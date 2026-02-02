@@ -15,6 +15,7 @@ endif()
 
 add_subdirectory(truvixx-assimp)
 add_subdirectory(truvixx-interface)
+add_subdirectory(truvixx-gfx)
 
 
 # 在配置完成后复制 compile_commands.json 到 build 目录

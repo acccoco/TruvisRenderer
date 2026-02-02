@@ -1,3 +1,4 @@
 ﻿#pragma once
 
-#include "TruvixxInterface/truvixx_api.h"
+#include "TruvixxInterface/assimp/module.h"
+#include "TruvixxInterface/gfx/module.h"

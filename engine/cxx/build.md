@@ -32,3 +32,9 @@ cmake `
   -S D:\code\Render-Rust-vk-Truvis\crates\truvis-cxx\cxx `
   -B D:\code\Render-Rust-vk-Truvis\crates\truvis-cxx\cxx\build-clang
 ```
+
+# 更新 vcpkg
+
+先更新 vcpkg 本地缓存：到达 vcpkg 目录，执行 `git pull` 
+
+然后到达当前项目，更新 baseline: `vcpkg x-update-baseline`

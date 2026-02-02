@@ -2,7 +2,7 @@
 #include <vector>
 #include <format>
 
-#include "TruvixxInterface/truvixx_api.h"
+#include "TruvixxInterface/lib.h"
 
 namespace
 {

@@ -36,7 +36,6 @@ fn main() {
     // 将自动绑定文件写入到当前项目中
     gen_rust_binding();
 
-    // 指定需要静态链接的符号文件 .lib
     let build_type = std::env::var("PROFILE").unwrap();
 
     let cargo_build_dir = TruvisPath::target_path().join(build_type);

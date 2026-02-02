@@ -25,6 +25,7 @@ generate_export_header(truvixx-interface
 target_include_directories(truvixx-interface PUBLIC include)
 target_link_libraries(truvixx-interface PUBLIC
         truvixx-assimp
+        truvixx-gfx
 )
 
 
