@@ -3,6 +3,9 @@
 ###########################################################################
 find_package(VulkanHeaders CONFIG REQUIRED)
 
+# vcpkg 的 vulkan-loader 不提供 CMake config，需要手动查找
+find_library(VULKAN_LOADER vulkan-1 REQUIRED)
+
 
 # target
 ###########################################################################
@@ -18,5 +21,6 @@ add_library(truvixx-gfx STATIC
 target_include_directories(truvixx-gfx PUBLIC include)
 target_link_libraries(truvixx-gfx PUBLIC
     Vulkan::Headers
+    ${VULKAN_LOADER}
 )
 

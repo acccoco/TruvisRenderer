@@ -5,7 +5,8 @@
   "dependencies": [
     "assimp",
     "glm",
-    "vulkan-headers"
+    "vulkan-headers",
+    "vulkan-loader"
   ],
   "overrides": [
     {
@@ -18,6 +19,10 @@
     },
     {
       "name": "vulkan-headers",
+      "version": "1.4.328.0"
+    },
+    {
+      "name": "vulkan-loader",
       "version": "1.4.328.0"
     }
   ]

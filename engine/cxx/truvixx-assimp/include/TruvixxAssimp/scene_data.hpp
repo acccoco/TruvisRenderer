@@ -17,10 +17,10 @@ struct MaterialData
     std::string name;
 
     // PBR 参数
-    TruvixxFloat4 base_color = { 1.f, 1.f, 1.f, 1.f };
+    TruvixxFloat4 base_color = { { 1.f, 1.f, 1.f, 1.f } };
     float roughness = 0.5f;
     float metallic = 0.0f;
-    TruvixxFloat4 emissive = { 0.0f, 0.0f, 0.0f, 1.0f };
+    TruvixxFloat4 emissive = { { 0.0f, 0.0f, 0.0f, 1.0f } };
     float opacity = 1.0f; ///< 1 = opaque, 0 = transparent
 
     // 纹理路径 (绝对路径)
@@ -36,10 +36,10 @@ struct InstanceData
     /// 世界变换矩阵 (列主序, 4x4)
     /// 坐标系：右手系，X-Right，Y-Up
     TruvixxFloat4x4 world_transform = {
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
+        { 1, 0, 0, 0,
+          0, 1, 0, 0,
+          0, 0, 1, 0,
+          0, 0, 0, 1 }
     };
 
     /// 该实例引用的 mesh 索引列表
