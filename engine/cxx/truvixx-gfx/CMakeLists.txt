@@ -1,3 +1,5 @@
+# truvixx-gfx: C++ Vulkan Graphics Library
+# 对 Rust truvis-gfx 模块的 C++ 替代实现
 
 # 第三方库
 ###########################################################################
@@ -23,4 +25,7 @@ target_link_libraries(truvixx-gfx PUBLIC
     Vulkan::Headers
     ${VULKAN_LOADER}
 )
+
+# 确保使用 C++20
+target_compile_features(truvixx-gfx PUBLIC cxx_std_20)
 

@@ -1,7 +1,8 @@
 #include "TruvixxInterface/gfx/module.h"
 #include "TruvixxGfx/lib.hpp"
 
-void truvixx_gfx_foo()
+void truvixx_gfx_test()
 {
-    foo();
+    // 简单的编译测试
+    // 实际使用时需要传入正确的参数
 }

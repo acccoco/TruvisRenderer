@@ -19,6 +19,14 @@ cxx-preset-clang:
 	cmake --preset clang-cl-debug
 
 [working-directory: "engine/cxx"]
+cxx-preset-vs:
+	cmake --preset vs2022
+
+[working-directory: "engine/cxx"]
+cxx-build-vs:
+	cmake --build --preset vs2022-build-debug
+
+[working-directory: "engine/cxx"]
 cxx-build-clang:
 	cmake --build --preset clang-cl-build-debug
 
