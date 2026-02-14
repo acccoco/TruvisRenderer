@@ -5,20 +5,23 @@
 
 #include "vulkan/vulkan.hpp"
 
-namespace truvixx {
+namespace truvixx
+{
 
 /// Queue Family 信息
-struct GfxQueueFamily {
+struct GfxQueueFamily
+{
     std::string name;
-    uint32_t queueFamilyIndex;
-    VkQueueFlags queueFlags;
-    uint32_t queueCount;
+    uint32_t queue_family_index;
+    VkQueueFlags queue_flags;
+    uint32_t queue_count;
 };
 
 /// 物理设备（GPU）封装
 ///
 /// 选择并保存物理设备信息，包括设备属性、队列族等
-class GfxPhysicalDevice {
+struct GfxPhysicalDevice
+{
 public:
     /// 创建一个新的物理设备实例
     /// 优先选择独立显卡，如果没有则选择第一个可用的显卡
@@ -34,38 +37,39 @@ public:
     GfxPhysicalDevice(GfxPhysicalDevice&&) noexcept = default;
     GfxPhysicalDevice& operator=(GfxPhysicalDevice&&) noexcept = default;
 
-    [[nodiscard]] VkPhysicalDevice handle() const { return m_physicalDevice; }
-    [[nodiscard]] const VkPhysicalDeviceProperties& properties() const { return m_basicProps; }
-    [[nodiscard]] const VkPhysicalDeviceMemoryProperties& memoryProperties() const { return m_memProps; }
-    [[nodiscard]] const GfxQueueFamily& gfxQueueFamily() const { return m_gfxQueueFamily; }
-    [[nodiscard]] const std::optional<GfxQueueFamily>& computeQueueFamily() const { return m_computeQueueFamily; }
-    [[nodiscard]] const std::optional<GfxQueueFamily>& transferQueueFamily() const { return m_transferQueueFamily; }
+    [[nodiscard]] VkPhysicalDevice handle() const { return physical_device_; }
+    [[nodiscard]] const VkPhysicalDeviceProperties& properties() const { return basic_props_; }
+    [[nodiscard]] const VkPhysicalDeviceMemoryProperties& memory_properties() const { return mem_props_; }
+    [[nodiscard]] const GfxQueueFamily& gfx_queue_family() const { return gfx_queue_family_; }
+    [[nodiscard]] const std::optional<GfxQueueFamily>& compute_queue_family() const { return compute_queue_family_; }
+    [[nodiscard]] const std::optional<GfxQueueFamily>& transfer_queue_family() const { return transfer_queue_family_; }
 
-    [[nodiscard]] bool isDiscreteGpu() const { return m_basicProps.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU; }
+    [[nodiscard]] bool is_discrete_gpu() const { return basic_props_.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU; }
 
 private:
-    void initPhysicalDevice(VkPhysicalDevice pdevice, VkInstance instance);
+    void init_physical_device(VkPhysicalDevice pdevice, VkInstance instance);
 
     /// 查找符合条件的 queue family
-    std::optional<GfxQueueFamily> findQueueFamily(
+    std::optional<GfxQueueFamily> find_queue_family(
         const std::string& name,
-        VkQueueFlags includeFlags,
-        VkQueueFlags excludeFlags) const;
+        VkQueueFlags include_flags,
+        VkQueueFlags exclude_flags
+    ) const;
 
 private:
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device_ = VK_NULL_HANDLE;
 
-    VkPhysicalDeviceFeatures m_features{};
-    VkPhysicalDeviceProperties m_basicProps{};
-    VkPhysicalDeviceMemoryProperties m_memProps{};
-    VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtPipelineProps{};
-    VkPhysicalDeviceAccelerationStructurePropertiesKHR m_accStructProps{};
+    VkPhysicalDeviceFeatures features_{};
+    VkPhysicalDeviceProperties basic_props_{};
+    VkPhysicalDeviceMemoryProperties mem_props_{};
+    VkPhysicalDeviceRayTracingPipelinePropertiesKHR rt_pipeline_props_{};
+    VkPhysicalDeviceAccelerationStructurePropertiesKHR acc_struct_props_{};
 
-    std::vector<VkQueueFamilyProperties> m_queueFamilyProps;
+    std::vector<VkQueueFamilyProperties> queue_family_props_;
 
-    GfxQueueFamily m_gfxQueueFamily;
-    std::optional<GfxQueueFamily> m_computeQueueFamily;
-    std::optional<GfxQueueFamily> m_transferQueueFamily;
+    GfxQueueFamily gfx_queue_family_;
+    std::optional<GfxQueueFamily> compute_queue_family_;
+    std::optional<GfxQueueFamily> transfer_queue_family_;
 };
 
 } // namespace truvixx

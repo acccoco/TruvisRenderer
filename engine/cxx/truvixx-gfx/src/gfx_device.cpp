@@ -3,22 +3,22 @@
 #include <iostream>
 #include <stdexcept>
 
-namespace truvixx {
+namespace truvixx
+{
 
-GfxDevice::GfxDevice(VkInstance instance,
-                     VkPhysicalDevice physicalDevice,
-                     const std::vector<VkDeviceQueueCreateInfo>& queueCreateInfos)
+GfxDevice::GfxDevice(VkInstance instance, VkPhysicalDevice physical_device, const std::vector<VkDeviceQueueCreateInfo>& queue_create_infos)
 {
     // 设备扩展
-    auto deviceExts = basicDeviceExts();
+    auto deviceExts = basic_device_exts();
 
     std::cout << "Device extensions:\n";
-    for (const auto& ext : deviceExts) {
+    for (const auto& ext : deviceExts)
+    {
         std::cout << "\t" << ext << "\n";
     }
 
     // 设备特性
-    VkPhysicalDeviceFeatures basicFeatures = basicDeviceFeatures();
+    VkPhysicalDeviceFeatures basicFeatures = basic_device_features();
 
     // 扩展特性链
     VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{};
@@ -77,123 +77,129 @@ GfxDevice::GfxDevice(VkInstance instance,
     // 创建设备
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
-    createInfo.pQueueCreateInfos = queueCreateInfos.data();
+    createInfo.queueCreateInfoCount = static_cast<uint32_t>(queue_create_infos.size());
+    createInfo.pQueueCreateInfos = queue_create_infos.data();
     createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExts.size());
     createInfo.ppEnabledExtensionNames = deviceExts.data();
     createInfo.pNext = &allFeatures;
 
-    VkResult result = vkCreateDevice(physicalDevice, &createInfo, nullptr, &m_device);
-    if (result != VK_SUCCESS) {
+    VkResult result = vkCreateDevice(physical_device, &createInfo, nullptr, &device_);
+    if (result != VK_SUCCESS)
+    {
         throw std::runtime_error("Failed to create logical device");
     }
 
     // 加载扩展函数
-    m_vkSetDebugUtilsObjectName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
-        vkGetDeviceProcAddr(m_device, "vkSetDebugUtilsObjectNameEXT"));
+    pfn_vkSetDebugUtilsObjectName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
+        vkGetDeviceProcAddr(device_, "vkSetDebugUtilsObjectNameEXT")
+    );
 }
 
 GfxDevice::~GfxDevice()
 {
-    if (m_device != VK_NULL_HANDLE) {
+    if (device_ != VK_NULL_HANDLE)
+    {
         std::cout << "Destroying GfxDevice\n";
-        vkDestroyDevice(m_device, nullptr);
-        m_device = VK_NULL_HANDLE;
+        vkDestroyDevice(device_, nullptr);
+        device_ = VK_NULL_HANDLE;
     }
 }
 
 GfxDevice::GfxDevice(GfxDevice&& other) noexcept
-    : m_device(other.m_device)
-    , m_vkSetDebugUtilsObjectName(other.m_vkSetDebugUtilsObjectName)
+    : device_(other.device_)
+    , pfn_vkSetDebugUtilsObjectName(other.pfn_vkSetDebugUtilsObjectName)
 {
-    other.m_device = VK_NULL_HANDLE;
-    other.m_vkSetDebugUtilsObjectName = nullptr;
+    other.device_ = VK_NULL_HANDLE;
+    other.pfn_vkSetDebugUtilsObjectName = nullptr;
 }
 
 GfxDevice& GfxDevice::operator=(GfxDevice&& other) noexcept
 {
-    if (this != &other) {
-        if (m_device != VK_NULL_HANDLE) {
-            vkDestroyDevice(m_device, nullptr);
+    if (this != &other)
+    {
+        if (device_ != VK_NULL_HANDLE)
+        {
+            vkDestroyDevice(device_, nullptr);
         }
-        m_device = other.m_device;
-        m_vkSetDebugUtilsObjectName = other.m_vkSetDebugUtilsObjectName;
-        other.m_device = VK_NULL_HANDLE;
-        other.m_vkSetDebugUtilsObjectName = nullptr;
+        device_ = other.device_;
+        pfn_vkSetDebugUtilsObjectName = other.pfn_vkSetDebugUtilsObjectName;
+        other.device_ = VK_NULL_HANDLE;
+        other.pfn_vkSetDebugUtilsObjectName = nullptr;
     }
     return *this;
 }
 
-VkQueue GfxDevice::getQueue(uint32_t queueFamilyIndex, uint32_t queueIndex) const
+VkQueue GfxDevice::get_queue(uint32_t queueFamilyIndex, uint32_t queueIndex) const
 {
     VkQueue queue;
-    vkGetDeviceQueue(m_device, queueFamilyIndex, queueIndex, &queue);
+    vkGetDeviceQueue(device_, queueFamilyIndex, queueIndex, &queue);
     return queue;
 }
 
-void GfxDevice::waitIdle() const
+void GfxDevice::wait_idle() const
 {
-    vkDeviceWaitIdle(m_device);
+    vkDeviceWaitIdle(device_);
 }
 
-void GfxDevice::setObjectDebugName(uint64_t objectHandle, VkObjectType objectType, const std::string& name) const
+void GfxDevice::set_object_debug_name(uint64_t object_handle, VkObjectType object_type, const std::string& name) const
 {
-    if (m_vkSetDebugUtilsObjectName == nullptr) {
+    if (pfn_vkSetDebugUtilsObjectName == nullptr)
+    {
         return;
     }
 
     VkDebugUtilsObjectNameInfoEXT nameInfo{};
     nameInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
-    nameInfo.objectType = objectType;
-    nameInfo.objectHandle = objectHandle;
+    nameInfo.objectType = object_type;
+    nameInfo.objectHandle = object_handle;
     nameInfo.pObjectName = name.c_str();
 
-    m_vkSetDebugUtilsObjectName(m_device, &nameInfo);
+    pfn_vkSetDebugUtilsObjectName(device_, &nameInfo);
 }
 
 template <>
-void GfxDevice::setObjectDebugName<VkInstance>(VkInstance handle, const std::string& name) const
+void GfxDevice::set_object_debug_name<VkInstance>(VkInstance handle, const std::string& name) const
 {
-    setObjectDebugName(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_INSTANCE, name);
+    set_object_debug_name(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_INSTANCE, name);
 }
 
 template <>
-void GfxDevice::setObjectDebugName<VkPhysicalDevice>(VkPhysicalDevice handle, const std::string& name) const
+void GfxDevice::set_object_debug_name<VkPhysicalDevice>(VkPhysicalDevice handle, const std::string& name) const
 {
-    setObjectDebugName(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_PHYSICAL_DEVICE, name);
+    set_object_debug_name(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_PHYSICAL_DEVICE, name);
 }
 
 template <>
-void GfxDevice::setObjectDebugName<VkDevice>(VkDevice handle, const std::string& name) const
+void GfxDevice::set_object_debug_name<VkDevice>(VkDevice handle, const std::string& name) const
 {
-    setObjectDebugName(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_DEVICE, name);
+    set_object_debug_name(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_DEVICE, name);
 }
 
 template <>
-void GfxDevice::setObjectDebugName<VkQueue>(VkQueue handle, const std::string& name) const
+void GfxDevice::set_object_debug_name<VkQueue>(VkQueue handle, const std::string& name) const
 {
-    setObjectDebugName(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_QUEUE, name);
+    set_object_debug_name(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_QUEUE, name);
 }
 
 template <>
-void GfxDevice::setObjectDebugName<VkSwapchainKHR>(VkSwapchainKHR handle, const std::string& name) const
+void GfxDevice::set_object_debug_name<VkSwapchainKHR>(VkSwapchainKHR handle, const std::string& name) const
 {
-    setObjectDebugName(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_SWAPCHAIN_KHR, name);
+    set_object_debug_name(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_SWAPCHAIN_KHR, name);
 }
 
 template <>
-void GfxDevice::setObjectDebugName<VkImage>(VkImage handle, const std::string& name) const
+void GfxDevice::set_object_debug_name<VkImage>(VkImage handle, const std::string& name) const
 {
-    setObjectDebugName(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_IMAGE, name);
+    set_object_debug_name(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_IMAGE, name);
 }
 
 template <>
-void GfxDevice::setObjectDebugName<VkImageView>(VkImageView handle, const std::string& name) const
+void GfxDevice::set_object_debug_name<VkImageView>(VkImageView handle, const std::string& name) const
 {
-    setObjectDebugName(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_IMAGE_VIEW, name);
+    set_object_debug_name(reinterpret_cast<uint64_t>(handle), VK_OBJECT_TYPE_IMAGE_VIEW, name);
 }
 
-std::vector<const char*> GfxDevice::basicDeviceExts()
+std::vector<const char*> GfxDevice::basic_device_exts()
 {
     return {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -206,7 +212,7 @@ std::vector<const char*> GfxDevice::basicDeviceExts()
     };
 }
 
-VkPhysicalDeviceFeatures GfxDevice::basicDeviceFeatures()
+VkPhysicalDeviceFeatures GfxDevice::basic_device_features()
 {
     VkPhysicalDeviceFeatures features{};
     features.samplerAnisotropy = VK_TRUE;

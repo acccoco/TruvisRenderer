@@ -1,36 +1,40 @@
 #include "TruvixxGfx/gfx_instance.hpp"
 
 #include <algorithm>
-#include <cstring>
 #include <functional>
 #include <iostream>
 #include <set>
 #include <stdexcept>
 
-namespace truvixx {
+namespace truvixx
+{
 
-GfxInstance::GfxInstance(const std::string& appName,
-                         const std::string& engineName,
-                         const std::vector<const char*>& extraInstanceExts)
+GfxInstance::GfxInstance(
+    const std::string& app_name,
+    const std::string& engine_name,
+    const std::vector<const char*>& extra_instance_exts
+)
 {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = appName.c_str();
+    appInfo.pApplicationName = app_name.c_str();
     appInfo.applicationVersion = VK_MAKE_API_VERSION(0, 1, 0, 0);
-    appInfo.pEngineName = engineName.c_str();
+    appInfo.pEngineName = engine_name.c_str();
     appInfo.engineVersion = VK_MAKE_API_VERSION(0, 1, 0, 0);
     appInfo.apiVersion = VK_API_VERSION_1_3;
 
-    auto enabledExtensions = getExtensions(extraInstanceExts);
-    auto enabledLayers = getLayers();
+    auto enabledExtensions = get_extensions(extra_instance_exts);
+    auto enabledLayers = get_layers();
 
     std::cout << "Instance extensions:\n";
-    for (const auto& ext : enabledExtensions) {
+    for (const auto& ext : enabledExtensions)
+    {
         std::cout << "\t" << ext << "\n";
     }
 
     std::cout << "Instance layers:\n";
-    for (const auto& layer : enabledLayers) {
+    for (const auto& layer : enabledLayers)
+    {
         std::cout << "\t" << layer << "\n";
     }
 
@@ -42,40 +46,44 @@ GfxInstance::GfxInstance(const std::string& appName,
     createInfo.enabledLayerCount = static_cast<uint32_t>(enabledLayers.size());
     createInfo.ppEnabledLayerNames = enabledLayers.data();
 
-    VkResult result = vkCreateInstance(&createInfo, nullptr, &m_instance);
-    if (result != VK_SUCCESS) {
+    VkResult result = vkCreateInstance(&createInfo, nullptr, &instance_);
+    if (result != VK_SUCCESS)
+    {
         throw std::runtime_error("Failed to create Vulkan instance");
     }
 }
 
 GfxInstance::~GfxInstance()
 {
-    if (m_instance != VK_NULL_HANDLE) {
+    if (instance_ != VK_NULL_HANDLE)
+    {
         std::cout << "Destroying GfxInstance\n";
-        vkDestroyInstance(m_instance, nullptr);
-        m_instance = VK_NULL_HANDLE;
+        vkDestroyInstance(instance_, nullptr);
+        instance_ = VK_NULL_HANDLE;
     }
 }
 
 GfxInstance::GfxInstance(GfxInstance&& other) noexcept
-    : m_instance(other.m_instance)
+    : instance_(other.instance_)
 {
-    other.m_instance = VK_NULL_HANDLE;
+    other.instance_ = VK_NULL_HANDLE;
 }
 
 GfxInstance& GfxInstance::operator=(GfxInstance&& other) noexcept
 {
-    if (this != &other) {
-        if (m_instance != VK_NULL_HANDLE) {
-            vkDestroyInstance(m_instance, nullptr);
+    if (this != &other)
+    {
+        if (instance_ != VK_NULL_HANDLE)
+        {
+            vkDestroyInstance(instance_, nullptr);
         }
-        m_instance = other.m_instance;
-        other.m_instance = VK_NULL_HANDLE;
+        instance_ = other.instance_;
+        other.instance_ = VK_NULL_HANDLE;
     }
     return *this;
 }
 
-std::vector<const char*> GfxInstance::getExtensions(const std::vector<const char*>& extraExts) const
+std::vector<const char*> GfxInstance::get_extensions(const std::vector<const char*>& extra_exts) const
 {
     uint32_t extensionCount = 0;
     vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
@@ -96,27 +104,32 @@ std::vector<const char*> GfxInstance::getExtensions(const std::vector<const char
             }
         );
 
-        if (supported) {
+        if (supported)
+        {
             enabledExtensions.insert(extName);
-        } else {
+        }
+        else
+        {
             throw std::runtime_error(std::string("Required instance extension is missing: ") + extName);
         }
     };
 
     // 启用基础 extensions
-    for (const auto& ext : basicInstanceExts()) {
+    for (const auto& ext : basic_instance_exts())
+    {
         enableExt(ext);
     }
 
     // 启用额外的 extensions
-    for (const auto& ext : extraExts) {
+    for (const auto& ext : extra_exts)
+    {
         enableExt(ext);
     }
 
-    return {enabledExtensions.begin(), enabledExtensions.end()};
+    return { enabledExtensions.begin(), enabledExtensions.end() };
 }
 
-std::vector<const char*> GfxInstance::getLayers() const
+std::vector<const char*> GfxInstance::get_layers() const
 {
     uint32_t layerCount = 0;
     vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
@@ -135,28 +148,32 @@ std::vector<const char*> GfxInstance::getLayers() const
             }
         );
 
-        if (supported) {
+        if (supported)
+        {
             enabledLayers.push_back(layerName);
-        } else {
+        }
+        else
+        {
             throw std::runtime_error(std::string("Required instance layer is missing: ") + layerName);
         }
     };
 
-    for (const auto& layer : basicInstanceLayers()) {
+    for (const auto& layer : basic_instance_layers())
+    {
         enableLayer(layer);
     }
 
     return enabledLayers;
 }
 
-std::vector<const char*> GfxInstance::basicInstanceExts()
+std::vector<const char*> GfxInstance::basic_instance_exts()
 {
     return {
         VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
     };
 }
 
-std::vector<const char*> GfxInstance::basicInstanceLayers()
+std::vector<const char*> GfxInstance::basic_instance_layers()
 {
     // 无需开启 validation layer，使用 vulkan configurator 控制 validation layer 的开启
     return {};

@@ -3,14 +3,16 @@
 #include <iostream>
 #include <stdexcept>
 
-namespace truvixx {
+namespace truvixx
+{
 
 GfxPhysicalDevice::GfxPhysicalDevice(VkInstance instance)
 {
     uint32_t deviceCount = 0;
     vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
 
-    if (deviceCount == 0) {
+    if (deviceCount == 0)
+    {
         throw std::runtime_error("Failed to find GPUs with Vulkan support");
     }
 
@@ -19,109 +21,121 @@ GfxPhysicalDevice::GfxPhysicalDevice(VkInstance instance)
 
     // 优先选择独立显卡
     VkPhysicalDevice selectedDevice = VK_NULL_HANDLE;
-    for (const auto& device : devices) {
+    for (const auto& device : devices)
+    {
         VkPhysicalDeviceProperties props;
         vkGetPhysicalDeviceProperties(device, &props);
 
-        if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+        if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+        {
             selectedDevice = device;
             break;
         }
 
-        if (selectedDevice == VK_NULL_HANDLE) {
+        if (selectedDevice == VK_NULL_HANDLE)
+        {
             selectedDevice = device;
         }
     }
 
-    initPhysicalDevice(selectedDevice, instance);
+    init_physical_device(selectedDevice, instance);
 }
 
-void GfxPhysicalDevice::initPhysicalDevice(VkPhysicalDevice pdevice, VkInstance instance)
+void GfxPhysicalDevice::init_physical_device(VkPhysicalDevice pdevice, VkInstance instance)
 {
-    m_physicalDevice = pdevice;
+    physical_device_ = pdevice;
 
     // 获取基础属性
-    vkGetPhysicalDeviceProperties(pdevice, &m_basicProps);
-    std::cout << "Found GPU: " << m_basicProps.deviceName << "\n";
+    vkGetPhysicalDeviceProperties(pdevice, &basic_props_);
+    std::cout << "Found GPU: " << basic_props_.deviceName << "\n";
 
     // 获取特性
-    vkGetPhysicalDeviceFeatures(pdevice, &m_features);
+    vkGetPhysicalDeviceFeatures(pdevice, &features_);
 
     // 获取内存属性
-    vkGetPhysicalDeviceMemoryProperties(pdevice, &m_memProps);
+    vkGetPhysicalDeviceMemoryProperties(pdevice, &mem_props_);
 
     // 获取 ray tracing 和加速结构属性
-    m_rtPipelineProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
-    m_rtPipelineProps.pNext = nullptr;
+    rt_pipeline_props_.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+    rt_pipeline_props_.pNext = nullptr;
 
-    m_accStructProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
-    m_accStructProps.pNext = &m_rtPipelineProps;
+    acc_struct_props_.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
+    acc_struct_props_.pNext = &rt_pipeline_props_;
 
     VkPhysicalDeviceProperties2 props2{};
     props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-    props2.pNext = &m_accStructProps;
+    props2.pNext = &acc_struct_props_;
     vkGetPhysicalDeviceProperties2(pdevice, &props2);
 
     // 获取队列族属性
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(pdevice, &queueFamilyCount, nullptr);
 
-    m_queueFamilyProps.resize(queueFamilyCount);
-    vkGetPhysicalDeviceQueueFamilyProperties(pdevice, &queueFamilyCount, m_queueFamilyProps.data());
+    queue_family_props_.resize(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(pdevice, &queueFamilyCount, queue_family_props_.data());
 
     std::cout << "Queue family properties:\n";
-    for (uint32_t i = 0; i < queueFamilyCount; ++i) {
-        const auto& props = m_queueFamilyProps[i];
+    for (uint32_t i = 0; i < queueFamilyCount; ++i)
+    {
+        const auto& props = queue_family_props_[i];
         std::cout << "\t[" << i << "] flags: " << props.queueFlags << ", count: " << props.queueCount << "\n";
     }
 
     // 查找 Graphics Queue Family (支持 Graphics, Compute, Transfer)
-    auto gfxFamily = findQueueFamily(
+    auto gfxFamily = find_queue_family(
         "gfx",
         VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
-        0);
+        0
+    );
 
-    if (!gfxFamily) {
+    if (!gfxFamily)
+    {
         throw std::runtime_error("Failed to find graphics queue family");
     }
-    m_gfxQueueFamily = std::move(*gfxFamily);
+    gfx_queue_family_ = std::move(*gfxFamily);
 
     // 查找 Compute Only Queue Family
-    m_computeQueueFamily = findQueueFamily(
+    compute_queue_family_ = find_queue_family(
         "compute-only",
         VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
-        VK_QUEUE_GRAPHICS_BIT);
+        VK_QUEUE_GRAPHICS_BIT
+    );
 
     // 查找 Transfer Only Queue Family
-    m_transferQueueFamily = findQueueFamily(
+    transfer_queue_family_ = find_queue_family(
         "transfer-only",
         VK_QUEUE_TRANSFER_BIT,
-        VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT);
+        VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT
+    );
 }
 
-std::optional<GfxQueueFamily> GfxPhysicalDevice::findQueueFamily(
+std::optional<GfxQueueFamily> GfxPhysicalDevice::find_queue_family(
     const std::string& name,
-    VkQueueFlags includeFlags,
-    VkQueueFlags excludeFlags) const
+    VkQueueFlags include_flags,
+    VkQueueFlags exclude_flags
+) const
 {
-    for (uint32_t i = 0; i < static_cast<uint32_t>(m_queueFamilyProps.size()); ++i) {
-        const auto& props = m_queueFamilyProps[i];
+    for (uint32_t i = 0; i < static_cast<uint32_t>(queue_family_props_.size()); ++i)
+    {
+        const auto& props = queue_family_props_[i];
 
-        // 检查是否包含所有 includeFlags
-        if ((props.queueFlags & includeFlags) != includeFlags) {
+        // 检查是否包含所有 include_flags
+        if ((props.queueFlags & include_flags) != include_flags)
+        {
             continue;
         }
 
-        // 检查是否不包含任何 excludeFlags
-        if ((props.queueFlags & excludeFlags) != 0) {
+        // 检查是否不包含任何 exclude_flags
+        if ((props.queueFlags & exclude_flags) != 0)
+        {
             continue;
         }
 
         return GfxQueueFamily{
             .name = name,
-            .queueFamilyIndex = i,
-            .queueFlags = props.queueFlags,
-            .queueCount = props.queueCount,
+            .queue_family_index = i,
+            .queue_flags = props.queueFlags,
+            .queue_count = props.queueCount,
         };
     }
 
