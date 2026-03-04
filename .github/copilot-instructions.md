@@ -13,12 +13,14 @@ engine/
 │   ├── truvis-renderer/         # Renderer 核心，Camera, Timer, RenderPresent
 │   ├── truvis-app/              # OuterApp trait，内置应用实现
 │   ├── truvis-scene/            # 几何体、场景数据
-│   ├── truvis-shader/           # 着色器编译与绑定生成
+│   ├── truvis-shader/           # 着色器编译（truvis-shader-build）与绑定生成（truvis-shader-binding）
 │   ├── truvis-cxx/              # C++ FFI（Assimp 场景加载）
+│   ├── truvis-gui-backend/      # ImGui Vulkan 后端（GuiPass）
+│   ├── truvis-utils/            # 通用工具
 │   └── truvis-asset/            # 异步资产加载
 ├── shader/
-│   ├── src/                     # .slang 源码（按 pass 组织）
-│   ├── include/                 # 共享头文件（.slangi）
+│   ├── entry/                   # .slang 入口着色器（按 pass 组织）
+│   ├── share/                   # 共享头文件（.slangi）：结构体、全局绑定
 │   └── .build/                  # 编译后 .spv（自动生成）
 └── cxx/                         # C++ 源码 + CMakeLists.txt
 
@@ -57,7 +59,7 @@ cargo run --bin shader-toy        # 着色器实验场
 - 着色器使用 rayon 并行编译 `.slang` → `.spv`，输出到 `engine/shader/.build/`
 
 **自动生成系统**:
-- 着色器绑定: `truvis-shader-binding/build.rs` 从 `.slangi` 生成 Rust 类型
+- 着色器绑定: `engine/crates/truvis-shader/truvis-shader-binding/build.rs` 从 `engine/shader/share/*.slangi` 生成 Rust 类型
 - C++ 绑定: `truvis-cxx/build.rs` 构建 CMake 并复制 DLL 到 `target/`
 
 
@@ -142,12 +144,12 @@ compiled.execute(&cmd, &gfx_resource_manager);
 ### 目录结构
 | 目录 | 用途 |
 |------|------|
-| `engine/shader/include/` | 共享头文件（`.slangi`）：结构体、全局绑定 |
-| `engine/shader/src/<pass>/` | 按渲染通道组织的着色器源码 |
+| `engine/shader/share/` | 共享头文件（`.slangi`）：结构体、全局绑定 |
+| `engine/shader/entry/<pass>/` | 按渲染通道组织的着色器入口源码 |
 | `engine/shader/.build/` | 编译输出（SPIR-V） |
 
 ### 全局描述符布局（三层绑定）
-定义于 `engine/shader/include/global_binding_sets.slangi`：
+定义于 `engine/shader/share/global_binding_sets.slangi`：
 ```slang
 // set 0: 全局采样器
 [[vk::binding(0, 0)]] SamplerState global_samplers[];
@@ -159,7 +161,7 @@ compiled.execute(&cmd, &gfx_resource_manager);
 
 ### Slang → Rust 自动绑定
 ```slang
-// engine/shader/include/frame_data.slangi
+// engine/shader/share/frame_data.slangi
 struct PerFrameData { float4x4 projection; float4x4 view; float3 camera_pos; uint time_ms; };
 ```
 ```rust
@@ -229,6 +231,8 @@ cargo run --bin my_app
 ```
 
 参考示例：`truvis-winit-app/src/bin/triangle_app.rs` + `engine/crates/truvis-app/src/outer_app/triangle/`
+
+`OuterApp` trait 定义于 `engine/crates/truvis-app/src/outer_app/base.rs`
 
 ### 创建新渲染管线
 ```rust
