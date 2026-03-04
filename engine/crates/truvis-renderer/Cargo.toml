@@ -14,6 +14,8 @@ truvis-cxx-binding = { workspace = true }
 truvis-gui-backend = { workspace = true }
 
 
+gltf = { workspace = true }
+
 ash = { workspace = true }
 glam = { workspace = true }
 bytemuck = { workspace = true }

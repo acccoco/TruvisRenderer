@@ -1,361 +1,247 @@
-//! 进行模型处理
+//! GLTF 场景加载器
 //!
-//! gltf 的格式，参考 https://www.khronos.org/files/gltf20-reference-guide.pdf
+//! 支持 GLTF 2.0 格式（.gltf / .glb），包含 PBR 材质、法线贴图、发光材质。
+//! 不支持骨骼动画、稀疏 accessor 和 GPU instancing 扩展。
 
-use std::{mem::size_of, rc::Rc};
+use std::path::Path;
 
-use ash::vk;
-use glam::f32::Mat4;
-use itertools::{izip, Itertools};
-use static_init::raw_static::Static;
+use glam::{Vec2, Vec3, Vec4};
+use truvis_asset::asset_hub::AssetHub;
+use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
+use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
+use truvis_render_interface::geometry::RtGeometry;
+use truvis_scene::components::instance::Instance;
+use truvis_scene::components::material::Material;
+use truvis_scene::components::mesh::Mesh;
+use truvis_scene::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle};
+use truvis_scene::scene_manager::SceneManager;
 
-use crate::{
-    resource::model::StaticMeshData,
-    gfx_type::{image::GfxImage2D, sampler::GfxSampler},
-};
-
-
-/// 导入 gltf 格式的模型
+/// GLTF 场景加载器
 ///
-/// 支持 mesh，不支持 skin，动画
-pub struct GltfLoader
-{
-    gltf_doc: gltf::Document,
-    buffers: Vec<gltf::buffer::Data>,
-    images: Vec<gltf::image::Data>,
-}
+/// 与 `AssimpSceneLoader` 接口对齐，将 GLTF 场景解析为引擎内部的
+/// `Mesh` / `Material` / `Instance` 并注册到 `SceneManager`。
+pub struct GltfSceneLoader;
 
-impl GltfLoader
-{
-    /// 从 gltf 文件中载入模型
-    pub fn load(path: &std::path::Path) -> Vec<HissNode>
-    {
-        let loader = Self::from_file(core, path);
-        loader.process_scene()
-    }
+impl GltfSceneLoader {
+    /// 加载 GLTF/GLB 文件，返回场景中所有 instance 的 handle 列表。
+    pub fn load_scene(
+        model_file: &Path,
+        scene_manager: &mut SceneManager,
+        asset_hub: &mut AssetHub,
+    ) -> Vec<InstanceHandle> {
+        let (doc, buffers, _images) = gltf::import(model_file)
+            .unwrap_or_else(|e| panic!("failed to load gltf file {:?}: {}", model_file, e));
 
-    /// 根据 gltf 文件创建 loader，使用 loader 来读取模型数据
-    fn from_file(core: Rc<HissGfxCore>, path: &std::path::Path) -> Self
-    {
-        let (doc, buffers, images) =
-            gltf::import(path).unwrap_or_else(|_| panic!("failed to open gltf file: {:?}", path));
+        let model_name = model_file.file_stem().and_then(|s| s.to_str()).unwrap_or("gltf-model");
+        let base_dir = model_file.parent().unwrap_or(Path::new(""));
 
-        Self {
-            core,
-            gltf_doc: doc,
-            buffers,
-            images,
-        }
-    }
+        log::info!("loading gltf scene: {} ({} meshes, {} materials)", model_name, doc.meshes().count(), doc.materials().count());
 
-    /// 处理 gltf 的场景，场景是 gltf 中最大的层级
-    ///
-    /// ```json
-    /// {
-    ///     "scene": 0, // 通过该字段指定默认场景
-    ///     "scenes": [
-    ///         { "nodes": [ 0, 1, 2 ] },
-    ///         { "nodes": ... }
-    ///     ],
-    /// }
-    /// ```
-    fn process_scene(&self) -> Vec<HissNode>
-    {
-        // 读取默认场景，否则读取 0 号场景
-        let default_scene = self.gltf_doc.default_scene();
-        let scene = default_scene.unwrap_or_else(|| self.gltf_doc.scenes().next().unwrap());
+        // 注册无材质 primitive 使用的默认材质
+        let default_mat_handle = scene_manager.register_mat(Material::default());
 
-        let mut nodes = vec![];
-        for node in scene.nodes() {
-            let node = self.process_node(&node, &Mat4::IDENTITY);
-            nodes.push(node);
-        }
+        // 加载所有显式材质
+        let mat_handles: Vec<MaterialHandle> = doc
+            .materials()
+            .map(|mat| {
+                let material = Self::load_material(&mat, base_dir, asset_hub);
+                scene_manager.register_mat(material)
+            })
+            .collect();
 
-        nodes
-    }
+        // 加载所有 mesh（每个 primitive 作为一个 RtGeometry）
+        let mesh_handles: Vec<(MeshHandle, Vec<Option<usize>>)> = doc
+            .meshes()
+            .enumerate()
+            .map(|(mesh_idx, mesh)| {
+                let (mut mesh_data, mat_indices) = Self::load_mesh(&mesh, &buffers, model_name, mesh_idx);
+                mesh_data.build_blas();
+                let handle = scene_manager.register_mesh(mesh_data);
+                (handle, mat_indices)
+            })
+            .collect();
 
-    /// 处理 gltf 中的一个 node
-    ///
-    /// node 可以包含 transform，mesh，camera，light 信息
-    ///
-    /// ```json
-    /// {
-    ///     "children": ...,
-    ///
-    ///     // transform 以 matrix 形式整体指定，或者分别指定
-    ///     "matrix": ...,
-    ///     "translation": ...,
-    ///     "rotation": ...,
-    ///     "scale": ...,
-    ///
-    ///     // node 中要么包含 mesh，要么包含 camera
-    ///     "mesh": 4,
-    ///     "camera": 5,
-    /// }
-    /// ```
-    fn process_node(&self, node: &gltf::Node, parent_matrix: &Mat4) -> HissNode
-    {
-        // 处理 transform 信息
-        // gltf 文件采用的是「右手系」
-        // gltf 这个库使用 column major 的方式存放矩阵（每个元素相当于矩阵的一列）
-        let local_matrix = Mat4::from_cols_array_2d(&node.transform().matrix());
-        let matrix = parent_matrix.mul_mat4(&local_matrix);
-
-        // gltf 的一个 mesh 中可以有多个 primitive，所以可以解析出多个可渲染的 Mesh 对象
-        let meshes: Vec<Box<dyn HissMesh>> = node.mesh().map_or(vec![], |gltf_mesh| self.process_mesh(&gltf_mesh));
-
-        let children: Vec<HissNode> = node.children().map(|node| self.process_node(&node, &matrix)).collect();
-
-        HissNode::new(meshes, children, matrix)
-    }
-
-    /// 处理 gltf 中的 mesh
-    ///
-    /// mesh 包括：indices，vertices attribute
-    ///
-    /// 一个 mesh 中可以有多个 `primitive`，每个 `primitive` 都是单独可渲染的
-    /// 一个 mesh 的结构如下：
-    ///
-    /// ```json
-    /// {
-    ///    "primitives": [
-    ///        {
-    ///            "mode": 4,  // 点，线，三角面
-    ///            "indices: n,
-    ///            "attributes": {
-    ///                "POSITION": n,
-    ///                "NORMAL": n,
-    ///            },
-    ///            "material": n,
-    ///        }
-    ///    ]
-    /// },
-    /// ```
-    fn process_mesh(&self, mesh: &gltf::Mesh) -> Vec<Box<dyn HissMesh>>
-    {
-        let mut meshes: Vec<Box<dyn HissMesh>> = vec![];
-
-        for primitive in mesh.primitives() {
-            assert_eq!(primitive.mode(), gltf::mesh::Mode::Triangles);
-
-            let (vertex_buffer, vertex_cnt) = self.loader_primitive_data(&primitive);
-            let (index_buffer, index_cnt) = self.create_index_buffer(&primitive);
-            let material = Rc::new(self.create_material(&primitive));
-
-            let mesh = HissMeshPNTBuilder::default()
-                .vertex_buffers(vec![vertex_buffer])
-                .vertex_cnt(vertex_cnt)
-                .index_buffer(index_buffer)
-                .indices_cnt(index_cnt)
-                .material(material)
-                .build()
-                .unwrap();
-            meshes.push(Box::new(mesh));
+        // 遍历节点树，为每个含 mesh 的节点创建 instance
+        let mut instances = Vec::new();
+        let scene = doc.default_scene().or_else(|| doc.scenes().next());
+        if let Some(scene) = scene {
+            for root_node in scene.nodes() {
+                Self::traverse_nodes(
+                    &root_node,
+                    glam::Mat4::IDENTITY,
+                    &mesh_handles,
+                    &mat_handles,
+                    default_mat_handle,
+                    scene_manager,
+                    &mut instances,
+                );
+            }
         }
 
-        meshes
+        log::info!("gltf scene loaded: {} instances", instances.len());
+        instances
     }
 
-    fn loader_primitive_data(&self, primitive: &gltf::Primitive) -> StaticMeshData
-    {
-        const DEFAULT_NORMAL: [f32; 3] = [0_f32; 3];
-        const DEFAULT_TANGENT: [f32; 4] = [0_f32; 4];
-        const DEFAULT_UV: [f32; 2] = [0_f32; 2];
-
-        let mut mesh_data = StaticMeshData::default();
-
-        let reader = primitive.reader(|buffer| Some(self.buffers[buffer.index()].as_ref()));
-
-        mesh_data.positions = reader.read_positions().unwrap().collect_vec();
-        let vertex_cnt = mesh_data.positions.len();
-
-        mesh_data.normal = reader.read_normals().map_or_else(|| vec![DEFAULT_NORMAL; vertex_cnt], Iterator::collect);
-        mesh_data.tangent = reader.read_tangents().map_or_else(|| vec![DEFAULT_TANGENT; vertex_cnt], Iterator::collect);
-        mesh_data.uv = reader.read_tex_coords(0).map_or_else(|| vec![DEFAULT_UV; vertex_cnt], Iterator::collect);
-
-        assert!(
-            mesh_data.normal.len() == vertex_cnt &&
-                mesh_data.tangent.len() == vertex_cnt &&
-                mesh_data.uv.len() == vertex_cnt
-        );
-
-        mesh_data.index = reader.read_indices().expect("gltf file has no indices.").into_u32().collect();
-
-        mesh_data
-    }
-
-
-    /// 创建材质对象
+    /// 解析单个 GLTF mesh，每个 primitive 生成一个 `RtGeometry`。
     ///
-    /// gltf 中一个 material 的组成
-    /// ```json
-    /// {
-    ///     "pbrMetallicRoughness": {
-    ///         "baseColorTexture": {},
-    ///         "baseColorFactor": [f32; 4],
-    ///         "metallicRoughnessTexture": {},
-    ///         "metallicFactor": f32,
-    ///         "roughnessFactor": f32,
-    ///     },
-    ///     "normalTexture": {},
-    ///     "occlusionTexture": {},
-    ///     "emissiveTexture": {},
-    ///     "emissiveFactor": [f32; 3]
-    /// }
-    /// ```
-    fn create_material(&self, primitive: &gltf::Primitive) -> HissMatMR
-    {
-        let pbr = primitive.material().pbr_metallic_roughness();
+    /// 返回 `(Mesh, Vec<Option<material_index>>)`，material index 与 primitive 一一对应。
+    fn load_mesh(
+        mesh: &gltf::Mesh<'_>,
+        buffers: &[gltf::buffer::Data],
+        model_name: &str,
+        mesh_idx: usize,
+    ) -> (Mesh, Vec<Option<usize>>) {
+        let mut geometries = Vec::new();
+        let mut material_indices = Vec::new();
 
-        // 读取 base color texture：以 sRGB 编码的
-        let base_color_tex = pbr.base_color_texture().map(|info| self.create_texture(info, true));
+        for (prim_idx, primitive) in mesh.primitives().enumerate() {
+            let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
-        // 读取 metallic roughness texture
-        // metallic 位于 Blue 通道；Roughness 位于 Green 通道
-        // 线性编码
-        let mr_tex = pbr.metallic_roughness_texture().map(|info| self.create_texture(info, false));
+            let positions: Vec<Vec3> = match reader.read_positions() {
+                Some(iter) => iter.map(Vec3::from).collect(),
+                None => continue, // 跳过无顶点数据的 primitive
+            };
+            let vertex_count = positions.len();
 
-        let base_color_factor = pbr.base_color_factor();
-        let matallic_factor = pbr.metallic_factor();
-        let roughness_factor = pbr.roughness_factor();
+            let normals: Vec<Vec3> = reader
+                .read_normals()
+                .map(|iter| iter.map(Vec3::from).collect())
+                .unwrap_or_else(|| vec![Vec3::Y; vertex_count]);
 
-        HissMatMR::builder()
-            .base_color_tex(base_color_tex)
-            .base_color_factor(base_color_factor)
-            .metallic_roughness_tex(mr_tex)
-            .metallic_factor(matallic_factor)
-            .roughness_factor(roughness_factor)
-            .build()
-            .unwrap()
-    }
+            // GLTF tangent 为 [f32;4]，w 为 bitangent 符号；当前引擎不使用 bitangent，仅取 xyz。
+            // 缺失时填充零值以跳过法线贴图效果。
+            let tangents: Vec<Vec3> = reader
+                .read_tangents()
+                .map(|iter| iter.map(|t| Vec3::new(t[0], t[1], t[2])).collect())
+                .unwrap_or_else(|| vec![Vec3::ZERO; vertex_count]);
 
-    /// 根据 gltf 的 texture info 创建 Texture 对象
-    ///
-    /// 注 只支持 TexCoord == 0 的 texture
-    fn create_texture(&self, tex_info: gltf::texture::Info, s_rgb: bool) -> HissTexture
-    {
-        assert_eq!(tex_info.tex_coord(), 0);
+            let uvs: Vec<Vec2> = reader
+                .read_tex_coords(0)
+                .map(|iter| iter.into_f32().map(Vec2::from).collect())
+                .unwrap_or_else(|| vec![Vec2::ZERO; vertex_count]);
 
-        let sampler = self.create_sampler(&tex_info.texture().sampler());
-        let image = self.create_image(&self.images[tex_info.texture().source().index()], s_rgb);
-        HissTexture::new(self.core.clone(), Rc::new(image), sampler)
-    }
+            let indices: Vec<u32> = reader
+                .read_indices()
+                .map(|iter| iter.into_u32().collect())
+                .unwrap_or_else(|| (0..vertex_count as u32).collect());
 
-    fn create_image(&self, image: &gltf::image::Data, s_rgb: bool) -> GfxImage2D
-    {
-        let image_info = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
-            .format(Self::gltf_format_to_vk(image.format, s_rgb))
-            .extent(
-                vk::Extent2D {
-                    width: image.width,
-                    height: image.height,
-                }
-                .into(),
-            )
-            .usage(vk::ImageUsageFlags::SAMPLED);
+            let buf_name = format!("{}-mesh{}-prim{}", model_name, mesh_idx, prim_idx);
+            let vertex_buffer =
+                VertexLayoutSoA3D::create_vertex_buffer(&positions, &normals, &tangents, &uvs, &buf_name);
 
-        let alloc_info = vk_mem::AllocationCreateInfo {
-            usage: vk_mem::MemoryUsage::AutoPreferDevice,
-            ..Default::default()
+            let index_buffer = GfxIndex32Buffer::new_device_local(indices.len(), format!("{}-idx", buf_name));
+            index_buffer.transfer_data_sync(&indices);
+
+            geometries.push(RtGeometry { vertex_buffer, index_buffer });
+            material_indices.push(primitive.material().index());
+        }
+
+        let mesh_data = Mesh {
+            geometries,
+            blas: None,
+            blas_device_address: None,
+            name: format!("{}-mesh{}", model_name, mesh_idx),
         };
 
-        GfxImage2D::new(&image_info, &alloc_info)
+        (mesh_data, material_indices)
     }
 
-    fn create_sampler(&self, sampler: &gltf::texture::Sampler) -> GfxSampler
-    {
-        let (min_filter, mipmap_mode) = Self::gltf_min_filter_to_vk(sampler.min_filter());
-        let mag_filter = Self::gltf_mag_filter_to_vk(sampler.mag_filter());
+    /// 将 GLTF material 映射为引擎 `Material`，并触发贴图异步加载。
+    fn load_material(material: &gltf::Material<'_>, base_dir: &Path, asset_hub: &mut AssetHub) -> Material {
+        let pbr = material.pbr_metallic_roughness();
 
-        let sampler_info = vk::SamplerCreateInfo::builder()
-            .min_filter(min_filter)
-            .mag_filter(mag_filter)
-            .mipmap_mode(mipmap_mode)
-            .address_mode_u(Self::gltf_wrap_mode_to_vk(sampler.wrap_s()))
-            .address_mode_v(Self::gltf_wrap_mode_to_vk(sampler.wrap_t()));
+        let base_color = {
+            let c = pbr.base_color_factor();
+            Vec4::new(c[0], c[1], c[2], c[3])
+        };
+        let emissive = {
+            let e = material.emissive_factor();
+            Vec4::new(e[0], e[1], e[2], 0.0)
+        };
 
-        unsafe {
-            Gfx::instance()
-                .device()
-                .create_sampler(&sampler_info, None)
-                .expect("failed to create sampler for gltf")
+        let diffuse_map = pbr
+            .base_color_texture()
+            .and_then(|info| Self::resolve_texture_path(info.texture().source().source(), base_dir))
+            .unwrap_or_default();
+
+        let normal_map = material
+            .normal_texture()
+            .and_then(|info| Self::resolve_texture_path(info.texture().source().source(), base_dir))
+            .unwrap_or_default();
+
+        if !diffuse_map.is_empty() {
+            asset_hub.load_texture(std::path::PathBuf::from(&diffuse_map));
         }
-    }
-}
+        if !normal_map.is_empty() {
+            asset_hub.load_texture(std::path::PathBuf::from(&normal_map));
+        }
 
-
-// 一些工具函数
-impl GltfLoader
-{
-    /// 将 gltf 内定义的 format 转换为 vulkan 的 format
-    ///
-    /// 注 只支持有限的几种格式
-    fn gltf_format_to_vk(format: gltf::image::Format, s_rgb: bool) -> vk::Format
-    {
-        use ash::vk::Format as v;
-        use gltf::image::Format as g;
-
-        if s_rgb {
-            match format {
-                g::R8 => v::R8_SRGB,
-                g::R8G8 => v::R8G8_SRGB,
-                g::R8G8B8 => v::R8G8B8_SRGB,
-                g::R8G8B8A8 => v::R8G8B8A8_SRGB,
-                _ => panic!("unsupported format"),
-            }
-        } else {
-            match format {
-                g::R8 => v::R8_UNORM,
-                g::R8G8 => v::R8G8_UNORM,
-                g::R8G8B8 => v::R8G8B8_UNORM,
-                g::R8G8B8A8 => v::R8G8B8A8_UNORM,
-                _ => panic!("unsupported format"),
-            }
+        Material {
+            base_color,
+            emissive,
+            metallic: pbr.metallic_factor(),
+            roughness: pbr.roughness_factor(),
+            // GLTF Alpha mode：Opaque → 完全不透明；Mask/Blend → 半透明
+            opaque: if material.alpha_mode() == gltf::material::AlphaMode::Opaque { 1.0 } else { 0.0 },
+            diffuse_map,
+            normal_map,
         }
     }
 
-    /// 将 gltf 文件中的 texture min 参数（OpenGL 风格）转换为 vulkan 格式
+    /// 将 GLTF image source 解析为绝对文件路径。
     ///
-    /// gltf 中的 min 对应者 vulkan 中的 min filter 以及 mipmap mod
-    fn gltf_min_filter_to_vk(filter: Option<gltf::texture::MinFilter>) -> (vk::Filter, vk::SamplerMipmapMode)
-    {
-        use ash::vk::{Filter, SamplerMipmapMode};
-        use gltf::texture::MinFilter;
-
-        // 注：LinearMipmapNearest 表示 level 内 linear，level 之间 nearest
-        filter.map_or((Filter::default(), SamplerMipmapMode::default()), |filter| match filter {
-            MinFilter::Nearest => (Filter::NEAREST, SamplerMipmapMode::default()),
-            MinFilter::Linear => (Filter::LINEAR, SamplerMipmapMode::default()),
-            MinFilter::NearestMipmapNearest => (Filter::NEAREST, SamplerMipmapMode::NEAREST),
-            MinFilter::LinearMipmapNearest => (Filter::LINEAR, SamplerMipmapMode::NEAREST),
-            MinFilter::NearestMipmapLinear => (Filter::NEAREST, SamplerMipmapMode::LINEAR),
-            MinFilter::LinearMipmapLinear => (Filter::LINEAR, SamplerMipmapMode::LINEAR),
-        })
+    /// 仅支持 URI 形式的外部贴图；内嵌 buffer view 贴图返回 `None`。
+    fn resolve_texture_path(source: gltf::image::Source<'_>, base_dir: &Path) -> Option<String> {
+        match source {
+            gltf::image::Source::Uri { uri, .. } => {
+                let path = base_dir.join(uri);
+                path.to_str().map(|s| s.to_string())
+            }
+            gltf::image::Source::View { .. } => None,
+        }
     }
 
-    /// 将 gltf 中纹理的 mag 参数（OpenGL 风格）转换为 vulkan 格式
-    fn gltf_mag_filter_to_vk(filter: Option<gltf::texture::MagFilter>) -> vk::Filter
-    {
-        use ash::vk::Filter;
-        use gltf::texture::MagFilter;
+    /// 递归遍历 GLTF 节点树，为每个含 mesh 的节点注册 `Instance`。
+    ///
+    /// GLTF 使用列主序矩阵，与 `glam::Mat4::from_cols_array_2d` 对齐。
+    fn traverse_nodes(
+        node: &gltf::Node<'_>,
+        parent_transform: glam::Mat4,
+        mesh_handles: &[(MeshHandle, Vec<Option<usize>>)],
+        mat_handles: &[MaterialHandle],
+        default_mat_handle: MaterialHandle,
+        scene_manager: &mut SceneManager,
+        instances: &mut Vec<InstanceHandle>,
+    ) {
+        let local_transform = glam::Mat4::from_cols_array_2d(&node.transform().matrix());
+        let world_transform = parent_transform * local_transform;
 
-        filter.map_or(Filter::default(), |filter| match filter {
-            MagFilter::Nearest => Filter::NEAREST,
-            MagFilter::Linear => Filter::LINEAR,
-        })
-    }
+        if let Some(mesh) = node.mesh() {
+            let (mesh_handle, mat_indices) = &mesh_handles[mesh.index()];
 
-    /// 将 gltf 中纹理的 sampler wrap mode 转换成 vk 的 wrap mode
-    fn gltf_wrap_mode_to_vk(wrap_mode: gltf::texture::WrappingMode) -> vk::SamplerAddressMode
-    {
-        use ash::vk::SamplerAddressMode;
-        use gltf::texture::WrappingMode;
+            let materials: Vec<MaterialHandle> = mat_indices
+                .iter()
+                .map(|opt_idx| {
+                    opt_idx
+                        .and_then(|idx| mat_handles.get(idx).copied())
+                        .unwrap_or(default_mat_handle)
+                })
+                .collect();
 
-        match wrap_mode {
-            WrappingMode::ClampToEdge => SamplerAddressMode::CLAMP_TO_EDGE,
-            WrappingMode::MirroredRepeat => SamplerAddressMode::MIRRORED_REPEAT,
-            WrappingMode::Repeat => SamplerAddressMode::REPEAT,
+            let instance = Instance { mesh: *mesh_handle, materials, transform: world_transform };
+            instances.push(scene_manager.register_instance(instance));
+        }
+
+        for child in node.children() {
+            Self::traverse_nodes(
+                &child,
+                world_transform,
+                mesh_handles,
+                mat_handles,
+                default_mat_handle,
+                scene_manager,
+                instances,
+            );
         }
     }
 }
