@@ -7,4 +7,5 @@
 #include "share/light.slangi"
 #include "share/material.slangi"
 #include "share/ptr.slangi"
+#include "share/raycast.slangi"
 #include "share/scene.slangi"

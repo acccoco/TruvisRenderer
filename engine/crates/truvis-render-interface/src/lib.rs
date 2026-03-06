@@ -7,6 +7,7 @@ pub mod global_descriptor_sets;
 pub mod gpu_scene;
 pub mod handles;
 pub mod pipeline_settings;
+pub mod raycast;
 pub mod render_data;
 pub mod sampler_manager;
 pub mod stage_buffer_manager;

@@ -1,0 +1,31 @@
+#pragma once
+#include "share/ptr.slangi"
+
+/// 射线检测的输入参数
+struct RayCastInput
+{
+    float3 origin;
+    float t_min;
+    float3 direction;
+    float t_max;
+};
+
+/// 射线检测的命中结果
+struct RayCastHit
+{
+    float3 position;
+    uint hit; // 1 = hit, 0 = miss
+
+    float3 normal;
+    float distance;
+
+    uint instance_id;
+    uint primitive_id;
+    float2 barycentrics;
+
+    float4 base_color;
+
+    float metallic;
+    float roughness;
+    float2 _pad;
+};
