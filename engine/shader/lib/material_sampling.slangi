@@ -1,0 +1,196 @@
+/// @file material_sampling.slangi
+/// @brief BRDF 采样与评估函数
+///
+/// 提供材质相关的 BRDF 采样（生成新光线方向）和评估（计算给定方向的 BRDF 值）。
+/// 所有函数基于 HitInfo 中的材质参数工作，不涉及材质类型分发逻辑。
+///
+/// 采样函数（生成方向 + throughput）:
+///   - sample_diffuse: cos-weighted 半球采样
+///   - sample_specular: GGX NDF 重要性采样
+///   - sample_perfect_reflection: Delta 镜面反射
+///   - sample_refraction: 折射 + 全内反射处理
+///
+/// 评估函数（给定方向计算 BRDF，用于 NEE）:
+///   - eval_brdf: 完整 BRDF * cos(theta)
+///   - eval_brdf_pdf: 混合 BRDF 采样 PDF
+
+#pragma once
+
+#include "share/rt_payload.slangi"
+#include "lib/pbr.slangi"
+#include "lib/sample/random.slangi"
+#include "lib/sample/sample.slangi"
+
+namespace material_sampling
+{
+
+// ============================================================================
+// BRDF 采样函数
+// ============================================================================
+
+/// 漫反射采样
+/// @param info 命中信息
+/// @param random_seed 随机种子
+/// @param out_dir 输出：采样方向
+/// @param out_throughput 输出：throughput = BRDF * cos / pdf
+/// @param out_pdf 输出：采样 PDF
+void sample_diffuse(
+    const HitInfo info,
+    inout uint random_seed,
+    out float3 out_dir,
+    out float3 out_throughput,
+    out float out_pdf
+)
+{
+    // 半球 cos 采样
+    // BRDF = diffuse_color / pi
+    // pdf = cos(theta) / pi
+    // throughput = BRDF * cos(theta) / pdf = diffuse_color
+    const float3 local_dir = Sample::get_cos_hemisphere_sample(random_seed);
+    float3 tangent, bitangent;
+    Sample::create_local_coord(info.forward_normal, tangent, bitangent);
+    out_dir = normalize(local_dir.x * tangent + local_dir.y * bitangent + local_dir.z * info.forward_normal);
+
+    const float3 diffuse_color = (1.f - info.metallic) * info.base_color;
+    out_throughput = diffuse_color;
+    out_pdf = DiffuseBrdf::pdf(info.forward_normal, out_dir);
+}
+
+/// 镜面反射采样（GGX）
+/// @param info 命中信息
+/// @param view_dir 观察方向（从命中点到相机）
+/// @param random_seed 随机种子
+/// @param out_dir 输出：采样方向
+/// @param out_throughput 输出：throughput = BRDF * cos / pdf
+/// @param out_pdf 输出：采样 PDF
+void sample_specular(
+    const HitInfo info,
+    const float3 view_dir,
+    inout uint random_seed,
+    out float3 out_dir,
+    out float3 out_throughput,
+    out float out_pdf
+)
+{
+    const float3 f0 = compute_f0(info.base_color, info.metallic);
+    const float real_roughness = info.roughness * info.roughness;
+
+    // 根据 NDF 采样半程向量 H
+    float3 h = SpecularBrdf::ggx_sample(random_seed, real_roughness, info.forward_normal);
+    SpecularBrdf specular_brdf = SpecularBrdf(f0, real_roughness, info.forward_normal, view_dir, h);
+
+    out_throughput = specular_brdf.brdf_with_pdf() * specular_brdf.get_ndotl();
+    out_dir = specular_brdf.light;
+    out_pdf = specular_brdf.ggx_pdf();
+}
+
+/// 完美镜面反射（delta 路径）
+/// @param info 命中信息
+/// @param ray_dir 入射光线方向
+/// @param out_dir 输出：反射方向
+/// @param out_throughput 输出：throughput
+void sample_perfect_reflection(
+    const HitInfo info,
+    const float3 ray_dir,
+    out float3 out_dir,
+    out float3 out_throughput
+)
+{
+    out_dir = reflect(ray_dir, info.forward_normal);
+    // 完美镜面反射的 throughput 基于菲涅尔
+    const float3 f0 = compute_f0(info.base_color, info.metallic);
+    const float cos_theta = saturate(dot(-ray_dir, info.forward_normal));
+    const float fresnel = pow(1.f - cos_theta, 5.f);
+    out_throughput = f0 + (1.f - f0) * fresnel;
+}
+
+/// 折射采样
+/// @param info 命中信息
+/// @param ray_dir 入射光线方向
+/// @param out_dir 输出：折射方向
+/// @param out_throughput 输出：throughput
+/// @return true 表示折射成功，false 表示全内反射
+bool sample_refraction(
+    const HitInfo info,
+    const float3 ray_dir,
+    out float3 out_dir,
+    out float3 out_throughput
+)
+{
+    // 根据光线与原始法线的夹角判断是进入还是离开介质
+    const float eta = dot(ray_dir, info.origin_normal) > 0.f ? info.ior : 1.f / info.ior;
+
+    out_dir = refract(ray_dir, info.forward_normal, eta);
+    if (length(out_dir) < 1e-6f)
+    {
+        out_dir = float3(0.f);
+        out_throughput = float3(0.f);
+        // 全内反射
+        return false;
+    }
+
+    out_throughput = info.base_color;
+    return true;
+}
+
+// ============================================================================
+// BRDF 评估函数（用于 NEE）
+// ============================================================================
+
+/// 评估 BRDF 值（用于 NEE 直接光照计算）
+/// @param info 命中信息
+/// @param view_dir 观察方向（从命中点到相机）
+/// @param light_dir 光照方向（从命中点到光源）
+/// @return BRDF * cos(theta)
+float3 eval_brdf(const HitInfo info, const float3 view_dir, const float3 light_dir)
+{
+    const float ndotl = max(dot(info.forward_normal, light_dir), 0.f);
+    if (ndotl <= 0.f)
+    {
+        return float3(0.f);
+    }
+
+    // Diffuse BRDF
+    const float3 diffuse_color = (1.f - info.metallic) * info.base_color;
+    const float3 diffuse = diffuse_color / M_PI;
+
+    // Specular BRDF
+    const float3 h = normalize(view_dir + light_dir);
+    const float3 f0 = compute_f0(info.base_color, info.metallic);
+    const float real_roughness = info.roughness * info.roughness;
+    SpecularBrdf specular_brdf = SpecularBrdf(f0, real_roughness, info.forward_normal, view_dir, h);
+    const float3 specular = specular_brdf.brdf();
+
+    return (diffuse + specular) * ndotl;
+}
+
+/// 计算给定方向的 BRDF PDF（用于 MIS）
+/// @param info 命中信息
+/// @param view_dir 观察方向（从命中点到相机）
+/// @param light_dir 光照方向（从命中点到光源）
+/// @return 混合 BRDF 的 PDF
+float eval_brdf_pdf(const HitInfo info, const float3 view_dir, const float3 light_dir)
+{
+    // Delta 材质没有 PDF（不参与 NEE）
+    if (info.is_delta_path())
+    {
+        return 0.f;
+    }
+
+    const float prob_diffuse = info.roughness;
+
+    // 漫反射 PDF
+    const float diffuse_pdf = DiffuseBrdf::pdf(info.forward_normal, light_dir);
+
+    // 镜面反射 PDF
+    const float3 h = normalize(view_dir + light_dir);
+    const float3 f0 = compute_f0(info.base_color, info.metallic);
+    const float real_roughness = info.roughness * info.roughness;
+    SpecularBrdf specular_brdf = SpecularBrdf(f0, real_roughness, info.forward_normal, view_dir, h);
+    const float specular_pdf = specular_brdf.ggx_pdf();
+
+    // 混合 PDF
+    return prob_diffuse * diffuse_pdf + (1.f - prob_diffuse) * specular_pdf;
+}
+
+} // namespace material_sampling

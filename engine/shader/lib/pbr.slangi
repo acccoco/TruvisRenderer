@@ -4,6 +4,16 @@
 #include "lib/sample/random.slangi"
 #include "lib/sample/sample.slangi"
 
+/// 计算菲涅尔反射率 F0
+/// @param base_color 基础颜色
+/// @param metallic 金属度
+/// @param reflectance 反射率参数（非金属的基础反射率，默认 0.8）
+/// @return F0 值：非金属使用 0.16 * reflectance^2，金属使用 base_color
+float3 compute_f0(float3 base_color, float metallic, float reflectance = 0.8f)
+{
+    return lerp(0.16f * reflectance * reflectance, base_color, metallic);
+}
+
 struct SpecularBrdf
 {
     float3 f0;

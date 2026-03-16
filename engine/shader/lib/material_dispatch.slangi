@@ -1,0 +1,222 @@
+/// @file material_dispatch.slangi
+/// @brief 材质类型分发与处理
+///
+/// 根据 MaterialType 分发到对应的处理逻辑：
+/// - EMISSIVE: 自发光终止
+/// - TRANSPARENT: 折射/反射（delta 路径）
+/// - SPECULAR: 完美镜面反射（delta 路径）
+/// - DIFFUSE: 漫反射 + GGX 混合采样
+///
+/// 统一入口 process_material() 返回下一条光线的起点、方向和 throughput
+
+#pragma once
+
+#include "share/rt_payload.slangi"
+#include "lib/material_sampling.slangi"
+#include "lib/sample/random.slangi"
+#include "lib/sample/sample.slangi"
+
+namespace material_dispatch
+{
+
+// ============================================================================
+// 材质处理函数
+// ============================================================================
+
+/// 处理自发光材质（EMISSIVE）
+/// @param info 命中信息
+/// @param out_emission 输出：自发光
+/// @param out_done 输出：是否终止
+/// @return true 表示是自发光材质，已处理
+bool handle_emissive(
+    const HitInfo info,
+    out float3 out_emission,
+    out bool out_done
+)
+{
+    out_emission = float3(0.f);
+    out_done = false;
+
+    if (info.material_type == MaterialType::EMISSIVE)
+    {
+        out_emission = info.emissive;
+        out_done = true;
+        return true;
+    }
+
+    return false;
+}
+
+/// 处理透明材质（TRANSPARENT）- Delta 路径
+/// @param info 命中信息
+/// @param ray_dir 当前光线方向
+/// @param random_seed 随机种子
+/// @param out_origin 输出：下一条光线起点
+/// @param out_dir 输出：下一条光线方向
+/// @param out_throughput 输出：throughput
+void handle_transparent(
+    const HitInfo info,
+    const float3 ray_dir,
+    inout uint random_seed,
+    out float3 out_origin,
+    out float3 out_dir,
+    out float3 out_throughput
+)
+{
+    // 折射 vs 反射的选择
+    const bool choose_refract = Random::rnd(random_seed) >= info.opaque;
+    if (choose_refract)
+    {
+        if (!material_sampling::sample_refraction(info, ray_dir, out_dir, out_throughput))
+        {
+            // 全内反射
+            material_sampling::sample_perfect_reflection(info, ray_dir, out_dir, out_throughput);
+        }
+    }
+    else
+    {
+        // 反射
+        material_sampling::sample_perfect_reflection(info, ray_dir, out_dir, out_throughput);
+    }
+    out_origin = info.position + 0.0001f * out_dir;
+}
+
+/// 处理镜面材质（SPECULAR）- Delta 路径
+/// @param info 命中信息
+/// @param ray_dir 当前光线方向
+/// @param out_origin 输出：下一条光线起点
+/// @param out_dir 输出：下一条光线方向
+/// @param out_throughput 输出：throughput
+void handle_specular(
+    const HitInfo info,
+    const float3 ray_dir,
+    out float3 out_origin,
+    out float3 out_dir,
+    out float3 out_throughput
+)
+{
+    // Delta 镜面反射
+    material_sampling::sample_perfect_reflection(info, ray_dir, out_dir, out_throughput);
+    out_origin = info.position + 0.0001f * out_dir;
+}
+
+/// 处理漫反射材质（DIFFUSE）
+/// 随机选择 diffuse 或 NDF 采样策略，计算完整 BRDF = diffuse + specular
+/// @param info 命中信息
+/// @param ray_dir 当前光线方向
+/// @param random_seed 随机种子
+/// @param out_origin 输出：下一条光线起点
+/// @param out_dir 输出：下一条光线方向
+/// @param out_throughput 输出：throughput = BRDF / PDF
+/// @param out_brdf_pdf 输出：混合 BRDF 采样 PDF（用于 MIS）
+void handle_diffuse(
+    const HitInfo info,
+    const float3 ray_dir,
+    inout uint random_seed,
+    out float3 out_origin,
+    out float3 out_dir,
+    out float3 out_throughput,
+    out float out_brdf_pdf
+)
+{
+    const float3 view_dir = -ray_dir;
+    const float prob_diffuse = info.roughness;
+    const bool choose_diffuse = Random::rnd(random_seed) < prob_diffuse;
+
+    // 根据选择的策略采样方向
+    if (choose_diffuse)
+    {
+        // Diffuse 采样：cos-weighted hemisphere
+        const float3 local_dir = Sample::get_cos_hemisphere_sample(random_seed);
+        float3 tangent, bitangent;
+        Sample::create_local_coord(info.forward_normal, tangent, bitangent);
+        out_dir = normalize(local_dir.x * tangent + local_dir.y * bitangent + local_dir.z * info.forward_normal);
+    }
+    else
+    {
+        // NDF 采样：GGX
+        const float3 f0 = compute_f0(info.base_color, info.metallic);
+        const float real_roughness = info.roughness * info.roughness;
+        float3 h = SpecularBrdf::ggx_sample(random_seed, real_roughness, info.forward_normal);
+        out_dir = reflect(-view_dir, h);
+    }
+
+    // 检查采样方向是否有效（在表面上方）
+    const float ndotl = dot(info.forward_normal, out_dir);
+    if (ndotl <= 0.f)
+    {
+        out_throughput = float3(0.f);
+        out_brdf_pdf = 1.f;
+        out_origin = info.position;
+        return;
+    }
+
+    // 计算完整的 BRDF = diffuse + specular（使用 eval_brdf）
+    const float3 brdf_cos = material_sampling::eval_brdf(info, view_dir, out_dir);
+
+    // 计算混合 PDF（使用 eval_brdf_pdf 保证一致性）
+    out_brdf_pdf = material_sampling::eval_brdf_pdf(info, view_dir, out_dir);
+
+    // throughput = BRDF * cos / PDF（带数值保护）
+    out_throughput = brdf_cos / max(out_brdf_pdf, 1e-7f);
+
+    out_origin = info.position + 0.0001f * out_dir;
+}
+
+/// 处理材质并采样下一条光线（统一入口）
+/// @param info 命中信息
+/// @param ray_dir 当前光线方向
+/// @param random_seed 随机种子
+/// @param out_origin 输出：下一条光线起点
+/// @param out_dir 输出：下一条光线方向
+/// @param out_throughput 输出：throughput
+/// @param out_emission 输出：自发光
+/// @param out_done 输出：是否终止
+/// @param out_brdf_pdf 输出：BRDF 采样 PDF（用于 MIS）
+void process_material(
+    const HitInfo info,
+    const float3 ray_dir,
+    inout uint random_seed,
+    out float3 out_origin,
+    out float3 out_dir,
+    out float3 out_throughput,
+    out float3 out_emission,
+    out bool out_done,
+    out float out_brdf_pdf
+)
+{
+    // 初始化输出
+    out_emission = float3(0.f);
+    out_throughput = float3(1.f);
+    out_done = false;
+    out_origin = info.position;
+    out_dir = ray_dir;
+    out_brdf_pdf = 1.f; // Delta 路径的 PDF 设为 1（不参与 MIS）
+
+    // 处理自发光材质
+    if (handle_emissive(info, out_emission, out_done))
+    {
+        return;
+    }
+
+    // 根据材质类型分发处理
+    switch (info.material_type)
+    {
+    case MaterialType::TRANSPARENT:
+        handle_transparent(info, ray_dir, random_seed, out_origin, out_dir, out_throughput);
+        // Delta 路径，out_brdf_pdf 保持为 1
+        break;
+
+    case MaterialType::SPECULAR:
+        handle_specular(info, ray_dir, out_origin, out_dir, out_throughput);
+        // Delta 路径，out_brdf_pdf 保持为 1
+        break;
+
+    case MaterialType::DIFFUSE:
+    default:
+        handle_diffuse(info, ray_dir, random_seed, out_origin, out_dir, out_throughput, out_brdf_pdf);
+        break;
+    }
+}
+
+} // namespace material_dispatch

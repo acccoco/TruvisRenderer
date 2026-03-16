@@ -1,0 +1,123 @@
+/// @file nee.slangi
+/// @brief Next Event Estimation（下一事件估计）
+///
+/// 封装 NEE 直接光照计算：
+/// - 在 HDRI 环境贴图上均匀采样光源方向
+/// - 发射阴影光线检测可见性
+/// - 使用 MIS 加权计算直接光照贡献
+///
+/// 当前使用均匀球面采样，后续可替换为基于亮度的重要性采样
+
+#pragma once
+
+#include "share/rt_payload.slangi"
+#include "lib/material_sampling.slangi"
+#include "lib/env_map.slangi"
+#include "lib/mis.slangi"
+#include "lib/bindless_op.slangi"
+
+namespace nee
+{
+
+/// NEE 计算结果
+struct NeeResult
+{
+    /// NEE 直接光照贡献（已乘 throughput 和 MIS 权重）
+    float3 contribution;
+    /// 是否有效（光源可见且贡献非零）
+    bool valid;
+};
+
+/// 发射 shadow ray，判断是否命中任何物体
+/// @param tlas 加速结构
+/// @param ray 阴影光线描述
+/// @return true 表示命中物体（被遮挡），false 表示未命中（可见）
+bool shadow_ray_any_hit(RaytracingAccelerationStructure tlas, const RayDesc ray)
+{
+    RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> rq;
+    rq.TraceRayInline(
+        tlas,
+        RAY_FLAG_NONE,
+        0xFF,
+        ray
+    );
+    while (rq.Proceed())
+    {
+        if (rq.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE)
+        {
+            rq.CommitNonOpaqueTriangleHit();
+        }
+    }
+    return rq.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+}
+
+/// 计算 NEE 直接光照贡献
+/// @param info 当前命中点信息
+/// @param ray_dir 当前光线方向（入射方向）
+/// @param throughput 当前路径 throughput
+/// @param tlas 加速结构
+/// @param gpu_scene GPU 场景数据（用于采样 HDRI）
+/// @param random_seed 随机种子
+/// @return NEE 计算结果
+NeeResult compute_nee(
+    const HitInfo info,
+    const float3 ray_dir,
+    const float3 throughput,
+    RaytracingAccelerationStructure tlas,
+    const GPUScene gpu_scene,
+    inout uint random_seed
+)
+{
+    NeeResult result;
+    result.contribution = float3(0.f);
+    result.valid = false;
+
+    // Delta 材质不参与 NEE
+    if (info.is_delta_path())
+    {
+        return result;
+    }
+
+    // 在 HDRI 上均匀采样光源方向
+    float3 light_dir;
+    float env_pdf;
+    sample_env_map_uniform(random_seed, light_dir, env_pdf);
+
+    // 检查光源方向是否在表面上方
+    const float ndotl = dot(info.forward_normal, light_dir);
+    if (ndotl <= 0.f)
+    {
+        return result;
+    }
+
+    // 构造阴影光线
+    RayDesc shadow_ray_desc;
+    shadow_ray_desc.Origin = info.position + 0.001f * light_dir;
+    shadow_ray_desc.Direction = light_dir;
+    shadow_ray_desc.TMin = 0.001f;
+    shadow_ray_desc.TMax = 10000.0f;
+
+    // 检测可见性
+    if (shadow_ray_any_hit(tlas, shadow_ray_desc))
+    {
+        return result; // 被遮挡
+    }
+
+    // 可见：计算直接光照贡献
+    const float2 env_uv = dir_to_env_uv(light_dir);
+    const float3 Li = bindless_srv::sample_level(gpu_scene.sky, env_uv, gpu_scene.sky_sampler_type, 0.0).xyz * 8.f;
+
+    const float3 view_dir = -ray_dir;
+    const float3 brdf_cos = material_sampling::eval_brdf(info, view_dir, light_dir);
+    const float brdf_pdf = material_sampling::eval_brdf_pdf(info, view_dir, light_dir);
+
+    // MIS 权重（光源采样策略）
+    const float mis_weight = MIS::power_heuristic(env_pdf, brdf_pdf);
+
+    // NEE 贡献: throughput * Li * brdf * cos / env_pdf * mis_weight
+    result.contribution = throughput * Li * brdf_cos / max(env_pdf, 1e-7f) * mis_weight;
+    result.valid = true;
+    return result;
+}
+
+} // namespace nee

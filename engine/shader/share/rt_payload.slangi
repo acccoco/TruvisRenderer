@@ -1,0 +1,114 @@
+/// @file rt_payload.slangi
+/// @brief 光线追踪载荷与材质类型定义
+///
+/// 定义 RT 管线中所有着色器共享的数据类型：
+/// - MaterialType: 材质类型枚举
+/// - HitInfo: 命中信息（几何 + 材质参数）
+/// - HitPayload: 主光线载荷
+/// - ShadowMissPayload / MatPayload: 辅助载荷
+/// - IC 阈值常量
+///
+/// 此文件位于 share/ 层，可被 lib/ 和 entry/ 同时引用
+
+#pragma once
+
+/// 材质类型枚举
+enum MaterialType : uint
+{
+    DIFFUSE = 0,     ///< 漫反射材质
+    SPECULAR = 1,    ///< 镜面反射材质（delta 路径）
+    TRANSPARENT = 2, ///< 透明/折射材质（delta 路径）
+    EMISSIVE = 3,    ///< 自发光材质
+    NO_HIT = 4,      ///< 未命中任何几何体
+};
+
+/// 命中信息结构体
+/// 包含 hit shader 提取的所有几何和材质信息
+struct HitInfo
+{
+    // ========== 几何信息 ==========
+    /// 世界空间命中位置
+    float3 position;
+    /// 朝向 Ray 起点的法线（已翻转，确保与入射方向同侧）
+    float3 forward_normal;
+    /// 原始世界空间法线（未翻转，用于判断正反面）
+    float3 origin_normal;
+    /// 纹理坐标
+    float2 uv;
+    /// 光线 t 值（线性深度）
+    float hit_t;
+
+    // ========== 材质参数 ==========
+    /// 基础颜色（漫反射颜色）
+    float3 base_color;
+    /// 金属度
+    float metallic;
+    /// 粗糙度
+    float roughness;
+    /// 不透明度（1.0 = 完全不透明）
+    float opaque;
+    /// 折射率
+    float ior;
+
+    // ========== 自发光 ==========
+    /// 自发光颜色
+    float3 emissive;
+
+    // ========== 材质类型 ==========
+    /// 材质类型
+    MaterialType material_type;
+
+    /// 是否为 delta 路径（镜面反射或透明折射）
+    bool is_delta_path()
+    {
+        return material_type == MaterialType::SPECULAR ||
+            material_type == MaterialType::TRANSPARENT;
+    }
+};
+
+/// 主光线追踪载荷（重构版）
+/// 只负责从 hit shader 向 ray gen 传递命中信息
+struct HitPayload
+{
+    /// 是否命中几何体
+    bool hit;
+    /// 命中信息（仅当 hit == true 时有效）
+    HitInfo info;
+    /// 随机数种子
+    uint random_seed;
+};
+
+/// 阴影光线载荷
+struct ShadowMissPayload
+{
+    bool miss;
+};
+
+/// 材质采样载荷（用于 callable shader）
+struct MatPayload
+{
+    uint instance_id;
+    uint geometry_id;
+    float2 uv;
+    float3 out_color;
+};
+
+namespace rt
+{
+
+// ============================================================================
+// Irradiance Cache 阈值常量
+// ============================================================================
+
+/// Diffuse 判定阈值：metallic < 此值视为 diffuse 表面
+const static float IC_DIFFUSE_METALLIC_THRESHOLD = 0.3f;
+
+const static float IC_DIFFUSE_ROUGHNESS_THRESHOLD = 0.7f;
+
+/// IC throughput 最小值：防止除零
+const static float IC_THROUGHPUT_MIN = 0.001f;
+
+/// IC 查询启用的最小 diffuse 弹射次数
+const static uint IC_MIN_DIFFUSE_BOUNCES = 1;
+
+}

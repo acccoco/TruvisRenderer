@@ -1,0 +1,151 @@
+/// @file debug_channel.slangi
+/// @brief 调试通道输出管理
+///
+/// 管理路径追踪的调试可视化通道：
+/// - 通道 0: 正常渲染
+/// - 通道 1: 法线可视化
+/// - 通道 2: 基础颜色
+/// - 通道 4: NEE 命中 HDRI 的贡献
+/// - 通道 5: 自发光物体的贡献
+/// - 通道 6: 最终命中 HDRI 的贡献
+/// - 通道 7: 第一次 bounce 的 NEE 贡献
+/// - 通道 8: 第二次 bounce 的 NEE 贡献
+/// - 通道 9: 首次命中位置的 IC 查询结果
+
+#pragma once
+
+#include "share/rt_payload.slangi"
+
+namespace debug_channel
+{
+
+/// 调试 radiance 累积器
+/// 跟踪各调试通道的分离贡献
+struct DebugAccumulator
+{
+    float3 nee_radiance;            ///< 通道 4：NEE 命中 HDRI 的贡献
+    float3 emissive_radiance;       ///< 通道 5：自发光物体的贡献
+    float3 hdri_radiance;           ///< 通道 6：最终命中 HDRI 的贡献
+    float3 nee_bounce1_radiance;    ///< 通道 7：第一次 bounce 的 NEE 贡献
+    float3 nee_bounce2_radiance;    ///< 通道 8：第二次 bounce 的 NEE 贡献
+
+    /// 初始化所有累积器为零
+    static DebugAccumulator create()
+    {
+        DebugAccumulator acc;
+        acc.nee_radiance = float3(0.f);
+        acc.emissive_radiance = float3(0.f);
+        acc.hdri_radiance = float3(0.f);
+        acc.nee_bounce1_radiance = float3(0.f);
+        acc.nee_bounce2_radiance = float3(0.f);
+        return acc;
+    }
+
+    /// 累积 NEE 贡献
+    /// @param contrib NEE 贡献值
+    /// @param depth 当前弹射深度
+    [mutating]
+    void accumulate_nee(float3 contrib, uint depth)
+    {
+        nee_radiance += contrib;
+        if (depth == 0)
+        {
+            nee_bounce1_radiance = contrib;
+        }
+        else if (depth == 1)
+        {
+            nee_bounce2_radiance = contrib;
+        }
+    }
+
+    /// 累积自发光贡献
+    [mutating]
+    void accumulate_emissive(float3 contrib)
+    {
+        emissive_radiance += contrib;
+    }
+
+    /// 累积 HDRI 贡献
+    [mutating]
+    void accumulate_hdri(float3 contrib)
+    {
+        hdri_radiance += contrib;
+    }
+};
+
+/// 处理调试通道（首次命中）
+/// @param info 命中信息
+/// @param channel 调试通道号
+/// @param out_color 输出颜色
+/// @return true 表示是调试模式（通道 1/2），已处理，应终止路径追踪
+/// @note 通道 0: 正常渲染（返回 false）
+///       通道 1: 法线可视化
+///       通道 2: 基础颜色
+///       通道 4-9: 需要完整路径追踪，在此函数中不处理（返回 false）
+bool handle_first_hit_debug(const HitInfo info, uint channel, out float3 out_color)
+{
+    out_color = float3(0.f);
+
+    if (channel == 0)
+    {
+        return false;
+    }
+
+    // 通道 1：法线可视化
+    if (channel == 1)
+    {
+        out_color = info.forward_normal * 0.5f + 0.5f;
+        return true;
+    }
+
+    // 通道 2：基础颜色
+    if (channel == 2)
+    {
+        out_color = info.base_color;
+        return true;
+    }
+
+    return false;
+}
+
+/// 根据调试通道选择最终输出
+/// @param channel 调试通道号
+/// @param radiance 正常渲染的 radiance
+/// @param acc 调试累积器
+/// @param first_hit_position 首次命中位置（通道 9 用）
+/// @param first_hit_normal 首次命中法线（通道 9 用）
+/// @param first_hit_recorded 是否记录了首次命中（通道 9 用）
+/// @param ic_table IC 哈希表指针（通道 9 用）
+/// @param ic_entry_pool IC entry 池指针（通道 9 用）
+/// @return 最终输出 radiance
+float3 select_output(
+    uint channel,
+    float3 radiance,
+    const DebugAccumulator acc
+)
+{
+    if (channel == 4)
+    {
+        return acc.nee_radiance;
+    }
+    else if (channel == 5)
+    {
+        return acc.emissive_radiance;
+    }
+    else if (channel == 6)
+    {
+        return acc.hdri_radiance;
+    }
+    else if (channel == 7)
+    {
+        return acc.nee_bounce1_radiance;
+    }
+    else if (channel == 8)
+    {
+        return acc.nee_bounce2_radiance;
+    }
+
+    return radiance;
+}
+
+} // namespace debug_channel
