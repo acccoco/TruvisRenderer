@@ -1,5 +1,6 @@
 ---
-applyTo: "**"
+description: 'Style guide for code in this repository.'
+applyTo: '**'
 ---
 
 ## 注释
