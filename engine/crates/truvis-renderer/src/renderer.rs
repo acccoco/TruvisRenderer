@@ -87,7 +87,7 @@ impl Renderer {
         let init_frame_id = 1;
         let frame_counter = FrameCounter::new(init_frame_id, 60.0);
 
-        let mut bindless_manager = BindlessManager::new();
+        let mut bindless_manager = BindlessManager::new(frame_counter.frame_token());
         let scene_manager = SceneManager::new();
         let asset_hub = AssetHub::new(&mut gfx_resource_manager, &mut bindless_manager);
         let gpu_scene = GpuScene::new(&mut gfx_resource_manager, &mut bindless_manager);
@@ -228,6 +228,10 @@ impl Renderer {
         self.render_context.delta_time_s = self.timer.delta_time_s();
         self.render_context.total_time_s = self.timer.total_time_s();
 
+        // 子系统 begin frame
+        let frame_token = self.render_context.frame_counter.frame_token();
+        self.render_context.bindless_manager.begin_frame(frame_token);
+
         // Update AssetHub
         self.render_context
             .asset_hub
@@ -327,7 +331,6 @@ impl Renderer {
         self.render_context.bindless_manager.prepare_render_data(
             &self.render_context.gfx_resource_manager,
             &self.render_context.global_descriptor_sets,
-            frame_label,
         );
 
         self.render_context.gpu_scene.upload_render_data(

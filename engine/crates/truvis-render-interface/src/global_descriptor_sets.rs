@@ -23,21 +23,21 @@ pub struct BindlessDescriptorBinding {
     #[descriptor_type = "COMBINED_IMAGE_SAMPLER"]
     #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
     #[count = 128]
-    #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND"]
+    #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING"]
     _textures: (),
 
     #[binding = 1]
     #[descriptor_type = "STORAGE_IMAGE"]
     #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
     #[count = 128]
-    #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND"]
+    #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING"]
     _uavs: (),
 
     #[binding = 2]
     #[descriptor_type = "SAMPLED_IMAGE"]
     #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
     #[count = 128]
-    #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND"]
+    #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING"]
     _srvs: (),
 }
 
@@ -61,7 +61,8 @@ pub struct GlobalDescriptorSets {
     set_0_static: GfxDescriptorSet<StaticDescriptorBinding>,
 
     layout_1_bindless: GfxDescriptorSetLayout<BindlessDescriptorBinding>,
-    set_1_bindless: [GfxDescriptorSet<BindlessDescriptorBinding>; FrameCounter::fif_count()],
+    // 单套 bindless descriptor set，配合 UPDATE_UNUSED_WHILE_PENDING_BIT 使用
+    set_1_bindless: GfxDescriptorSet<BindlessDescriptorBinding>,
 
     layout_2_perframe: GfxDescriptorSetLayout<PerFrameDescriptorBinding>,
     set_2_perframe: [GfxDescriptorSet<PerFrameDescriptorBinding>; FrameCounter::fif_count()],
@@ -87,13 +88,11 @@ impl GlobalDescriptorSets {
             vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL,
             "bindless-layout",
         );
-        let set_1_bindless = FrameCounter::frame_labes().map(|frame_label| {
-            GfxDescriptorSet::<BindlessDescriptorBinding>::new(
-                &descriptor_pool,
-                &layout_1_bindless,
-                format!("bindless-descriptor-set-{frame_label}"),
-            )
-        });
+        let set_1_bindless = GfxDescriptorSet::<BindlessDescriptorBinding>::new(
+            &descriptor_pool,
+            &layout_1_bindless,
+            "bindless-descriptor-set",
+        );
 
         let layout_2_perframe = GfxDescriptorSetLayout::<PerFrameDescriptorBinding>::new(
             vk::DescriptorSetLayoutCreateFlags::empty(),
@@ -172,8 +171,8 @@ impl GlobalDescriptorSets {
     }
 
     #[inline]
-    pub fn current_bindless_set(&self, frame_label: FrameLabel) -> &GfxDescriptorSet<BindlessDescriptorBinding> {
-        &self.set_1_bindless[*frame_label]
+    pub fn bindless_set(&self) -> &GfxDescriptorSet<BindlessDescriptorBinding> {
+        &self.set_1_bindless
     }
 
     #[inline]
@@ -194,7 +193,7 @@ impl GlobalDescriptorSets {
     pub fn global_sets(&self, frame_label: FrameLabel) -> Vec<vk::DescriptorSet> {
         vec![
             self.set_0_static.handle(),
-            self.set_1_bindless[*frame_label].handle(),
+            self.set_1_bindless.handle(),
             self.set_2_perframe[*frame_label].handle(),
         ]
     }

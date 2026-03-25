@@ -1,10 +1,21 @@
 use crate::pipeline_settings::FrameLabel;
 
+/// 语义化的帧标记，表示是对全局 frame_id 的一个包装，提供更清晰的语义
+#[derive(Copy, Clone)]
+pub struct FrameToken(u64);
+
+impl FrameToken {
+    pub fn frame_id(&self) -> u64 {
+        self.0
+    }
+}
+
 pub struct FrameCounter {
     /// 当前的帧序号，一直累加
     frame_id: u64,
     frame_limit: f32,
 }
+
 // new & init
 impl FrameCounter {
     pub fn new(init_frame_id: u64, frame_limit: f32) -> Self {
@@ -14,6 +25,7 @@ impl FrameCounter {
         }
     }
 }
+
 // update
 impl FrameCounter {
     #[inline]
@@ -21,6 +33,7 @@ impl FrameCounter {
         self.frame_id = self.frame_id.wrapping_add(1);
     }
 }
+
 // getters
 impl FrameCounter {
     const FIF_COUNT: usize = 3;
@@ -51,5 +64,9 @@ impl FrameCounter {
     #[inline]
     pub fn frame_name(&self) -> String {
         format!("[F{}{}]", self.frame_id, self.frame_label())
+    }
+    #[inline]
+    pub fn frame_token(&self) -> FrameToken {
+        FrameToken(self.frame_id)
     }
 }
