@@ -1,7 +1,7 @@
 use crate::bindless_manager::BindlessSrvHandle;
 use crate::geometry::RtGeometry;
 use ash::vk;
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 /// 用于渲染的完整实例数据（只读快照）
 ///
@@ -65,7 +65,7 @@ pub struct RenderData<'a> {
     /// 所有材质数据（按顺序）
     pub all_materials: Vec<MaterialRenderData>,
     /// 所有点光源数据
-    pub all_point_lights: Vec<truvisl::PointLight>,
+    pub all_point_lights: Vec<gpu::PointLight>,
 
     /// 每个 mesh 在 geometry buffer 中的起始索引（预计算）
     /// 长度与 all_meshes 相同

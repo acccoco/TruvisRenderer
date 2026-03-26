@@ -19,8 +19,8 @@ use truvis_render_graph::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::handles::GfxImageViewHandle;
-use truvis_shader_binding::truvisl;
-use truvis_shader_binding::truvisl::SrvHandle;
+use truvis_shader_binding::gpu;
+use truvis_shader_binding::gpu::SrvHandle;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
 
@@ -49,7 +49,7 @@ impl GuiPass {
             &[vk::PushConstantRange {
                 stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 offset: 0,
-                size: size_of::<truvisl::imgui::PushConstant>() as u32,
+                size: size_of::<gpu::imgui::PushConstant>() as u32,
             }],
             "uipass",
         ));
@@ -125,7 +125,7 @@ impl GuiPass {
         cmd.cmd_bind_pipeline(vk::PipelineBindPoint::GRAPHICS, self.pipeline.handle());
         cmd.cmd_set_viewport(0, std::slice::from_ref(&viewport));
 
-        let mut push_constant = truvisl::imgui::PushConstant {
+        let mut push_constant = gpu::imgui::PushConstant {
             ortho: glam::Mat4::orthographic_rh(
                 0.0,
                 draw_data.display_size[0],
@@ -136,9 +136,9 @@ impl GuiPass {
             )
             .into(),
             texture: SrvHandle {
-                index: truvisl::INVALID_TEX_ID,
+                index: gpu::INVALID_TEX_ID,
             },
-            texture_sampler_type: truvisl::ESamplerType_LinearRepeat,
+            texture_sampler_type: gpu::ESamplerType_LinearRepeat,
             _padding_0: Default::default(),
             _padding_1: Default::default(),
         };

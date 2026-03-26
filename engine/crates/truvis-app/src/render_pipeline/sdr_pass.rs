@@ -6,7 +6,7 @@ use truvis_render_graph::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::handles::GfxImageViewHandle;
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 pub struct SdrPassData {
     pub src_image: GfxImageViewHandle,
@@ -17,11 +17,11 @@ pub struct SdrPassData {
 }
 
 pub struct SdrPass {
-    sdr_pass: ComputePass<truvisl::sdr::PushConstant>,
+    sdr_pass: ComputePass<gpu::sdr::PushConstant>,
 }
 impl SdrPass {
     pub fn new(render_descriptor_sets: &GlobalDescriptorSets) -> Self {
-        let sdr_pass = ComputePass::<truvisl::sdr::PushConstant>::new(
+        let sdr_pass = ComputePass::<gpu::sdr::PushConstant>::new(
             render_descriptor_sets,
             c"main",
             TruvisPath::shader_build_path_str("pp/sdr.slang").as_str(),
@@ -37,7 +37,7 @@ impl SdrPass {
         self.sdr_pass.exec(
             cmd,
             render_context,
-            &truvisl::sdr::PushConstant {
+            &gpu::sdr::PushConstant {
                 src_image: src_image_bindless_handle.0,
                 dst_image: dst_image_bindless_handle.0,
                 image_size: glam::uvec2(data.src_image_size.width, data.src_image_size.height).into(),
@@ -45,8 +45,8 @@ impl SdrPass {
                 _padding_1: Default::default(),
             },
             glam::uvec3(
-                data.dst_image_size.width.div_ceil(truvisl::blit::SHADER_X as u32),
-                data.dst_image_size.height.div_ceil(truvisl::blit::SHADER_Y as u32),
+                data.dst_image_size.width.div_ceil(gpu::blit::SHADER_X as u32),
+                data.dst_image_size.height.div_ceil(gpu::blit::SHADER_Y as u32),
                 1,
             ),
         );

@@ -9,7 +9,7 @@ use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_render_interface::bindless_manager::BindlessManager;
 use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 /// 资产中心 (Facade)
 ///
@@ -73,7 +73,7 @@ impl AssetHub {
         AssetTexture {
             image_handle,
             view_handle,
-            sampler: truvisl::ESamplerType_LinearRepeat,
+            sampler: gpu::ESamplerType_LinearRepeat,
             is_srgb: false,
             mip_levels: 1,
         }
@@ -189,7 +189,7 @@ impl AssetHub {
             let texture = AssetTexture {
                 image_handle,
                 view_handle,
-                sampler: truvisl::ESamplerType_LinearRepeat,
+                sampler: gpu::ESamplerType_LinearRepeat,
                 is_srgb: true, // TODO 从加载数据中获取
                 mip_levels: 1, // TODO 从加载数据中获取
             };

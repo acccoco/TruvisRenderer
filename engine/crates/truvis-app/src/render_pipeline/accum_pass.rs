@@ -6,7 +6,7 @@ use truvis_render_graph::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::bindless_manager::BindlessUavHandle;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 /// 累积 Pass 的数据
 pub struct AccumPassData {
@@ -18,12 +18,12 @@ pub struct AccumPassData {
 
 /// 累积 Pass - 将单帧 RT 结果累积到 accum_image 中
 pub struct AccumPass {
-    accum_pass: ComputePass<truvisl::accum::PushConstant>,
+    accum_pass: ComputePass<gpu::accum::PushConstant>,
 }
 
 impl AccumPass {
     pub fn new(render_descriptor_sets: &GlobalDescriptorSets) -> Self {
-        let accum_pass = ComputePass::<truvisl::accum::PushConstant>::new(
+        let accum_pass = ComputePass::<gpu::accum::PushConstant>::new(
             render_descriptor_sets,
             c"main",
             TruvisPath::shader_build_path_str("pp/accum.slang").as_str(),
@@ -36,7 +36,7 @@ impl AccumPass {
         self.accum_pass.exec(
             cmd,
             render_context,
-            &truvisl::accum::PushConstant {
+            &gpu::accum::PushConstant {
                 single_frame_input: data.single_frame_bindless_uav_handle.0,
                 accum_output: data.accum_bindless_uav_handle.0,
                 image_size: glam::uvec2(data.image_size.width, data.image_size.height).into(),
@@ -44,8 +44,8 @@ impl AccumPass {
                 _padding_: 0,
             },
             glam::uvec3(
-                data.image_size.width.div_ceil(truvisl::accum::SHADER_X as u32),
-                data.image_size.height.div_ceil(truvisl::accum::SHADER_Y as u32),
+                data.image_size.width.div_ceil(gpu::accum::SHADER_X as u32),
+                data.image_size.height.div_ceil(gpu::accum::SHADER_Y as u32),
                 1,
             ),
         );

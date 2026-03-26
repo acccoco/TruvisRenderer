@@ -7,22 +7,22 @@ use image::Frame;
 use slotmap::{Key, SecondaryMap};
 use std::collections::HashMap;
 use truvis_gfx::{gfx::Gfx, utilities::descriptor_cursor::GfxDescriptorCursor};
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 /// 每个 bindless 类型（SRV/UAV）允许的最大 slot 数，须与 descriptor layout 的 count 对齐
 const MAX_BINDLESS_COUNT: usize = 128;
 
 #[derive(Copy, Clone)]
-pub struct BindlessUavHandle(pub truvisl::UavHandle);
+pub struct BindlessUavHandle(pub gpu::UavHandle);
 impl BindlessUavHandle {
     #[inline]
     pub fn new(index: usize) -> Self {
-        Self(truvisl::UavHandle { index: index as i32 })
+        Self(gpu::UavHandle { index: index as i32 })
     }
     #[inline]
     pub fn null() -> Self {
-        Self(truvisl::UavHandle {
-            index: truvisl::INVALID_TEX_ID,
+        Self(gpu::UavHandle {
+            index: gpu::INVALID_TEX_ID,
         })
     }
     #[inline]
@@ -37,16 +37,16 @@ impl Default for BindlessUavHandle {
 }
 
 #[derive(Copy, Clone)]
-pub struct BindlessSrvHandle(pub truvisl::SrvHandle);
+pub struct BindlessSrvHandle(pub gpu::SrvHandle);
 impl BindlessSrvHandle {
     #[inline]
     pub fn new(index: usize) -> Self {
-        Self(truvisl::SrvHandle { index: index as i32 })
+        Self(gpu::SrvHandle { index: index as i32 })
     }
     #[inline]
     pub fn null() -> Self {
-        Self(truvisl::SrvHandle {
-            index: truvisl::INVALID_TEX_ID,
+        Self(gpu::SrvHandle {
+            index: gpu::INVALID_TEX_ID,
         })
     }
     #[inline]

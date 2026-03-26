@@ -13,7 +13,7 @@ use truvis_render_graph::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::handles::GfxImageViewHandle;
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
 
@@ -35,7 +35,7 @@ pub struct ResolvePassData {
     /// 源图像的 texture handle（将从 bindless_textures 中采样）
     pub render_target: GfxImageViewHandle,
     /// 采样器类型
-    pub sampler_type: truvisl::ESamplerType,
+    pub sampler_type: gpu::ESamplerType,
     /// 在 color attachment 上的偏移量（像素坐标）
     pub offset: glam::Vec2,
     /// 绘制区域的大小（像素尺寸）
@@ -91,7 +91,7 @@ impl ResolvePass {
         let push_constant_range = vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
-            .size(size_of::<truvisl::resolve::PushConstant>() as u32);
+            .size(size_of::<gpu::resolve::PushConstant>() as u32);
 
         let pipeline_layout = Rc::new(GfxPipelineLayout::new(
             &global_descriptor_sets.global_set_layouts(),
@@ -130,7 +130,7 @@ impl ResolvePass {
         let src_srv_handle = render_context.bindless_manager.get_shader_srv_handle(params.render_target);
 
         // 构造 push constant
-        let push_constant = truvisl::resolve::PushConstant {
+        let push_constant = gpu::resolve::PushConstant {
             src_texture: src_srv_handle.0,
             sampler_type: params.sampler_type,
             offset: params.offset.into(),
@@ -230,7 +230,7 @@ impl RgPass for ResolveRgPass<'_> {
             self.swapchain_extent,
             &ResolvePassData {
                 render_target: render_target_view_handle,
-                sampler_type: truvisl::ESamplerType_LinearClamp,
+                sampler_type: gpu::ESamplerType_LinearClamp,
                 offset: glam::vec2(0.0, 0.0),
                 size: glam::vec2(self.swapchain_extent.width as f32, self.swapchain_extent.height as f32),
             },

@@ -18,19 +18,19 @@ use truvis_gfx::{
     raytracing::acceleration::GfxAcceleration,
     resources::special_buffers::structured_buffer::GfxStructuredBuffer,
 };
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 /// 构建 Gpu Scene 所需的所有 buffer
 struct GpuSceneBuffers {
-    scene_buffer: GfxStructuredBuffer<truvisl::GPUScene>,
-    light_buffer: GfxStructuredBuffer<truvisl::PointLight>,
-    light_stage_buffer: GfxStructuredBuffer<truvisl::PointLight>,
-    material_buffer: GfxStructuredBuffer<truvisl::PBRMaterial>,
-    material_stage_buffer: GfxStructuredBuffer<truvisl::PBRMaterial>,
-    geometry_buffer: GfxStructuredBuffer<truvisl::Geometry>,
-    geometry_stage_buffer: GfxStructuredBuffer<truvisl::Geometry>,
-    instance_buffer: GfxStructuredBuffer<truvisl::Instance>,
-    instance_stage_buffer: GfxStructuredBuffer<truvisl::Instance>,
+    scene_buffer: GfxStructuredBuffer<gpu::GPUScene>,
+    light_buffer: GfxStructuredBuffer<gpu::PointLight>,
+    light_stage_buffer: GfxStructuredBuffer<gpu::PointLight>,
+    material_buffer: GfxStructuredBuffer<gpu::PBRMaterial>,
+    material_stage_buffer: GfxStructuredBuffer<gpu::PBRMaterial>,
+    geometry_buffer: GfxStructuredBuffer<gpu::Geometry>,
+    geometry_stage_buffer: GfxStructuredBuffer<gpu::Geometry>,
+    instance_buffer: GfxStructuredBuffer<gpu::Instance>,
+    instance_stage_buffer: GfxStructuredBuffer<gpu::Instance>,
     material_indirect_buffer: GfxStructuredBuffer<u32>,
     material_indirect_stage_buffer: GfxStructuredBuffer<u32>,
     geometry_indirect_buffer: GfxStructuredBuffer<u32>,
@@ -116,7 +116,7 @@ impl GpuScene {
     }
 
     #[inline]
-    pub fn scene_buffer(&self, frame_label: FrameLabel) -> &GfxStructuredBuffer<truvisl::GPUScene> {
+    pub fn scene_buffer(&self, frame_label: FrameLabel) -> &GfxStructuredBuffer<gpu::GPUScene> {
         &self.gpu_scene_buffers[*frame_label].scene_buffer
     }
 }
@@ -236,7 +236,7 @@ impl GpuScene {
         bindless_manager: &BindlessManager,
     ) {
         let crt_gpu_buffers = &self.gpu_scene_buffers[*frame_counter.frame_label()];
-        let gpu_scene_data = truvisl::GPUScene {
+        let gpu_scene_data = gpu::GPUScene {
             all_instances: crt_gpu_buffers.instance_buffer.device_address(),
             all_mats: crt_gpu_buffers.material_buffer.device_address(),
             all_geometries: crt_gpu_buffers.geometry_buffer.device_address(),
@@ -248,9 +248,9 @@ impl GpuScene {
             spot_light_count: 0, // TODO 暂时无用
 
             sky: bindless_manager.get_shader_srv_handle(self.sky_texture.1).0,
-            sky_sampler_type: truvisl::ESamplerType_LinearClamp,
+            sky_sampler_type: gpu::ESamplerType_LinearClamp,
             uv_checker: bindless_manager.get_shader_srv_handle(self.uv_checker_texture.1).0,
-            uv_checker_sampler_type: truvisl::ESamplerType_LinearClamp,
+            uv_checker_sampler_type: gpu::ESamplerType_LinearClamp,
         };
 
         cmd.cmd_update_buffer(crt_gpu_buffers.scene_buffer.vk_buffer(), 0, BytesConvert::bytes_of(&gpu_scene_data));
@@ -298,7 +298,7 @@ impl GpuScene {
                 panic!("instance material cnt can not be larger than buffer");
             }
 
-            instance_buffer_slices[instance_idx] = truvisl::Instance {
+            instance_buffer_slices[instance_idx] = gpu::Instance {
                 geometry_indirect_idx: crt_geometry_indirect_idx as u32,
                 geometry_count: submesh_cnt as u32,
                 material_indirect_idx: crt_material_indirect_idx as u32,
@@ -359,15 +359,15 @@ impl GpuScene {
         }
 
         for (mat_idx, mat) in scene_data.all_materials.iter().enumerate() {
-            material_buffer_slices[mat_idx] = truvisl::PBRMaterial {
+            material_buffer_slices[mat_idx] = gpu::PBRMaterial {
                 base_color: mat.base_color.truncate().into(),
                 emissive: mat.emissive.truncate().into(),
                 metallic: mat.metallic,
                 roughness: mat.roughness,
                 diffuse_map: mat.diffuse_bindless_handle.0,
-                diffuse_map_sampler_type: truvisl::ESamplerType_LinearRepeat,
+                diffuse_map_sampler_type: gpu::ESamplerType_LinearRepeat,
                 normal_map: mat.normal_bindless_handle.0,
-                normal_map_sampler_type: truvisl::ESamplerType_LinearRepeat,
+                normal_map_sampler_type: gpu::ESamplerType_LinearRepeat,
                 opaque: mat.opaque,
                 _padding_1: Default::default(),
                 _padding_2: Default::default(),
@@ -400,7 +400,7 @@ impl GpuScene {
         }
 
         for (light_idx, point_light) in scene_data.all_point_lights.iter().enumerate() {
-            light_buffer_slices[light_idx] = truvisl::PointLight {
+            light_buffer_slices[light_idx] = gpu::PointLight {
                 pos: point_light.pos,
                 color: point_light.color,
 
@@ -431,7 +431,7 @@ impl GpuScene {
                 panic!("geometry cnt can not be larger than buffer");
             }
             for (submesh_idx, geometry) in mesh.geometries.iter().enumerate() {
-                geometry_buffer_slices[crt_geometry_idx + submesh_idx] = truvisl::Geometry {
+                geometry_buffer_slices[crt_geometry_idx + submesh_idx] = gpu::Geometry {
                     position_buffer: geometry.vertex_buffer.pos_address(),
                     normal_buffer: geometry.vertex_buffer.normal_address(),
                     tangent_buffer: geometry.vertex_buffer.tangent_address(),

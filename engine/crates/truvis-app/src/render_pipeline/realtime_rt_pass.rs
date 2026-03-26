@@ -17,7 +17,7 @@ use truvis_render_graph::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
 
@@ -312,8 +312,8 @@ pub struct RealtimeRtPass {
     _sbt: SBTRegions,
     _rt_descriptor_set_layout: GfxDescriptorSetLayout<RealtimeRtDescriptorBinding>,
 
-    hash_table: GfxStructuredBuffer<truvisl::ic::Table>,
-    entry_pool: GfxStructuredBuffer<truvisl::ic::EntryPool>,
+    hash_table: GfxStructuredBuffer<gpu::ic::Table>,
+    entry_pool: GfxStructuredBuffer<gpu::ic::EntryPool>,
 }
 impl RealtimeRtPass {
     pub fn new(render_descriptor_sets: &GlobalDescriptorSets) -> Self {
@@ -349,7 +349,7 @@ impl RealtimeRtPass {
                     | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
             )
             .offset(0)
-            .size(size_of::<truvisl::rt::PushConstants>() as u32);
+            .size(size_of::<gpu::rt::PushConstants>() as u32);
 
         let rt_descriptor_set_layout = GfxDescriptorSetLayout::<RealtimeRtDescriptorBinding>::new(
             vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR,
@@ -396,7 +396,7 @@ impl RealtimeRtPass {
         };
         let sbt = SBTRegions::create_sbt(&rt_pipeline);
 
-        let mut hash_table = GfxStructuredBuffer::<truvisl::ic::Table>::new(
+        let mut hash_table = GfxStructuredBuffer::<gpu::ic::Table>::new(
             "ic-hash-table",
             1,
             vk::BufferUsageFlags::STORAGE_BUFFER
@@ -405,7 +405,7 @@ impl RealtimeRtPass {
             false,
         );
         hash_table.clear();
-        let mut entry_pool = GfxStructuredBuffer::<truvisl::ic::EntryPool>::new(
+        let mut entry_pool = GfxStructuredBuffer::<gpu::ic::EntryPool>::new(
             "ic-entry-pool",
             1,
             vk::BufferUsageFlags::STORAGE_BUFFER
@@ -447,7 +447,7 @@ impl RealtimeRtPass {
         cmd.push_descriptor_set(
             vk::PipelineBindPoint::RAY_TRACING_KHR,
             self.pipeline.pipeline_layout,
-            truvisl::RT_SET_NUM,
+            gpu::RT_SET_NUM,
             &[
                 RealtimeRtDescriptorBinding::tlas().write_tals(
                     vk::DescriptorSet::null(),
@@ -503,7 +503,7 @@ impl RealtimeRtPass {
         );
         // FIXME 这个变量废除了，现在只有 spp 1
         let spp = 1;
-        let mut push_constant = truvisl::rt::PushConstants {
+        let mut push_constant = gpu::rt::PushConstants {
             spp,
             spp_idx: 0,
             channel: render_context.pipeline_settings.channel,

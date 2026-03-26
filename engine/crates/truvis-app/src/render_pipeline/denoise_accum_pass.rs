@@ -6,7 +6,7 @@ use truvis_render_graph::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::bindless_manager::BindlessUavHandle;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 /// 降噪累积 Pass 的数据
 pub struct DenoiseAccumPassData {
@@ -38,12 +38,12 @@ pub struct DenoiseAccumPassData {
 
 /// 降噪累积 Pass - 对单帧 RT 结果进行双边滤波降噪，然后累积到 accum_image 中
 pub struct DenoiseAccumPass {
-    denoise_accum_pass: ComputePass<truvisl::denoise_accum::PushConstant>,
+    denoise_accum_pass: ComputePass<gpu::denoise_accum::PushConstant>,
 }
 
 impl DenoiseAccumPass {
     pub fn new(render_descriptor_sets: &GlobalDescriptorSets) -> Self {
-        let denoise_accum_pass = ComputePass::<truvisl::denoise_accum::PushConstant>::new(
+        let denoise_accum_pass = ComputePass::<gpu::denoise_accum::PushConstant>::new(
             render_descriptor_sets,
             c"main",
             TruvisPath::shader_build_path_str("pp/denoise_accum.slang").as_str(),
@@ -56,7 +56,7 @@ impl DenoiseAccumPass {
         self.denoise_accum_pass.exec(
             cmd,
             render_context,
-            &truvisl::denoise_accum::PushConstant {
+            &gpu::denoise_accum::PushConstant {
                 single_frame_input: data.single_frame_bindless_uav_handle.0,
                 accum_output: data.accum_bindless_uav_handle.0,
                 gbuffer_a: data.gbuffer_a_bindless_uav_handle.0,
@@ -81,8 +81,8 @@ impl DenoiseAccumPass {
                 roughness_sigma_scale: data.roughness_sigma_scale,
             },
             glam::uvec3(
-                data.image_size.width.div_ceil(truvisl::denoise_accum::SHADER_X as u32),
-                data.image_size.height.div_ceil(truvisl::denoise_accum::SHADER_Y as u32),
+                data.image_size.width.div_ceil(gpu::denoise_accum::SHADER_X as u32),
+                data.image_size.height.div_ceil(gpu::denoise_accum::SHADER_Y as u32),
                 1,
             ),
         );

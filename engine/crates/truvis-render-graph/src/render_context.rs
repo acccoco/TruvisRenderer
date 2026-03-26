@@ -9,7 +9,7 @@ use truvis_render_interface::gpu_scene::GpuScene;
 use truvis_render_interface::pipeline_settings::{AccumData, FrameSettings, PipelineSettings};
 use truvis_render_interface::sampler_manager::RenderSamplerManager;
 use truvis_scene::scene_manager::SceneManager;
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 // Render 期间不可变
 pub struct RenderContext {
@@ -19,7 +19,7 @@ pub struct RenderContext {
 
     pub fif_buffers: FifBuffers,
     pub bindless_manager: BindlessManager,
-    pub per_frame_data_buffers: [GfxStructuredBuffer<truvisl::PerFrameData>; FrameCounter::fif_count()],
+    pub per_frame_data_buffers: [GfxStructuredBuffer<gpu::PerFrameData>; FrameCounter::fif_count()],
     pub gfx_resource_manager: GfxResourceManager,
     pub sampler_manager: RenderSamplerManager,
 
@@ -45,7 +45,7 @@ pub struct RenderContext2<'a> {
 
     pub fif_buffers: &'a FifBuffers,
     pub bindless_manager: &'a BindlessManager,
-    pub per_frame_data_buffers: &'a [GfxStructuredBuffer<truvisl::PerFrameData>; FrameCounter::fif_count()],
+    pub per_frame_data_buffers: &'a [GfxStructuredBuffer<gpu::PerFrameData>; FrameCounter::fif_count()],
     pub gfx_resource_manager: &'a GfxResourceManager,
     pub sampler_manager: &'a RenderSamplerManager,
 

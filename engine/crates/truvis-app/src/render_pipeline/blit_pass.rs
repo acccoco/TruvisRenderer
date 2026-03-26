@@ -6,7 +6,7 @@ use truvis_render_graph::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::bindless_manager::BindlessUavHandle;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 pub struct BlitPassData {
     pub src_bindless_uav_handle: BindlessUavHandle,
@@ -17,11 +17,11 @@ pub struct BlitPassData {
 }
 
 pub struct BlitPass {
-    blit_pass: ComputePass<truvisl::blit::PushConstant>,
+    blit_pass: ComputePass<gpu::blit::PushConstant>,
 }
 impl BlitPass {
     pub fn new(render_descriptor_sets: &GlobalDescriptorSets) -> Self {
-        let blit_pass = ComputePass::<truvisl::blit::PushConstant>::new(
+        let blit_pass = ComputePass::<gpu::blit::PushConstant>::new(
             render_descriptor_sets,
             c"main",
             TruvisPath::shader_build_path_str("imgui/blit.slang").as_str(),
@@ -34,15 +34,15 @@ impl BlitPass {
         self.blit_pass.exec(
             cmd,
             render_context,
-            &truvisl::blit::PushConstant {
+            &gpu::blit::PushConstant {
                 src_image: data.src_bindless_uav_handle.0,
                 dst_image: data.dst_bindless_uav_handle.0,
                 src_image_size: glam::uvec2(data.src_image_size.width, data.dst_image_size.height).into(),
                 offset: glam::uvec2(0, 0).into(),
             },
             glam::uvec3(
-                data.dst_image_size.width.div_ceil(truvisl::blit::SHADER_X as u32),
-                data.dst_image_size.height.div_ceil(truvisl::blit::SHADER_Y as u32),
+                data.dst_image_size.width.div_ceil(gpu::blit::SHADER_X as u32),
+                data.dst_image_size.height.div_ceil(gpu::blit::SHADER_Y as u32),
                 1,
             ),
         );

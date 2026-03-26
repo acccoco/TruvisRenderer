@@ -31,7 +31,7 @@ use truvis_render_interface::pipeline_settings::{
 };
 use truvis_render_interface::sampler_manager::RenderSamplerManager;
 use truvis_scene::scene_manager::SceneManager;
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 /// 渲染器核心
 ///
@@ -98,7 +98,7 @@ impl Renderer {
         let sampler_manager = RenderSamplerManager::new(&render_descriptor_sets);
 
         let per_frame_data_buffers = FrameCounter::frame_labes().map(|frame_label| {
-            GfxStructuredBuffer::<truvisl::PerFrameData>::new_ubo(1, format!("per-frame-data-buffer-{frame_label}"))
+            GfxStructuredBuffer::<gpu::PerFrameData>::new_ubo(1, format!("per-frame-data-buffer-{frame_label}"))
         });
 
         let cmds = FrameCounter::frame_labes()
@@ -349,7 +349,7 @@ impl Renderer {
             let view = camera.get_view_matrix();
             let projection = camera.get_projection_matrix();
 
-            truvisl::PerFrameData {
+            gpu::PerFrameData {
                 projection: projection.into(),
                 view: view.into(),
                 inv_view: view.inverse().into(),
@@ -359,7 +359,7 @@ impl Renderer {
                 time_ms: self.timer.total_time_ms(),
                 delta_time_ms: self.timer.delta_time_ms(),
                 frame_id: self.render_context.frame_counter.frame_id(),
-                resolution: truvisl::Float2 {
+                resolution: gpu::Float2 {
                     x: frame_extent.width as f32,
                     y: frame_extent.height as f32,
                 },

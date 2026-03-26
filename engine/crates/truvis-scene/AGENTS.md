@@ -24,7 +24,7 @@ pub struct SceneManager {
     all_meshes:       SlotMap<MeshHandle, Mesh>,
     all_mats:         SlotMap<MaterialHandle, Material>,
     all_instances:    SlotMap<InstanceHandle, Instance>,
-    all_point_lights: SlotMap<LightHandle, truvisl::PointLight>,
+    all_point_lights: SlotMap<LightHandle, gpu::PointLight>,
 }
 
 // 几何体 + BLAS（build_blas() 原地构建，幂等）

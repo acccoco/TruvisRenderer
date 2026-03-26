@@ -15,7 +15,7 @@ use truvis_gfx::{
 use truvis_render_graph::render_context::RenderContext;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::pipeline_settings::FrameLabel;
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 pub struct PhongPass {
     pipeline: GfxGraphicsPipeline,
@@ -48,7 +48,7 @@ impl PhongPass {
             &[vk::PushConstantRange::default()
                 .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
-                .size(size_of::<truvisl::raster::PushConstants>() as u32)],
+                .size(size_of::<gpu::raster::PushConstants>() as u32)],
             "phong-pass",
         ));
 
@@ -62,7 +62,7 @@ impl PhongPass {
         cmd: &GfxCommandBuffer,
         render_context: &RenderContext,
         viewport: &vk::Rect2D,
-        push_constant: &truvisl::raster::PushConstants,
+        push_constant: &gpu::raster::PushConstants,
         frame_label: FrameLabel,
     ) {
         cmd.cmd_bind_pipeline(vk::PipelineBindPoint::GRAPHICS, self.pipeline.handle());
@@ -121,7 +121,7 @@ impl PhongPass {
             cmd,
             render_context,
             &render_context.frame_settings.frame_extent.into(),
-            &truvisl::raster::PushConstants {
+            &gpu::raster::PushConstants {
                 frame_data: render_context.per_frame_data_buffers[*frame_label].device_address(),
                 scene: render_context.gpu_scene.scene_buffer(frame_label).device_address(),
 
@@ -144,7 +144,7 @@ impl PhongPass {
                 cmd.cmd_push_constants(
                     self.pipeline.layout(),
                     vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                    offset_of!(truvisl::raster::PushConstants, instance_idx) as u32,
+                    offset_of!(gpu::raster::PushConstants, instance_idx) as u32,
                     bytemuck::bytes_of(&data),
                 );
             },

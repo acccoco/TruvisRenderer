@@ -6,7 +6,7 @@ use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_renderer::model_loader::assimp_loader::AssimpSceneLoader;
 use truvis_renderer::platform::camera::Camera;
 use truvis_renderer::renderer::Renderer;
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 #[derive(Default)]
 pub struct CornellApp {
@@ -19,21 +19,21 @@ impl CornellApp {
         camera.euler_yaw_deg = 330.0;
         camera.euler_pitch_deg = -27.0;
 
-        renderer.render_context.scene_manager.register_point_light(truvisl::PointLight {
+        renderer.render_context.scene_manager.register_point_light(gpu::PointLight {
             pos: glam::vec3(-20.0, 40.0, 0.0).into(),
             color: (glam::vec3(5.0, 6.0, 1.0) * 2.0).into(),
 
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
-        renderer.render_context.scene_manager.register_point_light(truvisl::PointLight {
+        renderer.render_context.scene_manager.register_point_light(gpu::PointLight {
             pos: glam::vec3(40.0, 40.0, -30.0).into(),
             color: (glam::vec3(1.0, 6.0, 7.0) * 3.0).into(),
 
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
-        renderer.render_context.scene_manager.register_point_light(truvisl::PointLight {
+        renderer.render_context.scene_manager.register_point_light(gpu::PointLight {
             pos: glam::vec3(40.0, 40.0, 30.0).into(),
             color: (glam::vec3(5.0, 1.0, 8.0) * 3.0).into(),
 

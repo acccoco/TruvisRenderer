@@ -7,7 +7,7 @@ use slotmap::SlotMap;
 use truvis_asset::asset_hub::AssetHub;
 use truvis_render_interface::bindless_manager::{BindlessManager, BindlessSrvHandle};
 use truvis_render_interface::render_data::{InstanceRenderData, MaterialRenderData, MeshRenderData, RenderData};
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 /// 在 CPU 侧管理场景数据
 #[derive(Default)]
@@ -16,7 +16,7 @@ pub struct SceneManager {
     all_instances: SlotMap<InstanceHandle, Instance>,
     all_meshes: SlotMap<MeshHandle, Mesh>,
 
-    all_point_lights: SlotMap<LightHandle, truvisl::PointLight>,
+    all_point_lights: SlotMap<LightHandle, gpu::PointLight>,
 }
 // new & init
 impl SceneManager {
@@ -39,7 +39,7 @@ impl SceneManager {
         &self.all_meshes
     }
     #[inline]
-    pub fn point_light_map(&self) -> &SlotMap<LightHandle, truvisl::PointLight> {
+    pub fn point_light_map(&self) -> &SlotMap<LightHandle, gpu::PointLight> {
         &self.all_point_lights
     }
     #[inline]
@@ -138,7 +138,7 @@ impl SceneManager {
         }
 
         // 4. 构建点光源数据
-        let all_point_lights: Vec<truvisl::PointLight> =
+        let all_point_lights: Vec<gpu::PointLight> =
             self.all_point_lights.iter().map(|(_, light)| *light).collect();
 
         RenderData {
@@ -184,7 +184,7 @@ impl SceneManager {
     }
 
     /// 向场景中添加点光源
-    pub fn register_point_light(&mut self, light: truvisl::PointLight) -> LightHandle {
+    pub fn register_point_light(&mut self, light: gpu::PointLight) -> LightHandle {
         self.all_point_lights.insert(light)
     }
 }

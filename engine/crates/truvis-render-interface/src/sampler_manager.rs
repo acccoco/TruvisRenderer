@@ -4,11 +4,11 @@ use itertools::Itertools;
 use truvis_gfx::gfx::Gfx;
 use truvis_gfx::sampler::{GfxSampler, GfxSamplerDesc};
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
-use truvis_shader_binding::truvisl;
+use truvis_shader_binding::gpu;
 
 // Sampler manager
 pub struct RenderSamplerManager {
-    _samplers: [GfxSampler; truvisl::ESamplerType__Count_ as usize],
+    _samplers: [GfxSampler; gpu::ESamplerType__Count_ as usize],
 }
 
 impl RenderSamplerManager {
@@ -26,9 +26,9 @@ impl RenderSamplerManager {
         Self { _samplers: samplers }
     }
 
-    fn create_sampler() -> [GfxSampler; truvisl::ESamplerType__Count_ as usize] {
+    fn create_sampler() -> [GfxSampler; gpu::ESamplerType__Count_ as usize] {
         let mut sampler_descs =
-            [0; truvisl::ESamplerType__Count_ as usize].map(|_| (String::new(), GfxSamplerDesc::default()));
+            [0; gpu::ESamplerType__Count_ as usize].map(|_| (String::new(), GfxSamplerDesc::default()));
 
         fn create_sampler_desc(filter: vk::Filter, address_mode: vk::SamplerAddressMode) -> GfxSamplerDesc {
             GfxSamplerDesc {
@@ -46,22 +46,22 @@ impl RenderSamplerManager {
             }
         }
 
-        sampler_descs[truvisl::ESamplerType_PointRepeat as usize] =
+        sampler_descs[gpu::ESamplerType_PointRepeat as usize] =
             ("PointRepeat".to_string(), create_sampler_desc(vk::Filter::NEAREST, vk::SamplerAddressMode::REPEAT));
-        sampler_descs[truvisl::ESamplerType_PointClamp as usize] =
+        sampler_descs[gpu::ESamplerType_PointClamp as usize] =
             ("PointClamp".to_string(), create_sampler_desc(vk::Filter::NEAREST, vk::SamplerAddressMode::CLAMP_TO_EDGE));
-        sampler_descs[truvisl::ESamplerType_LinearRepeat as usize] =
+        sampler_descs[gpu::ESamplerType_LinearRepeat as usize] =
             ("LinearRepeat".to_string(), create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::REPEAT));
-        sampler_descs[truvisl::ESamplerType_LinearClamp as usize] =
+        sampler_descs[gpu::ESamplerType_LinearClamp as usize] =
             ("LinearClamp".to_string(), create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::CLAMP_TO_EDGE));
-        sampler_descs[truvisl::ESamplerType_AnisoRepeat as usize] = (
+        sampler_descs[gpu::ESamplerType_AnisoRepeat as usize] = (
             "AnisoRepeat".to_string(),
             GfxSamplerDesc {
                 max_anisotropy: 16,
                 ..create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::REPEAT)
             },
         );
-        sampler_descs[truvisl::ESamplerType_AnisoClamp as usize] = (
+        sampler_descs[gpu::ESamplerType_AnisoClamp as usize] = (
             "AnisoClamp".to_string(),
             GfxSamplerDesc {
                 max_anisotropy: 16,

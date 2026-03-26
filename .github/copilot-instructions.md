@@ -166,7 +166,7 @@ struct PerFrameData { float4x4 projection; float4x4 view; float3 camera_pos; uin
 ```
 ```rust
 // 自动生成到 truvis-shader-binding crate
-use truvis_shader_binding::truvisl::PerFrameData;
+use truvis_shader_binding::gpu::PerFrameData;
 ```
 
 ### 描述符布局宏
