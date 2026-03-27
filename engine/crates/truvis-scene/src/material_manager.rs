@@ -63,12 +63,18 @@ impl MaterialBuffers {
 
 /// 增量材质管理器
 ///
-/// # 设计
-/// 采用 slot + dirty + FIF 延迟回收模式：
-/// - 材质注册时分配稳定的 GPU buffer slot，直到删除才释放
+/// - slot 是稳定的：每个注册的材质对应一个固定的 GPU buffer slot，直到删除才释放
+///
+/// # dirty 和延迟回收
 /// - 每帧只更新 dirty slot 到当前帧对应的 FIF buffer
-/// - 支持 texture 异步依赖：texture 未就绪时使用 INVALID_TEX_ID，就绪后自动标记 dirty
-/// - slot 延迟回收：当 slot 内容删除且 frame 间隔 >= FIF_COUNT 时才归还 free list
+/// - slot 延迟回收：当 slot 内容删除且 frame 间隔 >= FIF_COUNT 时才归还 free list，确保所有引用该 slot 的 in-flight 命令已完成。
+///
+/// # 无阻塞
+/// - 只要材质注册到 MaterialManager，就可以被外部安全引用（如 Instance 中的 material_handle），无论其 texture 是否就绪。
+/// - texture 异步加载过程中，材质会使用占位 texture 数据（如 null texture），并在 texture 就绪后自动更新到 GPU。
+/// - 材质对应的 slot 更新会发生 2 次：
+///     - 第一次是 add/update 时，填入占位 texture；
+///     - 第二次是 texture 就绪时，填入正确的 texture 数据。两次更新之间，GPU 端始终有合法数据可用。
 pub struct MaterialManager {
     /// 核心映射：ManagedMaterialHandle -> slot index
     handle_to_slot: SlotMap<ManagedMaterialHandle, usize>,

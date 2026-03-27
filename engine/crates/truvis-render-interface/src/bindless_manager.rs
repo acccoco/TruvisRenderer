@@ -62,13 +62,18 @@ impl Default for BindlessSrvHandle {
 
 /// Bindless 描述符管理器
 ///
-/// # 设计
-/// 使用单套 descriptor set（配合 `UPDATE_UNUSED_WHILE_PENDING_BIT`），slot 是稳定的：
-/// - `dirty` map 的 value 记录最后写入时的 `frame_id`，用于更新和延迟回收 slot
+/// - 只允许 add 和 remove 操作，不支持 update 操作
+///
+/// # slot 稳定性
+/// - 使用单套 descriptor set（配合 `UPDATE_UNUSED_WHILE_PENDING_BIT`），slot 是稳定的：
+///
+/// # 更新与回收
+/// - `dirty` map 的 value 记录最后写入时的 `frame_id`，用于延迟回收 slot
+/// - add 可以立即写入 descriptor，因为可以确保这个 slot 不会被 GPU 同时访问
 ///
 /// # 安全性
 /// - `UPDATE_UNUSED_WHILE_PENDING_BIT` 允许 CPU 在有 in-flight 命令时更新 descriptor，
-/// 只要该 slot 未被这些命令动态访问。
+///     只要该 slot 未被这些命令动态访问。
 /// - slot 回收机制保证：slot 归还 free_list 时，所有引用它的 in-flight 命令已完成。
 /// - 仅支持 add 和 remove 操作，不支持 update，因此可以确保所有的 dirty slot 都不会被 GPU 同时访问。
 pub struct BindlessManager {
