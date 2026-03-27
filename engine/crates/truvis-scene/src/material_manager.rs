@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ash::vk;
 use slotmap::SlotMap;
+
 use truvis_asset::handle::AssetTextureHandle;
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -29,14 +30,12 @@ pub trait TextureResolver {
     fn get_srv_handle(&self, handle: AssetTextureHandle) -> Option<BindlessSrvHandle>;
 }
 
-/// 单个 slot 中存储的材质元数据
-struct MaterialSlotEntry {
-    handle: ManagedMaterialHandle,
-    params: ManagedMaterialParams,
+/// 单个 slot 在 dirty_slots 中维护的状态
+struct SlotDirtyInfo {
     /// 各 FIF buffer 是否需要更新（true = 需要写入该帧对应的 GPU buffer）
-    fif_dirty: [bool; FrameCounter::fif_count()], // FIXME 这个字段是否合理
-    /// 所有引用的 texture 是否全部就绪
-    textures_ready: bool, // FIXME 这个字段是否有必要
+    fif_dirty: [bool; FrameCounter::fif_count()],
+    /// 本次 dirty（或 unregister）发生时的 frame_id，用于回收计时
+    dirty_frame_id: u64,
 }
 
 /// 材质 GPU buffer（FIF 套）
@@ -69,28 +68,21 @@ impl MaterialBuffers {
 /// - 材质注册时分配稳定的 GPU buffer slot，直到删除才释放
 /// - 每帧只更新 dirty slot 到当前帧对应的 FIF buffer
 /// - 支持 texture 异步依赖：texture 未就绪时使用 INVALID_TEX_ID，就绪后自动标记 dirty
-/// - slot 回收延迟 FIF_COUNT 帧，确保 GPU 上不再访问后才归还 free list
-///
-/// # GPU Buffer 布局
-/// 维护 FIF_COUNT 套 `GfxStructuredBuffer<gpu::PBRMaterial>`，每个 slot 对应一个材质。
-/// 外部通过 `material_buffer_device_address(frame_label)` 获取 device address，
-/// 填入 `GPUScene` 或 push constant 中。
+/// - slot 延迟回收：当 slot 内容删除且 frame 间隔 >= FIF_COUNT 时才归还 free list
 pub struct MaterialManager {
     /// 核心映射：ManagedMaterialHandle -> slot index
     handle_to_slot: SlotMap<ManagedMaterialHandle, usize>,
 
     /// slot 数据：index = GPU buffer 中的位置
-    slots: Vec<Option<MaterialSlotEntry>>,
+    slots: Vec<Option<ManagedMaterialParams>>,
 
-    /// 空闲 slot 池（降序存放，pop 返回较小 slot）
-    free_slots: Vec<usize>, // FIXME 为什么要有序存放
+    free_slots: Vec<usize>,
 
-    /// dirty 列表：slot index -> 最后修改时的 frame_id
-    dirty_slots: HashMap<usize, u64>,
+    /// dirty 列表：slot index -> SlotDirtyInfo
+    dirty_slots: HashMap<usize, SlotDirtyInfo>,
 
-    /// 待回收列表：slot index -> 删除时的 frame_id
-    /// age >= FIF_COUNT 后归还 free_slots
-    pending_reclaim: HashMap<usize, u64>,
+    /// 等待 texture 就绪的材质 handle 列表
+    pending_texture_ready: HashSet<ManagedMaterialHandle>,
 
     /// FIF 套 GPU buffer
     buffers: [MaterialBuffers; FrameCounter::fif_count()],
@@ -107,7 +99,7 @@ impl MaterialManager {
             slots: (0..MAX_MATERIAL_COUNT).map(|_| None).collect(),
             free_slots,
             dirty_slots: HashMap::new(),
-            pending_reclaim: HashMap::new(),
+            pending_texture_ready: HashSet::new(),
             buffers: FrameCounter::frame_labes().map(MaterialBuffers::new),
             frame_token,
         }
@@ -133,14 +125,19 @@ impl MaterialManager {
         let slot = self.free_slots.pop().expect("MaterialManager: slots exhausted");
         let handle = self.handle_to_slot.insert(slot);
 
-        self.slots[slot] = Some(MaterialSlotEntry {
-            handle,
-            params,
-            fif_dirty: [true; FrameCounter::fif_count()],
-            textures_ready: false,
-        });
+        let has_textures = params.diffuse_texture.is_some() || params.normal_texture.is_some();
+        self.slots[slot] = Some(params);
+        self.dirty_slots.insert(
+            slot,
+            SlotDirtyInfo {
+                fif_dirty: [true; FrameCounter::fif_count()],
+                dirty_frame_id: self.frame_token.frame_id(),
+            },
+        );
+        if has_textures {
+            self.pending_texture_ready.insert(handle);
+        }
 
-        self.dirty_slots.insert(slot, self.frame_token.frame_id());
         log::debug!("MaterialManager: register slot={} handle={:?}", slot, handle);
         handle
     }
@@ -151,25 +148,47 @@ impl MaterialManager {
     pub fn update_params(&mut self, handle: ManagedMaterialHandle, params: ManagedMaterialParams) {
         let &slot = self.handle_to_slot.get(handle).expect("MaterialManager: invalid handle");
 
-        let entry = self.slots[slot].as_mut().expect("MaterialManager: slot is empty");
-        entry.params = params;
-        entry.fif_dirty = [true; FrameCounter::fif_count()];
-        // texture 就绪状态需要重新检测
-        entry.textures_ready = false;
+        let has_textures = params.diffuse_texture.is_some() || params.normal_texture.is_some();
+        self.slots[slot] = Some(params);
 
-        self.dirty_slots.insert(slot, self.frame_token.frame_id());
+        let frame_id = self.frame_token.frame_id();
+        self.dirty_slots
+            .entry(slot)
+            .and_modify(|info| {
+                info.fif_dirty = [true; FrameCounter::fif_count()];
+                info.dirty_frame_id = frame_id;
+            })
+            .or_insert(SlotDirtyInfo {
+                fif_dirty: [true; FrameCounter::fif_count()],
+                dirty_frame_id: frame_id,
+            });
+
+        // texture 就绪状态需要重新检测
+        if has_textures {
+            self.pending_texture_ready.insert(handle);
+        } else {
+            self.pending_texture_ready.remove(&handle);
+        }
     }
 
-    /// 移除材质
-    ///
-    /// slot 不会立即回收，而是进入 pending_reclaim 等待 FIF_COUNT 帧后才归还，
-    /// 确保 GPU 上所有 in-flight 命令不再访问该 slot。
+    /// 移除材质，延迟回收 slot
     pub fn unregister(&mut self, handle: ManagedMaterialHandle) {
         let slot = self.handle_to_slot.remove(handle).expect("MaterialManager: invalid handle");
 
         self.slots[slot] = None;
-        self.dirty_slots.remove(&slot);
-        self.pending_reclaim.insert(slot, self.frame_token.frame_id());
+        self.pending_texture_ready.remove(&handle);
+        // fif_dirty 全设为 false：不再需要上传，仅保留 dirty_frame_id 用于回收计时
+        let frame_id = self.frame_token.frame_id();
+        self.dirty_slots
+            .entry(slot)
+            .and_modify(|info| {
+                info.fif_dirty = [false; FrameCounter::fif_count()];
+                info.dirty_frame_id = frame_id;
+            })
+            .or_insert(SlotDirtyInfo {
+                fif_dirty: [false; FrameCounter::fif_count()],
+                dirty_frame_id: frame_id,
+            });
 
         log::debug!("MaterialManager: unregister slot={} handle={:?}", slot, handle);
     }
@@ -180,49 +199,41 @@ impl MaterialManager {
     /// 帧开始时调用，更新 frame_token 并回收过期 slot
     pub fn begin_frame(&mut self, frame_token: FrameToken) {
         self.frame_token = frame_token;
-
-        let fif = FrameCounter::fif_count() as u64;
-        let frame_id = frame_token.frame_id();
-
-        let mut reclaimed = Vec::new();
-        for (&slot, &remove_frame_id) in &self.pending_reclaim {
-            let age = frame_id.saturating_sub(remove_frame_id);
-            if age >= fif {
-                reclaimed.push(slot);
-            }
-        }
-        for slot in reclaimed {
-            self.pending_reclaim.remove(&slot);
-            self.free_slots.push(slot);
-            log::debug!("MaterialManager: reclaimed slot={}", slot);
-        }
     }
 
-    /// 检查 texture 异步加载状态，就绪时标记 dirty
-    ///
-    /// 在 `upload()` 之前调用。对每个尚未标记 `textures_ready` 的材质，
-    /// 通过 `TextureResolver` 查询所有引用的 texture 是否就绪。
-    /// 如果全部就绪且此前未就绪，则重新标记 `fif_dirty = [true; FIF]`。
+    /// 检查 texture 异步加载状态，尝试新增 dirty 标记
     pub fn update(&mut self, texture_resolver: &dyn TextureResolver) {
-        for slot_entry in self.slots.iter_mut().flatten() {
-            if slot_entry.textures_ready {
-                continue;
-            }
+        let frame_id = self.frame_token.frame_id();
 
-            let all_ready = Self::check_textures_ready(&slot_entry.params, texture_resolver);
-            if all_ready {
-                slot_entry.textures_ready = true;
-                // texture 刚变为就绪，需要重新上传到所有 FIF buffer（之前用的是 placeholder）
-                slot_entry.fif_dirty = [true; FrameCounter::fif_count()];
-                self.dirty_slots.insert(self.handle_to_slot[slot_entry.handle], self.frame_token.frame_id());
-            }
+        let now_ready: Vec<ManagedMaterialHandle> = self
+            .pending_texture_ready
+            .iter()
+            .copied()
+            .filter(|&handle| {
+                let slot = self.handle_to_slot[handle];
+                let entry = self.slots[slot].as_ref().unwrap();
+                Self::check_textures_ready(entry, texture_resolver)
+            })
+            .collect();
+
+        for handle in now_ready {
+            self.pending_texture_ready.remove(&handle);
+            let slot = self.handle_to_slot[handle];
+            // texture 刚变为就绪，需要重新上传到所有 FIF buffer（之前用的是 placeholder）
+            self.dirty_slots
+                .entry(slot)
+                .and_modify(|info| {
+                    info.fif_dirty = [true; FrameCounter::fif_count()];
+                    info.dirty_frame_id = frame_id;
+                })
+                .or_insert(SlotDirtyInfo {
+                    fif_dirty: [true; FrameCounter::fif_count()],
+                    dirty_frame_id: frame_id,
+                });
         }
     }
 
-    /// 将 dirty slot 写入当前帧对应的 GPU buffer
-    ///
-    /// 只更新 `fif_dirty[frame_label] == true` 的 slot。
-    /// texture 未就绪的材质使用 `INVALID_TEX_ID` 作为 placeholder。
+    /// 将 dirty slot 写入当前帧对应的 GPU buffer，或者回收 slot 到 free list 中
     pub fn upload(
         &mut self,
         cmd: &GfxCommandBuffer,
@@ -231,33 +242,54 @@ impl MaterialManager {
         texture_resolver: &dyn TextureResolver,
     ) {
         let fif_idx = *frame_label;
-        let buf = &mut self.buffers[fif_idx];
-        let stage_slice = buf.material_stage_buffer.mapped_slice();
-        let mut any_written = false;
+        let fif_count = FrameCounter::fif_count() as u64;
+        let current_frame_id = self.frame_token.frame_id();
 
-        // 收集需要处理的 dirty slot
         let dirty_slot_indices: Vec<usize> = self.dirty_slots.keys().copied().collect();
 
+        let mut any_written = false;
         let mut slots_done: Vec<usize> = Vec::new();
-        for slot in dirty_slot_indices {
-            let entry = match &self.slots[slot] {
-                Some(e) => e,
-                None => continue,
-            };
+        let mut slots_to_reclaim: Vec<usize> = Vec::new();
 
-            if !entry.fif_dirty[fif_idx] {
+        {
+            let stage_slice = self.buffers[fif_idx].material_stage_buffer.mapped_slice();
+
+            for &slot in &dirty_slot_indices {
+                let info = &self.dirty_slots[&slot];
+
+                if self.slots[slot].is_none() {
+                    // slot 已删除：检查回收计时
+                    let age = current_frame_id.saturating_sub(info.dirty_frame_id);
+                    if age >= fif_count {
+                        slots_to_reclaim.push(slot);
+                    }
+                    continue;
+                }
+
+                if !info.fif_dirty[fif_idx] {
+                    continue;
+                }
+
+                let params = self.slots[slot].as_ref().unwrap();
+                stage_slice[slot] = Self::build_gpu_material(params, texture_resolver);
+                any_written = true;
+            }
+        }
+
+        // 更新 dirty 标记（已项 stage_slice borrow 释放）
+        for &slot in &dirty_slot_indices {
+            if self.slots[slot].is_none() {
                 continue;
             }
-
-            stage_slice[slot] = Self::build_gpu_material(&entry.params, texture_resolver);
-            any_written = true;
-
-            // 标记当前帧已更新
-            let entry_mut = self.slots[slot].as_mut().unwrap();
-            entry_mut.fif_dirty[fif_idx] = false;
-
-            // 如果所有帧都已更新，从 dirty_slots 中移除
-            if entry_mut.fif_dirty.iter().all(|&d| !d) {
+            let info = match self.dirty_slots.get_mut(&slot) {
+                Some(i) => i,
+                None => continue,
+            };
+            if !info.fif_dirty[fif_idx] {
+                continue;
+            }
+            info.fif_dirty[fif_idx] = false;
+            if info.fif_dirty.iter().all(|&d| !d) {
                 slots_done.push(slot);
             }
         }
@@ -265,8 +297,14 @@ impl MaterialManager {
         for slot in slots_done {
             self.dirty_slots.remove(&slot);
         }
+        for slot in slots_to_reclaim {
+            self.dirty_slots.remove(&slot);
+            self.free_slots.push(slot);
+            log::debug!("MaterialManager: reclaimed slot={}", slot);
+        }
 
         if any_written {
+            let buf = &mut self.buffers[fif_idx];
             Self::flush_copy_and_barrier(cmd, &mut buf.material_stage_buffer, &mut buf.material_buffer, barrier_mask);
         }
     }
@@ -290,7 +328,7 @@ impl MaterialManager {
     #[inline]
     pub fn get_params(&self, handle: ManagedMaterialHandle) -> Option<&ManagedMaterialParams> {
         let &slot = self.handle_to_slot.get(handle)?;
-        self.slots[slot].as_ref().map(|e| &e.params)
+        self.slots[slot].as_ref().map(|e| e)
     }
 
     /// 获取当前已注册的材质数量
