@@ -64,16 +64,13 @@ impl Default for BindlessSrvHandle {
 ///
 /// # 设计
 /// 使用单套 descriptor set（配合 `UPDATE_UNUSED_WHILE_PENDING_BIT`），slot 是稳定的：
-/// - `srvs_slots[i]` / `uavs_slots[i]` 是主数据，index 即 shader 中访问的 bindless slot
-/// - `handle_to_slot` 是辅助逆向映射，用于查询 handle 对应的 slot
-/// - `dirty` map 的 value 记录最后写入时的 `frame_id`，兼作 pending_reclaim 列表：
-///   - `slots[slot] = Some`：在下一次 `prepare_render_data` 时写入 descriptor，然后从 dirty 中删除
-///   - `slots[slot] = None`：等待 age >= FIF_COUNT 后，将 slot 归还 free_list 并从 dirty 删除
+/// - `dirty` map 的 value 记录最后写入时的 `frame_id`，用于更新和延迟回收 slot
 ///
 /// # 安全性
-/// `UPDATE_UNUSED_WHILE_PENDING_BIT` 允许 CPU 在有 in-flight 命令时更新 descriptor，
+/// - `UPDATE_UNUSED_WHILE_PENDING_BIT` 允许 CPU 在有 in-flight 命令时更新 descriptor，
 /// 只要该 slot 未被这些命令动态访问。
-/// slot 回收机制保证：slot 归还 free_list 时，所有引用它的 in-flight 命令已完成。
+/// - slot 回收机制保证：slot 归还 free_list 时，所有引用它的 in-flight 命令已完成。
+/// - 仅支持 add 和 remove 操作，不支持 update，因此可以确保所有的 dirty slot 都不会被 GPU 同时访问。
 pub struct BindlessManager {
     // 核心结构：index = bindless shader slot
     srvs_slots: Vec<Option<GfxImageViewHandle>>,
@@ -87,8 +84,7 @@ pub struct BindlessManager {
     srvs_handle_to_slot: SecondaryMap<GfxImageViewHandle, usize>,
     uavs_handle_to_slot: SecondaryMap<GfxImageViewHandle, usize>,
 
-    // dirty 列表：key=slot，value=最后修改时的 frame_id
-    // Some slot: 待写入 descriptor；None slot: 待回收（等 age >= FIF_COUNT）
+    /// dirty 列表：key=slot，value=最后修改时的 frame_id
     dirty_srvs: HashMap<usize, u64>,
     dirty_uavs: HashMap<usize, u64>,
 
