@@ -1,9 +1,9 @@
 //! GitHub 资源下载示例
 
 use anyhow::Result;
-use truvis_crate_tools::fetch_resources::resource_fetcher::GitHubResourceFetcher;
-use truvis_crate_tools::init_log::init_log;
-use truvis_crate_tools::resource::TruvisPath;
+use truvis_fetch_res::fetch_resources::resource_fetcher::GitHubResourceFetcher;
+use truvis_logs::init_log;
+use truvis_path::TruvisPath;
 
 fn main() -> Result<()> {
     // 初始化日志

@@ -1,5 +1,5 @@
-use truvis_crate_tools::init_log::init_log;
-use truvis_crate_tools::resource::TruvisPath;
+use truvis_logs::init_log;
+use truvis_path::TruvisPath;
 
 enum BuildType {
     Debug,

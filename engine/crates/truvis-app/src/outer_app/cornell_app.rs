@@ -1,8 +1,8 @@
 use crate::outer_app::base::OuterApp;
 use crate::render_pipeline::rt_render_graph::RtPipeline;
 use imgui::Ui;
-use truvis_crate_tools::resource::TruvisPath;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
+use truvis_path::TruvisPath;
 use truvis_renderer::model_loader::assimp_loader::AssimpSceneLoader;
 use truvis_renderer::platform::camera::Camera;
 use truvis_renderer::renderer::Renderer;

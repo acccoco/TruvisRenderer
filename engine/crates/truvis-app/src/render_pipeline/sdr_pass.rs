@@ -1,6 +1,6 @@
 use ash::vk;
-use truvis_crate_tools::resource::TruvisPath;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
+use truvis_path::TruvisPath;
 use truvis_render_graph::compute_pass::ComputePass;
 use truvis_render_graph::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};

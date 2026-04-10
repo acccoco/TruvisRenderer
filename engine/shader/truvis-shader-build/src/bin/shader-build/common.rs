@@ -1,7 +1,7 @@
 //! 着色器编译的共享类型和工具
 
 use std::sync::OnceLock;
-use truvis_crate_tools::resource::TruvisPath;
+use truvis_path::TruvisPath;
 
 /// Shader 的执行阶段
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

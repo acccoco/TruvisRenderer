@@ -8,7 +8,6 @@ use crate::render_data::RenderData;
 use ash::vk;
 use itertools::Itertools;
 use std::path::PathBuf;
-use truvis_crate_tools::resource::TruvisPath;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::{
     commands::{
@@ -18,6 +17,7 @@ use truvis_gfx::{
     raytracing::acceleration::GfxAcceleration,
     resources::special_buffers::structured_buffer::GfxStructuredBuffer,
 };
+use truvis_path::TruvisPath;
 use truvis_shader_binding::gpu;
 
 /// 构建 Gpu Scene 所需的所有 buffer

@@ -1,0 +1,18 @@
+[package]
+name = "truvis-logs"
+version = "0.1.0"
+edition = "2024"
+description = ""
+
+
+[dependencies]
+log = { workspace = true }
+env_logger = { workspace = true }
+anstyle = { workspace = true }
+chrono = { workspace = true }
+
+reqwest = { workspace = true }
+serde = { workspace = true }
+zip = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }

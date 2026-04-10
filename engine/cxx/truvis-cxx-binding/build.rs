@@ -1,4 +1,4 @@
-use truvis_crate_tools::resource::TruvisPath;
+use truvis_path::TruvisPath;
 
 /// 读取 c++ 头文件（只能有一个），输出到当前 crate 中
 fn gen_rust_binding() {

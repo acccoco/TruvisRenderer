@@ -6,7 +6,8 @@ description = "build shader"
 
 
 [dependencies]
-truvis-crate-tools = { workspace = true }
+truvis-path = { workspace = true }
+truvis-logs = { workspace = true }
 
 log = { workspace = true }
 

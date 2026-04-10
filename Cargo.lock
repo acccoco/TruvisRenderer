@@ -3422,16 +3422,15 @@ dependencies = [
  "log",
  "raw-window-handle",
  "tracy-client",
- "truvis-asset",
- "truvis-crate-tools",
  "truvis-descriptor-layout-macro",
  "truvis-descriptor-layout-trait",
  "truvis-gfx",
  "truvis-gui-backend",
+ "truvis-logs",
+ "truvis-path",
  "truvis-render-graph",
  "truvis-render-interface",
  "truvis-renderer",
- "truvis-scene",
  "truvis-shader-binding",
  "truvis-utils",
 ]
@@ -3456,27 +3455,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "truvis-crate-tools"
-version = "0.1.0"
-dependencies = [
- "anstyle",
- "anyhow",
- "chrono",
- "env_logger",
- "log",
- "reqwest",
- "serde",
- "toml",
- "truvis-path",
- "zip",
-]
-
-[[package]]
 name = "truvis-cxx-binding"
 version = "0.1.0"
 dependencies = [
  "bindgen",
- "truvis-crate-tools",
+ "truvis-path",
 ]
 
 [[package]]
@@ -3484,7 +3467,8 @@ name = "truvis-cxx-build"
 version = "0.1.0"
 dependencies = [
  "log",
- "truvis-crate-tools",
+ "truvis-logs",
+ "truvis-path",
 ]
 
 [[package]]
@@ -3502,6 +3486,23 @@ name = "truvis-descriptor-layout-trait"
 version = "0.1.0"
 dependencies = [
  "ash",
+]
+
+[[package]]
+name = "truvis-fetch-res"
+version = "0.1.0"
+dependencies = [
+ "anstyle",
+ "anyhow",
+ "chrono",
+ "env_logger",
+ "log",
+ "reqwest",
+ "serde",
+ "toml",
+ "truvis-logs",
+ "truvis-path",
+ "zip",
 ]
 
 [[package]]
@@ -3531,12 +3532,27 @@ dependencies = [
  "imgui",
  "itertools 0.10.5",
  "log",
- "truvis-crate-tools",
  "truvis-gfx",
+ "truvis-path",
  "truvis-render-graph",
  "truvis-render-interface",
  "truvis-shader-binding",
  "truvis-utils",
+]
+
+[[package]]
+name = "truvis-logs"
+version = "0.1.0"
+dependencies = [
+ "anstyle",
+ "anyhow",
+ "chrono",
+ "env_logger",
+ "log",
+ "reqwest",
+ "serde",
+ "toml",
+ "zip",
 ]
 
 [[package]]
@@ -3561,10 +3577,10 @@ dependencies = [
  "slotmap",
  "tracy-client",
  "truvis-asset",
- "truvis-crate-tools",
  "truvis-descriptor-layout-macro",
  "truvis-descriptor-layout-trait",
  "truvis-gfx",
+ "truvis-path",
  "truvis-render-interface",
  "truvis-scene",
  "truvis-shader-binding",
@@ -3584,10 +3600,10 @@ dependencies = [
  "log",
  "slotmap",
  "tracy-client",
- "truvis-crate-tools",
  "truvis-descriptor-layout-macro",
  "truvis-descriptor-layout-trait",
  "truvis-gfx",
+ "truvis-path",
  "truvis-shader-binding",
  "vk-mem",
 ]
@@ -3637,7 +3653,7 @@ dependencies = [
  "bindgen",
  "bytemuck",
  "glam",
- "truvis-crate-tools",
+ "truvis-path",
 ]
 
 [[package]]
@@ -3646,7 +3662,8 @@ version = "0.1.0"
 dependencies = [
  "log",
  "rayon",
- "truvis-crate-tools",
+ "truvis-logs",
+ "truvis-path",
  "walkdir",
 ]
 
@@ -3662,7 +3679,7 @@ dependencies = [
  "log",
  "raw-window-handle",
  "truvis-app",
- "truvis-crate-tools",
+ "truvis-path",
  "winit",
 ]
 

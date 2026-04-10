@@ -183,7 +183,7 @@ struct MyLayout {
 
 ### TruvisPath
 ```rust
-use truvis_crate_tools::resource::TruvisPath;
+use truvis_path::TruvisPath;
 
 let model = TruvisPath::assets_path("sponza.fbx");                      // assets/...
 let texture = TruvisPath::resources_path("uv_checker.png");             // resources/...

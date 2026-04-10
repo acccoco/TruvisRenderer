@@ -7,8 +7,8 @@ use crate::platform::input_state::InputState;
 use ash::vk;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use std::ffi::CStr;
-use truvis_crate_tools::init_log::init_log;
 use truvis_gfx::gfx::Gfx;
+use truvis_logs::init_log;
 use truvis_renderer::renderer::Renderer;
 
 pub fn panic_handler(info: &std::panic::PanicHookInfo) {

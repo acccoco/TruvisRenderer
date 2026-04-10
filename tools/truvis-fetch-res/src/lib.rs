@@ -9,5 +9,3 @@
 //! 支持从 GitHub 下载 zip 文件并解压，可通过 TOML 配置管理。
 
 pub mod fetch_resources;
-pub mod init_log;
-pub mod resource;

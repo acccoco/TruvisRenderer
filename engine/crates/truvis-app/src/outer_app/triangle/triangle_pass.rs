@@ -3,7 +3,6 @@ use std::rc::Rc;
 use ash::vk;
 use itertools::Itertools;
 
-use truvis_crate_tools::resource::TruvisPath;
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_gfx::{
     commands::command_buffer::GfxCommandBuffer,
@@ -13,6 +12,7 @@ use truvis_gfx::{
         shader::GfxShaderStageInfo,
     },
 };
+use truvis_path::TruvisPath;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
 

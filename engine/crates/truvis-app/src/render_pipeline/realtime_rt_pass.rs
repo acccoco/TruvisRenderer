@@ -1,6 +1,5 @@
 use ash::vk;
 use itertools::Itertools;
-use truvis_crate_tools::resource::TruvisPath;
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::commands::barrier::GfxBufferBarrier;
@@ -13,6 +12,7 @@ use truvis_gfx::{
     pipelines::shader::{GfxShaderGroupInfo, GfxShaderModuleCache, GfxShaderStageInfo},
     resources::special_buffers::sbt_buffer::GfxSBTBuffer,
 };
+use truvis_path::TruvisPath;
 use truvis_render_graph::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
@@ -630,15 +630,12 @@ impl RgPass for RealtimeRtRgPass<'_> {
             .get_image_and_view_handle(self.single_frame_image)
             .expect("RealtimeRtRgPass: single_frame_image not found");
 
-        let (gbuffer_a, gbuffer_a_view) = ctx
-            .get_image_and_view_handle(self.gbuffer_a)
-            .expect("RealtimeRtRgPass: gbuffer_a not found");
-        let (gbuffer_b, gbuffer_b_view) = ctx
-            .get_image_and_view_handle(self.gbuffer_b)
-            .expect("RealtimeRtRgPass: gbuffer_b not found");
-        let (gbuffer_c, gbuffer_c_view) = ctx
-            .get_image_and_view_handle(self.gbuffer_c)
-            .expect("RealtimeRtRgPass: gbuffer_c not found");
+        let (gbuffer_a, gbuffer_a_view) =
+            ctx.get_image_and_view_handle(self.gbuffer_a).expect("RealtimeRtRgPass: gbuffer_a not found");
+        let (gbuffer_b, gbuffer_b_view) =
+            ctx.get_image_and_view_handle(self.gbuffer_b).expect("RealtimeRtRgPass: gbuffer_b not found");
+        let (gbuffer_c, gbuffer_c_view) =
+            ctx.get_image_and_view_handle(self.gbuffer_c).expect("RealtimeRtRgPass: gbuffer_c not found");
 
         self.rt_pass.ray_trace(
             self.render_context,

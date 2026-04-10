@@ -20,7 +20,7 @@ path = "src/bin/triangle_app.rs"
 
 [dependencies]
 truvis-app = { workspace = true }
-truvis-crate-tools = { workspace = true }
+truvis-path = {workspace = true}
 
 log = { workspace = true }
 winit = { workspace = true }

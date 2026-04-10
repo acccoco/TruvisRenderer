@@ -12,7 +12,7 @@ use glsl::GlslCompiler;
 use hlsl::HlslCompiler;
 use rayon::prelude::*;
 use slang::SlangCompiler;
-use truvis_crate_tools::init_log::init_log;
+use truvis_logs::init_log;
 
 /// 根据编译器类型获取对应的编译器实例
 fn get_compiler(compiler_type: ShaderCompilerType) -> Box<dyn ShaderCompiler> {

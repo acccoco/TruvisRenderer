@@ -1,8 +1,8 @@
-use crate::resource::TruvisPath;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use truvis_path::TruvisPath;
 
 /// 资源类型
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -138,8 +138,7 @@ impl SceneManager {
         }
 
         // 4. 构建点光源数据
-        let all_point_lights: Vec<gpu::PointLight> =
-            self.all_point_lights.iter().map(|(_, light)| *light).collect();
+        let all_point_lights: Vec<gpu::PointLight> = self.all_point_lights.iter().map(|(_, light)| *light).collect();
 
         RenderData {
             all_instances,

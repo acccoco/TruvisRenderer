@@ -65,14 +65,14 @@ impl Default for DenoiseSettings {
         Self {
             enabled: true,
             sigma_color: 0.1,
-            sigma_depth: 1.0,  // 提高默认值适应大场景
+            sigma_depth: 1.0, // 提高默认值适应大场景
             sigma_normal: 0.5,
-            kernel_radius: 3,  // 提高默认值提升降噪效果
+            kernel_radius: 3, // 提高默认值提升降噪效果
 
             // 增强联合双边滤波参数
             sigma_albedo: 0.1,
             sigma_position: 0.1,
-            scene_scale: 400.0,  // Cornell Box 尺度
+            scene_scale: 400.0, // Cornell Box 尺度
 
             // 粗糙度自适应参数
             roughness_adaptive_enabled: true,

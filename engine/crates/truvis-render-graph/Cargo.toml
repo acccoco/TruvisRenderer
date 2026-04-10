@@ -7,7 +7,7 @@ description = ""
 [dependencies]
 truvis-render-interface = { workspace = true }
 truvis-gfx = { workspace = true }
-truvis-crate-tools = { workspace = true }
+truvis-path = {workspace = true}
 truvis-shader-binding = { workspace = true }
 truvis-scene = { workspace = true }
 truvis-asset = { workspace = true }

@@ -1,6 +1,5 @@
 use ash::vk;
 use std::{mem::offset_of, rc::Rc};
-use truvis_crate_tools::resource::TruvisPath;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::resources::layout::GfxVertexLayout;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
@@ -12,6 +11,7 @@ use truvis_gfx::{
         rendering_info::GfxRenderingInfo,
     },
 };
+use truvis_path::TruvisPath;
 use truvis_render_graph::render_context::RenderContext;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::pipeline_settings::FrameLabel;

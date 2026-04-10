@@ -1,5 +1,5 @@
 use bindgen::callbacks::ItemInfo;
-use truvis_crate_tools::resource::TruvisPath;
+use truvis_path::TruvisPath;
 
 // 创建自定义回调实现
 #[derive(Debug)]

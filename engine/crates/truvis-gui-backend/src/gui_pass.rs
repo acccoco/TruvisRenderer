@@ -5,7 +5,6 @@ use imgui::TextureId;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::rc::Rc;
-use truvis_crate_tools::resource::TruvisPath;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::resources::layout::GfxVertexLayout;
 use truvis_gfx::{
@@ -15,6 +14,7 @@ use truvis_gfx::{
         shader::GfxShaderStageInfo,
     },
 };
+use truvis_path::TruvisPath;
 use truvis_render_graph::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;

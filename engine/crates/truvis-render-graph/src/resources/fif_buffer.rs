@@ -520,10 +520,7 @@ impl FifBuffers {
     /// 获取当前帧的单帧 RT 输出图像句柄
     #[inline]
     pub fn single_frame_rt_handle(&self, frame_label: FrameLabel) -> (GfxImageHandle, GfxImageViewHandle) {
-        (
-            self.single_frame_rt_images[*frame_label],
-            self.single_frame_rt_views[*frame_label],
-        )
+        (self.single_frame_rt_images[*frame_label], self.single_frame_rt_views[*frame_label])
     }
 
     /// 获取单帧 RT 输出图像的格式

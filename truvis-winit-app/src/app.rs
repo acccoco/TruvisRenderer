@@ -2,7 +2,7 @@ use crate::winit_event_adapter::WinitEventAdapter;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use truvis_app::outer_app::base::OuterApp;
 use truvis_app::render_app::RenderApp;
-use truvis_crate_tools::resource::TruvisPath;
+use truvis_path::TruvisPath;
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::Window;
 use winit::{

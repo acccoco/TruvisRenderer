@@ -9,8 +9,7 @@ description = "通过 bindgen 生成 shader 对应的 rust 数据结构"
 bytemuck = { workspace = true }
 glam = { workspace = true }
 
-
 [build-dependencies]
-truvis-crate-tools = { workspace = true }
+truvis-path = { workspace = true }
 
 bindgen = { workspace = true }

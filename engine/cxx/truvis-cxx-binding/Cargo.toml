@@ -9,6 +9,6 @@ description = "为 Truvis 提供 Cxx 绑定"
 
 
 [build-dependencies]
-truvis-crate-tools = { workspace = true }
+truvis-path = { workspace = true }
 
 bindgen = { workspace = true }
