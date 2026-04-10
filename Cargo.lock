@@ -6200,6 +6200,7 @@ dependencies = [
  "reqwest 0.11.27",
  "serde",
  "toml 0.8.2",
+ "truvis-path",
  "zip",
 ]
 
@@ -6269,6 +6270,15 @@ dependencies = [
  "truvis-render-interface",
  "truvis-shader-binding",
  "truvis-utils",
+]
+
+[[package]]
+name = "truvis-path"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "toml 0.8.2",
 ]
 
 [[package]]

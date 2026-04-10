@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     # 通用部分
     "truvis-crate-tools",
+    "tools/truvis-path",
     "engine/crates/truvis-utils",
     # RenderApp 层级
     "engine/crates/truvis-gfx",
@@ -41,6 +42,7 @@ panic = 'abort'    # panic 时直接终止，进一步减小体积
 
 [workspace.dependencies]
 truvis-crate-tools = { path = "truvis-crate-tools" }
+truvis-path = { path = "tools/truvis-path" }
 truvis-utils = { path = "engine/crates/truvis-utils" }
 truvis-gfx = { path = "engine/crates/truvis-gfx" }
 truvis-render-interface = { path = "engine/crates/truvis-render-interface" }
