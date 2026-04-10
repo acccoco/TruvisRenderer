@@ -16,13 +16,13 @@ members = [
     # imgui 后端
     "engine/crates/truvis-gui-backend",
     # shader 绑定相关
-    "engine/crates/truvis-shader/truvis-descriptor-layout-macro",
-    "engine/crates/truvis-shader/truvis-descriptor-layout-trait",
-    "engine/crates/truvis-shader/truvis-shader-binding",
-    "engine/crates/truvis-shader/truvis-shader-build",
+    "engine/crates/truvis-descriptor-layout/truvis-descriptor-layout-macro",
+    "engine/crates/truvis-descriptor-layout/truvis-descriptor-layout-trait",
+    "engine/shader/truvis-shader-binding",
+    "engine/shader/truvis-shader-build",
     # cxx 绑定相关
-    "engine/crates/truvis-cxx/truvis-cxx-binding",
-    "engine/crates/truvis-cxx/truvis-cxx-build",
+    "engine/cxx/truvis-cxx-binding",
+    "engine/cxx/truvis-cxx-build",
     # App
     "truvis-winit-app",
     "truvis-tauri-app/src-tauri",
@@ -52,12 +52,12 @@ truvis-scene = { path = "engine/crates/truvis-scene" }
 truvis-renderer = { path = "engine/crates/truvis-renderer" }
 truvis-app = { path = "engine/crates/truvis-app" }
 truvis-gui-backend = { path = "engine/crates/truvis-gui-backend" }
-truvis-descriptor-layout-macro = { path = "engine/crates/truvis-shader/truvis-descriptor-layout-macro" }
-truvis-descriptor-layout-trait = { path = "engine/crates/truvis-shader/truvis-descriptor-layout-trait" }
-truvis-shader-binding = { path = "engine/crates/truvis-shader/truvis-shader-binding" }
-truvis-shader-build = { path = "engine/crates/truvis-shader/truvis-shader-build" }
-truvis-cxx-binding = { path = "engine/crates/truvis-cxx/truvis-cxx-binding" }
-truvis-cxx-build = { path = "engine/crates/truvis-cxx/truvis-cxx-build" }
+truvis-descriptor-layout-macro = { path = "engine/crates/truvis-descriptor-layout/truvis-descriptor-layout-macro" }
+truvis-descriptor-layout-trait = { path = "engine/crates/truvis-descriptor-layout/truvis-descriptor-layout-trait" }
+truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
+truvis-shader-build = { path = "engine/shader/truvis-shader-build" }
+truvis-cxx-binding = { path = "engine/cxx/truvis-cxx-binding" }
+truvis-cxx-build = { path = "engine/cxx/truvis-cxx-build" }
 
 
 

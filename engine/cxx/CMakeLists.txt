@@ -13,9 +13,9 @@ if (MSVC)
     add_compile_options(/utf-8)
 endif()
 
-add_subdirectory(truvixx-assimp)
-add_subdirectory(truvixx-interface)
-add_subdirectory(truvixx-gfx)
+add_subdirectory(mods/truvixx-assimp)
+add_subdirectory(mods/truvixx-interface)
+add_subdirectory(mods/truvixx-gfx)
 
 
 # 在配置完成后复制 compile_commands.json 到 build 目录

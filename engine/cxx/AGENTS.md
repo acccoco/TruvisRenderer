@@ -16,10 +16,10 @@ truvixx-interface.dll (C FFI 层, SHARED)
 ### 关键文件
 | 文件 | 职责 |
 |------|------|
-| [truvixx-interface/include/TruvixxInterface/truvixx_api.h](truvixx-interface/include/TruvixxInterface/truvixx_api.h) | **FFI 入口**：所有 `extern "C"` 函数声明，Rust 调用此头文件 |
-| [truvixx-assimp/include/TruvixxAssimp/base_type.h](truvixx-assimp/include/TruvixxAssimp/base_type.h) | C 兼容的 POD 类型：`TruvixxFloat4x4`, `TruvixxFloat3` 等 |
-| [truvixx-assimp/include/TruvixxAssimp/scene_importer.hpp](truvixx-assimp/include/TruvixxAssimp/scene_importer.hpp) | Assimp 封装：`SceneImporter` 类 |
-| [truvixx-assimp/include/TruvixxAssimp/scene_data.hpp](truvixx-assimp/include/TruvixxAssimp/scene_data.hpp) | 内部 C++ 数据结构：`SceneData`, `MeshInfo`, `MaterialData` |
+| [truvixx-interface/include/TruvixxInterface/truvixx_api.h](mods/truvixx-interface/include/TruvixxInterface/truvixx_api.h) | **FFI 入口**：所有 `extern "C"` 函数声明，Rust 调用此头文件 |
+| [truvixx-assimp/include/TruvixxAssimp/base_type.h](mods/truvixx-assimp/include/TruvixxAssimp/base_type.h) | C 兼容的 POD 类型：`TruvixxFloat4x4`, `TruvixxFloat3` 等 |
+| [truvixx-assimp/include/TruvixxAssimp/scene_importer.hpp](mods/truvixx-assimp/include/TruvixxAssimp/scene_importer.hpp) | Assimp 封装：`SceneImporter` 类 |
+| [truvixx-assimp/include/TruvixxAssimp/scene_data.hpp](mods/truvixx-assimp/include/TruvixxAssimp/scene_data.hpp) | 内部 C++ 数据结构：`SceneData`, `MeshInfo`, `MaterialData` |
 
 ## 构建命令
 

@@ -5,10 +5,10 @@ fn gen_rust_binding() {
     let cxx_root_path = TruvisPath::cxx_root_path();
 
     let bindings = bindgen::Builder::default()
-        .header(cxx_root_path.join("truvixx-interface/include/TruvixxInterface/lib.h").to_str().unwrap())
+        .header(cxx_root_path.join("mods/truvixx-interface/include/TruvixxInterface/lib.h").to_str().unwrap())
         .clang_args([
-            format!("-I{}", cxx_root_path.join("truvixx-interface/include").to_str().unwrap()),
-            format!("-I{}", cxx_root_path.join("truvixx-assimp/include").to_str().unwrap()),
+            format!("-I{}", cxx_root_path.join("mods/truvixx-interface/include").to_str().unwrap()),
+            format!("-I{}", cxx_root_path.join("mods/truvixx-assimp/include").to_str().unwrap()),
         ])
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
