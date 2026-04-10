@@ -25,7 +25,6 @@ members = [
     "engine/cxx/truvis-cxx-build",
     # App
     "truvis-winit-app",
-    "truvis-tauri-app/src-tauri",
 ]
 
 [profile.dev]
@@ -77,13 +76,6 @@ ash-window = "0.13.0"
 # 让 winit 可以和图形库通信
 raw-window-handle = "0.6.2"
 imgui = { version = "0.12.0", features = ["docking"] }
-
-###########################################################
-# Tauri
-###########################################################
-tauri-build = { version = "2", features = [] }
-tauri = { version = "2", features = ["unstable"] }
-tauri-plugin-opener = "2"
 
 ###########################################################
 # 资源加载与序列化 (Asset Loading & Serialization)
