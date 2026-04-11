@@ -10,9 +10,3 @@ log = { workspace = true }
 env_logger = { workspace = true }
 anstyle = { workspace = true }
 chrono = { workspace = true }
-
-reqwest = { workspace = true }
-serde = { workspace = true }
-zip = { workspace = true }
-toml = { workspace = true }
-anyhow = { workspace = true }

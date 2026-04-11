@@ -2,7 +2,7 @@ use ash::vk;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_path::TruvisPath;
 use truvis_render_graph::compute_pass::ComputePass;
-use truvis_render_graph::render_context::RenderContext;
+use truvis_renderer::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::bindless_manager::BindlessUavHandle;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
@@ -53,9 +53,11 @@ impl DenoiseAccumPass {
     }
 
     pub fn exec(&self, cmd: &GfxCommandBuffer, data: DenoiseAccumPassData, render_context: &RenderContext) {
+        let frame_label = render_context.frame_counter.frame_label();
         self.denoise_accum_pass.exec(
             cmd,
-            render_context,
+            frame_label,
+            &render_context.global_descriptor_sets,
             &gpu::denoise_accum::PushConstant {
                 single_frame_input: data.single_frame_bindless_uav_handle.0,
                 accum_output: data.accum_bindless_uav_handle.0,

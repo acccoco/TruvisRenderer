@@ -1,6 +1,6 @@
-use crate::resources::fif_buffer::FifBuffers;
 use truvis_asset::asset_hub::AssetHub;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
+use truvis_render_graph::resources::fif_buffer::FifBuffers;
 use truvis_render_interface::bindless_manager::BindlessManager;
 use truvis_render_interface::frame_counter::FrameCounter;
 use truvis_render_interface::gfx_resource_manager::GfxResourceManager;

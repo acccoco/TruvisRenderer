@@ -8,4 +8,5 @@ pub mod present;
 pub mod subsystems;
 
 pub mod model_loader;
+pub mod render_context;
 pub mod renderer;

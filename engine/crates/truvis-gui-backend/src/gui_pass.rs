@@ -15,10 +15,10 @@ use truvis_gfx::{
     },
 };
 use truvis_path::TruvisPath;
-use truvis_render_graph::render_context::RenderContext;
-use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
+use truvis_render_interface::bindless_manager::BindlessManager;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::handles::GfxImageViewHandle;
+use truvis_render_interface::pipeline_settings::FrameLabel;
 use truvis_shader_binding::gpu;
 use truvis_shader_binding::gpu::SrvHandle;
 use truvis_utils::count_indexed_array;
@@ -94,7 +94,9 @@ impl GuiPass {
 impl GuiPass {
     pub fn draw(
         &self,
-        render_context: &RenderContext,
+        frame_label: FrameLabel,
+        global_descriptor_sets: &GlobalDescriptorSets,
+        bindless_manager: &BindlessManager,
         canvas_color_view: vk::ImageView,
         canvas_extent: vk::Extent2D,
         cmd: &GfxCommandBuffer,
@@ -143,14 +145,11 @@ impl GuiPass {
             _padding_1: Default::default(),
         };
 
-        let frame_label = render_context.frame_counter.frame_label();
-
-        let render_descriptor_sets = &render_context.global_descriptor_sets;
         cmd.bind_descriptor_sets(
             vk::PipelineBindPoint::GRAPHICS,
             self.pipeline_layout.handle(),
             0,
-            &render_descriptor_sets.global_sets(frame_label),
+            &global_descriptor_sets.global_sets(frame_label),
             None,
         );
 
@@ -170,8 +169,6 @@ impl GuiPass {
         let mut last_texture_id: Option<imgui::TextureId> = None;
         let clip_offset = draw_data.display_pos;
         let clip_scale = draw_data.framebuffer_scale;
-
-        let bindless_manager = &render_context.bindless_manager;
 
         // 简而言之：对于每个 command，设置正确的 vertex, index, texture, scissor 即可
         for draw_list in draw_data.draw_lists() {
@@ -246,44 +243,3 @@ impl GuiPass {
     }
 }
 
-pub struct GuiRgPass<'a> {
-    pub gui_pass: &'a GuiPass,
-
-    // TODO 暂时使用这个肮脏的实现
-    pub render_context: &'a RenderContext,
-
-    pub ui_draw_data: &'a imgui::DrawData,
-    pub gui_mesh: &'a GuiMesh,
-    pub tex_map: &'a HashMap<imgui::TextureId, GfxImageViewHandle>,
-
-    pub canvas_color: RgImageHandle,
-    pub canvas_extent: vk::Extent2D,
-}
-
-impl RgPass for GuiRgPass<'_> {
-    fn setup(&mut self, builder: &mut RgPassBuilder) {
-        builder.read_write_image(self.canvas_color, RgImageState::COLOR_ATTACHMENT_READ_WRITE);
-    }
-
-    fn execute(&self, ctx: &RgPassContext<'_>) {
-        if self.ui_draw_data.total_vtx_count == 0 {
-            return;
-        }
-
-        let cmd = ctx.cmd;
-
-        let canvas_color_view_handle =
-            ctx.get_image_view_handle(self.canvas_color).expect("GuiPass: canvas_color not found");
-        let canvas_color_view = ctx.resource_manager.get_image_view(canvas_color_view_handle).unwrap();
-
-        self.gui_pass.draw(
-            self.render_context,
-            canvas_color_view.handle(),
-            self.canvas_extent,
-            cmd,
-            self.gui_mesh,
-            self.ui_draw_data,
-            self.tex_map,
-        );
-    }
-}

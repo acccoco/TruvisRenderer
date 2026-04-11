@@ -1,5 +1,5 @@
 use ash::vk;
-use truvis_render_graph::render_context::RenderContext;
+use truvis_renderer::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageState, RgSemaphoreInfo};
 use truvis_render_graph::resources::fif_buffer::FifBuffers;
 
@@ -12,7 +12,8 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::Gfx;
 use truvis_gfx::swapchain::swapchain::GfxSwapchain;
-use truvis_gui_backend::gui_pass::{GuiPass, GuiRgPass};
+use crate::gui_rg_pass::GuiRgPass;
+use truvis_gui_backend::gui_pass::GuiPass;
 use truvis_render_interface::cmd_allocator::CmdAllocator;
 use truvis_render_interface::frame_counter::FrameCounter;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;

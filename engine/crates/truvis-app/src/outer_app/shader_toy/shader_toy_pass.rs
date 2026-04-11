@@ -14,7 +14,7 @@ use truvis_gfx::{
     },
 };
 use truvis_path::TruvisPath;
-use truvis_render_graph::render_context::RenderContext;
+use truvis_renderer::render_context::RenderContext;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
 

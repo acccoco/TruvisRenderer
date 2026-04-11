@@ -5,11 +5,52 @@
 ## 依赖层次
 
 ```
+Layer 0 (Foundation)
+├── truvis-utils
+├── truvis-logs
+├── truvis-path
+├── truvis-shader-binding
+└── truvis-descriptor-layout-*
+
+Layer 1 (RHI)
+└── truvis-gfx
+
+Layer 2 (Resource Management)
+└── truvis-render-interface
+
+Layer 3 (Render Graph / Domain)    ← 同层，互不依赖
+├── truvis-render-graph            ← 纯 pass 编排，不依赖 scene/asset
+├── truvis-asset
+├── truvis-scene
+└── truvis-gui-backend             ← 纯 Vulkan 录制，不依赖 render-graph
+
+Layer 4 (Integration)
+└── truvis-renderer                ← 组装 RenderContext，整合 scene/asset/graph/gui
+
+Layer 5 (App Framework)
+└── truvis-app                     ← OuterApp trait + render pipeline + GuiRgPass 适配
+
+Layer 6 (Binaries)
+└── truvis-winit-app               ← 具体可执行文件
+```
+
+**核心依赖链（主干）：**
+
+```
 truvis-gfx
   └── truvis-render-interface
         └── truvis-render-graph
               └── truvis-renderer
                     └── truvis-app
+                          └── truvis-winit-app
+```
+
+**领域模块（与 render-graph 同层，依赖 gfx + render-interface）：**
+
+```
+truvis-asset        ── gfx, render-interface
+truvis-scene        ── gfx, render-interface, asset
+truvis-gui-backend  ── gfx, render-interface（不依赖 render-graph）
 ```
 
 ---
@@ -28,21 +69,23 @@ GPU 资源管理边界，包含：
 - **`StageBufferManager`**：staging buffer 上传管理。
 
 ### `truvis-render-graph`
-声明式 RenderGraph，自动推导图像屏障和信号量同步：
+声明式 RenderGraph，自动推导图像屏障和信号量同步。**纯 pass 编排层，不依赖 scene/asset 等领域模块。**
 - **`RenderGraphBuilder`**：构建 Pass 依赖图，声明资源读写关系。
-- **`RenderContext`**：编译后的图，负责在 CommandBuffer 上执行 Pass 并插入正确的 `vkCmdPipelineBarrier2`。
+- **`ComputePass`**：通用 compute pass 封装，接收 `FrameLabel` 和 `GlobalDescriptorSets` 作为参数（而非 `RenderContext`）。
 - 支持 Timeline Semaphore 和 Binary Semaphore 的导入/导出。
 
 ### `truvis-renderer`
-高层渲染管理器：
-- **`Renderer`**：统一管理交换链（`RenderPresent`）、`RenderContext`、相机（`Camera`）等核心子系统，驱动每帧渲染循环。
+高层渲染管理器，负责组装所有子系统：
+- **`Renderer`**：统一管理交换链（`RenderPresent`）、相机（`Camera`）等核心子系统，驱动每帧渲染循环。
+- **`RenderContext`**：渲染期间不可变的全局状态聚合体，包含 `SceneManager`、`AssetHub`、`GpuScene`、`BindlessManager`、`GlobalDescriptorSets` 等。定义在此层（而非 render-graph 层），确保层次隔离。
 - **`RenderPresent`**：交换链获取、呈现和重建（窗口 Resize）。
 
 ### `truvis-app`
 应用框架层，面向应用开发者：
 - **`OuterApp`** trait：定义 `init / update / draw / draw_ui / on_window_resized` 接口，开发者实现此 trait 即可构建渲染应用。
-- 内置 GUI 前端集成（ImGui）和平台抽象。
-- 包含 `triangle`、`shader_toy`、`rt_cornell`、`rt_sponza` 等参考实现。
+- **`GuiRgPass`**：ImGui 的 render graph 适配器，将 `GuiPass`（来自 gui-backend）包装为 `RgPass`。
+- 内置 GUI 前端集成和平台抽象。
+- 包含 `triangle`、`shader_toy`、`rt_cornell`、`rt_sponza` 等参考实现及 render pipeline。
 
 ### `truvis-scene`
 场景数据管理：
@@ -61,7 +104,7 @@ GPU 资源管理边界，包含：
 - **`AssetUploadManager`**：将 CPU 数据上传到 GPU（配合 staging buffer）。
 
 ### `truvis-gui-backend`
-ImGui Vulkan 后端实现，负责字体纹理上传和 UI DrawData 的 GPU 渲染。
+ImGui Vulkan 后端实现，负责字体纹理上传和 UI DrawData 的 GPU 渲染。**纯 Vulkan 录制层，不依赖 render-graph。** `GuiPass::draw` 接收显式参数（`FrameLabel`、`GlobalDescriptorSets`、`BindlessManager`）而非 `RenderContext`。Render graph 适配（`GuiRgPass`）由上层 `truvis-app` 负责。
 
 ### `truvis-cxx`
 C++ FFI 桥接层：
@@ -69,4 +112,4 @@ C++ FFI 桥接层：
 - `build.rs` 自动构建 C++ 库并将 DLL 复制到 `target/`。
 
 ### `truvis-utils`
-通用工具库，当前提供 `NamedArray`（按名称索引的固定大小数组）。
+通用工具库，当前提供 `NamedArray`（按名称索引的固定大小数组）及 `enumed_map!` / `count_indexed_array!` 等宏。

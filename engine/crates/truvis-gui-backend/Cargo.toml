@@ -9,7 +9,6 @@ description = "imgui GUI 后端实现"
 truvis-gfx = { workspace = true }
 truvis-render-interface = { workspace = true }
 truvis-path = { workspace = true }
-truvis-render-graph = { workspace = true }
 truvis-shader-binding = { workspace = true }
 truvis-utils = { workspace = true }
 

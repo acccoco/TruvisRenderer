@@ -1,10 +1,10 @@
 use std::ffi::CStr;
 
-use crate::render_context::RenderContext;
 use ash::vk;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::{commands::command_buffer::GfxCommandBuffer, gfx::Gfx, pipelines::shader::GfxShaderModule};
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
+use truvis_render_interface::pipeline_settings::FrameLabel;
 
 /// 泛型参数 P 表示 compute shader 的参数，以 push constant 的形式传入 shader
 pub struct ComputePass<P: Sized> {
@@ -53,8 +53,14 @@ impl<P: Sized> ComputePass<P> {
         }
     }
 
-    pub fn exec(&self, cmd: &GfxCommandBuffer, render_context: &RenderContext, params: &P, group_cnt: glam::UVec3) {
-        let frame_label = render_context.frame_counter.frame_label();
+    pub fn exec(
+        &self,
+        cmd: &GfxCommandBuffer,
+        frame_label: FrameLabel,
+        global_descriptor_sets: &GlobalDescriptorSets,
+        params: &P,
+        group_cnt: glam::UVec3,
+    ) {
         cmd.cmd_bind_pipeline(vk::PipelineBindPoint::COMPUTE, self.pipeline);
 
         cmd.cmd_push_constants(self.pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, BytesConvert::bytes_of(params));
@@ -62,11 +68,10 @@ impl<P: Sized> ComputePass<P> {
             vk::PipelineBindPoint::COMPUTE,
             self.pipeline_layout,
             0,
-            &render_context.global_descriptor_sets.global_sets(frame_label),
+            &global_descriptor_sets.global_sets(frame_label),
             None,
         );
 
-        // 执行计算
         cmd.cmd_dispatch(group_cnt);
     }
 

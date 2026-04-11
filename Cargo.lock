@@ -3534,7 +3534,6 @@ dependencies = [
  "log",
  "truvis-gfx",
  "truvis-path",
- "truvis-render-graph",
  "truvis-render-interface",
  "truvis-shader-binding",
  "truvis-utils",
@@ -3545,14 +3544,9 @@ name = "truvis-logs"
 version = "0.1.0"
 dependencies = [
  "anstyle",
- "anyhow",
  "chrono",
  "env_logger",
  "log",
- "reqwest",
- "serde",
- "toml",
- "zip",
 ]
 
 [[package]]
@@ -3576,13 +3570,11 @@ dependencies = [
  "petgraph",
  "slotmap",
  "tracy-client",
- "truvis-asset",
  "truvis-descriptor-layout-macro",
  "truvis-descriptor-layout-trait",
  "truvis-gfx",
  "truvis-path",
  "truvis-render-interface",
- "truvis-scene",
  "truvis-shader-binding",
  "truvis-utils",
  "vk-mem",

@@ -18,7 +18,7 @@ use truvis_gfx::{
     },
     gfx::Gfx,
 };
-use truvis_render_graph::render_context::RenderContext;
+use crate::render_context::RenderContext;
 use truvis_render_graph::resources::fif_buffer::FifBuffers;
 use truvis_render_interface::bindless_manager::BindlessManager;
 use truvis_render_interface::cmd_allocator::CmdAllocator;

@@ -2,7 +2,7 @@ use ash::vk;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_path::TruvisPath;
 use truvis_render_graph::compute_pass::ComputePass;
-use truvis_render_graph::render_context::RenderContext;
+use truvis_renderer::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::handles::GfxImageViewHandle;
@@ -34,9 +34,11 @@ impl SdrPass {
         let src_image_bindless_handle = render_context.bindless_manager.get_shader_uav_handle(data.src_image);
         let dst_image_bindless_handle = render_context.bindless_manager.get_shader_uav_handle(data.dst_image);
 
+        let frame_label = render_context.frame_counter.frame_label();
         self.sdr_pass.exec(
             cmd,
-            render_context,
+            frame_label,
+            &render_context.global_descriptor_sets,
             &gpu::sdr::PushConstant {
                 src_image: src_image_bindless_handle.0,
                 dst_image: dst_image_bindless_handle.0,

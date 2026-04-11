@@ -9,8 +9,6 @@ truvis-render-interface = { workspace = true }
 truvis-gfx = { workspace = true }
 truvis-path = {workspace = true}
 truvis-shader-binding = { workspace = true }
-truvis-scene = { workspace = true }
-truvis-asset = { workspace = true }
 truvis-descriptor-layout-trait = { workspace = true }
 truvis-descriptor-layout-macro = { workspace = true }
 truvis-utils = { workspace = true }
