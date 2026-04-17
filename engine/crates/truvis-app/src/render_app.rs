@@ -1,7 +1,6 @@
 use crate::gui_front::GuiHost;
 use crate::outer_app::base::OuterApp;
 use crate::platform::camera_controller::CameraController;
-use crate::platform::input_event::InputEvent;
 use crate::platform::input_manager::InputManager;
 use crate::platform::input_state::InputState;
 use ash::vk;
@@ -79,7 +78,6 @@ impl RenderApp {
         init_log();
 
         tracy_client::Client::start();
-        tracy_client::set_thread_name!("RenderThread");
     }
 }
 // destroy
@@ -99,9 +97,23 @@ impl RenderApp {
         self.renderer.time_to_render()
     }
 
-    pub fn handle_event(&mut self, event: &InputEvent) {
-        // 使用InputManager处理窗口事件
-        self.input_manager.push_event(event.clone());
+    /// 渲染线程轮询调用：若传入的 `new_size` 与 `last_built_size` 不一致，
+    /// 重建 swapchain 并通知 `OuterApp`。调用方负责保证 `new_size` 非零。
+    ///
+    /// 与 `VK_ERROR_OUT_OF_DATE_KHR` 后续合并到同一入口时，仅需把 out-of-date
+    /// 触发点翻译为"将 `*last_built_size` 置为 `[0, 0]`"即可再次触发重建。
+    pub fn recreate_swapchain_if_needed(&mut self, new_size: [u32; 2], last_built_size: &mut [u32; 2]) {
+        if new_size == *last_built_size {
+            return;
+        }
+        log::debug!("swapchain rebuild: {:?} -> {:?}", *last_built_size, new_size);
+
+        self.renderer.render_present.as_mut().unwrap().update_window_size(new_size);
+        if self.renderer.need_resize() {
+            self.renderer.recreate_swapchain();
+            self.outer_app.as_mut().unwrap().on_window_resized(&mut self.renderer);
+        }
+        *last_built_size = new_size;
     }
 
     fn build_ui(&mut self) {
@@ -230,35 +242,14 @@ impl RenderApp {
                 // imgui 处理事件
                 // TODO imgui 是否吞掉事件
                 self.gui_host.handle_event(event);
-
-                // resize 相关事件
-                if let InputEvent::Resized {
-                    physical_width,
-                    physical_height,
-                } = event
-                {
-                    if *physical_width < 1 || *physical_height < 1 {
-                        log::error!("Invalid window size: {}x{}", physical_width, physical_height);
-                        continue;
-                    } else {
-                        self.renderer
-                            .render_present
-                            .as_mut()
-                            .unwrap()
-                            .update_window_size([*physical_width, *physical_height]);
-                    }
-                }
             }
 
             // input manager 处理事件
             self.input_manager.process_events();
         }
 
-        // resize
-        if self.renderer.need_resize() {
-            self.renderer.recreate_swapchain();
-            self.outer_app.as_mut().unwrap().on_window_resized(&mut self.renderer);
-        }
+        // swapchain 重建由 render_loop 通过 `recreate_swapchain_if_needed` 触发；
+        // 这里仅更新 frame settings 以同步最新 extent。
         self.renderer.update_frame_settings();
 
         // GPU 帧的开始

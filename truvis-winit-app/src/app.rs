@@ -1,35 +1,64 @@
-use crate::winit_event_adapter::WinitEventAdapter;
+use std::panic::{self, AssertUnwindSafe};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::thread::{self, JoinHandle};
+
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use truvis_app::outer_app::base::OuterApp;
 use truvis_app::render_app::RenderApp;
 use truvis_path::TruvisPath;
+use winit::application::ApplicationHandler;
+use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
+use winit::event_loop::ActiveEventLoop;
 use winit::platform::windows::WindowAttributesExtWindows;
-use winit::window::Window;
-use winit::{
-    application::ApplicationHandler,
-    event::{DeviceEvent, DeviceId, StartCause, WindowEvent},
-    event_loop::ActiveEventLoop,
-    window::WindowId,
-};
+use winit::window::{Window, WindowId};
+
+use crate::render_loop::render_loop;
+use crate::shared::{RenderInitMsg, SendWrapper, SharedState, pack_size};
+use crate::winit_event_adapter::WinitEventAdapter;
 
 pub struct UserEvent;
 
-pub struct WinitApp {
-    render_app: RenderApp,
+/// OuterApp 工厂闭包类型。
+///
+/// 主线程 own 的 `OuterApp` trait 对象通常包含 `Rc` 等 `!Send` 字段，因此
+/// 无法直接跨线程传递；让调用方提供 `FnOnce() -> Box<dyn OuterApp> + Send`
+/// 工厂，由渲染线程调用构造，规避 `dyn OuterApp: !Send` 的问题。
+pub type OuterAppFactory = Box<dyn FnOnce() -> Box<dyn OuterApp> + Send + 'static>;
 
+/// winit 主线程的 app handler。
+///
+/// 生命周期：
+/// - `resumed` 中创建 `Window` 并 spawn 渲染线程；
+/// - `window_event` 将事件转发到 channel、resize 写入 atomic、`CloseRequested` 设置 exit；
+/// - `about_to_wait` 观察到 `render_finished` 时调 `event_loop.exit()`；
+/// - `run_app` 返回后 `destroy()` join 渲染线程并在最后 drop `Window`。
+pub struct WinitApp {
     window: Option<Window>,
+
+    shared: Option<Arc<SharedState>>,
+
+    /// 仅在 `resumed` 前有值；spawn 时 `take()` 后交给渲染线程。
+    outer_app_factory: Option<OuterAppFactory>,
+
+    render_thread: Option<JoinHandle<()>>,
 }
-// 总的 main 函数
+
 impl WinitApp {
-    /// 整个程序的入口
-    pub fn run(outer_app: Box<dyn OuterApp>) {
+    /// 程序入口。`outer_app_factory` 在渲染线程上调用一次。
+    pub fn run<F>(outer_app_factory: F)
+    where
+        F: FnOnce() -> Box<dyn OuterApp> + Send + 'static,
+    {
         RenderApp::init_env();
 
         let event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event().build().unwrap();
 
         let mut app = Self {
-            render_app: RenderApp::new(event_loop.raw_display_handle().unwrap(), outer_app),
             window: None,
+            shared: None,
+            outer_app_factory: Some(Box::new(outer_app_factory)),
+            render_thread: None,
         };
 
         event_loop.run_app(&mut app).unwrap();
@@ -37,24 +66,6 @@ impl WinitApp {
         log::info!("end run.");
 
         app.destroy();
-    }
-}
-// new & init
-impl WinitApp {
-    /// 在 window 创建之后调用，初始化 Renderer 和 GUI
-    fn init_after_window(&mut self, event_loop: &ActiveEventLoop) {
-        let window = Self::create_window(event_loop, "Truvis".to_string(), [1200.0, 800.0]);
-
-        let window_size = window.inner_size();
-
-        self.render_app.init_after_window(
-            window.raw_display_handle().unwrap(),
-            window.raw_window_handle().unwrap(),
-            window.scale_factor(),
-            [window_size.width, window_size.height],
-        );
-
-        self.window = Some(window);
     }
 
     fn create_window(event_loop: &ActiveEventLoop, window_title: String, window_extent: [f64; 2]) -> Window {
@@ -80,27 +91,77 @@ impl WinitApp {
 
         event_loop.create_window(window_attr).unwrap()
     }
-}
-// destroy
-impl WinitApp {
-    fn destroy(mut self) {
-        self.render_app.destroy();
-        self.window = None;
-    }
-}
-// 各种 winit 的事件处理
-impl ApplicationHandler<UserEvent> for WinitApp {
-    fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: StartCause) {
-        // TODO 确认一下发送时机
-        // TODO 可以在此处更新 timer
+
+    /// 在 `resumed` 中创建 window 并 spawn 渲染线程。
+    fn init_after_window(&mut self, event_loop: &ActiveEventLoop) {
+        let window = Self::create_window(event_loop, "Truvis".to_string(), [1200.0, 800.0]);
+        let window_size = window.inner_size();
+        let initial_size = [window_size.width, window_size.height];
+
+        let shared = Arc::new(SharedState::new(initial_size));
+
+        let init_msg = RenderInitMsg {
+            raw_display: SendWrapper(window.raw_display_handle().unwrap()),
+            raw_window: SendWrapper(window.raw_window_handle().unwrap()),
+            scale_factor: window.scale_factor(),
+            initial_size,
+        };
+
+        let factory = self.outer_app_factory.take().expect("outer_app_factory already consumed");
+        let shared_for_thread = shared.clone();
+
+        let join_handle = thread::Builder::new()
+            .name("RenderThread".to_string())
+            .spawn(move || {
+                let shared_in_thread = shared_for_thread;
+                let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                    let outer_app = factory();
+                    render_loop(shared_in_thread.clone(), init_msg, outer_app);
+                }));
+                // 无论 panic 与否，都必须让主线程观察到退出信号，否则 about_to_wait 死循环
+                if let Err(payload) = result {
+                    log::error!("RenderThread panicked; capturing payload for main thread resume.");
+                    if let Ok(mut slot) = shared_in_thread.panic_payload.lock() {
+                        *slot = Some(payload);
+                    }
+                }
+                shared_in_thread.exit.store(true, Ordering::Release);
+                shared_in_thread.render_finished.store(true, Ordering::Release);
+            })
+            .expect("failed to spawn RenderThread");
+
+        self.window = Some(window);
+        self.shared = Some(shared);
+        self.render_thread = Some(join_handle);
     }
 
-    // 建议在这里创建 window 和 Renderer
+    /// `run_app` 返回后调用：先 join 渲染线程（此时 Vulkan 资源已销毁），
+    /// 再 drop window；最后若渲染线程曾 panic 则 resume 到主线程。
+    fn destroy(mut self) {
+        if let Some(handle) = self.render_thread.take() {
+            if let Err(e) = handle.join() {
+                log::error!("RenderThread join returned Err: {:?}", e);
+            }
+        }
+
+        // Window 必须在 surface 销毁（渲染线程销毁 Renderer 时完成）之后 drop。
+        self.window = None;
+
+        if let Some(shared) = self.shared.take() {
+            let payload = shared.panic_payload.lock().ok().and_then(|mut g| g.take());
+            if let Some(payload) = payload {
+                panic::resume_unwind(payload);
+            }
+        }
+    }
+}
+
+impl ApplicationHandler<UserEvent> for WinitApp {
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: StartCause) {}
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         assert!(self.window.is_none(), "window should be None when resumed.");
-
         log::info!("winit event: resumed");
-
         self.init_after_window(event_loop);
     }
 
@@ -108,29 +169,47 @@ impl ApplicationHandler<UserEvent> for WinitApp {
         todo!()
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
-        let input_event = WinitEventAdapter::from_winit_event(&event);
-        self.render_app.handle_event(&input_event);
+    fn window_event(&mut self, _event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
+        let Some(shared) = self.shared.as_ref() else {
+            return;
+        };
 
-        // TODO 可以放到 render app 里面去处理，加入队列中
-        match event {
+        // resize / close 优先处理共享状态，不经过事件通道
+        match &event {
             WindowEvent::CloseRequested => {
-                event_loop.exit();
+                // 二阶段关闭：只置 exit，不在此调用 event_loop.exit()
+                shared.exit.store(true, Ordering::Release);
             }
-            WindowEvent::RedrawRequested => {
-                self.render_app.big_update();
-                // TODO 是否应该手动调用 redraw，实现死循环？
+            WindowEvent::Resized(size) => {
+                shared.size.store(pack_size(size.width, size.height), Ordering::Relaxed);
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                // winit 会额外发 Resized 事件，此处无需独立处理
             }
             _ => {}
         }
+
+        // 其它输入事件转发到渲染线程；Resized/Other 不经通道（Resized 走 atomic）
+        let input_event = WinitEventAdapter::from_winit_event(&event);
+        use truvis_app::platform::input_event::InputEvent;
+        match input_event {
+            InputEvent::Other | InputEvent::Resized { .. } => {}
+            _ => {
+                // unbounded send 在主线程上非阻塞
+                let _ = shared.event_sender.send(input_event);
+            }
+        }
     }
 
-    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: DeviceId, _event: DeviceEvent) {
-        // 使用InputManager处理设备事件
-    }
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: DeviceId, _event: DeviceEvent) {}
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        self.window.as_ref().unwrap().request_redraw();
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // 渲染线程自驱，不再 request_redraw
+        if let Some(shared) = self.shared.as_ref() {
+            if shared.render_finished.load(Ordering::Acquire) {
+                event_loop.exit();
+            }
+        }
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {

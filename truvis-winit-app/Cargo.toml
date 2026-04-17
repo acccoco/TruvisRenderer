@@ -26,3 +26,5 @@ log = { workspace = true }
 winit = { workspace = true }
 image = { workspace = true }
 raw-window-handle = { workspace = true }
+crossbeam-channel = { workspace = true }
+tracy-client = { workspace = true }

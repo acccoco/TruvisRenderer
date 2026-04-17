@@ -3667,9 +3667,11 @@ version = "0.1.0"
 name = "truvis-winit-app"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
  "image",
  "log",
  "raw-window-handle",
+ "tracy-client",
  "truvis-app",
  "truvis-path",
  "winit",
