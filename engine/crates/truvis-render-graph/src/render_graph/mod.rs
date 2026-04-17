@@ -1,3 +1,18 @@
+//! RenderGraph：声明式渲染管线编排
+//!
+//! # 核心约束
+//!
+//! RenderGraph 只关心 GPU 资源（Image / Buffer），**不感知** Texture、Material 等资产概念。
+//! 资产到 GPU 资源的映射由上游模块（AssetHub、BindlessManager 等）在 Upload Phase 完成，
+//! RenderGraph 仅消费最终的 `GfxImageHandle` / `GfxBufferHandle`。
+//!
+//! # 关键设计
+//!
+//! - **两层 Handle**：`RgImageHandle`（graph 内部虚拟引用）→ `GfxImageHandle`（物理 GPU 资源），
+//!   在 compile 阶段建立映射，execute 阶段解引用。
+//! - **Pass 添加顺序即逻辑顺序**：用户决定渲染管线的执行顺序，graph 据此建立依赖边。
+//! - **自动 Barrier**：compile 阶段通过模拟资源访问序列，自动计算 layout transition 和 memory barrier。
+
 mod barrier;
 mod buffer_resource;
 mod executor;

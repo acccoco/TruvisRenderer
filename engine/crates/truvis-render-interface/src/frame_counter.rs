@@ -1,6 +1,18 @@
 use crate::pipeline_settings::FrameLabel;
 
-/// 语义化的帧标记，表示是对全局 frame_id 的一个包装，提供更清晰的语义
+/// 语义化的帧标记，用于在不持有 `FrameCounter` 引用的情况下传递当前帧 ID。
+///
+/// # 设计决策
+///
+/// `BindlessManager`、`MaterialManager` 等模块需要根据 frame ID 进行 dirty 标记和 slot 回收。
+/// 曾考虑过四种方案：
+/// 1. 全局变量 `FrameCounter` — 隐式依赖
+/// 2. 模块内部维护 `frame_id: u64` 字段 — 语义不明确（看起来像模块自身状态）
+/// 3. 持有 `&FrameCounter` 引用 — 借用检查灾难
+/// 4. 每个接口都传入 `frame_id` 参数 — 接口繁琐
+///
+/// 最终选择新增 `FrameToken(u64)` 类型，在 `begin_frame` 时由外部传入。
+/// 既避免隐式依赖，又保持接口简洁，同时不引入借用冲突。
 #[derive(Copy, Clone)]
 pub struct FrameToken(u64);
 

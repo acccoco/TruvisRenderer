@@ -5,6 +5,11 @@ use truvis_shader_binding::gpu;
 new_key_type! { pub struct AssetTextureHandle; }
 new_key_type! { pub struct AssetMeshHandle; }
 
+/// 资产语义的纹理，而非 GPU 语义。
+///
+/// 聚合了纹理资产的完整描述（GPU 资源 handle + 采样/格式元信息），
+/// 与 Bindless 系统刻意隔离——本类型不持有任何 `BindlessSrvHandle`，
+/// bindless 索引的解析由外部（如 `TextureResolver`）在使用时按需完成。
 #[derive(Debug)]
 pub struct AssetTexture {
     pub image_handle: GfxImageHandle,

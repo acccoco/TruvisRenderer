@@ -1,3 +1,20 @@
+//! 渲染上下文与 Phase 模型
+//!
+//! 每帧的渲染流程分为若干 Phase，每个 Phase 有严格的数据读写规则：
+//!
+//! | Phase            | CPU 数据   | GPU 数据   | 典型操作                        |
+//! |------------------|-----------|-----------|--------------------------------|
+//! | CPU Update       | 读写      | —         | SceneManager 更新场景           |
+//! | GPU Upload       | 只读      | 写入      | prepare_render_data, upload     |
+//! | Render           | 只读      | 只读/写入  | Pass 执行，RenderGraph dispatch |
+//!
+//! 这样做的好处：
+//! - 明确数据流向，避免资源访问冲突
+//! - 将同阶段的数据组装在一起（如 `RenderContext2<'a>`），简化接口设计
+//!
+//! `RenderContext` 持有全部渲染资源的所有权，在 GPU Upload 阶段可变访问；
+//! `RenderContext2<'a>` 是其只读借用切片，用于 Render 阶段，通过类型系统强制不可变。
+
 use truvis_asset::asset_hub::AssetHub;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_graph::resources::fif_buffer::FifBuffers;
@@ -11,7 +28,10 @@ use truvis_render_interface::sampler_manager::RenderSamplerManager;
 use truvis_scene::scene_manager::SceneManager;
 use truvis_shader_binding::gpu;
 
-// Render 期间不可变
+/// 渲染上下文，持有一帧渲染所需全部资源的所有权。
+///
+/// 在 GPU Upload 阶段以 `&mut self` 访问（prepare / upload），
+/// 在 Render 阶段通过 [`RenderContext2`] 以只读方式暴露给各 Pass。
 pub struct RenderContext {
     pub scene_manager: SceneManager,
     pub gpu_scene: GpuScene,
@@ -34,9 +54,10 @@ pub struct RenderContext {
     pub pipeline_settings: PipelineSettings,
 }
 
-/// 使用 <'a>，表示这些资源是临时的，可以被消费的，是对外展示的一个切片
+/// Render 阶段的只读上下文切片。
 ///
-/// 通过类型系统来表达架构意图，区分 Render 期间不可变的资源和可变的资源
+/// 通过生命周期 `'a` 借用 [`RenderContext`] 的资源，
+/// 利用类型系统保证 Render Phase 中数据不被意外修改。
 #[derive(Copy, Clone)]
 pub struct RenderContext2<'a> {
     pub scene_manager: &'a SceneManager,
