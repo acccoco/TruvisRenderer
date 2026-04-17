@@ -65,7 +65,9 @@ cargo run --bin shader-toy        # 着色器实验场
 
 ## 🎯 OuterApp 开发模式
 
-应用入口位于 `truvis-winit-app/src/bin/`，OuterApp 实现位于 `truvis-app/src/outer_app/`：
+应用入口位于 `truvis-winit-app/src/bin/`，OuterApp 实现位于 `truvis-app/src/outer_app/`。
+
+**线程模型**: winit 主线程只做事件 pump；`WinitApp::run` 在渲染线程中通过工厂闭包构造 `OuterApp`，后续 `init` / `update` / `draw` / `draw_ui` 全部在渲染线程中调用。因此传入的闭包必须 `Send + 'static`，且 OuterApp 内部可以使用 `Rc` 等线程局部类型（只要不跨线程泄露引用）。
 
 ```rust
 // truvis-winit-app/src/bin/my_app.rs
@@ -73,8 +75,8 @@ use truvis_app::outer_app::my_app::MyAppImpl;
 use truvis_winit_app::app::WinitApp;
 
 fn main() {
-    let outer_app = Box::new(MyAppImpl::default());
-    WinitApp::run(outer_app);
+    // 工厂闭包在渲染线程上调用一次；OuterApp 整个生命周期都在渲染线程
+    WinitApp::run(|| Box::new(MyAppImpl::default()));
 }
 
 // truvis-app/src/outer_app/my_app.rs

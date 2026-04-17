@@ -412,28 +412,34 @@ graph TD
 ### 启动链
 
 ```
-main (bin)
+main (bin)                                 [winit main thread]
   │
   ▼
-WinitApp::run(outer_app)                 [truvis-winit-app]
+WinitApp::run(|| Box::new(OuterAppImpl)) [truvis-winit-app]
+  │  ├── RenderApp::init_env()               (log / panic hook / tracy)
+  │  ├── EventLoop::run_app(&mut WinitApp)   (进入 winit pump)
+  │  └── WinitApp::resumed
+  │        ├── 创建 Window
+  │        ├── SharedState::new(initial_size)
+  │        └── thread::spawn("RenderThread", move || { ... render_loop(...) })
   │
-  ▼
-RenderApp::new()                          [truvis-app]
-  ├── Renderer::new()                     [truvis-renderer]
-  │     ├── Gfx::init()                   [truvis-gfx]   ← 全局单例
-  │     ├── RenderContext {
-  │     │     SceneManager,               [scene]
-  │     │     GpuScene,                   [render-interface]
-  │     │     AssetHub,                   [asset]
-  │     │     FifBuffers,                 [render-graph]
-  │     │     BindlessManager,
-  │     │     GlobalDescriptorSets,
-  │     │     GfxResourceManager, ...
-  │     │   }
-  │     └── CmdAllocator, Timer, RenderPresent
-  ├── CameraController · InputManager
-  ├── GuiHost                             [truvis-app]
-  └── outer_app.init(&mut renderer, &mut camera)
+  ▼  [render thread]
+render_loop(shared, init_msg, outer_app)   [truvis-winit-app::render_loop]
+  ├── tracy_client::set_thread_name!("RenderThread")
+  ├── RenderApp::new(raw_display, outer_app)    [truvis-app]
+  │     ├── Renderer::new()                     [truvis-renderer]
+  │     │     ├── Gfx::init()                   [truvis-gfx]   ← 全局单例
+  │     │     ├── RenderContext { SceneManager, GpuScene, AssetHub,
+  │     │     │                   FifBuffers, BindlessManager,
+  │     │     │                   GlobalDescriptorSets, GfxResourceManager, ... }
+  │     │     └── CmdAllocator, Timer, RenderPresent
+  │     ├── CameraController · InputManager
+  │     └── GuiHost                             [truvis-app]
+  ├── RenderApp::init_after_window(raw_display, raw_window, scale, size)
+  │     ├── outer_app.init(&mut renderer, &mut camera)
+  │     └── gui_backend.register_font(...)
+  └── loop { drain events · check size · recreate_swapchain_if_needed ·
+             time_to_render? big_update : park_timeout(1ms) }
 ```
 
 ### 每帧循环
