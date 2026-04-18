@@ -1,6 +1,5 @@
-use crate::outer_app::base::OuterApp;
+use crate::app_plugin::AppPlugin;
 use crate::render_pipeline::rt_render_graph::RtPipeline;
-use imgui::Ui;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_path::TruvisPath;
 use truvis_renderer::model_loader::assimp_loader::AssimpSceneLoader;
@@ -55,7 +54,7 @@ impl SponzaApp {
     }
 }
 
-impl OuterApp for SponzaApp {
+impl AppPlugin for SponzaApp {
     fn init(&mut self, renderer: &mut Renderer, camera: &mut Camera) {
         let rt_pipeline = RtPipeline::new(
             &renderer.render_context.global_descriptor_sets,
@@ -68,10 +67,10 @@ impl OuterApp for SponzaApp {
         self.rt_pipeline = Some(rt_pipeline);
     }
 
-    fn draw_ui(&mut self, _ui: &Ui) {}
+    fn build_ui(&mut self, _ui: &imgui::Ui) {}
     fn update(&mut self, _renderer: &mut Renderer) {}
 
-    fn draw(&self, renderer: &Renderer, gui_draw_data: &imgui::DrawData, fence: &GfxSemaphore) {
+    fn render(&self, renderer: &Renderer, gui_draw_data: &imgui::DrawData, fence: &GfxSemaphore) {
         self.rt_pipeline.as_ref().unwrap().render(
             &renderer.render_context,
             renderer.render_present.as_ref().unwrap(),

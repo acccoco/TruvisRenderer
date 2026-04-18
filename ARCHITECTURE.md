@@ -62,15 +62,15 @@ truvis-gfx
 - `truvis-render-graph`：声明式 pass 编排，负责资源状态推导与同步拼接。
 - `truvis-scene`：CPU 侧场景数据组织（mesh/material/instance/light）。
 - `truvis-asset`：异步资产加载与上传流程。
-- `truvis-renderer`：帧循环驱动与子系统整合。
-- `truvis-app`：OuterApp 应用接口与示例渲染流程。
+- `truvis-renderer`：backend 执行与子系统整合（device/swapchain/cmd/sync/submit/present + GPU 上传执行）。
+- `truvis-app`：`FrameRuntime` 帧编排、`AppPlugin` 契约、overlay 模块注册与示例应用。
 
 ## 4. 关键数据流
 
 ```text
 磁盘资产 -> AssetLoader -> AssetHub -> UploadManager -> GPU 资源
 CPU Scene -> RenderData -> GpuScene 上传 -> shader 可见 buffer / TLAS
-OuterApp 构建 RenderGraph -> 编译 -> 执行 -> 提交 -> present
+AppPlugin 在 render phase 构建 RenderGraph -> 编译 -> 执行 -> 提交 -> present
 ```
 
 要点：
@@ -83,14 +83,20 @@ OuterApp 构建 RenderGraph -> 编译 -> 执行 -> 提交 -> present
 
 ```text
 begin_frame
-  -> 输入与相机更新
+  -> 输入处理
   -> acquire swapchain image
-  -> UI 构建
+  -> UI 构建（runtime overlays + plugin build_ui）
+  -> plugin update（CPU 侧更新）
   -> scene/asset 更新与 GPU 上传
   -> 构建并执行 RenderGraph
   -> 提交命令并 present
 end_frame
 ```
+
+补充：
+
+- swapchain 重建由 runtime 单入口触发，覆盖 `size_changed || backend_need_resize`。
+- `build_ui` 与 `update` 的顺序按当前实现固定为 `build_ui -> update`。
 
 ## 6. 模块边界约束
 

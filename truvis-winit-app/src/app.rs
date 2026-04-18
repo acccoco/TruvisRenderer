@@ -4,8 +4,10 @@ use std::sync::atomic::Ordering;
 use std::thread::{self, JoinHandle};
 
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use truvis_app::app_plugin::{AppPlugin, LegacyOuterAppAdapter};
+use truvis_app::frame_runtime::FrameRuntime;
+#[allow(deprecated)]
 use truvis_app::outer_app::base::OuterApp;
-use truvis_app::render_app::RenderApp;
 use truvis_path::TruvisPath;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
@@ -19,11 +21,12 @@ use crate::winit_event_adapter::WinitEventAdapter;
 
 pub struct UserEvent;
 
-/// OuterApp 工厂闭包类型。
-///
-/// 主线程 own 的 `OuterApp` trait 对象通常包含 `Rc` 等 `!Send` 字段，因此
-/// 无法直接跨线程传递；让调用方提供 `FnOnce() -> Box<dyn OuterApp> + Send`
-/// 工厂，由渲染线程调用构造，规避 `dyn OuterApp: !Send` 的问题。
+/// AppPlugin 工厂闭包类型（新契约路径）。
+pub type AppPluginFactory = Box<dyn FnOnce() -> Box<dyn AppPlugin> + Send + 'static>;
+
+/// OuterApp 工厂闭包类型（兼容路径）。
+#[deprecated(note = "Use `AppPluginFactory` / `WinitApp::run_plugin`. This alias will be removed after the compatibility window.")]
+#[allow(deprecated)]
 pub type OuterAppFactory = Box<dyn FnOnce() -> Box<dyn OuterApp> + Send + 'static>;
 
 /// winit 主线程的 app handler。
@@ -39,25 +42,42 @@ pub struct WinitApp {
     shared: Option<Arc<SharedState>>,
 
     /// 仅在 `resumed` 前有值；spawn 时 `take()` 后交给渲染线程。
-    outer_app_factory: Option<OuterAppFactory>,
+    plugin_factory: Option<AppPluginFactory>,
 
     render_thread: Option<JoinHandle<()>>,
 }
 
 impl WinitApp {
-    /// 程序入口。`outer_app_factory` 在渲染线程上调用一次。
+    /// 新契约入口。`plugin_factory` 在渲染线程上调用一次，返回的
+    /// [`AppPlugin`] 直接接入 `FrameRuntime`。
+    pub fn run_plugin<F>(plugin_factory: F)
+    where
+        F: FnOnce() -> Box<dyn AppPlugin> + Send + 'static,
+    {
+        Self::run_inner(Box::new(plugin_factory));
+    }
+
+    /// 兼容入口：接受旧 [`OuterApp`] 工厂，内部包装为 [`LegacyOuterAppAdapter`]。
+    #[deprecated(note = "Use `run_plugin` with an `AppPlugin` implementation.")]
+    #[allow(deprecated)]
     pub fn run<F>(outer_app_factory: F)
     where
         F: FnOnce() -> Box<dyn OuterApp> + Send + 'static,
     {
-        RenderApp::init_env();
+        Self::run_inner(Box::new(move || -> Box<dyn AppPlugin> {
+            Box::new(LegacyOuterAppAdapter::new(outer_app_factory()))
+        }));
+    }
+
+    fn run_inner(plugin_factory: AppPluginFactory) {
+        FrameRuntime::init_env();
 
         let event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event().build().unwrap();
 
         let mut app = Self {
             window: None,
             shared: None,
-            outer_app_factory: Some(Box::new(outer_app_factory)),
+            plugin_factory: Some(plugin_factory),
             render_thread: None,
         };
 
@@ -107,7 +127,7 @@ impl WinitApp {
             initial_size,
         };
 
-        let factory = self.outer_app_factory.take().expect("outer_app_factory already consumed");
+        let factory = self.plugin_factory.take().expect("plugin_factory already consumed");
         let shared_for_thread = shared.clone();
 
         let join_handle = thread::Builder::new()
@@ -115,8 +135,8 @@ impl WinitApp {
             .spawn(move || {
                 let shared_in_thread = shared_for_thread;
                 let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                    let outer_app = factory();
-                    render_loop(shared_in_thread.clone(), init_msg, outer_app);
+                    let plugin = factory();
+                    render_loop(shared_in_thread.clone(), init_msg, plugin);
                 }));
                 // 无论 panic 与否，都必须让主线程观察到退出信号，否则 about_to_wait 死循环
                 if let Err(payload) = result {

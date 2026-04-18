@@ -6,11 +6,11 @@
 
 ### Requirement: 渲染循环运行于独立线程
 
-渲染循环 SHALL 在独立于 winit 主线程的 OS 线程中执行。winit 主线程仅负责 window 生命周期与事件 pump，不得直接调用 `RenderApp::big_update` 或任何 Vulkan API。
+渲染循环 SHALL 在独立于 winit 主线程的 OS 线程中执行。winit 主线程仅负责 window 生命周期与事件 pump，不得直接调用 `FrameRuntime::big_update` 或任何 Vulkan API。
 
 #### Scenario: 进程启动
 
-- **WHEN** `WinitApp::run` 被调用
+- **WHEN** `WinitApp::run_plugin`（或兼容入口 `WinitApp::run`）被调用
 - **THEN** 主线程创建 winit `EventLoop`；在 `resumed` 回调中创建 `Window` 后，spawn 一条渲染线程并传递 window handles
 - **AND** 渲染线程内部完成 `Gfx::init` / `Renderer::new` / `init_after_window`
 - **AND** 主线程后续仅执行事件 pump 与退出握手

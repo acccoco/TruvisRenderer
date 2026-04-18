@@ -2,9 +2,14 @@ use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_renderer::platform::camera::Camera;
 use truvis_renderer::renderer::Renderer;
 
-/// 外部应用接口 trait
+/// 外部应用接口 trait（已废弃）。
 ///
-/// 定义应用生命周期的关键钩子函数。所有自定义应用需实现此 trait。
+/// 请迁移到 [`AppPlugin`](crate::app_plugin::AppPlugin)。四个 demo 已完成迁移，
+/// 此 trait 将在下一 change 中移除。
+///
+/// 如仍需兼容旧代码，使用 [`LegacyOuterAppAdapter`](crate::app_plugin::LegacyOuterAppAdapter)
+/// 包装为 `AppPlugin`。
+#[deprecated(note = "Migrate to `AppPlugin`. This trait will be removed after the compatibility window.")]
 pub trait OuterApp {
     fn init(&mut self, renderer: &mut Renderer, camera: &mut Camera);
 

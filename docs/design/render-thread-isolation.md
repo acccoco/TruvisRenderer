@@ -2,12 +2,17 @@
 
 本笔记记录 `render-thread-isolation` change 落地后，winit 主线程与渲染线程的分工与握手。
 
+> 术语更新（`frame-runtime-boundary-refactor` 之后）：
+> - `RenderApp` -> `FrameRuntime`
+> - `OuterApp` -> `AppPlugin`
+> - `WinitApp::run`（兼容）-> `WinitApp::run_plugin`（默认）
+
 ## 线程分工
 
 | 线程 | 职责 |
 | --- | --- |
 | **winit 主线程** | `EventLoop` pump、`Window` 生命周期、事件翻译转发、resize atomic 写、二阶段退出握手 |
-| **渲染线程** (`RenderThread`) | Vulkan 初始化与销毁、`RenderApp` 全部状态、每帧 pacing、`OuterApp::init`/`update`/`draw`/`draw_ui`、`GuiHost` 访问 |
+| **渲染线程** (`RenderThread`) | Vulkan 初始化与销毁、`FrameRuntime` 全部状态、每帧 pacing、`AppPlugin::init`/`build_ui`/`update`/`render`、`GuiHost` 访问 |
 
 Vulkan 对象（`Gfx` 单例、`Renderer`、`VkSurfaceKHR`、swapchain、command buffers、fences、semaphores）严格只在渲染线程创建与销毁。主线程不直接调用任何 `ash` / `truvis-gfx` API。
 
@@ -28,18 +33,18 @@ Vulkan 对象（`Gfx` 单例、`Renderer`、`VkSurfaceKHR`、swapchain、command
 ```
 winit 主线程                           RenderThread
 ─────────────                          ────────────
-WinitApp::run(factory)
-  ├── RenderApp::init_env()
+WinitApp::run_plugin(factory)
+  ├── FrameRuntime::init_env()
   └── EventLoop::run_app → resumed
         ├── create_window
         ├── Arc::new(SharedState)
         └── thread::spawn ─────────▶ tracy_client::set_thread_name!
                                        catch_unwind:
-                                         outer_app = factory()
-                                         render_loop(shared, init_msg, outer_app)
-                                           ├── RenderApp::new
-                                           ├── init_after_window
-                                           └── loop { ... }
+                                         plugin = factory()
+                                         render_loop(shared, init_msg, plugin)
+                                          ├── FrameRuntime::new_with_plugin
+                                          ├── init_after_window
+                                          └── loop { ... }
 ```
 
 ## 每帧 (RenderThread)
@@ -107,20 +112,28 @@ run_app 返回
 1. `render_finished` 与 `exit` 必定被置位 → 主线程 `about_to_wait` 一定能观察退出条件，不会卡死。
 2. 若 panic，payload 存入 `shared.panic_payload`；主线程 `destroy()` 在 join 完成后 `panic::resume_unwind(payload)`，把渲染线程的崩溃抛回主线程，让进程正常崩溃退出而不是"黑屏但事件还在 pump"。
 
-## OuterApp 契约变更
+## 入口契约（当前与兼容）
 
-`WinitApp::run` 签名改为：
+当前默认入口：
+
+```rust
+pub fn run_plugin<F>(plugin_factory: F)
+where F: FnOnce() -> Box<dyn AppPlugin> + Send + 'static;
+```
+
+兼容入口（deprecated）：
 
 ```rust
 pub fn run<F>(outer_app_factory: F)
 where F: FnOnce() -> Box<dyn OuterApp> + Send + 'static;
 ```
 
-因为 `Box<dyn OuterApp>` 不是 `Send`（多数实现含 `Rc<GfxPipelineLayout>` 等线程局部资源），所以 API 改为接收工厂闭包，由渲染线程在 `spawn` 内调用 `factory()` 构造 `OuterApp`。这让 `OuterApp` 实现者可以继续自由使用 `Rc` / `RefCell` 等非 `Send` 类型，只要它们不跨线程即可。
+两种入口都采用工厂闭包形式，由渲染线程在 `spawn` 内构造应用对象，避免把应用对象本体跨线程传输。
+兼容入口内部通过 `LegacyOuterAppAdapter` 包装到 `AppPlugin`。
 
-## 不在本次 change 的范围
+## 不在本次 change 的范围（历史记录）
 
-- `RenderApp` / `Renderer` / `OuterApp` 职责拆分
+- `FrameRuntime` / `Renderer` / `AppPlugin` 职责拆分（后续已由 `frame-runtime-boundary-refactor` 推进）
 - tick system、`CameraController` 归属
 - `Renderer::time_to_render()` 驱动模型变化（仍基于 timer 阈值）
 - resize debounce（由实际体验触发）

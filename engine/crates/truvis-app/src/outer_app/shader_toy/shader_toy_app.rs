@@ -1,7 +1,6 @@
-use crate::outer_app::base::OuterApp;
+use crate::app_plugin::AppPlugin;
 use crate::outer_app::shader_toy::shader_toy_pass::ShaderToyPass;
 use ash::vk;
-use imgui::Ui;
 use itertools::Itertools;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
@@ -21,7 +20,7 @@ pub struct ShaderToy {
 
     cmds: Vec<GfxCommandBuffer>,
 }
-impl OuterApp for ShaderToy {
+impl AppPlugin for ShaderToy {
     fn init(&mut self, renderer: &mut Renderer, _camera: &mut Camera) {
         log::info!("shader toy.");
 
@@ -37,13 +36,13 @@ impl OuterApp for ShaderToy {
             .collect_vec();
     }
 
-    fn draw_ui(&mut self, ui: &Ui) {
+    fn build_ui(&mut self, ui: &imgui::Ui) {
         ui.text_wrapped("Hello world!");
         ui.text_wrapped("こんにちは世界！");
     }
     fn update(&mut self, _renderer: &mut Renderer) {}
 
-    fn draw(&self, renderer: &Renderer, gui_draw_data: &imgui::DrawData, fence: &GfxSemaphore) {
+    fn render(&self, renderer: &Renderer, gui_draw_data: &imgui::DrawData, fence: &GfxSemaphore) {
         let frame_label = renderer.render_context.frame_counter.frame_label();
         let frame_id = renderer.render_context.frame_counter.frame_id();
         let render_present = renderer.render_present.as_ref().unwrap();

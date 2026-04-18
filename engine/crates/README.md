@@ -11,8 +11,8 @@
 - `truvis-gfx`：Vulkan RHI 抽象
 - `truvis-render-interface`：渲染契约与资源管理原语
 - `truvis-render-graph`：声明式渲染图
-- `truvis-renderer`：帧驱动与系统整合
-- `truvis-app`：应用层接口与示例逻辑
+- `truvis-renderer`：backend 执行与系统整合（swapchain/cmd/sync/submit/present + GPU 上传）
+- `truvis-app`：`FrameRuntime` 帧编排、`AppPlugin` 接口与示例逻辑
 - `truvis-scene` / `truvis-asset`：场景与资产系统
 - `truvis-gui-backend`：ImGui Vulkan 后端
 

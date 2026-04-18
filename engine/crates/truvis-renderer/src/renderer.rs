@@ -33,18 +33,23 @@ use truvis_render_interface::sampler_manager::RenderSamplerManager;
 use truvis_scene::scene_manager::SceneManager;
 use truvis_shader_binding::gpu;
 
-/// 渲染器核心
+/// 渲染 Backend 核心
 ///
-/// 管理整个渲染流程，包括帧同步、资源更新、GPU 场景同步等。
-/// 与 [`FrameContext`] 配合工作，提供帧级生命周期管理。
+/// 聚焦 GPU backend 能力：device / swapchain / cmd / sync / submit / present、
+/// GPU 数据上传执行、descriptor 更新执行。
 ///
-/// # 渲染流程
+/// **不**主动推进 scene / asset 的 world 更新调度决策——
+/// 这些由 `FrameRuntime` 的 phase 编排驱动。
+///
+/// # FrameRuntime 驱动的调用顺序
 /// ```ignore
-/// renderer.begin_frame();        // 等待 GPU、清理资源
-/// // OuterApp::update() / OuterApp::draw()
-/// renderer.before_render();      // 更新相机、输入状态
-/// // 录制命令...
-/// renderer.end_frame();          // 提交命令、推进帧计数
+/// renderer.begin_frame();          // 等待 GPU、清理 FIF 资源
+/// renderer.update_assets();        // AssetHub CPU tick（由 FrameRuntime 调度）
+/// renderer.update_accum_frames();  // 累积帧跟踪（由 FrameRuntime 调度）
+/// renderer.before_render(camera);  // GPU scene / descriptor 上传
+/// // plugin.render(...)
+/// renderer.present_image();
+/// renderer.end_frame();
 /// ```
 pub struct Renderer {
     pub render_context: RenderContext,
@@ -204,6 +209,9 @@ impl Renderer {
 }
 // phase call
 impl Renderer {
+    /// Backend 帧起始：timer tick、等待 FIF timeline、重置命令/资源、bindless begin_frame。
+    ///
+    /// 注意：asset 更新（`update_assets`）已从此方法迁出，由 `FrameRuntime` 显式调度。
     pub fn begin_frame(&mut self) {
         let _span = tracy_client::span!("Renderer::begin_frame");
         self.timer.tick();
@@ -231,8 +239,13 @@ impl Renderer {
         // 子系统 begin frame
         let frame_token = self.render_context.frame_counter.frame_token();
         self.render_context.bindless_manager.begin_frame(frame_token);
+    }
 
-        // Update AssetHub
+    /// 执行 AssetHub CPU 侧增量更新。
+    ///
+    /// 由 `FrameRuntime` 在 begin_frame phase 中调度，不再由 `Renderer::begin_frame` 隐式触发。
+    pub fn update_assets(&mut self) {
+        let _span = tracy_client::span!("Renderer::update_assets");
         self.render_context
             .asset_hub
             .update(&mut self.render_context.gfx_resource_manager, &mut self.render_context.bindless_manager);
@@ -258,11 +271,19 @@ impl Renderer {
             < self.timer.elapsed_since_tick().as_micros() as f32
     }
 
+    /// 更新累积帧计数（用于渐进式渲染）。
+    ///
+    /// 由 `FrameRuntime` 在 prepare phase 中调度，不再由 `before_render` 隐式触发。
+    pub fn update_accum_frames(&mut self, camera: &Camera) {
+        let current_camera_dir = glam::vec3(camera.euler_yaw_deg, camera.euler_pitch_deg, camera.euler_roll_deg);
+        self.render_context.accum_data.update_accum_frames(current_camera_dir, camera.position);
+    }
+
+    /// Backend GPU 数据准备：将 scene/per-frame 数据上传到 GPU 并更新 descriptor sets。
+    ///
+    /// 注意：`update_accum_frames` 已从此方法迁出，由 `FrameRuntime` 显式调度。
     pub fn before_render(&mut self, camera: &Camera) {
         let _span = tracy_client::span!("Renderer::before_render");
-        let current_camera_dir = glam::vec3(camera.euler_yaw_deg, camera.euler_pitch_deg, camera.euler_roll_deg);
-
-        self.render_context.accum_data.update_accum_frames(current_camera_dir, camera.position);
         self.update_gpu_scene(camera);
         self.update_perframe_descriptor_set();
     }

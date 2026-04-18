@@ -51,6 +51,14 @@ cargo run --bin rt-sponza
 cargo run --bin shader-toy
 ```
 
+## 运行时架构（当前）
+
+- 平台入口：`truvis-winit-app` 通过 `WinitApp::run_plugin(...)` 启动渲染线程
+- 帧编排：`truvis-app::FrameRuntime` 负责 phase 调度（`input -> build_ui -> update -> prepare -> render -> present`）
+- 应用扩展：demo 通过 `AppPlugin` 接入；旧 `OuterApp` 仅保留兼容路径（deprecated）
+- 渲染后端：`truvis-renderer::Renderer` 聚焦 backend 执行与 GPU 数据上传
+- swapchain 重建：统一由 runtime 单入口处理，覆盖窗口尺寸变化与 backend `need_resize`（out-of-date/suboptimal）
+
 ## 文档导航
 
 - 架构总览：[`ARCHITECTURE.md`](./ARCHITECTURE.md)

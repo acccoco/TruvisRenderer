@@ -10,32 +10,30 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use truvis_app::outer_app::base::OuterApp;
-use truvis_app::render_app::RenderApp;
+use truvis_app::app_plugin::AppPlugin;
+use truvis_app::frame_runtime::FrameRuntime;
 
 use crate::shared::{RenderInitMsg, SharedState, unpack_size};
 
-/// 渲染线程入口。`outer_app` 由主线程构造后通过 `SendWrapper` 移交过来。
+/// 渲染线程入口（新契约路径）。直接接受 [`AppPlugin`]。
 ///
 /// 返回时意味着已完成 `Gfx::wait_idle` 与资源销毁；调用方（`WinitApp` 的
 /// 线程 wrapper）会在此之后置位 `render_finished`。
-pub fn render_loop(shared: Arc<SharedState>, init_msg: RenderInitMsg, outer_app: Box<dyn OuterApp>) {
+pub fn render_loop(shared: Arc<SharedState>, init_msg: RenderInitMsg, plugin: Box<dyn AppPlugin>) {
     tracy_client::set_thread_name!("RenderThread");
 
     let raw_display = init_msg.raw_display.0;
     let raw_window = init_msg.raw_window.0;
-    let mut render_app = RenderApp::new(raw_display, outer_app);
+    let mut render_app = FrameRuntime::new_with_plugin(raw_display, plugin);
     render_app.init_after_window(raw_display, raw_window, init_msg.scale_factor, init_msg.initial_size);
 
     let mut last_built_size = init_msg.initial_size;
 
     while !shared.exit.load(Ordering::Acquire) {
-        // drain 事件通道 → InputManager
         while let Ok(event) = shared.event_receiver.try_recv() {
             render_app.input_manager.push_event(event);
         }
 
-        // 读取最新尺寸；零尺寸（最小化）时跳过渲染，但继续 drain 事件
         let [w, h] = unpack_size(shared.size.load(Ordering::Relaxed));
         if w == 0 || h == 0 {
             std::thread::park_timeout(Duration::from_millis(1));
