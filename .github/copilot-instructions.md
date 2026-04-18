@@ -69,6 +69,9 @@ cargo run --bin shader-toy        # 着色器实验场
 
 **线程模型**: winit 主线程只做事件 pump；`WinitApp::run` 在渲染线程中通过工厂闭包构造 `OuterApp`，后续 `init` / `update` / `draw` / `draw_ui` 全部在渲染线程中调用。因此传入的闭包必须 `Send + 'static`，且 OuterApp 内部可以使用 `Rc` 等线程局部类型（只要不跨线程泄露引用）。
 
+- 主线程只负责将 winit 事件转成 `InputEvent` 并通过 `crossbeam-channel` 转发；禁止在主线程直接触发渲染逻辑（包括 `request_redraw` 驱动帧循环）。
+- 关闭流程是二阶段握手：`CloseRequested` 仅置 `exit`，渲染线程销毁完 Vulkan 资源后置 `render_finished`，主线程在 `about_to_wait` 观察到后才 `event_loop.exit()`。
+
 ```rust
 // truvis-winit-app/src/bin/my_app.rs
 use truvis_app::outer_app::my_app::MyAppImpl;

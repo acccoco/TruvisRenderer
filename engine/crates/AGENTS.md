@@ -442,6 +442,24 @@ render_loop(shared, init_msg, outer_app)   [truvis-winit-app::render_loop]
              time_to_render? big_update : park_timeout(1ms) }
 ```
 
+### 关闭握手（主线程 ↔ 渲染线程）
+
+```
+WindowEvent::CloseRequested
+  └─ 主线程: shared.exit.store(true)     // 不直接 event_loop.exit()
+
+RenderThread loop 读到 exit=true
+  ├─ 跳出循环
+  ├─ wait_idle + destroy Vulkan 资源
+  └─ shared.render_finished.store(true)
+
+about_to_wait
+  └─ 主线程: if render_finished { event_loop.exit() }
+
+run_app 返回后
+  └─ join(render_thread) 后再 drop(Window)
+```
+
 ### 每帧循环
 
 ```
@@ -452,10 +470,10 @@ RenderApp::big_update()
 │      ├── gfx_resource_manager.cleanup(frame_id)
 │      └── frame_counter.advance()
 │
-├── 2. 输入与窗口
+├── 2. 输入状态推进
 │      ├── InputManager::process_events()
 │      ├── CameraController::update(&camera)
-│      └── (若 resize) outer_app.on_window_resized()
+│      └── 注：事件 drain 与 resize 检查在 render_loop 顶部完成
 │
 ├── 3. RenderPresent::acquire_next_image()
 │
@@ -729,7 +747,7 @@ RenderApp::big_update()
 │      ├── GfxResourceManager::cleanup()  // 释放延迟销毁的资源
 │      └── FrameCounter::advance()
 │
-├── 2. 输入处理 & 窗口 Resize
+├── 2. 输入处理（事件已在 render_loop 顶部 drain）
 │      ├── InputManager::process_events()
 │      └── CameraController::update()
 │
