@@ -13,6 +13,9 @@ members = [
     "engine/crates/truvis-asset",
     "engine/crates/truvis-scene",
     "engine/crates/truvis-renderer",
+    "engine/crates/truvis-app-api",
+    "engine/crates/truvis-frame-runtime",
+    "engine/crates/truvis-render-passes",
     "engine/crates/truvis-app",
     # imgui 后端
     "engine/crates/truvis-gui-backend",
@@ -51,6 +54,9 @@ truvis-render-graph = { path = "engine/crates/truvis-render-graph" }
 truvis-asset = { path = "engine/crates/truvis-asset" }
 truvis-scene = { path = "engine/crates/truvis-scene" }
 truvis-renderer = { path = "engine/crates/truvis-renderer" }
+truvis-app-api = { path = "engine/crates/truvis-app-api" }
+truvis-frame-runtime = { path = "engine/crates/truvis-frame-runtime" }
+truvis-render-passes = { path = "engine/crates/truvis-render-passes" }
 truvis-app = { path = "engine/crates/truvis-app" }
 truvis-gui-backend = { path = "engine/crates/truvis-gui-backend" }
 truvis-descriptor-layout-macro = { path = "engine/crates/truvis-descriptor-layout/truvis-descriptor-layout-macro" }

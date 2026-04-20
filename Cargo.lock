@@ -3422,17 +3422,35 @@ dependencies = [
  "log",
  "raw-window-handle",
  "tracy-client",
+ "truvis-app-api",
+ "truvis-asset",
  "truvis-descriptor-layout-macro",
  "truvis-descriptor-layout-trait",
+ "truvis-frame-runtime",
  "truvis-gfx",
  "truvis-gui-backend",
  "truvis-logs",
  "truvis-path",
  "truvis-render-graph",
  "truvis-render-interface",
+ "truvis-render-passes",
  "truvis-renderer",
+ "truvis-scene",
  "truvis-shader-binding",
  "truvis-utils",
+]
+
+[[package]]
+name = "truvis-app-api"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "imgui",
+ "truvis-asset",
+ "truvis-gfx",
+ "truvis-render-interface",
+ "truvis-renderer",
+ "truvis-scene",
 ]
 
 [[package]]
@@ -3503,6 +3521,25 @@ dependencies = [
  "truvis-logs",
  "truvis-path",
  "zip",
+]
+
+[[package]]
+name = "truvis-frame-runtime"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "ash-window",
+ "glam",
+ "imgui",
+ "log",
+ "raw-window-handle",
+ "tracy-client",
+ "truvis-app-api",
+ "truvis-gfx",
+ "truvis-logs",
+ "truvis-path",
+ "truvis-render-interface",
+ "truvis-renderer",
 ]
 
 [[package]]
@@ -3601,6 +3638,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "truvis-render-passes"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "bytemuck",
+ "glam",
+ "itertools 0.10.5",
+ "log",
+ "truvis-descriptor-layout-macro",
+ "truvis-descriptor-layout-trait",
+ "truvis-gfx",
+ "truvis-path",
+ "truvis-render-graph",
+ "truvis-render-interface",
+ "truvis-renderer",
+ "truvis-shader-binding",
+ "truvis-utils",
+]
+
+[[package]]
 name = "truvis-renderer"
 version = "0.1.0"
 dependencies = [
@@ -3673,6 +3730,8 @@ dependencies = [
  "raw-window-handle",
  "tracy-client",
  "truvis-app",
+ "truvis-app-api",
+ "truvis-frame-runtime",
  "truvis-path",
  "winit",
 ]

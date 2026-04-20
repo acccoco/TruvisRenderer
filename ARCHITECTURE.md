@@ -37,8 +37,11 @@ L3 Domain + Graph (同层互不依赖)
 L4 Renderer Integration
   truvis-renderer
 
-L5 App Framework
-  truvis-app
+L5 App Contract + Runtime
+  truvis-app-api (plugin contract + typed contexts + overlay)
+  truvis-frame-runtime (phase orchestration runtime)
+  truvis-render-passes (shared pass implementations)
+  truvis-app (demo apps + RenderGraph integration + re-export shims)
 
 L6 Platform Entry
   truvis-winit-app
@@ -51,8 +54,11 @@ truvis-gfx
   -> truvis-render-interface
       -> truvis-render-graph
           -> truvis-renderer
-              -> truvis-app
-                  -> truvis-winit-app
+              -> truvis-app-api
+                  -> truvis-frame-runtime
+                      -> truvis-app (demos + integration)
+                          -> truvis-winit-app
+              -> truvis-render-passes (shared passes, parallel to app-api)
 ```
 
 ## 3. 核心模块职责
@@ -63,7 +69,10 @@ truvis-gfx
 - `truvis-scene`：CPU 侧场景数据组织（mesh/material/instance/light）。
 - `truvis-asset`：异步资产加载与上传流程。
 - `truvis-renderer`：backend 执行与子系统整合（device/swapchain/cmd/sync/submit/present + GPU 上传执行）。
-- `truvis-app`：`FrameRuntime` 帧编排、`AppPlugin` 契约、overlay 模块注册与示例应用。
+- `truvis-app-api`：`AppPlugin` 插件契约、typed contexts（`InitCtx` / `UpdateCtx` / `RenderCtx` / `ResizeCtx`）与 overlay 合约。
+- `truvis-frame-runtime`：`FrameRuntime` 帧编排运行时，外部仅通过 public API 驱动（`push_input_event` / `time_to_render` / `run_frame` / `destroy`）。
+- `truvis-render-passes`：通用 render pass 实现（RT / 累积 / 降噪 / 色调映射 / blit / resolve / phong）。
+- `truvis-app`：示例应用（triangle / rt-cornell / rt-sponza / shader-toy）、`GuiRgPass` RenderGraph 适配与过渡期 re-export shim。
 
 ## 4. 关键数据流
 

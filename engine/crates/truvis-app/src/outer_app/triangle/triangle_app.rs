@@ -1,54 +1,47 @@
-use crate::app_plugin::AppPlugin;
+use crate::app_plugin::{AppPlugin, InitCtx, RenderCtx, UpdateCtx};
+use crate::gui_rg_pass::GuiRgPass;
 use crate::outer_app::triangle::triangle_pass::TrianglePass;
 use ash::vk;
 use itertools::Itertools;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
-use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::Gfx;
-use crate::gui_rg_pass::GuiRgPass;
 use truvis_gui_backend::gui_pass::GuiPass;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageState, RgSemaphoreInfo};
 use truvis_render_interface::frame_counter::FrameCounter;
-use truvis_renderer::platform::camera::Camera;
-use truvis_renderer::renderer::Renderer;
 
 #[derive(Default)]
 pub struct HelloTriangleApp {
     triangle_pass: Option<TrianglePass>,
-
     gui_pass: Option<GuiPass>,
-
     cmds: Vec<GfxCommandBuffer>,
 }
+
 impl AppPlugin for HelloTriangleApp {
-    fn init(&mut self, renderer: &mut Renderer, _camera: &mut Camera) {
+    fn init(&mut self, ctx: &mut InitCtx) {
         log::info!("hello triangle init.");
 
-        self.triangle_pass = Some(TrianglePass::new(renderer.swapchain_image_info().image_format));
-        self.gui_pass = Some(GuiPass::new(
-            &renderer.render_context.global_descriptor_sets,
-            renderer.swapchain_image_info().image_format,
-        ));
+        self.triangle_pass = Some(TrianglePass::new(ctx.swapchain_image_info.image_format));
+        self.gui_pass = Some(GuiPass::new(ctx.global_descriptor_sets, ctx.swapchain_image_info.image_format));
 
         self.cmds = FrameCounter::frame_labes()
             .iter()
-            .map(|label| renderer.cmd_allocator.alloc_command_buffer(*label, "triangle-app"))
+            .map(|label| ctx.cmd_allocator.alloc_command_buffer(*label, "triangle-app"))
             .collect_vec();
     }
 
     fn build_ui(&mut self, _ui: &imgui::Ui) {}
-    fn update(&mut self, _renderer: &mut Renderer) {}
+    fn update(&mut self, _ctx: &mut UpdateCtx) {}
 
-    fn render(&self, renderer: &Renderer, gui_draw_data: &imgui::DrawData, fence: &GfxSemaphore) {
-        let frame_label = renderer.render_context.frame_counter.frame_label();
-        let frame_id = renderer.render_context.frame_counter.frame_id();
-        let render_present = renderer.render_present.as_ref().unwrap();
+    fn render(&self, ctx: &RenderCtx) {
+        let frame_label = ctx.render_context.frame_counter.frame_label();
+        let frame_id = ctx.render_context.frame_counter.frame_id();
+        let render_present = ctx.render_present;
 
         let (swapchain_image_handle, swapchain_view_handle) = render_present.current_image_and_view();
 
         let mut graph = RenderGraphBuilder::new();
         graph.signal_semaphore(RgSemaphoreInfo::timeline(
-            fence.handle(),
+            ctx.timeline.handle(),
             vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
             frame_id,
         ));
@@ -93,9 +86,9 @@ impl AppPlugin for HelloTriangleApp {
                 "gui",
                 GuiRgPass {
                     gui_pass: self.gui_pass.as_ref().unwrap(),
-                    render_context: &renderer.render_context,
+                    render_context: ctx.render_context,
 
-                    ui_draw_data: gui_draw_data,
+                    ui_draw_data: ctx.gui_draw_data,
                     gui_mesh: &render_present.gui_backend.gui_meshes[*frame_label],
                     tex_map: &render_present.gui_backend.tex_map,
 
@@ -106,7 +99,6 @@ impl AppPlugin for HelloTriangleApp {
 
         let compiled_graph = graph.compile();
 
-        // 调试输出执行计划
         if log::log_enabled!(log::Level::Debug) {
             static PRINT_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
             PRINT_DEBUG_INFO.call_once(|| {
@@ -116,7 +108,7 @@ impl AppPlugin for HelloTriangleApp {
 
         let cmd = &self.cmds[*frame_label];
         cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-present-graph");
-        compiled_graph.execute(cmd, &renderer.render_context.gfx_resource_manager);
+        compiled_graph.execute(cmd, &ctx.render_context.gfx_resource_manager);
         cmd.end();
 
         let submit_info = compiled_graph.build_submit_info(std::slice::from_ref(cmd));

@@ -6,6 +6,9 @@ description = "app"
 
 
 [dependencies]
+truvis-app-api = { workspace = true }
+truvis-frame-runtime = { workspace = true }
+truvis-render-passes = { workspace = true }
 truvis-gfx = { workspace = true }
 truvis-renderer = { workspace = true }
 truvis-shader-binding = { workspace = true }
@@ -13,6 +16,8 @@ truvis-path = { workspace = true }
 truvis-logs = { workspace = true }
 truvis-render-interface = { workspace = true }
 truvis-render-graph = { workspace = true }
+truvis-asset = { workspace = true }
+truvis-scene = { workspace = true }
 truvis-utils = { workspace = true }
 truvis-descriptor-layout-macro = { workspace = true }
 truvis-descriptor-layout-trait = { workspace = true }

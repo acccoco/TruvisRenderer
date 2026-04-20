@@ -1,0 +1,21 @@
+[package]
+name = "truvis-frame-runtime"
+version = "0.1.0"
+edition = "2024"
+description = "Frame orchestration runtime: phase dispatch, input, camera, GUI host"
+
+[dependencies]
+truvis-app-api = { workspace = true }
+truvis-gfx = { workspace = true }
+truvis-renderer = { workspace = true }
+truvis-render-interface = { workspace = true }
+truvis-logs = { workspace = true }
+truvis-path = { workspace = true }
+
+ash = { workspace = true }
+ash-window = { workspace = true }
+raw-window-handle = { workspace = true }
+imgui = { workspace = true }
+glam = { workspace = true }
+tracy-client = { workspace = true }
+log = { workspace = true }

@@ -5,7 +5,7 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use std::any::Any;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use truvis_app::platform::input_event::InputEvent;
+use truvis_app_api::input_event::InputEvent;
 
 /// 跨线程传递 `!Send` 类型（如 `RawWindowHandle`）的受控包装。
 ///

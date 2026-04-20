@@ -19,6 +19,8 @@ path = "src/bin/triangle_app.rs"
 
 
 [dependencies]
+truvis-app-api = { workspace = true }
+truvis-frame-runtime = { workspace = true }
 truvis-app = { workspace = true }
 truvis-path = {workspace = true}
 

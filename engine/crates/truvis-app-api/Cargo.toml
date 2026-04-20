@@ -1,0 +1,15 @@
+[package]
+name = "truvis-app-api"
+version = "0.1.0"
+edition = "2024"
+description = "Plugin contract, typed contexts, and overlay definitions for truvis apps"
+
+[dependencies]
+truvis-gfx = { workspace = true }
+truvis-renderer = { workspace = true }
+truvis-render-interface = { workspace = true }
+truvis-scene = { workspace = true }
+truvis-asset = { workspace = true }
+
+ash = { workspace = true }
+imgui = { workspace = true }

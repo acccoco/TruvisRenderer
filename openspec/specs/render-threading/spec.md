@@ -6,7 +6,7 @@
 
 ### Requirement: 渲染循环运行于独立线程
 
-渲染循环 SHALL 在独立于 winit 主线程的 OS 线程中执行。winit 主线程仅负责 window 生命周期与事件 pump，不得直接调用 `FrameRuntime::big_update` 或任何 Vulkan API。
+渲染循环 SHALL 在独立于 winit 主线程的 OS 线程中执行。winit 主线程仅负责 window 生命周期与事件 pump，不得直接调用 `FrameRuntime::run_frame` 或任何 Vulkan API。
 
 #### Scenario: 进程启动
 
