@@ -1,5 +1,6 @@
-use crate::frame_counter::FrameCounter;
 use truvis_gfx::resources::buffer::GfxBuffer;
+
+use crate::frame_counter::FrameCounter;
 
 pub struct StageBufferManager {
     buffers: [Vec<GfxBuffer>; FrameCounter::fif_count()],

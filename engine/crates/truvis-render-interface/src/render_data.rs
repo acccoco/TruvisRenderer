@@ -1,7 +1,9 @@
+use ash::vk;
+
+use truvis_shader_binding::gpu;
+
 use crate::bindless_manager::BindlessSrvHandle;
 use crate::geometry::RtGeometry;
-use ash::vk;
-use truvis_shader_binding::gpu;
 
 /// 用于渲染的完整实例数据（只读快照）
 ///

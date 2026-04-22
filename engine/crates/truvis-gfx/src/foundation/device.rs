@@ -1,10 +1,11 @@
-use ash::vk;
-use itertools::Itertools;
 use std::cell::Cell;
 use std::{
     ffi::{CStr, CString},
     ops::Deref,
 };
+
+use ash::vk;
+use itertools::Itertools;
 
 use crate::{foundation::debug_messenger::DebugType, utilities::descriptor_cursor::GfxWriteDescriptorSet};
 

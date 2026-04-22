@@ -1,6 +1,7 @@
-use ash::vk;
 use std::ffi::CStr;
 use std::rc::Rc;
+
+use ash::vk;
 
 use crate::{
     commands::command_queue::GfxCommandQueue,

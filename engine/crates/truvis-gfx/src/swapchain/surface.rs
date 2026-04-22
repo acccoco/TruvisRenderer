@@ -1,6 +1,7 @@
+use ash::vk;
+
 use crate::foundation::debug_messenger::DebugType;
 use crate::gfx::Gfx;
-use ash::vk;
 
 pub struct GfxSurface {
     pub(crate) handle: vk::SurfaceKHR,

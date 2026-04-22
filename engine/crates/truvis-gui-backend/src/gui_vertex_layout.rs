@@ -1,5 +1,7 @@
-use ash::vk;
 use std::mem::offset_of;
+
+use ash::vk;
+
 use truvis_gfx::resources::layout::GfxVertexLayout;
 
 /// AoS: Array of Structs

@@ -4,14 +4,15 @@ use std::sync::atomic::Ordering;
 use std::thread::{self, JoinHandle};
 
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
-use truvis_app_api::app_plugin::AppPlugin;
-use truvis_frame_runtime::FrameRuntime;
-use truvis_path::TruvisPath;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Window, WindowId};
+
+use truvis_app_api::app_plugin::AppPlugin;
+use truvis_frame_runtime::FrameRuntime;
+use truvis_path::TruvisPath;
 
 use crate::render_loop::render_loop;
 use crate::shared::{RenderInitMsg, SendWrapper, SharedState, pack_size};

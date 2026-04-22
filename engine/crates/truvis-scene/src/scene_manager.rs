@@ -1,13 +1,15 @@
-use crate::components::instance::Instance;
-use crate::components::material::Material;
-use crate::components::mesh::Mesh;
-use crate::guid_new_type::{InstanceHandle, LightHandle, MaterialHandle, MeshHandle};
 use indexmap::IndexMap;
 use slotmap::SlotMap;
+
 use truvis_asset::asset_hub::AssetHub;
 use truvis_render_interface::bindless_manager::{BindlessManager, BindlessSrvHandle};
 use truvis_render_interface::render_data::{InstanceRenderData, MaterialRenderData, MeshRenderData, RenderData};
 use truvis_shader_binding::gpu;
+
+use crate::components::instance::Instance;
+use crate::components::material::Material;
+use crate::components::mesh::Mesh;
+use crate::guid_new_type::{InstanceHandle, LightHandle, MaterialHandle, MeshHandle};
 
 /// 在 CPU 侧管理场景数据
 #[derive(Default)]

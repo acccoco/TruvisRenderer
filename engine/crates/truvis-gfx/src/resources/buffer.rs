@@ -1,6 +1,6 @@
-use ash::vk;
 use std::ptr;
 
+use ash::vk;
 use vk_mem::Alloc;
 
 use crate::{foundation::debug_messenger::DebugType, gfx::Gfx};

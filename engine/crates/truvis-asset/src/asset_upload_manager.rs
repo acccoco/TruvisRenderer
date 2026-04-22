@@ -1,7 +1,7 @@
-use crate::asset_loader::RawAssetData;
-use crate::handle::AssetTextureHandle;
-use ash::vk;
 use std::collections::VecDeque;
+
+use ash::vk;
+
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::command_pool::GfxCommandPool;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
@@ -9,6 +9,9 @@ use truvis_gfx::commands::submit_info::GfxSubmitInfo;
 use truvis_gfx::gfx::Gfx;
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
+
+use crate::asset_loader::RawAssetData;
+use crate::handle::AssetTextureHandle;
 
 struct PendingUpload {
     semaphore_value: u64,

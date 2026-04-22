@@ -1,11 +1,12 @@
+use ash::vk;
+use ash::vk::Handle;
+use itertools::Itertools;
+
 use crate::commands::command_queue::GfxCommandQueue;
 use crate::commands::fence::GfxFence;
 use crate::commands::semaphore::GfxSemaphore;
 use crate::gfx::Gfx;
 use crate::swapchain::surface::GfxSurface;
-use ash::vk;
-use ash::vk::Handle;
-use itertools::Itertools;
 
 pub struct GfxSwapchain {
     swapchain_handle: vk::SwapchainKHR,

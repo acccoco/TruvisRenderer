@@ -1,10 +1,10 @@
-use crate::gui_mesh::GuiMesh;
-use crate::gui_vertex_layout::ImGuiVertexLayoutAoS;
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use ash::vk;
 use imgui::TextureId;
 use itertools::Itertools;
-use std::collections::HashMap;
-use std::rc::Rc;
+
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::resources::layout::GfxVertexLayout;
 use truvis_gfx::{
@@ -23,6 +23,9 @@ use truvis_shader_binding::gpu;
 use truvis_shader_binding::gpu::SrvHandle;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
+
+use crate::gui_mesh::GuiMesh;
+use crate::gui_vertex_layout::ImGuiVertexLayoutAoS;
 
 enumed_map!(ShaderStage<GfxShaderStageInfo>: {
     Vertex: GfxShaderStageInfo {

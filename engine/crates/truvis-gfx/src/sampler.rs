@@ -1,6 +1,8 @@
-use crate::gfx::Gfx;
-use ash::vk;
 use std::hash::Hash;
+
+use ash::vk;
+
+use crate::gfx::Gfx;
 
 // Sampler descriptor
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

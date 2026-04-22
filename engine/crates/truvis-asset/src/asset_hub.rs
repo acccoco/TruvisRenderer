@@ -1,15 +1,18 @@
-use crate::asset_loader::{AssetLoadRequest, AssetLoader, LoadResult};
-use crate::asset_upload_manager::AssetUploadManager;
-use crate::handle::{AssetTexture, AssetTextureHandle, LoadStatus};
-use ash::vk;
-use slotmap::{SecondaryMap, SlotMap};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+use ash::vk;
+use slotmap::{SecondaryMap, SlotMap};
+
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_render_interface::bindless_manager::BindlessManager;
 use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
 use truvis_shader_binding::gpu;
+
+use crate::asset_loader::{AssetLoadRequest, AssetLoader, LoadResult};
+use crate::asset_upload_manager::AssetUploadManager;
+use crate::handle::{AssetTexture, AssetTextureHandle, LoadStatus};
 
 /// 资产中心 (Facade)
 ///

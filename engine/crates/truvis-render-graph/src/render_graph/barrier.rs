@@ -5,8 +5,7 @@
 use ash::vk;
 use truvis_gfx::commands::barrier::{GfxBufferBarrier, GfxImageBarrier};
 
-use super::resource_handle::{RgBufferHandle, RgImageHandle};
-use super::resource_state::{RgBufferState, RgImageState};
+use crate::render_graph::{RgBufferHandle, RgBufferState, RgImageHandle, RgImageState};
 
 /// 图像 Barrier 描述
 #[derive(Clone, Debug)]

@@ -13,14 +13,11 @@ truvis-gfx = { workspace = true }
 truvis-renderer = { workspace = true }
 truvis-shader-binding = { workspace = true }
 truvis-path = { workspace = true }
-truvis-logs = { workspace = true }
 truvis-render-interface = { workspace = true }
 truvis-render-graph = { workspace = true }
 truvis-asset = { workspace = true }
 truvis-scene = { workspace = true }
 truvis-utils = { workspace = true }
-truvis-descriptor-layout-macro = { workspace = true }
-truvis-descriptor-layout-trait = { workspace = true }
 truvis-gui-backend = { workspace = true }
 
 log = { workspace = true }
@@ -28,8 +25,6 @@ ash = { workspace = true }
 glam = { workspace = true }
 bytemuck = { workspace = true }
 itertools = { workspace = true }
-ash-window = { workspace = true }
 imgui = { workspace = true }
-raw-window-handle = { workspace = true }
 tracy-client = { workspace = true }
 

@@ -104,6 +104,14 @@ prepare 阶段的调度与执行顺序 SHALL 由 `FrameRuntime` 唯一持有；`
 - **THEN** `OuterApp` / `LegacyOuterAppAdapter` / `RenderApp` / `WinitApp::run` SHALL 被移除或彻底下线
 - **AND** 文档与 OpenSpec SHALL 同步更新为最终结构
 
+#### Scenario: truvis-app shim 全部下线后不残留 re-export 模块
+
+- **WHEN** 兼容窗口关闭，所有 re-export shim 被移除
+- **THEN** `truvis-app` 的 `lib.rs` SHALL NOT 包含仅由 `pub use other_crate::*` 构成的纯转发模块
+- **AND** `truvis-app` 的 `Cargo.toml` SHALL NOT 保留仅因 re-export 而存在的依赖项（如 `truvis-logs`、`truvis-descriptor-layout-macro`、`ash-window`、`raw-window-handle`）
+- **AND** `truvis-app/src/render_pipeline/` SHALL 仅保留属于应用集成层的 pass 编排（如 `rt_render_graph`），不包含已迁移到 `truvis-render-passes` 的通用 pass shim
+- **AND** `truvis-app/src/platform/` 目录 SHALL 被完全移除，其职责已由 `truvis-frame-runtime` 承载
+
 ### Requirement: 文档与注释 SHALL 与边界改造同步维护
 
 运行时边界、插件契约、迁移状态发生变化时，文档与关键注释 SHALL 在同一里程碑内同步更新。

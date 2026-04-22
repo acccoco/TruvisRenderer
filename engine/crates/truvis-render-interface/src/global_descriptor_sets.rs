@@ -1,11 +1,14 @@
-use crate::frame_counter::FrameCounter;
-use crate::pipeline_settings::FrameLabel;
+use std::rc::Rc;
+
 use ash::vk;
 use itertools::Itertools;
-use std::rc::Rc;
+
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::descriptors::descriptor::{GfxDescriptorSet, GfxDescriptorSetLayout};
 use truvis_gfx::descriptors::descriptor_pool::{GfxDescriptorPool, GfxDescriptorPoolCreateInfo};
+
+use crate::frame_counter::FrameCounter;
+use crate::pipeline_settings::FrameLabel;
 
 #[derive(DescriptorBinding)]
 pub struct StaticDescriptorBinding {

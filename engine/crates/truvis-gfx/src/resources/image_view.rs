@@ -1,6 +1,7 @@
-use crate::{foundation::debug_messenger::DebugType, gfx::Gfx};
 use ash::vk;
 use ash::vk::Handle;
+
+use crate::{foundation::debug_messenger::DebugType, gfx::Gfx};
 
 pub struct GfxImageView {
     handle: vk::ImageView,

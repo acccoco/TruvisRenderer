@@ -8,7 +8,7 @@ use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
 use slotmap::SecondaryMap;
 
-use super::resource_handle::{RgBufferHandle, RgImageHandle};
+use crate::render_graph::{RgBufferHandle, RgImageHandle};
 
 /// 依赖边数据：资源依赖信息
 #[derive(Clone, Debug, Default)]

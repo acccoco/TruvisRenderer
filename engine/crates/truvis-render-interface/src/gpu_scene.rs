@@ -1,13 +1,8 @@
-use crate::bindless_manager::BindlessManager;
-use crate::frame_counter::FrameCounter;
-use crate::gfx_resource_manager::GfxResourceManager;
-use crate::gpu_scene::helper::ImageLoader;
-use crate::handles::{GfxImageHandle, GfxImageViewHandle};
-use crate::pipeline_settings::FrameLabel;
-use crate::render_data::RenderData;
+use std::path::PathBuf;
+
 use ash::vk;
 use itertools::Itertools;
-use std::path::PathBuf;
+
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::{
     commands::{
@@ -19,6 +14,14 @@ use truvis_gfx::{
 };
 use truvis_path::TruvisPath;
 use truvis_shader_binding::gpu;
+
+use crate::bindless_manager::BindlessManager;
+use crate::frame_counter::FrameCounter;
+use crate::gfx_resource_manager::GfxResourceManager;
+use crate::gpu_scene::helper::ImageLoader;
+use crate::handles::{GfxImageHandle, GfxImageViewHandle};
+use crate::pipeline_settings::FrameLabel;
+use crate::render_data::RenderData;
 
 /// 构建 Gpu Scene 所需的所有 buffer
 struct GpuSceneBuffers {

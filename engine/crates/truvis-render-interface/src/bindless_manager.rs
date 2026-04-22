@@ -1,13 +1,15 @@
+use std::collections::HashMap;
+
+use ash::vk;
+use slotmap::{Key, SecondaryMap};
+
+use truvis_gfx::{gfx::Gfx, utilities::descriptor_cursor::GfxDescriptorCursor};
+use truvis_shader_binding::gpu;
+
 use crate::frame_counter::{FrameCounter, FrameToken};
 use crate::gfx_resource_manager::GfxResourceManager;
 use crate::global_descriptor_sets::{BindlessDescriptorBinding, GlobalDescriptorSets};
 use crate::handles::GfxImageViewHandle;
-use ash::vk;
-use image::Frame;
-use slotmap::{Key, SecondaryMap};
-use std::collections::HashMap;
-use truvis_gfx::{gfx::Gfx, utilities::descriptor_cursor::GfxDescriptorCursor};
-use truvis_shader_binding::gpu;
 
 /// 每个 bindless 类型（SRV/UAV）允许的最大 slot 数，须与 descriptor layout 的 count 对齐
 const MAX_BINDLESS_COUNT: usize = 128;

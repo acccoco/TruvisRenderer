@@ -1,5 +1,7 @@
-use ash::vk;
 use std::{mem::offset_of, rc::Rc};
+
+use ash::vk;
+
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::resources::layout::GfxVertexLayout;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;

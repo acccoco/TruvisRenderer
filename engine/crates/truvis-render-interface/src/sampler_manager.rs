@@ -1,10 +1,12 @@
-use crate::global_descriptor_sets::{GlobalDescriptorSets, StaticDescriptorBinding};
 use ash::vk;
 use itertools::Itertools;
+
 use truvis_gfx::gfx::Gfx;
 use truvis_gfx::sampler::{GfxSampler, GfxSamplerDesc};
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_shader_binding::gpu;
+
+use crate::global_descriptor_sets::{GlobalDescriptorSets, StaticDescriptorBinding};
 
 // Sampler manager
 pub struct RenderSamplerManager {

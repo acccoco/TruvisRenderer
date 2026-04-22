@@ -1,9 +1,10 @@
 //! 参考 imgui-rs-vulkan-renderer
 
-use crate::gui_mesh::GuiMesh;
+use std::collections::HashMap;
+
 use ash::vk;
 use imgui::{DrawData, FontAtlasTexture, TextureId};
-use std::collections::HashMap;
+
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::{basic::color::LabelColor, gfx::Gfx, resources::image::GfxImage};
 use truvis_render_interface::bindless_manager::BindlessManager;
@@ -12,9 +13,10 @@ use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
 use truvis_render_interface::handles::GfxImageViewHandle;
 use truvis_render_interface::pipeline_settings::FrameLabel;
 
+use crate::gui_mesh::GuiMesh;
+
 // TODO 这个东西和 GuiHost 的重复了
 const FONT_TEXTURE_ID: usize = 0;
-const RENDER_IMAGE_ID: usize = 1;
 
 pub struct GuiBackend {
     /// 存放多帧 imgui 的 mesh 数据

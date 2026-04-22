@@ -1,10 +1,12 @@
-use crate::handle::AssetTextureHandle;
+use std::path::PathBuf;
+use std::thread;
+
 use ash::vk;
 use crossbeam_channel::{Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
 use image::GenericImageView;
-use std::path::PathBuf;
-use std::thread;
+
+use crate::handle::AssetTextureHandle;
 
 pub struct AssetLoadRequest {
     pub path: PathBuf,

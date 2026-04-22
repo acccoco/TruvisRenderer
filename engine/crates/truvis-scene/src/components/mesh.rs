@@ -1,5 +1,6 @@
 use ash::vk;
 use itertools::Itertools;
+
 use truvis_gfx::raytracing::acceleration::GfxAcceleration;
 use truvis_render_interface::geometry::RtGeometry;
 

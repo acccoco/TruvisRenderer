@@ -1,16 +1,17 @@
+use std::ffi::CStr;
+
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
+
 use truvis_app_api::app_plugin::{AppPlugin, InitCtx, RenderCtx, ResizeCtx, UpdateCtx};
 use truvis_app_api::input_event::InputEvent;
 use truvis_app_api::overlay::{self, OverlayContext, OverlayModule};
+use truvis_gfx::gfx::Gfx;
+use truvis_logs::init_log;
+use truvis_renderer::renderer::Renderer;
 
 use crate::camera_controller::CameraController;
 use crate::gui_front::GuiHost;
 use crate::input_manager::InputManager;
-
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
-use std::ffi::CStr;
-use truvis_gfx::gfx::Gfx;
-use truvis_logs::init_log;
-use truvis_renderer::renderer::Renderer;
 
 pub fn panic_handler(info: &std::panic::PanicHookInfo) {
     log::error!("{}", info);

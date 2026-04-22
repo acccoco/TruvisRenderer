@@ -1,23 +1,24 @@
 use ash::vk;
-use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageState, RgSemaphoreInfo};
-use truvis_render_graph::resources::fif_buffer::FifBuffers;
-use truvis_renderer::render_context::RenderContext;
 
-use crate::gui_rg_pass::GuiRgPass;
-use crate::render_pipeline::blit_pass::{BlitPass, BlitRgPass};
-use crate::render_pipeline::denoise_accum_pass::{DenoiseAccumPass, DenoiseAccumRgPass};
-use crate::render_pipeline::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};
-use crate::render_pipeline::resolve_pass::{ResolvePass, ResolveRgPass};
-use crate::render_pipeline::sdr_pass::{SdrPass, SdrRgPass};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::Gfx;
 use truvis_gfx::swapchain::swapchain::GfxSwapchain;
 use truvis_gui_backend::gui_pass::GuiPass;
+use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageState, RgSemaphoreInfo};
+use truvis_render_graph::resources::fif_buffer::FifBuffers;
 use truvis_render_interface::cmd_allocator::CmdAllocator;
 use truvis_render_interface::frame_counter::FrameCounter;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
+use truvis_render_passes::blit_pass::{BlitPass, BlitRgPass};
+use truvis_render_passes::denoise_accum_pass::{DenoiseAccumPass, DenoiseAccumRgPass};
+use truvis_render_passes::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};
+use truvis_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
+use truvis_render_passes::sdr_pass::{SdrPass, SdrRgPass};
 use truvis_renderer::present::render_present::RenderPresent;
+use truvis_renderer::render_context::RenderContext;
+
+use crate::gui_rg_pass::GuiRgPass;
 
 pub struct RtPipeline {
     /// 光追 pass

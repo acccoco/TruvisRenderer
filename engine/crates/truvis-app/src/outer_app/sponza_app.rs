@@ -1,11 +1,12 @@
-use crate::app_plugin::{AppPlugin, InitCtx, RenderCtx, UpdateCtx};
-use crate::render_pipeline::rt_render_graph::RtPipeline;
+use truvis_app_api::app_plugin::{AppPlugin, InitCtx, RenderCtx, UpdateCtx};
 use truvis_asset::asset_hub::AssetHub;
 use truvis_path::TruvisPath;
 use truvis_renderer::model_loader::assimp_loader::AssimpSceneLoader;
 use truvis_renderer::platform::camera::Camera;
 use truvis_scene::scene_manager::SceneManager;
 use truvis_shader_binding::gpu;
+
+use crate::render_pipeline::rt_render_graph::RtPipeline;
 
 #[derive(Default)]
 pub struct SponzaApp {
