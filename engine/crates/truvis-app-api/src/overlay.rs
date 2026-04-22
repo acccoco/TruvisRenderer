@@ -28,10 +28,7 @@ impl OverlayModule for DebugInfoOverlay {
     fn build_ui(&mut self, ui: &imgui::Ui, ctx: &mut OverlayContext) {
         ui.window("##overlay")
             .position([0.0, 0.0], imgui::Condition::Always)
-            .size(
-                [ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32],
-                imgui::Condition::Always,
-            )
+            .size([ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32], imgui::Condition::Always)
             .flags(
                 imgui::WindowFlags::NO_TITLE_BAR
                     | imgui::WindowFlags::NO_RESIZE
@@ -50,10 +47,7 @@ impl OverlayModule for DebugInfoOverlay {
             .build(|| {
                 ui.set_cursor_pos([5.0, 5.0]);
                 ui.text(format!("FPS: {:.2}", 1.0 / ctx.delta_time_s));
-                ui.text(format!(
-                    "swapchain: {:.0}x{:.0}",
-                    ctx.swapchain_extent.width, ctx.swapchain_extent.height
-                ));
+                ui.text(format!("swapchain: {:.0}x{:.0}", ctx.swapchain_extent.width, ctx.swapchain_extent.height));
 
                 let camera = ctx.camera;
                 ui.text(format!(

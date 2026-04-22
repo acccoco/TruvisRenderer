@@ -1,8 +1,9 @@
 use ash::vk;
-use truvis_renderer::render_context::RenderContext;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageState, RgSemaphoreInfo};
 use truvis_render_graph::resources::fif_buffer::FifBuffers;
+use truvis_renderer::render_context::RenderContext;
 
+use crate::gui_rg_pass::GuiRgPass;
 use crate::render_pipeline::blit_pass::{BlitPass, BlitRgPass};
 use crate::render_pipeline::denoise_accum_pass::{DenoiseAccumPass, DenoiseAccumRgPass};
 use crate::render_pipeline::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};
@@ -12,7 +13,6 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::Gfx;
 use truvis_gfx::swapchain::swapchain::GfxSwapchain;
-use crate::gui_rg_pass::GuiRgPass;
 use truvis_gui_backend::gui_pass::GuiPass;
 use truvis_render_interface::cmd_allocator::CmdAllocator;
 use truvis_render_interface::frame_counter::FrameCounter;

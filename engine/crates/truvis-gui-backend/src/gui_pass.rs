@@ -242,4 +242,3 @@ impl GuiPass {
         cmd.end_rendering();
     }
 }
-

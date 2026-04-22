@@ -1,6 +1,7 @@
 use crate::platform::camera::Camera;
 use crate::platform::timer::Timer;
 use crate::present::render_present::RenderPresent;
+use crate::render_context::RenderContext;
 use ash::vk;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use std::ffi::CStr;
@@ -18,7 +19,6 @@ use truvis_gfx::{
     },
     gfx::Gfx,
 };
-use crate::render_context::RenderContext;
 use truvis_render_graph::resources::fif_buffer::FifBuffers;
 use truvis_render_interface::bindless_manager::BindlessManager;
 use truvis_render_interface::cmd_allocator::CmdAllocator;

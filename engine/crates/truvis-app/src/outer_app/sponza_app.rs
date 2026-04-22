@@ -37,11 +37,7 @@ impl SponzaApp {
             _color_padding: Default::default(),
         });
         log::info!("start load sponza scene");
-        AssimpSceneLoader::load_scene(
-            &TruvisPath::assets_path("fbx/sponza/sponza.fbx"),
-            scene_manager,
-            asset_hub,
-        );
+        AssimpSceneLoader::load_scene(&TruvisPath::assets_path("fbx/sponza/sponza.fbx"), scene_manager, asset_hub);
         log::info!("finished load sponza scene");
     }
 }

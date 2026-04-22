@@ -1,6 +1,6 @@
-use truvis_app_api::input_event::{ElementState, InputEvent, MouseButton};
 use crate::input_state::InputState;
 use std::collections::VecDeque;
+use truvis_app_api::input_event::{ElementState, InputEvent, MouseButton};
 
 pub struct InputManager {
     state: InputState,

@@ -1,5 +1,5 @@
-use truvis_app_api::input_event::KeyCode;
 use crate::input_state::InputState;
+use truvis_app_api::input_event::KeyCode;
 use truvis_renderer::platform::camera::Camera;
 
 pub struct CameraController {
