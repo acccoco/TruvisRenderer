@@ -1,5 +1,12 @@
 # 架构演进差距分析（2026-04-22）
 
+> 维护状态（2026-04-23）：本文是 `World + RenderWorld` 拆分前后的过渡期盘点。
+> 其中 “RenderContext 是 World + RenderWorld 的混合体” 这一 P0 已经在当前代码中落地为
+> `truvis-world::World` + `truvis-render-interface::RenderWorld`。
+> 仍然有效的部分主要是：显式 `phase_extract`、多 plugin、Camera/Input/GUI plugin 化、
+> Renderer 职责继续收窄。当前实现事实请先看 [`README.md`](README.md) 与
+> [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)。
+
 > 四次架构重构完成后的现状盘点。对照理想架构（App / World / RenderWorld / Plugin），
 > 找出已完成、可调整、待探索的方向。
 >

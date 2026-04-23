@@ -1,5 +1,10 @@
 # 渲染线程剥离：循环结构
 
+> 维护状态（2026-04-23）：渲染线程剥离仍是当前主线；
+> 但本文“兼容入口”部分提到的 `OuterApp` / `LegacyOuterAppAdapter` 在当前代码中已不再保留，
+> 当前入口是 `WinitApp::run_plugin(|| Box<dyn AppPlugin>)`。
+> 线程分工、共享状态和二阶段关闭握手仍可作为当前设计说明阅读。
+
 本笔记记录 `render-thread-isolation` change 落地后，winit 主线程与渲染线程的分工与握手。
 
 > 术语更新（`frame-runtime-boundary-refactor` 之后）：

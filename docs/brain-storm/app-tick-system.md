@@ -1,7 +1,13 @@
 # App 侧 Tick 机制
 
 > 日期：2026-04-17
-> 状态：设计草案（未实现）
+> 状态：历史设计草案（未按本文 API 实现）
+>
+> 维护状态（2026-04-23）：本文基于旧 `RenderApp` / `OuterApp` API。
+> 当前主线已经使用 `FrameRuntime` / `AppPlugin` 和 typed contexts；
+> `UpdateCtx` 已提供 `world`、`pipeline_settings`、`frame_settings`、`delta_time_s`。
+> 但 “Camera/Input/GUI 行为不应长期硬编码在 runtime 中” 这个动机仍然有效，
+> 更近期的方向是 builtin plugin / 多 plugin，而不是直接照搬本文的 `Tickable` 注册表。
 
 
 ## 一、动机

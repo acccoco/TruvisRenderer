@@ -1,5 +1,10 @@
 # RenderApp / OuterApp / Renderer / GUI 分层分析
 
+> 维护状态（2026-04-23）：本文是历史诊断，文中的 `RenderApp` / `OuterApp` /
+> `RenderContext` 主线已经分别演进为 `FrameRuntime` / `AppPlugin` / `World + RenderWorld`。
+> 保留本文是为了记录早期问题来源和 GUI、surface、extract、plugin 化等演进方向。
+> 当前代码状态请先看 [`README.md`](README.md) 与 [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)。
+
 基于 [ideal_layered_architecture.md](ideal_layered_architecture.md) 中的 Bevy 风格分层理念，对当前 `truvis-winit-app` / `truvis-app` / `truvis-renderer` / `truvis-gui-backend` 的职责划分做诊断，并给出重构方向。
 
 
