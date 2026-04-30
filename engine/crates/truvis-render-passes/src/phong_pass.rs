@@ -16,7 +16,8 @@ use truvis_gfx::{
 use truvis_path::TruvisPath;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::pipeline_settings::FrameLabel;
-use truvis_renderer::render_context::RenderContext;
+use truvis_render_interface::render_world::RenderWorld;
+use truvis_world::World;
 use truvis_shader_binding::gpu;
 
 pub struct PhongPass {
@@ -62,7 +63,7 @@ impl PhongPass {
     fn bind(
         &self,
         cmd: &GfxCommandBuffer,
-        render_context: &RenderContext,
+        render_world: &RenderWorld,
         viewport: &vk::Rect2D,
         push_constant: &gpu::raster::PushConstants,
         frame_label: FrameLabel,
@@ -87,7 +88,7 @@ impl PhongPass {
             BytesConvert::bytes_of(push_constant),
         );
 
-        let render_descriptor_sets = &render_context.global_descriptor_sets;
+        let render_descriptor_sets = &render_world.global_descriptor_sets;
         cmd.bind_descriptor_sets(
             vk::PipelineBindPoint::GRAPHICS,
             self.pipeline.layout(),
@@ -97,14 +98,14 @@ impl PhongPass {
         );
     }
 
-    pub fn draw(&self, cmd: &GfxCommandBuffer, render_context: &RenderContext) {
-        let frame_label = render_context.frame_counter.frame_label();
+    pub fn draw(&self, cmd: &GfxCommandBuffer, render_world: &RenderWorld, world: &World) {
+        let frame_label = render_world.frame_counter.frame_label();
 
-        let (_, render_target_view_handle) = render_context.fif_buffers.render_target_handle(frame_label);
-        let render_target_view = render_context.gfx_resource_manager.get_image_view(render_target_view_handle).unwrap();
-        let depth_image_view = render_context
+        let (_, render_target_view_handle) = render_world.fif_buffers.render_target_handle(frame_label);
+        let render_target_view = render_world.gfx_resource_manager.get_image_view(render_target_view_handle).unwrap();
+        let depth_image_view = render_world
             .gfx_resource_manager
-            .get_image_view(render_context.fif_buffers.depth_image_view_handle())
+            .get_image_view(render_world.fif_buffers.depth_image_view_handle())
             .unwrap();
 
         let rendering_info = GfxRenderingInfo::new(
@@ -112,7 +113,7 @@ impl PhongPass {
             Some(depth_image_view.handle()),
             vk::Rect2D {
                 offset: vk::Offset2D::default(),
-                extent: render_context.frame_settings.frame_extent,
+                extent: render_world.frame_settings.frame_extent,
             },
         );
 
@@ -121,27 +122,26 @@ impl PhongPass {
 
         self.bind(
             cmd,
-            render_context,
-            &render_context.frame_settings.frame_extent.into(),
+            render_world,
+            &render_world.frame_settings.frame_extent.into(),
             &gpu::raster::PushConstants {
-                frame_data: render_context.per_frame_data_buffers[*frame_label].device_address(),
-                scene: render_context.gpu_scene.scene_buffer(frame_label).device_address(),
+                frame_data: render_world.per_frame_data_buffers[*frame_label].device_address(),
+                scene: render_world.gpu_scene.scene_buffer(frame_label).device_address(),
 
-                submesh_idx: 0,  // 这个值在 draw 时会被更新
-                instance_idx: 0, // 这个值在 draw 时会被更新
+                submesh_idx: 0,
+                instance_idx: 0,
 
                 _padding_1: Default::default(),
                 _padding_2: Default::default(),
             },
             frame_label,
         );
-        render_context.gpu_scene.draw(
+        render_world.gpu_scene.draw(
             cmd,
-            &render_context
+            &world
                 .scene_manager
-                .prepare_render_data(&render_context.bindless_manager, &render_context.asset_hub),
+                .prepare_render_data(&render_world.bindless_manager, &world.asset_hub),
             &mut |ins_idx, submesh_idx| {
-                // NOTE 这个数据和 PushConstant 中的内存布局是一致的
                 let data = [ins_idx, submesh_idx];
                 cmd.cmd_push_constants(
                     self.pipeline.layout(),

@@ -17,6 +17,7 @@ truvis-render-interface = { workspace = true }
 truvis-render-graph = { workspace = true }
 truvis-asset = { workspace = true }
 truvis-scene = { workspace = true }
+truvis-world = { workspace = true }
 truvis-utils = { workspace = true }
 truvis-gui-backend = { workspace = true }
 

@@ -14,7 +14,7 @@ use truvis_gfx::{
     },
 };
 use truvis_path::TruvisPath;
-use truvis_renderer::render_context::RenderContext;
+use truvis_render_interface::render_world::RenderWorld;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
 
@@ -88,7 +88,7 @@ impl ShaderToyPass {
 
     pub fn draw(
         &self,
-        render_context: &RenderContext,
+        render_world: &RenderWorld,
         cmd: &GfxCommandBuffer,
         canvas: &GfxImageView,
         canvas_extent: vk::Extent2D,
@@ -96,10 +96,10 @@ impl ShaderToyPass {
         let viewport_extent = canvas_extent;
 
         let push_constants = PushConstants {
-            time: render_context.total_time_s,
-            delta_time: render_context.delta_time_s,
-            frame: render_context.frame_counter.frame_id() as i32,
-            frame_rate: 1.0 / render_context.delta_time_s,
+            time: render_world.total_time_s,
+            delta_time: render_world.delta_time_s,
+            frame: render_world.frame_counter.frame_id() as i32,
+            frame_rate: 1.0 / render_world.delta_time_s,
             resolution: glam::Vec2::new(viewport_extent.width as f32, viewport_extent.height as f32),
             mouse: glam::Vec4::new(
                 0.2 * (viewport_extent.width as f32),

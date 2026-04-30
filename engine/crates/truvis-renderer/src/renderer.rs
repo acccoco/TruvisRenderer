@@ -17,7 +17,7 @@ use truvis_gfx::{
     },
     gfx::Gfx,
 };
-use truvis_render_graph::resources::fif_buffer::FifBuffers;
+use truvis_render_interface::fif_buffer::FifBuffers;
 use truvis_render_interface::bindless_manager::BindlessManager;
 use truvis_render_interface::cmd_allocator::CmdAllocator;
 use truvis_render_interface::frame_counter::FrameCounter;
@@ -31,10 +31,12 @@ use truvis_render_interface::sampler_manager::RenderSamplerManager;
 use truvis_scene::scene_manager::SceneManager;
 use truvis_shader_binding::gpu;
 
+use truvis_render_interface::render_world::RenderWorld;
+use truvis_world::World;
+
 use crate::platform::camera::Camera;
 use crate::platform::timer::Timer;
 use crate::present::render_present::RenderPresent;
-use crate::render_context::RenderContext;
 
 /// 渲染 Backend 核心
 ///
@@ -55,7 +57,8 @@ use crate::render_context::RenderContext;
 /// renderer.end_frame();
 /// ```
 pub struct Renderer {
-    pub render_context: RenderContext,
+    pub world: World,
+    pub render_world: RenderWorld,
 
     pub cmd_allocator: CmdAllocator,
 
@@ -121,24 +124,26 @@ impl Renderer {
             gpu_scene_update_cmds: cmds,
             render_present: None,
 
-            render_context: RenderContext {
-                asset_hub,
+            world: World {
                 scene_manager,
+                asset_hub,
+            },
+            render_world: RenderWorld {
                 gpu_scene,
-                fif_buffers,
                 bindless_manager,
-                per_frame_data_buffers,
-                gfx_resource_manager,
                 global_descriptor_sets: render_descriptor_sets,
+                gfx_resource_manager,
+                fif_buffers,
                 sampler_manager,
-
-                delta_time_s: 0.0,
-                total_time_s: 0.0,
-                accum_data,
+                per_frame_data_buffers,
 
                 frame_counter,
                 frame_settings,
                 pipeline_settings: PipelineSettings::default(),
+
+                delta_time_s: 0.0,
+                total_time_s: 0.0,
+                accum_data,
             },
         }
     }
@@ -150,7 +155,7 @@ impl Renderer {
         window_physical_size: [u32; 2],
     ) {
         self.render_present = Some(RenderPresent::new(
-            &mut self.render_context.gfx_resource_manager,
+            &mut self.render_world.gfx_resource_manager,
             raw_display_handle,
             raw_window_handle,
             vk::Extent2D {
@@ -182,32 +187,31 @@ impl Renderer {
 
     #[inline]
     pub fn frame_label(&self) -> FrameLabel {
-        self.render_context.frame_counter.frame_label()
+        self.render_world.frame_counter.frame_label()
     }
 }
 // destroy
 impl Renderer {
     pub fn destroy(mut self) {
-        // 在 Renderer 被销毁时，等待 Gfx 设备空闲
         Gfx::get().wait_idel();
 
         if let Some(render_present) = self.render_present.take() {
-            render_present.destroy(&mut self.render_context.gfx_resource_manager);
+            render_present.destroy(&mut self.render_world.gfx_resource_manager);
         }
 
-        self.render_context
+        self.render_world
             .fif_buffers
-            .destroy_mut(&mut self.render_context.bindless_manager, &mut self.render_context.gfx_resource_manager);
-        self.render_context.scene_manager.destroy();
-        self.render_context
+            .destroy_mut(&mut self.render_world.bindless_manager, &mut self.render_world.gfx_resource_manager);
+        self.world.scene_manager.destroy();
+        self.world
             .asset_hub
-            .destroy(&mut self.render_context.gfx_resource_manager, &mut self.render_context.bindless_manager);
-        self.render_context.bindless_manager.destroy();
-        self.render_context.gpu_scene.destroy();
+            .destroy(&mut self.render_world.gfx_resource_manager, &mut self.render_world.bindless_manager);
+        self.render_world.bindless_manager.destroy();
+        self.render_world.gpu_scene.destroy();
         self.cmd_allocator.destroy();
-        self.render_context.gfx_resource_manager.destroy();
+        self.render_world.gfx_resource_manager.destroy();
         self.fif_timeline_semaphore.destroy();
-        self.render_context.global_descriptor_sets.destroy();
+        self.render_world.global_descriptor_sets.destroy();
     }
 }
 // phase call
@@ -223,7 +227,7 @@ impl Renderer {
         {
             let _span = tracy_client::span!("wait fif timeline");
 
-            let current_frame_id = self.render_context.frame_counter.frame_id();
+            let current_frame_id = self.render_world.frame_counter.frame_id();
             let fif_count = FrameCounter::fif_count();
             let wait_frame_id = current_frame_id.saturating_sub(fif_count as u64);
             const WAIT_SEMAPHORE_TIMEOUT_NS: u64 = 30 * 1000 * 1000 * 1000; // 30s
@@ -232,16 +236,16 @@ impl Renderer {
 
         // 清理 fif 资源
         {
-            self.cmd_allocator.reset_frame_commands(self.render_context.frame_counter.frame_label());
-            self.render_context.gfx_resource_manager.cleanup(self.render_context.frame_counter.frame_id());
+            self.cmd_allocator.reset_frame_commands(self.render_world.frame_counter.frame_label());
+            self.render_world.gfx_resource_manager.cleanup(self.render_world.frame_counter.frame_id());
         }
 
-        self.render_context.delta_time_s = self.timer.delta_time_s();
-        self.render_context.total_time_s = self.timer.total_time_s();
+        self.render_world.delta_time_s = self.timer.delta_time_s();
+        self.render_world.total_time_s = self.timer.total_time_s();
 
         // 子系统 begin frame
-        let frame_token = self.render_context.frame_counter.frame_token();
-        self.render_context.bindless_manager.begin_frame(frame_token);
+        let frame_token = self.render_world.frame_counter.frame_token();
+        self.render_world.bindless_manager.begin_frame(frame_token);
     }
 
     /// 执行 AssetHub CPU 侧增量更新。
@@ -249,14 +253,14 @@ impl Renderer {
     /// 由 `FrameRuntime` 在 begin_frame phase 中调度，不再由 `Renderer::begin_frame` 隐式触发。
     pub fn update_assets(&mut self) {
         let _span = tracy_client::span!("Renderer::update_assets");
-        self.render_context
+        self.world
             .asset_hub
-            .update(&mut self.render_context.gfx_resource_manager, &mut self.render_context.bindless_manager);
+            .update(&mut self.render_world.gfx_resource_manager, &mut self.render_world.bindless_manager);
     }
 
     pub fn acquire_image(&mut self) {
         // swapchain image
-        self.render_present.as_mut().unwrap().acquire_image(self.render_context.frame_counter.frame_label());
+        self.render_present.as_mut().unwrap().acquire_image(self.render_world.frame_counter.frame_label());
     }
 
     pub fn present_image(&mut self) {
@@ -266,11 +270,11 @@ impl Renderer {
     pub fn end_frame(&mut self) {
         let _span = tracy_client::span!("Renderer::end_frame");
 
-        self.render_context.frame_counter.next_frame();
+        self.render_world.frame_counter.next_frame();
     }
 
     pub fn time_to_render(&mut self) -> bool {
-        self.render_context.frame_counter.frame_delta_time_limit_us()
+        self.render_world.frame_counter.frame_delta_time_limit_us()
             < self.timer.elapsed_since_tick().as_micros() as f32
     }
 
@@ -279,7 +283,7 @@ impl Renderer {
     /// 由 `FrameRuntime` 在 prepare phase 中调度，不再由 `before_render` 隐式触发。
     pub fn update_accum_frames(&mut self, camera: &Camera) {
         let current_camera_dir = glam::vec3(camera.euler_yaw_deg, camera.euler_pitch_deg, camera.euler_roll_deg);
-        self.render_context.accum_data.update_accum_frames(current_camera_dir, camera.position);
+        self.render_world.accum_data.update_accum_frames(current_camera_dir, camera.position);
     }
 
     /// Backend GPU 数据准备：将 scene/per-frame 数据上传到 GPU 并更新 descriptor sets。
@@ -298,47 +302,44 @@ impl Renderer {
 
     pub fn update_frame_settings(&mut self) {
         let swapchain_extent = self.render_present.as_ref().unwrap().swapchain.as_ref().unwrap().extent();
-        if self.render_context.frame_settings.frame_extent == swapchain_extent {
+        if self.render_world.frame_settings.frame_extent == swapchain_extent {
             return;
         }
 
-        // 更新 frame settings
         let extent = self.render_present.as_ref().unwrap().swapchain.as_ref().unwrap().extent();
 
-        // Renderer: Resize Framebuffer
-        if self.render_context.frame_settings.frame_extent != extent {
-            self.render_context.frame_settings.frame_extent = extent;
+        if self.render_world.frame_settings.frame_extent != extent {
+            self.render_world.frame_settings.frame_extent = extent;
             self.resize_frame_buffer(extent);
         }
     }
 
     pub fn recreate_swapchain(&mut self) {
-        self.render_present.as_mut().unwrap().rebuild_after_resized(&mut self.render_context.gfx_resource_manager);
+        self.render_present.as_mut().unwrap().rebuild_after_resized(&mut self.render_world.gfx_resource_manager);
     }
 
     pub fn resize_frame_buffer(&mut self, new_extent: vk::Extent2D) {
-        let mut accum_data = self.render_context.accum_data;
+        let mut accum_data = self.render_world.accum_data;
         accum_data.reset();
 
         unsafe {
             Gfx::get().gfx_device().device_wait_idle().unwrap();
         }
-        self.render_context.frame_settings.frame_extent = new_extent;
+        self.render_world.frame_settings.frame_extent = new_extent;
 
-        self.render_context.fif_buffers.rebuild(
-            &mut self.render_context.bindless_manager,
-            &mut self.render_context.gfx_resource_manager,
-            &self.render_context.frame_settings,
-            &self.render_context.frame_counter,
+        self.render_world.fif_buffers.rebuild(
+            &mut self.render_world.bindless_manager,
+            &mut self.render_world.gfx_resource_manager,
+            &self.render_world.frame_settings,
+            &self.render_world.frame_counter,
         );
     }
 
     fn update_gpu_scene(&mut self, camera: &Camera) {
         let _span = tracy_client::span!("update_gpu_scene");
-        let frame_extent = self.render_context.frame_settings.frame_extent;
-        let frame_label = self.render_context.frame_counter.frame_label();
+        let frame_extent = self.render_world.frame_settings.frame_extent;
+        let frame_label = self.render_world.frame_counter.frame_label();
 
-        // 将数据上传到 gpu buffer 中
         let cmd = self.gpu_scene_update_cmds[*frame_label].clone();
         cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "[update-draw-buffer]stage-to-ubo");
 
@@ -352,23 +353,23 @@ impl Renderer {
             dst_access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::UNIFORM_READ,
         };
 
-        self.render_context.bindless_manager.prepare_render_data(
-            &self.render_context.gfx_resource_manager,
-            &self.render_context.global_descriptor_sets,
+        self.render_world.bindless_manager.prepare_render_data(
+            &self.render_world.gfx_resource_manager,
+            &self.render_world.global_descriptor_sets,
         );
 
-        self.render_context.gpu_scene.upload_render_data(
+        let scene_render_data = self
+            .world
+            .scene_manager
+            .prepare_render_data(&self.render_world.bindless_manager, &self.world.asset_hub);
+        self.render_world.gpu_scene.upload_render_data(
             &cmd,
             transfer_barrier_mask,
-            &self.render_context.frame_counter,
-            &self
-                .render_context
-                .scene_manager
-                .prepare_render_data(&self.render_context.bindless_manager, &self.render_context.asset_hub),
-            &self.render_context.bindless_manager,
+            &self.render_world.frame_counter,
+            &scene_render_data,
+            &self.render_world.bindless_manager,
         );
 
-        // 准备好当前帧的数据
         let per_frame_data = {
             let view = camera.get_view_matrix();
             let projection = camera.get_projection_matrix();
@@ -382,18 +383,18 @@ impl Renderer {
                 camera_forward: camera.camera_forward().into(),
                 time_ms: self.timer.total_time_ms(),
                 delta_time_ms: self.timer.delta_time_ms(),
-                frame_id: self.render_context.frame_counter.frame_id(),
+                frame_id: self.render_world.frame_counter.frame_id(),
                 resolution: gpu::Float2 {
                     x: frame_extent.width as f32,
                     y: frame_extent.height as f32,
                 },
-                accum_frames: self.render_context.accum_data.accum_frames_num() as u32,
+                accum_frames: self.render_world.accum_data.accum_frames_num() as u32,
                 _padding_0: Default::default(),
                 _padding_1: Default::default(),
                 _padding_2: Default::default(),
             }
         };
-        let crt_frame_data_buffer = &self.render_context.per_frame_data_buffers[*frame_label];
+        let crt_frame_data_buffer = &self.render_world.per_frame_data_buffers[*frame_label];
         cmd.cmd_update_buffer(crt_frame_data_buffer.vk_buffer(), 0, BytesConvert::bytes_of(&per_frame_data));
         cmd.buffer_memory_barrier(
             vk::DependencyFlags::empty(),
@@ -406,10 +407,10 @@ impl Renderer {
     }
 
     fn update_perframe_descriptor_set(&mut self) {
-        let frame_label = self.render_context.frame_counter.frame_label();
-        let per_frame_data_buffer = &self.render_context.per_frame_data_buffers[*frame_label];
-        let gpu_scene_buffer = self.render_context.gpu_scene.scene_buffer(frame_label);
-        let perframe_set = self.render_context.global_descriptor_sets.current_perframe_set(frame_label).handle();
+        let frame_label = self.render_world.frame_counter.frame_label();
+        let per_frame_data_buffer = &self.render_world.per_frame_data_buffers[*frame_label];
+        let gpu_scene_buffer = self.render_world.gpu_scene.scene_buffer(frame_label);
+        let perframe_set = self.render_world.global_descriptor_sets.current_perframe_set(frame_label).handle();
 
         let perframe_data_buffer_info = vec![
             vk::DescriptorBufferInfo::default()

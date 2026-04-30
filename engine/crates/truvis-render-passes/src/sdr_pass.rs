@@ -6,7 +6,7 @@ use truvis_render_graph::compute_pass::ComputePass;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::handles::GfxImageViewHandle;
-use truvis_renderer::render_context::RenderContext;
+use truvis_render_interface::render_world::RenderWorld;
 use truvis_shader_binding::gpu;
 
 pub struct SdrPassData {
@@ -31,20 +31,20 @@ impl SdrPass {
         Self { sdr_pass }
     }
 
-    pub fn exec(&self, cmd: &GfxCommandBuffer, data: SdrPassData, render_context: &RenderContext) {
-        let src_image_bindless_handle = render_context.bindless_manager.get_shader_uav_handle(data.src_image);
-        let dst_image_bindless_handle = render_context.bindless_manager.get_shader_uav_handle(data.dst_image);
+    pub fn exec(&self, cmd: &GfxCommandBuffer, data: SdrPassData, render_world: &RenderWorld) {
+        let src_image_bindless_handle = render_world.bindless_manager.get_shader_uav_handle(data.src_image);
+        let dst_image_bindless_handle = render_world.bindless_manager.get_shader_uav_handle(data.dst_image);
 
-        let frame_label = render_context.frame_counter.frame_label();
+        let frame_label = render_world.frame_counter.frame_label();
         self.sdr_pass.exec(
             cmd,
             frame_label,
-            &render_context.global_descriptor_sets,
+            &render_world.global_descriptor_sets,
             &gpu::sdr::PushConstant {
                 src_image: src_image_bindless_handle.0,
                 dst_image: dst_image_bindless_handle.0,
                 image_size: glam::uvec2(data.src_image_size.width, data.src_image_size.height).into(),
-                channel: render_context.pipeline_settings.channel,
+                channel: render_world.pipeline_settings.channel,
                 _padding_1: Default::default(),
             },
             glam::uvec3(
@@ -60,7 +60,7 @@ pub struct SdrRgPass<'a> {
     pub sdr_pass: &'a SdrPass,
 
     // TODO 暂时使用这个肮脏的实现
-    pub render_context: &'a RenderContext,
+    pub render_world: &'a RenderWorld,
 
     pub src_image: RgImageHandle,
     pub dst_image: RgImageHandle,
@@ -86,7 +86,7 @@ impl<'a> RgPass for SdrRgPass<'a> {
                 src_image_size: self.src_image_extent,
                 dst_image_size: self.dst_image_extent,
             },
-            self.render_context,
+            self.render_world,
         );
     }
 }

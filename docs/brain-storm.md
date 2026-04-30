@@ -3,7 +3,7 @@
 本目录保存架构发散、设计草案和阶段性诊断。这里的文档允许互相矛盾，
 因为它们记录的是不同时间点、不同演进方向的思考过程。
 
-当前代码事实以仓库根目录的 [`ARCHITECTURE.md`](../../ARCHITECTURE.md) 为准；
+当前代码事实以仓库根目录的 [`ARCHITECTURE.md`](../ARCHITECTURE.md) 为准；
 本文件只负责把 brain-storm 文档按主题、状态和后续价值整理出来。
 
 ## 1. 当前代码快照（2026-04-23）
@@ -51,43 +51,43 @@
 
 这些文档最贴近当前代码，可作为近期架构判断的主要参考：
 
-- [`2026-04-23-structure-responsibility-open-source-comparison.md`](2026-04-23-structure-responsibility-open-source-comparison.md)：
+- [`2026-04-23-structure-responsibility-open-source-comparison.md`](brain-storm/2026-04-23-structure-responsibility-open-source-comparison.md)：
   当前职责混乱点与开源渲染器对照。建议优先看这篇。
-- [`2026-04-23-assets-bindless-decoupling.md`](2026-04-23-assets-bindless-decoupling.md)：
+- [`2026-04-23-assets-bindless-decoupling.md`](brain-storm/2026-04-23-assets-bindless-decoupling.md)：
   asset / bindless / material texture binding 的边界拆分。
-- [`2026-04-23-asset-resource-naming.md`](2026-04-23-asset-resource-naming.md)：
+- [`2026-04-23-asset-resource-naming.md`](brain-storm/2026-04-23-asset-resource-naming.md)：
   `truvis-asset` 与 `GfxResourceManager` 的命名语义。
-- [`2026-04-23-render-view-concept.md`](2026-04-23-render-view-concept.md)：
+- [`2026-04-23-render-view-concept.md`](brain-storm/2026-04-23-render-view-concept.md)：
   `ViewDesc` / `PreparedView` 的轻量引入路径。
-- [`naming-renderworld-renderer-backend-app.md`](naming-renderworld-renderer-backend-app.md)：
+- [`naming-renderworld-renderer-backend-app.md`](brain-storm/naming-renderworld-renderer-backend-app.md)：
   `RenderWorld` / `Renderer` / `FrameRuntime` / `AppPlugin` 的概念边界和重命名路线。
-- [`plugin-pass-eventbus-evolution.md`](plugin-pass-eventbus-evolution.md)：
+- [`plugin-pass-eventbus-evolution.md`](brain-storm/plugin-pass-eventbus-evolution.md)：
   多 plugin、pass 特性化和事件总线的中长期路线。
 
 ### 已落地或部分落地的历史记录
 
 这些文档记录的许多问题已经被后续重构解决，应作为历史上下文阅读：
 
-- [`clean-crate-dependencies.md`](clean-crate-dependencies.md)：
+- [`clean-crate-dependencies.md`](brain-storm/clean-crate-dependencies.md)：
   已完成的 crate 依赖清理，render-graph / gui-backend 边界已按本文收敛。
-- [`render-thread-isolation.md`](render-thread-isolation.md)：
+- [`render-thread-isolation.md`](brain-storm/render-thread-isolation.md)：
   渲染线程剥离已落地；其中旧兼容入口描述与当前代码不完全一致。
-- [`2026-04-22-architecture-evolution-gap-analysis.md`](2026-04-22-architecture-evolution-gap-analysis.md)：
+- [`2026-04-22-architecture-evolution-gap-analysis.md`](brain-storm/2026-04-22-architecture-evolution-gap-analysis.md)：
   其中 `RenderContext -> World + RenderWorld` 已落地；显式 extract、多 plugin、builtin systems plugin 化仍未落地。
-- [`render-app-layering-analysis.md`](render-app-layering-analysis.md)：
+- [`render-app-layering-analysis.md`](brain-storm/render-app-layering-analysis.md)：
   `RenderApp` / `OuterApp` / `RenderContext` 的历史诊断。主问题已由 `FrameRuntime` / `AppPlugin` / `World + RenderWorld` 缓解，但 GUI、surface、extract、plugin 化方向仍有效。
 
 ### 理想模型与远期路线
 
 这些文档不一定要求当前项目完全照做，更适合作为设计原则和对照标尺：
 
-- [`ideal_layered_architecture.md`](ideal_layered_architecture.md)：
+- [`ideal_layered_architecture.md`](brain-storm/ideal_layered_architecture.md)：
   Platform / AppShell / Main World / Render World 的理想模型。
-- [`ideal-module-architecture.md`](ideal-module-architecture.md)：
+- [`ideal-module-architecture.md`](brain-storm/ideal-module-architecture.md)：
   组件级归属分析，部分内容已被后续 `World + RenderWorld` 重构覆盖。
-- [`plugin-imgui-winit-multi-pipeline-integration.md`](plugin-imgui-winit-multi-pipeline-integration.md)：
+- [`plugin-imgui-winit-multi-pipeline-integration.md`](brain-storm/plugin-imgui-winit-multi-pipeline-integration.md)：
   ImGui、Winit、多管线以 plugin/feature 方式接入的设计方向。
-- [`app-tick-system.md`](app-tick-system.md)：
+- [`app-tick-system.md`](brain-storm/app-tick-system.md)：
   基于旧 `RenderApp` / `OuterApp` 的 tick 草案；可作为“Camera/Input 行为不应硬编码”的历史动机，而不是当前 API 草案。
 
 ## 3. 保留的分叉方向

@@ -6,8 +6,8 @@ description = "Shared render pass implementations (RT, post-process, etc.)"
 
 [dependencies]
 truvis-gfx = { workspace = true }
-truvis-renderer = { workspace = true }
 truvis-render-interface = { workspace = true }
+truvis-world = { workspace = true }
 truvis-render-graph = { workspace = true }
 truvis-shader-binding = { workspace = true }
 truvis-path = { workspace = true }

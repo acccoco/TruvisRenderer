@@ -32,7 +32,7 @@ L2 Render Contract
   truvis-render-interface
 
 L3 Domain + Graph (同层互不依赖)
-  truvis-render-graph / truvis-scene / truvis-asset / truvis-gui-backend
+  truvis-render-graph / truvis-scene / truvis-asset / truvis-gui-backend / truvis-world
 
 L4 Renderer Integration
   truvis-renderer
@@ -40,8 +40,8 @@ L4 Renderer Integration
 L5 App Contract + Runtime
   truvis-app-api (plugin contract + typed contexts + overlay)
   truvis-frame-runtime (phase orchestration runtime)
-  truvis-render-passes (shared pass implementations)
-  truvis-app (demo apps + RenderGraph integration + re-export shims)
+  truvis-render-passes (shared pass implementations, depends on render-interface, NOT renderer)
+  truvis-app (demo apps + RenderGraph integration)
 
 L6 Platform Entry
   truvis-winit-app
@@ -51,25 +51,27 @@ L6 Platform Entry
 
 ```text
 truvis-gfx
-  -> truvis-render-interface
+  -> truvis-render-interface (defines RenderWorld)
       -> truvis-render-graph
-          -> truvis-renderer
-              -> truvis-app-api
+      -> truvis-world (defines World, depends on scene + asset)
+          -> truvis-renderer (holds World + RenderWorld)
+              -> truvis-app-api (contexts use World + RenderWorld)
                   -> truvis-frame-runtime
                       -> truvis-app (demos + integration)
                           -> truvis-winit-app
-              -> truvis-render-passes (shared passes, parallel to app-api)
+      -> truvis-render-passes (shared passes, depends on render-interface, NOT renderer)
 ```
 
 ## 3. 核心模块职责
 
 - `truvis-gfx`：Vulkan RHI 抽象，封装设备、队列、资源、同步与管线对象。
-- `truvis-render-interface`：渲染契约层，提供 FrameCounter、CmdAllocator、Handle、全局描述符与资源管理基础设施。
+- `truvis-render-interface`：渲染契约层，提供 FrameCounter、CmdAllocator、Handle、全局描述符、资源管理基础设施与 `RenderWorld`（GPU 渲染状态聚合容器）。
 - `truvis-render-graph`：声明式 pass 编排，负责资源状态推导与同步拼接。
 - `truvis-scene`：CPU 侧场景数据组织（mesh/material/instance/light）。
 - `truvis-asset`：异步资产加载与上传流程。
-- `truvis-renderer`：backend 执行与子系统整合（device/swapchain/cmd/sync/submit/present + GPU 上传执行）。
-- `truvis-app-api`：`AppPlugin` 插件契约、typed contexts（`InitCtx` / `UpdateCtx` / `RenderCtx` / `ResizeCtx`）与 overlay 合约。
+- `truvis-world`：CPU 侧场景状态聚合（`World`），持有 `SceneManager` + `AssetHub`，与 GPU 状态物理分离。
+- `truvis-renderer`：backend 执行与子系统整合，持有 `World`（CPU 状态）+ `RenderWorld`（GPU 状态）。
+- `truvis-app-api`：`AppPlugin` 插件契约、typed contexts（`InitCtx`→World+RenderWorld / `UpdateCtx`→World / `RenderCtx`→&RenderWorld / `ResizeCtx`→&mut RenderWorld）与 overlay 合约。
 - `truvis-frame-runtime`：`FrameRuntime` 帧编排运行时，外部仅通过 public API 驱动（`push_input_event` / `time_to_render` / `run_frame` / `destroy`）。
 - `truvis-render-passes`：通用 render pass 实现（RT / 累积 / 降噪 / 色调映射 / blit / resolve / phong）。
 - `truvis-app`：示例应用（triangle / rt-cornell / rt-sponza / shader-toy）、`GuiRgPass` RenderGraph 适配与过渡期 re-export shim。

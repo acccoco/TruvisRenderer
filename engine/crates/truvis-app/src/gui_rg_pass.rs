@@ -7,12 +7,12 @@ use truvis_gui_backend::gui_mesh::GuiMesh;
 use truvis_gui_backend::gui_pass::GuiPass;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::handles::GfxImageViewHandle;
-use truvis_renderer::render_context::RenderContext;
+use truvis_render_interface::render_world::RenderWorld;
 
 pub struct GuiRgPass<'a> {
     pub gui_pass: &'a GuiPass,
 
-    pub render_context: &'a RenderContext,
+    pub render_world: &'a RenderWorld,
 
     pub ui_draw_data: &'a imgui::DrawData,
     pub gui_mesh: &'a GuiMesh,
@@ -38,11 +38,11 @@ impl RgPass for GuiRgPass<'_> {
             ctx.get_image_view_handle(self.canvas_color).expect("GuiPass: canvas_color not found");
         let canvas_color_view = ctx.resource_manager.get_image_view(canvas_color_view_handle).unwrap();
 
-        let frame_label = self.render_context.frame_counter.frame_label();
+        let frame_label = self.render_world.frame_counter.frame_label();
         self.gui_pass.draw(
             frame_label,
-            &self.render_context.global_descriptor_sets,
-            &self.render_context.bindless_manager,
+            &self.render_world.global_descriptor_sets,
+            &self.render_world.bindless_manager,
             canvas_color_view.handle(),
             self.canvas_extent,
             cmd,

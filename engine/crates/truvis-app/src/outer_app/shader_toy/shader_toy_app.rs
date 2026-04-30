@@ -23,7 +23,7 @@ impl AppPlugin for ShaderToy {
         log::info!("shader toy.");
 
         self.shader_toy_pass = Some(ShaderToyPass::new(ctx.swapchain_image_info.image_format));
-        self.gui_pass = Some(GuiPass::new(ctx.global_descriptor_sets, ctx.swapchain_image_info.image_format));
+        self.gui_pass = Some(GuiPass::new(&ctx.render_world.global_descriptor_sets, ctx.swapchain_image_info.image_format));
 
         self.cmds = FrameCounter::frame_labes()
             .iter()
@@ -38,8 +38,8 @@ impl AppPlugin for ShaderToy {
     fn update(&mut self, _ctx: &mut UpdateCtx) {}
 
     fn render(&self, ctx: &RenderCtx) {
-        let frame_label = ctx.render_context.frame_counter.frame_label();
-        let frame_id = ctx.render_context.frame_counter.frame_id();
+        let frame_label = ctx.render_world.frame_counter.frame_label();
+        let frame_id = ctx.render_world.frame_counter.frame_id();
         let render_present = ctx.render_present;
 
         let (swapchain_image_handle, swapchain_view_handle) = render_present.current_image_and_view();
@@ -81,7 +81,7 @@ impl AppPlugin for ShaderToy {
                 |context| {
                     let canvas_view = context.get_image_view(swapchain_image_rg_handle).unwrap();
                     self.shader_toy_pass.as_ref().unwrap().draw(
-                        ctx.render_context,
+                        ctx.render_world,
                         context.cmd,
                         canvas_view,
                         render_present.swapchain_image_info().image_extent,
@@ -92,7 +92,7 @@ impl AppPlugin for ShaderToy {
                 "gui",
                 GuiRgPass {
                     gui_pass: self.gui_pass.as_ref().unwrap(),
-                    render_context: ctx.render_context,
+                    render_world: ctx.render_world,
 
                     ui_draw_data: ctx.gui_draw_data,
                     gui_mesh: &render_present.gui_backend.gui_meshes[*frame_label],
@@ -114,7 +114,7 @@ impl AppPlugin for ShaderToy {
 
         let cmd = &self.cmds[*frame_label];
         cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-present-graph");
-        compiled_graph.execute(cmd, &ctx.render_context.gfx_resource_manager);
+        compiled_graph.execute(cmd, &ctx.render_world.gfx_resource_manager);
         cmd.end();
 
         let submit_info = compiled_graph.build_submit_info(std::slice::from_ref(cmd));

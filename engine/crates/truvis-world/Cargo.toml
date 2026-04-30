@@ -1,0 +1,9 @@
+[package]
+name = "truvis-world"
+version = "0.1.0"
+edition = "2024"
+description = "CPU-side world state: scene and asset management"
+
+[dependencies]
+truvis-scene = { workspace = true }
+truvis-asset = { workspace = true }

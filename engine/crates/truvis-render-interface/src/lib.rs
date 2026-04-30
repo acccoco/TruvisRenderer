@@ -8,5 +8,7 @@ pub mod gpu_scene;
 pub mod handles;
 pub mod pipeline_settings;
 pub mod render_data;
+pub mod render_world;
 pub mod sampler_manager;
+pub mod fif_buffer;
 pub mod stage_buffer_manager;
