@@ -32,15 +32,15 @@
 - [x] 4.9 删除 `render_context.rs` 文件（RenderContext 和 RenderContext2）
 - [x] 4.10 `cargo check -p truvis-renderer` 验证编译通过
 
-## 5. 更新 AppPlugin Contexts
+## 5. 更新 FramePlugin Contexts
 
-- [x] 5.1 在 `truvis-app-api` 的 `Cargo.toml` 中添加 `truvis-world` 依赖
+- [x] 5.1 在 `truvis-frame-api` 的 `Cargo.toml` 中添加 `truvis-world` 依赖
 - [x] 5.2 修改 `InitCtx`：删除单独的 scene_manager / asset_hub / bindless_manager / gfx_resource_manager / global_descriptor_sets 字段，改为 `world: &mut World` + `render_world: &mut RenderWorld` + 保留 camera / swapchain_image_info / render_present / cmd_allocator
 - [x] 5.3 修改 `UpdateCtx`：删除 `scene_manager` 字段，改为 `world: &mut World`；保留 pipeline_settings / frame_settings / delta_time_s
 - [x] 5.4 修改 `RenderCtx`：删除 `render_context: &RenderContext` 字段，改为 `render_world: &RenderWorld`；保留 render_present / gui_draw_data / timeline
 - [x] 5.5 修改 `ResizeCtx`：删除单独的 frame_settings / global_descriptor_sets / gfx_resource_manager / bindless_manager 字段，改为 `render_world: &mut RenderWorld`；保留 render_present
-- [x] 5.6 更新 `truvis-app-api` 的 import 路径，移除对 `truvis_renderer::render_context::RenderContext` 的引用
-- [x] 5.7 `cargo check -p truvis-app-api` 验证编译通过
+- [x] 5.6 更新 `truvis-frame-api` 的 import 路径，移除对 `truvis_renderer::render_context::RenderContext` 的引用
+- [x] 5.7 `cargo check -p truvis-frame-api` 验证编译通过
 
 ## 6. 更新 FrameRuntime
 

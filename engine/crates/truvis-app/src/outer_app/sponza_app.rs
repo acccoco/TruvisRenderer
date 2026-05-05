@@ -1,4 +1,4 @@
-use truvis_app_api::app_plugin::{AppPlugin, InitCtx, RenderCtx, UpdateCtx};
+use truvis_frame_api::frame_plugin::{FramePlugin, InitCtx, RenderCtx, UpdateCtx};
 use truvis_path::TruvisPath;
 use truvis_renderer::model_loader::assimp_loader::AssimpSceneLoader;
 use truvis_renderer::platform::camera::Camera;
@@ -46,7 +46,7 @@ impl SponzaApp {
     }
 }
 
-impl AppPlugin for SponzaApp {
+impl FramePlugin for SponzaApp {
     fn init(&mut self, ctx: &mut InitCtx, camera: &mut Camera) {
         let rt_pipeline = RtPipeline::new(
             &ctx.render_world.global_descriptor_sets,

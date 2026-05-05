@@ -6,13 +6,13 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use truvis_app_api::app_plugin::AppPlugin;
+use truvis_frame_api::frame_plugin::FramePlugin;
 use truvis_frame_runtime::FrameRuntime;
 
 use crate::shared::{RenderInitMsg, SharedState, unpack_size};
 
 /// Render thread entry point.
-pub fn render_loop(shared: Arc<SharedState>, init_msg: RenderInitMsg, plugin: Box<dyn AppPlugin>) {
+pub fn render_loop(shared: Arc<SharedState>, init_msg: RenderInitMsg, plugin: Box<dyn FramePlugin>) {
     tracy_client::set_thread_name!("RenderThread");
 
     let raw_display = init_msg.raw_display.0;

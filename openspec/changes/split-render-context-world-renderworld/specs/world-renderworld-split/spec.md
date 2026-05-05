@@ -67,7 +67,7 @@
 - **WHEN** 搜索 workspace 中的 `RenderContext` 结构体定义
 - **THEN** SHALL NOT 存在 `RenderContext` 或 `RenderContext2` 的 struct 定义
 
-### Requirement: AppPlugin 的 RenderCtx 使用 RenderWorld
+### Requirement: FramePlugin 的 RenderCtx 使用 RenderWorld
 
 `RenderCtx` SHALL 通过 `&RenderWorld` 提供 GPU 状态访问，替代原有的 `&RenderContext`。
 
@@ -79,10 +79,10 @@
 
 #### Scenario: Plugin render 阶段只能读取 GPU 状态
 
-- **WHEN** AppPlugin 的 `render` 方法被调用
+- **WHEN** FramePlugin 的 `render` 方法被调用
 - **THEN** 通过 `RenderCtx` 只能获得 `&RenderWorld`（不可变引用），无法修改 GPU 状态
 
-### Requirement: AppPlugin 的 UpdateCtx 使用 World
+### Requirement: FramePlugin 的 UpdateCtx 使用 World
 
 `UpdateCtx` SHALL 通过 `&mut World` 提供 CPU 状态访问。
 
@@ -93,7 +93,7 @@
 - **AND** SHALL 包含 `pub pipeline_settings: &'a mut PipelineSettings` 和 `pub frame_settings: &'a FrameSettings`
 - **AND** SHALL NOT 包含 `scene_manager` 或 `render_context` 字段
 
-### Requirement: AppPlugin 的 InitCtx 同时使用 World 和 RenderWorld
+### Requirement: FramePlugin 的 InitCtx 同时使用 World 和 RenderWorld
 
 `InitCtx` SHALL 提供对 `World` 和 `RenderWorld` 的可变访问。
 
@@ -103,7 +103,7 @@
 - **THEN** SHALL 包含 `pub world: &'a mut World` 和 `pub render_world: &'a mut RenderWorld`
 - **AND** SHALL NOT 包含单独的 `scene_manager`、`asset_hub`、`bindless_manager`、`gfx_resource_manager`、`global_descriptor_sets` 字段
 
-### Requirement: AppPlugin 的 ResizeCtx 使用 RenderWorld
+### Requirement: FramePlugin 的 ResizeCtx 使用 RenderWorld
 
 `ResizeCtx` SHALL 通过 `&mut RenderWorld` 提供 GPU 状态的可变访问。
 

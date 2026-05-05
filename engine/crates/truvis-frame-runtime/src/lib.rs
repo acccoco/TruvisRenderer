@@ -10,7 +10,7 @@
 //! [`run_frame`](FrameRuntime::run_frame),
 //! [`destroy`](FrameRuntime::destroy).
 //!
-//! `phase_prepare` is owned exclusively by the runtime — not exposed as an `AppPlugin` hook.
+//! `phase_prepare` is owned exclusively by the runtime — not exposed as a `FramePlugin` hook.
 
 mod camera_controller;
 mod frame_runtime;

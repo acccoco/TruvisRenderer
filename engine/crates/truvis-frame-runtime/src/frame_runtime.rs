@@ -2,9 +2,9 @@ use std::ffi::CStr;
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use truvis_app_api::app_plugin::{AppPlugin, RenderCtx, UpdateCtx};
-use truvis_app_api::input_event::InputEvent;
-use truvis_app_api::overlay::{self, OverlayContext, OverlayModule};
+use truvis_frame_api::frame_plugin::{FramePlugin, RenderCtx, UpdateCtx};
+use truvis_frame_api::input_event::InputEvent;
+use truvis_frame_api::overlay::{self, OverlayContext, OverlayModule};
 use truvis_gfx::gfx::Gfx;
 use truvis_logs::init_log;
 use truvis_renderer::renderer::Renderer;
@@ -28,7 +28,7 @@ pub struct FrameRuntime {
     input_manager: InputManager,
     gui_host: GuiHost,
 
-    plugin: Option<Box<dyn AppPlugin>>,
+    plugin: Option<Box<dyn FramePlugin>>,
     overlays: Vec<Box<dyn OverlayModule>>,
 }
 
@@ -36,7 +36,7 @@ pub struct FrameRuntime {
 // Construction & initialization
 // ---------------------------------------------------------------------------
 impl FrameRuntime {
-    pub fn new_with_plugin(raw_display_handle: RawDisplayHandle, plugin: Box<dyn AppPlugin>) -> Self {
+    pub fn new_with_plugin(raw_display_handle: RawDisplayHandle, plugin: Box<dyn FramePlugin>) -> Self {
         let extra_instance_ext = ash_window::enumerate_required_extensions(raw_display_handle)
             .unwrap()
             .iter()
@@ -67,7 +67,7 @@ impl FrameRuntime {
 
         {
             let mut ctx = self.renderer.init_after_window(raw_display_handle, raw_window_handle, window_physical_size);
-            let _span = tracy_client::span!("AppPlugin::init");
+            let _span = tracy_client::span!("FramePlugin::init");
             self.plugin.as_mut().unwrap().init(&mut ctx, self.camera_controller.camera_mut());
         }
         // ctx dropped — renderer unlocked

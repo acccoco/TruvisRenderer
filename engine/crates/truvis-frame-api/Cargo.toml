@@ -1,8 +1,8 @@
 [package]
-name = "truvis-app-api"
+name = "truvis-frame-api"
 version = "0.1.0"
 edition = "2024"
-description = "Plugin contract, typed contexts, and overlay definitions for truvis apps"
+description = "Plugin contract, typed contexts, and overlay definitions for the frame runtime"
 
 [dependencies]
 truvis-gfx = { workspace = true }

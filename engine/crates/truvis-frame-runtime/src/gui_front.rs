@@ -1,6 +1,6 @@
 use imgui::{DrawData, FontAtlasTexture, TextureId};
 
-use truvis_app_api::input_event::{ElementState, InputEvent, MouseButton};
+use truvis_frame_api::input_event::{ElementState, InputEvent, MouseButton};
 use truvis_path::TruvisPath;
 
 const FONT_TEXTURE_ID: usize = 0;

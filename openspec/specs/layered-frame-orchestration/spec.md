@@ -69,13 +69,13 @@ Plugin's `init` hook SHALL receive `RendererInitCtx` (from Renderer) and `&mut C
 ### Requirement: Three-layer lifecycle independence
 
 Each layer (Renderer, FrameRuntime, App/Plugin) SHALL only know about its own lifecycle and the Ctx it produces or consumes. Specifically:
-- Renderer SHALL NOT reference AppPlugin, FrameRuntime, or any Plugin-related type
+- Renderer SHALL NOT reference FramePlugin, FrameRuntime, or any Plugin-related type
 - FrameRuntime SHALL NOT reference specific application logic (demo-specific code)
 - Plugin SHALL NOT reference Renderer directly (only through Ctx types)
 
 #### Scenario: Renderer has no plugin dependency
 - **WHEN** inspecting Renderer's source and dependencies
-- **THEN** there are no imports or references to AppPlugin, FrameRuntime, overlays, or gui_host
+- **THEN** there are no imports or references to FramePlugin, FrameRuntime, overlays, or gui_host
 
 #### Scenario: Adding a new plugin hook does not modify Renderer
 - **WHEN** a new plugin lifecycle hook is needed (e.g., tick)

@@ -1,6 +1,6 @@
 ## Purpose
 
-定义主框架帧编排语义（`FrameRuntime`）、应用扩展契约（`AppPlugin`）、显式 phase 编排与 `Renderer` 后端职责边界，以及默认 overlay 注册方式与旧 API 兼容收口条件，使 runtime 与 GPU backend 分工可被契约化验证，并与 `render-threading` 既有线程与关闭语义保持兼容。
+定义主框架帧编排语义（`FrameRuntime`）、应用扩展契约（`FramePlugin`）、显式 phase 编排与 `Renderer` 后端职责边界，以及默认 overlay 注册方式与旧 API 兼容收口条件，使 runtime 与 GPU backend 分工可被契约化验证，并与 `render-threading` 既有线程与关闭语义保持兼容。
 
 ## Requirements
 
@@ -14,19 +14,19 @@
 - **THEN** SHALL 通过 `truvis_frame_runtime::FrameRuntime` 访问
 - **AND** `truvis-app` 可提供 re-export 转发以简化导入路径
 
-### Requirement: 应用扩展点升级为 AppPlugin（单 trait 多 hook）
+### Requirement: 应用扩展点升级为 FramePlugin（单 trait 多 hook）
 
-应用侧扩展契约 SHALL 采用 `AppPlugin` 单 trait 的多阶段 hook 形式（定义在 `truvis-app-api`），每个 hook 接收对应阶段的 typed context。
+应用侧扩展契约 SHALL 采用 `FramePlugin` 单 trait 的多阶段 hook 形式（定义在 `truvis-frame-api`），每个 hook 接收对应阶段的 typed context。
 
 #### Scenario: 新插件契约覆盖现有生命周期
 
-- **WHEN** 应用实现 `AppPlugin`
+- **WHEN** 应用实现 `FramePlugin`
 - **THEN** SHALL 能表达初始化、更新、UI 构建、渲染相关 hook
 - **AND** 框架 SHALL 按既定阶段顺序调用这些 hook
 
 #### Scenario: Hook 顺序定义与实现保持一致
 
-- **WHEN** `FrameRuntime` 文档化每帧内的 `AppPlugin` hook 调用顺序
+- **WHEN** `FrameRuntime` 文档化每帧内的 `FramePlugin` hook 调用顺序
 - **THEN** spec、代码注释与实际调用顺序 SHALL 保持一致
 - **AND** 同一 phase 内的子顺序（例如 `build_ui` 与 `update`）SHALL 被明确说明，避免契约歧义
 - **AND** 在当前过渡实现中，`phase_update` 内 SHALL 先调用 `build_ui`，再调用 `update`
@@ -34,8 +34,8 @@
 #### Scenario: 插件契约覆盖 resize 与关闭语义
 
 - **WHEN** 应用需要在窗口尺寸变化后重建依赖 swapchain 的资源
-- **THEN** `AppPlugin::on_resize` SHALL 在 swapchain 重建完成后、下一帧渲染提交前被调用
-- **AND** `AppPlugin::shutdown` SHALL 在 runtime 销毁前被调用
+- **THEN** `FramePlugin::on_resize` SHALL 在 swapchain 重建完成后、下一帧渲染提交前被调用
+- **AND** `FramePlugin::shutdown` SHALL 在 runtime 销毁前被调用
 
 ### Requirement: FrameRuntime SHALL 采用显式 phase 编排
 
@@ -59,7 +59,7 @@
 - **WHEN** 渲染线程处理单帧前的 swapchain 重建判定
 - **THEN** 在「窗口尺寸变化」或「backend 报告 need_resize（含 out-of-date/suboptimal）」任一条件成立时 SHALL 触发重建
 - **AND** 重建 SHALL 仅通过 runtime 的单一入口执行，不得在其他 phase 中引入分叉重建流程
-- **AND** 重建成功后 SHALL 在下一次渲染提交前调用 `AppPlugin::on_resize`
+- **AND** 重建成功后 SHALL 在下一次渲染提交前调用 `FramePlugin::on_resize`
 
 ### Requirement: Renderer SHALL 收敛为 backend 职责
 
@@ -75,9 +75,9 @@
 
 `FrameRuntime` 与 `Renderer` 之间 SHALL 通过稳定的上下文/接口边界协作，避免应用层直接依赖 backend 内部可变实现细节。
 
-#### Scenario: AppPlugin 通过 typed contexts 访问能力
+#### Scenario: FramePlugin 通过 typed contexts 访问能力
 
-- **WHEN** `AppPlugin` 在各阶段读取或修改渲染相关状态
+- **WHEN** `FramePlugin` 在各阶段读取或修改渲染相关状态
 - **THEN** SHALL 通过对应阶段的 typed context（`InitCtx` / `UpdateCtx` / `RenderCtx` / `ResizeCtx`）完成
 - **AND** 不得将 `Renderer` 的内部字段布局视为稳定 API
 
@@ -99,9 +99,9 @@
 
 ### Requirement: 旧兼容接口已下线
 
-`OuterApp` / `LegacyOuterAppAdapter` / `RenderApp` trait / `WinitApp::run` 已移除。四个 demo 全部通过 `AppPlugin` typed contexts 接入。
+`OuterApp` / `LegacyOuterAppAdapter` / `RenderApp` trait / `WinitApp::run` 已移除。四个 demo 全部通过 `FramePlugin` typed contexts 接入。
 
 #### Scenario: 兼容层已完成收口
 
-- **GIVEN** `triangle`、`rt-cornell`、`rt-sponza`、`shader-toy` 已迁移到 `FrameRuntime` + `AppPlugin`
+- **GIVEN** `triangle`、`rt-cornell`、`rt-sponza`、`shader-toy` 已迁移到 `FrameRuntime` + `FramePlugin`
 - **THEN** 旧接口已移除，`truvis-app` 中仅保留 re-export shim 简化导入路径

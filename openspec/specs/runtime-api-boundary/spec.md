@@ -1,22 +1,22 @@
 ## Purpose
 
-定义 runtime/plugin/passes 的能力边界与迁移收口条件，约束 `AppPlugin` typed contexts、`FrameRuntime` 单入口编排、crate 物理拆分以及兼容层下线标准，确保运行时语义可验证且不回退既有分层规范。
+定义 runtime/plugin/passes 的能力边界与迁移收口条件，约束 `FramePlugin` typed contexts、`FrameRuntime` 单入口编排、crate 物理拆分以及兼容层下线标准，确保运行时语义可验证且不回退既有分层规范。
 
 ## Requirements
 
-### Requirement: AppPlugin SHALL 通过 typed contexts 访问运行时能力
+### Requirement: FramePlugin SHALL 通过 typed contexts 访问运行时能力
 
-`AppPlugin` SHALL 使用按阶段划分的上下文类型访问运行时能力，而非直接接收 `Renderer` 全量对象。
+`FramePlugin` SHALL 使用按阶段划分的上下文类型访问运行时能力，而非直接接收 `Renderer` 全量对象。
 
 #### Scenario: Hook 签名使用上下文类型
 
-- **WHEN** 定义或实现 `AppPlugin` 的 `init/build_ui/update/render/on_resize` hook
+- **WHEN** 定义或实现 `FramePlugin` 的 `init/build_ui/update/render/on_resize` hook
 - **THEN** 每个 hook SHALL 接收对应阶段的上下文对象（或等价的受控上下文）
 - **AND** hook 签名中 SHALL NOT 暴露完整 `Renderer` 作为通用参数
 
 #### Scenario: 上下文能力面受控
 
-- **WHEN** `AppPlugin` 需要读取帧状态、提交渲染命令、访问 UI 数据或 resize 信息
+- **WHEN** `FramePlugin` 需要读取帧状态、提交渲染命令、访问 UI 数据或 resize 信息
 - **THEN** SHALL 通过上下文公开的稳定接口完成
 - **AND** 插件代码 SHALL NOT 依赖 `Renderer` 内部字段布局
 
@@ -38,11 +38,11 @@
 
 ### Requirement: prepare 阶段职责 SHALL 由 FrameRuntime 唯一持有
 
-prepare 阶段的调度与执行顺序 SHALL 由 `FrameRuntime` 唯一持有；`AppPlugin` 不引入独立 prepare hook。
+prepare 阶段的调度与执行顺序 SHALL 由 `FrameRuntime` 唯一持有；`FramePlugin` 不引入独立 prepare hook。
 
 #### Scenario: 插件契约不包含 prepare hook
 
-- **WHEN** 定义 `AppPlugin` 生命周期 hook
+- **WHEN** 定义 `FramePlugin` 生命周期 hook
 - **THEN** 契约 SHALL 包含 `init/build_ui/update/render/on_resize/shutdown`（或语义等价集合）
 - **AND** SHALL NOT 暴露独立 `prepare` hook 造成职责分叉
 
@@ -59,7 +59,7 @@ prepare 阶段的调度与执行顺序 SHALL 由 `FrameRuntime` 唯一持有；`
 #### Scenario: 四 demo 完成迁移
 
 - **WHEN** 运行 `triangle` / `rt-cornell` / `rt-sponza` / `shader-toy`
-- **THEN** 四者均 SHALL 通过新的上下文化 `AppPlugin` 路径接入 runtime
+- **THEN** 四者均 SHALL 通过新的上下文化 `FramePlugin` 路径接入 runtime
 - **AND** 不再依赖旧 `OuterApp` 兼容路径
 
 ### Requirement: crate 边界 SHALL 映射为 runtime/api/passes 分层
@@ -69,7 +69,7 @@ prepare 阶段的调度与执行顺序 SHALL 由 `FrameRuntime` 唯一持有；`
 #### Scenario: app-api 与 frame-runtime 拆分
 
 - **WHEN** 完成 M4 里程碑
-- **THEN** 插件契约与上下文 SHALL 位于 `truvis-app-api`
+- **THEN** 插件契约与上下文 SHALL 位于 `truvis-frame-api`
 - **AND** 帧编排实现 SHALL 位于 `truvis-frame-runtime`
 
 #### Scenario: render-passes 拆分

@@ -39,15 +39,15 @@ pub struct RenderCtx<'a> {
 pub type ResizeCtx<'a> = RendererResizeCtx<'a>;
 
 // ---------------------------------------------------------------------------
-// AppPlugin
+// FramePlugin
 // ---------------------------------------------------------------------------
 
-/// Application plugin — `FrameRuntime` phase hook contract.
+/// Frame plugin — `FrameRuntime` phase hook contract.
 ///
 /// Hook order: `init` (once) → per frame: `build_ui` → `update` → `render`.
 /// `on_resize` fires after swapchain rebuild. `shutdown` before destruction.
 /// `prepare` is runtime-internal — not a plugin hook.
-pub trait AppPlugin {
+pub trait FramePlugin {
     fn init(&mut self, ctx: &mut InitCtx, camera: &mut Camera);
     fn update(&mut self, ctx: &mut UpdateCtx);
     fn build_ui(&mut self, ui: &imgui::Ui);

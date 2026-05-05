@@ -5,7 +5,7 @@ edition = "2024"
 description = "Frame orchestration runtime: phase dispatch, input, camera, GUI host"
 
 [dependencies]
-truvis-app-api = { workspace = true }
+truvis-frame-api = { workspace = true }
 truvis-gfx = { workspace = true }
 truvis-renderer = { workspace = true }
 truvis-render-interface = { workspace = true }

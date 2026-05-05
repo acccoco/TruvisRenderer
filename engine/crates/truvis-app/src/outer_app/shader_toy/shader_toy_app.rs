@@ -1,7 +1,7 @@
 use ash::vk;
 use itertools::Itertools;
 
-use truvis_app_api::app_plugin::{AppPlugin, InitCtx, RenderCtx, UpdateCtx};
+use truvis_frame_api::frame_plugin::{FramePlugin, InitCtx, RenderCtx, UpdateCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::Gfx;
 use truvis_gui_backend::gui_pass::GuiPass;
@@ -19,7 +19,7 @@ pub struct ShaderToy {
     cmds: Vec<GfxCommandBuffer>,
 }
 
-impl AppPlugin for ShaderToy {
+impl FramePlugin for ShaderToy {
     fn init(&mut self, ctx: &mut InitCtx, _camera: &mut Camera) {
         log::info!("shader toy.");
 

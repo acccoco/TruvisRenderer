@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use truvis_app_api::input_event::InputEvent;
+use truvis_frame_api::input_event::InputEvent;
 
 /// 跨线程传递 `!Send` 类型（如 `RawWindowHandle`）的受控包装。
 ///

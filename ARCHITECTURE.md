@@ -33,7 +33,7 @@
 │  └───────┬────────┘  └────────┬───────────┘  └───────┬───────────┘   │
 │          │                    │                      │               │
 │          │           ┌───────┴──────────┐            │               │
-│          │           │  truvis-app-api  │            │               │
+│          │           │  truvis-frame-api │            │               │
 │          │           │  (plugin 契约)    │            │               │
 │          │           └───────┬──────────┘            │               │
 │           \                  │                      /                │
@@ -91,7 +91,7 @@
 - 主线程 spawn `RenderThread`，渲染线程内部创建 `FrameRuntime`。
 - `Renderer::new` 初始化 `Gfx`，创建 `World` 和 `RenderWorld`。
 - `init_after_window` 创建 surface、swapchain 和 `RenderPresent`。
-- `AppPlugin::init(InitCtx)` 做一次性应用初始化，随后注册 GUI font 资源。
+- `FramePlugin::init(InitCtx)` 做一次性应用初始化，随后注册 GUI font 资源。
 
 每帧生命周期：
 
@@ -152,7 +152,7 @@ run_frame()
 - 主线程收到 `WindowEvent::Resized` 后，只把最新尺寸写入 `AtomicU64`。
 - 渲染线程在循环中读取最新尺寸；零尺寸表示最小化，跳过重建和渲染。
 - 尺寸变化或 backend 报告 `need_resize` 时，统一调用 `FrameRuntime::recreate_swapchain_if_needed`。
-- swapchain 重建完成后，runtime 调用 `AppPlugin::on_resize(ResizeCtx)`。
+- swapchain 重建完成后，runtime 调用 `FramePlugin::on_resize(ResizeCtx)`。
 
 关闭生命周期：
 
@@ -303,7 +303,7 @@ render thread
 
 - `Renderer::new` 初始化 `Gfx`，创建 resource managers、`World` 和 `RenderWorld`。
 - `Renderer::init_after_window` 创建 surface、swapchain 和 `RenderPresent`。
-- `AppPlugin::init` 创建应用特定 pass、pipeline 或场景资源。
+- `FramePlugin::init` 创建应用特定 pass、pipeline 或场景资源。
 
 重建路径：
 

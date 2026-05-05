@@ -10,7 +10,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Window, WindowId};
 
-use truvis_app_api::app_plugin::AppPlugin;
+use truvis_frame_api::frame_plugin::FramePlugin;
 use truvis_frame_runtime::FrameRuntime;
 use truvis_path::TruvisPath;
 
@@ -20,13 +20,13 @@ use crate::winit_event_adapter::WinitEventAdapter;
 
 pub struct UserEvent;
 
-type AppPluginFactory = Box<dyn FnOnce() -> Box<dyn AppPlugin> + Send + 'static>;
+type FramePluginFactory = Box<dyn FnOnce() -> Box<dyn FramePlugin> + Send + 'static>;
 
 /// winit main-thread app handler.
 pub struct WinitApp {
     window: Option<Window>,
     shared: Option<Arc<SharedState>>,
-    plugin_factory: Option<AppPluginFactory>,
+    plugin_factory: Option<FramePluginFactory>,
     render_thread: Option<JoinHandle<()>>,
 }
 
@@ -34,12 +34,12 @@ impl WinitApp {
     /// Primary entry point. `plugin_factory` is called once on the render thread.
     pub fn run_plugin<F>(plugin_factory: F)
     where
-        F: FnOnce() -> Box<dyn AppPlugin> + Send + 'static,
+        F: FnOnce() -> Box<dyn FramePlugin> + Send + 'static,
     {
         Self::run_inner(Box::new(plugin_factory));
     }
 
-    fn run_inner(plugin_factory: AppPluginFactory) {
+    fn run_inner(plugin_factory: FramePluginFactory) {
         FrameRuntime::init_env();
 
         let event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event().build().unwrap();
@@ -171,7 +171,7 @@ impl ApplicationHandler<UserEvent> for WinitApp {
         }
 
         let input_event = WinitEventAdapter::from_winit_event(&event);
-        use truvis_app_api::input_event::InputEvent;
+        use truvis_frame_api::input_event::InputEvent;
         match input_event {
             InputEvent::Other | InputEvent::Resized { .. } => {}
             _ => {

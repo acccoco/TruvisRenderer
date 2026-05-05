@@ -1,6 +1,6 @@
 ## Context
 
-经过四次架构重构，系统已具备 FrameRuntime 调度 + AppPlugin 契约 + 物理 crate 分层的基础。但核心数据容器 `RenderContext` 仍是一个混合了 CPU 场景状态和 GPU 渲染状态的单一结构体，阻碍了 phase 边界的类型化表达和依赖层次的进一步收窄。
+经过四次架构重构，系统已具备 FrameRuntime 调度 + FramePlugin 契约 + 物理 crate 分层的基础。但核心数据容器 `RenderContext` 仍是一个混合了 CPU 场景状态和 GPU 渲染状态的单一结构体，阻碍了 phase 边界的类型化表达和依赖层次的进一步收窄。
 
 当前分层（简化）：
 
@@ -15,7 +15,7 @@ L5  render-passes → renderer (仅为 RenderContext 类型)
 已做出的用户决策：
 - Shared 帧状态字段（FrameCounter、Settings、time 等）放在 RenderWorld 中
 - 新建 `truvis-world` crate 持有 World，RenderWorld 定义在 `render-interface`
-- AppPlugin contexts 采用 World / RenderWorld 分离模型
+- FramePlugin contexts 采用 World / RenderWorld 分离模型
 - UpdateCtx 直接给 `&mut World`
 - 删除 `RenderContext2`（`&RenderWorld` 已满足只读需求）
 
@@ -24,7 +24,7 @@ L5  render-passes → renderer (仅为 RenderContext 类型)
 **Goals:**
 - 将 `RenderContext` 拆分为 `World`（CPU 场景状态）和 `RenderWorld`（GPU 渲染状态 + 帧状态），建立物理分离的所有权边界
 - `FifBuffers` 从 `render-graph` 迁移到 `render-interface`，修正放错位置的类型
-- AppPlugin phase contexts 通过类型约束体现 CPU/GPU 的 phase 边界
+- FramePlugin phase contexts 通过类型约束体现 CPU/GPU 的 phase 边界
 - `render-passes` 去掉对 `renderer` 的依赖，降到 L3
 - 全部 demo app 和 pass 无功能回归
 
@@ -75,7 +75,7 @@ truvis-world (L3, 新 crate)
 
 **迁移方式**: 移动源文件，render-graph 中保留 re-export 以减少下游立即破坏（可选的过渡期兼容），后续统一清理。
 
-### Decision 4: AppPlugin Contexts 分离模型
+### Decision 4: FramePlugin Contexts 分离模型
 
 **选择**:
 

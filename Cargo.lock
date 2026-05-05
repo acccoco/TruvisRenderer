@@ -3420,8 +3420,8 @@ dependencies = [
  "itertools 0.10.5",
  "log",
  "tracy-client",
- "truvis-app-api",
  "truvis-asset",
+ "truvis-frame-api",
  "truvis-frame-runtime",
  "truvis-gfx",
  "truvis-gui-backend",
@@ -3433,18 +3433,6 @@ dependencies = [
  "truvis-scene",
  "truvis-shader-binding",
  "truvis-utils",
- "truvis-world",
-]
-
-[[package]]
-name = "truvis-app-api"
-version = "0.1.0"
-dependencies = [
- "ash",
- "imgui",
- "truvis-gfx",
- "truvis-render-interface",
- "truvis-renderer",
  "truvis-world",
 ]
 
@@ -3519,6 +3507,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "truvis-frame-api"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "imgui",
+ "truvis-gfx",
+ "truvis-render-interface",
+ "truvis-renderer",
+ "truvis-world",
+]
+
+[[package]]
 name = "truvis-frame-runtime"
 version = "0.1.0"
 dependencies = [
@@ -3529,7 +3529,7 @@ dependencies = [
  "log",
  "raw-window-handle",
  "tracy-client",
- "truvis-app-api",
+ "truvis-frame-api",
  "truvis-gfx",
  "truvis-logs",
  "truvis-path",
@@ -3726,7 +3726,7 @@ dependencies = [
  "raw-window-handle",
  "tracy-client",
  "truvis-app",
- "truvis-app-api",
+ "truvis-frame-api",
  "truvis-frame-runtime",
  "truvis-path",
  "winit",
