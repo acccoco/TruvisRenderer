@@ -5,8 +5,9 @@
 //!
 //! **New code** should import from [`truvis_frame_api`] (contracts) or
 //! [`truvis_frame_runtime`] (runtime) directly. This crate provides
-//! Concrete apps own `BaseApp`, GUI, camera/input state, overlays, and render
-//! pipeline plugins.
+//! concrete app state that owns GUI, camera/input state, overlays, and render
+//! pipeline plugins. `FrameAppShell` owns `BaseApp` and adapts that state to
+//! the render-loop `FrameApp` contract.
 
 pub mod camera_controller;
 pub mod gui_plugin;

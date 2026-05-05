@@ -4,7 +4,7 @@
 
 核心契约与帧骨架位于独立 crate：
 - App / Plugin 契约与 typed contexts：`truvis-frame-api`
-- 帧骨架：`truvis-frame-runtime::BaseApp`
+- 帧骨架与 App shell：`truvis-frame-runtime::BaseApp` / `FrameAppShell`
 - 通用 render pass：`truvis-render-passes`
 
 ## 主要内容
@@ -16,10 +16,11 @@
 
 ## 使用方式
 
-- 实现 `FrameApp` + `FrameAppHooks`，内部持有 `Option<BaseApp>` 并通过 `truvis-winit-app::WinitApp::run_app(...)` 启动
+- demo state 实现 `FrameAppState` + `FrameAppHooks`，持有 GUI、相机/输入状态、overlay 和具体 render pipeline plugin
+- `src/bin/` 入口用 `FrameAppShell::new(demo_state)` 包装成 `Box<dyn FrameApp>` 后交给 `truvis-winit-app::WinitApp::run_app(...)`
 
 ## 边界约束
 
 - 本层承载 demo 与集成逻辑，不向底层反向注入依赖
 - `BaseApp` 不持有 GUI、Camera、Overlay 或具体渲染管线
-- App 在 `FrameAppHooks::render` 中创建 RenderGraph，并显式决定渲染管线与 GUI pass 顺序
+- App state 在 `FrameAppHooks::render` 中创建 RenderGraph，并显式决定渲染管线与 GUI pass 顺序

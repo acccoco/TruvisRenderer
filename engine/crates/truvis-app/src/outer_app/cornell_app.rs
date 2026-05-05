@@ -1,9 +1,7 @@
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
-
-use truvis_frame_api::frame_app::{FrameApp, FrameAppHooks};
+use truvis_frame_api::frame_app::FrameAppHooks;
 use truvis_frame_api::input_event::InputEvent;
 use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx};
-use truvis_frame_runtime::BaseApp;
+use truvis_frame_runtime::{FrameAppInitCtx, FrameAppResizeCtx, FrameAppState};
 use truvis_gfx::gfx::Gfx;
 use truvis_path::TruvisPath;
 use truvis_render_backend::model_loader::assimp_loader::AssimpSceneLoader;
@@ -21,7 +19,6 @@ use crate::render_pipeline::rt_render_graph::RtPipeline;
 
 #[derive(Default)]
 pub struct CornellApp {
-    base: Option<BaseApp>,
     gui: GuiPlugin,
     rt_pipeline: RtPipeline,
     camera_controller: CameraController,
@@ -65,57 +62,34 @@ impl CornellApp {
     }
 }
 
-impl FrameApp for CornellApp {
-    fn init_after_window(
-        &mut self,
-        raw_display: RawDisplayHandle,
-        raw_window: RawWindowHandle,
-        scale_factor: f64,
-        window_size: [u32; 2],
-    ) {
+impl FrameAppState for CornellApp {
+    fn init(&mut self, ctx: FrameAppInitCtx<'_>) {
+        let FrameAppInitCtx {
+            backend: ctx,
+            scale_factor,
+            window_size,
+        } = ctx;
+
         self.gui.set_hidpi_factor(scale_factor);
         self.gui.set_display_size(window_size);
-        self.base = Some(BaseApp::new(raw_display));
 
-        let mut base = self.base.take().expect("BaseApp should be present during init");
-        {
-            let ctx = base.init_after_window(raw_display, raw_window, window_size);
-            Self::create_scene(ctx.world, self.camera_controller.camera_mut());
+        Self::create_scene(ctx.world, self.camera_controller.camera_mut());
 
-            let mut plugin_ctx = PluginInitCtx {
-                world: ctx.world,
-                render_world: ctx.render_world,
-                cmd_allocator: ctx.cmd_allocator,
-                swapchain_image_info: ctx.swapchain_image_info,
-                render_present: ctx.render_present,
-            };
-            self.rt_pipeline.init(&mut plugin_ctx);
-            self.gui.init(&mut plugin_ctx);
-            self.debug_overlay.init(&mut plugin_ctx);
-            self.pipeline_overlay.init(&mut plugin_ctx);
-        }
-        self.base = Some(base);
-    }
-
-    fn run_frame(&mut self) {
-        let mut base = self.base.take().expect("BaseApp missing in run_frame");
-        base.run_frame(self);
-        self.base = Some(base);
-    }
-
-    fn push_input_event(&mut self, event: InputEvent) {
-        self.base.as_mut().expect("BaseApp missing in push_input_event").push_input_event(event);
-    }
-
-    fn recreate_swapchain_if_needed(&mut self, new_size: [u32; 2]) {
-        let Some(ctx) = self
-            .base
-            .as_mut()
-            .expect("BaseApp missing in recreate_swapchain_if_needed")
-            .recreate_swapchain_if_needed(new_size)
-        else {
-            return;
+        let mut plugin_ctx = PluginInitCtx {
+            world: ctx.world,
+            render_world: ctx.render_world,
+            cmd_allocator: ctx.cmd_allocator,
+            swapchain_image_info: ctx.swapchain_image_info,
+            render_present: ctx.render_present,
         };
+        self.rt_pipeline.init(&mut plugin_ctx);
+        self.gui.init(&mut plugin_ctx);
+        self.debug_overlay.init(&mut plugin_ctx);
+        self.pipeline_overlay.init(&mut plugin_ctx);
+    }
+
+    fn on_resize(&mut self, ctx: FrameAppResizeCtx<'_>) {
+        let ctx = ctx.backend;
 
         let mut plugin_ctx = PluginResizeCtx {
             render_world: ctx.render_world,
@@ -125,18 +99,11 @@ impl FrameApp for CornellApp {
         self.rt_pipeline.on_resize(&mut plugin_ctx);
     }
 
-    fn time_to_render(&self) -> bool {
-        self.base.as_ref().expect("BaseApp missing in time_to_render").time_to_render()
-    }
-
     fn shutdown(&mut self) {
         self.pipeline_overlay.shutdown();
         self.debug_overlay.shutdown();
         self.rt_pipeline.shutdown();
         self.gui.shutdown();
-        if let Some(base) = self.base.take() {
-            base.destroy();
-        }
     }
 }
 

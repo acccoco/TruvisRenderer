@@ -14,7 +14,7 @@ L5  truvis-app
     demo app、GuiPlugin、overlay plugin、render pipeline plugin、RenderGraph 编排
 
 L5  truvis-frame-runtime
-    BaseApp 帧骨架：RenderBackend 生命周期 + 输入事件队列
+    BaseApp 帧骨架 + FrameAppShell 适配层
 
 L5  truvis-frame-api
     FrameApp / FrameAppHooks / Plugin 契约与 Plugin Ctx
@@ -47,7 +47,7 @@ WinitApp::run_app
   -> init_env
   -> create Window + SharedState
   -> spawn RenderThread
-  -> app_factory() -> Box<dyn FrameApp>
+  -> app_factory() -> Box<dyn FrameApp>（通常是 FrameAppShell<ConcreteApp>）
   -> app.init_after_window(raw handles, scale_factor, initial_size)
 ```
 
@@ -63,7 +63,7 @@ render_loop
   -> app.run_frame()
 ```
 
-`FrameApp::run_frame` 由具体 App 通过 `Option<BaseApp>::take()` 取出 `BaseApp`，调用 `base.run_frame(self)` 后放回，避免同时可变借用 `self.base` 和 `self` 的 hook 字段。
+`FrameApp` 通常由 `FrameAppShell<A>` 实现。`FrameAppShell` 持有 `BaseApp` 与具体 App state 两个并列字段，因此 `FrameApp::run_frame` 可以直接调用 `base.run_frame(&mut app_state)`，具体 App 不需要持有 `BaseApp` 或手写转发生命周期方法。
 
 `BaseApp::run_frame` 的固定顺序：
 
@@ -80,7 +80,7 @@ render_backend.end_frame()
 关闭流程：
 
 - 渲染线程观察到退出信号后调用 `FrameApp::shutdown(&mut self)`。
-- App 先 shutdown 自己持有的 Plugin，再 `take()` 出 `BaseApp` 调用 `BaseApp::destroy()`。
+- `FrameAppShell` 先调用 App state 的 `shutdown()`，由 App state shutdown 自己持有的 Plugin，再取出 `BaseApp` 调用 `BaseApp::destroy()`。
 - `BaseApp::destroy()` 等待 GPU idle，销毁 RenderBackend，再销毁 `Gfx`。
 - 主线程等待渲染线程完成后再 drop `Window`。
 
@@ -102,9 +102,13 @@ RenderBackend
 
 `BaseApp` 不持有 GUI、Camera、Overlay、InputState 或任何具体 render pipeline plugin。
 
-具体 App 持有：
+`FrameAppShell` 持有：
 
 - `Option<BaseApp>`
+- 具体 App state
+
+具体 App state 持有：
+
 - `GuiPlugin`
 - `CameraController` / `InputManager`
 - `DebugInfoOverlay` / `PipelineControlsOverlay`
@@ -137,7 +141,15 @@ GUI draw data 不进入通用 Ctx。`GuiPlugin` 自行持有 imgui context、dra
 - `time_to_render`
 - `shutdown`
 
-`FrameAppHooks` 是 `BaseApp` 的内部回调契约：
+`FrameAppShell<A>` 是适配层：它实现 `FrameApp`，持有 `BaseApp` 和 `A: FrameAppState`，把 render loop 的外部生命周期转发到 `BaseApp` 与具体 App state。
+
+`FrameAppState` 是具体 App state 的生命周期契约：
+
+- `init`
+- `on_resize`
+- `shutdown`
+
+`FrameAppHooks` 是 `BaseApp` 的内部回调契约，由具体 App state 实现：
 
 - `on_input`
 - `update`
@@ -197,7 +209,7 @@ main thread
 
 render thread
   owns Box<dyn FrameApp>
-  owns BaseApp/RenderBackend through App
+  owns BaseApp/RenderBackend through FrameAppShell
   creates, uses, destroys all Vulkan objects
 ```
 
@@ -223,16 +235,17 @@ render thread
 
 - `RenderBackend::new` 初始化 `Gfx`，创建 `World` / `RenderWorld`。
 - `RenderBackend::init_after_window` 创建 surface、swapchain 和 `RenderPresent`。
-- App 从 `RenderBackendInitCtx` 构造 `PluginInitCtx`，依次初始化自己持有的 Plugin。
+- `FrameAppShell` 创建 `BaseApp` 并把 `RenderBackendInitCtx` 包装为 `FrameAppInitCtx` 交给 App state。
+- App state 从 `FrameAppInitCtx` 中的 RenderBackend Ctx 构造 `PluginInitCtx`，依次初始化自己持有的 Plugin。
 
 重建路径：
 
 - render loop 调用 `FrameApp::recreate_swapchain_if_needed(size)`。
-- App 委托 `BaseApp::recreate_swapchain_if_needed(size)`。
+- `FrameAppShell` 委托 `BaseApp::recreate_swapchain_if_needed(size)`。
 - RenderBackend 只有实际重建时返回 `Some(RenderBackendResizeCtx)`。
-- App 构造 `PluginResizeCtx` 并通知需要 resize 的 Plugin。
+- `FrameAppShell` 把返回值包装为 `FrameAppResizeCtx` 交给 App state，App state 构造 `PluginResizeCtx` 并通知需要 resize 的 Plugin。
 
 销毁路径：
 
-- `FrameApp::shutdown(&mut self)`：Plugin shutdown -> `BaseApp::destroy()`。
+- `FrameApp::shutdown(&mut self)`：`FrameAppShell` 调用 App state shutdown plugins -> `BaseApp::destroy()`。
 - `BaseApp::destroy()`：`Gfx::wait_idle()` -> `render_backend.destroy()` -> `Gfx::destroy()`。

@@ -13,7 +13,7 @@
 - `truvis-render-graph`：声明式渲染图
 - `truvis-render-backend`：backend 执行与系统整合（swapchain/cmd/sync/submit/present + GPU 上传）
 - `truvis-frame-api`：`FrameApp` / `FrameAppHooks` / `Plugin` 契约与 Plugin typed contexts
-- `truvis-frame-runtime`：`BaseApp` 帧骨架（RenderBackend 生命周期 + 输入事件队列）
+- `truvis-frame-runtime`：`BaseApp` 帧骨架与 `FrameAppShell` 适配层
 - `truvis-render-passes`：通用 render pass 实现（RT / 累积 / 降噪 / 色调映射 / blit / resolve / phong）
 - `truvis-app`：示例应用、GUI plugin、overlay plugin 与 render pipeline plugin 编排
 - `truvis-scene` / `truvis-asset`：场景与资产系统
