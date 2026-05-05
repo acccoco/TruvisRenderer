@@ -3433,6 +3433,7 @@ dependencies = [
  "truvis-scene",
  "truvis-shader-binding",
  "truvis-utils",
+ "truvis-world",
 ]
 
 [[package]]
@@ -3441,11 +3442,10 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "imgui",
- "truvis-asset",
  "truvis-gfx",
  "truvis-render-interface",
  "truvis-renderer",
- "truvis-scene",
+ "truvis-world",
 ]
 
 [[package]]
@@ -3647,9 +3647,9 @@ dependencies = [
  "truvis-path",
  "truvis-render-graph",
  "truvis-render-interface",
- "truvis-renderer",
  "truvis-shader-binding",
  "truvis-utils",
+ "truvis-world",
 ]
 
 [[package]]
@@ -3672,6 +3672,7 @@ dependencies = [
  "truvis-render-interface",
  "truvis-scene",
  "truvis-shader-binding",
+ "truvis-world",
 ]
 
 [[package]]
@@ -3729,6 +3730,14 @@ dependencies = [
  "truvis-frame-runtime",
  "truvis-path",
  "winit",
+]
+
+[[package]]
+name = "truvis-world"
+version = "0.1.0"
+dependencies = [
+ "truvis-asset",
+ "truvis-scene",
 ]
 
 [[package]]

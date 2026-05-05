@@ -8,7 +8,7 @@
 > `RenderContext` 主线已退场，`World + RenderWorld` 已落地，通用 pass 已拆到
 > `truvis-render-passes`。仍然有效的重点是 scene/asset/bindless 解耦、
 > `truvis-render-interface` 命名与内容收窄、app 依赖扇出收敛。
-> 阅读时请结合 [`README.md`](README.md) 的当前状态快照。
+> 阅读时请结合 [`README.md`](../README.md) 的当前状态快照。
 
 ## 一、背景
 

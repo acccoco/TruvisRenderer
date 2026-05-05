@@ -12,7 +12,7 @@ use truvis_path::TruvisPath;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::handles::GfxImageViewHandle;
-use truvis_renderer::render_context::RenderContext;
+use truvis_render_interface::render_world::RenderWorld;
 use truvis_shader_binding::gpu;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
@@ -111,7 +111,7 @@ impl ResolvePass {
     ///
     /// # 参数
     /// - `cmd`: 命令缓冲区
-    /// - `render_context`: 渲染上下文
+    /// - `render_world`: 渲染上下文
     /// - `frame_label`: 当前帧标签
     /// - `color_attachment`: 目标 color attachment 的 image view
     /// - `target_extent`: 目标区域的尺寸
@@ -119,15 +119,15 @@ impl ResolvePass {
     pub fn draw(
         &self,
         cmd: &GfxCommandBuffer,
-        render_context: &RenderContext,
+        render_world: &RenderWorld,
         color_attachment: vk::ImageView,
         target_extent: vk::Extent2D,
         params: &ResolvePassData,
     ) {
-        let frame_label = render_context.frame_counter.frame_label();
+        let frame_label = render_world.frame_counter.frame_label();
 
         // 获取源图像的 bindless handle
-        let src_srv_handle = render_context.bindless_manager.get_shader_srv_handle(params.render_target);
+        let src_srv_handle = render_world.bindless_manager.get_shader_srv_handle(params.render_target);
 
         // 构造 push constant
         let push_constant = gpu::resolve::PushConstant {
@@ -178,7 +178,7 @@ impl ResolvePass {
             vk::PipelineBindPoint::GRAPHICS,
             self.pipeline_layout.handle(),
             0,
-            &render_context.global_descriptor_sets.global_sets(frame_label),
+            &render_world.global_descriptor_sets.global_sets(frame_label),
             None,
         );
 
@@ -201,7 +201,7 @@ pub struct ResolveRgPass<'a> {
     pub resolve_pass: &'a ResolvePass,
 
     // TODO 暂时使用这个肮脏的实现
-    pub render_context: &'a RenderContext,
+    pub render_world: &'a RenderWorld,
 
     pub render_target: RgImageHandle,
     pub swapchain_image: RgImageHandle,
@@ -225,7 +225,7 @@ impl RgPass for ResolveRgPass<'_> {
 
         self.resolve_pass.draw(
             cmd,
-            self.render_context,
+            self.render_world,
             swapchain_image_view.handle(),
             self.swapchain_extent,
             &ResolvePassData {

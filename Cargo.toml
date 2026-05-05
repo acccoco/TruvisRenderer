@@ -12,6 +12,7 @@ members = [
     "engine/crates/truvis-render-graph",
     "engine/crates/truvis-asset",
     "engine/crates/truvis-scene",
+    "engine/crates/truvis-world",
     "engine/crates/truvis-renderer",
     "engine/crates/truvis-app-api",
     "engine/crates/truvis-frame-runtime",
@@ -53,6 +54,7 @@ truvis-render-interface = { path = "engine/crates/truvis-render-interface" }
 truvis-render-graph = { path = "engine/crates/truvis-render-graph" }
 truvis-asset = { path = "engine/crates/truvis-asset" }
 truvis-scene = { path = "engine/crates/truvis-scene" }
+truvis-world = { path = "engine/crates/truvis-world" }
 truvis-renderer = { path = "engine/crates/truvis-renderer" }
 truvis-app-api = { path = "engine/crates/truvis-app-api" }
 truvis-frame-runtime = { path = "engine/crates/truvis-frame-runtime" }

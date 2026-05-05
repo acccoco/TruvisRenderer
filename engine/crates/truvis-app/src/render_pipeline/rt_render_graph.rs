@@ -6,7 +6,7 @@ use truvis_gfx::gfx::Gfx;
 use truvis_gfx::swapchain::swapchain::GfxSwapchain;
 use truvis_gui_backend::gui_pass::GuiPass;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageState, RgSemaphoreInfo};
-use truvis_render_graph::resources::fif_buffer::FifBuffers;
+use truvis_render_interface::fif_buffer::FifBuffers;
 use truvis_render_interface::cmd_allocator::CmdAllocator;
 use truvis_render_interface::frame_counter::FrameCounter;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
@@ -15,8 +15,8 @@ use truvis_render_passes::denoise_accum_pass::{DenoiseAccumPass, DenoiseAccumRgP
 use truvis_render_passes::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};
 use truvis_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
 use truvis_render_passes::sdr_pass::{SdrPass, SdrRgPass};
+use truvis_render_interface::render_world::RenderWorld;
 use truvis_renderer::present::render_present::RenderPresent;
-use truvis_renderer::render_context::RenderContext;
 
 use crate::gui_rg_pass::GuiRgPass;
 
@@ -73,18 +73,18 @@ impl RtPipeline {
 impl RtPipeline {
     pub fn render(
         &self,
-        render_context: &RenderContext,
+        render_world: &RenderWorld,
         render_present: &RenderPresent,
         gui_draw_data: &imgui::DrawData,
         frame_fence: &GfxSemaphore,
     ) {
-        let frame_label = render_context.frame_counter.frame_label();
-        let frame_id = render_context.frame_counter.frame_id();
+        let frame_label = render_world.frame_counter.frame_label();
+        let frame_id = render_world.frame_counter.frame_id();
 
         // compute subgraph
         let compute_subgraph_submit = {
             let mut compute_graph_builder = RenderGraphBuilder::new();
-            self.prepare_compute_graph(&mut compute_graph_builder, render_context);
+            self.prepare_compute_graph(&mut compute_graph_builder, render_world);
             let compute_graph = compute_graph_builder.compile();
 
             // 调试输出执行计划
@@ -97,7 +97,7 @@ impl RtPipeline {
 
             let compute_cmd = &self.compute_cmds[*frame_label];
             compute_cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-render-graph");
-            compute_graph.execute(compute_cmd, &render_context.gfx_resource_manager);
+            compute_graph.execute(compute_cmd, &render_world.gfx_resource_manager);
             compute_cmd.end();
 
             compute_graph.build_submit_info(std::slice::from_ref(compute_cmd))
@@ -112,7 +112,7 @@ impl RtPipeline {
                 frame_id,
             ));
 
-            self.prepare_present_graph(&mut present_graph_builder, render_context, render_present, gui_draw_data);
+            self.prepare_present_graph(&mut present_graph_builder, render_world, render_present, gui_draw_data);
             let present_graph = present_graph_builder.compile();
 
             // 调试输出执行计划
@@ -125,7 +125,7 @@ impl RtPipeline {
 
             let present_cmd = &self.present_cmds[*frame_label];
             present_cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-present-graph");
-            present_graph.execute(present_cmd, &render_context.gfx_resource_manager);
+            present_graph.execute(present_cmd, &render_world.gfx_resource_manager);
             present_cmd.end();
 
             present_graph.build_submit_info(std::slice::from_ref(present_cmd))
@@ -137,10 +137,10 @@ impl RtPipeline {
     pub fn prepare_compute_graph<'a>(
         &'a self,
         rg_builder: &mut RenderGraphBuilder<'a>,
-        render_context: &'a RenderContext,
+        render_world: &'a RenderWorld,
     ) {
-        let frame_label = render_context.frame_counter.frame_label();
-        let fif_buffers = &render_context.fif_buffers;
+        let frame_label = render_world.frame_counter.frame_label();
+        let fif_buffers = &render_world.fif_buffers;
 
         // 导入外部资源
         // 单帧 RT 输出（per-frame image）
@@ -215,9 +215,9 @@ impl RtPipeline {
                 "ray-tracing",
                 RealtimeRtRgPass {
                     rt_pass: &self.realtime_rt_pass,
-                    render_context,
+                    render_world,
                     single_frame_image,
-                    single_frame_extent: render_context.frame_settings.frame_extent,
+                    single_frame_extent: render_world.frame_settings.frame_extent,
                     gbuffer_a,
                     gbuffer_b,
                     gbuffer_c,
@@ -227,35 +227,35 @@ impl RtPipeline {
                 "denoise-accum",
                 DenoiseAccumRgPass {
                     denoise_accum_pass: &self.denoise_accum_pass,
-                    render_context,
+                    render_world,
                     single_frame_image,
                     accum_image,
                     gbuffer_a,
                     gbuffer_b,
                     gbuffer_c,
-                    image_extent: render_context.frame_settings.frame_extent,
+                    image_extent: render_world.frame_settings.frame_extent,
                 },
             )
             .add_pass(
                 "blit",
                 BlitRgPass {
                     blit_pass: &self.blit_pass,
-                    render_context,
+                    render_world,
                     src_image: accum_image,
                     dst_image: render_target,
-                    src_image_extent: render_context.frame_settings.frame_extent,
-                    dst_image_extent: render_context.frame_settings.frame_extent,
+                    src_image_extent: render_world.frame_settings.frame_extent,
+                    dst_image_extent: render_world.frame_settings.frame_extent,
                 },
             )
             .add_pass(
                 "hdr-to-sdr",
                 SdrRgPass {
                     sdr_pass: &self.sdr_pass,
-                    render_context,
+                    render_world,
                     src_image: accum_image,
                     dst_image: render_target,
-                    src_image_extent: render_context.frame_settings.frame_extent,
-                    dst_image_extent: render_context.frame_settings.frame_extent,
+                    src_image_extent: render_world.frame_settings.frame_extent,
+                    dst_image_extent: render_world.frame_settings.frame_extent,
                 },
             );
     }
@@ -263,12 +263,12 @@ impl RtPipeline {
     pub fn prepare_present_graph<'a>(
         &'a self,
         rg_builder: &mut RenderGraphBuilder<'a>,
-        render_context: &'a RenderContext,
+        render_world: &'a RenderWorld,
         render_present: &'a RenderPresent,
         gui_draw_data: &'a imgui::DrawData,
     ) {
-        let frame_label = render_context.frame_counter.frame_label();
-        let fif_buffers = &render_context.fif_buffers;
+        let frame_label = render_world.frame_counter.frame_label();
+        let fif_buffers = &render_world.fif_buffers;
 
         // 导入外部资源
         let (render_target_image_handle, render_target_view_handle) = fif_buffers.render_target_handle(frame_label);
@@ -310,7 +310,7 @@ impl RtPipeline {
                 "resolve",
                 ResolveRgPass {
                     resolve_pass: &self.resolve_pass,
-                    render_context,
+                    render_world,
                     render_target,
                     swapchain_image: present_image,
                     swapchain_extent: render_present.swapchain_image_info().image_extent,
@@ -320,7 +320,7 @@ impl RtPipeline {
                 "gui",
                 GuiRgPass {
                     gui_pass: &self.gui_pass,
-                    render_context,
+                    render_world,
 
                     ui_draw_data: gui_draw_data,
                     gui_mesh: &render_present.gui_backend.gui_meshes[*frame_label],

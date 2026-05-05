@@ -76,21 +76,18 @@ impl FrameRuntime {
             let mut ctx = InitCtx {
                 camera: self.camera_controller.camera_mut(),
                 swapchain_image_info: self.renderer.swapchain_image_info(),
-                global_descriptor_sets: &self.renderer.render_context.global_descriptor_sets,
                 render_present: self.renderer.render_present.as_ref().unwrap(),
                 cmd_allocator: &mut self.renderer.cmd_allocator,
-                scene_manager: &mut self.renderer.render_context.scene_manager,
-                asset_hub: &mut self.renderer.render_context.asset_hub,
-                gfx_resource_manager: &mut self.renderer.render_context.gfx_resource_manager,
-                bindless_manager: &mut self.renderer.render_context.bindless_manager,
+                world: &mut self.renderer.world,
+                render_world: &mut self.renderer.render_world,
             };
             self.plugin.as_mut().unwrap().init(&mut ctx);
         };
 
         let (fonts_atlas, font_tex_id) = self.gui_host.init_font();
         self.renderer.render_present.as_mut().unwrap().gui_backend.register_font(
-            &mut self.renderer.render_context.bindless_manager,
-            &mut self.renderer.render_context.gfx_resource_manager,
+            &mut self.renderer.render_world.bindless_manager,
+            &mut self.renderer.render_world.gfx_resource_manager,
             fonts_atlas,
             font_tex_id,
         );
@@ -126,11 +123,8 @@ impl FrameRuntime {
             self.renderer.recreate_swapchain();
 
             let mut ctx = ResizeCtx {
-                frame_settings: &self.renderer.render_context.frame_settings,
+                render_world: &mut self.renderer.render_world,
                 render_present: self.renderer.render_present.as_ref().unwrap(),
-                global_descriptor_sets: &self.renderer.render_context.global_descriptor_sets,
-                gfx_resource_manager: &mut self.renderer.render_context.gfx_resource_manager,
-                bindless_manager: &mut self.renderer.render_context.bindless_manager,
             };
             self.plugin.as_mut().unwrap().on_resize(&mut ctx);
         }
@@ -215,7 +209,7 @@ impl FrameRuntime {
         {
             let _span = tracy_client::span!("FrameRuntime::phase_update::scene");
             let input_state = self.input_manager.state().clone();
-            let frame_extent = self.renderer.render_context.frame_settings.frame_extent;
+            let frame_extent = self.renderer.render_world.frame_settings.frame_extent;
 
             self.camera_controller.update(
                 &input_state,
@@ -224,10 +218,10 @@ impl FrameRuntime {
             );
 
             let mut ctx = UpdateCtx {
-                scene_manager: &mut self.renderer.render_context.scene_manager,
-                pipeline_settings: &mut self.renderer.render_context.pipeline_settings,
-                frame_settings: &self.renderer.render_context.frame_settings,
-                delta_time_s: self.renderer.render_context.delta_time_s,
+                world: &mut self.renderer.world,
+                pipeline_settings: &mut self.renderer.render_world.pipeline_settings,
+                frame_settings: &self.renderer.render_world.frame_settings,
+                delta_time_s: self.renderer.render_world.delta_time_s,
             };
             self.plugin.as_mut().unwrap().update(&mut ctx);
         }
@@ -244,7 +238,7 @@ impl FrameRuntime {
 
         let gui_draw_data = self.gui_host.get_render_data();
         let ctx = RenderCtx {
-            render_context: &self.renderer.render_context,
+            render_world: &self.renderer.render_world,
             render_present: self.renderer.render_present.as_ref().unwrap(),
             gui_draw_data,
             timeline: &self.renderer.fif_timeline_semaphore,
@@ -268,10 +262,10 @@ impl FrameRuntime {
     fn build_ui(&mut self) {
         let elapsed = self.renderer.timer.delta_time();
         let swapchain_extent = self.renderer.render_present.as_ref().unwrap().swapchain.as_ref().unwrap().extent();
-        let accum_frames_num = self.renderer.render_context.accum_data.accum_frames_num();
+        let accum_frames_num = self.renderer.render_world.accum_data.accum_frames_num();
 
         let camera = self.camera_controller.camera();
-        let pipeline_settings = &mut self.renderer.render_context.pipeline_settings;
+        let pipeline_settings = &mut self.renderer.render_world.pipeline_settings;
         let plugin = self.plugin.as_mut().unwrap();
         let overlays = &mut self.overlays;
 
