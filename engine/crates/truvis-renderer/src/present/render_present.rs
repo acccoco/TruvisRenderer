@@ -9,7 +9,6 @@ use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::swapchain::surface::GfxSurface;
 use truvis_gfx::swapchain::swapchain::{GfxSwapchain, GfxSwapchainImageInfo};
-use truvis_gui_backend::gui_backend::GuiBackend;
 use truvis_render_interface::frame_counter::FrameCounter;
 use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
 use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
@@ -38,8 +37,6 @@ pub struct RenderPresent {
     pub swapchain: Option<GfxSwapchain>,
     pub swapchain_images: Vec<GfxImageHandle>,
     pub swapchain_image_views: Vec<GfxImageViewHandle>,
-
-    pub gui_backend: GuiBackend,
 
     /// 数量和 fif num 相同
     pub present_complete_semaphores: [GfxSemaphore; FrameCounter::fif_count()],
@@ -72,8 +69,6 @@ impl RenderPresent {
 
         let swapchain_image_infos = swapchain.image_infos();
 
-        let gui_backend = GuiBackend::new();
-
         let present_complete_semaphores = FrameCounter::frame_labes()
             .map(|frame_label| GfxSemaphore::new(&format!("window-present-complete-{}", frame_label)));
         let render_complete_semaphores = (0..swapchain_image_infos.image_cnt)
@@ -86,7 +81,6 @@ impl RenderPresent {
             swapchain_images: swapchain_image_handles,
             swapchain_image_views: swapchain_image_view_handles,
 
-            gui_backend,
             present_complete_semaphores,
             render_complete_semaphores,
 

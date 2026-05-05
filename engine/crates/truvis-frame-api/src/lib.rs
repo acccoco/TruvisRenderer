@@ -1,11 +1,11 @@
-//! Plugin contract and phase context definitions.
+//! Frame app and plugin contracts shared by runtime and app crates.
 //!
-//! This crate defines the stable API surface for frame plugins:
-//! - [`FramePlugin`](frame_plugin::FramePlugin) — typed-context plugin trait
-//! - Phase contexts: [`InitCtx`], [`UpdateCtx`], [`RenderCtx`], [`ResizeCtx`]
-//! - [`OverlayModule`](overlay::OverlayModule) — registrable UI overlay trait
+//! This crate defines only contracts and typed contexts:
+//! - [`FrameApp`](frame_app::FrameApp) — object-safe render-loop app contract
+//! - [`FrameAppHooks`](frame_app::FrameAppHooks) — hook points used by `BaseApp`
+//! - [`Plugin`](plugin::Plugin) — reusable capability lifecycle contract
 //! - [`InputEvent`](input_event::InputEvent) — platform input event types
 
-pub mod frame_plugin;
+pub mod frame_app;
 pub mod input_event;
-pub mod overlay;
+pub mod plugin;

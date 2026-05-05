@@ -12,7 +12,6 @@ truvis-render-interface = { workspace = true }
 truvis-scene = { workspace = true }
 truvis-world = { workspace = true }
 truvis-cxx-binding = { workspace = true }
-truvis-gui-backend = { workspace = true }
 
 
 ash = { workspace = true }
@@ -21,6 +20,4 @@ bytemuck = { workspace = true }
 tracy-client = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
-imgui = { workspace = true }
 raw-window-handle = { workspace = true }
-

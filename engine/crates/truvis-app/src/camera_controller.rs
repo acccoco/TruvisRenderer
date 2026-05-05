@@ -9,17 +9,13 @@ pub struct CameraController {
 
 impl Default for CameraController {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl CameraController {
-    pub fn new() -> Self {
         Self {
             camera: Camera::default(),
         }
     }
+}
 
+impl CameraController {
     pub fn camera(&self) -> &Camera {
         &self.camera
     }
@@ -28,8 +24,8 @@ impl CameraController {
         &mut self.camera
     }
 
-    pub fn update(&mut self, input_state: &InputState, viewport_size: glam::Vec2, deltatime: std::time::Duration) {
-        let delta_time_s = deltatime.as_secs_f32();
+    pub fn update(&mut self, input_state: &InputState, viewport_size: glam::Vec2, delta_time: std::time::Duration) {
+        let delta_time_s = delta_time.as_secs_f32();
 
         self.camera.set_aspect_ratio(viewport_size.x / viewport_size.y);
 

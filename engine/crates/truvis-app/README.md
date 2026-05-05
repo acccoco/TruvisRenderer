@@ -1,24 +1,25 @@
 # truvis-app
 
-应用集成层，承载示例应用、RenderGraph 适配（`GuiRgPass`、`RtPipeline`）以及过渡期 re-export shim。
+应用集成层，承载示例应用、GUI plugin、overlay plugin 与具体 render pipeline plugin。
 
-核心契约与运行时已迁出至独立 crate：
-- 插件契约与 typed contexts：`truvis-frame-api`
-- 帧编排运行时：`truvis-frame-runtime`
+核心契约与帧骨架位于独立 crate：
+- App / Plugin 契约与 typed contexts：`truvis-frame-api`
+- 帧骨架：`truvis-frame-runtime::BaseApp`
 - 通用 render pass：`truvis-render-passes`
 
 ## 主要内容
 
 - 示例应用实现（triangle / rt-cornell / rt-sponza / shader-toy）
-- `GuiRgPass`：ImGui RenderGraph 适配（应用集成层，不下沉到 gui-backend）
-- `RtPipeline`（`rt_render_graph`）：RT 流水线编排
-- Re-export shim：`frame_plugin`、`frame_runtime`、`overlay`、`render_pipeline/*` 转发到新 crate
+- `GuiPlugin`：imgui context、输入转发、字体资源、GUI mesh 上传和 GUI RenderGraph pass 注入
+- `DebugInfoOverlay` / `PipelineControlsOverlay`：实现 `Plugin` 的 UI-only 插件
+- `TrianglePlugin` / `ShaderToyPlugin` / `RtPipeline`：由 App 持有的具体渲染能力插件
 
 ## 使用方式
 
-- 实现 `FramePlugin`（from `truvis-frame-api`）并通过 `truvis-winit-app::WinitApp::run_plugin(...)` 启动
+- 实现 `FrameApp` + `FrameAppHooks`，内部持有 `Option<BaseApp>` 并通过 `truvis-winit-app::WinitApp::run_app(...)` 启动
 
 ## 边界约束
 
 - 本层承载 demo 与集成逻辑，不向底层反向注入依赖
-- `Renderer` 保持 backend 语义；scene/asset 调度由 `FrameRuntime` phase 决策
+- `BaseApp` 不持有 GUI、Camera、Overlay 或具体渲染管线
+- App 在 `FrameAppHooks::render` 中创建 RenderGraph，并显式决定渲染管线与 GUI pass 顺序

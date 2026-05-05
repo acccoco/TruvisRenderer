@@ -1,21 +1,10 @@
-//! Frame orchestration runtime.
+//! Base frame orchestration runtime.
 //!
-//! [`FrameRuntime`] drives the per-frame lifecycle:
-//!   `begin_frame` → `phase_input` → `phase_update` → `phase_prepare` → `phase_render` → `phase_present`
+//! [`BaseApp`] drives the invariant per-frame lifecycle:
+//! `begin_frame` → input hook → update hook → prepare → render hook → present → `end_frame`.
 //!
-//! External callers interact only through the public runtime API:
-//! [`push_input_event`](FrameRuntime::push_input_event),
-//! [`time_to_render`](FrameRuntime::time_to_render),
-//! [`recreate_swapchain_if_needed`](FrameRuntime::recreate_swapchain_if_needed),
-//! [`run_frame`](FrameRuntime::run_frame),
-//! [`destroy`](FrameRuntime::destroy).
-//!
-//! `phase_prepare` is owned exclusively by the runtime — not exposed as a `FramePlugin` hook.
+//! Concrete apps own GUI, camera, input state, overlays, and render plugins.
 
-mod camera_controller;
-mod frame_runtime;
-mod gui_front;
-mod input_manager;
-mod input_state;
+mod base_app;
 
-pub use frame_runtime::FrameRuntime;
+pub use base_app::{BaseApp, init_env};

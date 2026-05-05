@@ -1,35 +1,25 @@
-//! Registrable overlay module system.
-
 use ash::vk;
-
+use truvis_frame_api::plugin::Plugin;
 use truvis_render_interface::pipeline_settings::PipelineSettings;
 use truvis_renderer::platform::camera::Camera;
 
-/// Read-only snapshot + mutable pipeline settings passed to each overlay per frame.
-pub struct OverlayContext<'a> {
-    pub delta_time_s: f32,
-    pub swapchain_extent: vk::Extent2D,
-    pub camera: &'a Camera,
-    pub accum_frames_num: usize,
-    pub pipeline_settings: &'a mut PipelineSettings,
-}
-
-/// A registrable UI overlay module.
-pub trait OverlayModule {
-    fn build_ui(&mut self, ui: &imgui::Ui, ctx: &mut OverlayContext);
-}
-
-// ---------------------------------------------------------------------------
-// Default overlays
-// ---------------------------------------------------------------------------
-
+#[derive(Default)]
 pub struct DebugInfoOverlay;
 
-impl OverlayModule for DebugInfoOverlay {
-    fn build_ui(&mut self, ui: &imgui::Ui, ctx: &mut OverlayContext) {
+impl Plugin for DebugInfoOverlay {}
+
+impl DebugInfoOverlay {
+    pub fn build_overlay_ui(
+        &mut self,
+        ui: &imgui::Ui,
+        camera: &Camera,
+        swapchain_extent: vk::Extent2D,
+        accum_frames_num: usize,
+        delta_time_s: f32,
+    ) {
         ui.window("##overlay")
             .position([0.0, 0.0], imgui::Condition::Always)
-            .size([ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32], imgui::Condition::Always)
+            .size([swapchain_extent.width as f32, swapchain_extent.height as f32], imgui::Condition::Always)
             .flags(
                 imgui::WindowFlags::NO_TITLE_BAR
                     | imgui::WindowFlags::NO_RESIZE
@@ -47,10 +37,8 @@ impl OverlayModule for DebugInfoOverlay {
             )
             .build(|| {
                 ui.set_cursor_pos([5.0, 5.0]);
-                ui.text(format!("FPS: {:.2}", 1.0 / ctx.delta_time_s));
-                ui.text(format!("swapchain: {:.0}x{:.0}", ctx.swapchain_extent.width, ctx.swapchain_extent.height));
-
-                let camera = ctx.camera;
+                ui.text(format!("FPS: {:.2}", 1.0 / delta_time_s));
+                ui.text(format!("swapchain: {:.0}x{:.0}", swapchain_extent.width, swapchain_extent.height));
                 ui.text(format!(
                     "CameraPos: ({:.2}, {:.2}, {:.2})",
                     camera.position.x, camera.position.y, camera.position.z
@@ -67,23 +55,25 @@ impl OverlayModule for DebugInfoOverlay {
                 ));
                 ui.text(format!("CameraAspect: {:.2}", camera.asp));
                 ui.text(format!("CameraFov(Vertical): {:.2}\u{00b0}", camera.fov_deg_vertical));
-                ui.text(format!("Accum Frames: {}", ctx.accum_frames_num));
+                ui.text(format!("Accum Frames: {}", accum_frames_num));
                 ui.new_line();
             });
     }
 }
 
+#[derive(Default)]
 pub struct PipelineControlsOverlay;
 
-impl OverlayModule for PipelineControlsOverlay {
-    fn build_ui(&mut self, ui: &imgui::Ui, ctx: &mut OverlayContext) {
+impl Plugin for PipelineControlsOverlay {}
+
+impl PipelineControlsOverlay {
+    pub fn build_overlay_ui(&mut self, ui: &imgui::Ui, pipeline_settings: &mut PipelineSettings) {
         ui.window("Controls")
             .position([10.0, 200.0], imgui::Condition::FirstUseEver)
             .size([250.0, 200.0], imgui::Condition::FirstUseEver)
             .build(|| {
-                let ps = &mut *ctx.pipeline_settings;
-                ui.slider("channel", 0, 9, &mut ps.channel);
-                ui.text(match ps.channel {
+                ui.slider("channel", 0, 9, &mut pipeline_settings.channel);
+                ui.text(match pipeline_settings.channel {
                     0 => "final",
                     1 => "normal",
                     2 => "base color",
@@ -99,12 +89,12 @@ impl OverlayModule for PipelineControlsOverlay {
 
                 ui.separator();
                 ui.text("Irradiance Cache");
-                ui.checkbox("Enable IC", &mut ps.ic_enabled);
+                ui.checkbox("Enable IC", &mut pipeline_settings.ic_enabled);
 
                 ui.separator();
                 ui.text("Denoise Settings");
 
-                let denoise = &mut ps.denoise;
+                let denoise = &mut pipeline_settings.denoise;
                 ui.checkbox("Enable Denoise", &mut denoise.enabled);
 
                 let _disabled = ui.begin_disabled(!denoise.enabled);
@@ -114,9 +104,4 @@ impl OverlayModule for PipelineControlsOverlay {
                 ui.slider("Kernel Radius", 1, 5, &mut denoise.kernel_radius);
             });
     }
-}
-
-/// Returns the default set of overlay modules.
-pub fn default_overlays() -> Vec<Box<dyn OverlayModule>> {
-    vec![Box::new(DebugInfoOverlay), Box::new(PipelineControlsOverlay)]
 }

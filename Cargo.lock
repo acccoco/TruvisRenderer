@@ -3419,6 +3419,7 @@ dependencies = [
  "imgui",
  "itertools 0.10.5",
  "log",
+ "raw-window-handle",
  "tracy-client",
  "truvis-asset",
  "truvis-frame-api",
@@ -3510,8 +3511,7 @@ dependencies = [
 name = "truvis-frame-api"
 version = "0.1.0"
 dependencies = [
- "ash",
- "imgui",
+ "raw-window-handle",
  "truvis-gfx",
  "truvis-render-interface",
  "truvis-renderer",
@@ -3522,18 +3522,13 @@ dependencies = [
 name = "truvis-frame-runtime"
 version = "0.1.0"
 dependencies = [
- "ash",
  "ash-window",
- "glam",
- "imgui",
  "log",
  "raw-window-handle",
  "tracy-client",
  "truvis-frame-api",
  "truvis-gfx",
  "truvis-logs",
- "truvis-path",
- "truvis-render-interface",
  "truvis-renderer",
 ]
 
@@ -3659,7 +3654,6 @@ dependencies = [
  "ash",
  "bytemuck",
  "glam",
- "imgui",
  "itertools 0.10.5",
  "log",
  "raw-window-handle",
@@ -3667,7 +3661,6 @@ dependencies = [
  "truvis-asset",
  "truvis-cxx-binding",
  "truvis-gfx",
- "truvis-gui-backend",
  "truvis-render-graph",
  "truvis-render-interface",
  "truvis-scene",

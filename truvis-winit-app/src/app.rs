@@ -3,15 +3,15 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::thread::{self, JoinHandle};
 
-use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Window, WindowId};
 
-use truvis_frame_api::frame_plugin::FramePlugin;
-use truvis_frame_runtime::FrameRuntime;
+use truvis_frame_api::frame_app::FrameApp;
+use truvis_frame_runtime::init_env;
 use truvis_path::TruvisPath;
 
 use crate::render_loop::render_loop;
@@ -20,34 +20,34 @@ use crate::winit_event_adapter::WinitEventAdapter;
 
 pub struct UserEvent;
 
-type FramePluginFactory = Box<dyn FnOnce() -> Box<dyn FramePlugin> + Send + 'static>;
+type FrameAppFactory = Box<dyn FnOnce() -> Box<dyn FrameApp> + Send + 'static>;
 
 /// winit main-thread app handler.
 pub struct WinitApp {
     window: Option<Window>,
     shared: Option<Arc<SharedState>>,
-    plugin_factory: Option<FramePluginFactory>,
+    app_factory: Option<FrameAppFactory>,
     render_thread: Option<JoinHandle<()>>,
 }
 
 impl WinitApp {
-    /// Primary entry point. `plugin_factory` is called once on the render thread.
-    pub fn run_plugin<F>(plugin_factory: F)
+    /// Primary entry point. `app_factory` is called once on the render thread.
+    pub fn run_app<F>(app_factory: F)
     where
-        F: FnOnce() -> Box<dyn FramePlugin> + Send + 'static,
+        F: FnOnce() -> Box<dyn FrameApp> + Send + 'static,
     {
-        Self::run_inner(Box::new(plugin_factory));
+        Self::run_inner(Box::new(app_factory));
     }
 
-    fn run_inner(plugin_factory: FramePluginFactory) {
-        FrameRuntime::init_env();
+    fn run_inner(app_factory: FrameAppFactory) {
+        init_env();
 
         let event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event().build().unwrap();
 
         let mut app = Self {
             window: None,
             shared: None,
-            plugin_factory: Some(plugin_factory),
+            app_factory: Some(app_factory),
             render_thread: None,
         };
 
@@ -90,13 +90,13 @@ impl WinitApp {
         let shared = Arc::new(SharedState::new(initial_size));
 
         let init_msg = RenderInitMsg {
-            raw_display: SendWrapper(window.raw_display_handle().unwrap()),
-            raw_window: SendWrapper(window.raw_window_handle().unwrap()),
+            raw_display: SendWrapper(window.display_handle().unwrap().as_raw()),
+            raw_window: SendWrapper(window.window_handle().unwrap().as_raw()),
             scale_factor: window.scale_factor(),
             initial_size,
         };
 
-        let factory = self.plugin_factory.take().expect("plugin_factory already consumed");
+        let factory = self.app_factory.take().expect("app_factory already consumed");
         let shared_for_thread = shared.clone();
 
         let join_handle = thread::Builder::new()
@@ -104,8 +104,8 @@ impl WinitApp {
             .spawn(move || {
                 let shared_in_thread = shared_for_thread;
                 let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                    let plugin = factory();
-                    render_loop(shared_in_thread.clone(), init_msg, plugin);
+                    let app = factory();
+                    render_loop(shared_in_thread.clone(), init_msg, app);
                 }));
                 if let Err(payload) = result {
                     log::error!("RenderThread panicked; capturing payload for main thread resume.");

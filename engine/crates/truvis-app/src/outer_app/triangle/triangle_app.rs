@@ -1,45 +1,193 @@
 use ash::vk;
 use itertools::Itertools;
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use truvis_frame_api::frame_plugin::{FramePlugin, InitCtx, RenderCtx, UpdateCtx};
-use truvis_renderer::platform::camera::Camera;
+use truvis_frame_api::frame_app::{FrameApp, FrameAppHooks};
+use truvis_frame_api::input_event::InputEvent;
+use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx};
+use truvis_frame_runtime::BaseApp;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::Gfx;
-use truvis_gui_backend::gui_pass::GuiPass;
-use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageState, RgSemaphoreInfo};
+use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
 use truvis_render_interface::frame_counter::FrameCounter;
+use truvis_renderer::platform::camera::Camera;
+use truvis_renderer::renderer::{RendererRenderCtx, RendererUpdateCtx};
 
-use crate::gui_rg_pass::GuiRgPass;
+use crate::camera_controller::CameraController;
+use crate::gui_plugin::GuiPlugin;
+use crate::input_state::InputManager;
 use crate::outer_app::triangle::triangle_pass::TrianglePass;
+use crate::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
+
+#[derive(Default)]
+pub struct TrianglePlugin {
+    triangle_pass: Option<TrianglePass>,
+}
+
+impl Plugin for TrianglePlugin {
+    fn init(&mut self, ctx: &mut PluginInitCtx) {
+        self.triangle_pass = Some(TrianglePass::new(ctx.swapchain_image_info.image_format));
+    }
+}
+
+impl TrianglePlugin {
+    pub fn contribute_passes<'a>(
+        &'a self,
+        graph: &mut RenderGraphBuilder<'a>,
+        canvas_color: RgImageHandle,
+        canvas_extent: vk::Extent2D,
+    ) {
+        graph.add_pass_lambda(
+            "triangle",
+            move |builder| {
+                builder.read_write_image(canvas_color, RgImageState::COLOR_ATTACHMENT_READ_WRITE);
+            },
+            move |context| {
+                let canvas_view = context.get_image_view(canvas_color).unwrap();
+                self.triangle_pass.as_ref().expect("TrianglePlugin not initialized").draw(
+                    context.cmd,
+                    canvas_view,
+                    canvas_extent,
+                );
+            },
+        );
+    }
+}
 
 #[derive(Default)]
 pub struct HelloTriangleApp {
-    triangle_pass: Option<TrianglePass>,
-    gui_pass: Option<GuiPass>,
+    base: Option<BaseApp>,
+    gui: GuiPlugin,
+    triangle: TrianglePlugin,
+    camera_controller: CameraController,
+    input: InputManager,
+    debug_overlay: DebugInfoOverlay,
+    pipeline_overlay: PipelineControlsOverlay,
     cmds: Vec<GfxCommandBuffer>,
 }
 
-impl FramePlugin for HelloTriangleApp {
-    fn init(&mut self, ctx: &mut InitCtx, _camera: &mut Camera) {
-        log::info!("hello triangle init.");
+impl FrameApp for HelloTriangleApp {
+    fn init_after_window(
+        &mut self,
+        raw_display: RawDisplayHandle,
+        raw_window: RawWindowHandle,
+        scale_factor: f64,
+        window_size: [u32; 2],
+    ) {
+        self.gui.set_hidpi_factor(scale_factor);
+        self.gui.set_display_size(window_size);
+        self.base = Some(BaseApp::new(raw_display));
 
-        self.triangle_pass = Some(TrianglePass::new(ctx.swapchain_image_info.image_format));
-        self.gui_pass = Some(GuiPass::new(&ctx.render_world.global_descriptor_sets, ctx.swapchain_image_info.image_format));
+        let mut base = self.base.take().expect("BaseApp should be present during init");
+        {
+            let ctx = base.init_after_window(raw_display, raw_window, window_size);
+            self.cmds = FrameCounter::frame_labes()
+                .iter()
+                .map(|label| ctx.cmd_allocator.alloc_command_buffer(*label, "triangle-app"))
+                .collect_vec();
 
-        self.cmds = FrameCounter::frame_labes()
-            .iter()
-            .map(|label| ctx.cmd_allocator.alloc_command_buffer(*label, "triangle-app"))
-            .collect_vec();
+            let mut plugin_ctx = PluginInitCtx {
+                world: ctx.world,
+                render_world: ctx.render_world,
+                cmd_allocator: ctx.cmd_allocator,
+                swapchain_image_info: ctx.swapchain_image_info,
+                render_present: ctx.render_present,
+            };
+            self.triangle.init(&mut plugin_ctx);
+            self.gui.init(&mut plugin_ctx);
+            self.debug_overlay.init(&mut plugin_ctx);
+            self.pipeline_overlay.init(&mut plugin_ctx);
+        }
+        self.base = Some(base);
     }
 
-    fn build_ui(&mut self, _ui: &imgui::Ui) {}
-    fn update(&mut self, _ctx: &mut UpdateCtx) {}
+    fn run_frame(&mut self) {
+        let mut base = self.base.take().expect("BaseApp missing in run_frame");
+        base.run_frame(self);
+        self.base = Some(base);
+    }
 
-    fn render(&self, ctx: &RenderCtx) {
+    fn push_input_event(&mut self, event: InputEvent) {
+        self.base.as_mut().expect("BaseApp missing in push_input_event").push_input_event(event);
+    }
+
+    fn recreate_swapchain_if_needed(&mut self, new_size: [u32; 2]) {
+        let Some(ctx) = self
+            .base
+            .as_mut()
+            .expect("BaseApp missing in recreate_swapchain_if_needed")
+            .recreate_swapchain_if_needed(new_size)
+        else {
+            return;
+        };
+
+        let mut plugin_ctx = PluginResizeCtx {
+            render_world: ctx.render_world,
+            render_present: ctx.render_present,
+        };
+        self.gui.on_resize(&mut plugin_ctx);
+        self.triangle.on_resize(&mut plugin_ctx);
+    }
+
+    fn time_to_render(&self) -> bool {
+        self.base.as_ref().expect("BaseApp missing in time_to_render").time_to_render()
+    }
+
+    fn shutdown(&mut self) {
+        self.pipeline_overlay.shutdown();
+        self.debug_overlay.shutdown();
+        self.triangle.shutdown();
+        self.gui.shutdown();
+        if let Some(base) = self.base.take() {
+            base.destroy();
+        }
+    }
+}
+
+impl FrameAppHooks for HelloTriangleApp {
+    fn on_input(&mut self, events: &[InputEvent]) {
+        self.input.begin_frame();
+        for event in events {
+            if !self.gui.on_input(event) {
+                self.input.process_event(event);
+            }
+        }
+    }
+
+    fn update(&mut self, ctx: &mut RendererUpdateCtx) {
+        let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
+        self.gui.begin_frame(delta);
+        {
+            let ui = self.gui.ui();
+            self.debug_overlay.build_overlay_ui(
+                ui,
+                self.camera_controller.camera(),
+                ctx.swapchain_extent,
+                ctx.accum_data.accum_frames_num(),
+                ctx.delta_time_s,
+            );
+            self.pipeline_overlay.build_overlay_ui(ui, ctx.pipeline_settings);
+        }
+        self.gui.end_frame();
+
+        self.camera_controller.update(
+            self.input.state(),
+            glam::vec2(ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32),
+            delta,
+        );
+    }
+
+    fn render(&mut self, ctx: &RendererRenderCtx) {
+        let plugin_ctx = PluginRenderCtx {
+            render_world: ctx.render_world,
+            render_present: ctx.render_present,
+            timeline: ctx.timeline,
+        };
+        self.gui.prepare_render_data(&plugin_ctx);
+
         let frame_label = ctx.render_world.frame_counter.frame_label();
         let frame_id = ctx.render_world.frame_counter.frame_id();
         let render_present = ctx.render_present;
-
         let (swapchain_image_handle, swapchain_view_handle) = render_present.current_image_and_view();
 
         let mut graph = RenderGraphBuilder::new();
@@ -49,7 +197,7 @@ impl FramePlugin for HelloTriangleApp {
             frame_id,
         ));
 
-        let swapchain_image_rg_handle = graph.import_image(
+        let swapchain_image = graph.import_image(
             "swapchain-image",
             swapchain_image_handle,
             Some(swapchain_view_handle),
@@ -62,7 +210,7 @@ impl FramePlugin for HelloTriangleApp {
         );
 
         graph.export_image(
-            swapchain_image_rg_handle,
+            swapchain_image,
             RgImageState::PRESENT_BOTTOM,
             Some(RgSemaphoreInfo::binary(
                 render_present.current_render_compute_semaphore().handle(),
@@ -70,38 +218,19 @@ impl FramePlugin for HelloTriangleApp {
             )),
         );
 
-        graph
-            .add_pass_lambda(
-                "triangle",
-                |builder| {
-                    builder.read_write_image(swapchain_image_rg_handle, RgImageState::COLOR_ATTACHMENT_READ_WRITE);
-                },
-                |context| {
-                    let canvas_view = context.get_image_view(swapchain_image_rg_handle).unwrap();
-                    self.triangle_pass.as_ref().unwrap().draw(
-                        context.cmd,
-                        canvas_view,
-                        render_present.swapchain_image_info().image_extent,
-                    );
-                },
-            )
-            .add_pass(
-                "gui",
-                GuiRgPass {
-                    gui_pass: self.gui_pass.as_ref().unwrap(),
-                    render_world: ctx.render_world,
-
-                    ui_draw_data: ctx.gui_draw_data,
-                    gui_mesh: &render_present.gui_backend.gui_meshes[*frame_label],
-                    tex_map: &render_present.gui_backend.tex_map,
-
-                    canvas_color: swapchain_image_rg_handle,
-                    canvas_extent: render_present.swapchain_image_info().image_extent,
-                },
-            );
+        self.triangle.contribute_passes(
+            &mut graph,
+            swapchain_image,
+            render_present.swapchain_image_info().image_extent,
+        );
+        self.gui.contribute_passes(
+            &mut graph,
+            &plugin_ctx,
+            swapchain_image,
+            render_present.swapchain_image_info().image_extent,
+        );
 
         let compiled_graph = graph.compile();
-
         if log::log_enabled!(log::Level::Debug) {
             static PRINT_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
             PRINT_DEBUG_INFO.call_once(|| {
@@ -110,12 +239,15 @@ impl FramePlugin for HelloTriangleApp {
         }
 
         let cmd = &self.cmds[*frame_label];
-        cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-present-graph");
+        cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "triangle-graph");
         compiled_graph.execute(cmd, &ctx.render_world.gfx_resource_manager);
         cmd.end();
 
         let submit_info = compiled_graph.build_submit_info(std::slice::from_ref(cmd));
-
         Gfx::get().gfx_queue().submit(vec![submit_info], None);
+    }
+
+    fn camera(&self) -> &Camera {
+        self.camera_controller.camera()
     }
 }

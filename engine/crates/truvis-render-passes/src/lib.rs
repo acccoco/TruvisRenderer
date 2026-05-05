@@ -3,8 +3,8 @@
 //! Contains reusable GPU passes: real-time ray tracing, accumulation,
 //! denoising, tone-mapping (SDR), blit, resolve, and Phong shading.
 //!
-//! The pipeline orchestrator (`RtPipeline`) and GUI integration (`GuiRgPass`)
-//! remain in `truvis-app` (application integration layer).
+//! Pipeline orchestration and GUI RenderGraph integration remain in `truvis-app`
+//! where concrete apps compose plugins and decide pass order.
 
 pub mod accum_pass;
 pub mod blit_pass;

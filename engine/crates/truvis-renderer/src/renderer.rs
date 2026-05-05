@@ -17,16 +17,14 @@ use truvis_gfx::{
     },
     gfx::Gfx,
 };
-use truvis_render_interface::fif_buffer::FifBuffers;
 use truvis_render_interface::bindless_manager::BindlessManager;
 use truvis_render_interface::cmd_allocator::CmdAllocator;
+use truvis_render_interface::fif_buffer::FifBuffers;
 use truvis_render_interface::frame_counter::FrameCounter;
 use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
 use truvis_render_interface::global_descriptor_sets::{GlobalDescriptorSets, PerFrameDescriptorBinding};
 use truvis_render_interface::gpu_scene::GpuScene;
-use truvis_render_interface::pipeline_settings::{
-    AccumData, DefaultRendererSettings, FrameSettings, PipelineSettings,
-};
+use truvis_render_interface::pipeline_settings::{AccumData, DefaultRendererSettings, FrameSettings, PipelineSettings};
 use truvis_render_interface::sampler_manager::RenderSamplerManager;
 use truvis_scene::scene_manager::SceneManager;
 use truvis_shader_binding::gpu;
@@ -41,19 +39,18 @@ use crate::present::render_present::RenderPresent;
 /// Rendering backend core.
 ///
 /// Exposes state exclusively through lifecycle methods that return typed Ctx structs.
-/// External code (FrameRuntime) drives the lifecycle; Renderer does not know about
-/// Plugin, GuiHost, or any orchestration-level concepts.
+/// External code drives the lifecycle; Renderer does not know about Plugin,
+/// GUI, or app orchestration concepts.
 ///
 /// # Lifecycle call order
 /// ```ignore
 /// renderer.begin_frame();
 /// let update_ctx = renderer.update_phase();
-/// // ... use update_ctx for UI build + plugin update ...
+/// // ... use update_ctx for app/plugin CPU update ...
 /// drop(update_ctx);
-/// renderer.submit_gui_data(draw_data);
 /// renderer.prepare(camera);
 /// let render_ctx = renderer.render_phase();
-/// // ... plugin.render(...) ...
+/// // ... app/plugin render graph work ...
 /// drop(render_ctx);
 /// renderer.present();
 /// renderer.end_frame();
@@ -76,9 +73,9 @@ pub struct Renderer {
 // Lifecycle Context Types
 // ---------------------------------------------------------------------------
 
-/// Update phase context — borrows Renderer fields needed for CPU-side scene/UI updates.
+/// Update phase context — borrows Renderer fields needed for CPU-side updates.
 ///
-/// Alive while FrameRuntime performs build_ui + plugin.update; Renderer is locked until dropped.
+/// Alive while the app performs update work; Renderer is locked until dropped.
 pub struct RendererUpdateCtx<'a> {
     pub world: &'a mut World,
     pub pipeline_settings: &'a mut PipelineSettings,
@@ -97,7 +94,7 @@ pub struct RendererRenderCtx<'a> {
 
 /// Init phase context — one-time setup after window/surface creation.
 ///
-/// Does NOT contain camera (belongs to FrameRuntime).
+/// Does NOT contain camera; camera belongs to the concrete app.
 pub struct RendererInitCtx<'a> {
     pub world: &'a mut World,
     pub render_world: &'a mut RenderWorld,
@@ -263,7 +260,7 @@ impl Renderer {
     }
 
     /// Perform internal frame-settings sync + acquire swapchain image, then return
-    /// a context for external CPU-side updates (UI build, plugin update).
+    /// a context for external CPU-side updates.
     pub fn update_phase(&mut self) -> RendererUpdateCtx<'_> {
         let _span = tracy_client::span!("Renderer::update_phase");
 
@@ -278,17 +275,6 @@ impl Renderer {
             swapchain_extent: self.render_world.frame_settings.frame_extent,
             delta_time_s: self.render_world.delta_time_s,
         }
-    }
-
-    /// Accept externally-produced GUI draw data and upload to GPU buffers.
-    pub fn submit_gui_data(&mut self, draw_data: &imgui::DrawData) {
-        let _span = tracy_client::span!("Renderer::submit_gui_data");
-        let frame_label = self.render_world.frame_counter.frame_label();
-        self.render_present
-            .as_mut()
-            .unwrap()
-            .gui_backend
-            .prepare_render_data(draw_data, frame_label);
     }
 
     /// Accumulate frame tracking + upload GPU scene/descriptor data.
@@ -324,8 +310,7 @@ impl Renderer {
 
     /// Query whether enough time has elapsed for the next frame.
     pub fn time_to_render(&self) -> bool {
-        self.render_world.frame_counter.frame_delta_time_limit_us()
-            < self.timer.elapsed_since_tick().as_micros() as f32
+        self.render_world.frame_counter.frame_delta_time_limit_us() < self.timer.elapsed_since_tick().as_micros() as f32
     }
 
     /// Handle window resize. Returns `Some(ctx)` only when swapchain was actually rebuilt.
@@ -369,21 +354,6 @@ impl Renderer {
             swapchain_image_info: self.render_present.as_ref().unwrap().swapchain_image_info(),
             render_present: self.render_present.as_ref().unwrap(),
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GUI integration
-// ---------------------------------------------------------------------------
-impl Renderer {
-    /// Register font atlas with the GUI backend. Called once after init.
-    pub fn register_gui_font(&mut self, font_atlas: imgui::FontAtlasTexture, font_tex_id: imgui::TextureId) {
-        self.render_present.as_mut().unwrap().gui_backend.register_font(
-            &mut self.render_world.bindless_manager,
-            &mut self.render_world.gfx_resource_manager,
-            font_atlas,
-            font_tex_id,
-        );
     }
 }
 
@@ -441,15 +411,12 @@ impl Renderer {
             dst_access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::UNIFORM_READ,
         };
 
-        self.render_world.bindless_manager.prepare_render_data(
-            &self.render_world.gfx_resource_manager,
-            &self.render_world.global_descriptor_sets,
-        );
+        self.render_world
+            .bindless_manager
+            .prepare_render_data(&self.render_world.gfx_resource_manager, &self.render_world.global_descriptor_sets);
 
-        let scene_render_data = self
-            .world
-            .scene_manager
-            .prepare_render_data(&self.render_world.bindless_manager, &self.world.asset_hub);
+        let scene_render_data =
+            self.world.scene_manager.prepare_render_data(&self.render_world.bindless_manager, &self.world.asset_hub);
         self.render_world.gpu_scene.upload_render_data(
             &cmd,
             transfer_barrier_mask,
