@@ -144,7 +144,7 @@ impl GlobalDescriptorSets {
             pool_size,
         ));
 
-        GfxDescriptorPool::new(pool_ci, "renderer")
+        GfxDescriptorPool::new(pool_ci, "render-backend")
     }
 }
 impl Default for GlobalDescriptorSets {

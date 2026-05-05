@@ -1,8 +1,8 @@
 //! App contracts used by the render thread and the BaseApp frame skeleton.
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
-use truvis_renderer::platform::camera::Camera;
-use truvis_renderer::renderer::{RendererRenderCtx, RendererUpdateCtx};
+use truvis_render_backend::platform::camera::Camera;
+use truvis_render_backend::render_backend::{RenderBackendRenderCtx, RenderBackendUpdateCtx};
 
 use crate::input_event::InputEvent;
 
@@ -31,9 +31,9 @@ pub trait FrameApp {
 pub trait FrameAppHooks {
     fn on_input(&mut self, events: &[InputEvent]);
 
-    fn update(&mut self, ctx: &mut RendererUpdateCtx);
+    fn update(&mut self, ctx: &mut RenderBackendUpdateCtx);
 
-    fn render(&mut self, ctx: &RendererRenderCtx);
+    fn render(&mut self, ctx: &RenderBackendRenderCtx);
 
     fn camera(&self) -> &Camera;
 }

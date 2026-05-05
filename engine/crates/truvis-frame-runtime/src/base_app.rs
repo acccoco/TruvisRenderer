@@ -5,15 +5,15 @@ use truvis_frame_api::frame_app::FrameAppHooks;
 use truvis_frame_api::input_event::InputEvent;
 use truvis_gfx::gfx::Gfx;
 use truvis_logs::init_log;
-use truvis_renderer::renderer::{Renderer, RendererInitCtx, RendererResizeCtx};
+use truvis_render_backend::render_backend::{RenderBackend, RenderBackendInitCtx, RenderBackendResizeCtx};
 
 /// Invariant frame skeleton shared by concrete apps.
 ///
-/// `BaseApp` owns only renderer infrastructure and the pending input event queue.
+/// `BaseApp` owns only render backend infrastructure and the pending input event queue.
 /// Camera, GUI, overlays, input state, and render-pipeline plugins belong to the
 /// concrete app that implements `FrameAppHooks`.
 pub struct BaseApp {
-    renderer: Renderer,
+    render_backend: RenderBackend,
     input_events: Vec<InputEvent>,
 }
 
@@ -26,7 +26,7 @@ impl BaseApp {
             .collect();
 
         Self {
-            renderer: Renderer::new(extra_instance_ext),
+            render_backend: RenderBackend::new(extra_instance_ext),
             input_events: Vec::new(),
         }
     }
@@ -36,8 +36,8 @@ impl BaseApp {
         raw_display_handle: RawDisplayHandle,
         raw_window_handle: RawWindowHandle,
         window_physical_size: [u32; 2],
-    ) -> RendererInitCtx<'_> {
-        self.renderer.init_after_window(raw_display_handle, raw_window_handle, window_physical_size)
+    ) -> RenderBackendInitCtx<'_> {
+        self.render_backend.init_after_window(raw_display_handle, raw_window_handle, window_physical_size)
     }
 
     pub fn push_input_event(&mut self, event: InputEvent) {
@@ -45,15 +45,15 @@ impl BaseApp {
     }
 
     pub fn time_to_render(&self) -> bool {
-        self.renderer.time_to_render()
+        self.render_backend.time_to_render()
     }
 
-    pub fn recreate_swapchain_if_needed(&mut self, new_size: [u32; 2]) -> Option<RendererResizeCtx<'_>> {
-        self.renderer.handle_resize(new_size)
+    pub fn recreate_swapchain_if_needed(&mut self, new_size: [u32; 2]) -> Option<RenderBackendResizeCtx<'_>> {
+        self.render_backend.handle_resize(new_size)
     }
 
     pub fn run_frame(&mut self, app: &mut impl FrameAppHooks) {
-        self.renderer.begin_frame();
+        self.render_backend.begin_frame();
 
         {
             let _span = tracy_client::span!("BaseApp::input");
@@ -63,26 +63,26 @@ impl BaseApp {
 
         {
             let _span = tracy_client::span!("BaseApp::update");
-            let mut update_ctx = self.renderer.update_phase();
+            let mut update_ctx = self.render_backend.update_phase();
             app.update(&mut update_ctx);
         }
 
-        self.renderer.prepare(app.camera());
+        self.render_backend.prepare(app.camera());
 
         {
             let _span = tracy_client::span!("BaseApp::render");
-            let render_ctx = self.renderer.render_phase();
+            let render_ctx = self.render_backend.render_phase();
             app.render(&render_ctx);
         }
 
-        self.renderer.present();
-        self.renderer.end_frame();
+        self.render_backend.present();
+        self.render_backend.end_frame();
         tracy_client::frame_mark();
     }
 
     pub fn destroy(self) {
         Gfx::get().wait_idel();
-        self.renderer.destroy();
+        self.render_backend.destroy();
         Gfx::destroy();
     }
 }

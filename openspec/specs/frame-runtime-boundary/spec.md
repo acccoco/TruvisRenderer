@@ -1,6 +1,6 @@
 ## Purpose
 
-定义主框架帧编排语义（`FrameRuntime`）、应用扩展契约（`FramePlugin`）、显式 phase 编排与 `Renderer` 后端职责边界，以及默认 overlay 注册方式与旧 API 兼容收口条件，使 runtime 与 GPU backend 分工可被契约化验证，并与 `render-threading` 既有线程与关闭语义保持兼容。
+定义主框架帧编排语义（`FrameRuntime`）、应用扩展契约（`FramePlugin`）、显式 phase 编排与 `RenderBackend` 后端职责边界，以及默认 overlay 注册方式与旧 API 兼容收口条件，使 runtime 与 GPU backend 分工可被契约化验证，并与 `render-threading` 既有线程与关闭语义保持兼容。
 
 ## Requirements
 
@@ -61,31 +61,31 @@
 - **AND** 重建 SHALL 仅通过 runtime 的单一入口执行，不得在其他 phase 中引入分叉重建流程
 - **AND** 重建成功后 SHALL 在下一次渲染提交前调用 `FramePlugin::on_resize`
 
-### Requirement: Renderer SHALL 收敛为 backend 职责
+### Requirement: RenderBackend SHALL 收敛为 backend 职责
 
-`Renderer` SHALL 聚焦 GPU backend 能力（device/swapchain/cmd/sync/submit/present），不得继续承载 scene/asset 侧 world 更新调度职责。
+`RenderBackend` SHALL 聚焦 GPU backend 能力（device/swapchain/cmd/sync/submit/present），不得继续承载 scene/asset 侧 world 更新调度职责。
 
 #### Scenario: world 更新由 runtime 驱动
 
 - **WHEN** 发生 scene/asset 相关更新推进
 - **THEN** 调度入口 SHALL 位于 `FrameRuntime` 的相应 phase
-- **AND** `Renderer` SHALL 仅消费已准备好的渲染输入并执行 GPU 提交
+- **AND** `RenderBackend` SHALL 仅消费已准备好的渲染输入并执行 GPU 提交
 
-### Requirement: Runtime 与 Renderer 的职责边界 SHALL 可被契约化验证
+### Requirement: Runtime 与 RenderBackend 的职责边界 SHALL 可被契约化验证
 
-`FrameRuntime` 与 `Renderer` 之间 SHALL 通过稳定的上下文/接口边界协作，避免应用层直接依赖 backend 内部可变实现细节。
+`FrameRuntime` 与 `RenderBackend` 之间 SHALL 通过稳定的上下文/接口边界协作，避免应用层直接依赖 backend 内部可变实现细节。
 
 #### Scenario: FramePlugin 通过 typed contexts 访问能力
 
 - **WHEN** `FramePlugin` 在各阶段读取或修改渲染相关状态
 - **THEN** SHALL 通过对应阶段的 typed context（`InitCtx` / `UpdateCtx` / `RenderCtx` / `ResizeCtx`）完成
-- **AND** 不得将 `Renderer` 的内部字段布局视为稳定 API
+- **AND** 不得将 `RenderBackend` 的内部字段布局视为稳定 API
 
-#### Scenario: Renderer 不再主动推进应用 world 生命周期
+#### Scenario: RenderBackend 不再主动推进应用 world 生命周期
 
 - **WHEN** 触发 asset/scene/world 的 CPU 侧更新决策
 - **THEN** 决策与调度 SHALL 发生在 runtime/plugin 侧
-- **AND** `Renderer` SHALL 仅执行 backend 数据上传与 GPU 执行步骤
+- **AND** `RenderBackend` SHALL 仅执行 backend 数据上传与 GPU 执行步骤
 
 ### Requirement: 默认 overlay SHALL 可注册而非硬编码
 

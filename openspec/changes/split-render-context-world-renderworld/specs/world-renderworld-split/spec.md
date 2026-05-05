@@ -52,13 +52,13 @@
 - **WHEN** 检查 `truvis-render-graph` 的源码
 - **THEN** SHALL NOT 包含 `FifBuffers` 的定义（re-export 用于过渡期的除外）
 
-### Requirement: Renderer 持有 World 和 RenderWorld
+### Requirement: RenderBackend 持有 World 和 RenderWorld
 
-`Renderer` 结构体 SHALL 持有 `World` 和 `RenderWorld` 作为独立字段，替代原有的 `RenderContext`。
+`RenderBackend` 结构体 SHALL 持有 `World` 和 `RenderWorld` 作为独立字段，替代原有的 `RenderContext`。
 
-#### Scenario: Renderer 的字段结构
+#### Scenario: RenderBackend 的字段结构
 
-- **WHEN** 查看 `Renderer` 结构体定义
+- **WHEN** 查看 `RenderBackend` 结构体定义
 - **THEN** SHALL 包含 `pub world: World` 和 `pub render_world: RenderWorld` 字段
 - **AND** SHALL NOT 包含 `render_context: RenderContext` 字段
 
@@ -123,10 +123,10 @@
 - **THEN** SHALL 包含 `pub render_world: &'a RenderWorld` 字段
 - **AND** SHALL NOT 包含 `render_context` 字段
 
-#### Scenario: truvis-render-passes 不依赖 truvis-renderer
+#### Scenario: truvis-render-passes 不依赖 truvis-render-backend
 
 - **WHEN** 检查 `truvis-render-passes` 的 `Cargo.toml`
-- **THEN** SHALL NOT 包含对 `truvis-renderer` 的依赖
+- **THEN** SHALL NOT 包含对 `truvis-render-backend` 的依赖
 
 ### Requirement: 编译通过且功能不回归
 

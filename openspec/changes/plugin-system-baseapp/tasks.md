@@ -1,7 +1,7 @@
 ## 0. OpenSpec 基线同步
 
-- [x] 0.1 同步 `renderer-lifecycle-ctx`：移除 `submit_gui_data` / `register_gui_font` 作为 Renderer API 的要求
-- [x] 0.2 同步 `layered-frame-orchestration`：三层模型从 App / FrameRuntime / Renderer 改为 App / BaseApp / Renderer
+- [x] 0.1 同步 `render-backend-lifecycle-ctx`：移除 `submit_gui_data` / `register_gui_font` 作为 RenderBackend API 的要求
+- [x] 0.2 同步 `layered-frame-orchestration`：三层模型从 App / FrameRuntime / RenderBackend 改为 App / BaseApp / RenderBackend
 - [x] 0.3 同步 `gui-pass-separation`：GUI RenderGraph adapter 迁入 GuiPlugin 上层集成 crate，`truvis-gui-backend` 保持不依赖 RenderGraph
 - [x] 0.4 同步 `render-threading`：render loop 通过 `Box<dyn FrameApp>` 驱动，不再创建 `FrameRuntime`
 
@@ -21,9 +21,9 @@
 
 ## 3. BaseApp 帧骨架
 
-- [x] 3.1 在 `truvis-frame-runtime` 中创建 `BaseApp` struct（持有 Renderer + 输入事件队列）
+- [x] 3.1 在 `truvis-frame-runtime` 中创建 `BaseApp` struct（持有 RenderBackend + 输入事件队列）
 - [x] 3.2 实现 `BaseApp::run_frame(&mut self, app: &mut impl FrameAppHooks)` 帧骨架方法
-- [x] 3.3 实现 `BaseApp` 的 `init_after_window`（调 Renderer init，返回 Ctx）、`time_to_render`、`push_input_event`、resize、destroy 等生命周期方法
+- [x] 3.3 实现 `BaseApp` 的 `init_after_window`（调 RenderBackend init，返回 Ctx）、`time_to_render`、`push_input_event`、resize、destroy 等生命周期方法
 - [x] 3.4 确保 BaseApp 不持有 Plugin、GUI、Camera、Overlay、InputState 或 demo 特定状态
 - [x] 3.5 移除 `FrameRuntime` struct 及其实现
 - [x] 3.6 迁移 `FrameRuntime::init_env` 的职责到合适入口（如 `truvis-frame-runtime` free function 或 `WinitApp` 启动路径）
@@ -33,7 +33,7 @@
 - [x] 4.1 创建 `truvis-gui-plugin` 或等价上层集成 crate，承载 `GuiPlugin` 和 GUI RenderGraph adapter
 - [x] 4.2 创建 `GuiPlugin` struct，将 `GuiHost` 的 imgui context 管理迁入
 - [x] 4.3 将 `GuiBackend` 的 GPU mesh buffer / tex_map 管理迁入 `GuiPlugin`，从 `RenderPresent` 中移除 `gui_backend` 字段
-- [x] 4.4 移除 `Renderer::submit_gui_data` 和 `Renderer::register_gui_font` 方法
+- [x] 4.4 移除 `RenderBackend::submit_gui_data` 和 `RenderBackend::register_gui_font` 方法
 - [x] 4.5 实现 `Plugin` trait（init 中注册 font texture，on_input 转发事件并返回消费状态）
 - [x] 4.6 实现 `GuiPlugin` 特有方法：`begin_frame` / `ui()` / `end_frame` / `prepare_render_data`
 - [x] 4.7 实现 `GuiPlugin::contribute_passes`，封装 `GuiRgPass` 的 render graph 注入逻辑

@@ -55,9 +55,9 @@ cargo run --bin shader-toy
 
 - 平台入口：`truvis-winit-app` 通过 `WinitApp::run_app(...)` 启动渲染线程
 - App 契约：demo 实现 `FrameApp`，并在内部持有 `BaseApp`、GUI、相机/输入状态和具体 render pipeline plugin
-- 帧骨架：`truvis-frame-runtime::BaseApp` 只持有 `Renderer` 与输入事件队列，负责 `input -> update -> prepare -> render -> present` 固定顺序
+- 帧骨架：`truvis-frame-runtime::BaseApp` 只持有 `RenderBackend` 与输入事件队列，负责 `input -> update -> prepare -> render -> present` 固定顺序
 - Plugin 组合：`truvis-frame-api::Plugin` 提供 init/update/resize/shutdown 标准生命周期；GUI 与渲染管线的特有能力通过具体类型方法暴露
-- 渲染后端：`truvis-renderer::Renderer` 聚焦 backend 执行与 GPU 数据上传
+- 渲染后端：`truvis-render-backend::RenderBackend` 聚焦 backend 执行与 GPU 数据上传
 - swapchain 重建：渲染线程通过 `FrameApp::recreate_swapchain_if_needed` 触发，App 再通知需要 resize 的插件
 
 ## 文档导航

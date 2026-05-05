@@ -1,5 +1,5 @@
 use truvis_frame_api::input_event::KeyCode;
-use truvis_renderer::platform::camera::Camera;
+use truvis_render_backend::platform::camera::Camera;
 
 use crate::input_state::InputState;
 

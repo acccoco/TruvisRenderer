@@ -6,19 +6,19 @@
 
 ### Requirement: FramePlugin SHALL 通过 typed contexts 访问运行时能力
 
-`FramePlugin` SHALL 使用按阶段划分的上下文类型访问运行时能力，而非直接接收 `Renderer` 全量对象。
+`FramePlugin` SHALL 使用按阶段划分的上下文类型访问运行时能力，而非直接接收 `RenderBackend` 全量对象。
 
 #### Scenario: Hook 签名使用上下文类型
 
 - **WHEN** 定义或实现 `FramePlugin` 的 `init/build_ui/update/render/on_resize` hook
 - **THEN** 每个 hook SHALL 接收对应阶段的上下文对象（或等价的受控上下文）
-- **AND** hook 签名中 SHALL NOT 暴露完整 `Renderer` 作为通用参数
+- **AND** hook 签名中 SHALL NOT 暴露完整 `RenderBackend` 作为通用参数
 
 #### Scenario: 上下文能力面受控
 
 - **WHEN** `FramePlugin` 需要读取帧状态、提交渲染命令、访问 UI 数据或 resize 信息
 - **THEN** SHALL 通过上下文公开的稳定接口完成
-- **AND** 插件代码 SHALL NOT 依赖 `Renderer` 内部字段布局
+- **AND** 插件代码 SHALL NOT 依赖 `RenderBackend` 内部字段布局
 
 ### Requirement: FrameRuntime SHALL 成为帧编排单入口
 

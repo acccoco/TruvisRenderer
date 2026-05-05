@@ -8,10 +8,10 @@ use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginRes
 use truvis_frame_runtime::BaseApp;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::Gfx;
+use truvis_render_backend::platform::camera::Camera;
+use truvis_render_backend::render_backend::{RenderBackendRenderCtx, RenderBackendUpdateCtx};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
 use truvis_render_interface::frame_counter::FrameCounter;
-use truvis_renderer::platform::camera::Camera;
-use truvis_renderer::renderer::{RendererRenderCtx, RendererUpdateCtx};
 
 use crate::camera_controller::CameraController;
 use crate::gui_plugin::GuiPlugin;
@@ -154,7 +154,7 @@ impl FrameAppHooks for HelloTriangleApp {
         }
     }
 
-    fn update(&mut self, ctx: &mut RendererUpdateCtx) {
+    fn update(&mut self, ctx: &mut RenderBackendUpdateCtx) {
         let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
         self.gui.begin_frame(delta);
         {
@@ -177,7 +177,7 @@ impl FrameAppHooks for HelloTriangleApp {
         );
     }
 
-    fn render(&mut self, ctx: &RendererRenderCtx) {
+    fn render(&mut self, ctx: &RenderBackendRenderCtx) {
         let plugin_ctx = PluginRenderCtx {
             render_world: ctx.render_world,
             render_present: ctx.render_present,

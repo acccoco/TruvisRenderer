@@ -12,13 +12,13 @@
 
 - **WHEN** `WinitApp::run_plugin`（或兼容入口 `WinitApp::run`）被调用
 - **THEN** 主线程创建 winit `EventLoop`；在 `resumed` 回调中创建 `Window` 后，spawn 一条渲染线程并传递 window handles
-- **AND** 渲染线程内部完成 `Gfx::init` / `Renderer::new` / `init_after_window`
+- **AND** 渲染线程内部完成 `Gfx::init` / `RenderBackend::new` / `init_after_window`
 - **AND** 主线程后续仅执行事件 pump 与退出握手
 
 #### Scenario: 每帧渲染由渲染线程自主驱动
 
 - **WHEN** 渲染线程处于主循环中
-- **THEN** 渲染线程 SHALL 自行决定何时推进帧（通过 `Renderer::time_to_render()` 或等价机制），不依赖 winit 的 `RedrawRequested` 事件
+- **THEN** 渲染线程 SHALL 自行决定何时推进帧（通过 `RenderBackend::time_to_render()` 或等价机制），不依赖 winit 的 `RedrawRequested` 事件
 - **AND** 主线程 SHALL NOT 再调用 `Window::request_redraw`
 
 ### Requirement: 事件通过 crossbeam-channel 传递
@@ -88,11 +88,11 @@
 
 ### Requirement: Vulkan 资源严格线程局部
 
-所有 Vulkan 对象（`Gfx`、`Renderer`、`VkSurfaceKHR`、swapchain、command buffer、fence、semaphore 等）SHALL 仅在渲染线程中创建、使用和销毁。主线程 SHALL NOT 直接调用任何 `ash` / `truvis-gfx` API。
+所有 Vulkan 对象（`Gfx`、`RenderBackend`、`VkSurfaceKHR`、swapchain、command buffer、fence、semaphore 等）SHALL 仅在渲染线程中创建、使用和销毁。主线程 SHALL NOT 直接调用任何 `ash` / `truvis-gfx` API。
 
 #### Scenario: Vulkan 初始化位置
 
-- **WHEN** `Gfx::init` / `Renderer::new` / `Renderer::init_after_window` 被调用
+- **WHEN** `Gfx::init` / `RenderBackend::new` / `RenderBackend::init_after_window` 被调用
 - **THEN** 调用 SHALL 发生在渲染线程中
 - **AND** 主线程仅负责把 `RawDisplayHandle` / `RawWindowHandle` / 初始尺寸通过通道投递给渲染线程
 

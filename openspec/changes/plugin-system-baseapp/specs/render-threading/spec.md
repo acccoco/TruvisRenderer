@@ -14,7 +14,7 @@
 
 - **WHEN** 渲染线程需要推进一帧
 - **THEN** SHALL 调用 `FrameApp::time_to_render` 和 `FrameApp::run_frame`
-- **AND** SHALL NOT 直接访问 Renderer、BaseApp 或 App 内部字段
+- **AND** SHALL NOT 直接访问 RenderBackend、BaseApp 或 App 内部字段
 
 ### Requirement: 事件通过 crossbeam-channel 传递
 
@@ -28,7 +28,7 @@
 
 ### Requirement: 二阶段关闭握手
 
-关闭流程 SHALL 保持主线程与渲染线程二阶段握手。渲染线程观察到退出信号后 SHALL 调用 `FrameApp::shutdown(&mut self)`，由 App 关闭 Plugin 并销毁 BaseApp/Renderer/Gfx。
+关闭流程 SHALL 保持主线程与渲染线程二阶段握手。渲染线程观察到退出信号后 SHALL 调用 `FrameApp::shutdown(&mut self)`，由 App 关闭 Plugin 并销毁 BaseApp/RenderBackend/Gfx。
 
 #### Scenario: App owns shutdown sequencing
 

@@ -3,6 +3,8 @@
 基于 `split-render-context-world-renderworld` 重构完成后的架构现状，
 对引擎核心四个概念的内涵、边界、当前命名问题和改进方向做系统梳理。
 
+> 2026-05-06 更新：方案 B 中 `truvis-renderer (struct Renderer) -> truvis-render-backend (struct RenderBackend)` 已采用。本文其余内容保留为命名决策的历史讨论记录。
+
 ## 1. 四个概念的本质定义
 
 ### RenderWorld — "GPU 侧有什么"

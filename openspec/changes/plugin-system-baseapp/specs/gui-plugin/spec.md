@@ -87,23 +87,23 @@
 
 ### Requirement: GuiBackend 从 RenderPresent 剥离
 
-`RenderPresent` SHALL NOT 持有 `GuiBackend` 字段。`Renderer` SHALL NOT 提供 `submit_gui_data` 或 `register_gui_font` 方法。GUI 的 GPU 资源管理职责 SHALL 完全由 `GuiPlugin` 承担。
+`RenderPresent` SHALL NOT 持有 `GuiBackend` 字段。`RenderBackend` SHALL NOT 提供 `submit_gui_data` 或 `register_gui_font` 方法。GUI 的 GPU 资源管理职责 SHALL 完全由 `GuiPlugin` 承担。
 
 #### Scenario: RenderPresent 无 GuiBackend 字段
 
 - **WHEN** 检查 `RenderPresent` 的字段
 - **THEN** SHALL NOT 存在 `gui_backend: GuiBackend` 或任何 GUI 相关字段
 
-#### Scenario: Renderer 无 GUI 方法
+#### Scenario: RenderBackend 无 GUI 方法
 
-- **WHEN** 检查 `Renderer` 的公开方法
+- **WHEN** 检查 `RenderBackend` 的公开方法
 - **THEN** SHALL NOT 存在 `submit_gui_data` 或 `register_gui_font` 方法
 
 #### Scenario: GuiPlugin 自行管理 GuiBackend
 
 - **WHEN** `GuiPlugin::init` 被调用
 - **THEN** GuiPlugin 利用 `PluginInitCtx` 中的 `RenderWorld`（`BindlessManager`、`GfxResourceManager`）创建 GUI GPU 资源
-- **AND** 后续的 mesh 上传和 font 注册由 `GuiPlugin` 自行完成，不经过 `Renderer`
+- **AND** 后续的 mesh 上传和 font 注册由 `GuiPlugin` 自行完成，不经过 `RenderBackend`
 
 ### Requirement: GuiPlugin 位于上层集成边界
 

@@ -12,7 +12,7 @@ use truvis_gfx::swapchain::swapchain::{GfxSwapchain, GfxSwapchainImageInfo};
 use truvis_render_interface::frame_counter::FrameCounter;
 use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
 use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_render_interface::pipeline_settings::{DefaultRendererSettings, FrameLabel};
+use truvis_render_interface::pipeline_settings::{DefaultRenderBackendSettings, FrameLabel};
 
 /// 渲染演示数据结构
 ///
@@ -59,8 +59,8 @@ impl RenderPresent {
         let surface = GfxSurface::new(raw_display_handle, raw_window_handle);
         let swapchain = GfxSwapchain::new(
             &surface,
-            DefaultRendererSettings::DEFAULT_PRESENT_MODE,
-            DefaultRendererSettings::DEFAULT_SURFACE_FORMAT,
+            DefaultRenderBackendSettings::DEFAULT_PRESENT_MODE,
+            DefaultRenderBackendSettings::DEFAULT_SURFACE_FORMAT,
             window_physical_extent,
             None,
         );
@@ -193,8 +193,8 @@ impl RenderPresent {
         let old_swapchain = self.swapchain.take();
         self.swapchain = Some(GfxSwapchain::new(
             &self.surface,
-            DefaultRendererSettings::DEFAULT_PRESENT_MODE,
-            DefaultRendererSettings::DEFAULT_SURFACE_FORMAT,
+            DefaultRenderBackendSettings::DEFAULT_PRESENT_MODE,
+            DefaultRenderBackendSettings::DEFAULT_SURFACE_FORMAT,
             self.window_physical_extent,
             old_swapchain,
         ));

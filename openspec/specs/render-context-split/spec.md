@@ -1,21 +1,21 @@
 ## Purpose
 
-定义 `RenderContext` 在分层架构中的归属与依赖边界：完整上下文由 `truvis-renderer` 持有，`truvis-render-graph` 保持为与 scene/asset 解耦的渲染编排层，避免跨层依赖回流。
+定义 `RenderContext` 在分层架构中的归属与依赖边界：完整上下文由 `truvis-render-backend` 持有，`truvis-render-graph` 保持为与 scene/asset 解耦的渲染编排层，避免跨层依赖回流。
 
 ## Requirements
 
-### Requirement: RenderContext 定义在 truvis-renderer 中
+### Requirement: RenderContext 定义在 truvis-render-backend 中
 
-`RenderContext` 和 `RenderContext2` 结构体 SHALL 定义在 `truvis-renderer` crate 中（`truvis_renderer::render_context` 模块），而非 `truvis-render-graph`。
+`RenderContext` 和 `RenderContext2` 结构体 SHALL 定义在 `truvis-render-backend` crate 中（`truvis_render_backend::render_context` 模块），而非 `truvis-render-graph`。
 
-#### Scenario: RenderContext 从 truvis-renderer 导入
+#### Scenario: RenderContext 从 truvis-render-backend 导入
 
 - **WHEN** 任何 crate 需要使用 `RenderContext` 类型
-- **THEN** 该 crate SHALL 从 `truvis_renderer::render_context::RenderContext` 导入
+- **THEN** 该 crate SHALL 从 `truvis_render_backend::render_context::RenderContext` 导入
 
 #### Scenario: RenderContext 保持原有字段
 
-- **WHEN** `RenderContext` 被搬迁到 truvis-renderer
+- **WHEN** `RenderContext` 被搬迁到 truvis-render-backend
 - **THEN** 其所有字段（scene_manager、gpu_scene、asset_hub、fif_buffers、bindless_manager 等）SHALL 保持不变
 
 ### Requirement: truvis-render-graph 不依赖 truvis-scene 和 truvis-asset

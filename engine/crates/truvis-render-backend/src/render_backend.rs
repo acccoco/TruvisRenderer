@@ -24,7 +24,9 @@ use truvis_render_interface::frame_counter::FrameCounter;
 use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
 use truvis_render_interface::global_descriptor_sets::{GlobalDescriptorSets, PerFrameDescriptorBinding};
 use truvis_render_interface::gpu_scene::GpuScene;
-use truvis_render_interface::pipeline_settings::{AccumData, DefaultRendererSettings, FrameSettings, PipelineSettings};
+use truvis_render_interface::pipeline_settings::{
+    AccumData, DefaultRenderBackendSettings, FrameSettings, PipelineSettings,
+};
 use truvis_render_interface::sampler_manager::RenderSamplerManager;
 use truvis_scene::scene_manager::SceneManager;
 use truvis_shader_binding::gpu;
@@ -39,23 +41,23 @@ use crate::present::render_present::RenderPresent;
 /// Rendering backend core.
 ///
 /// Exposes state exclusively through lifecycle methods that return typed Ctx structs.
-/// External code drives the lifecycle; Renderer does not know about Plugin,
+/// External code drives the lifecycle; RenderBackend does not know about Plugin,
 /// GUI, or app orchestration concepts.
 ///
 /// # Lifecycle call order
 /// ```ignore
-/// renderer.begin_frame();
-/// let update_ctx = renderer.update_phase();
+/// render_backend.begin_frame();
+/// let update_ctx = render_backend.update_phase();
 /// // ... use update_ctx for app/plugin CPU update ...
 /// drop(update_ctx);
-/// renderer.prepare(camera);
-/// let render_ctx = renderer.render_phase();
+/// render_backend.prepare(camera);
+/// let render_ctx = render_backend.render_phase();
 /// // ... app/plugin render graph work ...
 /// drop(render_ctx);
-/// renderer.present();
-/// renderer.end_frame();
+/// render_backend.present();
+/// render_backend.end_frame();
 /// ```
-pub struct Renderer {
+pub struct RenderBackend {
     world: World,
     render_world: RenderWorld,
 
@@ -73,10 +75,10 @@ pub struct Renderer {
 // Lifecycle Context Types
 // ---------------------------------------------------------------------------
 
-/// Update phase context — borrows Renderer fields needed for CPU-side updates.
+/// Update phase context — borrows RenderBackend fields needed for CPU-side updates.
 ///
-/// Alive while the app performs update work; Renderer is locked until dropped.
-pub struct RendererUpdateCtx<'a> {
+/// Alive while the app performs update work; RenderBackend is locked until dropped.
+pub struct RenderBackendUpdateCtx<'a> {
     pub world: &'a mut World,
     pub pipeline_settings: &'a mut PipelineSettings,
     pub frame_settings: &'a FrameSettings,
@@ -85,8 +87,8 @@ pub struct RendererUpdateCtx<'a> {
     pub delta_time_s: f32,
 }
 
-/// Render phase context — shared (read-only) borrow of Renderer state for GPU command recording.
-pub struct RendererRenderCtx<'a> {
+/// Render phase context — shared (read-only) borrow of RenderBackend state for GPU command recording.
+pub struct RenderBackendRenderCtx<'a> {
     pub render_world: &'a RenderWorld,
     pub render_present: &'a RenderPresent,
     pub timeline: &'a GfxSemaphore,
@@ -95,7 +97,7 @@ pub struct RendererRenderCtx<'a> {
 /// Init phase context — one-time setup after window/surface creation.
 ///
 /// Does NOT contain camera; camera belongs to the concrete app.
-pub struct RendererInitCtx<'a> {
+pub struct RenderBackendInitCtx<'a> {
     pub world: &'a mut World,
     pub render_world: &'a mut RenderWorld,
     pub cmd_allocator: &'a mut CmdAllocator,
@@ -104,17 +106,17 @@ pub struct RendererInitCtx<'a> {
 }
 
 /// Swapchain resize context — produced only when swapchain was actually rebuilt.
-pub struct RendererResizeCtx<'a> {
+pub struct RenderBackendResizeCtx<'a> {
     pub render_world: &'a mut RenderWorld,
     pub render_present: &'a RenderPresent,
 }
 
 // new & init
-impl Renderer {
+impl RenderBackend {
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
-        let _span = tracy_client::span!("Renderer::new");
+        let _span = tracy_client::span!("RenderBackend::new");
 
-        // 初始化 RenderContext 单例
+        // 初始化 Gfx 全局上下文。
         Gfx::init("Truvis".to_string(), extra_instance_ext);
 
         let frame_settings = FrameSettings {
@@ -191,7 +193,7 @@ impl Renderer {
     fn get_depth_format() -> vk::Format {
         Gfx::get()
             .find_supported_format(
-                DefaultRendererSettings::DEPTH_FORMAT_CANDIDATES,
+                DefaultRenderBackendSettings::DEPTH_FORMAT_CANDIDATES,
                 vk::ImageTiling::OPTIMAL,
                 vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
             )
@@ -201,7 +203,7 @@ impl Renderer {
     }
 }
 // destroy
-impl Renderer {
+impl RenderBackend {
     pub fn destroy(mut self) {
         Gfx::get().wait_idel();
 
@@ -227,10 +229,10 @@ impl Renderer {
 // ---------------------------------------------------------------------------
 // Lifecycle methods (public API)
 // ---------------------------------------------------------------------------
-impl Renderer {
+impl RenderBackend {
     /// Self-contained frame start: timer tick, FIF wait, resource cleanup, bindless advance, asset update.
     pub fn begin_frame(&mut self) {
-        let _span = tracy_client::span!("Renderer::begin_frame");
+        let _span = tracy_client::span!("RenderBackend::begin_frame");
         self.timer.tick();
 
         {
@@ -261,13 +263,13 @@ impl Renderer {
 
     /// Perform internal frame-settings sync + acquire swapchain image, then return
     /// a context for external CPU-side updates.
-    pub fn update_phase(&mut self) -> RendererUpdateCtx<'_> {
-        let _span = tracy_client::span!("Renderer::update_phase");
+    pub fn update_phase(&mut self) -> RenderBackendUpdateCtx<'_> {
+        let _span = tracy_client::span!("RenderBackend::update_phase");
 
         self.update_frame_settings();
         self.acquire_image();
 
-        RendererUpdateCtx {
+        RenderBackendUpdateCtx {
             world: &mut self.world,
             pipeline_settings: &mut self.render_world.pipeline_settings,
             frame_settings: &self.render_world.frame_settings,
@@ -279,7 +281,7 @@ impl Renderer {
 
     /// Accumulate frame tracking + upload GPU scene/descriptor data.
     pub fn prepare(&mut self, camera: &Camera) {
-        let _span = tracy_client::span!("Renderer::prepare");
+        let _span = tracy_client::span!("RenderBackend::prepare");
 
         let current_camera_dir = glam::vec3(camera.euler_yaw_deg, camera.euler_pitch_deg, camera.euler_roll_deg);
         self.render_world.accum_data.update_accum_frames(current_camera_dir, camera.position);
@@ -288,9 +290,9 @@ impl Renderer {
         self.update_perframe_descriptor_set();
     }
 
-    /// Shared borrow — Renderer state is read-only during render phase.
-    pub fn render_phase(&self) -> RendererRenderCtx<'_> {
-        RendererRenderCtx {
+    /// Shared borrow — RenderBackend state is read-only during render phase.
+    pub fn render_phase(&self) -> RenderBackendRenderCtx<'_> {
+        RenderBackendRenderCtx {
             render_world: &self.render_world,
             render_present: self.render_present.as_ref().unwrap(),
             timeline: &self.fif_timeline_semaphore,
@@ -304,7 +306,7 @@ impl Renderer {
 
     /// Advance frame counter.
     pub fn end_frame(&mut self) {
-        let _span = tracy_client::span!("Renderer::end_frame");
+        let _span = tracy_client::span!("RenderBackend::end_frame");
         self.render_world.frame_counter.next_frame();
     }
 
@@ -314,7 +316,7 @@ impl Renderer {
     }
 
     /// Handle window resize. Returns `Some(ctx)` only when swapchain was actually rebuilt.
-    pub fn handle_resize(&mut self, new_size: [u32; 2]) -> Option<RendererResizeCtx<'_>> {
+    pub fn handle_resize(&mut self, new_size: [u32; 2]) -> Option<RenderBackendResizeCtx<'_>> {
         let render_present = self.render_present.as_mut().unwrap();
         render_present.update_window_size(new_size);
 
@@ -324,7 +326,7 @@ impl Renderer {
 
         render_present.rebuild_after_resized(&mut self.render_world.gfx_resource_manager);
 
-        Some(RendererResizeCtx {
+        Some(RenderBackendResizeCtx {
             render_world: &mut self.render_world,
             render_present: self.render_present.as_ref().unwrap(),
         })
@@ -336,7 +338,7 @@ impl Renderer {
         raw_display_handle: RawDisplayHandle,
         raw_window_handle: RawWindowHandle,
         window_physical_size: [u32; 2],
-    ) -> RendererInitCtx<'_> {
+    ) -> RenderBackendInitCtx<'_> {
         self.render_present = Some(RenderPresent::new(
             &mut self.render_world.gfx_resource_manager,
             raw_display_handle,
@@ -347,7 +349,7 @@ impl Renderer {
             },
         ));
 
-        RendererInitCtx {
+        RenderBackendInitCtx {
             world: &mut self.world,
             render_world: &mut self.render_world,
             cmd_allocator: &mut self.cmd_allocator,
@@ -360,7 +362,7 @@ impl Renderer {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-impl Renderer {
+impl RenderBackend {
     fn acquire_image(&mut self) {
         self.render_present.as_mut().unwrap().acquire_image(self.render_world.frame_counter.frame_label());
     }

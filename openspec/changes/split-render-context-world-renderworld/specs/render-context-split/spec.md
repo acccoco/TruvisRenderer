@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: RenderContext 定义在 truvis-renderer 中
+### Requirement: RenderContext 定义在 truvis-render-backend 中
 
 `RenderContext` 和 `RenderContext2` 结构体 SHALL 被删除。其职责由 `World`（定义在 `truvis-world`）和 `RenderWorld`（定义在 `truvis-render-interface`）接管。
 

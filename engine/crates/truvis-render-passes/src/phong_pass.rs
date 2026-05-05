@@ -17,8 +17,8 @@ use truvis_path::TruvisPath;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::pipeline_settings::FrameLabel;
 use truvis_render_interface::render_world::RenderWorld;
-use truvis_world::World;
 use truvis_shader_binding::gpu;
+use truvis_world::World;
 
 pub struct PhongPass {
     pipeline: GfxGraphicsPipeline,
@@ -138,9 +138,7 @@ impl PhongPass {
         );
         render_world.gpu_scene.draw(
             cmd,
-            &world
-                .scene_manager
-                .prepare_render_data(&render_world.bindless_manager, &world.asset_hub),
+            &world.scene_manager.prepare_render_data(&render_world.bindless_manager, &world.asset_hub),
             &mut |ins_idx, submesh_idx| {
                 let data = [ins_idx, submesh_idx];
                 cmd.cmd_push_constants(

@@ -1,11 +1,11 @@
-# truvis-renderer
+# truvis-render-backend
 
 渲染后端整合层，负责持有 `World` / `RenderWorld` 并通过生命周期方法暴露 typed Ctx。
 
 ## 主要职责
 
 - 提供 `begin_frame`、`update_phase`、`prepare`、`render_phase`、`present`、`end_frame`
-- 产出 `RendererInitCtx` / `RendererUpdateCtx` / `RendererRenderCtx` / `RendererResizeCtx`
+- 产出 `RenderBackendInitCtx` / `RenderBackendUpdateCtx` / `RenderBackendRenderCtx` / `RenderBackendResizeCtx`
 - 与 swapchain / command 提交 / 同步机制对接
 
 ## 与其他模块关系

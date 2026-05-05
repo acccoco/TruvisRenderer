@@ -1,5 +1,6 @@
 pub mod bindless_manager;
 pub mod cmd_allocator;
+pub mod fif_buffer;
 pub mod frame_counter;
 pub mod geometry;
 pub mod gfx_resource_manager;
@@ -10,5 +11,4 @@ pub mod pipeline_settings;
 pub mod render_data;
 pub mod render_world;
 pub mod sampler_manager;
-pub mod fif_buffer;
 pub mod stage_buffer_manager;
