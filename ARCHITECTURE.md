@@ -104,50 +104,47 @@ render_loop
   -> FrameRuntime::run_frame
 ```
 
-`FrameRuntime::run_frame` 内部阶段固定为：
+`FrameRuntime::run_frame` 通过调用 Renderer 的生命周期方法并消费返回的 Ctx 来编排帧：
 
-- `begin_frame`：等待 frames-in-flight timeline，清理帧资源，推进 asset 更新。
-- `phase_input`：GUI 先处理输入事件，随后 `InputManager` 更新输入状态。
-- `phase_update`：acquire swapchain image，构建 UI，准备 GUI draw data，调用 `plugin.update`。
-- `phase_prepare`：更新累积帧状态，将 CPU scene 上传到 GPU scene，更新 per-frame descriptors。
-- `phase_render`：构造 `RenderCtx`，调用 `plugin.render`，应用侧构建并执行 RenderGraph。
-- `phase_present`：present 当前 swapchain image，推进 `FrameCounter`。
+三层生命周期模型：
+
+```text
+App (Plugin)  ──▶ 通过 Ctx 参数获得帧阶段权限
+FrameRuntime  ──▶ 驱动 Renderer 生命周期，组合 Ctx 供 Plugin 消费
+Renderer      ──▶ 在关键节点产出 typed Ctx，不预设消费者
+```
+
+每层只知道自己的生命周期和产出/消费的 Ctx。Renderer 不引用 Plugin 或 FrameRuntime；
+FrameRuntime 不访问 Renderer 内部字段（通过 Ctx 获取状态）；Plugin 只通过 Ctx 与系统交互。
 
 每帧生命周期的精确展开：
 
 ```text
 run_frame()
-  ├─ begin_frame()
-  │    renderer.begin_frame()      // wait GPU, reset FIF resources
-  │    renderer.update_assets()    // AssetHub CPU tick
+  ├─ renderer.begin_frame()           // wait GPU, reset FIF resources, asset update
   │
   ├─ phase_input()
-  │    input_manager.get_events()  // drain queued events
-  │    gui_host.handle_event()     // forward to imgui
-  │    input_manager.process()     // update input state
+  │    gui_host.handle_event()        // forward to imgui
+  │    input_manager.process()        // update input state
   │
-  ├─ phase_update()
-  │    renderer.update_frame_settings()
-  │    renderer.acquire_image()    // vkAcquireNextImageKHR
-  │    build_ui()                  // overlays + plugin.build_ui
-  │    gui_host.compile_ui()       // imgui draw lists
-  │    gui.prepare_render_data()   // upload imgui vertex/index
-  │    camera_controller.update()
-  │    plugin.update(UpdateCtx)    // CPU scene logic
+  ├─ { update_ctx = renderer.update_phase() }  // acquire image, return RendererUpdateCtx
+  │    build_ui(update_ctx)           // overlays + plugin.build_ui
+  │    plugin.update(UpdateCtx)       // CPU scene logic
+  │   drop(update_ctx)               // Renderer unlocked
   │
-  ├─ phase_prepare()
-  │    renderer.update_accum_frames()
-  │    renderer.before_render()
-  │      ├─ update_gpu_scene()     // scene → GPU buffer upload
-  │      └─ update_perframe_desc() // write descriptor sets
+  ├─ gui_host.compile_ui()           // imgui draw lists
+  ├─ renderer.submit_gui_data()      // upload imgui vertex/index to GPU
   │
-  ├─ phase_render()
-  │    plugin.render(RenderCtx)    // GPU cmd recording + submit
+  ├─ camera_controller.update()      // uses swapchain_extent + delta from Ctx
+  ├─ renderer.prepare(camera)        // accum frames + GPU scene upload + descriptors
   │
-  └─ phase_present()
-       renderer.present_image()    // vkQueuePresentKHR
-       renderer.end_frame()        // advance frame counter
-       tracy frame_mark()
+  ├─ { render_ctx = renderer.render_phase() }  // &self, return RendererRenderCtx
+  │    compose RenderCtx (render_ctx + gui_draw_data)
+  │    plugin.render(RenderCtx)      // GPU cmd recording + submit
+  │   drop(render_ctx)
+  │
+  ├─ renderer.present()              // vkQueuePresentKHR
+  └─ renderer.end_frame()            // advance frame counter
 ```
 
 窗口生命周期：
@@ -181,17 +178,21 @@ Renderer
   -> RenderWorld GPU resources + frame state
 ```
 
-`AppPlugin` 通过 typed contexts 获取阶段权限：
+`Renderer` 通过生命周期方法产出 typed Ctx（`RendererUpdateCtx`、`RendererRenderCtx`、`RendererInitCtx`、`RendererResizeCtx`），
+借出内部字段。Ctx 的 lifetime bound 由 Rust 编译器保证：Ctx 存活期间 Renderer 被锁定，Ctx drop 后 Renderer 恢复可用。
 
-- `InitCtx`：可写 `World` 和 `RenderWorld`，用于一次性初始化。
-- `UpdateCtx`：可写 `World` 和受控 settings，用于 CPU 更新，不暴露完整 `Renderer`。
-- `RenderCtx`：只读 `RenderWorld`，附带 `RenderPresent`、GUI draw data 和 timeline，用于 GPU 命令录制。
-- `ResizeCtx`：可写 `RenderWorld`，用于 swapchain resize 后重建 GPU 相关资源。
+`FrameRuntime` 消费 Renderer Ctx 并组合自有数据（gui_draw_data、camera）构造 Plugin-facing Ctx：
+
+- `InitCtx`（= `RendererInitCtx`）：可写 `World`、`RenderWorld`、`CmdAllocator`，附 swapchain info 和 `RenderPresent`。Camera 由 FrameRuntime 单独传入。
+- `UpdateCtx`：可写 `World` 和受控 settings，用于 CPU 更新。从 `RendererUpdateCtx` 字段子集构造。
+- `RenderCtx`：只读 `RenderWorld`，附带 `RenderPresent`、GUI draw data 和 timeline。由 `RendererRenderCtx` + gui_draw_data 组合。
+- `ResizeCtx`（= `RendererResizeCtx`）：可写 `RenderWorld`，用于 swapchain resize 后重建 GPU 相关资源。
 
 架构约束：
 
-- 不把完整 `Renderer` 暴露给应用作为稳定 API。
-- 不重新引入混合 CPU scene、GPU resource、调度策略和应用语义的大 `RenderContext`。
+- Renderer 字段全部私有，外部只通过生命周期方法和 Ctx 交互。
+- FrameRuntime 不直接访问 `renderer.world`、`renderer.render_world` 等内部字段。
+- Ctx 只包含产出层拥有的数据；跨层数据（如 gui_draw_data、camera）由外层组合。
 - update 阶段主要修改 CPU 语义状态，prepare 阶段同步到 GPU，render 阶段消费 prepare 后的稳定 GPU 输入。
 
 ## 4. 数据流向
@@ -306,9 +307,9 @@ render thread
 
 重建路径：
 
-- resize 或 backend `need_resize` 统一进入 `FrameRuntime::recreate_swapchain_if_needed`。
-- runtime 驱动 `renderer.recreate_swapchain` 和 `renderer.resize_frame_buffer`。
-- 重建完成后调用 `plugin.on_resize`。
+- resize 统一进入 `FrameRuntime::recreate_swapchain_if_needed`。
+- runtime 调用 `renderer.handle_resize(new_size)`，Renderer 内部判断是否需要重建。
+- 如果重建发生，返回 `Some(RendererResizeCtx)`，runtime 传给 `plugin.on_resize`。
 
 销毁路径：
 

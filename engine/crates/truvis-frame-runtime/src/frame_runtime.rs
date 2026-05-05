@@ -2,7 +2,7 @@ use std::ffi::CStr;
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use truvis_app_api::app_plugin::{AppPlugin, InitCtx, RenderCtx, ResizeCtx, UpdateCtx};
+use truvis_app_api::app_plugin::{AppPlugin, RenderCtx, UpdateCtx};
 use truvis_app_api::input_event::InputEvent;
 use truvis_app_api::overlay::{self, OverlayContext, OverlayModule};
 use truvis_gfx::gfx::Gfx;
@@ -19,13 +19,9 @@ pub fn panic_handler(info: &std::panic::PanicHookInfo) {
 
 /// Frame orchestration runtime.
 ///
-/// External callers drive frame advancement through the public API only:
-///
-/// - [`push_input_event`](Self::push_input_event)
-/// - [`time_to_render`](Self::time_to_render)
-/// - [`recreate_swapchain_if_needed`](Self::recreate_swapchain_if_needed)
-/// - [`run_frame`](Self::run_frame)
-/// - [`destroy`](Self::destroy)
+/// Drives the per-frame lifecycle by calling Renderer lifecycle methods
+/// and connecting the returned Ctx to Plugin hooks. Does NOT access
+/// Renderer internal fields directly.
 pub struct FrameRuntime {
     renderer: Renderer,
     camera_controller: CameraController,
@@ -69,28 +65,15 @@ impl FrameRuntime {
     ) {
         self.gui_host.hidpi_factor = window_scale_factor;
 
-        self.renderer.init_after_window(raw_display_handle, raw_window_handle, window_physical_size);
-
         {
+            let mut ctx = self.renderer.init_after_window(raw_display_handle, raw_window_handle, window_physical_size);
             let _span = tracy_client::span!("AppPlugin::init");
-            let mut ctx = InitCtx {
-                camera: self.camera_controller.camera_mut(),
-                swapchain_image_info: self.renderer.swapchain_image_info(),
-                render_present: self.renderer.render_present.as_ref().unwrap(),
-                cmd_allocator: &mut self.renderer.cmd_allocator,
-                world: &mut self.renderer.world,
-                render_world: &mut self.renderer.render_world,
-            };
-            self.plugin.as_mut().unwrap().init(&mut ctx);
-        };
+            self.plugin.as_mut().unwrap().init(&mut ctx, self.camera_controller.camera_mut());
+        }
+        // ctx dropped — renderer unlocked
 
         let (fonts_atlas, font_tex_id) = self.gui_host.init_font();
-        self.renderer.render_present.as_mut().unwrap().gui_backend.register_font(
-            &mut self.renderer.render_world.bindless_manager,
-            &mut self.renderer.render_world.gfx_resource_manager,
-            fonts_atlas,
-            font_tex_id,
-        );
+        self.renderer.register_gui_font(fonts_atlas, font_tex_id);
     }
 
     pub fn init_env() {
@@ -108,36 +91,110 @@ impl FrameRuntime {
         self.input_manager.push_event(event);
     }
 
-    pub fn time_to_render(&mut self) -> bool {
+    pub fn time_to_render(&self) -> bool {
         self.renderer.time_to_render()
     }
 
     pub fn recreate_swapchain_if_needed(&mut self, new_size: [u32; 2], last_built_size: &mut [u32; 2]) {
-        let size_changed = new_size != *last_built_size;
-        if size_changed {
-            log::debug!("swapchain rebuild: {:?} -> {:?}", *last_built_size, new_size);
-            self.renderer.render_present.as_mut().unwrap().update_window_size(new_size);
+        if new_size == *last_built_size {
+            return;
         }
 
-        if self.renderer.need_resize() {
-            self.renderer.recreate_swapchain();
+        log::debug!("swapchain rebuild: {:?} -> {:?}", *last_built_size, new_size);
 
-            let mut ctx = ResizeCtx {
-                render_world: &mut self.renderer.render_world,
-                render_present: self.renderer.render_present.as_ref().unwrap(),
-            };
+        if let Some(mut ctx) = self.renderer.handle_resize(new_size) {
             self.plugin.as_mut().unwrap().on_resize(&mut ctx);
         }
+
         *last_built_size = new_size;
     }
 
     pub fn run_frame(&mut self) {
-        self.begin_frame();
+        // 1. begin_frame (self-contained: timer, FIF wait, resource cleanup, assets)
+        self.renderer.begin_frame();
+
+        // 2. process input
         self.phase_input();
-        self.phase_update();
-        self.phase_prepare();
-        self.phase_render();
-        self.phase_present();
+
+        // 3. update_phase → Ctx for build_ui + plugin.update
+        let (swapchain_extent, delta_time) = {
+            let _span = tracy_client::span!("FrameRuntime::phase_update");
+            let update_ctx = self.renderer.update_phase();
+
+            // build_ui: pass Ctx data to overlay + plugin UI (reborrow pipeline_settings)
+            {
+                let _span = tracy_client::span!("FrameRuntime::build_ui");
+                let elapsed = std::time::Duration::from_secs_f32(update_ctx.delta_time_s);
+                let swapchain_extent = update_ctx.swapchain_extent;
+                let accum_frames_num = update_ctx.accum_data.accum_frames_num();
+                let camera = self.camera_controller.camera();
+                let pipeline_settings = &mut *update_ctx.pipeline_settings;
+                let plugin = self.plugin.as_mut().unwrap();
+                let overlays = &mut self.overlays;
+
+                self.gui_host.new_frame(elapsed, |ui| {
+                    let mut ctx = OverlayContext {
+                        delta_time_s: elapsed.as_secs_f32(),
+                        swapchain_extent,
+                        camera,
+                        accum_frames_num,
+                        pipeline_settings,
+                    };
+                    for overlay in overlays.iter_mut() {
+                        overlay.build_ui(ui, &mut ctx);
+                    }
+                    plugin.build_ui(ui);
+                });
+            }
+
+            // plugin.update (reborrow again from update_ctx)
+            let mut plugin_ctx = UpdateCtx {
+                world: &mut *update_ctx.world,
+                pipeline_settings: &mut *update_ctx.pipeline_settings,
+                frame_settings: update_ctx.frame_settings,
+                delta_time_s: update_ctx.delta_time_s,
+            };
+            self.plugin.as_mut().unwrap().update(&mut plugin_ctx);
+
+            (update_ctx.swapchain_extent, update_ctx.delta_time_s)
+        };
+        // update_ctx dropped here — Renderer unlocked
+
+        // 4. compile UI + submit GUI data
+        self.gui_host.compile_ui();
+        self.renderer.submit_gui_data(self.gui_host.get_render_data());
+
+        // 5. camera update (uses swapchain_extent + delta_time saved from Ctx)
+        {
+            let input_state = self.input_manager.state().clone();
+            self.camera_controller.update(
+                &input_state,
+                glam::vec2(swapchain_extent.width as f32, swapchain_extent.height as f32),
+                std::time::Duration::from_secs_f32(delta_time),
+            );
+        }
+
+        // 6. prepare (accum frames + GPU scene upload)
+        self.renderer.prepare(self.camera_controller.camera());
+
+        // 7. render_phase → compose RenderCtx → plugin.render
+        {
+            let _span = tracy_client::span!("FrameRuntime::phase_render");
+            let renderer_ctx = self.renderer.render_phase();
+            let gui_draw_data = self.gui_host.get_render_data();
+            let ctx = RenderCtx {
+                render_world: renderer_ctx.render_world,
+                render_present: renderer_ctx.render_present,
+                gui_draw_data,
+                timeline: renderer_ctx.timeline,
+            };
+            self.plugin.as_ref().unwrap().render(&ctx);
+        }
+
+        // 8. present + end_frame
+        self.renderer.present();
+        self.renderer.end_frame();
+        tracy_client::frame_mark();
     }
 
     pub fn destroy(mut self) {
@@ -167,15 +224,9 @@ impl FrameRuntime {
 }
 
 // ---------------------------------------------------------------------------
-// Frame phases (internal)
+// Internal helpers
 // ---------------------------------------------------------------------------
 impl FrameRuntime {
-    fn begin_frame(&mut self) {
-        let _span = tracy_client::span!("FrameRuntime::begin_frame");
-        self.renderer.begin_frame();
-        self.renderer.update_assets();
-    }
-
     fn phase_input(&mut self) {
         let _span = tracy_client::span!("FrameRuntime::phase_input");
 
@@ -184,103 +235,5 @@ impl FrameRuntime {
         }
 
         self.input_manager.process_events();
-    }
-
-    fn phase_update(&mut self) {
-        let _span = tracy_client::span!("FrameRuntime::phase_update");
-
-        self.renderer.update_frame_settings();
-        self.renderer.acquire_image();
-
-        {
-            let _span = tracy_client::span!("FrameRuntime::phase_update::build_ui");
-            self.build_ui();
-            self.gui_host.compile_ui();
-
-            let frame_label = self.renderer.frame_label();
-            self.renderer
-                .render_present
-                .as_mut()
-                .unwrap()
-                .gui_backend
-                .prepare_render_data(self.gui_host.get_render_data(), frame_label);
-        }
-
-        {
-            let _span = tracy_client::span!("FrameRuntime::phase_update::scene");
-            let input_state = self.input_manager.state().clone();
-            let frame_extent = self.renderer.render_world.frame_settings.frame_extent;
-
-            self.camera_controller.update(
-                &input_state,
-                glam::vec2(frame_extent.width as f32, frame_extent.height as f32),
-                self.renderer.timer.delta_time(),
-            );
-
-            let mut ctx = UpdateCtx {
-                world: &mut self.renderer.world,
-                pipeline_settings: &mut self.renderer.render_world.pipeline_settings,
-                frame_settings: &self.renderer.render_world.frame_settings,
-                delta_time_s: self.renderer.render_world.delta_time_s,
-            };
-            self.plugin.as_mut().unwrap().update(&mut ctx);
-        }
-    }
-
-    fn phase_prepare(&mut self) {
-        let _span = tracy_client::span!("FrameRuntime::phase_prepare");
-        self.renderer.update_accum_frames(self.camera_controller.camera());
-        self.renderer.before_render(self.camera_controller.camera());
-    }
-
-    fn phase_render(&mut self) {
-        let _span = tracy_client::span!("FrameRuntime::phase_render");
-
-        let gui_draw_data = self.gui_host.get_render_data();
-        let ctx = RenderCtx {
-            render_world: &self.renderer.render_world,
-            render_present: self.renderer.render_present.as_ref().unwrap(),
-            gui_draw_data,
-            timeline: &self.renderer.fif_timeline_semaphore,
-        };
-        self.plugin.as_ref().unwrap().render(&ctx);
-    }
-
-    fn phase_present(&mut self) {
-        let _span = tracy_client::span!("FrameRuntime::phase_present");
-
-        self.renderer.present_image();
-        self.renderer.end_frame();
-        tracy_client::frame_mark();
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Internal: overlay dispatch
-// ---------------------------------------------------------------------------
-impl FrameRuntime {
-    fn build_ui(&mut self) {
-        let elapsed = self.renderer.timer.delta_time();
-        let swapchain_extent = self.renderer.render_present.as_ref().unwrap().swapchain.as_ref().unwrap().extent();
-        let accum_frames_num = self.renderer.render_world.accum_data.accum_frames_num();
-
-        let camera = self.camera_controller.camera();
-        let pipeline_settings = &mut self.renderer.render_world.pipeline_settings;
-        let plugin = self.plugin.as_mut().unwrap();
-        let overlays = &mut self.overlays;
-
-        self.gui_host.new_frame(elapsed, |ui| {
-            let mut ctx = OverlayContext {
-                delta_time_s: elapsed.as_secs_f32(),
-                swapchain_extent,
-                camera,
-                accum_frames_num,
-                pipeline_settings,
-            };
-            for overlay in overlays.iter_mut() {
-                overlay.build_ui(ui, &mut ctx);
-            }
-            plugin.build_ui(ui);
-        });
     }
 }

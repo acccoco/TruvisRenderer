@@ -47,14 +47,14 @@ impl CornellApp {
 }
 
 impl AppPlugin for CornellApp {
-    fn init(&mut self, ctx: &mut InitCtx) {
+    fn init(&mut self, ctx: &mut InitCtx, camera: &mut Camera) {
         let rt_pipeline = RtPipeline::new(
             &ctx.render_world.global_descriptor_sets,
             ctx.render_present.swapchain.as_ref().unwrap(),
             ctx.cmd_allocator,
         );
 
-        Self::create_scene(ctx.world, ctx.camera);
+        Self::create_scene(ctx.world, camera);
 
         self.rt_pipeline = Some(rt_pipeline);
     }

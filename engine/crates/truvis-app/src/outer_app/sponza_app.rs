@@ -2,8 +2,8 @@ use truvis_app_api::app_plugin::{AppPlugin, InitCtx, RenderCtx, UpdateCtx};
 use truvis_path::TruvisPath;
 use truvis_renderer::model_loader::assimp_loader::AssimpSceneLoader;
 use truvis_renderer::platform::camera::Camera;
-use truvis_world::World;
 use truvis_shader_binding::gpu;
+use truvis_world::World;
 
 use crate::render_pipeline::rt_render_graph::RtPipeline;
 
@@ -37,20 +37,24 @@ impl SponzaApp {
             _color_padding: Default::default(),
         });
         log::info!("start load sponza scene");
-        AssimpSceneLoader::load_scene(&TruvisPath::assets_path("fbx/sponza/sponza.fbx"), &mut world.scene_manager, &mut world.asset_hub);
+        AssimpSceneLoader::load_scene(
+            &TruvisPath::assets_path("fbx/sponza/sponza.fbx"),
+            &mut world.scene_manager,
+            &mut world.asset_hub,
+        );
         log::info!("finished load sponza scene");
     }
 }
 
 impl AppPlugin for SponzaApp {
-    fn init(&mut self, ctx: &mut InitCtx) {
+    fn init(&mut self, ctx: &mut InitCtx, camera: &mut Camera) {
         let rt_pipeline = RtPipeline::new(
             &ctx.render_world.global_descriptor_sets,
             ctx.render_present.swapchain.as_ref().unwrap(),
             ctx.cmd_allocator,
         );
 
-        Self::create_scene(ctx.world, ctx.camera);
+        Self::create_scene(ctx.world, camera);
 
         self.rt_pipeline = Some(rt_pipeline);
     }

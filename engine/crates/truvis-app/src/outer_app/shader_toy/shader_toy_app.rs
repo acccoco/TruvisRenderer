@@ -7,6 +7,7 @@ use truvis_gfx::gfx::Gfx;
 use truvis_gui_backend::gui_pass::GuiPass;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageState, RgSemaphoreInfo};
 use truvis_render_interface::frame_counter::FrameCounter;
+use truvis_renderer::platform::camera::Camera;
 
 use crate::gui_rg_pass::GuiRgPass;
 use crate::outer_app::shader_toy::shader_toy_pass::ShaderToyPass;
@@ -19,11 +20,12 @@ pub struct ShaderToy {
 }
 
 impl AppPlugin for ShaderToy {
-    fn init(&mut self, ctx: &mut InitCtx) {
+    fn init(&mut self, ctx: &mut InitCtx, _camera: &mut Camera) {
         log::info!("shader toy.");
 
         self.shader_toy_pass = Some(ShaderToyPass::new(ctx.swapchain_image_info.image_format));
-        self.gui_pass = Some(GuiPass::new(&ctx.render_world.global_descriptor_sets, ctx.swapchain_image_info.image_format));
+        self.gui_pass =
+            Some(GuiPass::new(&ctx.render_world.global_descriptor_sets, ctx.swapchain_image_info.image_format));
 
         self.cmds = FrameCounter::frame_labes()
             .iter()

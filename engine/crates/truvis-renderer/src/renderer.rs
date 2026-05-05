@@ -25,7 +25,7 @@ use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
 use truvis_render_interface::global_descriptor_sets::{GlobalDescriptorSets, PerFrameDescriptorBinding};
 use truvis_render_interface::gpu_scene::GpuScene;
 use truvis_render_interface::pipeline_settings::{
-    AccumData, DefaultRendererSettings, FrameLabel, FrameSettings, PipelineSettings,
+    AccumData, DefaultRendererSettings, FrameSettings, PipelineSettings,
 };
 use truvis_render_interface::sampler_manager::RenderSamplerManager;
 use truvis_scene::scene_manager::SceneManager;
@@ -38,36 +38,78 @@ use crate::platform::camera::Camera;
 use crate::platform::timer::Timer;
 use crate::present::render_present::RenderPresent;
 
-/// 渲染 Backend 核心
+/// Rendering backend core.
 ///
-/// 聚焦 GPU backend 能力：device / swapchain / cmd / sync / submit / present、
-/// GPU 数据上传执行、descriptor 更新执行。
+/// Exposes state exclusively through lifecycle methods that return typed Ctx structs.
+/// External code (FrameRuntime) drives the lifecycle; Renderer does not know about
+/// Plugin, GuiHost, or any orchestration-level concepts.
 ///
-/// **不**主动推进 scene / asset 的 world 更新调度决策——
-/// 这些由 `FrameRuntime` 的 phase 编排驱动。
-///
-/// # FrameRuntime 驱动的调用顺序
+/// # Lifecycle call order
 /// ```ignore
-/// renderer.begin_frame();          // 等待 GPU、清理 FIF 资源
-/// renderer.update_assets();        // AssetHub CPU tick（由 FrameRuntime 调度）
-/// renderer.update_accum_frames();  // 累积帧跟踪（由 FrameRuntime 调度）
-/// renderer.before_render(camera);  // GPU scene / descriptor 上传
-/// // plugin.render(...)
-/// renderer.present_image();
+/// renderer.begin_frame();
+/// let update_ctx = renderer.update_phase();
+/// // ... use update_ctx for UI build + plugin update ...
+/// drop(update_ctx);
+/// renderer.submit_gui_data(draw_data);
+/// renderer.prepare(camera);
+/// let render_ctx = renderer.render_phase();
+/// // ... plugin.render(...) ...
+/// drop(render_ctx);
+/// renderer.present();
 /// renderer.end_frame();
 /// ```
 pub struct Renderer {
-    pub world: World,
-    pub render_world: RenderWorld,
+    world: World,
+    render_world: RenderWorld,
 
-    pub cmd_allocator: CmdAllocator,
+    cmd_allocator: CmdAllocator,
 
-    pub timer: Timer,
-    pub fif_timeline_semaphore: GfxSemaphore,
+    timer: Timer,
+    fif_timeline_semaphore: GfxSemaphore,
 
     gpu_scene_update_cmds: Vec<GfxCommandBuffer>,
 
-    pub render_present: Option<RenderPresent>,
+    render_present: Option<RenderPresent>,
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle Context Types
+// ---------------------------------------------------------------------------
+
+/// Update phase context — borrows Renderer fields needed for CPU-side scene/UI updates.
+///
+/// Alive while FrameRuntime performs build_ui + plugin.update; Renderer is locked until dropped.
+pub struct RendererUpdateCtx<'a> {
+    pub world: &'a mut World,
+    pub pipeline_settings: &'a mut PipelineSettings,
+    pub frame_settings: &'a FrameSettings,
+    pub accum_data: &'a AccumData,
+    pub swapchain_extent: vk::Extent2D,
+    pub delta_time_s: f32,
+}
+
+/// Render phase context — shared (read-only) borrow of Renderer state for GPU command recording.
+pub struct RendererRenderCtx<'a> {
+    pub render_world: &'a RenderWorld,
+    pub render_present: &'a RenderPresent,
+    pub timeline: &'a GfxSemaphore,
+}
+
+/// Init phase context — one-time setup after window/surface creation.
+///
+/// Does NOT contain camera (belongs to FrameRuntime).
+pub struct RendererInitCtx<'a> {
+    pub world: &'a mut World,
+    pub render_world: &'a mut RenderWorld,
+    pub cmd_allocator: &'a mut CmdAllocator,
+    pub swapchain_image_info: GfxSwapchainImageInfo,
+    pub render_present: &'a RenderPresent,
+}
+
+/// Swapchain resize context — produced only when swapchain was actually rebuilt.
+pub struct RendererResizeCtx<'a> {
+    pub render_world: &'a mut RenderWorld,
+    pub render_present: &'a RenderPresent,
 }
 
 // new & init
@@ -148,23 +190,6 @@ impl Renderer {
         }
     }
 
-    pub fn init_after_window(
-        &mut self,
-        raw_display_handle: RawDisplayHandle,
-        raw_window_handle: RawWindowHandle,
-        window_physical_size: [u32; 2],
-    ) {
-        self.render_present = Some(RenderPresent::new(
-            &mut self.render_world.gfx_resource_manager,
-            raw_display_handle,
-            raw_window_handle,
-            vk::Extent2D {
-                width: window_physical_size[0],
-                height: window_physical_size[1],
-            },
-        ));
-    }
-
     /// 根据 vulkan 实例和显卡，获取合适的深度格式
     fn get_depth_format() -> vk::Format {
         Gfx::get()
@@ -176,18 +201,6 @@ impl Renderer {
             .first()
             .copied()
             .unwrap_or(vk::Format::UNDEFINED)
-    }
-}
-// getter
-impl Renderer {
-    #[inline]
-    pub fn swapchain_image_info(&self) -> GfxSwapchainImageInfo {
-        self.render_present.as_ref().unwrap().swapchain_image_info()
-    }
-
-    #[inline]
-    pub fn frame_label(&self) -> FrameLabel {
-        self.render_world.frame_counter.frame_label()
     }
 }
 // destroy
@@ -214,27 +227,24 @@ impl Renderer {
         self.render_world.global_descriptor_sets.destroy();
     }
 }
-// phase call
+// ---------------------------------------------------------------------------
+// Lifecycle methods (public API)
+// ---------------------------------------------------------------------------
 impl Renderer {
-    /// Backend 帧起始：timer tick、等待 FIF timeline、重置命令/资源、bindless begin_frame。
-    ///
-    /// 注意：asset 更新（`update_assets`）已从此方法迁出，由 `FrameRuntime` 显式调度。
+    /// Self-contained frame start: timer tick, FIF wait, resource cleanup, bindless advance, asset update.
     pub fn begin_frame(&mut self) {
         let _span = tracy_client::span!("Renderer::begin_frame");
         self.timer.tick();
 
-        // 等待 fif 的同一帧渲染完成
         {
             let _span = tracy_client::span!("wait fif timeline");
-
             let current_frame_id = self.render_world.frame_counter.frame_id();
             let fif_count = FrameCounter::fif_count();
             let wait_frame_id = current_frame_id.saturating_sub(fif_count as u64);
-            const WAIT_SEMAPHORE_TIMEOUT_NS: u64 = 30 * 1000 * 1000 * 1000; // 30s
+            const WAIT_SEMAPHORE_TIMEOUT_NS: u64 = 30 * 1000 * 1000 * 1000;
             self.fif_timeline_semaphore.wait_timeline(wait_frame_id, WAIT_SEMAPHORE_TIMEOUT_NS);
         }
 
-        // 清理 fif 资源
         {
             self.cmd_allocator.reset_frame_commands(self.render_world.frame_counter.frame_label());
             self.render_world.gfx_resource_manager.cleanup(self.render_world.frame_counter.frame_id());
@@ -243,84 +253,162 @@ impl Renderer {
         self.render_world.delta_time_s = self.timer.delta_time_s();
         self.render_world.total_time_s = self.timer.total_time_s();
 
-        // 子系统 begin frame
         let frame_token = self.render_world.frame_counter.frame_token();
         self.render_world.bindless_manager.begin_frame(frame_token);
-    }
 
-    /// 执行 AssetHub CPU 侧增量更新。
-    ///
-    /// 由 `FrameRuntime` 在 begin_frame phase 中调度，不再由 `Renderer::begin_frame` 隐式触发。
-    pub fn update_assets(&mut self) {
-        let _span = tracy_client::span!("Renderer::update_assets");
+        // Asset update internalized into begin_frame
         self.world
             .asset_hub
             .update(&mut self.render_world.gfx_resource_manager, &mut self.render_world.bindless_manager);
     }
 
-    pub fn acquire_image(&mut self) {
-        // swapchain image
-        self.render_present.as_mut().unwrap().acquire_image(self.render_world.frame_counter.frame_label());
+    /// Perform internal frame-settings sync + acquire swapchain image, then return
+    /// a context for external CPU-side updates (UI build, plugin update).
+    pub fn update_phase(&mut self) -> RendererUpdateCtx<'_> {
+        let _span = tracy_client::span!("Renderer::update_phase");
+
+        self.update_frame_settings();
+        self.acquire_image();
+
+        RendererUpdateCtx {
+            world: &mut self.world,
+            pipeline_settings: &mut self.render_world.pipeline_settings,
+            frame_settings: &self.render_world.frame_settings,
+            accum_data: &self.render_world.accum_data,
+            swapchain_extent: self.render_world.frame_settings.frame_extent,
+            delta_time_s: self.render_world.delta_time_s,
+        }
     }
 
-    pub fn present_image(&mut self) {
-        self.render_present.as_mut().unwrap().present_image();
+    /// Accept externally-produced GUI draw data and upload to GPU buffers.
+    pub fn submit_gui_data(&mut self, draw_data: &imgui::DrawData) {
+        let _span = tracy_client::span!("Renderer::submit_gui_data");
+        let frame_label = self.render_world.frame_counter.frame_label();
+        self.render_present
+            .as_mut()
+            .unwrap()
+            .gui_backend
+            .prepare_render_data(draw_data, frame_label);
     }
 
-    pub fn end_frame(&mut self) {
-        let _span = tracy_client::span!("Renderer::end_frame");
+    /// Accumulate frame tracking + upload GPU scene/descriptor data.
+    pub fn prepare(&mut self, camera: &Camera) {
+        let _span = tracy_client::span!("Renderer::prepare");
 
-        self.render_world.frame_counter.next_frame();
-    }
-
-    pub fn time_to_render(&mut self) -> bool {
-        self.render_world.frame_counter.frame_delta_time_limit_us()
-            < self.timer.elapsed_since_tick().as_micros() as f32
-    }
-
-    /// 更新累积帧计数（用于渐进式渲染）。
-    ///
-    /// 由 `FrameRuntime` 在 prepare phase 中调度，不再由 `before_render` 隐式触发。
-    pub fn update_accum_frames(&mut self, camera: &Camera) {
         let current_camera_dir = glam::vec3(camera.euler_yaw_deg, camera.euler_pitch_deg, camera.euler_roll_deg);
         self.render_world.accum_data.update_accum_frames(current_camera_dir, camera.position);
-    }
 
-    /// Backend GPU 数据准备：将 scene/per-frame 数据上传到 GPU 并更新 descriptor sets。
-    ///
-    /// 注意：`update_accum_frames` 已从此方法迁出，由 `FrameRuntime` 显式调度。
-    pub fn before_render(&mut self, camera: &Camera) {
-        let _span = tracy_client::span!("Renderer::before_render");
         self.update_gpu_scene(camera);
         self.update_perframe_descriptor_set();
     }
 
-    #[inline]
-    pub fn need_resize(&mut self) -> bool {
-        self.render_present.as_mut().unwrap().need_resize()
+    /// Shared borrow — Renderer state is read-only during render phase.
+    pub fn render_phase(&self) -> RendererRenderCtx<'_> {
+        RendererRenderCtx {
+            render_world: &self.render_world,
+            render_present: self.render_present.as_ref().unwrap(),
+            timeline: &self.fif_timeline_semaphore,
+        }
     }
 
-    pub fn update_frame_settings(&mut self) {
+    /// Submit present command.
+    pub fn present(&mut self) {
+        self.render_present.as_mut().unwrap().present_image();
+    }
+
+    /// Advance frame counter.
+    pub fn end_frame(&mut self) {
+        let _span = tracy_client::span!("Renderer::end_frame");
+        self.render_world.frame_counter.next_frame();
+    }
+
+    /// Query whether enough time has elapsed for the next frame.
+    pub fn time_to_render(&self) -> bool {
+        self.render_world.frame_counter.frame_delta_time_limit_us()
+            < self.timer.elapsed_since_tick().as_micros() as f32
+    }
+
+    /// Handle window resize. Returns `Some(ctx)` only when swapchain was actually rebuilt.
+    pub fn handle_resize(&mut self, new_size: [u32; 2]) -> Option<RendererResizeCtx<'_>> {
+        let render_present = self.render_present.as_mut().unwrap();
+        render_present.update_window_size(new_size);
+
+        if !render_present.need_resize() {
+            return None;
+        }
+
+        render_present.rebuild_after_resized(&mut self.render_world.gfx_resource_manager);
+
+        Some(RendererResizeCtx {
+            render_world: &mut self.render_world,
+            render_present: self.render_present.as_ref().unwrap(),
+        })
+    }
+
+    /// One-time init after window/surface creation. Returns a context for plugin initialization.
+    pub fn init_after_window(
+        &mut self,
+        raw_display_handle: RawDisplayHandle,
+        raw_window_handle: RawWindowHandle,
+        window_physical_size: [u32; 2],
+    ) -> RendererInitCtx<'_> {
+        self.render_present = Some(RenderPresent::new(
+            &mut self.render_world.gfx_resource_manager,
+            raw_display_handle,
+            raw_window_handle,
+            vk::Extent2D {
+                width: window_physical_size[0],
+                height: window_physical_size[1],
+            },
+        ));
+
+        RendererInitCtx {
+            world: &mut self.world,
+            render_world: &mut self.render_world,
+            cmd_allocator: &mut self.cmd_allocator,
+            swapchain_image_info: self.render_present.as_ref().unwrap().swapchain_image_info(),
+            render_present: self.render_present.as_ref().unwrap(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GUI integration
+// ---------------------------------------------------------------------------
+impl Renderer {
+    /// Register font atlas with the GUI backend. Called once after init.
+    pub fn register_gui_font(&mut self, font_atlas: imgui::FontAtlasTexture, font_tex_id: imgui::TextureId) {
+        self.render_present.as_mut().unwrap().gui_backend.register_font(
+            &mut self.render_world.bindless_manager,
+            &mut self.render_world.gfx_resource_manager,
+            font_atlas,
+            font_tex_id,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+impl Renderer {
+    fn acquire_image(&mut self) {
+        self.render_present.as_mut().unwrap().acquire_image(self.render_world.frame_counter.frame_label());
+    }
+
+    fn update_frame_settings(&mut self) {
         let swapchain_extent = self.render_present.as_ref().unwrap().swapchain.as_ref().unwrap().extent();
         if self.render_world.frame_settings.frame_extent == swapchain_extent {
             return;
         }
 
-        let extent = self.render_present.as_ref().unwrap().swapchain.as_ref().unwrap().extent();
-
-        if self.render_world.frame_settings.frame_extent != extent {
-            self.render_world.frame_settings.frame_extent = extent;
-            self.resize_frame_buffer(extent);
+        if self.render_world.frame_settings.frame_extent != swapchain_extent {
+            self.render_world.frame_settings.frame_extent = swapchain_extent;
+            self.resize_frame_buffer(swapchain_extent);
         }
     }
 
-    pub fn recreate_swapchain(&mut self) {
-        self.render_present.as_mut().unwrap().rebuild_after_resized(&mut self.render_world.gfx_resource_manager);
-    }
-
-    pub fn resize_frame_buffer(&mut self, new_extent: vk::Extent2D) {
-        let mut accum_data = self.render_world.accum_data;
-        accum_data.reset();
+    fn resize_frame_buffer(&mut self, new_extent: vk::Extent2D) {
+        self.render_world.accum_data.reset();
 
         unsafe {
             Gfx::get().gfx_device().device_wait_idle().unwrap();

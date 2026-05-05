@@ -2,6 +2,7 @@ use ash::vk;
 use itertools::Itertools;
 
 use truvis_app_api::app_plugin::{AppPlugin, InitCtx, RenderCtx, UpdateCtx};
+use truvis_renderer::platform::camera::Camera;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::Gfx;
 use truvis_gui_backend::gui_pass::GuiPass;
@@ -19,7 +20,7 @@ pub struct HelloTriangleApp {
 }
 
 impl AppPlugin for HelloTriangleApp {
-    fn init(&mut self, ctx: &mut InitCtx) {
+    fn init(&mut self, ctx: &mut InitCtx, _camera: &mut Camera) {
         log::info!("hello triangle init.");
 
         self.triangle_pass = Some(TrianglePass::new(ctx.swapchain_image_info.image_format));
