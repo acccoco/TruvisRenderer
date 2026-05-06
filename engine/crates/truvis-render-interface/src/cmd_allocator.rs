@@ -13,7 +13,7 @@ use crate::pipeline_settings::FrameLabel;
 /// 为每帧管理独立的命令池和命令缓冲，支持帧内批量分配和帧间自动回收。
 /// 采用 TRANSIENT 标志优化临时命令的分配性能。
 ///
-/// # Frames in Flight
+/// # Frames in Flight（帧并行）
 /// - 每帧独立的 CommandPool（避免同步冲突）
 /// - 帧结束时统一释放命令缓冲
 /// - 命令缓冲自动添加帧标签：`[F42A]my-pass`
@@ -26,7 +26,7 @@ pub struct CmdAllocator {
     allocated_command_buffers: [Vec<GfxCommandBuffer>; FrameCounter::fif_count()],
 }
 
-// new & init
+// 创建与初始化
 impl Default for CmdAllocator {
     fn default() -> Self {
         Self::new()
@@ -58,11 +58,11 @@ impl Drop for CmdAllocator {
         }
     }
 }
-// destroy
+// 销毁
 impl CmdAllocator {
     pub fn destroy(self) {}
 }
-// tools
+// 工具函数
 impl CmdAllocator {
     /// 分配 command buffer，在当前 frame 使用
     pub fn alloc_command_buffer(&mut self, frame_label: FrameLabel, debug_name: &str) -> GfxCommandBuffer {

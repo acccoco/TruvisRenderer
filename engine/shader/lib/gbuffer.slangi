@@ -2,9 +2,9 @@
 /// @brief GBuffer 写入辅助函数
 ///
 /// GBuffer 布局：
-/// - GBufferA (R16G16B16A16_SFLOAT): normal.xyz + roughness
-/// - GBufferB (R16G16B16A16_SFLOAT): world_position.xyz + linear_depth
-/// - GBufferC (R8G8B8A8_UNORM): albedo.rgb + metallic
+/// - GBufferA (R16G16B16A16_SFLOAT)：法线 normal.xyz + 粗糙度 roughness
+/// - GBufferB (R16G16B16A16_SFLOAT)：世界位置 world_position.xyz + 线性深度 linear_depth
+/// - GBufferC (R8G8B8A8_UNORM)：反照率 albedo.rgb + 金属度 metallic
 
 #pragma once
 
@@ -43,11 +43,11 @@ struct GBufferData
 
 /// 从命中信息构建 GBuffer 数据
 /// @param position 世界空间命中位置
-/// @param normal 世界空间法线（应为 forward_normal）
+/// @param normal 法线 世界空间法线（应为 forward_normal）
 /// @param linear_depth 线性深度（光线 t 值）
 /// @param albedo 基础颜色
 /// @param metallic 金属度
-/// @param roughness 粗糙度
+/// @param roughness 粗糙度 粗糙度
 /// @return 填充好的 GBuffer 数据
 GBufferData make_gbuffer_data(
     float3 position,
@@ -73,13 +73,13 @@ GBufferData make_gbuffer_data(
 /// @param data GBuffer 数据
 void write_gbuffer_hit(uint2 thread_id, GBufferData data)
 {
-    // GBufferA: normal.xyz + roughness
+    // GBufferA：法线 normal.xyz + 粗糙度 roughness
     rt::gbuffer_a.Store(thread_id, float4(data.normal, data.roughness));
 
-    // GBufferB: world_position.xyz + linear_depth
+    // GBufferB：世界位置 world_position.xyz + 线性深度 linear_depth
     rt::gbuffer_b.Store(thread_id, float4(data.position, data.linear_depth));
 
-    // GBufferC: albedo.rgb + metallic
+    // GBufferC：反照率 albedo.rgb + 金属度 metallic
     rt::gbuffer_c.Store(thread_id, float4(data.albedo, data.metallic));
 }
 
@@ -88,13 +88,13 @@ void write_gbuffer_hit(uint2 thread_id, GBufferData data)
 /// @note miss 时写入默认值：depth = DEFAULT_LINEAR_DEPTH, 其他为 0
 void write_gbuffer_miss(uint2 thread_id)
 {
-    // GBufferA: normal = (0,0,0), roughness = 0
+    // GBufferA：法线 normal = (0,0,0)，粗糙度 roughness = 0
     rt::gbuffer_a.Store(thread_id, float4(0.0f, 0.0f, 0.0f, 0.0f));
 
-    // GBufferB: position = (0,0,0), depth = DEFAULT_LINEAR_DEPTH
+    // GBufferB：位置 position = (0,0,0)，深度 depth = DEFAULT_LINEAR_DEPTH
     rt::gbuffer_b.Store(thread_id, float4(0.0f, 0.0f, 0.0f, DEFAULT_LINEAR_DEPTH));
 
-    // GBufferC: albedo = (0,0,0), metallic = 0
+    // GBufferC：反照率 albedo = (0,0,0)，金属度 metallic = 0
     rt::gbuffer_c.Store(thread_id, float4(0.0f, 0.0f, 0.0f, 0.0f));
 }
 

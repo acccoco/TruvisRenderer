@@ -44,19 +44,19 @@ pub struct FifBuffers {
     #[allow(dead_code)]
     render_target_extent: vk::Extent2D,
 
-    // ========== GBuffer ==========
-    /// GBufferA: normal.xyz + roughness (R16G16B16A16_SFLOAT)
+    // ========== GBuffer 数据 ==========
+    /// GBufferA：法线 normal.xyz + 粗糙度 roughness (R16G16B16A16_SFLOAT)
     gbuffer_a_images: [GfxImageHandle; FrameCounter::fif_count()],
     gbuffer_a_views: [GfxImageViewHandle; FrameCounter::fif_count()],
-    /// GBufferB: world_position.xyz + linear_depth (R16G16B16A16_SFLOAT)
+    /// GBufferB：世界位置 world_position.xyz + 线性深度 linear_depth (R16G16B16A16_SFLOAT)
     gbuffer_b_images: [GfxImageHandle; FrameCounter::fif_count()],
     gbuffer_b_views: [GfxImageViewHandle; FrameCounter::fif_count()],
-    /// GBufferC: albedo.rgb + metallic (R8G8B8A8_UNORM)
+    /// GBufferC：反照率 albedo.rgb + 金属度 metallic (R8G8B8A8_UNORM)
     gbuffer_c_images: [GfxImageHandle; FrameCounter::fif_count()],
     gbuffer_c_views: [GfxImageViewHandle; FrameCounter::fif_count()],
     gbuffer_extent: vk::Extent2D,
 }
-// new & init
+// 创建与初始化
 impl FifBuffers {
     pub fn new(
         frame_settigns: &FrameSettings,
@@ -399,9 +399,9 @@ impl FifBuffers {
     }
 
     /// 创建 per-frame 的 GBuffer 图像
-    /// - GBufferA (R16G16B16A16_SFLOAT): normal.xyz + roughness
-    /// - GBufferB (R16G16B16A16_SFLOAT): world_position.xyz + linear_depth
-    /// - GBufferC (R8G8B8A8_UNORM): albedo.rgb + metallic
+    /// - GBufferA (R16G16B16A16_SFLOAT)：法线 normal.xyz + 粗糙度 roughness
+    /// - GBufferB (R16G16B16A16_SFLOAT)：世界位置 world_position.xyz + 线性深度 linear_depth
+    /// - GBufferC (R8G8B8A8_UNORM)：反照率 albedo.rgb + 金属度 metallic
     fn create_gbuffer_images(
         gfx_resource_manager: &mut GfxResourceManager,
         format: vk::Format,
@@ -461,7 +461,7 @@ impl FifBuffers {
         (image_handles, image_view_handles)
     }
 }
-// destroy
+// 销毁
 impl FifBuffers {
     pub fn destroy_mut(
         &mut self,
@@ -516,7 +516,7 @@ impl Drop for FifBuffers {
         debug_assert!(self.accum_image_view.is_null());
     }
 }
-// getter
+// 访问器
 impl FifBuffers {
     /// 获取当前帧的单帧 RT 输出图像句柄
     #[inline]
@@ -597,21 +597,21 @@ impl FifBuffers {
         self.render_target_format
     }
 
-    // ========== GBuffer Getters ==========
+    // ========== GBuffer 访问器 ==========
 
-    /// 获取 GBufferA (normal.xyz + roughness) 的 handle
+    /// 获取 GBufferA (法线 normal.xyz + 粗糙度 roughness) 的 handle
     #[inline]
     pub fn gbuffer_a_handle(&self, frame_label: FrameLabel) -> (GfxImageHandle, GfxImageViewHandle) {
         (self.gbuffer_a_images[*frame_label], self.gbuffer_a_views[*frame_label])
     }
 
-    /// 获取 GBufferB (world_position.xyz + linear_depth) 的 handle
+    /// 获取 GBufferB (世界位置 world_position.xyz + 线性深度 linear_depth) 的 handle
     #[inline]
     pub fn gbuffer_b_handle(&self, frame_label: FrameLabel) -> (GfxImageHandle, GfxImageViewHandle) {
         (self.gbuffer_b_images[*frame_label], self.gbuffer_b_views[*frame_label])
     }
 
-    /// 获取 GBufferC (albedo.rgb + metallic) 的 handle
+    /// 获取 GBufferC (反照率 albedo.rgb + 金属度 metallic) 的 handle
     #[inline]
     pub fn gbuffer_c_handle(&self, frame_label: FrameLabel) -> (GfxImageHandle, GfxImageViewHandle) {
         (self.gbuffer_c_images[*frame_label], self.gbuffer_c_views[*frame_label])

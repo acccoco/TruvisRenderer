@@ -7,9 +7,9 @@ struct PushConstants
     PTR(PerFrameData, frame_data);
     PTR(GPUScene, scene);
 
-    /// raster only
+    /// 仅 raster 使用
     uint instance_idx;
-    /// raster only
+    /// 仅 raster 使用
     uint submesh_idx;
     uint _padding_1;
     uint _padding_2;

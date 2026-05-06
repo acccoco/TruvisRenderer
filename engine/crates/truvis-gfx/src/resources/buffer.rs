@@ -41,7 +41,7 @@ impl Drop for GfxBuffer {
         }
     }
 }
-// init & destroy
+// 初始化与销毁
 impl GfxBuffer {
     /// - align: 当 buffer 处于一个大的 memory block 中时，align 用来指定 buffer 的起始 offset,
     ///   其实地址的内存对齐，默认对齐到 8 字节
@@ -111,14 +111,14 @@ impl GfxBuffer {
         Self::new(size, vk::BufferUsageFlags::TRANSFER_SRC, None, true, debug_name)
     }
 }
-// destroy
+// 销毁
 impl GfxBuffer {
     #[inline]
     pub fn destroy(self) {
         drop(self)
     }
 }
-// getter
+// 访问器
 impl GfxBuffer {
     #[inline]
     pub fn vk_buffer(&self) -> vk::Buffer {
@@ -137,7 +137,7 @@ impl GfxBuffer {
         self.size
     }
 }
-// tools
+// 工具函数
 impl GfxBuffer {
     #[inline]
     pub fn mapped_ptr(&self) -> *mut u8 {
@@ -175,11 +175,11 @@ impl GfxBuffer {
     }
 
     /// 创建一个临时的 stage buffer，先将数据放入 stage buffer，再 transfer 到
-    /// self
+    /// 自身
     ///
     /// sync 表示这个函数是同步等待的，会阻塞运行
     ///
-    /// # Note
+    /// # 说明
     /// * 避免使用这个将 *小块* 数据从内存传到 GPU，推荐使用 cmd transfer
     /// * 这个应该是用来传输大块数据的
     pub fn transfer_data_sync(&self, data: &[impl Sized + Copy]) {
@@ -205,11 +205,11 @@ impl GfxBuffer {
     }
 
     /// 创建一个临时的 stage buffer，先将数据放入 stage buffer，再 transfer 到
-    /// self
+    /// 自身
     ///
     /// sync 表示这个函数是同步等待的，会阻塞运行
     ///
-    /// # Note
+    /// # 说明
     /// * 避免使用这个将 *小块* 数据从内存传到 GPU，推荐使用 cmd transfer
     /// * 这个应该是用来传输大块数据的
     pub fn transfer_data_sync2(&self, total_size: vk::DeviceSize, do_with_stage_buffer: impl FnOnce(&GfxBuffer)) {

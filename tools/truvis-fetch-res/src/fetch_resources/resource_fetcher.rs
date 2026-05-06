@@ -13,7 +13,7 @@ pub struct GitHubResourceFetcher {
     temp_dir: PathBuf,
 }
 
-// new & init
+// 创建与初始化
 impl GitHubResourceFetcher {
     /// 使用自定义临时目录创建下载器
     pub fn with_temp_dir<P: AsRef<Path>>(temp_dir: P) -> anyhow::Result<Self> {
@@ -33,7 +33,7 @@ impl GitHubResourceFetcher {
     }
 }
 
-// tools
+// 工具函数
 impl GitHubResourceFetcher {
     /// 从配置文件批量下载资源
     pub fn fetch_from_config<P: AsRef<Path>>(&self, config_path: P) -> anyhow::Result<()> {

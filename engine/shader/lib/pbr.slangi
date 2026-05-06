@@ -22,9 +22,9 @@ struct SpecularBrdf
     float3 F;
     float V;
 
-    /// @param f0
-    /// @param roughness
-    /// @param normal
+    /// @param f0 菲涅尔 F0
+    /// @param roughness 粗糙度
+    /// @param normal 法线
     /// @param view 观察方向，从物体到相机
     /// @param light 光照方向，从物体到光源
     __init(float3 f0, float roughness, float3 normal, float3 view, float3 h)
@@ -74,21 +74,21 @@ struct SpecularBrdf
     }
 
     /// 基于 NDF 进行采样，得到的是半程向量 H
-    /// pdf = D * NdotH / (4 * NdotV)
+    /// PDF 公式：D * NdotH / (4 * NdotV)
     static float3 ggx_sample(inout uint rand_seed, const float roughness, const float3 normal)
     {
         float3 tangent, bitangent;
         Sample::create_local_coord(normal, tangent, bitangent);
 
         const float2 rand_val = float2(clamp(Random::rnd(rand_seed), 0.001f, 0.999f), Random::rnd(rand_seed));
-        // GGX NDF sampling
+        // GGX NDF 采样
         const float a2 = roughness * roughness;
         const float denominator = (a2 - 1.f) * rand_val.x + 1.f;
         const float cos_theta_h = saturate(sqrt(max(0.0f, (1.0 - rand_val.x) / max(1e-7f, denominator))));
         const float sin_theta_h = sqrt(max(0.0f, 1.0f - cos_theta_h * cos_theta_h));
         const float phi_h = rand_val.y * M_PI * 2.0f;
 
-        // Get our GGX NDF sample (i.e., the half vector)
+        // 获取 GGX NDF 样本（即半程向量）
         return tangent * (sin_theta_h * cos(phi_h)) +
             bitangent * (sin_theta_h * sin(phi_h)) +
             normal * cos_theta_h;
@@ -120,7 +120,7 @@ struct DiffuseBrdf
     }
 
     /// cos-weighted 半球采样的 PDF
-    /// @param normal 表面法线
+    /// @param normal 法线 表面法线
     /// @param dir 采样方向（朝外）
     /// @return PDF = cos(theta) / pi
     static float pdf(float3 normal, float3 dir)

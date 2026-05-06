@@ -77,7 +77,7 @@ impl<P: Sized> ComputePass<P> {
     }
 
     pub fn destroy(self) {
-        // drop
+        // Drop 处理
     }
 }
 impl<P: Sized> Drop for ComputePass<P> {

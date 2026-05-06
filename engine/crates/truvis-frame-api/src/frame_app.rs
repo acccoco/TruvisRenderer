@@ -1,4 +1,4 @@
-//! App contracts used by the render thread and the BaseApp frame skeleton.
+//! 渲染线程和 BaseApp 帧骨架使用的 App 契约。
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use truvis_render_backend::platform::camera::Camera;
@@ -6,7 +6,7 @@ use truvis_render_backend::render_backend::{RenderBackendRenderCtx, RenderBacken
 
 use crate::input_event::InputEvent;
 
-/// Object-safe external contract driven by the render loop.
+/// 由 render loop 驱动的 object-safe 外部契约。
 pub trait FrameApp {
     fn init_after_window(
         &mut self,
@@ -27,7 +27,7 @@ pub trait FrameApp {
     fn shutdown(&mut self);
 }
 
-/// Internal hook points called by `BaseApp::run_frame`.
+/// `BaseApp::run_frame` 调用的内部 hook 点。
 pub trait FrameAppHooks {
     fn on_input(&mut self, events: &[InputEvent]);
 

@@ -8,7 +8,7 @@ use truvis_shader_binding::gpu;
 
 use crate::global_descriptor_sets::{GlobalDescriptorSets, StaticDescriptorBinding};
 
-// Sampler manager
+// Sampler 管理器
 pub struct RenderSamplerManager {
     _samplers: [GfxSampler; gpu::ESamplerType__Count_ as usize],
 }
@@ -75,5 +75,5 @@ impl RenderSamplerManager {
     }
 }
 
-// destroy
+// 销毁
 impl RenderSamplerManager {}

@@ -4,7 +4,7 @@ use ash::vk;
 
 use truvis_gfx::resources::layout::GfxVertexLayout;
 
-/// AoS: Array of Structs
+/// AoS：结构体数组（Array of Structs）
 pub struct ImGuiVertex {
     pos: glam::Vec2,
     uv: glam::Vec2,

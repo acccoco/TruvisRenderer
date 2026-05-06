@@ -94,7 +94,7 @@ impl Gfx {
 
     /// 初始化 RenderContext 单例
     ///
-    /// # Parameters
+    /// # 参数
     /// - `app_name`: 应用程序名称
     /// - `instance_extra_exts`: 额外的 Vulkan 实例扩展
     ///
@@ -130,7 +130,7 @@ impl Gfx {
     }
 }
 
-// getter
+// 访问器
 impl Gfx {
     #[inline]
     pub fn vk_core(&self) -> &GfxCore {
@@ -196,7 +196,7 @@ impl Gfx {
     }
 }
 
-// tools
+// 工具函数
 impl Gfx {
     /// 根据给定的格式，返回支持的格式
     pub fn find_supported_format(

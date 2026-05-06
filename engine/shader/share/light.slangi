@@ -26,7 +26,7 @@ struct PointLight
         const float quadratic_term = 0.032f;
         const float distance = length(pos - obj_pos);
 
-        // FIXME attenuation
+        // FIXME 衰减
         const float light_attenuation = 10.0 / (const_term + linear_term * distance + quadratic_term * distance * distance);
 
         const float3 diffuse_color = object_color.rgb * diffuse_coef * color;

@@ -1,6 +1,6 @@
 #pragma once
 
-// TruvixxGfx - C++ Vulkan Graphics Library
+// TruvixxGfx - C++ Vulkan 图形库
 // 对 Rust truvis-gfx 模块的 C++ 替代实现
 
 #include "TruvixxGfx/gfx_instance.hpp"

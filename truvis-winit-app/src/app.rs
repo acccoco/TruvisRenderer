@@ -22,7 +22,7 @@ pub struct UserEvent;
 
 type FrameAppFactory = Box<dyn FnOnce() -> Box<dyn FrameApp> + Send + 'static>;
 
-/// winit main-thread app handler.
+/// winit 主线程 app handler。
 pub struct WinitApp {
     window: Option<Window>,
     shared: Option<Arc<SharedState>>,
@@ -31,7 +31,7 @@ pub struct WinitApp {
 }
 
 impl WinitApp {
-    /// Primary entry point. `app_factory` is called once on the render thread.
+    /// 主入口。`app_factory` 会在渲染线程上调用一次。
     pub fn run_app<F>(app_factory: F)
     where
         F: FnOnce() -> Box<dyn FrameApp> + Send + 'static,

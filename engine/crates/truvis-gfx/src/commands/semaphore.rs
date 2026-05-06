@@ -2,7 +2,7 @@ use ash::vk;
 
 use crate::{foundation::debug_messenger::DebugType, gfx::Gfx};
 
-/// # Destroy
+/// # 销毁
 /// 不应该实现 Semaphore，因为可以 Clone，需要手动 destroy
 #[derive(Clone)]
 pub struct GfxSemaphore {
@@ -41,7 +41,7 @@ impl GfxSemaphore {
     }
 }
 
-// getters
+// 访问器
 impl GfxSemaphore {
     #[inline]
     pub fn handle(&self) -> vk::Semaphore {
@@ -49,7 +49,7 @@ impl GfxSemaphore {
     }
 }
 
-// tools
+// 工具函数
 impl GfxSemaphore {
     #[inline]
     pub fn wait_timeline(&self, timeline_value: u64, timeout_ns: u64) {

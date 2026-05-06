@@ -9,9 +9,9 @@ static const int SHADER_Y = 8;
 
 struct PushConstant
 {
-    /// rt render
+    /// RT 渲染
     UavHandle src_image;
-    /// final image to present
+    /// 最终用于 present 的图像
     UavHandle dst_image;
 
     uint2 src_image_size;

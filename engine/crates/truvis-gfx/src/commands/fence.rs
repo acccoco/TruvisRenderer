@@ -2,7 +2,7 @@ use ash::vk;
 
 use crate::{foundation::debug_messenger::DebugType, gfx::Gfx};
 
-/// # Destroy
+/// # 销毁
 /// 不应该实现 Fence，因为可以 Clone，需要手动 destroy
 #[derive(Clone)]
 pub struct GfxFence {
@@ -21,7 +21,7 @@ impl DebugType for GfxFence {
 
 // 创建与销毁
 impl GfxFence {
-    /// # param
+    /// # 参数
     /// * signaled - 是否创建时就 signaled
     pub fn new(signaled: bool, debug_name: &str) -> Self {
         let gfx_device = Gfx::get().gfx_device();
@@ -42,7 +42,7 @@ impl GfxFence {
     }
 }
 
-// getters
+// 访问器
 impl GfxFence {
     #[inline]
     pub fn handle(&self) -> vk::Fence {
@@ -50,7 +50,7 @@ impl GfxFence {
     }
 }
 
-// tools
+// 工具函数
 impl GfxFence {
     /// 阻塞等待 fence
     #[inline]

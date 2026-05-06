@@ -45,7 +45,7 @@ impl GfxImageBarrier {
         &self.inner
     }
 
-    /// builder
+    /// 构建器
     #[inline]
     pub fn queue_family_transfer(mut self, src_queue_family_index: u32, dst_queue_family_index: u32) -> Self {
         self.inner.src_queue_family_index = src_queue_family_index;
@@ -53,7 +53,7 @@ impl GfxImageBarrier {
         self
     }
 
-    /// builder
+    /// 构建器
     #[inline]
     pub fn layout_transfer(mut self, old_layout: vk::ImageLayout, new_layout: vk::ImageLayout) -> Self {
         self.inner.old_layout = old_layout;
@@ -61,7 +61,7 @@ impl GfxImageBarrier {
         self
     }
 
-    /// builder
+    /// 构建器
     #[inline]
     pub fn src_mask(mut self, src_stage_mask: vk::PipelineStageFlags2, src_access_mask: vk::AccessFlags2) -> Self {
         self.inner.src_stage_mask = src_stage_mask;
@@ -69,7 +69,7 @@ impl GfxImageBarrier {
         self
     }
 
-    /// builder
+    /// 构建器
     #[inline]
     pub fn dst_mask(mut self, dst_stage_mask: vk::PipelineStageFlags2, dst_access_mask: vk::AccessFlags2) -> Self {
         self.inner.dst_stage_mask = dst_stage_mask;
@@ -77,7 +77,7 @@ impl GfxImageBarrier {
         self
     }
 
-    /// builder
+    /// 构建器
     /// layer 和 miplevel 都使用默认值
     #[inline]
     pub fn image_aspect_flag(mut self, aspect_mask: vk::ImageAspectFlags) -> Self {
@@ -85,7 +85,7 @@ impl GfxImageBarrier {
         self
     }
 
-    /// builder
+    /// 构建器
     #[inline]
     pub fn image(mut self, image: vk::Image) -> Self {
         self.inner.image = image;

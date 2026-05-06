@@ -14,13 +14,13 @@ pub struct VulkanFormatUtils;
 impl VulkanFormatUtils {
     /// 计算指定 Vulkan 格式下每个像素需要的字节数
     ///
-    /// # Params
+    /// # 参数
     /// * `format` - Vulkan 图像格式
     ///
-    /// # return
+    /// # 返回
     /// 每个像素的字节数
     ///
-    /// # Panic
+    /// # Panics
     /// 当遇到不支持的格式时会 panic
     pub fn pixel_size_in_bytes(format: vk::Format) -> usize {
         // 根据 vulkan specification 得到的 format 顺序
@@ -64,7 +64,7 @@ pub struct GfxImage {
     name: String,
 }
 
-// getter
+// 访问器
 impl GfxImage {
     #[inline]
     pub fn width(&self) -> u32 {
@@ -87,7 +87,7 @@ impl GfxImage {
     }
 }
 
-// new & init
+// 创建与初始化
 impl GfxImage {
     pub fn new(image_info: &GfxImageCreateInfo, alloc_info: &vk_mem::AllocationCreateInfo, debug_name: &str) -> Self {
         let allocator = Gfx::get().allocator();
@@ -151,7 +151,7 @@ impl DebugType for GfxImage {
     }
 }
 
-// destroy
+// 销毁
 impl GfxImage {
     pub fn destroy(mut self) {
         self.destroy_mut();
@@ -174,7 +174,7 @@ impl Drop for GfxImage {
     }
 }
 
-// tools
+// 工具函数
 impl GfxImage {
     /// # 实现步骤
     /// 1. 创建一个 staging buffer，用于存放待复制的数据
@@ -189,9 +189,9 @@ impl GfxImage {
         let stage_buffer = GfxBuffer::new_stage_buffer(size_of_val(data) as vk::DeviceSize, "image-stage-buffer");
         stage_buffer.transfer_data_by_mmap(data);
 
-        // 1. transition the image layout
-        // 2. copy the buffer into the image
-        // 3. transition the layout 为了让 fragment shader 可读
+        // 1. 转换 image layout
+        // 2. 将 buffer 复制到 image
+        // 3. 再次转换 layout，让 fragment shader 可读
         {
             let image_barrier = GfxImageBarrier::new()
                 .image(self.handle)
@@ -270,7 +270,7 @@ impl GfxImageCreateInfo {
         self.inner.queue_family_indices(&self.queue_family_indices)
     }
 
-    // builder
+    // 构建器
     #[inline]
     pub fn queue_family_indices(mut self, queue_family_indices: &[u32]) -> Self {
         self.inner.sharing_mode = vk::SharingMode::CONCURRENT;

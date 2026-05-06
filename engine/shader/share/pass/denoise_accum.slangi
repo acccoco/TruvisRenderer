@@ -19,11 +19,11 @@ struct PushConstant
     UavHandle single_frame_input;
     /// 累积结果（读写）
     UavHandle accum_output;
-    /// GBufferA: normal.xyz + roughness（只读）
+    /// GBufferA：normal.xyz + roughness（只读）
     UavHandle gbuffer_a;
-    /// GBufferB: world_position.xyz + linear_depth（只读）
+    /// GBufferB：world_position.xyz + linear_depth（只读）
     UavHandle gbuffer_b;
-    /// GBufferC: albedo.rgb + metallic（只读）
+    /// GBufferC：albedo.rgb + metallic（只读）
     UavHandle gbuffer_c;
     /// Padding 使 image_size (uint2) 8 字节对齐
     uint _padding0;

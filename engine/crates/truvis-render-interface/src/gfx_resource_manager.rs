@@ -41,7 +41,7 @@ impl Default for GfxResourceManager {
         Self::new()
     }
 }
-// new & init
+// 创建与初始化
 impl GfxResourceManager {
     /// 创建一个新的资源管理器
     pub fn new() -> Self {
@@ -59,7 +59,7 @@ impl GfxResourceManager {
         }
     }
 }
-// destroy
+// 销毁
 impl GfxResourceManager {
     pub fn destroy(mut self) {
         self.destroy_mut();
@@ -67,24 +67,24 @@ impl GfxResourceManager {
     pub fn destroy_mut(&mut self) {
         let _span = tracy_client::span!("ResourceManager::destroy_all");
 
-        // destroy 所有的 image views
+        // 销毁 所有的 image views
         for (_, image_view) in self.image_view_pool.drain() {
             image_view.destroy()
         }
         self.image_view_lookup.clear();
         self.image_to_views.clear();
 
-        // Destroy 所有的 images
+        // 销毁所有 images
         for (_, image) in self.image_pool.drain() {
             image.destroy()
         }
 
-        // Destroy 所有的 buffers
+        // 销毁所有 buffers
         for (_, buffer) in self.buffer_pool.drain() {
             buffer.destroy()
         }
 
-        // Clear pending queues
+        // 清空待处理队列
         self.pending_destroy_buffers.clear();
         self.pending_destroy_images.clear();
 
@@ -102,7 +102,7 @@ impl Drop for GfxResourceManager {
         }
     }
 }
-// Subsystem API
+// 子系统 API
 impl GfxResourceManager {
     /// 清理已过期的资源
     ///
@@ -160,7 +160,7 @@ impl GfxResourceManager {
         }
     }
 }
-// Buffer API
+// Buffer 资源 API
 impl GfxResourceManager {
     pub fn register_buffer(&mut self, buffer: GfxBuffer) -> GfxBufferHandle {
         self.buffer_pool.insert(buffer)
@@ -195,7 +195,7 @@ impl GfxResourceManager {
         self.pending_destroy_buffers.push((handle, current_frame_index));
     }
 }
-// Image API
+// 图像 API
 impl GfxResourceManager {
     pub fn register_image(&mut self, image: GfxImage) -> GfxImageHandle {
         self.image_pool.insert(image)
@@ -251,7 +251,7 @@ impl GfxResourceManager {
         }
     }
 }
-// ImageView API
+// ImageView 资源 API
 impl GfxResourceManager {
     /// 创建一个 ImageView
     pub fn get_or_create_image_view(

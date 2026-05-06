@@ -36,7 +36,7 @@ impl GfxPipelineLayout {
 
     #[inline]
     pub fn destroy(self) {
-        // drop
+        // Drop 处理
     }
 }
 impl Drop for GfxPipelineLayout {
@@ -68,7 +68,7 @@ impl GfxGraphicsPipeline {
         pipeline_layout: Rc<GfxPipelineLayout>,
         debug_name: &str,
     ) -> Self {
-        // dynamic rendering 需要的 framebuffer 信息
+        // dynamic rendering 扩展 需要的 framebuffer 信息
         let mut attach_info = vk::PipelineRenderingCreateInfo::default()
             .color_attachment_formats(&create_info.color_attach_formats)
             .depth_attachment_format(create_info.depth_attach_format)
@@ -159,7 +159,7 @@ impl GfxGraphicsPipeline {
 
     #[inline]
     pub fn destroy(self) {
-        // drop
+        // Drop 处理
     }
 }
 impl Drop for GfxGraphicsPipeline {
@@ -249,9 +249,9 @@ impl Default for GfxGraphicsPipelineCreateInfo {
         }
     }
 }
-// builder
+// 构建器
 impl GfxGraphicsPipelineCreateInfo {
-    /// builder
+    /// 构建器
     #[inline]
     pub fn attach_info(
         &mut self,
@@ -266,7 +266,7 @@ impl GfxGraphicsPipelineCreateInfo {
         self
     }
 
-    /// builder
+    /// 构建器
     #[inline]
     pub fn vertex_shader_stage(&mut self, path: &str, entry_point: &'static CStr) -> &mut Self {
         self.shader_stages.push(GfxShaderStageInfo {
@@ -277,7 +277,7 @@ impl GfxGraphicsPipelineCreateInfo {
         self
     }
 
-    /// builder
+    /// 构建器
     #[inline]
     pub fn fragment_shader_stage(&mut self, path: &str, entry_point: &'static CStr) -> &mut Self {
         self.shader_stages.push(GfxShaderStageInfo {
@@ -294,14 +294,14 @@ impl GfxGraphicsPipelineCreateInfo {
         self
     }
 
-    /// builder
+    /// 构建器
     #[inline]
     pub fn vertex_binding(&mut self, bindings: Vec<vk::VertexInputBindingDescription>) -> &mut Self {
         self.vertex_binding_desc = bindings;
         self
     }
 
-    /// builder
+    /// 构建器
     #[inline]
     pub fn vertex_attribute(&mut self, attributes: Vec<vk::VertexInputAttributeDescription>) -> &mut Self {
         self.vertex_attribute_desec = attributes;

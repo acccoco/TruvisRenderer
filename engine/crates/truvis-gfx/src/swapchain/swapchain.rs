@@ -18,7 +18,7 @@ pub struct GfxSwapchain {
     swapchain_extent: vk::Extent2D,
 }
 
-// new & init
+// 创建与初始化
 impl GfxSwapchain {
     pub fn new(
         surface: &GfxSurface,
@@ -122,7 +122,7 @@ pub struct GfxSwapchainImageInfo {
     pub image_format: vk::Format,
 }
 
-// getters
+// 访问器
 impl GfxSwapchain {
     #[inline]
     pub fn present_images(&self) -> Vec<vk::Image> {
@@ -149,7 +149,7 @@ impl GfxSwapchain {
     }
 }
 
-// tools
+// 工具函数
 impl GfxSwapchain {
     /// 确定 window 的 extent 尺寸
     ///
@@ -173,10 +173,10 @@ impl GfxSwapchain {
     }
 }
 
-// update
+// 更新
 impl GfxSwapchain {
-    /// timeout: nano seconds
-    /// return: need recreate
+    /// timeout：纳秒
+    /// 返回：需要重建
     #[inline]
     pub fn acquire_next_image(
         &mut self,
@@ -211,7 +211,7 @@ impl GfxSwapchain {
         }
     }
 
-    /// return: need recreate
+    /// 返回：需要重建
     #[inline]
     pub fn present_image(&self, queue: &GfxCommandQueue, wait_semaphores: &[GfxSemaphore]) -> bool {
         let wait_semaphores = wait_semaphores.iter().map(|s| s.handle()).collect_vec();
@@ -240,7 +240,7 @@ impl GfxSwapchain {
     }
 }
 
-// destroy
+// 销毁
 impl GfxSwapchain {
     pub fn destroy(mut self) {
         unsafe {

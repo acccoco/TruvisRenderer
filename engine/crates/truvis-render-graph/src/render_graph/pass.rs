@@ -150,7 +150,7 @@ pub struct RgPassNode<'a> {
     pub(crate) executor: Box<dyn RgPassExecutor + 'a>,
 }
 
-/// RgPass trait
+/// RgPass trait 定义
 ///
 /// 定义渲染图中的一个 Pass
 pub trait RgPass {

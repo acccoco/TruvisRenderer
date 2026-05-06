@@ -6,7 +6,7 @@ pub struct StageBufferManager {
     buffers: [Vec<GfxBuffer>; FrameCounter::fif_count()],
 }
 
-// new & init
+// 创建与初始化
 impl Default for StageBufferManager {
     fn default() -> Self {
         Self::new()
@@ -24,11 +24,11 @@ impl Drop for StageBufferManager {
         log::info!("UploadBufferManager dropped.");
     }
 }
-// destory
+// 销毁
 impl StageBufferManager {
     pub fn destroy(self) {}
 }
-// tools
+// 工具函数
 impl StageBufferManager {
     pub fn alloc_buffer(&mut self, frame_counter: &FrameCounter, size: u64, debug_name: &str) -> &mut GfxBuffer {
         let buffer = GfxBuffer::new_stage_buffer(size, debug_name);

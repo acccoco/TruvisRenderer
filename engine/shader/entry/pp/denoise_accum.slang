@@ -84,8 +84,8 @@ int adaptive_kernel_radius(float roughness)
         return g_params.kernel_radius;
     
     // 粗糙表面需要更大的滤波核
-    // roughness 接近 1 时，radius 增大
-    // roughness 接近 0 时，radius 减小（保留镜面细节）
+    // 粗糙度 接近 1 时，radius 增大
+    // 粗糙度 接近 0 时，radius 减小（保留镜面细节）
     float scale = lerp(0.5, g_params.roughness_radius_scale, roughness);
     return max(1, int(float(g_params.kernel_radius) * scale));
 }

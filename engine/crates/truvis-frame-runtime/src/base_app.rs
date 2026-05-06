@@ -7,11 +7,11 @@ use truvis_gfx::gfx::Gfx;
 use truvis_logs::init_log;
 use truvis_render_backend::render_backend::{RenderBackend, RenderBackendInitCtx, RenderBackendResizeCtx};
 
-/// Invariant frame skeleton shared by concrete apps.
+/// 由具体 app 共享的固定帧骨架。
 ///
-/// `BaseApp` owns only render backend infrastructure and the pending input event queue.
-/// Camera, GUI, overlays, input state, and render-pipeline plugins belong to the
-/// concrete app that implements `FrameAppHooks`.
+/// `BaseApp` 只持有 render backend 基础设施和待处理输入事件队列。
+/// Camera、GUI、overlay、input state 和 render-pipeline plugin 都属于实现
+/// `FrameAppHooks` 的具体 app。
 pub struct BaseApp {
     render_backend: RenderBackend,
     input_events: Vec<InputEvent>,

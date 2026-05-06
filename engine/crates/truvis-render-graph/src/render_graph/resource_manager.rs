@@ -16,7 +16,7 @@ pub struct RgResourceManager {
     buffers: SlotMap<RgBufferHandle, RgBufferResource>,
 }
 
-// new & init
+// 创建与初始化
 impl RgResourceManager {
     /// 创建新的资源注册表
     pub fn new() -> Self {
@@ -24,7 +24,7 @@ impl RgResourceManager {
     }
 }
 
-// register
+// 注册
 impl RgResourceManager {
     pub fn register_image(&mut self, rg_image_resource: RgImageResource) -> RgImageHandle {
         self.images.insert(rg_image_resource)
@@ -34,7 +34,7 @@ impl RgResourceManager {
     }
 }
 
-// getter & iter
+// 访问器 & iter
 impl RgResourceManager {
     /// 获取图像资源
     #[inline]

@@ -64,7 +64,7 @@ pub struct MeshManager {
     pending: VecDeque<ManagedMeshHandle>,
 }
 
-// new & destroy
+// 创建与销毁
 impl MeshManager {
     pub fn new() -> Self {
         Self {

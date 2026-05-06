@@ -11,7 +11,7 @@ use crate::handle::AssetTextureHandle;
 pub struct AssetLoadRequest {
     pub path: PathBuf,
     pub handle: AssetTextureHandle,
-    // pub params: AssetParams, // Future expansion
+    // pub params: AssetParams, // 预留扩展
 }
 
 /// 解码后的原始资产数据 (CPU 端)

@@ -1,10 +1,10 @@
-//! Base frame orchestration runtime.
+//! 基础帧编排运行时。
 //!
-//! [`BaseApp`] drives the invariant per-frame lifecycle:
-//! `begin_frame` → input hook → update hook → prepare → render hook → present → `end_frame`.
+//! [`BaseApp`] 驱动固定的每帧生命周期：
+//! `begin_frame` → 输入 hook → update hook → prepare → render hook → present → `end_frame`。
 //!
-//! [`FrameAppShell`] owns `BaseApp` and drives concrete app state. Concrete app
-//! state owns GUI, camera, input state, overlays, and render plugins.
+//! [`FrameAppShell`] 持有 `BaseApp` 并驱动具体 app state。具体 app state
+//! 持有 GUI、camera、input state、overlay 和 render plugin。
 
 mod base_app;
 mod frame_app_shell;

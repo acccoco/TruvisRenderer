@@ -37,7 +37,7 @@ pub struct GfxCommandBuffer {
 
     _name: String,
 }
-// new & init
+// 创建与初始化
 impl GfxCommandBuffer {
     pub fn new(command_pool: &GfxCommandPool, debug_name: &str) -> Self {
         let info = vk::CommandBufferAllocateInfo::default()
@@ -81,9 +81,9 @@ impl GfxCommandBuffer {
         unsafe { Gfx::get().gfx_device().end_command_buffer(self.vk_handle).unwrap() }
     }
 }
-// getters
+// 访问器
 impl GfxCommandBuffer {
-    /// getter
+    /// 访问器
     #[inline]
     pub fn vk_handle(&self) -> vk::CommandBuffer {
         self.vk_handle
@@ -91,7 +91,7 @@ impl GfxCommandBuffer {
 }
 // 数据传输类型
 impl GfxCommandBuffer {
-    /// - command type: action
+    /// - 命令类型：action
     /// - 支持的 queue：transfer，graphics，compute
     #[inline]
     pub fn cmd_copy_buffer(&self, src: &GfxBuffer, dst: &GfxBuffer, regions: &[vk::BufferCopy]) {
@@ -100,7 +100,7 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: action
+    /// - 命令类型：action
     /// - 支持的 queue：transfer，graphics，compute
     #[inline]
     pub fn cmd_copy_buffer_to_image(&self, copy_info: &vk::CopyBufferToImageInfo2) {
@@ -115,8 +115,8 @@ impl GfxCommandBuffer {
     /// 需要在 render pass 之外进行，注意同步
     ///
     ///
-    /// - command type: action
-    /// - supported queue types: transfer, graphics, compute
+    /// - 命令类型：action
+    /// - 支持的 queue 类型：transfer, graphics, compute
     #[inline]
     pub fn cmd_update_buffer(&self, buffer: vk::Buffer, offset: vk::DeviceSize, data: &[u8]) {
         unsafe { Gfx::get().gfx_device().cmd_update_buffer(self.vk_handle, buffer, offset, data) }
@@ -131,7 +131,7 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: state
+    /// - 命令类型：state
     /// - 支持的 queue: graphics, compute
     #[inline]
     pub fn cmd_push_constants(
@@ -148,8 +148,8 @@ impl GfxCommandBuffer {
 }
 // 绘制类型的命令
 impl GfxCommandBuffer {
-    /// - command type: action, state
-    /// - supported queue types: graphics
+    /// - 命令类型：action, state
+    /// - 支持的 queue 类型：graphics
     #[inline]
     pub fn cmd_begin_rendering(&self, render_info: &vk::RenderingInfo) {
         unsafe {
@@ -164,8 +164,8 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: action, state
-    /// - supported queue types: graphics
+    /// - 命令类型：action, state
+    /// - 支持的 queue 类型：graphics
     #[inline]
     pub fn end_rendering(&self) {
         unsafe {
@@ -173,8 +173,8 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: action
-    /// - supported queue types: graphics
+    /// - 命令类型：action
+    /// - 支持的 queue 类型：graphics
     #[inline]
     pub fn draw_indexed(
         &self,
@@ -196,8 +196,8 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: action
-    /// - supported queue types: graphics
+    /// - 命令类型：action
+    /// - 支持的 queue 类型：graphics
     ///
     /// 不使用 index buffer 的绘制
     #[inline]
@@ -213,8 +213,8 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: state
-    /// - supported queue types: graphics, compute
+    /// - 命令类型：state
+    /// - 支持的 queue 类型：graphics, compute
     #[inline]
     pub fn bind_descriptor_sets(
         &self,
@@ -255,8 +255,8 @@ impl GfxCommandBuffer {
         })
     }
 
-    /// - command type: state
-    /// - supported queue types: graphics, compute
+    /// - 命令类型：state
+    /// - 支持的 queue 类型：graphics, compute
     #[inline]
     pub fn cmd_bind_pipeline(&self, bind_point: vk::PipelineBindPoint, pipeline: vk::Pipeline) {
         unsafe {
@@ -265,8 +265,8 @@ impl GfxCommandBuffer {
     }
 
     /// buffers 每个 vertex buffer 以及 offset
-    /// - command type: state
-    /// - supported queue types: graphics
+    /// - 命令类型：state
+    /// - 支持的 queue 类型：graphics
     #[inline]
     pub fn cmd_bind_vertex_buffers(&self, first_bind: u32, buffers: &[vk::Buffer], offsets: &[vk::DeviceSize]) {
         unsafe {
@@ -274,8 +274,8 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: state
-    /// - supported queue types: graphics
+    /// - 命令类型：state
+    /// - 支持的 queue 类型：graphics
     #[inline]
     pub fn cmd_bind_index_buffer<T: GfxIndexType>(&self, buffer: &GfxIndexBuffer<T>, offset: vk::DeviceSize) {
         unsafe {
@@ -283,8 +283,8 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: state
-    /// - supported queue types: graphics
+    /// - 命令类型：state
+    /// - 支持的 queue 类型：graphics
     #[inline]
     pub fn cmd_set_viewport(&self, first_viewport: u32, viewports: &[vk::Viewport]) {
         unsafe {
@@ -292,8 +292,8 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: state
-    /// - supported queue types: graphics
+    /// - 命令类型：state
+    /// - 支持的 queue 类型：graphics
     #[inline]
     pub fn cmd_set_scissor(&self, first_scissor: u32, scissors: &[vk::Rect2D]) {
         unsafe {
@@ -303,8 +303,8 @@ impl GfxCommandBuffer {
 }
 // 光追相关
 impl GfxCommandBuffer {
-    /// - command type: action
-    /// - supported queue types: compute
+    /// - 命令类型：action
+    /// - 支持的 queue 类型：compute
     #[inline]
     pub fn cmd_copy_acceleration_structure(&self, copy_info: &vk::CopyAccelerationStructureInfoKHR) {
         unsafe {
@@ -312,8 +312,8 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: action
-    /// - supported queue types: compute
+    /// - 命令类型：action
+    /// - 支持的 queue 类型：compute
     #[inline]
     pub fn build_acceleration_structure(
         &self,
@@ -331,8 +331,8 @@ impl GfxCommandBuffer {
     }
 
     /// 这里涉及到对加速结构的 read，需要同步
-    /// - command type: action
-    /// - supported queue types: compute
+    /// - 命令类型：action
+    /// - 支持的 queue 类型：compute
     #[inline]
     pub fn write_acceleration_structure_properties(
         &self,
@@ -352,8 +352,8 @@ impl GfxCommandBuffer {
     }
 
     /// 光追的入口
-    /// - command type: action
-    /// - supported queue types: compute
+    /// - 命令类型：action
+    /// - 支持的 queue 类型：compute
     #[inline]
     pub fn trace_rays(
         &self,
@@ -388,8 +388,8 @@ impl GfxCommandBuffer {
 }
 // 同步相关命令
 impl GfxCommandBuffer {
-    /// - command type: synchronize
-    /// - supported queue types: graphics, compute, transfer
+    /// - 命令类型：synchronize
+    /// - 支持的 queue 类型：graphics, compute, transfer
     #[inline]
     pub fn memory_barrier(&self, barriers: &[vk::MemoryBarrier2]) {
         let dependency_info = vk::DependencyInfo::default().memory_barriers(barriers);
@@ -398,8 +398,8 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: synchronize
-    /// - supported queue types: graphics, compute, transfer
+    /// - 命令类型：synchronize
+    /// - 支持的 queue 类型：graphics, compute, transfer
     #[inline]
     pub fn image_memory_barrier(&self, dependency_flags: vk::DependencyFlags, barriers: &[GfxImageBarrier]) {
         let barriers = barriers.iter().map(|b| *b.inner()).collect_vec();
@@ -410,8 +410,8 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: synchronize
-    /// - supported queue types: graphics, compute, transfer
+    /// - 命令类型：synchronize
+    /// - 支持的 queue 类型：graphics, compute, transfer
     #[inline]
     pub fn buffer_memory_barrier(&self, dependency_flags: vk::DependencyFlags, barriers: &[GfxBufferBarrier]) {
         let barriers = barriers.iter().map(|b| *b.inner()).collect_vec();
@@ -424,8 +424,8 @@ impl GfxCommandBuffer {
 }
 // debug 相关命令
 impl GfxCommandBuffer {
-    /// - command type: state, action
-    /// - supported queue type: graphics, compute
+    /// - 命令类型：state, action
+    /// - 支持的 queue 类型：graphics, compute
     #[inline]
     pub fn begin_label(&self, label_name: &str, label_color: glam::Vec4) {
         let name = std::ffi::CString::new(label_name).unwrap();
@@ -437,8 +437,8 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: state, action
-    /// - supported queue type: graphics, compute
+    /// - 命令类型：state, action
+    /// - 支持的 queue 类型：graphics, compute
     #[inline]
     pub fn end_label(&self) {
         unsafe {
@@ -446,8 +446,8 @@ impl GfxCommandBuffer {
         }
     }
 
-    /// - command type: action
-    /// - supported queue type: graphics, compute
+    /// - 命令类型：action
+    /// - 支持的 queue 类型：graphics, compute
     #[inline]
     pub fn insert_label(&self, label_name: &str, label_color: glam::Vec4) {
         let name = std::ffi::CString::new(label_name).unwrap();

@@ -4,7 +4,7 @@ use ash::vk;
 
 use crate::gfx::Gfx;
 
-// Sampler descriptor
+// Sampler 描述符
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct GfxSamplerDesc {
     pub mag_filter: vk::Filter,
@@ -34,7 +34,7 @@ impl Default for GfxSamplerDesc {
 pub struct GfxSampler {
     handle: vk::Sampler,
 }
-// new & init
+// 创建与初始化
 impl GfxSampler {
     pub fn new(desc: &GfxSamplerDesc, name: impl AsRef<str>) -> Self {
         let mut create_info = vk::SamplerCreateInfo::default()
@@ -67,7 +67,7 @@ impl GfxSampler {
         Self { handle: sampler }
     }
 }
-// getters
+// 访问器
 impl GfxSampler {
     #[inline]
     pub fn handle(&self) -> vk::Sampler {

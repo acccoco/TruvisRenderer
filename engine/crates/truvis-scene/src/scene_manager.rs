@@ -20,13 +20,13 @@ pub struct SceneManager {
 
     all_point_lights: SlotMap<LightHandle, gpu::PointLight>,
 }
-// new & init
+// 创建与初始化
 impl SceneManager {
     pub fn new() -> Self {
         Self::default()
     }
 }
-// getter
+// 访问器
 impl SceneManager {
     #[inline]
     pub fn mat_map(&self) -> &SlotMap<MaterialHandle, Material> {
@@ -152,7 +152,7 @@ impl SceneManager {
         }
     }
 }
-// tools
+// 工具函数
 impl SceneManager {
     #[inline]
     pub fn get_instance(&self, handle: InstanceHandle) -> Option<&Instance> {
@@ -194,7 +194,7 @@ impl Drop for SceneManager {
         log::info!("SceneManager dropped.");
     }
 }
-// destroy
+// 销毁
 impl SceneManager {
     pub fn destroy(self) {}
     pub fn destroy_mut(&mut self) {

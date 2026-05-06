@@ -30,7 +30,7 @@ struct Sample
     }
 
     /// 获得垂直于输入向量的单位向量
-    ///    (from "Efficient Construction of Perpendicular Vectors Without Branching")
+    ///    （来自 "Efficient Construction of Perpendicular Vectors Without Branching"）
     static float3 get_perpendicular_vector(float3 u)
     {
         float3 a = abs(u);

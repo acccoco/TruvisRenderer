@@ -1,10 +1,10 @@
-//! Shared render pass implementations.
+//! 共享 render pass 实现。
 //!
-//! Contains reusable GPU passes: real-time ray tracing, accumulation,
-//! denoising, tone-mapping (SDR), blit, resolve, and Phong shading.
+//! 包含可复用的 GPU pass：real-time ray tracing、accumulation、
+//! denoising、tone-mapping (SDR)、blit、resolve 和 Phong shading。
 //!
-//! Pipeline orchestration and GUI RenderGraph integration remain in `truvis-app`
-//! where concrete apps compose plugins and decide pass order.
+//! Pipeline 编排和 GUI RenderGraph 集成保留在 `truvis-app` 中，
+//! 由具体 app 组合 plugin 并决定 pass 顺序。
 
 pub mod accum_pass;
 pub mod blit_pass;

@@ -48,7 +48,7 @@ pub struct RenderPresent {
     need_resize: bool,
 }
 
-// new & init
+// 创建与初始化
 impl RenderPresent {
     pub fn new(
         gfx_resource_manager: &mut GfxResourceManager,
@@ -121,7 +121,7 @@ impl RenderPresent {
     }
 }
 
-// getter
+// 访问器
 impl RenderPresent {
     pub fn current_image_and_view(&self) -> (GfxImageHandle, GfxImageViewHandle) {
         let swapchain = self.swapchain.as_ref().unwrap();
@@ -147,7 +147,7 @@ impl RenderPresent {
     }
 }
 
-// update
+// 更新
 impl RenderPresent {
     /// 记录窗口的最新尺寸
     #[inline]
@@ -222,7 +222,7 @@ impl RenderPresent {
     }
 }
 
-// destroy
+// 销毁
 impl RenderPresent {
     pub fn destroy(self, gfx_resource_manager: &mut GfxResourceManager) {
         for semaphore in self.present_complete_semaphores {

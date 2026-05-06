@@ -11,7 +11,7 @@ pub struct GfxCommandPool {
     _debug_name: String,
     valid: bool,
 }
-// new & init
+// 创建与初始化
 impl GfxCommandPool {
     // TODO 使用 new_internal 简化
     #[inline]
@@ -68,7 +68,7 @@ impl GfxCommandPool {
         command_pool
     }
 }
-// destory
+// 销毁
 impl GfxCommandPool {
     pub fn destroy(&mut self) {
         let gfx_device = Gfx::get().gfx_device();
@@ -85,15 +85,15 @@ impl GfxCommandPool {
         self.valid = false;
     }
 }
-// getters
+// 访问器
 impl GfxCommandPool {
-    /// getter
+    /// 访问器
     #[inline]
     pub fn handle(&self) -> vk::CommandPool {
         self.handle
     }
 }
-// tools
+// 工具函数
 impl GfxCommandPool {
     /// 这个调用并不会释放资源，而是将 pool 内的 command buffer 设置到初始状态
     ///

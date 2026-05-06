@@ -103,7 +103,7 @@ pub struct MaterialManager {
     frame_token: FrameToken,
 }
 
-// new & init
+// 创建与初始化
 impl MaterialManager {
     pub fn new(frame_token: FrameToken) -> Self {
         let free_slots: Vec<usize> = (0..MAX_MATERIAL_COUNT).rev().collect();
@@ -119,7 +119,7 @@ impl MaterialManager {
     }
 }
 
-// destroy
+// 销毁
 impl MaterialManager {
     pub fn destroy(self) {}
 }
@@ -323,7 +323,7 @@ impl MaterialManager {
     }
 }
 
-// getter
+// 访问器
 impl MaterialManager {
     /// 获取材质在 GPU buffer 中的 slot index
     #[inline]

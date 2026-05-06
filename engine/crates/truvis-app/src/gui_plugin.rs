@@ -1,4 +1,4 @@
-//! ImGui integration as an app-owned plugin.
+//! 作为 app-owned plugin 的 ImGui 集成。
 
 use std::collections::HashMap;
 
@@ -82,8 +82,8 @@ impl GuiPlugin {
 
     pub fn ui(&self) -> &Ui {
         let ui = self.current_ui.expect("GuiPlugin::ui called outside begin_frame/end_frame");
-        // The pointer is produced by imgui::Context::new_frame and remains valid
-        // until Context::render is called by end_frame.
+        // 指针由 imgui::Context::new_frame 生成，在 end_frame 调用
+        // Context::render 之前保持有效。
         unsafe { &*ui }
     }
 

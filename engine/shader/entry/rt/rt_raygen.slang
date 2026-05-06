@@ -77,8 +77,8 @@ void sample_diffuse(
 {
     // 半球 cos 采样
     // BRDF = diffuse_color / pi
-    // pdf = cos(theta) / pi
-    // throughput = BRDF * cos(theta) / pdf = diffuse_color
+    // PDF = cos(theta) / pi
+    // throughput = BRDF * cos(theta) / PDF = diffuse_color
     const float3 local_dir = Sample::get_cos_hemisphere_sample(random_seed);
     float3 tangent, bitangent;
     Sample::create_local_coord(info.forward_normal, tangent, bitangent);
@@ -416,11 +416,11 @@ float3 eval_brdf(const HitInfo info, const float3 view_dir, const float3 light_d
         return float3(0.f);
     }
 
-    // Diffuse BRDF
+    // Diffuse BRDF 项
     const float3 diffuse_color = (1.f - info.metallic) * info.base_color;
     const float3 diffuse = diffuse_color / M_PI;
 
-    // Specular BRDF
+    // Specular BRDF 项
     const float3 h = normalize(view_dir + light_dir);
     const float reflectance = 0.8f;
     const float3 f0 = lerp(0.16 * reflectance * reflectance, info.base_color, info.metallic);
@@ -472,7 +472,7 @@ bool handle_debug_channel(const HitInfo info, uint channel, out float3 out_color
 }
 
 // ============================================================================
-// SER (Shader Execution Reordering)
+// SER（Shader Execution Reordering）
 // ============================================================================
 
 /// 计算 SER coherence hint
@@ -731,7 +731,7 @@ void main_ray_gen()
                     // MIS 权重（光源采样策略）
                     const float mis_weight = MIS::power_heuristic(env_pdf, brdf_pdf);
 
-                    // 累加 NEE 贡献: throughput * Li * brdf * cos / env_pdf * mis_weight
+                    // 累加 NEE 贡献：throughput * Li * BRDF * cos / env_pdf * mis_weight
                     const float3 nee_contrib = throughput * Li * brdf_cos / max(env_pdf, 1e-7f) * mis_weight;
                     radiance += nee_contrib;
                     nee_radiance += nee_contrib; // 调试通道 4
@@ -978,4 +978,3 @@ void main_ray_gen()
     // 输出单帧结果（累积逻辑移至单独的 accum pass）
     rt::rt_single_frame_output.Store(thread_id, float4(output_radiance, 1.f));
 }
-

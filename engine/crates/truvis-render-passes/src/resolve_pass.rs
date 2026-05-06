@@ -42,7 +42,7 @@ pub struct ResolvePassData {
     pub size: glam::Vec2,
 }
 
-/// Resolve Pass
+/// Resolve Pass 实现
 ///
 /// 功能：将指定的 image 按照给定的 offset 和 size 绘制到 color attachment
 ///
@@ -182,7 +182,7 @@ impl ResolvePass {
             None,
         );
 
-        // Push constants
+        // 写入 push constants
         cmd.cmd_push_constants(
             self.pipeline_layout.handle(),
             vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,

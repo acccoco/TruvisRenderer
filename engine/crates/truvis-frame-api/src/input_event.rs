@@ -1,4 +1,4 @@
-//! Platform input event types.
+//! 平台输入事件类型。
 
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum MouseButton {

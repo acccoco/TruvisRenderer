@@ -59,7 +59,7 @@ impl<T: DescriptorBindingLayout> GfxDescriptorSetLayout<T> {
 
     #[inline]
     pub fn destroy(self) {
-        // drop
+        // Drop 处理
     }
 }
 impl<T: DescriptorBindingLayout> Drop for GfxDescriptorSetLayout<T> {
@@ -87,7 +87,7 @@ impl<T: DescriptorBindingLayout> DebugType for GfxDescriptorSetLayout<T> {
 /// # 泛型参数
 /// - T: 实现了 ShaderBindingLayout trait 的类型，定义了具体的绑定布局
 ///
-/// # Destroy
+/// # 销毁
 ///
 /// 跟随 descriptor pool 一起销毁
 pub struct GfxDescriptorSet<T: DescriptorBindingLayout> {

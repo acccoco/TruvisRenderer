@@ -31,7 +31,7 @@ impl GfxAcceleration {
     /// 3. 查询 blas 的 compact size
     /// 4. 将 blas copy 到 compact 的 blas
     ///
-    /// # params
+    /// # 参数s
     /// - primitives 每个 geometry 的 max primitives 数量
     pub fn build_blas_sync(
         blas_inputs: &[GfxBlasInputInfo],
@@ -239,7 +239,7 @@ impl GfxAcceleration {
         drop(self)
     }
 }
-// getters
+// 访问器
 impl GfxAcceleration {
     #[inline]
     pub fn handle(&self) -> vk::AccelerationStructureKHR {

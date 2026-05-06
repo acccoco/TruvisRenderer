@@ -30,8 +30,8 @@ float2 dir_to_angle(const float3 dir)
 ///         v: [0, 1]，垂直方向（顶部为 0）
 float2 angle_to_uv(const float2 angle)
 {
-    // phi: [-pi, pi] -> [0, 1]
-    // theta: [-pi/2, pi/2] -> [1, 0]
+    // phi: [-pi, pi] 映射到 [0, 1]
+    // theta: [-pi/2, pi/2] 映射到 [1, 0]
     return float2(angle.x / M_PI * 0.5 + 0.5, 0.5 - angle.y / M_PI);
 }
 
@@ -61,8 +61,8 @@ float env_map_uniform_pdf()
 void sample_env_map_uniform(inout uint seed, out float3 out_dir, out float out_pdf)
 {
     // 均匀球面采样
-    // u1 -> phi: [0, 2*pi]
-    // u2 -> cos_theta: [-1, 1]
+    // u1 映射到 phi: [0, 2*pi]
+    // u2 映射到 cos_theta: [-1, 1]
     const float u1 = Random::rnd(seed);
     const float u2 = Random::rnd(seed);
 

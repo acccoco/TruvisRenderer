@@ -25,8 +25,8 @@ const static float NORMAL_THRESHOLD = 0.9f;
 /// 默认 entry 有效半径
 const static float DEFAULT_RADIUS = CELL_SIZE * 1.3f;
 
-/// weight = Radius / (100 * Dist + Radius)
-/// Dist = (1 - weight) / (100 * weigt) * Radius
+/// 权重公式：weight = Radius / (100 * Dist + Radius)
+/// 反推距离：Dist = (1 - weight) / (100 * weight) * Radius
 
 /// 大约 0.8R
 const static float IC_LOOKUP_THRESHOLD = 0.0123f;
@@ -129,7 +129,7 @@ namespace fn
 {
 /// 查询 Irradiance Cache
 /// @param position 查询位置
-/// @param normal 查询法线
+/// @param normal 法线 查询法线
 /// @param out_radiance [out] 输出插值后的 outgoing radiance
 /// @param weight [out] 输出总权重
 /// @param max_weight_entry_index [out] 输出最大权重的 entry 索引，用于后续 update
@@ -293,7 +293,7 @@ static void update(
 
 /// 插入新的 entry 到 Irradiance Cache
 /// @param position entry 位置
-/// @param normal entry 法线
+/// @param normal 法线 entry 法线
 /// @param radiance 初始 outgoing radiance
 /// @return 成功返回 true，失败（entry 池满）返回 false
 static bool insert(

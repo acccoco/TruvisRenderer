@@ -46,7 +46,7 @@ pub struct PushConstants {
     frame: i32,
     /// 帧率
     frame_rate: f32,
-    /// padding
+    /// 对齐填充
     __padding__: [f32; 2],
 }
 

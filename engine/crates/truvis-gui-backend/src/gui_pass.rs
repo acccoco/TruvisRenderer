@@ -44,7 +44,7 @@ pub struct GuiPass {
     pipeline: GfxGraphicsPipeline,
     pipeline_layout: Rc<GfxPipelineLayout>,
 }
-// new & init
+// 创建与初始化
 impl GuiPass {
     pub fn new(render_descriptor_sets: &GlobalDescriptorSets, color_format: vk::Format) -> Self {
         let pipeline_layout = Rc::new(GfxPipelineLayout::new(
@@ -93,7 +93,7 @@ impl GuiPass {
         }
     }
 }
-// draw
+// 绘制
 impl GuiPass {
     pub fn draw(
         &self,

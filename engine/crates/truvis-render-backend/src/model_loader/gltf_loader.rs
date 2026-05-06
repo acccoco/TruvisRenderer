@@ -211,7 +211,7 @@ impl GltfLoader
         let base_color_tex = pbr.base_color_texture().map(|info| self.create_texture(info, true));
 
         // 读取 metallic roughness texture
-        // metallic 位于 Blue 通道；Roughness 位于 Green 通道
+        // 金属度 位于 Blue 通道；Roughness 位于 Green 通道
         // 线性编码
         let mr_tex = pbr.metallic_roughness_texture().map(|info| self.create_texture(info, false));
 

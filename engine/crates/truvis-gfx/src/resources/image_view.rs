@@ -19,7 +19,7 @@ impl DebugType for GfxImageView {
         self.handle
     }
 }
-// new & init
+// 创建与初始化
 impl GfxImageView {
     pub fn new(image: vk::Image, view_desc: GfxImageViewDesc, name: impl AsRef<str>) -> Self {
         let gfx_device = Gfx::get().gfx_device();
@@ -50,7 +50,7 @@ impl GfxImageView {
         image_view
     }
 }
-// destory
+// 销毁
 impl GfxImageView {
     pub fn destroy(mut self) {
         self.destroy_mut();
@@ -68,9 +68,9 @@ impl Drop for GfxImageView {
         debug_assert!(self.handle.is_null());
     }
 }
-// getters
+// 访问器
 impl GfxImageView {
-    /// getter
+    /// 访问器
     #[inline]
     pub fn handle(&self) -> vk::ImageView {
         self.handle
@@ -116,8 +116,8 @@ impl GfxImageViewDesc {
     /// - `format`: 图像格式（可重解释）
     /// - `view_type`: 视图类型（2D, 3D, Cube, Array 等）
     /// - `aspect_mask`: 图像 aspect（COLOR, DEPTH, STENCIL）
-    /// - `mip_range`: (base_mip_level, level_count)
-    /// - `layer_range`: (base_array_layer, layer_count)
+    /// - `mip_range`：(base_mip_level, level_count)
+    /// - `layer_range`：(base_array_layer, layer_count)
     pub fn new(
         format: vk::Format,
         view_type: vk::ImageViewType,

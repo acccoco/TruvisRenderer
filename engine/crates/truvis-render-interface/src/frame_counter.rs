@@ -28,7 +28,7 @@ pub struct FrameCounter {
     frame_limit: f32,
 }
 
-// new & init
+// 创建与初始化
 impl FrameCounter {
     pub fn new(init_frame_id: u64, frame_limit: f32) -> Self {
         Self {
@@ -38,7 +38,7 @@ impl FrameCounter {
     }
 }
 
-// update
+// 更新
 impl FrameCounter {
     #[inline]
     pub fn next_frame(&mut self) {
@@ -46,7 +46,7 @@ impl FrameCounter {
     }
 }
 
-// getters
+// 访问器
 impl FrameCounter {
     const FIF_COUNT: usize = 3;
     #[inline]

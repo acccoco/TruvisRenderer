@@ -1,6 +1,6 @@
-//! Render thread main loop.
+//! 渲染线程主循环。
 //!
-//! Drives a [`FrameApp`] through its public API only.
+//! 只通过公开 API 驱动 [`FrameApp`]。
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -10,7 +10,7 @@ use truvis_frame_api::frame_app::FrameApp;
 
 use crate::shared::{RenderInitMsg, SharedState, unpack_size};
 
-/// Render thread entry point.
+/// 渲染线程入口。
 pub fn render_loop(shared: Arc<SharedState>, init_msg: RenderInitMsg, mut app: Box<dyn FrameApp>) {
     tracy_client::set_thread_name!("RenderThread");
 

@@ -4,7 +4,7 @@ fn main() {
         .parent()
         .unwrap() // tools/
         .parent()
-        .unwrap(); // workspace root
+        .unwrap(); // workspace 根目录
     println!("cargo:rustc-env=TRUVIS_WORKSPACE_ROOT={}", root.display());
     println!("cargo:rerun-if-changed=../../map.toml");
 }

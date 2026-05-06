@@ -258,14 +258,14 @@ pub struct RealtimeRtPassData {
     pub single_frame_output_view: GfxImageViewHandle,
     pub single_frame_extent: vk::Extent2D,
 
-    // ========== GBuffer ==========
-    /// GBufferA: normal.xyz + roughness
+    // ========== GBuffer 数据 ==========
+    /// GBufferA：法线 normal.xyz + 粗糙度 roughness
     pub gbuffer_a: GfxImageHandle,
     pub gbuffer_a_view: GfxImageViewHandle,
-    /// GBufferB: world_position.xyz + linear_depth
+    /// GBufferB：世界位置 world_position.xyz + 线性深度 linear_depth
     pub gbuffer_b: GfxImageHandle,
     pub gbuffer_b_view: GfxImageViewHandle,
-    /// GBufferC: albedo.rgb + metallic
+    /// GBufferC：反照率 albedo.rgb + 金属度 metallic
     pub gbuffer_c: GfxImageHandle,
     pub gbuffer_c_view: GfxImageViewHandle,
 }
@@ -285,22 +285,22 @@ struct RealtimeRtDescriptorBinding {
     #[count = 1]
     _rt_single_frame_output: (),
 
-    // ========== GBuffer ==========
-    /// GBufferA: normal.xyz + roughness
+    // ========== GBuffer 数据 ==========
+    /// GBufferA：法线 normal.xyz + 粗糙度 roughness
     #[binding = 2]
     #[descriptor_type = "STORAGE_IMAGE"]
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
     _gbuffer_a: (),
 
-    /// GBufferB: world_position.xyz + linear_depth
+    /// GBufferB：世界位置 world_position.xyz + 线性深度 linear_depth
     #[binding = 3]
     #[descriptor_type = "STORAGE_IMAGE"]
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
     _gbuffer_b: (),
 
-    /// GBufferC: albedo.rgb + metallic
+    /// GBufferC：反照率 albedo.rgb + 金属度 metallic
     #[binding = 4]
     #[descriptor_type = "STORAGE_IMAGE"]
     #[stage = "RAYGEN_KHR"]
@@ -464,7 +464,7 @@ impl RealtimeRtPass {
                             .image_view(rt_image_view),
                     ],
                 ),
-                // GBuffer bindings
+                // GBuffer 绑定
                 RealtimeRtDescriptorBinding::gbuffer_a().write_image(
                     vk::DescriptorSet::null(),
                     0,
@@ -594,7 +594,7 @@ impl Drop for RealtimeRtPass {
 }
 
 mod helper {
-    /// round x up to a multiple of align
+    /// 将 x 向上对齐到 align 的倍数
     pub fn align_up(x: u32, align: u32) -> u32 {
         assert!(align.is_power_of_two());
 
@@ -612,7 +612,7 @@ pub struct RealtimeRtRgPass<'a> {
     pub single_frame_image: RgImageHandle,
     pub single_frame_extent: vk::Extent2D,
 
-    // ========== GBuffer ==========
+    // ========== GBuffer 数据 ==========
     pub gbuffer_a: RgImageHandle,
     pub gbuffer_b: RgImageHandle,
     pub gbuffer_c: RgImageHandle,

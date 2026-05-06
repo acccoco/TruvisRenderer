@@ -154,10 +154,10 @@ impl GfxDevice {
     fn basic_device_exts() -> Vec<&'static CStr> {
         let mut exts = vec![];
 
-        // swapchain
+        // swapchain 扩展
         exts.push(ash::khr::swapchain::NAME);
 
-        // dynamic rendering
+        // dynamic rendering 扩展
         exts.append(&mut vec![
             // 已经提升到 core-1.2.0
             // ash::khr::depth_stencil_resolve::NAME,
@@ -165,7 +165,7 @@ impl GfxDevice {
             ash::khr::dynamic_rendering::NAME,
         ]);
 
-        // RayTracing 相关的
+        // RayTracing 相关扩展
         exts.append(&mut vec![
             ash::khr::acceleration_structure::NAME, // 主要的 ext
             // 已经提升到 core-1.2.0
@@ -178,17 +178,17 @@ impl GfxDevice {
             ash::khr::deferred_host_operations::NAME,
         ]);
 
-        // Shader Execution Reordering (NVIDIA)
+        // Shader Execution Reordering（NVIDIA）
         exts.push(ash::nv::ray_tracing_invocation_reorder::NAME);
 
-        // push descriptor
+        // push descriptor 扩展
         exts.push(ash::khr::push_descriptor::NAME);
 
         exts
     }
 }
 
-// getters
+// 访问器
 impl GfxDevice {
     #[inline]
     pub fn vk_handle(&self) -> vk::Device {
@@ -216,7 +216,7 @@ impl GfxDevice {
     }
 }
 
-// tools
+// 工具函数
 impl GfxDevice {
     #[inline]
     pub fn write_descriptor_sets(&self, writes: &[GfxWriteDescriptorSet]) {

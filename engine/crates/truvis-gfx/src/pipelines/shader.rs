@@ -5,7 +5,7 @@ use ash::vk;
 
 use crate::{foundation::debug_messenger::DebugType, gfx::Gfx};
 
-/// # Destroy
+/// # 销毁
 ///
 /// 需要手动调用 `destroy` 方法来释放资源。
 pub struct GfxShaderModule {
@@ -15,7 +15,7 @@ pub struct GfxShaderModule {
     destroyed: bool,
 }
 impl GfxShaderModule {
-    /// # param
+    /// # 参数
     /// * path - spv shader 文件路径
     pub fn new(path: &std::path::Path) -> Self {
         let gfx_device = Gfx::get().gfx_device();

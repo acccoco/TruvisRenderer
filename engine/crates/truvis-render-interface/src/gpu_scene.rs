@@ -42,7 +42,7 @@ struct GpuSceneBuffers {
     // TODO 使用 frame id 来标记是否过期，scene manager 里面也需要有相应的标记
     tlas: Option<GfxAcceleration>,
 }
-// init & destroy
+// 初始化与销毁
 impl GpuSceneBuffers {
     fn new(frame_label: FrameLabel) -> Self {
         let max_light_cnt = 512;
@@ -111,7 +111,7 @@ pub struct GpuScene {
     // TODO uv checker texture handle 不应该放在 GPU scene 里面
     uv_checker_texture: (GfxImageHandle, GfxImageViewHandle),
 }
-// getter
+// 访问器
 impl GpuScene {
     #[inline]
     pub fn tlas(&self, frame_label: FrameLabel) -> Option<&GfxAcceleration> {
@@ -123,7 +123,7 @@ impl GpuScene {
         &self.gpu_scene_buffers[*frame_label].scene_buffer
     }
 }
-// new & init
+// 创建与初始化
 impl GpuScene {
     pub fn new(gfx_resource_manager: &mut GfxResourceManager, bindless_manager: &mut BindlessManager) -> Self {
         let sky_path = TruvisPath::resources_path_str("sky.jpg");
@@ -166,14 +166,14 @@ impl GpuScene {
 impl Drop for GpuScene {
     fn drop(&mut self) {}
 }
-// destroy
+// 销毁
 impl GpuScene {
     pub fn destroy(self) {}
     pub fn destroy_mut(&mut self) {}
 }
-// tools
+// 工具函数
 impl GpuScene {
-    /// # Phase: Before Render (基于 SceneData2)
+    /// # 阶段：Before Render (基于 SceneData2)
     ///
     /// 将已经准备好的 GPU 格式的场景数据写入 Device Buffer 中。
     /// 此方法不依赖 SceneManager，仅使用 SceneData2 中的数据。
@@ -462,7 +462,7 @@ impl GpuScene {
     ) -> vk::AccelerationStructureInstanceKHR {
         let mesh = &scene_data.all_meshes[instance.mesh_index];
         vk::AccelerationStructureInstanceKHR {
-            // 3x4 row-major matrix
+            // 3x4 row-major 矩阵
             transform: helper::get_rt_matrix(&instance.transform),
             instance_custom_index_and_mask: vk::Packed24_8::new(custom_idx, 0xFF),
             instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(
@@ -550,7 +550,7 @@ mod helper {
         let c3 = &trans.z_axis;
         let c4 = &trans.w_axis;
 
-        // 3x4 matrix, row-major order
+        // 3x4 矩阵，row-major 顺序
         vk::TransformMatrixKHR {
             matrix: [
                 c1.x, c2.x, c3.x, c4.x, // row 1

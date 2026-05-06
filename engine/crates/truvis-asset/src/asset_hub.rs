@@ -39,7 +39,7 @@ pub struct AssetHub {
     upload_manager: AssetUploadManager,
 }
 
-// new & init
+// 创建与初始化
 impl AssetHub {
     pub fn new(gfx_resource_manager: &mut GfxResourceManager, bindless_manager: &mut BindlessManager) -> Self {
         let fallback_texture = Self::create_fallback_texture(gfx_resource_manager, bindless_manager);
@@ -60,7 +60,7 @@ impl AssetHub {
         gfx_resource_manager: &mut GfxResourceManager,
         bindless_manager: &mut BindlessManager,
     ) -> AssetTexture {
-        // 1. Create Image (1x1 Pink)
+        // 1. 创建 Image（1x1 粉色）
         let pixels: [u8; 4] = [255, 0, 255, 255];
         let image = GfxImage::from_rgba8(1, 1, &pixels, "FallbackTexture");
         let image_format = image.format();
@@ -83,7 +83,7 @@ impl AssetHub {
     }
 }
 
-// destroy
+// 销毁
 impl AssetHub {
     pub fn destroy(self, gfx_resource_manager: &mut GfxResourceManager, bindless_manager: &mut BindlessManager) {
         bindless_manager.unregister_srv(self.fallback_texture.view_handle);
@@ -91,7 +91,7 @@ impl AssetHub {
     }
 }
 
-// tools
+// 工具函数
 impl AssetHub {
     /// 请求加载纹理
     ///

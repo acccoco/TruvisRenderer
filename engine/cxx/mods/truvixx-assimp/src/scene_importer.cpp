@@ -218,7 +218,7 @@ void SceneImporter::process_mesh_info(const aiMesh* mesh, MeshInfo& out_mesh)
         }
     }
 
-    // indices
+    // 索引
     out_mesh.indices.reserve(static_cast<size_t>(face_count) * 3);
     for (unsigned int i = 0; i < face_count; ++i)
     {
@@ -257,13 +257,13 @@ void SceneImporter::process_material(const aiMaterial* material, MaterialData& o
         return {};
     };
 
-    // name
+    // 名称
     if (material->Get(AI_MATKEY_NAME, out_str) == AI_SUCCESS)
     {
         out_material.name = out_str.C_Str();
     }
 
-    // base color
+    // 基础颜色
     if (material->Get(AI_MATKEY_COLOR_DIFFUSE, out_color) == AI_SUCCESS)
     {
         out_material.base_color.r = out_color.r;
@@ -272,19 +272,19 @@ void SceneImporter::process_material(const aiMaterial* material, MaterialData& o
         out_material.base_color.a = out_color.a;
     }
 
-    // roughness
+    // 粗糙度
     if (material->Get(AI_MATKEY_ROUGHNESS_FACTOR, out_real) == AI_SUCCESS)
     {
         out_material.roughness = out_real;
     }
 
-    // metallic
+    // 金属度
     if (material->Get(AI_MATKEY_REFLECTIVITY, out_real) == AI_SUCCESS)
     {
         out_material.metallic = out_real;
     }
 
-    // emissive color
+    // 自发光颜色
     if (material->Get(AI_MATKEY_COLOR_EMISSIVE, out_color) == AI_SUCCESS)
     {
         out_material.emissive.r = out_color.r;
@@ -293,7 +293,7 @@ void SceneImporter::process_material(const aiMaterial* material, MaterialData& o
         out_material.emissive.a = out_color.a;
     }
 
-    // opacity
+    // 不透明度
     if (material->Get(AI_MATKEY_OPACITY, out_real) == AI_SUCCESS)
     {
         out_material.opacity = out_real;

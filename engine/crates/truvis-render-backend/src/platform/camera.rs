@@ -26,7 +26,7 @@ impl Camera {
     const K_PITCH: f32 = 89.5;
 }
 
-// getter
+// 访问器
 impl Camera {
     #[inline]
     fn yaw_rad(&self) -> f32 {

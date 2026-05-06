@@ -16,7 +16,7 @@ pub struct GfxQueueFamily {
     pub queue_count: u32,
 }
 
-/// # destroy
+/// # 销毁
 ///
 /// GfxQueueFamily 在 GfxDevice 销毁时会被销毁
 pub struct GfxCommandQueue {
@@ -33,7 +33,7 @@ impl DebugType for GfxCommandQueue {
     }
 }
 
-// getter
+// 访问器
 impl GfxCommandQueue {
     #[inline]
     pub fn queue_family(&self) -> &GfxQueueFamily {
@@ -46,7 +46,7 @@ impl GfxCommandQueue {
     }
 }
 
-// tools
+// 工具函数
 impl GfxCommandQueue {
     pub fn submit(&self, batches: Vec<GfxSubmitInfo>, fence: Option<GfxFence>) {
         unsafe {

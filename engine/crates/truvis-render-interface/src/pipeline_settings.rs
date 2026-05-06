@@ -166,7 +166,7 @@ pub struct AccumData {
     accum_frames_num: usize,
 }
 impl AccumData {
-    /// call phase: BeforeRender-CollectData
+    /// 调用阶段：BeforeRender-CollectData
     pub fn update_accum_frames(&mut self, camera_pos: glam::Vec3, camera_dir: glam::Vec3) {
         if self.last_camera_dir != camera_dir || self.last_camera_pos != camera_pos {
             self.accum_frames_num = 0;

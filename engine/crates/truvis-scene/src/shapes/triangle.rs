@@ -11,7 +11,7 @@ use truvis_render_interface::geometry::RtGeometry;
 /// ```text
 ///          y^
 ///           |
-///           C (red)
+///           C (红色)
 ///          /|\
 ///         / | \
 ///        /  |  \
@@ -19,7 +19,7 @@ use truvis_render_interface::geometry::RtGeometry;
 ///      /    |    \
 ///     /     |     \
 ///    A------+------B---->x
-/// (green)   |   (blue)
+/// (绿色)   |   (蓝色)
 ///           |
 /// ```
 pub struct TriangleSoA {}

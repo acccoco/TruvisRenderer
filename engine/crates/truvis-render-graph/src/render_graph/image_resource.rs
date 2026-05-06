@@ -51,7 +51,7 @@ impl Default for RgImageDesc {
     }
 }
 
-// new & init & builder
+// 创建与初始化 & builder
 impl RgImageDesc {
     /// 创建 2D 图像描述
     #[inline]
@@ -155,7 +155,7 @@ pub struct RgImageResource {
     pub version: u32,
 }
 
-// new & init
+// 创建与初始化
 impl RgImageResource {
     /// 创建导入的图像资源
     ///
@@ -200,7 +200,7 @@ impl RgImageResource {
     }
 }
 
-// getters
+// 访问器
 impl RgImageResource {
     /// 根据格式推断 aspect flags
     #[inline]

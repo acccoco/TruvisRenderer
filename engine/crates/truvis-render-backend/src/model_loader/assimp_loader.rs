@@ -34,7 +34,7 @@ pub struct AssimpSceneLoader {
 }
 
 impl AssimpSceneLoader {
-    /// # return
+    /// # 返回
     /// 返回整个场景的所有 instance id
     pub fn load_scene(
         model_file: &std::path::Path,

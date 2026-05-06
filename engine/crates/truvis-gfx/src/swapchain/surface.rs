@@ -37,7 +37,7 @@ impl GfxSurface {
     }
 }
 
-// getters
+// 访问器
 impl GfxSurface {
     /// 实时获取 surface 的能力信息
     pub fn get_capabilities(&self) -> vk::SurfaceCapabilitiesKHR {

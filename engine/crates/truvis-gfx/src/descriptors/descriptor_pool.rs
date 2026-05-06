@@ -51,7 +51,7 @@ impl GfxDescriptorPool {
 
     #[inline]
     pub fn destroy(self) {
-        // drop
+        // Drop 处理
     }
 }
 impl Drop for GfxDescriptorPool {

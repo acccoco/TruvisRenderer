@@ -25,7 +25,7 @@ mod resource_manager;
 mod resource_state;
 mod semaphore_info;
 
-// Re-exports
+// 重新导出
 pub use barrier::{BufferBarrierDesc, PassBarriers, RgImageBarrierDesc};
 pub use buffer_resource::{RgBufferDesc, RgBufferResource, RgBufferSource};
 pub use executor::{CompiledGraph, RenderGraphBuilder};

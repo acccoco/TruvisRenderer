@@ -11,11 +11,11 @@ use ash::vk;
 /// 描述图像在某个 Pass 中的使用方式，用于自动计算 barrier。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RgImageState {
-    /// Pipeline stage
+    /// Pipeline stage 标志
     pub stage: vk::PipelineStageFlags2,
-    /// Access mask
+    /// Access mask 标志
     pub access: vk::AccessFlags2,
-    /// Image layout
+    /// Image layout 状态
     pub layout: vk::ImageLayout,
 }
 
@@ -188,9 +188,9 @@ impl RgImageState {
 /// 描述缓冲区在某个 Pass 中的使用方式。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RgBufferState {
-    /// Pipeline stage
+    /// Pipeline stage 标志
     pub stage: vk::PipelineStageFlags2,
-    /// Access mask
+    /// Access mask 标志
     pub access: vk::AccessFlags2,
 }
 

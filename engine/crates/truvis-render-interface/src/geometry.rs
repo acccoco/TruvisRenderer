@@ -20,7 +20,7 @@ pub struct RtGeometry {
     pub index_buffer: GfxIndex32Buffer,
 }
 
-// getters
+// 访问器
 impl RtGeometry {
     #[inline]
     pub fn index_type() -> vk::IndexType {
@@ -33,7 +33,7 @@ impl RtGeometry {
     }
 }
 
-// tools
+// 工具函数
 impl RtGeometry {
     pub fn get_blas_geometry_info(&self) -> GfxBlasInputInfo<'_> {
         let geometry_triangle = vk::AccelerationStructureGeometryTrianglesDataKHR {

@@ -72,7 +72,7 @@ pub struct GlobalDescriptorSets {
 
     _descriptor_pool: GfxDescriptorPool,
 }
-// new & init
+// 创建与初始化
 impl GlobalDescriptorSets {
     pub fn new() -> Self {
         let descriptor_pool = Self::init_descriptor_pool();
@@ -152,7 +152,7 @@ impl Default for GlobalDescriptorSets {
         Self::new()
     }
 }
-// destroy
+// 销毁
 impl GlobalDescriptorSets {
     pub fn destroy_mut(&mut self) {
         // descriptor sets 跟随 pool 一起销毁
@@ -166,7 +166,7 @@ impl Drop for GlobalDescriptorSets {
         self.destroy_mut();
     }
 }
-// getters
+// 访问器
 impl GlobalDescriptorSets {
     #[inline]
     pub fn sampler_set(&self) -> &GfxDescriptorSet<StaticDescriptorBinding> {

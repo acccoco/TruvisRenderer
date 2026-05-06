@@ -1,13 +1,12 @@
-//! Application framework layer.
+//! 应用框架层。
 //!
-//! Re-exports contracts from [`truvis_frame_api`] and runtime from [`truvis_frame_runtime`],
-//! plus demo apps, render passes, and the GUI plugin integration.
+//! 重新导出 [`truvis_frame_api`] 的契约与 [`truvis_frame_runtime`] 的运行时，
+//! 并提供 demo app、render pass 和 GUI plugin 集成。
 //!
-//! **New code** should import from [`truvis_frame_api`] (contracts) or
-//! [`truvis_frame_runtime`] (runtime) directly. This crate provides
-//! concrete app state that owns GUI, camera/input state, overlays, and render
-//! pipeline plugins. `FrameAppShell` owns `BaseApp` and adapts that state to
-//! the render-loop `FrameApp` contract.
+//! **新代码** 应直接从 [`truvis_frame_api`]（契约）或
+//! [`truvis_frame_runtime`]（运行时）导入。这个 crate 提供具体 app state，
+//! 由 app state 持有 GUI、camera/input state、overlay 和 render pipeline plugin。
+//! `FrameAppShell` 持有 `BaseApp`，并将该 state 适配到 render-loop `FrameApp` 契约。
 
 pub mod camera_controller;
 pub mod gui_plugin;

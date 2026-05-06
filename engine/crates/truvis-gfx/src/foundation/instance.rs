@@ -74,7 +74,7 @@ impl GfxInstance {
     }
 }
 
-// getter
+// 访问器
 impl GfxInstance {
     #[inline]
     pub fn ash_instance(&self) -> &ash::Instance {
@@ -125,7 +125,7 @@ impl GfxInstance {
 
     /// instance 所需的所有 extension
     ///
-    /// # return
+    /// # 返回
     /// instance 所需的，且受支持的 extension
     fn get_extensions(vk_entry: &ash::Entry, extra_instance_exts: &[&'static CStr]) -> Vec<*const c_char> {
         let all_ext_props = unsafe { vk_entry.enumerate_instance_extension_properties(None).unwrap() };

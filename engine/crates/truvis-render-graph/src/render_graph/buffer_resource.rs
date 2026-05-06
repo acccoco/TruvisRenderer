@@ -22,7 +22,7 @@ impl Default for RgBufferDesc {
     }
 }
 
-// new & init
+// 创建与初始化
 impl RgBufferDesc {
     /// 创建新描述
     #[inline]
@@ -53,7 +53,7 @@ pub struct RgBufferResource {
     pub version: u32,
 }
 
-// new & init
+// 创建与初始化
 impl RgBufferResource {
     /// 创建导入的缓冲区资源
     pub fn imported(name: impl Into<String>, buffer_handle: GfxBufferHandle, initial_state: RgBufferState) -> Self {
@@ -76,7 +76,7 @@ impl RgBufferResource {
     }
 }
 
-// getter
+// 访问器
 impl RgBufferResource {
     /// 获取物理 buffer handle（仅对导入资源有效）
     #[inline]

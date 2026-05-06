@@ -74,9 +74,9 @@ impl AssetUploadManager {
     /// 1. 创建 HostVisible 的 Staging Buffer 并写入像素数据。
     /// 2. 创建 DeviceLocal 的目标 Image。
     /// 3. 分配并录制 Command Buffer:
-    ///    - Barrier: Image Undefined -> TransferDst
-    ///    - Copy: Buffer -> Image
-    ///    - Barrier: Image TransferDst -> ShaderReadOnly
+    ///    - Barrier：Image 从 Undefined 转到 TransferDst
+    ///    - Copy：从 Buffer 复制到 Image
+    ///    - Barrier：Image 从 TransferDst 转到 ShaderReadOnly
     /// 4. 提交到 Transfer Queue，并设置 Timeline Semaphore 的 Signal 操作。
     pub fn upload_texture(&mut self, data: RawAssetData) -> anyhow::Result<()> {
         let _span = tracy_client::span!("upload_texture");

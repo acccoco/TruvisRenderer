@@ -15,7 +15,7 @@ pub struct GfxIndexBuffer<T: GfxIndexType> {
     _phantom: std::marker::PhantomData<T>,
 }
 impl_derive_buffer!(GfxIndexBuffer<T: GfxIndexType>, GfxBuffer, inner);
-// new & init
+// 创建与初始化
 impl<T: GfxIndexType> GfxIndexBuffer<T> {
     pub fn new_device_local(index_cnt: usize, debug_name: impl AsRef<str>) -> Self {
         Self::new(index_cnt, false, debug_name)
@@ -52,7 +52,7 @@ impl<T: GfxIndexType> GfxIndexBuffer<T> {
         index_buffer
     }
 }
-// getter
+// 访问器
 impl<T: GfxIndexType> GfxIndexBuffer<T> {
     #[inline]
     pub fn index_type() -> vk::IndexType {

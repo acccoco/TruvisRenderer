@@ -38,21 +38,20 @@ use crate::platform::camera::Camera;
 use crate::platform::timer::Timer;
 use crate::present::render_present::RenderPresent;
 
-/// Rendering backend core.
+/// 渲染后端核心。
 ///
-/// Exposes state exclusively through lifecycle methods that return typed Ctx structs.
-/// External code drives the lifecycle; RenderBackend does not know about Plugin,
-/// GUI, or app orchestration concepts.
+/// 只通过返回类型化 Ctx 结构的生命周期方法暴露状态。
+/// 生命周期由外部代码驱动；RenderBackend 不感知 Plugin、GUI 或 app 编排概念。
 ///
-/// # Lifecycle call order
+/// # 生命周期调用顺序
 /// ```ignore
 /// render_backend.begin_frame();
 /// let update_ctx = render_backend.update_phase();
-/// // ... use update_ctx for app/plugin CPU update ...
+/// // ... 使用 update_ctx 执行 app/plugin CPU 更新 ...
 /// drop(update_ctx);
 /// render_backend.prepare(camera);
 /// let render_ctx = render_backend.render_phase();
-/// // ... app/plugin render graph work ...
+/// // ... 执行 app/plugin render graph 工作 ...
 /// drop(render_ctx);
 /// render_backend.present();
 /// render_backend.end_frame();
@@ -72,12 +71,12 @@ pub struct RenderBackend {
 }
 
 // ---------------------------------------------------------------------------
-// Lifecycle Context Types
+// 生命周期上下文类型
 // ---------------------------------------------------------------------------
 
-/// Update phase context — borrows RenderBackend fields needed for CPU-side updates.
+/// Update 阶段上下文，借用 CPU 端更新需要的 RenderBackend 字段。
 ///
-/// Alive while the app performs update work; RenderBackend is locked until dropped.
+/// 在 app 执行 update 工作期间保持存活；drop 前 RenderBackend 会保持借用锁定。
 pub struct RenderBackendUpdateCtx<'a> {
     pub world: &'a mut World,
     pub pipeline_settings: &'a mut PipelineSettings,
@@ -87,16 +86,16 @@ pub struct RenderBackendUpdateCtx<'a> {
     pub delta_time_s: f32,
 }
 
-/// Render phase context — shared (read-only) borrow of RenderBackend state for GPU command recording.
+/// Render 阶段上下文，对 GPU 命令录制需要的 RenderBackend 状态进行只读共享借用。
 pub struct RenderBackendRenderCtx<'a> {
     pub render_world: &'a RenderWorld,
     pub render_present: &'a RenderPresent,
     pub timeline: &'a GfxSemaphore,
 }
 
-/// Init phase context — one-time setup after window/surface creation.
+/// Init 阶段上下文，用于 window/surface 创建后的一次性设置。
 ///
-/// Does NOT contain camera; camera belongs to the concrete app.
+/// 不包含 camera；camera 属于具体 app。
 pub struct RenderBackendInitCtx<'a> {
     pub world: &'a mut World,
     pub render_world: &'a mut RenderWorld,
@@ -105,13 +104,13 @@ pub struct RenderBackendInitCtx<'a> {
     pub render_present: &'a RenderPresent,
 }
 
-/// Swapchain resize context — produced only when swapchain was actually rebuilt.
+/// Swapchain resize 上下文，仅在 swapchain 实际重建时产生。
 pub struct RenderBackendResizeCtx<'a> {
     pub render_world: &'a mut RenderWorld,
     pub render_present: &'a RenderPresent,
 }
 
-// new & init
+// 创建与初始化
 impl RenderBackend {
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
         let _span = tracy_client::span!("RenderBackend::new");
@@ -202,7 +201,7 @@ impl RenderBackend {
             .unwrap_or(vk::Format::UNDEFINED)
     }
 }
-// destroy
+// 销毁
 impl RenderBackend {
     pub fn destroy(mut self) {
         Gfx::get().wait_idel();
@@ -227,10 +226,10 @@ impl RenderBackend {
     }
 }
 // ---------------------------------------------------------------------------
-// Lifecycle methods (public API)
+// 生命周期方法（public API）
 // ---------------------------------------------------------------------------
 impl RenderBackend {
-    /// Self-contained frame start: timer tick, FIF wait, resource cleanup, bindless advance, asset update.
+    /// 自包含的帧开始流程：timer tick、FIF 等待、资源清理、bindless 推进和资产更新。
     pub fn begin_frame(&mut self) {
         let _span = tracy_client::span!("RenderBackend::begin_frame");
         self.timer.tick();
@@ -255,14 +254,14 @@ impl RenderBackend {
         let frame_token = self.render_world.frame_counter.frame_token();
         self.render_world.bindless_manager.begin_frame(frame_token);
 
-        // Asset update internalized into begin_frame
+        // 资产更新已内聚到 begin_frame 中
         self.world
             .asset_hub
             .update(&mut self.render_world.gfx_resource_manager, &mut self.render_world.bindless_manager);
     }
 
-    /// Perform internal frame-settings sync + acquire swapchain image, then return
-    /// a context for external CPU-side updates.
+    /// 执行内部 frame-settings 同步并获取 swapchain image，
+    /// 然后返回供外部 CPU 端更新使用的上下文。
     pub fn update_phase(&mut self) -> RenderBackendUpdateCtx<'_> {
         let _span = tracy_client::span!("RenderBackend::update_phase");
 
@@ -279,7 +278,7 @@ impl RenderBackend {
         }
     }
 
-    /// Accumulate frame tracking + upload GPU scene/descriptor data.
+    /// 更新累积帧跟踪，并上传 GPU scene/descriptor 数据。
     pub fn prepare(&mut self, camera: &Camera) {
         let _span = tracy_client::span!("RenderBackend::prepare");
 
@@ -290,7 +289,7 @@ impl RenderBackend {
         self.update_perframe_descriptor_set();
     }
 
-    /// Shared borrow — RenderBackend state is read-only during render phase.
+    /// 共享借用：render 阶段中 RenderBackend 状态只读。
     pub fn render_phase(&self) -> RenderBackendRenderCtx<'_> {
         RenderBackendRenderCtx {
             render_world: &self.render_world,
@@ -299,23 +298,23 @@ impl RenderBackend {
         }
     }
 
-    /// Submit present command.
+    /// 提交 present 命令。
     pub fn present(&mut self) {
         self.render_present.as_mut().unwrap().present_image();
     }
 
-    /// Advance frame counter.
+    /// 推进帧计数器。
     pub fn end_frame(&mut self) {
         let _span = tracy_client::span!("RenderBackend::end_frame");
         self.render_world.frame_counter.next_frame();
     }
 
-    /// Query whether enough time has elapsed for the next frame.
+    /// 查询是否已经到达下一帧的渲染时间。
     pub fn time_to_render(&self) -> bool {
         self.render_world.frame_counter.frame_delta_time_limit_us() < self.timer.elapsed_since_tick().as_micros() as f32
     }
 
-    /// Handle window resize. Returns `Some(ctx)` only when swapchain was actually rebuilt.
+    /// 处理窗口 resize。只有实际重建 swapchain 时才返回 `Some(ctx)`。
     pub fn handle_resize(&mut self, new_size: [u32; 2]) -> Option<RenderBackendResizeCtx<'_>> {
         let render_present = self.render_present.as_mut().unwrap();
         render_present.update_window_size(new_size);
@@ -332,7 +331,7 @@ impl RenderBackend {
         })
     }
 
-    /// One-time init after window/surface creation. Returns a context for plugin initialization.
+    /// window/surface 创建后的一次性初始化。返回用于 plugin 初始化的上下文。
     pub fn init_after_window(
         &mut self,
         raw_display_handle: RawDisplayHandle,
@@ -360,7 +359,7 @@ impl RenderBackend {
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// 内部辅助函数
 // ---------------------------------------------------------------------------
 impl RenderBackend {
     fn acquire_image(&mut self) {

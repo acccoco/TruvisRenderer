@@ -11,32 +11,32 @@ pub struct CubeSoA {}
 impl CubeSoA {
     // 24 个顶点（每个面 4 个顶点，6 个面）
     const POSITIONS: [glam::Vec3; 24] = [
-        // Top face (Y+)
+        // 顶面 (Y+)
         glam::vec3(0.5, 0.5, -0.5),  // 0: TOP_A
         glam::vec3(-0.5, 0.5, -0.5), // 1: TOP_B
         glam::vec3(-0.5, 0.5, 0.5),  // 2: TOP_C
         glam::vec3(0.5, 0.5, 0.5),   // 3: TOP_D
-        // Bottom face (Y-)
+        // 底面 (Y-)
         glam::vec3(0.5, -0.5, -0.5),  // 4: BOTTOM_A
         glam::vec3(-0.5, -0.5, -0.5), // 5: BOTTOM_B
         glam::vec3(-0.5, -0.5, 0.5),  // 6: BOTTOM_C
         glam::vec3(0.5, -0.5, 0.5),   // 7: BOTTOM_D
-        // Near face (Z+)
+        // 近端面 (Z+)
         glam::vec3(0.5, 0.5, 0.5),   // 8: NEAR_A
         glam::vec3(-0.5, 0.5, 0.5),  // 9: NEAR_B
         glam::vec3(-0.5, -0.5, 0.5), // 10: NEAR_C
         glam::vec3(0.5, -0.5, 0.5),  // 11: NEAR_D
-        // Far face (Z-)
+        // 远端面 (Z-)
         glam::vec3(0.5, 0.5, -0.5),   // 12: FAR_A
         glam::vec3(-0.5, 0.5, -0.5),  // 13: FAR_B
         glam::vec3(-0.5, -0.5, -0.5), // 14: FAR_C
         glam::vec3(0.5, -0.5, -0.5),  // 15: FAR_D
-        // Left face (X-)
+        // 左侧面 (X-)
         glam::vec3(-0.5, 0.5, 0.5),   // 16: LEFT_A
         glam::vec3(-0.5, 0.5, -0.5),  // 17: LEFT_B
         glam::vec3(-0.5, -0.5, -0.5), // 18: LEFT_C
         glam::vec3(-0.5, -0.5, 0.5),  // 19: LEFT_D
-        // Right face (X+)
+        // 右侧面 (X+)
         glam::vec3(0.5, 0.5, 0.5),   // 20: RIGHT_A
         glam::vec3(0.5, 0.5, -0.5),  // 21: RIGHT_B
         glam::vec3(0.5, -0.5, -0.5), // 22: RIGHT_C
@@ -44,32 +44,32 @@ impl CubeSoA {
     ];
 
     const NORMALS: [glam::Vec3; 24] = [
-        // Top face (Y+)
+        // 顶面 (Y+)
         glam::vec3(0.0, 1.0, 0.0),
         glam::vec3(0.0, 1.0, 0.0),
         glam::vec3(0.0, 1.0, 0.0),
         glam::vec3(0.0, 1.0, 0.0),
-        // Bottom face (Y-)
+        // 底面 (Y-)
         glam::vec3(0.0, -1.0, 0.0),
         glam::vec3(0.0, -1.0, 0.0),
         glam::vec3(0.0, -1.0, 0.0),
         glam::vec3(0.0, -1.0, 0.0),
-        // Near face (Z+)
+        // 近端面 (Z+)
         glam::vec3(0.0, 0.0, 1.0),
         glam::vec3(0.0, 0.0, 1.0),
         glam::vec3(0.0, 0.0, 1.0),
         glam::vec3(0.0, 0.0, 1.0),
-        // Far face (Z-)
+        // 远端面 (Z-)
         glam::vec3(0.0, 0.0, -1.0),
         glam::vec3(0.0, 0.0, -1.0),
         glam::vec3(0.0, 0.0, -1.0),
         glam::vec3(0.0, 0.0, -1.0),
-        // Left face (X-)
+        // 左侧面 (X-)
         glam::vec3(-1.0, 0.0, 0.0),
         glam::vec3(-1.0, 0.0, 0.0),
         glam::vec3(-1.0, 0.0, 0.0),
         glam::vec3(-1.0, 0.0, 0.0),
-        // Right face (X+)
+        // 右侧面 (X+)
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
@@ -77,32 +77,32 @@ impl CubeSoA {
     ];
 
     const UVS: [glam::Vec2; 24] = [
-        // Top face (Y+)
+        // 顶面 (Y+)
         glam::vec2(1.0, 0.0),
         glam::vec2(0.0, 0.0),
         glam::vec2(0.0, 1.0),
         glam::vec2(1.0, 1.0),
-        // Bottom face (Y-)
+        // 底面 (Y-)
         glam::vec2(1.0, 0.0),
         glam::vec2(0.0, 0.0),
         glam::vec2(0.0, 1.0),
         glam::vec2(1.0, 1.0),
-        // Near face (Z+)
+        // 近端面 (Z+)
         glam::vec2(1.0, 0.0),
         glam::vec2(0.0, 0.0),
         glam::vec2(0.0, 1.0),
         glam::vec2(1.0, 1.0),
-        // Far face (Z-)
+        // 远端面 (Z-)
         glam::vec2(1.0, 0.0),
         glam::vec2(0.0, 0.0),
         glam::vec2(0.0, 1.0),
         glam::vec2(1.0, 1.0),
-        // Left face (X-)
+        // 左侧面 (X-)
         glam::vec2(1.0, 0.0),
         glam::vec2(0.0, 0.0),
         glam::vec2(0.0, 1.0),
         glam::vec2(1.0, 1.0),
-        // Right face (X+)
+        // 右侧面 (X+)
         glam::vec2(1.0, 0.0),
         glam::vec2(0.0, 0.0),
         glam::vec2(0.0, 1.0),

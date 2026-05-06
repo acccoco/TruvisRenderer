@@ -67,7 +67,7 @@ impl GfxPhysicalDevice {
                 let physical_device_name = CStr::from_ptr(basic_props.device_name.as_ptr());
                 log::info!("found gpu: {:?}", physical_device_name);
 
-                // ray tracing props
+                // ray tracing 属性
                 pdevice_raytracing_props.p_next = null_mut();
                 rt_props = pdevice_raytracing_props;
                 log::debug!("physical deviceray tracing props:\n{:#?}", rt_props);
@@ -121,14 +121,14 @@ impl GfxPhysicalDevice {
             )
             .unwrap();
 
-            // Compute Only
+            // 仅 Compute
             let compute_queue_family = find_queue_family(
                 "compute-only".to_string(),
                 vk::QueueFlags::COMPUTE | vk::QueueFlags::TRANSFER,
                 vk::QueueFlags::GRAPHICS,
             );
 
-            // Tansfer Only
+            // 仅 Transfer
             let transfer_queue_family = find_queue_family(
                 "transfer-only".to_string(),
                 vk::QueueFlags::TRANSFER,

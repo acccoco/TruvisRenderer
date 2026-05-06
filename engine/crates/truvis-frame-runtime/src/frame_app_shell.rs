@@ -5,24 +5,23 @@ use truvis_render_backend::render_backend::{RenderBackendInitCtx, RenderBackendR
 
 use crate::base_app::BaseApp;
 
-/// Window-bound initialization context passed from [`FrameAppShell`] to app state.
+/// [`FrameAppShell`] 传给 app state 的窗口绑定初始化上下文。
 pub struct FrameAppInitCtx<'a> {
     pub backend: RenderBackendInitCtx<'a>,
     pub scale_factor: f64,
     pub window_size: [u32; 2],
 }
 
-/// Resize context passed from [`FrameAppShell`] to app state when swapchain resources change.
+/// swapchain 资源变化时，[`FrameAppShell`] 传给 app state 的 resize 上下文。
 pub struct FrameAppResizeCtx<'a> {
     pub backend: RenderBackendResizeCtx<'a>,
     pub window_size: [u32; 2],
 }
 
-/// Concrete app state driven by [`FrameAppShell`].
+/// 由 [`FrameAppShell`] 驱动的具体 app state。
 ///
-/// App state owns GUI, camera/input state, overlays, and render plugins. The shell
-/// owns `BaseApp` and implements the object-safe `FrameApp` contract for the
-/// render loop.
+/// App state 持有 GUI、camera/input state、overlay 和 render plugin。
+/// shell 持有 `BaseApp`，并为 render loop 实现 object-safe 的 `FrameApp` 契约。
 pub trait FrameAppState: FrameAppHooks {
     fn init(&mut self, ctx: FrameAppInitCtx<'_>);
 
@@ -31,7 +30,7 @@ pub trait FrameAppState: FrameAppHooks {
     fn shutdown(&mut self) {}
 }
 
-/// Adapter that turns concrete app state into a render-loop [`FrameApp`].
+/// 将具体 app state 转换为 render-loop [`FrameApp`] 的适配器。
 pub struct FrameAppShell<A> {
     base: Option<BaseApp>,
     app: A,

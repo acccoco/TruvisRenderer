@@ -17,16 +17,16 @@ RaytracingAccelerationStructure rt_tlas;
 [[vk::binding(1, RT_SET_NUM)]]
 RWTexture2D<float4> rt_single_frame_output;
 
-// ========== GBuffer Outputs ==========
-/// GBufferA: normal.xyz + roughness (R16G16B16A16_SFLOAT)
+// ========== GBuffer 输出 ==========
+/// GBufferA：法线 normal.xyz + 粗糙度 roughness (R16G16B16A16_SFLOAT)
 [[vk::binding(2, RT_SET_NUM)]]
 RWTexture2D<float4> gbuffer_a;
 
-/// GBufferB: world_position.xyz + linear_depth (R16G16B16A16_SFLOAT)
+/// GBufferB：世界位置 world_position.xyz + 线性深度 linear_depth (R16G16B16A16_SFLOAT)
 [[vk::binding(3, RT_SET_NUM)]]
 RWTexture2D<float4> gbuffer_b;
 
-/// GBufferC: albedo.rgb + metallic (R8G8B8A8_UNORM)
+/// GBufferC：反照率 albedo.rgb + 金属度 metallic (R8G8B8A8_UNORM)
 [[vk::binding(4, RT_SET_NUM)]]
 RWTexture2D<float4> gbuffer_c;
 

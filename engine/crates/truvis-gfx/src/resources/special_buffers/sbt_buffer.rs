@@ -8,7 +8,7 @@ pub struct GfxSBTBuffer {
     _inner: GfxBuffer,
 }
 impl_derive_buffer!(GfxSBTBuffer, GfxBuffer, _inner);
-// init & destroy
+// 初始化与销毁
 impl GfxSBTBuffer {
     pub fn new(size: vk::DeviceSize, align: vk::DeviceSize, name: impl AsRef<str>) -> Self {
         let inner = GfxBuffer::new(

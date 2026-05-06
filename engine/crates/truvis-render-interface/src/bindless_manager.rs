@@ -101,7 +101,7 @@ pub struct BindlessManager {
     frame_token: FrameToken,
 }
 
-// new & init
+// 创建与初始化
 impl BindlessManager {
     pub fn new(frame_token: FrameToken) -> Self {
         // 降序填充，使得 pop() 优先分配较小 slot（方便调试观察）
@@ -120,7 +120,7 @@ impl BindlessManager {
     }
 }
 
-// destroy
+// 销毁
 impl BindlessManager {
     pub fn destroy(self) {}
 }
@@ -130,13 +130,13 @@ impl Drop for BindlessManager {
     }
 }
 
-// update
+// 更新
 impl BindlessManager {
     pub fn begin_frame(&mut self, frame_token: FrameToken) {
         self.frame_token = frame_token;
     }
 
-    /// # Phase: Before Render
+    /// # 阶段：Before Render
     ///
     /// 增量更新 bindless descriptor set：
     /// - 对新注册的 slot（`slots[slot] = Some`），写入 descriptor 后立即从 dirty 移除
@@ -229,7 +229,7 @@ impl BindlessManager {
     }
 }
 
-// UAV
+// UAV 资源
 impl BindlessManager {
     pub fn register_uav(&mut self, image_view_handle: GfxImageViewHandle) {
         debug_assert!(!image_view_handle.is_null());
@@ -259,7 +259,7 @@ impl BindlessManager {
     }
 }
 
-// SRV
+// SRV 资源
 impl BindlessManager {
     pub fn register_srv(&mut self, image_view_handle: GfxImageViewHandle) {
         debug_assert!(!image_view_handle.is_null());

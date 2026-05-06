@@ -9,25 +9,25 @@ pub struct VertexLayoutSoA3D;
 impl GfxVertexLayout for VertexLayoutSoA3D {
     fn vertex_input_bindings() -> Vec<vk::VertexInputBindingDescription> {
         vec![
-            // positions
+            // 位置
             vk::VertexInputBindingDescription {
                 binding: 0,
                 stride: size_of::<glam::Vec3>() as u32,
                 input_rate: vk::VertexInputRate::VERTEX,
             },
-            // normals
+            // 法线
             vk::VertexInputBindingDescription {
                 binding: 1,
                 stride: size_of::<glam::Vec3>() as u32,
                 input_rate: vk::VertexInputRate::VERTEX,
             },
-            // tangents
+            // 切线
             vk::VertexInputBindingDescription {
                 binding: 2,
                 stride: size_of::<glam::Vec3>() as u32,
                 input_rate: vk::VertexInputRate::VERTEX,
             },
-            // uvs
+            // UV 坐标
             vk::VertexInputBindingDescription {
                 binding: 3,
                 stride: size_of::<glam::Vec2>() as u32,
@@ -38,28 +38,28 @@ impl GfxVertexLayout for VertexLayoutSoA3D {
 
     fn vertex_input_attributes() -> Vec<vk::VertexInputAttributeDescription> {
         vec![
-            // positions
+            // 位置
             vk::VertexInputAttributeDescription {
                 binding: 0,
                 location: 0,
                 format: vk::Format::R32G32B32_SFLOAT,
                 offset: 0,
             },
-            // normals
+            // 法线
             vk::VertexInputAttributeDescription {
                 binding: 1,
                 location: 1,
                 format: vk::Format::R32G32B32_SFLOAT,
                 offset: 0,
             },
-            // tangents
+            // 切线
             vk::VertexInputAttributeDescription {
                 binding: 2,
                 location: 2,
                 format: vk::Format::R32G32B32_SFLOAT,
                 offset: 0,
             },
-            // uvs
+            // UV 坐标
             vk::VertexInputAttributeDescription {
                 binding: 3,
                 location: 3,

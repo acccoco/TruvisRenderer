@@ -59,7 +59,7 @@ impl Default for RenderGraphBuilder<'_> {
     }
 }
 
-// new & init
+// 创建与初始化
 impl<'a> RenderGraphBuilder<'a> {
     /// 创建新的 RenderGraph 构建器
     pub fn new() -> Self {
@@ -323,7 +323,7 @@ impl<'a> RenderGraphBuilder<'a> {
             let pass_barriers = &mut barriers[pass_idx];
 
             // 收集此 Pass 中每个图像的所有使用
-            // Key: handle, Value: (is_write, required_state)
+            // Key: handle，Value: (是否写入, 期望状态)
             let mut image_usage: HashMap<RgImageHandle, (bool, RgImageState)> = HashMap::new();
 
             // 处理读取声明
@@ -655,7 +655,7 @@ impl CompiledGraph<'_> {
                     barriers.buffer_barrier_count()
                 );
 
-                // Image Barriers
+                // 图像 barrier
                 for barrier in &barriers.image_barriers {
                     let name = self.resources.get_image(barrier.handle).map(|r| r.name.as_str()).unwrap_or("<unknown>");
                     let layout_change = if barrier.src_state.layout != barrier.dst_state.layout {
@@ -678,7 +678,7 @@ impl CompiledGraph<'_> {
                     log::info!("│       Aspect: {:?}", barrier.aspect);
                 }
 
-                // Buffer Barriers
+                // Buffer barrier 录制
                 for barrier in &barriers.buffer_barriers {
                     let name =
                         self.resources.get_buffer(barrier.handle).map(|r| r.name.as_str()).unwrap_or("<unknown>");
