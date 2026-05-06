@@ -2,8 +2,10 @@ use std::ffi::CStr;
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use truvis_frame_api::input_event::InputEvent;
-use truvis_frame_api::plugin::{PluginInitCtx, PluginResizeCtx, PluginUpdateCtx};
-use truvis_frame_api::render_app::{RenderApp, RenderAppHooks, RenderAppInitCtx, RenderAppResizeCtx};
+use truvis_frame_api::plugin::{PluginInitCtx, PluginResizeCtx, PluginShutdownCtx, PluginUpdateCtx};
+use truvis_frame_api::render_app::{
+    RenderApp, RenderAppHooks, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx,
+};
 use truvis_gfx::gfx::Gfx;
 use truvis_render_backend::render_backend::RenderBackend;
 
@@ -169,10 +171,24 @@ where
     }
 
     fn shutdown(&mut self) {
-        self.app.shutdown();
-        self.app.visit_plugins_mut_rev(&mut |plugin| {
-            plugin.shutdown();
-        });
+        if let Some(render_backend) = self.render_backend.as_mut() {
+            Gfx::get().wait_idel();
+            {
+                let backend = render_backend.shutdown_phase();
+                let mut app_ctx = RenderAppShutdownCtx { backend };
+                self.app.shutdown(&mut app_ctx);
+            }
+            {
+                let backend = render_backend.shutdown_phase();
+                let mut plugin_ctx = PluginShutdownCtx {
+                    render_world: backend.render_world,
+                    cmd_allocator: backend.cmd_allocator,
+                };
+                self.app.visit_plugins_mut_rev(&mut |plugin| {
+                    plugin.shutdown(&mut plugin_ctx);
+                });
+            }
+        }
         if let Some(render_backend) = self.render_backend.take() {
             Self::destroy_render_backend(render_backend);
         }

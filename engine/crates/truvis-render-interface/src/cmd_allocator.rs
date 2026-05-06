@@ -24,6 +24,8 @@ pub struct CmdAllocator {
     /// 每个 command pool 已经分配出去的 command buffer，用于集中 free
     /// 或其他操作
     allocated_command_buffers: [Vec<GfxCommandBuffer>; FrameCounter::fif_count()],
+
+    destroyed: bool,
 }
 
 // 创建与初始化
@@ -47,20 +49,36 @@ impl CmdAllocator {
         Self {
             graphics_command_pools,
             allocated_command_buffers,
+            destroyed: false,
         }
     }
 }
 impl Drop for CmdAllocator {
     fn drop(&mut self) {
-        log::info!("Dropping CmdAllocator and destroying command pools.");
-        for pool in &mut self.graphics_command_pools {
-            pool.destroy()
-        }
+        debug_assert!(self.destroyed, "CmdAllocator dropped without explicit destroy");
     }
 }
 // 销毁
 impl CmdAllocator {
-    pub fn destroy(self) {}
+    pub fn destroy(mut self) {
+        self.destroy_mut();
+    }
+
+    fn destroy_mut(&mut self) {
+        if self.destroyed {
+            return;
+        }
+
+        for frame_label in 0..FrameCounter::fif_count() {
+            let commands = std::mem::take(&mut self.allocated_command_buffers[frame_label]);
+            if !commands.is_empty() {
+                self.graphics_command_pools[frame_label].free_command_buffers(commands);
+            }
+            self.graphics_command_pools[frame_label].destroy();
+        }
+
+        self.destroyed = true;
+    }
 }
 // 工具函数
 impl CmdAllocator {

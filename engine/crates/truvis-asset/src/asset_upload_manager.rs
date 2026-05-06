@@ -9,6 +9,7 @@ use truvis_gfx::commands::submit_info::GfxSubmitInfo;
 use truvis_gfx::gfx::Gfx;
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
+use truvis_gfx::resources::lifecycle::DestroyReason;
 
 use crate::asset_loader::RawAssetData;
 use crate::handle::AssetTextureHandle;
@@ -30,12 +31,13 @@ struct PendingUpload {
 /// 3. 自动处理 Staging Buffer 的创建和销毁。
 /// 4. 处理 Image Layout 转换 (Undefined -> TransferDst -> ShaderReadOnly)。
 pub struct AssetUploadManager {
-    command_pool: GfxCommandPool,
-    timeline_semaphore: GfxSemaphore,
+    command_pool: Option<GfxCommandPool>,
+    timeline_semaphore: Option<GfxSemaphore>,
     next_timeline_value: u64,
 
     /// 正在等待完成的上传任务队列，会在 update 中检查状态，并且返回已完成的任务
     pending_uploads: VecDeque<PendingUpload>,
+    destroyed: bool,
 }
 
 impl Default for AssetUploadManager {
@@ -60,10 +62,11 @@ impl AssetUploadManager {
         let timeline_semaphore = GfxSemaphore::new_timeline(0, "AssetTransferTimeline");
 
         Self {
-            command_pool,
-            timeline_semaphore,
+            command_pool: Some(command_pool),
+            timeline_semaphore: Some(timeline_semaphore),
             next_timeline_value: 1,
             pending_uploads: VecDeque::new(),
+            destroyed: false,
         }
     }
 
@@ -102,7 +105,9 @@ impl AssetUploadManager {
         );
 
         // 2. 分配 Command Buffer
-        let command_buffer = GfxCommandBuffer::new(&self.command_pool, "AssetUploadCmd");
+        let command_pool = self.command_pool.as_ref().expect("AssetUploadManager used after shutdown");
+        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("AssetUploadManager used after shutdown");
+        let command_buffer = GfxCommandBuffer::new(command_pool, "AssetUploadCmd");
 
         // 3. 录制命令
         command_buffer.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "AssetUpload");
@@ -118,7 +123,7 @@ impl AssetUploadManager {
         self.next_timeline_value += 1;
 
         let submit_info = GfxSubmitInfo::new(std::slice::from_ref(&command_buffer)).signal(
-            &self.timeline_semaphore,
+            timeline_semaphore,
             vk::PipelineStageFlags2::ALL_COMMANDS,
             Some(target_value),
         );
@@ -148,8 +153,9 @@ impl AssetUploadManager {
         let device = gfx.gfx_device();
 
         // 查询当前 Timeline Semaphore 的值 (非阻塞)
-        let current_value =
-            unsafe { device.get_semaphore_counter_value(self.timeline_semaphore.handle()).unwrap_or(0) };
+        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("AssetUploadManager used after shutdown");
+        let command_pool = self.command_pool.as_ref().expect("AssetUploadManager used after shutdown");
+        let current_value = unsafe { device.get_semaphore_counter_value(timeline_semaphore.handle()).unwrap_or(0) };
 
         let mut finished_uploads = Vec::new();
 
@@ -159,7 +165,7 @@ impl AssetUploadManager {
                 let upload = self.pending_uploads.pop_front().unwrap();
 
                 // 释放 Command Buffer
-                self.command_pool.free_command_buffers(vec![upload.command_buffer]);
+                command_pool.free_command_buffers(vec![upload.command_buffer]);
 
                 // Staging Buffer 会在 upload 被 drop 时自动销毁
 
@@ -172,11 +178,37 @@ impl AssetUploadManager {
 
         finished_uploads
     }
+
+    pub fn shutdown(&mut self) {
+        if self.destroyed {
+            return;
+        }
+
+        let Some(timeline_semaphore) = self.timeline_semaphore.take() else {
+            self.destroyed = true;
+            return;
+        };
+        let mut command_pool = self.command_pool.take().expect("AssetUploadManager command pool missing");
+
+        if let Some(last_upload) = self.pending_uploads.back() {
+            const WAIT_SEMAPHORE_TIMEOUT_NS: u64 = 30 * 1000 * 1000 * 1000;
+            timeline_semaphore.wait_timeline(last_upload.semaphore_value, WAIT_SEMAPHORE_TIMEOUT_NS);
+        }
+
+        while let Some(upload) = self.pending_uploads.pop_front() {
+            command_pool.free_command_buffers(vec![upload.command_buffer]);
+            upload.image.destroy(DestroyReason::Shutdown);
+            // staging buffer 在 Gfx 仍然存活时释放。
+        }
+
+        timeline_semaphore.destroy();
+        command_pool.destroy();
+        self.destroyed = true;
+    }
 }
 
 impl Drop for AssetUploadManager {
     fn drop(&mut self) {
-        self.timeline_semaphore.clone().destroy();
-        self.command_pool.destroy();
+        debug_assert!(self.destroyed, "AssetUploadManager dropped without explicit shutdown");
     }
 }

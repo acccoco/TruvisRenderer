@@ -73,7 +73,9 @@ impl MeshManager {
         }
     }
 
-    pub fn destroy(self) {}
+    pub fn destroy(self) {
+        drop(self)
+    }
 }
 
 impl Drop for MeshManager {

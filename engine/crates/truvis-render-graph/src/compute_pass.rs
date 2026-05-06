@@ -76,8 +76,9 @@ impl<P: Sized> ComputePass<P> {
         cmd.cmd_dispatch(group_cnt);
     }
 
+    /// RAII 持有资源的立即释放别名。
     pub fn destroy(self) {
-        // Drop 处理
+        drop(self)
     }
 }
 impl<P: Sized> Drop for ComputePass<P> {

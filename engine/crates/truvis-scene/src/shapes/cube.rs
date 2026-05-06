@@ -2,9 +2,9 @@ use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 use truvis_render_interface::geometry::RtGeometry;
 
-/// 坐标系：Right-Hand, X-Right, Y-Up
+/// 坐标系：右手系，X 向右，Y 向上
 ///
-/// 三角形绕序: CCW
+/// 三角形绕序: 逆时针 (CCW)
 ///
 /// cube 尺寸：1
 pub struct CubeSoA {}
@@ -112,32 +112,32 @@ impl CubeSoA {
     // 切线向量指向 U 轴正方向
     // 对于每个面，切线与法线、副切线构成右手坐标系
     const TANGENTS: [glam::Vec3; 24] = [
-        // Top face (Y+, normal: Y+): tangent 指向 X+ (U 轴方向)
+        // 顶面 (Y+，法线 Y+)：tangent 指向 X+ (U 轴方向)
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
-        // Bottom face (Y-, normal: Y-): tangent 指向 X+ (U 轴方向)
+        // 底面 (Y-，法线 Y-)：tangent 指向 X+ (U 轴方向)
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
-        // Near face (Z+, normal: Z+): tangent 指向 X+ (U 轴方向)
+        // 近端面 (Z+，法线 Z+)：tangent 指向 X+ (U 轴方向)
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
-        // Far face (Z-, normal: Z-): tangent 指向 X+ (U 轴方向)
+        // 远端面 (Z-，法线 Z-)：tangent 指向 X+ (U 轴方向)
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
         glam::vec3(1.0, 0.0, 0.0),
-        // Left face (X-, normal: X-): tangent 指向 Z+ (U 轴方向)
+        // 左侧面 (X-，法线 X-)：tangent 指向 Z+ (U 轴方向)
         glam::vec3(0.0, 0.0, 1.0),
         glam::vec3(0.0, 0.0, 1.0),
         glam::vec3(0.0, 0.0, 1.0),
         glam::vec3(0.0, 0.0, 1.0),
-        // Right face (X+, normal: X+): tangent 指向 Z+ (U 轴方向)
+        // 右侧面 (X+，法线 X+)：tangent 指向 Z+ (U 轴方向)
         glam::vec3(0.0, 0.0, 1.0),
         glam::vec3(0.0, 0.0, 1.0),
         glam::vec3(0.0, 0.0, 1.0),
@@ -145,12 +145,12 @@ impl CubeSoA {
     ];
 
     const INDICES: [u32; 36] = [
-        0, 1, 2, 0, 2, 3, // top
-        4, 6, 5, 4, 7, 6, // bottom
-        8, 9, 10, 8, 10, 11, // near
-        12, 14, 13, 12, 15, 14, // far
-        16, 17, 18, 16, 18, 19, // left
-        20, 22, 21, 20, 23, 22, // right
+        0, 1, 2, 0, 2, 3, // 顶面
+        4, 6, 5, 4, 7, 6, // 底面
+        8, 9, 10, 8, 10, 11, // 近端面
+        12, 14, 13, 12, 15, 14, // 远端面
+        16, 17, 18, 16, 18, 19, // 左侧面
+        20, 22, 21, 20, 23, 22, // 右侧面
     ];
 
     pub fn create_mesh() -> RtGeometry {

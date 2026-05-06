@@ -29,9 +29,9 @@ impl GfxAcceleration {
     /// 1. 查询构建 blas 所需的尺寸
     /// 2. 构建 blas
     /// 3. 查询 blas 的 compact size
-    /// 4. 将 blas copy 到 compact 的 blas
+    /// 4. 将 BLAS 拷贝为 compact BLAS
     ///
-    /// # 参数s
+    /// # 参数
     /// - primitives 每个 geometry 的 max primitives 数量
     pub fn build_blas_sync(
         blas_inputs: &[GfxBlasInputInfo],

@@ -2,8 +2,8 @@ use ash::vk;
 use itertools::Itertools;
 
 use truvis_frame_api::input_event::InputEvent;
-use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx};
-use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx};
+use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
+use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx, RenderAppShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::Gfx;
 use truvis_render_backend::platform::camera::Camera;
@@ -25,6 +25,10 @@ pub struct ShaderToyPlugin {
 impl Plugin for ShaderToyPlugin {
     fn init(&mut self, ctx: &mut PluginInitCtx) {
         self.shader_toy_pass = Some(ShaderToyPass::new(ctx.swapchain_image_info.image_format));
+    }
+
+    fn shutdown(&mut self, _ctx: &mut PluginShutdownCtx<'_>) {
+        self.shader_toy_pass.take();
     }
 }
 
@@ -198,5 +202,9 @@ impl RenderAppHooks for ShaderToy {
 
     fn camera(&self) -> &Camera {
         self.camera_controller.camera()
+    }
+
+    fn shutdown(&mut self, _ctx: &mut RenderAppShutdownCtx<'_>) {
+        self.cmds.clear();
     }
 }

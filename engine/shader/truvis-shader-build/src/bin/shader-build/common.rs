@@ -7,12 +7,12 @@ use truvis_path::TruvisPath;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShaderStage {
     Vertex,
-    /// HLSL Hull shader
+    /// HLSL Hull Shader（细分控制着色器）
     TessellationControl,
-    /// HLSL Domain shader
+    /// HLSL Domain Shader（细分求值着色器）
     TessellationEvaluation,
     Geometry,
-    /// HLSL Pixel shader
+    /// HLSL Pixel Shader（像素着色器）
     Fragment,
     Compute,
 
@@ -24,7 +24,7 @@ pub enum ShaderStage {
     Intersection,
     RayCallable,
 
-    /// HLSL Amplification shader
+    /// HLSL Amplification Shader（任务着色器前置阶段）
     Task,
     Mesh,
 
@@ -108,10 +108,10 @@ pub struct ShaderCompileTask {
 impl ShaderCompileTask {
     /// 从目录项创建编译任务
     ///
-    /// # Arguments
+    /// # 参数
     /// * `entry` - 相对于 workspace 的目录项
     ///
-    /// # Returns
+    /// # 返回值
     /// 如果文件扩展名不被支持，返回 None
     pub fn new(entry: &walkdir::DirEntry) -> Option<Self> {
         let shader_path = entry.path().to_str()?.replace('\\', "/");
@@ -141,29 +141,29 @@ impl ShaderCompileTask {
     /// 根据文件名解析 shader stage
     fn parse_shader_stage(shader_name: &str) -> Option<ShaderStage> {
         let stage = match () {
-            // Vertex shaders
+            // 顶点 Shader
             _ if shader_name.ends_with(".vert") || shader_name.ends_with(".vs.hlsl") => ShaderStage::Vertex,
-            // Fragment/Pixel shaders
+            // 片元/像素 Shader
             _ if shader_name.ends_with(".frag") || shader_name.ends_with(".ps.hlsl") => ShaderStage::Fragment,
-            // Compute shaders
+            // 计算 Shader
             _ if shader_name.ends_with(".comp") || shader_name.ends_with(".cs.hlsl") => ShaderStage::Compute,
-            // Ray Tracing shaders
+            // Ray Tracing Shader 阶段
             _ if shader_name.ends_with(".rgen") => ShaderStage::RayGen,
             _ if shader_name.ends_with(".rchit") => ShaderStage::ClosestHit,
             _ if shader_name.ends_with(".rmiss") => ShaderStage::Miss,
             _ if shader_name.ends_with(".rahit") => ShaderStage::AnyHit,
             _ if shader_name.ends_with(".rint") => ShaderStage::Intersection,
             _ if shader_name.ends_with(".rcall") => ShaderStage::RayCallable,
-            // Tessellation shaders
+            // Tessellation Shader 阶段
             _ if shader_name.ends_with(".tesc") || shader_name.ends_with(".hs.hlsl") => {
                 ShaderStage::TessellationControl
             }
             _ if shader_name.ends_with(".tese") || shader_name.ends_with(".ds.hlsl") => {
                 ShaderStage::TessellationEvaluation
             }
-            // Geometry shader
+            // 几何 Shader
             _ if shader_name.ends_with(".geom") || shader_name.ends_with(".gs.hlsl") => ShaderStage::Geometry,
-            // Mesh shaders
+            // Mesh Shader 阶段
             _ if shader_name.ends_with(".task") || shader_name.ends_with(".as.hlsl") => ShaderStage::Task,
             _ if shader_name.ends_with(".mesh") || shader_name.ends_with(".ms.hlsl") => ShaderStage::Mesh,
             // Slang (通用)

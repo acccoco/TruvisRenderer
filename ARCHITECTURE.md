@@ -216,7 +216,12 @@ flowchart LR
 
 ## 7. 资源生命周期
 
-资源分类：
+生命周期契约分为两类：
+
+- RAII-owned：Rust value 是唯一 owner，`Drop` 释放 Vulkan/VMA 对象；`destroy(self)` 只能作为 drop-now 别名，不允许同一类型再暴露 `destroy_mut(&mut self)`。
+- Manager-owned：资源由 manager 或明确 lifecycle owner 释放；`Drop` 不调用 Vulkan/VMA 销毁，只通过 debug assertion 暴露遗漏的显式 release。
+
+GPU 资源按用途分类：
 
 - Persistent：pipeline、sampler、descriptor layout、shader binding
 - Frame：command buffer、per-frame buffer、FIF resources
@@ -241,5 +246,8 @@ flowchart LR
 
 销毁路径：
 
-- `RenderApp::shutdown(&mut self)`：`RenderAppShell` 调用 App hooks shutdown plugins -> destroy backend。
-- backend destroy：`Gfx::wait_idle()` -> `render_backend.destroy()` -> `Gfx::destroy()`。
+- `RenderApp::shutdown(&mut self)`：`RenderAppShell` 等待 GPU idle 后，先用 `RenderAppShutdownCtx` 调用 App hooks shutdown，再用 `PluginShutdownCtx` 反向遍历 Plugin shutdown。
+- App / Plugin shutdown 必须在 `RenderBackend::destroy()` 与 `Gfx::destroy()` 之前释放自己持有的 GPU 资源；需要 manager 访问时通过 shutdown context 使用 `RenderWorld`。
+- manager-owned image/view 只能通过 `GfxResourceManager` 释放，manager 负责 image-view-before-image、延迟销毁队列与 `DestroyReason` 诊断。
+- backend destroy：`Gfx::wait_idle()` -> release present/FIF/assets/GPU scene/cmd/backend resources -> `Gfx::destroy()`。
+- `Gfx::destroy()` 开始后，剩余 App / Plugin 字段的 `Drop` 不得再调用 `Gfx::get()` 或 Vulkan/VMA 销毁 API。

@@ -1,9 +1,10 @@
 use std::ptr;
 
 use ash::vk;
+use ash::vk::Handle;
 use vk_mem::Alloc;
 
-use crate::{foundation::debug_messenger::DebugType, gfx::Gfx};
+use crate::{foundation::debug_messenger::DebugType, gfx::Gfx, resources::vma_debug::with_vma_debug_name};
 
 pub struct GfxBuffer {
     handle: vk::Buffer,
@@ -31,6 +32,7 @@ impl DebugType for GfxBuffer {
 }
 impl Drop for GfxBuffer {
     fn drop(&mut self) {
+        log::debug!("Destroying GfxBuffer name={} raw={:#x} reason=scope-drop", self.debug_name, self.handle.as_raw());
         let allocator = Gfx::get().allocator();
         unsafe {
             if self.map_ptr.is_some() {
@@ -72,8 +74,10 @@ impl GfxBuffer {
         };
 
         let align = align.unwrap_or(8);
-        let (buffer, mut alloc) =
-            unsafe { Gfx::get().vm_allocator.create_buffer_with_alignment(&buffer_ci, &alloc_ci, align).unwrap() };
+        let allocation_name = format!("Buffer::{}", name.as_ref());
+        let (buffer, mut alloc) = with_vma_debug_name(&alloc_ci, &allocation_name, |alloc_ci| unsafe {
+            Gfx::get().vm_allocator.create_buffer_with_alignment(&buffer_ci, alloc_ci, align).unwrap()
+        });
 
         let mut mapped_ptr = None;
         if mem_map {
@@ -92,7 +96,7 @@ impl GfxBuffer {
             }
         }
 
-        Gfx::get().gfx_device().set_object_debug_name(buffer, format!("Buffer::{}", name.as_ref()));
+        Gfx::get().gfx_device().set_object_debug_name(buffer, allocation_name);
         Self {
             handle: buffer,
             allocation: alloc,
@@ -114,6 +118,7 @@ impl GfxBuffer {
 // 销毁
 impl GfxBuffer {
     #[inline]
+    /// RAII 持有资源的立即释放别名；buffer 仍通过 `Drop` 释放。
     pub fn destroy(self) {
         drop(self)
     }
@@ -135,6 +140,11 @@ impl GfxBuffer {
     #[inline]
     pub fn size(&self) -> vk::DeviceSize {
         self.size
+    }
+
+    #[inline]
+    pub fn debug_name(&self) -> &str {
+        &self.debug_name
     }
 }
 // 工具函数

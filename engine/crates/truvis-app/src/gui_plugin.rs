@@ -1,15 +1,16 @@
-//! 作为 app-owned plugin 的 ImGui 集成。
+//! 作为由 app 持有的 plugin 提供 ImGui 集成。
 
 use std::collections::HashMap;
 
 use ash::vk;
 use imgui::{DrawData, TextureId, Ui};
 use truvis_frame_api::input_event::{ElementState, InputEvent, MouseButton};
-use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx};
+use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::basic::color::LabelColor;
 use truvis_gfx::gfx::Gfx;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
+use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gui_backend::gui_mesh::GuiMesh;
 use truvis_gui_backend::gui_pass::GuiPass;
 use truvis_path::TruvisPath;
@@ -17,7 +18,7 @@ use truvis_render_graph::render_graph::{
     RenderGraphBuilder, RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext,
 };
 use truvis_render_interface::frame_counter::FrameCounter;
-use truvis_render_interface::handles::GfxImageViewHandle;
+use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_interface::render_world::RenderWorld;
 
 const FONT_TEXTURE_ID: usize = 0;
@@ -31,6 +32,7 @@ pub struct GuiPlugin {
     gui_pass: Option<GuiPass>,
     gui_meshes: Option<[GuiMesh; FrameCounter::fif_count()]>,
     tex_map: HashMap<TextureId, GfxImageViewHandle>,
+    fonts_image_handle: Option<GfxImageHandle>,
     fonts_image_view_handle: Option<GfxImageViewHandle>,
 }
 
@@ -61,6 +63,7 @@ impl GuiPlugin {
             gui_pass: None,
             gui_meshes: None,
             tex_map: HashMap::new(),
+            fonts_image_handle: None,
             fonts_image_view_handle: None,
         }
     }
@@ -178,6 +181,7 @@ impl GuiPlugin {
         );
         ctx.render_world.bindless_manager.register_srv(fonts_image_view_handle);
 
+        self.fonts_image_handle = Some(fonts_image_handle);
         self.fonts_image_view_handle = Some(fonts_image_view_handle);
     }
 }
@@ -229,7 +233,21 @@ impl Plugin for GuiPlugin {
         self.set_display_size([extent.width, extent.height]);
     }
 
-    fn shutdown(&mut self) {}
+    fn shutdown(&mut self, ctx: &mut PluginShutdownCtx<'_>) {
+        self.current_ui = None;
+        self.draw_data = None;
+        self.tex_map.clear();
+
+        if let Some(view_handle) = self.fonts_image_view_handle.take() {
+            ctx.render_world.bindless_manager.unregister_srv(view_handle);
+        }
+        if let Some(image_handle) = self.fonts_image_handle.take() {
+            ctx.render_world.gfx_resource_manager.release_image_immediate(image_handle, DestroyReason::Shutdown);
+        }
+
+        self.gui_meshes.take();
+        self.gui_pass.take();
+    }
 }
 
 struct GuiRenderGraphPass<'a> {

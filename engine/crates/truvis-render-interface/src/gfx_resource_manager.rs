@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
 use ash::vk;
-use slotmap::{SecondaryMap, SlotMap};
+use ash::vk::Handle;
+use slotmap::{Key, SecondaryMap, SlotMap};
 
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
+use truvis_gfx::resources::lifecycle::DestroyReason;
 
 use crate::frame_counter::FrameCounter;
 use crate::handles::{GfxBufferHandle, GfxImageHandle, GfxImageViewHandle};
@@ -31,8 +33,8 @@ pub struct GfxResourceManager {
 
     // 待销毁队列 (用于延迟销毁，例如在帧结束时)
     // (handle, frame_index)
-    pending_destroy_buffers: Vec<(GfxBufferHandle, u64)>,
-    pending_destroy_images: Vec<(GfxImageHandle, u64)>,
+    pending_destroy_buffers: Vec<(GfxBufferHandle, u64, DestroyReason)>,
+    pending_destroy_images: Vec<(GfxImageHandle, u64, DestroyReason)>,
 
     destroyed: bool,
 }
@@ -62,25 +64,47 @@ impl GfxResourceManager {
 // 销毁
 impl GfxResourceManager {
     pub fn destroy(mut self) {
-        self.destroy_mut();
+        self.destroy_all(DestroyReason::Shutdown);
     }
-    pub fn destroy_mut(&mut self) {
+
+    pub fn destroy_all(&mut self, reason: DestroyReason) {
         let _span = tracy_client::span!("ResourceManager::destroy_all");
 
         // 销毁 所有的 image views
-        for (_, image_view) in self.image_view_pool.drain() {
-            image_view.destroy()
+        for (view_handle, image_view) in self.image_view_pool.drain() {
+            log::debug!(
+                "GfxResourceManager releasing image view manager={:?} name={} raw={:#x} reason={}",
+                view_handle,
+                image_view.debug_name(),
+                image_view.handle().as_raw(),
+                reason
+            );
+            image_view.destroy(reason)
         }
         self.image_view_lookup.clear();
         self.image_to_views.clear();
 
         // 销毁所有 images
-        for (_, image) in self.image_pool.drain() {
-            image.destroy()
+        for (image_handle, image) in self.image_pool.drain() {
+            log::debug!(
+                "GfxResourceManager releasing image manager={:?} name={} raw={:#x} reason={}",
+                image_handle,
+                image.debug_name(),
+                image.handle().as_raw(),
+                reason
+            );
+            image.destroy(reason)
         }
 
         // 销毁所有 buffers
-        for (_, buffer) in self.buffer_pool.drain() {
+        for (buffer_handle, buffer) in self.buffer_pool.drain() {
+            log::debug!(
+                "GfxResourceManager releasing buffer manager={:?} name={} raw={:#x} reason={}",
+                buffer_handle,
+                buffer.debug_name(),
+                buffer.vk_buffer().as_raw(),
+                reason
+            );
             buffer.destroy()
         }
 
@@ -114,49 +138,39 @@ impl GfxResourceManager {
 
         // 清理 buffers
         let mut buffers_to_destroy = Vec::new();
-        self.pending_destroy_buffers.retain(|(buffer_handle, frame_index)| {
+        self.pending_destroy_buffers.retain(|(buffer_handle, frame_index, reason)| {
             if *frame_index + FIF <= current_frame_id {
-                buffers_to_destroy.push(*buffer_handle);
+                buffers_to_destroy.push((*buffer_handle, *reason));
                 false
             } else {
                 true
             }
         });
-        for buffer_handle in buffers_to_destroy {
+        for (buffer_handle, reason) in buffers_to_destroy {
             if let Some(buffer) = self.buffer_pool.remove(buffer_handle) {
+                log::debug!(
+                    "GfxResourceManager releasing delayed buffer manager={:?} name={} raw={:#x} reason={}",
+                    buffer_handle,
+                    buffer.debug_name(),
+                    buffer.vk_buffer().as_raw(),
+                    reason
+                );
                 buffer.destroy()
             }
         }
 
         // 清理 images
         let mut images_to_destroy = Vec::new();
-        self.pending_destroy_images.retain(|(image_handle, frame_index)| {
+        self.pending_destroy_images.retain(|(image_handle, frame_index, reason)| {
             if *frame_index + FIF <= current_frame_id {
-                images_to_destroy.push(*image_handle);
+                images_to_destroy.push((*image_handle, *reason));
                 false
             } else {
                 true
             }
         });
-        for image_handle in &images_to_destroy {
-            // 先清理基于 image 创建的 image views
-            if let Some(view_handles) = self.image_to_views.remove(*image_handle) {
-                for image_view_handle in view_handles {
-                    // 从 lookup 中移除对应条目
-                    if let Some(image_view) = self.image_view_pool.get(image_view_handle) {
-                        let view_desc = *image_view.desc();
-                        self.image_view_lookup.remove(&(*image_handle, view_desc));
-                    }
-                    // 销毁 image view
-                    if let Some(image_view) = self.image_view_pool.remove(image_view_handle) {
-                        image_view.destroy()
-                    }
-                }
-            }
-            // 再销毁 image 本身
-            if let Some(image) = self.image_pool.remove(*image_handle) {
-                image.destroy()
-            }
+        for (image_handle, reason) in images_to_destroy {
+            self.release_image_now(image_handle, reason);
         }
     }
 }
@@ -191,8 +205,8 @@ impl GfxResourceManager {
     /// 销毁 Buffer（指定帧索引）
     ///
     /// 将 Buffer 加入待销毁队列，在 `current_frame_index` 对应的帧完成后销毁。
-    pub fn destroy_buffer(&mut self, handle: GfxBufferHandle, current_frame_index: u64) {
-        self.pending_destroy_buffers.push((handle, current_frame_index));
+    pub fn release_buffer_deferred(&mut self, handle: GfxBufferHandle, current_frame_index: u64) {
+        self.pending_destroy_buffers.push((handle, current_frame_index, DestroyReason::DeferredCleanup));
     }
 }
 // 图像 API
@@ -219,14 +233,22 @@ impl GfxResourceManager {
     /// 销毁 Image（指定帧索引）
     ///
     /// 同时会销毁默认的 ImageView。
-    pub fn destroy_image(&mut self, handle: GfxImageHandle, current_frame_index: u64) {
-        self.pending_destroy_images.push((handle, current_frame_index));
+    pub fn release_image_deferred(&mut self, handle: GfxImageHandle, current_frame_index: u64) {
+        self.pending_destroy_images.push((handle, current_frame_index, DestroyReason::DeferredCleanup));
     }
 
     /// 立即销毁 Image 及其关联的所有 ImageView
     ///
     /// 注意：调用者需要确保该资源不再被 GPU 使用，否则可能导致未定义行为。
-    pub fn destroy_image_immediate(&mut self, handle: GfxImageHandle) {
+    pub fn release_image_immediate(&mut self, handle: GfxImageHandle, reason: DestroyReason) {
+        self.release_image_now(handle, reason);
+    }
+
+    fn release_image_now(&mut self, handle: GfxImageHandle, reason: DestroyReason) {
+        if handle.is_null() {
+            return;
+        }
+
         // 先清理基于 image 创建的 image views
         if let Some(view_handles) = self.image_to_views.remove(handle) {
             for image_view_handle in view_handles {
@@ -237,17 +259,32 @@ impl GfxResourceManager {
                 }
                 // 销毁 image view
                 if let Some(image_view) = self.image_view_pool.remove(image_view_handle) {
-                    image_view.destroy()
+                    log::debug!(
+                        "GfxResourceManager releasing image view manager={:?} parent={:?} name={} raw={:#x} reason={}",
+                        image_view_handle,
+                        handle,
+                        image_view.debug_name(),
+                        image_view.handle().as_raw(),
+                        reason
+                    );
+                    image_view.destroy(reason)
                 }
             }
         }
 
         // 从待销毁队列中移除（如果存在）
-        self.pending_destroy_images.retain(|(h, _)| *h != handle);
+        self.pending_destroy_images.retain(|(h, _, _)| *h != handle);
 
         // 销毁 image 本身
         if let Some(image) = self.image_pool.remove(handle) {
-            image.destroy()
+            log::debug!(
+                "GfxResourceManager releasing image manager={:?} name={} raw={:#x} reason={}",
+                handle,
+                image.debug_name(),
+                image.handle().as_raw(),
+                reason
+            );
+            image.destroy(reason)
         }
     }
 }

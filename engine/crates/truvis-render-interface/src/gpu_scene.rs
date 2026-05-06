@@ -2,8 +2,10 @@ use std::path::PathBuf;
 
 use ash::vk;
 use itertools::Itertools;
+use slotmap::Key;
 
 use truvis_gfx::basic::bytes::BytesConvert;
+use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::{
     commands::{
         barrier::{GfxBarrierMask, GfxBufferBarrier},
@@ -164,12 +166,43 @@ impl GpuScene {
     }
 }
 impl Drop for GpuScene {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        debug_assert!(self.sky_texture.0.is_null());
+        debug_assert!(self.sky_texture.1.is_null());
+        debug_assert!(self.uv_checker_texture.0.is_null());
+        debug_assert!(self.uv_checker_texture.1.is_null());
+    }
 }
 // 销毁
 impl GpuScene {
-    pub fn destroy(self) {}
-    pub fn destroy_mut(&mut self) {}
+    pub fn destroy_mut(
+        &mut self,
+        bindless_manager: &mut BindlessManager,
+        gfx_resource_manager: &mut GfxResourceManager,
+    ) {
+        for buffers in &mut self.gpu_scene_buffers {
+            buffers.tlas.take();
+        }
+
+        let (sky_image, sky_view) = self.sky_texture;
+        if !sky_view.is_null() {
+            bindless_manager.unregister_srv(sky_view);
+        }
+        if !sky_image.is_null() {
+            gfx_resource_manager.release_image_immediate(sky_image, DestroyReason::Shutdown);
+        }
+
+        let (uv_checker_image, uv_checker_view) = self.uv_checker_texture;
+        if !uv_checker_view.is_null() {
+            bindless_manager.unregister_srv(uv_checker_view);
+        }
+        if !uv_checker_image.is_null() {
+            gfx_resource_manager.release_image_immediate(uv_checker_image, DestroyReason::Shutdown);
+        }
+
+        self.sky_texture = (GfxImageHandle::default(), GfxImageViewHandle::default());
+        self.uv_checker_texture = (GfxImageHandle::default(), GfxImageViewHandle::default());
+    }
 }
 // 工具函数
 impl GpuScene {
@@ -519,7 +552,7 @@ mod helper {
     /// 三个操作：
     /// 1. 将 stage buffer 的数据 *全部* flush 到 buffer 中
     /// 2. 从 stage buffer 中将 *所有* 数据复制到目标 buffer 中
-    /// 3. 添加 barrier，确保后续访问时 copy 已经完成且数据可用
+    /// 3. 添加 barrier，确保后续访问时 Copy 已经完成且数据可用
     pub fn flush_copy_and_barrier(
         cmd: &GfxCommandBuffer,
         stage_buffer: &mut GfxBuffer,
@@ -553,9 +586,9 @@ mod helper {
         // 3x4 矩阵，row-major 顺序
         vk::TransformMatrixKHR {
             matrix: [
-                c1.x, c2.x, c3.x, c4.x, // row 1
-                c1.y, c2.y, c3.y, c4.y, // row 2
-                c1.z, c2.z, c3.z, c4.z, // row 3
+                c1.x, c2.x, c3.x, c4.x, // 第 1 行
+                c1.y, c2.y, c3.y, c4.y, // 第 2 行
+                c1.z, c2.z, c3.z, c4.z, // 第 3 行
             ],
         }
     }

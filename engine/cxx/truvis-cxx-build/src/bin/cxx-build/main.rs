@@ -20,7 +20,7 @@ impl BuildType {
     }
 }
 
-/// 将 cxx 编译的结果 copy 到 rust
+/// 将 cxx 编译结果复制到 Rust 侧
 fn copy_to_rust(cmake_project: &std::path::Path, cargo_target_dir: &std::path::Path, build_type: BuildType) {
     let cmake_output_path = cmake_project.join("build").join("output").join(build_type.cmake_output_dir());
     let cargo_output_path = cargo_target_dir.join(build_type.cargo_output_dir());

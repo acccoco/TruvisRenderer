@@ -60,7 +60,7 @@ fn gen_rust_binding() {
         .generate()
         .expect("Unable to generate bindings");
 
-    // Write the bindings to the $OUT_DIR/bindings.rs file.
+    // 将 bindings 写入 crate 内的生成文件。
     let out_path = std::path::PathBuf::from("src").join("_shader_bindings.rs");
     bindings.write_to_file(out_path).expect("Couldn't write bindings!");
 }

@@ -3,7 +3,8 @@
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use truvis_render_backend::platform::camera::Camera;
 use truvis_render_backend::render_backend::{
-    RenderBackendInitCtx, RenderBackendRenderCtx, RenderBackendResizeCtx, RenderBackendUpdateCtx,
+    RenderBackendInitCtx, RenderBackendRenderCtx, RenderBackendResizeCtx, RenderBackendShutdownCtx,
+    RenderBackendUpdateCtx,
 };
 
 use crate::input_event::InputEvent;
@@ -43,6 +44,11 @@ pub struct RenderAppResizeCtx<'a> {
     pub window_size: [u32; 2],
 }
 
+/// `RenderAppShell` 传给 app hooks 的 shutdown 上下文。
+pub struct RenderAppShutdownCtx<'a> {
+    pub backend: RenderBackendShutdownCtx<'a>,
+}
+
 /// 由 `RenderAppShell` 驱动的具体 app hook 契约。
 ///
 /// 具体 app 持有 GUI、camera/input state、overlay 和 render plugin。
@@ -72,5 +78,5 @@ pub trait RenderAppHooks {
 
     fn on_resize(&mut self, _ctx: &mut RenderAppResizeCtx<'_>) {}
 
-    fn shutdown(&mut self) {}
+    fn shutdown(&mut self, _ctx: &mut RenderAppShutdownCtx<'_>) {}
 }

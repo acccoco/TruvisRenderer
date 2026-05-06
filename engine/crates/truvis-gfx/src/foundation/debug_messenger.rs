@@ -20,8 +20,9 @@ impl GfxDebugMsger {
         }
     }
 
+    /// debug messenger 的 RAII 持有资源立即释放别名。
     pub fn destroy(self) {
-        // 触发 drop 进行销毁
+        drop(self)
     }
 }
 

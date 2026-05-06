@@ -21,8 +21,9 @@ impl VMemAllocator {
         Self { inner: vma }
     }
 
+    /// VMA allocator 的 RAII 持有资源立即释放别名。
     pub fn destroy(self) {
-        // 通过 drop 触发销毁
+        drop(self)
     }
 }
 

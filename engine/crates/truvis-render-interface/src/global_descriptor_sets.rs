@@ -154,17 +154,13 @@ impl Default for GlobalDescriptorSets {
 }
 // 销毁
 impl GlobalDescriptorSets {
-    pub fn destroy_mut(&mut self) {
-        // descriptor sets 跟随 pool 一起销毁
-    }
+    /// RAII 持有资源的立即释放别名；descriptor set 跟随 descriptor pool 释放。
     pub fn destroy(self) {
-        // descriptor sets 跟随 pool 一起销毁
+        drop(self)
     }
 }
 impl Drop for GlobalDescriptorSets {
-    fn drop(&mut self) {
-        self.destroy_mut();
-    }
+    fn drop(&mut self) {}
 }
 // 访问器
 impl GlobalDescriptorSets {

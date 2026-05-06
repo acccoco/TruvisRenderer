@@ -1,7 +1,7 @@
 use ash::vk;
 use ash::vk::Handle;
 
-use crate::{foundation::debug_messenger::DebugType, gfx::Gfx};
+use crate::{foundation::debug_messenger::DebugType, gfx::Gfx, resources::lifecycle::DestroyReason};
 
 pub struct GfxImageView {
     handle: vk::ImageView,
@@ -52,10 +52,16 @@ impl GfxImageView {
 }
 // 销毁
 impl GfxImageView {
-    pub fn destroy(mut self) {
-        self.destroy_mut();
+    pub fn destroy(mut self, reason: DestroyReason) {
+        self.release(reason);
     }
-    pub fn destroy_mut(&mut self) {
+
+    fn release(&mut self, reason: DestroyReason) {
+        if self.handle.is_null() {
+            return;
+        }
+
+        log::debug!("Destroying GfxImageView name={} raw={:#x} reason={}", self.name, self.handle.as_raw(), reason);
         unsafe {
             let gfx_device = Gfx::get().gfx_device();
             gfx_device.destroy_image_view(self.handle, None);
@@ -65,7 +71,7 @@ impl GfxImageView {
 }
 impl Drop for GfxImageView {
     fn drop(&mut self) {
-        debug_assert!(self.handle.is_null());
+        debug_assert!(self.handle.is_null(), "GfxImageView '{}' dropped without explicit manager release", self.name);
     }
 }
 // 访问器
@@ -78,6 +84,10 @@ impl GfxImageView {
     #[inline]
     pub fn desc(&self) -> &GfxImageViewDesc {
         &self.desc
+    }
+    #[inline]
+    pub fn debug_name(&self) -> &str {
+        &self.name
     }
 }
 impl std::fmt::Display for GfxImageView {

@@ -109,8 +109,8 @@ impl GfxCommandBuffer {
 
     /// 将 data 传输到 buffer 中，大小限制：65536Bytes=64KB
     ///
-    /// 首先将 data copy 到 cmd buffer 中，然后再 transfer 到指定 buffer
-    /// 中，这是一个  transfer op
+    /// 首先将 data 复制到 cmd buffer 中，然后再 transfer 到指定 buffer
+    /// 中，这是一个 transfer op
     ///
     /// 需要在 render pass 之外进行，注意同步
     ///

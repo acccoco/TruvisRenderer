@@ -6,7 +6,7 @@ use crate::{
     commands::{barrier::GfxImageBarrier, command_buffer::GfxCommandBuffer},
     foundation::debug_messenger::DebugType,
     gfx::Gfx,
-    resources::buffer::GfxBuffer,
+    resources::{buffer::GfxBuffer, lifecycle::DestroyReason, vma_debug::with_vma_debug_name},
 };
 
 /// Vulkan 格式相关的工具类
@@ -85,6 +85,11 @@ impl GfxImage {
     pub fn format(&self) -> vk::Format {
         self.format
     }
+
+    #[inline]
+    pub fn debug_name(&self) -> &str {
+        &self.name
+    }
 }
 
 // 创建与初始化
@@ -92,7 +97,9 @@ impl GfxImage {
     pub fn new(image_info: &GfxImageCreateInfo, alloc_info: &vk_mem::AllocationCreateInfo, debug_name: &str) -> Self {
         let allocator = Gfx::get().allocator();
         let gfx_device = Gfx::get().gfx_device();
-        let (image, alloc) = unsafe { allocator.create_image(&image_info.as_info(), alloc_info).unwrap() };
+        let (image, alloc) = with_vma_debug_name(alloc_info, debug_name, |alloc_info| unsafe {
+            allocator.create_image(&image_info.as_info(), alloc_info).unwrap()
+        });
         let image = Self {
             handle: image,
             source: ImageSource::Allocated(alloc),
@@ -153,11 +160,16 @@ impl DebugType for GfxImage {
 
 // 销毁
 impl GfxImage {
-    pub fn destroy(mut self) {
-        self.destroy_mut();
+    pub fn destroy(mut self, reason: DestroyReason) {
+        self.release(reason);
     }
-    pub fn destroy_mut(&mut self) {
-        log::debug!("Destroying GfxImage: {}", self.name);
+
+    fn release(&mut self, reason: DestroyReason) {
+        if self.handle.is_null() {
+            return;
+        }
+
+        log::debug!("Destroying GfxImage name={} raw={:#x} reason={}", self.name, self.handle.as_raw(), reason);
 
         match &mut self.source {
             ImageSource::External => (),
@@ -170,7 +182,11 @@ impl GfxImage {
 }
 impl Drop for GfxImage {
     fn drop(&mut self) {
-        debug_assert!(self.handle.is_null());
+        debug_assert!(
+            self.handle.is_null(),
+            "GfxImage '{}' dropped without explicit manager/lifecycle-owner release",
+            self.name
+        );
     }
 }
 

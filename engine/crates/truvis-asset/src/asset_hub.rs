@@ -6,6 +6,7 @@ use slotmap::{SecondaryMap, SlotMap};
 
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
+use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_interface::bindless_manager::BindlessManager;
 use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
 use truvis_shader_binding::gpu;
@@ -85,9 +86,16 @@ impl AssetHub {
 
 // 销毁
 impl AssetHub {
-    pub fn destroy(self, gfx_resource_manager: &mut GfxResourceManager, bindless_manager: &mut BindlessManager) {
+    pub fn destroy(mut self, gfx_resource_manager: &mut GfxResourceManager, bindless_manager: &mut BindlessManager) {
+        self.upload_manager.shutdown();
+
+        for (_, texture) in self.textures.drain() {
+            bindless_manager.unregister_srv(texture.view_handle);
+            gfx_resource_manager.release_image_immediate(texture.image_handle, DestroyReason::Shutdown);
+        }
+
         bindless_manager.unregister_srv(self.fallback_texture.view_handle);
-        gfx_resource_manager.destroy_image_immediate(self.fallback_texture.image_handle);
+        gfx_resource_manager.release_image_immediate(self.fallback_texture.image_handle, DestroyReason::Shutdown);
     }
 }
 

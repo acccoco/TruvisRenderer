@@ -42,7 +42,7 @@ struct SlotDirtyInfo {
 struct MaterialBuffers {
     /// Device-local SSBO，shader 直接读取
     material_buffer: GfxStructuredBuffer<gpu::PBRMaterial>,
-    /// Host-mapped staging buffer，CPU 写入后 copy 到 SSBO
+    /// host-mapped staging buffer，CPU 写入后复制到 SSBO
     material_stage_buffer: GfxStructuredBuffer<gpu::PBRMaterial>,
 }
 
@@ -121,7 +121,9 @@ impl MaterialManager {
 
 // 销毁
 impl MaterialManager {
-    pub fn destroy(self) {}
+    pub fn destroy(self) {
+        drop(self)
+    }
 }
 impl Drop for MaterialManager {
     fn drop(&mut self) {

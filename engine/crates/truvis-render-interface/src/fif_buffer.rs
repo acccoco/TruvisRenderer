@@ -1,6 +1,7 @@
 use ash::vk;
 use itertools::Itertools;
 use slotmap::Key;
+use truvis_gfx::resources::lifecycle::DestroyReason;
 
 use crate::bindless_manager::BindlessManager;
 use crate::frame_counter::FrameCounter;
@@ -158,7 +159,7 @@ impl FifBuffers {
         frame_settings: &FrameSettings,
         frame_counter: &FrameCounter,
     ) {
-        self.destroy_mut(bindless_manager, gfx_resource_manager);
+        self.destroy_mut(bindless_manager, gfx_resource_manager, DestroyReason::Resize);
         *self = Self::new(frame_settings, bindless_manager, gfx_resource_manager, frame_counter);
     }
 
@@ -467,31 +468,32 @@ impl FifBuffers {
         &mut self,
         bindless_manager: &mut BindlessManager,
         gfx_resource_manager: &mut GfxResourceManager,
+        reason: DestroyReason,
     ) {
         self.unregister_bindless(bindless_manager);
 
         // 只需销毁 image，view 会跟随销毁
         for single_frame_image in std::mem::take(&mut self.single_frame_rt_images) {
-            gfx_resource_manager.destroy_image_immediate(single_frame_image);
+            gfx_resource_manager.release_image_immediate(single_frame_image, reason);
         }
         for render_target_image in std::mem::take(&mut self.off_screen_target_image_handles) {
-            gfx_resource_manager.destroy_image_immediate(render_target_image);
+            gfx_resource_manager.release_image_immediate(render_target_image, reason);
         }
 
         // 销毁 GBuffer 图像
         for gbuffer_image in std::mem::take(&mut self.gbuffer_a_images) {
-            gfx_resource_manager.destroy_image_immediate(gbuffer_image);
+            gfx_resource_manager.release_image_immediate(gbuffer_image, reason);
         }
         for gbuffer_image in std::mem::take(&mut self.gbuffer_b_images) {
-            gfx_resource_manager.destroy_image_immediate(gbuffer_image);
+            gfx_resource_manager.release_image_immediate(gbuffer_image, reason);
         }
         for gbuffer_image in std::mem::take(&mut self.gbuffer_c_images) {
-            gfx_resource_manager.destroy_image_immediate(gbuffer_image);
+            gfx_resource_manager.release_image_immediate(gbuffer_image, reason);
         }
 
         // image view 无需销毁，只需要销毁 image 即可
-        gfx_resource_manager.destroy_image_immediate(self.depth_image);
-        gfx_resource_manager.destroy_image_immediate(self.accum_image);
+        gfx_resource_manager.release_image_immediate(self.depth_image, reason);
+        gfx_resource_manager.release_image_immediate(self.accum_image, reason);
 
         self.single_frame_rt_views = Default::default();
         self.depth_image_view = GfxImageViewHandle::default();

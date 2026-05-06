@@ -21,7 +21,7 @@ struct MaterialData
     float roughness = 0.5f;
     float metallic = 0.0f;
     TruvixxFloat4 emissive = { { 0.0f, 0.0f, 0.0f, 1.0f } };
-    float opacity = 1.0f; ///< 1 = opaque, 0 = transparent
+    float opacity = 1.0f; ///< 1 = 不透明，0 = 透明
 
     // 纹理路径 (绝对路径)
     std::string diffuse_map;

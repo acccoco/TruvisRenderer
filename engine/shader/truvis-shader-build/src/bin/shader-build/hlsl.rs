@@ -23,10 +23,10 @@ impl HlslCompiler {
     fn get_shader_model_target(stage: ShaderStage) -> &'static str {
         match stage {
             ShaderStage::Vertex => "vs",
-            ShaderStage::TessellationControl => "hs",    // Hull Shader
-            ShaderStage::TessellationEvaluation => "ds", // Domain Shader
+            ShaderStage::TessellationControl => "hs", // Hull Shader（细分控制着色器）
+            ShaderStage::TessellationEvaluation => "ds", // Domain Shader（细分求值着色器）
             ShaderStage::Geometry => "gs",
-            ShaderStage::Fragment => "ps", // Pixel Shader
+            ShaderStage::Fragment => "ps", // Pixel Shader（像素着色器）
             ShaderStage::Compute => "cs",
             // Ray Tracing 阶段使用 lib
             ShaderStage::RayGen
@@ -35,7 +35,7 @@ impl HlslCompiler {
             | ShaderStage::Miss
             | ShaderStage::Intersection
             | ShaderStage::RayCallable => "lib",
-            ShaderStage::Task => "as", // Amplification Shader
+            ShaderStage::Task => "as", // Amplification Shader（任务着色器前置阶段）
             ShaderStage::Mesh => "ms",
             ShaderStage::General => panic!("DXC does not support Slang shaders"),
         }

@@ -1,12 +1,14 @@
 use ash::vk;
+use ash::vk::Handle;
 
 use crate::{foundation::debug_messenger::DebugType, gfx::Gfx};
 
-/// # 销毁
-/// 不应该实现 Semaphore，因为可以 Clone，需要手动 destroy
-#[derive(Clone)]
+/// Vulkan semaphore 的唯一所有者。
+///
+/// 需要共享时传递引用或 raw handle；克隆该类型会让同一个 Vulkan handle 出现多个表面所有者。
 pub struct GfxSemaphore {
     semaphore: vk::Semaphore,
+    debug_name: String,
 }
 
 // 创建与销毁
@@ -15,7 +17,10 @@ impl GfxSemaphore {
         let gfx_device = Gfx::get().gfx_device();
         let semaphore = unsafe { gfx_device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap() };
 
-        let semaphore = Self { semaphore };
+        let semaphore = Self {
+            semaphore,
+            debug_name: debug_name.to_string(),
+        };
         gfx_device.set_debug_name(&semaphore, debug_name);
         semaphore
     }
@@ -28,16 +33,28 @@ impl GfxSemaphore {
         let timeline_semaphore_ci = vk::SemaphoreCreateInfo::default().push_next(&mut timeline_type_ci);
         let semaphore = unsafe { gfx_device.create_semaphore(&timeline_semaphore_ci, None).unwrap() };
 
-        let semaphore = Self { semaphore };
+        let semaphore = Self {
+            semaphore,
+            debug_name: debug_name.to_string(),
+        };
         gfx_device.set_debug_name(&semaphore, debug_name);
         semaphore
     }
     #[inline]
-    pub fn destroy(self) {
+    pub fn destroy(mut self) {
+        if self.semaphore.is_null() {
+            return;
+        }
+        log::debug!(
+            "Destroying GfxSemaphore name={} raw={:#x} reason=shutdown",
+            self.debug_name,
+            self.semaphore.as_raw()
+        );
         let gfx_device = Gfx::get().gfx_device();
         unsafe {
             gfx_device.destroy_semaphore(self.semaphore, None);
         }
+        self.semaphore = vk::Semaphore::null();
     }
 }
 
@@ -71,5 +88,15 @@ impl DebugType for GfxSemaphore {
 
     fn vk_handle(&self) -> impl vk::Handle {
         self.semaphore
+    }
+}
+
+impl Drop for GfxSemaphore {
+    fn drop(&mut self) {
+        debug_assert!(
+            self.semaphore.is_null(),
+            "GfxSemaphore '{}' dropped without explicit owner destroy",
+            self.debug_name
+        );
     }
 }

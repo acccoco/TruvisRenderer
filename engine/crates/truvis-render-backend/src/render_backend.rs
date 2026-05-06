@@ -7,6 +7,7 @@ use truvis_asset::asset_hub::AssetHub;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
+use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
@@ -110,6 +111,12 @@ pub struct RenderBackendResizeCtx<'a> {
     pub render_present: &'a RenderPresent,
 }
 
+/// Shutdown 阶段上下文，保证 app/plugin 可在 backend 与 Gfx 存活时释放 GPU 资源。
+pub struct RenderBackendShutdownCtx<'a> {
+    pub render_world: &'a mut RenderWorld,
+    pub cmd_allocator: &'a mut CmdAllocator,
+}
+
 // 创建与初始化
 impl RenderBackend {
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
@@ -210,15 +217,19 @@ impl RenderBackend {
             render_present.destroy(&mut self.render_world.gfx_resource_manager);
         }
 
-        self.render_world
-            .fif_buffers
-            .destroy_mut(&mut self.render_world.bindless_manager, &mut self.render_world.gfx_resource_manager);
+        self.render_world.fif_buffers.destroy_mut(
+            &mut self.render_world.bindless_manager,
+            &mut self.render_world.gfx_resource_manager,
+            DestroyReason::Shutdown,
+        );
         self.world.scene_manager.destroy();
         self.world
             .asset_hub
             .destroy(&mut self.render_world.gfx_resource_manager, &mut self.render_world.bindless_manager);
-        self.render_world.bindless_manager.destroy();
-        self.render_world.gpu_scene.destroy();
+        self.render_world
+            .gpu_scene
+            .destroy_mut(&mut self.render_world.bindless_manager, &mut self.render_world.gfx_resource_manager);
+        self.gpu_scene_update_cmds.clear();
         self.cmd_allocator.destroy();
         self.render_world.gfx_resource_manager.destroy();
         self.fif_timeline_semaphore.destroy();
@@ -329,6 +340,13 @@ impl RenderBackend {
             render_world: &mut self.render_world,
             render_present: self.render_present.as_ref().unwrap(),
         })
+    }
+
+    pub fn shutdown_phase(&mut self) -> RenderBackendShutdownCtx<'_> {
+        RenderBackendShutdownCtx {
+            render_world: &mut self.render_world,
+            cmd_allocator: &mut self.cmd_allocator,
+        }
     }
 
     /// window/surface 创建后的一次性初始化。返回用于 plugin 初始化的上下文。

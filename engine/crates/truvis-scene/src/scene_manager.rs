@@ -196,7 +196,9 @@ impl Drop for SceneManager {
 }
 // 销毁
 impl SceneManager {
-    pub fn destroy(self) {}
+    pub fn destroy(self) {
+        drop(self)
+    }
     pub fn destroy_mut(&mut self) {
         self.all_mats.clear();
         self.all_instances.clear();

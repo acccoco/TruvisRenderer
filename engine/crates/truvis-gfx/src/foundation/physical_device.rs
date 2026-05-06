@@ -87,7 +87,7 @@ impl GfxPhysicalDevice {
                     ext_name.to_str().unwrap().to_string()
                 })
                 .join("\n");
-            log::trace!("physical device supports extensions: {}", device_extension_strs);
+            log::debug!("physical device supports extensions: {}", device_extension_strs);
 
             // 找到所有的队列信息并打印出来
 

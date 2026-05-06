@@ -7,6 +7,7 @@ use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::Gfx;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
+use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::swapchain::surface::GfxSurface;
 use truvis_gfx::swapchain::swapchain::{GfxSwapchain, GfxSwapchainImageInfo};
 use truvis_render_interface::frame_counter::FrameCounter;
@@ -188,7 +189,7 @@ impl RenderPresent {
         }
 
         for image_handle in std::mem::take(&mut self.swapchain_images) {
-            gfx_resource_manager.destroy_image_immediate(image_handle);
+            gfx_resource_manager.release_image_immediate(image_handle, DestroyReason::Resize);
         }
         let old_swapchain = self.swapchain.take();
         self.swapchain = Some(GfxSwapchain::new(
@@ -232,7 +233,7 @@ impl RenderPresent {
             semaphore.destroy();
         }
         for image_handle in self.swapchain_images {
-            gfx_resource_manager.destroy_image_immediate(image_handle)
+            gfx_resource_manager.release_image_immediate(image_handle, DestroyReason::Shutdown)
         }
         if let Some(swapchain) = self.swapchain {
             swapchain.destroy();

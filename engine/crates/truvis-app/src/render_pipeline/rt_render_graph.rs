@@ -1,6 +1,6 @@
 use ash::vk;
 
-use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx};
+use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::swapchain::swapchain::GfxSwapchain;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
@@ -66,6 +66,10 @@ impl Plugin for RtPipeline {
             ctx.render_present.swapchain.as_ref().unwrap(),
             ctx.cmd_allocator,
         ));
+    }
+
+    fn shutdown(&mut self, _ctx: &mut PluginShutdownCtx<'_>) {
+        self.inner.take();
     }
 }
 

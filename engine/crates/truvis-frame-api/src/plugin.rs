@@ -10,7 +10,7 @@ use truvis_world::World;
 
 use crate::input_event::InputEvent;
 
-/// app-owned plugin 的一次性初始化上下文。
+/// 由 app 持有的 plugin 的一次性初始化上下文。
 pub struct PluginInitCtx<'a> {
     pub world: &'a mut World,
     pub render_world: &'a mut RenderWorld,
@@ -19,7 +19,7 @@ pub struct PluginInitCtx<'a> {
     pub render_present: &'a RenderPresent,
 }
 
-/// app-owned plugin 的 CPU 更新上下文。
+/// 由 app 持有的 plugin 的 CPU 更新上下文。
 pub struct PluginUpdateCtx<'a> {
     pub world: &'a mut World,
     pub pipeline_settings: &'a mut PipelineSettings,
@@ -27,7 +27,7 @@ pub struct PluginUpdateCtx<'a> {
     pub delta_time_s: f32,
 }
 
-/// app-owned plugin 的渲染上下文。
+/// 由 app 持有的 plugin 的渲染上下文。
 ///
 /// GUI draw data 刻意保留在具体 GUI plugin 内部。
 pub struct PluginRenderCtx<'a> {
@@ -42,7 +42,13 @@ pub struct PluginResizeCtx<'a> {
     pub render_present: &'a RenderPresent,
 }
 
-/// 可复用 app-owned 能力单元的标准生命周期。
+/// 由 app 持有的 plugin 的 GPU shutdown 上下文。
+pub struct PluginShutdownCtx<'a> {
+    pub render_world: &'a mut RenderWorld,
+    pub cmd_allocator: &'a mut CmdAllocator,
+}
+
+/// 可复用、由 app 持有的能力单元标准生命周期。
 ///
 /// `ui()` 或 `contribute_passes()` 等特有能力保留在具体 plugin 类型上，
 /// 这样 app 可以组合 plugin，而无需 downcast。
@@ -57,5 +63,5 @@ pub trait Plugin {
 
     fn on_resize(&mut self, _ctx: &mut PluginResizeCtx) {}
 
-    fn shutdown(&mut self) {}
+    fn shutdown(&mut self, _ctx: &mut PluginShutdownCtx<'_>) {}
 }

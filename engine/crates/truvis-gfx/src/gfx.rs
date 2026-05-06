@@ -184,7 +184,7 @@ impl Gfx {
 
     /// 当 uniform buffer 的 descriptor 在更新时，其 offset 必须是这个值的整数倍
     ///
-    /// 注：这个值一定是 power of 2
+    /// 注：这个值一定是 2 的幂
     #[inline]
     pub fn min_ubo_offset_align(&self) -> vk::DeviceSize {
         self.gfx_core.physical_device.basic_props.limits.min_uniform_buffer_offset_alignment

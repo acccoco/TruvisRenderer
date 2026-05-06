@@ -193,7 +193,7 @@ impl GfxInstance {
     fn basic_instance_exts() -> Vec<&'static CStr> {
         let exts = vec![
             // 这个 extension 可以单独使用，提供以下功能：
-            // 1. debug messenger
+            // 1. 创建 debug messenger
             // 2. 为 vulkan object 设置 debug name
             // 2. 使用 label 标记 queue 或者 command buffer 中的一个一个 section
             // 这个 extension 可以和 validation layer 配合使用，提供更详细的信息

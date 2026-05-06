@@ -129,7 +129,7 @@ impl GfxShaderStageInfo {
 
 /// 用于 RayTracing Pipeline 的创建
 ///
-/// 在 pipeline create info 的 groups 中，每个 shader group 的 index
+/// 在 pipeline create info 的 groups 中，每个 shader group 的索引
 ///
 /// 每个 shader group 可以由多个 shader 组成，每个 shader group 都是独一无二的
 pub struct GfxShaderGroupInfo {

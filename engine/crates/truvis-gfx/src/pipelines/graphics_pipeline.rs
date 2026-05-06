@@ -35,8 +35,9 @@ impl GfxPipelineLayout {
     }
 
     #[inline]
+    /// RAII 持有资源的立即释放别名。
     pub fn destroy(self) {
-        // Drop 处理
+        drop(self)
     }
 }
 impl Drop for GfxPipelineLayout {
@@ -158,8 +159,9 @@ impl GfxGraphicsPipeline {
     }
 
     #[inline]
+    /// RAII 持有资源的立即释放别名。
     pub fn destroy(self) {
-        // Drop 处理
+        drop(self)
     }
 }
 impl Drop for GfxGraphicsPipeline {

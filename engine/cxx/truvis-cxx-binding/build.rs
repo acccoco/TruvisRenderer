@@ -10,8 +10,7 @@ fn gen_rust_binding() {
             format!("-I{}", cxx_root_path.join("mods/truvixx-interface/include").to_str().unwrap()),
             format!("-I{}", cxx_root_path.join("mods/truvixx-assimp/include").to_str().unwrap()),
         ])
-        // Tell cargo to invalidate the built crate whenever any of the
-        // included header files changed.
+        // 任何被包含的头文件变化时，都通知 cargo 重新构建当前 crate。
         .raw_line("#![allow(clippy::all)]")
         .raw_line("#![allow(warnings)]")
         .derive_default(true)
@@ -20,7 +19,7 @@ fn gen_rust_binding() {
         .generate()
         .expect("Unable to generate bindings");
 
-    // Write the bindings to the $OUT_DIR/bindings.rs file.
+    // 将 bindings 写入 crate 内的生成文件。
     let out_path = std::path::PathBuf::from("src").join("_ffi_bindings.rs");
     bindings.write_to_file(out_path).expect("Couldn't write bindings!");
 }

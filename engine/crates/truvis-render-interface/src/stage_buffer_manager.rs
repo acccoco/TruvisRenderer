@@ -26,7 +26,10 @@ impl Drop for StageBufferManager {
 }
 // 销毁
 impl StageBufferManager {
-    pub fn destroy(self) {}
+    /// RAII 持有资源的立即释放别名；已保存的 buffer 通过 `Drop` 释放。
+    pub fn destroy(self) {
+        drop(self)
+    }
 }
 // 工具函数
 impl StageBufferManager {

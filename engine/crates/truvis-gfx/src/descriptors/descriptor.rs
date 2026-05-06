@@ -58,8 +58,9 @@ impl<T: DescriptorBindingLayout> GfxDescriptorSetLayout<T> {
     }
 
     #[inline]
+    /// RAII 持有资源的立即释放别名。
     pub fn destroy(self) {
-        // Drop 处理
+        drop(self)
     }
 }
 impl<T: DescriptorBindingLayout> Drop for GfxDescriptorSetLayout<T> {
