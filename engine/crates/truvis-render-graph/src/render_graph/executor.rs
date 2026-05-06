@@ -3,7 +3,7 @@
 //! 提供 `RenderGraphBuilder` 用于构建渲染图，
 //! `CompiledGraph` 用于缓存编译结果并执行渲染。
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Write as _};
 
 use ash::vk;
 use itertools::Itertools;
@@ -569,140 +569,170 @@ impl CompiledGraph<'_> {
     /// - 每个 Pass 的 image/buffer 读写信息（包含资源名称）
     /// - 每个 Pass 的 barrier 详细信息（layout 转换、目标资源名称）
     pub fn print_execution_plan(&self) {
-        log::info!("====================================================================");
-        log::info!("|              RenderGraph Execution Plan                          |");
-        log::info!("|==================================================================|");
-        log::info!(
-            "| Total Passes: {}  |  Execution Order: [{}]",
+        if !log::log_enabled!(log::Level::Info) {
+            return;
+        }
+
+        let mut plan = String::new();
+        self.write_execution_plan(&mut plan);
+        log::info!("{}", plan.trim_end());
+    }
+
+    fn write_execution_plan(&self, plan: &mut String) {
+        let order_text = self
+            .execution_order
+            .iter()
+            .enumerate()
+            .map(|(order, &pass_idx)| format!("[{}] {}", order + 1, self.passes[pass_idx].name))
+            .join(" -> ");
+        let pass_image_barriers = self.barriers.iter().map(PassBarriers::image_barrier_count).sum::<usize>();
+        let pass_buffer_barriers = self.barriers.iter().map(PassBarriers::buffer_barrier_count).sum::<usize>();
+
+        let _ = writeln!(plan, "RenderGraph Execution Plan");
+        let _ = writeln!(plan, "summary:");
+        let _ = writeln!(
+            plan,
+            "  passes={}, images={}, buffers={}",
             self.passes.len(),
-            self.execution_order.iter().map(|i| self.passes[*i].name.as_str()).collect::<Vec<_>>().join(" → ")
+            self.resources.image_count(),
+            self.resources.buffer_count()
         );
-        log::info!("╚══════════════════════════════════════════════════════════════════╝");
+        let _ = writeln!(
+            plan,
+            "  pass barriers={} image, {} buffer; epilogue barriers={} image, {} buffer",
+            pass_image_barriers,
+            pass_buffer_barriers,
+            self.epilogue_barriers.image_barrier_count(),
+            self.epilogue_barriers.buffer_barrier_count()
+        );
+        let _ = writeln!(
+            plan,
+            "  semaphores: wait={}, signal={}",
+            self.wait_semaphores.len(),
+            self.signal_semaphores.len()
+        );
+        let _ = writeln!(plan, "order: {}", if order_text.is_empty() { "<empty>" } else { order_text.as_str() });
 
         for (order, &pass_idx) in self.execution_order.iter().enumerate() {
             let pass = &self.passes[pass_idx];
             let barriers = &self.barriers[pass_idx];
 
-            log::info!("");
-            log::info!("┌─────────────────────────────────────────────────────────────────┐");
-            log::info!("│ [{}/{}] Pass: \"{}\"", order + 1, self.execution_order.len(), pass.name);
-            log::info!("├─────────────────────────────────────────────────────────────────┤");
-
-            // 打印 Image 读取信息
-            if !pass.image_reads.is_empty() {
-                log::info!("│ Image Reads:");
-                for (handle, state) in &pass.image_reads {
-                    let name = self.resources.get_image(*handle).map(|r| r.name.as_str()).unwrap_or("<unknown>");
-                    log::info!(
-                        "│   📖 \"{}\" @ {:?} (stage: {}, access: {})",
-                        name,
-                        state.layout,
-                        Self::format_pipeline_stage(state.stage),
-                        Self::format_access_flags(state.access)
-                    );
-                }
-            }
-
-            // 打印 Image 写入信息
-            if !pass.image_writes.is_empty() {
-                log::info!("│ Image Writes:");
-                for (handle, state) in &pass.image_writes {
-                    let name = self.resources.get_image(*handle).map(|r| r.name.as_str()).unwrap_or("<unknown>");
-                    log::info!(
-                        "│   ✏️  \"{}\" @ {:?} (stage: {}, access: {})",
-                        name,
-                        state.layout,
-                        Self::format_pipeline_stage(state.stage),
-                        Self::format_access_flags(state.access)
-                    );
-                }
-            }
-
-            // 打印 Buffer 读取信息
-            if !pass.buffer_reads.is_empty() {
-                log::info!("│ Buffer Reads:");
-                for (handle, state) in &pass.buffer_reads {
-                    let name = self.resources.get_buffer(*handle).map(|r| r.name.as_str()).unwrap_or("<unknown>");
-                    log::info!(
-                        "│   📖 \"{}\" (stage: {}, access: {})",
-                        name,
-                        Self::format_pipeline_stage(state.stage),
-                        Self::format_access_flags(state.access)
-                    );
-                }
-            }
-
-            // 打印 Buffer 写入信息
-            if !pass.buffer_writes.is_empty() {
-                log::info!("│ Buffer Writes:");
-                for (handle, state) in &pass.buffer_writes {
-                    let name = self.resources.get_buffer(*handle).map(|r| r.name.as_str()).unwrap_or("<unknown>");
-                    log::info!(
-                        "│   ✏️  \"{}\" (stage: {}, access: {})",
-                        name,
-                        Self::format_pipeline_stage(state.stage),
-                        Self::format_access_flags(state.access)
-                    );
-                }
-            }
-
-            // 打印 Barrier 详细信息
-            if barriers.has_barriers() {
-                log::info!("├─────────────────────────────────────────────────────────────────┤");
-                log::info!(
-                    "│ Barriers: {} image, {} buffer",
-                    barriers.image_barrier_count(),
-                    barriers.buffer_barrier_count()
-                );
-
-                // 图像 barrier
-                for barrier in &barriers.image_barriers {
-                    let name = self.resources.get_image(barrier.handle).map(|r| r.name.as_str()).unwrap_or("<unknown>");
-                    let layout_change = if barrier.src_state.layout != barrier.dst_state.layout {
-                        format!("{:?} → {:?}", barrier.src_state.layout, barrier.dst_state.layout)
-                    } else {
-                        format!("{:?} (no layout change)", barrier.src_state.layout)
-                    };
-                    log::info!("│   🔒 Image \"{}\":", name);
-                    log::info!("│       Layout: {}", layout_change);
-                    log::info!(
-                        "│       Stage:  {} → {}",
-                        Self::format_pipeline_stage(barrier.src_state.stage),
-                        Self::format_pipeline_stage(barrier.dst_state.stage)
-                    );
-                    log::info!(
-                        "│       Access: {} → {}",
-                        Self::format_access_flags(barrier.src_state.access),
-                        Self::format_access_flags(barrier.dst_state.access)
-                    );
-                    log::info!("│       Aspect: {:?}", barrier.aspect);
-                }
-
-                // Buffer barrier 录制
-                for barrier in &barriers.buffer_barriers {
-                    let name =
-                        self.resources.get_buffer(barrier.handle).map(|r| r.name.as_str()).unwrap_or("<unknown>");
-                    log::info!("│   🔒 Buffer \"{}\":", name);
-                    log::info!(
-                        "│       Stage:  {} → {}",
-                        Self::format_pipeline_stage(barrier.src_state.stage),
-                        Self::format_pipeline_stage(barrier.dst_state.stage)
-                    );
-                    log::info!(
-                        "│       Access: {} → {}",
-                        Self::format_access_flags(barrier.src_state.access),
-                        Self::format_access_flags(barrier.dst_state.access)
-                    );
-                }
-            } else {
-                log::info!("│ No barriers required");
-            }
-
-            log::info!("└─────────────────────────────────────────────────────────────────┘");
+            let _ = writeln!(plan);
+            let _ = writeln!(plan, "[{}/{}] {}", order + 1, self.execution_order.len(), pass.name);
+            self.write_pass_resources(plan, pass);
+            self.write_barriers(plan, "barriers before pass", barriers, "  ");
         }
 
-        log::info!("");
-        log::info!("═══════════════════════ End of Execution Plan ═══════════════════════");
+        let _ = writeln!(plan);
+        self.write_barriers(plan, "epilogue barriers", &self.epilogue_barriers, "");
+    }
+
+    fn write_pass_resources(&self, plan: &mut String, pass: &RgPassNode<'_>) {
+        if pass.image_reads.is_empty()
+            && pass.image_writes.is_empty()
+            && pass.buffer_reads.is_empty()
+            && pass.buffer_writes.is_empty()
+        {
+            let _ = writeln!(plan, "  resources: none");
+            return;
+        }
+
+        let _ = writeln!(plan, "  resources:");
+        self.write_image_accesses(plan, "image reads", &pass.image_reads);
+        self.write_image_accesses(plan, "image writes", &pass.image_writes);
+        self.write_buffer_accesses(plan, "buffer reads", &pass.buffer_reads);
+        self.write_buffer_accesses(plan, "buffer writes", &pass.buffer_writes);
+    }
+
+    fn write_image_accesses(&self, plan: &mut String, label: &str, accesses: &[(RgImageHandle, RgImageState)]) {
+        if accesses.is_empty() {
+            return;
+        }
+
+        let _ = writeln!(plan, "    {label}:");
+        for (handle, state) in accesses {
+            let _ = writeln!(
+                plan,
+                "      - {}: layout={:?}, stage={}, access={}",
+                self.image_name(*handle),
+                state.layout,
+                Self::format_pipeline_stage(state.stage),
+                Self::format_access_flags(state.access)
+            );
+        }
+    }
+
+    fn write_buffer_accesses(&self, plan: &mut String, label: &str, accesses: &[(RgBufferHandle, RgBufferState)]) {
+        if accesses.is_empty() {
+            return;
+        }
+
+        let _ = writeln!(plan, "    {label}:");
+        for (handle, state) in accesses {
+            let _ = writeln!(
+                plan,
+                "      - {}: stage={}, access={}",
+                self.buffer_name(*handle),
+                Self::format_pipeline_stage(state.stage),
+                Self::format_access_flags(state.access)
+            );
+        }
+    }
+
+    fn write_barriers(&self, plan: &mut String, title: &str, barriers: &PassBarriers, indent: &str) {
+        if !barriers.has_barriers() {
+            let _ = writeln!(plan, "{indent}{title}: none");
+            return;
+        }
+
+        let _ = writeln!(
+            plan,
+            "{indent}{title}: {} image, {} buffer",
+            barriers.image_barrier_count(),
+            barriers.buffer_barrier_count()
+        );
+
+        let item_indent = format!("{indent}  ");
+
+        for barrier in &barriers.image_barriers {
+            let _ = writeln!(
+                plan,
+                "{}- image {}: layout={}, stage={} -> {}, access={} -> {}, aspect={:?}",
+                item_indent,
+                self.image_name(barrier.handle),
+                Self::format_image_layout_transition(barrier.src_state.layout, barrier.dst_state.layout),
+                Self::format_pipeline_stage(barrier.src_state.stage),
+                Self::format_pipeline_stage(barrier.dst_state.stage),
+                Self::format_access_flags(barrier.src_state.src_access()),
+                Self::format_access_flags(barrier.dst_state.access),
+                barrier.aspect
+            );
+        }
+
+        for barrier in &barriers.buffer_barriers {
+            let _ = writeln!(
+                plan,
+                "{}- buffer {}: stage={} -> {}, access={} -> {}",
+                item_indent,
+                self.buffer_name(barrier.handle),
+                Self::format_pipeline_stage(barrier.src_state.stage),
+                Self::format_pipeline_stage(barrier.dst_state.stage),
+                Self::format_access_flags(barrier.src_state.access),
+                Self::format_access_flags(barrier.dst_state.access)
+            );
+        }
+    }
+
+    fn image_name(&self, handle: RgImageHandle) -> &str {
+        self.resources.get_image(handle).map(|r| r.name.as_str()).unwrap_or("<unknown>")
+    }
+
+    fn buffer_name(&self, handle: RgBufferHandle) -> &str {
+        self.resources.get_buffer(handle).map(|r| r.name.as_str()).unwrap_or("<unknown>")
+    }
+
+    fn format_image_layout_transition(src: vk::ImageLayout, dst: vk::ImageLayout) -> String {
+        if src == dst { format!("{src:?}") } else { format!("{src:?} -> {dst:?}") }
     }
 
     /// 格式化 PipelineStageFlags2 为可读字符串
@@ -719,6 +749,8 @@ impl CompiledGraph<'_> {
             TOP_OF_PIPE => "TOP_OF_PIPE",
             BOTTOM_OF_PIPE => "BOTTOM_OF_PIPE",
             VERTEX_INPUT => "VERTEX_INPUT",
+            INDEX_INPUT => "INDEX_INPUT",
+            DRAW_INDIRECT => "DRAW_INDIRECT",
             VERTEX_SHADER => "VERTEX_SHADER",
             FRAGMENT_SHADER => "FRAGMENT_SHADER",
             COLOR_ATTACHMENT_OUTPUT => "COLOR_ATTACHMENT_OUTPUT",

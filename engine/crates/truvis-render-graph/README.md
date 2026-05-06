@@ -9,6 +9,10 @@
 - 自动生成必要同步与状态转换
 - 编译后按拓扑顺序执行
 
+## 调试输出
+
+`CompiledGraph::print_execution_plan()` 用于打印编译后的执行计划。输出会先组装为一段多行文本，再通过一次 `info` 日志写出，内容包含 pass 顺序、资源读写、pass 前 barrier、epilogue barrier 和 semaphore 数量，便于从日志中整体复制和分析。
+
 ## 边界约束
 
 - 仅关注图编排，不依赖 scene/asset 等领域模块
