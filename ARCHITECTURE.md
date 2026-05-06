@@ -66,8 +66,8 @@ flowchart TD
 关闭流程：
 
 - 渲染线程观察到退出信号后调用 `RenderApp::shutdown(&mut self)`。
-- `RenderAppShell` 先调用 App hooks 的 `shutdown()`，再通过 App 提供的 shutdown visitor 调用 Plugin shutdown，最后销毁 RenderBackend 与 `Gfx`。
-- backend 销毁前等待 GPU idle，随后销毁 RenderBackend，再销毁 `Gfx`。
+- `RenderAppShell` 先调用 App hooks 的 `shutdown()`，再通过 App 提供的 shutdown visitor 调用 Plugin shutdown，最后销毁 RenderBackend。
+- `RenderBackend` 拥有 `Gfx` root owner；backend 销毁时先等待 GPU idle，释放所有子资源，最后销毁 `Gfx`。
 - 主线程等待渲染线程完成后再 drop `Window`。
 
 ## 3. 状态所有权
@@ -76,6 +76,7 @@ flowchart TD
 
 ```text
 RenderBackend
+  -> Gfx         Vulkan root owner + typed Ctx factory
   -> World       CPU scene + assets
   -> RenderWorld GPU resources + frame state
   -> RenderPresent swapchain/present resources
@@ -102,6 +103,7 @@ RenderBackend 通过 lifecycle Ctx 借出内部字段：
 - `RenderBackendUpdateCtx`
 - `RenderBackendRenderCtx`
 - `RenderBackendResizeCtx`
+- `RenderBackendShutdownCtx`
 
 `RenderAppShell` 从 RenderBackend Ctx 裁剪标准生命周期需要的 Plugin Ctx，App 在 render hook 中为特有 render 能力裁剪 `PluginRenderCtx`：
 
@@ -109,6 +111,9 @@ RenderBackend 通过 lifecycle Ctx 借出内部字段：
 - `PluginUpdateCtx`
 - `PluginRenderCtx`
 - `PluginResizeCtx`
+- `PluginShutdownCtx`
+
+这些 Ctx 携带 phase-appropriate 的 typed `Gfx` Ctx（如 device、resource、queue、surface、immediate、device-info），调用点只获得当前阶段需要的能力，不持有完整 `&Gfx`。
 
 GUI draw data 不进入通用 Ctx。`GuiPlugin` 自行持有 imgui context、draw data、GUI mesh buffer、font texture map，并通过 `prepare_render_data` 和 `contribute_passes` 接入 render hook。
 
@@ -216,10 +221,12 @@ flowchart LR
 
 ## 7. 资源生命周期
 
-生命周期契约分为两类：
+生命周期契约以显式 owner 为边界：
 
-- RAII-owned：Rust value 是唯一 owner，`Drop` 释放 Vulkan/VMA 对象；`destroy(self)` 只能作为 drop-now 别名，不允许同一类型再暴露 `destroy_mut(&mut self)`。
-- Manager-owned：资源由 manager 或明确 lifecycle owner 释放；`Drop` 不调用 Vulkan/VMA 销毁，只通过 debug assertion 暴露遗漏的显式 release。
+- `Gfx` 是 Vulkan root owner，由 `RenderBackend` 持有并在所有子资源之后销毁。
+- 叶子 Vulkan/VMA/WSI wrapper 通过 `destroy(self, ctx, reason)` 或 `destroy_mut(&mut self, ctx, reason)` 释放，释放所需依赖由 owner 在调用点传入 typed `Gfx` Ctx。
+- `Drop` 不调用 Vulkan/VMA/WSI release API，只通过 debug assertion 暴露遗漏的显式销毁。
+- `RenderWorld`、manager、plugin 字段和长期资源 wrapper 不保存 typed `Gfx` Ctx、`&Gfx`、`&GfxDevice` 或 `&VMemAllocator` 引用。
 
 GPU 资源按用途分类：
 
@@ -247,7 +254,7 @@ GPU 资源按用途分类：
 销毁路径：
 
 - `RenderApp::shutdown(&mut self)`：`RenderAppShell` 等待 GPU idle 后，先用 `RenderAppShutdownCtx` 调用 App hooks shutdown，再用 `PluginShutdownCtx` 反向遍历 Plugin shutdown。
-- App / Plugin shutdown 必须在 `RenderBackend::destroy()` 与 `Gfx::destroy()` 之前释放自己持有的 GPU 资源；需要 manager 访问时通过 shutdown context 使用 `RenderWorld`。
+- App / Plugin shutdown 必须在 `RenderBackend::destroy()` 释放 backend 子资源之前释放自己持有的 GPU 资源；需要 manager 访问时通过 shutdown context 使用 `RenderWorld`。
 - manager-owned image/view 只能通过 `GfxResourceManager` 释放，manager 负责 image-view-before-image、延迟销毁队列与 `DestroyReason` 诊断。
-- backend destroy：`Gfx::wait_idle()` -> release present/FIF/assets/GPU scene/cmd/backend resources -> `Gfx::destroy()`。
-- `Gfx::destroy()` 开始后，剩余 App / Plugin 字段的 `Drop` 不得再调用 `Gfx::get()` 或 Vulkan/VMA 销毁 API。
+- backend destroy：`gfx.wait_idel()` -> release present/FIF/assets/GPU scene/cmd/backend resources -> `gfx.destroy()`。
+- `gfx.destroy()` 开始后，剩余 App / Plugin 字段的 `Drop` 不得再调用 Vulkan/VMA/WSI 销毁 API。

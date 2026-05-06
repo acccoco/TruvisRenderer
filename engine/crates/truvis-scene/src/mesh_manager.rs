@@ -3,7 +3,9 @@ use std::collections::VecDeque;
 use ash::vk;
 use slotmap::SlotMap;
 
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::raytracing::acceleration::GfxAcceleration;
+use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 use truvis_render_interface::geometry::RtGeometry;
@@ -73,8 +75,10 @@ impl MeshManager {
         }
     }
 
-    pub fn destroy(self) {
-        drop(self)
+    pub fn destroy(mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
+        for (_, mut mesh) in self.meshes.drain() {
+            Self::destroy_mesh(&mut mesh, resource_ctx, device_ctx);
+        }
     }
 }
 
@@ -109,10 +113,16 @@ impl MeshManager {
     ///
     /// 注意：当前版本直接销毁 GPU 资源。如果 mesh 正在被渲染管线引用，
     /// 调用方需确保相关 GPU 命令已完成。后续集成时可补充 FIF 延迟回收。
-    pub fn unregister(&mut self, handle: ManagedMeshHandle) {
-        if let Some(mesh) = self.meshes.remove(handle) {
+    pub fn unregister(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        handle: ManagedMeshHandle,
+    ) {
+        if let Some(mut mesh) = self.meshes.remove(handle) {
             // 从 pending 队列移除（如果还在排队）
             self.pending.retain(|&h| h != handle);
+            Self::destroy_mesh(&mut mesh, resource_ctx, device_ctx);
             log::debug!("MeshManager: unregister handle={:?} name={}", handle, mesh.name);
         }
     }
@@ -123,7 +133,13 @@ impl MeshManager {
     /// 处理 pending 队列：上传顶点/索引数据到 GPU 并构建 BLAS
     ///
     /// `max_per_frame` 限制每次调用处理的 mesh 数量，`None` 表示全部处理。
-    pub fn update(&mut self, max_per_frame: Option<usize>) {
+    pub fn update(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        max_per_frame: Option<usize>,
+    ) {
         let count = match max_per_frame {
             Some(max) => max.min(self.pending.len()),
             None => self.pending.len(),
@@ -146,19 +162,32 @@ impl MeshManager {
                 None => continue,
             };
 
-            Self::build_mesh(mesh, input);
+            Self::build_mesh(resource_ctx, device_ctx, immediate_ctx, mesh, input);
         }
     }
 
-    fn build_mesh(mesh: &mut ManagedMesh, input: MeshInputData) {
+    fn build_mesh(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        mesh: &mut ManagedMesh,
+        input: MeshInputData,
+    ) {
         let vertex_buffer = VertexLayoutSoA3D::create_vertex_buffer(
+            resource_ctx,
+            immediate_ctx,
             &input.positions,
             &input.normals,
             &input.tangents,
             &input.uvs,
             format!("{}-vertex", mesh.name),
         );
-        let index_buffer = GfxIndex32Buffer::new_with_data(&input.indices, format!("{}-index", mesh.name));
+        let index_buffer = GfxIndex32Buffer::new_with_data(
+            resource_ctx,
+            immediate_ctx,
+            &input.indices,
+            format!("{}-index", mesh.name),
+        );
 
         let geometry = RtGeometry {
             vertex_buffer,
@@ -167,17 +196,29 @@ impl MeshManager {
 
         let blas_infos = [geometry.get_blas_geometry_info()];
         let blas = GfxAcceleration::build_blas_sync(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
             &blas_infos,
             vk::BuildAccelerationStructureFlagsKHR::empty(),
             format!("{}-blas", mesh.name),
         );
 
-        mesh.blas_device_address = Some(blas.device_address());
+        mesh.blas_device_address = Some(blas.device_address(device_ctx));
         mesh.blas = Some(blas);
         mesh.geometry = Some(geometry);
         mesh.status = MeshStatus::Ready;
 
         log::debug!("MeshManager: mesh '{}' is now Ready", mesh.name);
+    }
+
+    fn destroy_mesh(mesh: &mut ManagedMesh, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
+        if let Some(blas) = mesh.blas.take() {
+            blas.destroy(resource_ctx, device_ctx, DestroyReason::Shutdown);
+        }
+        if let Some(mut geometry) = mesh.geometry.take() {
+            geometry.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        }
     }
 }
 

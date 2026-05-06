@@ -3,6 +3,7 @@ use std::{mem::offset_of, rc::Rc};
 use ash::vk;
 
 use truvis_gfx::basic::bytes::BytesConvert;
+use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_gfx::resources::layout::GfxVertexLayout;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 use truvis_gfx::{
@@ -25,6 +26,7 @@ pub struct PhongPass {
 }
 impl PhongPass {
     pub fn new(
+        ctx: GfxDeviceCtx<'_>,
         color_format: vk::Format,
         depth_format: vk::Format,
         render_descriptor_sets: &GlobalDescriptorSets,
@@ -47,6 +49,7 @@ impl PhongPass {
         );
 
         let pipeline_layout = Rc::new(GfxPipelineLayout::new(
+            ctx,
             &render_descriptor_sets.global_set_layouts(),
             &[vk::PushConstantRange::default()
                 .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
@@ -55,9 +58,13 @@ impl PhongPass {
             "phong-pass",
         ));
 
-        let d3_pipe = GfxGraphicsPipeline::new(&ci, pipeline_layout, "phong-d3-pipe");
+        let d3_pipe = GfxGraphicsPipeline::new(ctx, &ci, pipeline_layout, "phong-d3-pipe");
 
         Self { pipeline: d3_pipe }
+    }
+
+    pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
+        self.pipeline.destroy(ctx);
     }
 
     fn bind(

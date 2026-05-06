@@ -11,11 +11,13 @@
 
 ## 资源管理规则
 
+- 本层 API 通过 typed `Gfx` Ctx 接收底层能力；`RenderWorld` 和长期资源字段不保存 Ctx 引用。
 - `GfxResourceManager` 是 manager-owned image/view 的唯一释放入口，负责 view 先于 image 销毁。
 - 延迟销毁通过 frame id 入队，`cleanup()` 到达安全帧后释放，并记录 `DestroyReason::DeferredCleanup`。
 - resize / shutdown / immediate release 必须使用带 `DestroyReason` 的 release API，便于把日志关联到项目资源名、raw Vulkan handle 与 manager handle。
 - `FifBuffers` 只保存 manager handle；resize 和 shutdown 时先注销 bindless，再通过 `GfxResourceManager` 释放 image，view 随 image 释放。
-- `CmdAllocator::destroy()` 是显式 shutdown 边界；`Drop` 只断言它已经被销毁。
+- `CmdAllocator`、`GlobalDescriptorSets`、`RenderSamplerManager`、`GpuScene` 等 owner 在 shutdown 时接收 phase Ctx 并显式销毁自身持有的 GPU 资源。
+- `Drop` 只保留诊断职责，不作为 Vulkan/VMA 释放路径。
 
 ## 模块定位
 

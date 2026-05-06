@@ -2,6 +2,7 @@ use itertools::Itertools;
 
 use truvis_asset::asset_hub::AssetHub;
 use truvis_cxx_binding::truvixx;
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 use truvis_render_interface::geometry::RtGeometry;
@@ -37,6 +38,9 @@ impl AssimpSceneLoader {
     /// # 返回
     /// 返回整个场景的所有 instance id
     pub fn load_scene(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
         model_file: &std::path::Path,
         scene_manager: &mut SceneManager,
         asset_hub: &mut AssetHub,
@@ -60,8 +64,8 @@ impl AssimpSceneLoader {
             instances: vec![],
         };
 
-        scene_loader.load_mesh(|mut mesh| {
-            mesh.build_blas();
+        scene_loader.load_mesh(resource_ctx, immediate_ctx, |mut mesh| {
+            mesh.build_blas(resource_ctx, device_ctx, immediate_ctx);
             scene_manager.register_mesh(mesh)
         });
         scene_loader.load_mats(|mat| {
@@ -80,7 +84,13 @@ impl AssimpSceneLoader {
         scene_loader.instances
     }
 
-    unsafe fn create_mesh(scene_handle: truvixx::TruvixxSceneHandle, mesh_idx: u32, model_name: &str) -> Mesh {
+    unsafe fn create_mesh(
+        resource_ctx: GfxResourceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        scene_handle: truvixx::TruvixxSceneHandle,
+        mesh_idx: u32,
+        model_name: &str,
+    ) -> Mesh {
         unsafe {
             let mut mesh_info = truvixx::TruvixxMeshInfo::default();
             let res = truvixx::truvixx_mesh_get_info(scene_handle, mesh_idx, &mut mesh_info as *mut _);
@@ -104,6 +114,8 @@ impl AssimpSceneLoader {
             let uvs = std::slice::from_raw_parts(uv_ptr as *const glam::Vec2, mesh_info.vertex_count as usize);
 
             let vertex_buffer = VertexLayoutSoA3D::create_vertex_buffer(
+                resource_ctx,
+                immediate_ctx,
                 positions,
                 normals,
                 tangents,
@@ -118,9 +130,12 @@ impl AssimpSceneLoader {
 
             let indices = std::slice::from_raw_parts(indices_ptr, mesh_info.index_count as usize);
 
-            let index_buffer =
-                GfxIndex32Buffer::new_device_local(indices.len(), format!("{}-mesh-{}-indices", model_name, mesh_idx));
-            index_buffer.transfer_data_sync(indices);
+            let index_buffer = GfxIndex32Buffer::new_device_local(
+                resource_ctx,
+                indices.len(),
+                format!("{}-mesh-{}-indices", model_name, mesh_idx),
+            );
+            index_buffer.transfer_data_sync(resource_ctx, immediate_ctx, indices);
 
             // 只有 single geometry 的 mesh
             Mesh {
@@ -136,13 +151,19 @@ impl AssimpSceneLoader {
     }
 
     /// 加载场景中基础的几何体
-    fn load_mesh(&mut self, mut mesh_register: impl FnMut(Mesh) -> MeshHandle) {
+    fn load_mesh(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        mut mesh_register: impl FnMut(Mesh) -> MeshHandle,
+    ) {
         let _span = tracy_client::span!("load_mesh");
         let mesh_cnt = unsafe { truvixx::truvixx_scene_mesh_count(self.scene_handle) };
 
         let mesh_uuids = (0..mesh_cnt)
             .map(|mesh_idx| unsafe {
-                let mesh = Self::create_mesh(self.scene_handle, mesh_idx, &self.model_name);
+                let mesh =
+                    Self::create_mesh(resource_ctx, immediate_ctx, self.scene_handle, mesh_idx, &self.model_name);
                 mesh_register(mesh)
             })
             .collect_vec();

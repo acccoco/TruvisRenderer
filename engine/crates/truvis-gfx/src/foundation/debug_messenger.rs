@@ -20,18 +20,25 @@ impl GfxDebugMsger {
         }
     }
 
-    /// debug messenger 的 RAII 持有资源立即释放别名。
-    pub fn destroy(self) {
-        drop(self)
+    /// 显式释放 debug messenger，必须在 Instance 销毁前调用。
+    pub fn destroy(mut self) {
+        if self.vk_debug_utils_messenger == vk::DebugUtilsMessengerEXT::null() {
+            return;
+        }
+        unsafe {
+            log::info!("Destroying GfxDebugUtils");
+            self.vk_debug_utils_instance.destroy_debug_utils_messenger(self.vk_debug_utils_messenger, None);
+        }
+        self.vk_debug_utils_messenger = vk::DebugUtilsMessengerEXT::null();
     }
 }
 
 impl Drop for GfxDebugMsger {
     fn drop(&mut self) {
-        unsafe {
-            log::info!("Destroying GfxDebugUtils");
-            self.vk_debug_utils_instance.destroy_debug_utils_messenger(self.vk_debug_utils_messenger, None);
-        }
+        debug_assert!(
+            self.vk_debug_utils_messenger == vk::DebugUtilsMessengerEXT::null(),
+            "GfxDebugMsger dropped without explicit destroy"
+        );
     }
 }
 

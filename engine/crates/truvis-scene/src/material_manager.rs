@@ -6,6 +6,8 @@ use slotmap::SlotMap;
 use truvis_asset::handle::AssetTextureHandle;
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
+use truvis_gfx::gfx::GfxResourceCtx;
+use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_interface::bindless_manager::BindlessSrvHandle;
 use truvis_render_interface::frame_counter::{FrameCounter, FrameToken};
@@ -47,17 +49,24 @@ struct MaterialBuffers {
 }
 
 impl MaterialBuffers {
-    fn new(frame_label: FrameLabel) -> Self {
+    fn new(ctx: GfxResourceCtx<'_>, frame_label: FrameLabel) -> Self {
         Self {
             material_buffer: GfxStructuredBuffer::new_ssbo(
+                ctx,
                 MAX_MATERIAL_COUNT,
                 format!("MaterialManager::material_buffer-{}", frame_label),
             ),
             material_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
+                ctx,
                 MAX_MATERIAL_COUNT,
                 format!("MaterialManager::material_stage_buffer-{}", frame_label),
             ),
         }
+    }
+
+    fn destroy_mut(&mut self, ctx: GfxResourceCtx<'_>) {
+        self.material_buffer.destroy_mut(ctx, DestroyReason::Shutdown);
+        self.material_stage_buffer.destroy_mut(ctx, DestroyReason::Shutdown);
     }
 }
 
@@ -105,7 +114,7 @@ pub struct MaterialManager {
 
 // 创建与初始化
 impl MaterialManager {
-    pub fn new(frame_token: FrameToken) -> Self {
+    pub fn new(ctx: GfxResourceCtx<'_>, frame_token: FrameToken) -> Self {
         let free_slots: Vec<usize> = (0..MAX_MATERIAL_COUNT).rev().collect();
         Self {
             handle_to_slot: SlotMap::with_key(),
@@ -113,7 +122,7 @@ impl MaterialManager {
             free_slots,
             dirty_slots: HashMap::new(),
             pending_texture_ready: HashSet::new(),
-            buffers: FrameCounter::frame_labes().map(MaterialBuffers::new),
+            buffers: FrameCounter::frame_labes().map(|frame_label| MaterialBuffers::new(ctx, frame_label)),
             frame_token,
         }
     }
@@ -121,8 +130,10 @@ impl MaterialManager {
 
 // 销毁
 impl MaterialManager {
-    pub fn destroy(self) {
-        drop(self)
+    pub fn destroy(mut self, ctx: GfxResourceCtx<'_>) {
+        for buffer in &mut self.buffers {
+            buffer.destroy_mut(ctx);
+        }
     }
 }
 impl Drop for MaterialManager {
@@ -251,6 +262,7 @@ impl MaterialManager {
     /// 将 dirty slot 写入当前帧对应的 GPU buffer，或者回收 slot 到 free list 中
     pub fn upload(
         &mut self,
+        ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
         frame_label: FrameLabel,
@@ -320,7 +332,13 @@ impl MaterialManager {
 
         if any_written {
             let buf = &mut self.buffers[fif_idx];
-            Self::flush_copy_and_barrier(cmd, &mut buf.material_stage_buffer, &mut buf.material_buffer, barrier_mask);
+            Self::flush_copy_and_barrier(
+                ctx,
+                cmd,
+                &mut buf.material_stage_buffer,
+                &mut buf.material_buffer,
+                barrier_mask,
+            );
         }
     }
 }
@@ -400,13 +418,14 @@ impl MaterialManager {
 
     // TODO 可以细化更新 regions
     fn flush_copy_and_barrier(
+        ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
         stage_buffer: &mut GfxStructuredBuffer<gpu::PBRMaterial>,
         dst_buffer: &mut GfxStructuredBuffer<gpu::PBRMaterial>,
         barrier_mask: GfxBarrierMask,
     ) {
         let buffer_size = stage_buffer.size();
-        stage_buffer.flush(0, buffer_size);
+        stage_buffer.flush(ctx, 0, buffer_size);
         cmd.cmd_copy_buffer(
             stage_buffer,
             dst_buffer,

@@ -5,6 +5,7 @@ use itertools::Itertools;
 
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
+use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_gfx::pipelines::graphics_pipeline::{GfxGraphicsPipeline, GfxGraphicsPipelineCreateInfo, GfxPipelineLayout};
 use truvis_gfx::pipelines::rendering_info::GfxRenderingInfo;
 use truvis_gfx::pipelines::shader::GfxShaderStageInfo;
@@ -58,7 +59,7 @@ impl ResolvePass {
     /// # 参数
     /// - `color_format`: color attachment 的格式
     /// - `render_descriptor_sets`: 全局描述符集
-    pub fn new(global_descriptor_sets: &GlobalDescriptorSets, color_format: vk::Format) -> Self {
+    pub fn new(ctx: GfxDeviceCtx<'_>, global_descriptor_sets: &GlobalDescriptorSets, color_format: vk::Format) -> Self {
         let mut pipeline_ci = GfxGraphicsPipelineCreateInfo::default();
 
         // 着色器阶段
@@ -94,17 +95,23 @@ impl ResolvePass {
             .size(size_of::<gpu::resolve::PushConstant>() as u32);
 
         let pipeline_layout = Rc::new(GfxPipelineLayout::new(
+            ctx,
             &global_descriptor_sets.global_set_layouts(),
             &[push_constant_range],
             "resolve-pass",
         ));
 
-        let pipeline = GfxGraphicsPipeline::new(&pipeline_ci, pipeline_layout.clone(), "resolve-pipeline");
+        let pipeline = GfxGraphicsPipeline::new(ctx, &pipeline_ci, pipeline_layout.clone(), "resolve-pipeline");
 
         Self {
             pipeline,
             pipeline_layout,
         }
+    }
+
+    pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
+        self.pipeline.destroy(ctx);
+        self.pipeline_layout.destroy(ctx);
     }
 
     /// 绘制指定的 image 到 color attachment

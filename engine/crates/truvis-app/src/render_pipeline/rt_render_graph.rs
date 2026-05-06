@@ -2,6 +2,7 @@ use ash::vk;
 
 use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchain;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
 use truvis_render_interface::cmd_allocator::CmdAllocator;
@@ -32,20 +33,25 @@ struct RtPipelineInner {
 
 impl RtPipelineInner {
     fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        device_info_ctx: GfxDeviceInfoCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
         global_descriptor_sets: &GlobalDescriptorSets,
         swapchain: &GfxSwapchain,
         cmd_allocator: &mut CmdAllocator,
     ) -> Self {
-        let realtime_rt_pass = RealtimeRtPass::new(global_descriptor_sets);
-        let denoise_accum_pass = DenoiseAccumPass::new(global_descriptor_sets);
-        let blit_pass = BlitPass::new(global_descriptor_sets);
-        let sdr_pass = SdrPass::new(global_descriptor_sets);
-        let resolve_pass = ResolvePass::new(global_descriptor_sets, swapchain.image_infos().image_format);
+        let realtime_rt_pass =
+            RealtimeRtPass::new(resource_ctx, device_ctx, device_info_ctx, immediate_ctx, global_descriptor_sets);
+        let denoise_accum_pass = DenoiseAccumPass::new(device_ctx, global_descriptor_sets);
+        let blit_pass = BlitPass::new(device_ctx, global_descriptor_sets);
+        let sdr_pass = SdrPass::new(device_ctx, global_descriptor_sets);
+        let resolve_pass = ResolvePass::new(device_ctx, global_descriptor_sets, swapchain.image_infos().image_format);
 
         let compute_cmds = FrameCounter::frame_labes()
-            .map(|frame_label| cmd_allocator.alloc_command_buffer(frame_label, "rt-compute-subgraph"));
+            .map(|frame_label| cmd_allocator.alloc_command_buffer(device_ctx, frame_label, "rt-compute-subgraph"));
         let present_cmds = FrameCounter::frame_labes()
-            .map(|frame_label| cmd_allocator.alloc_command_buffer(frame_label, "rt-present-subgraph"));
+            .map(|frame_label| cmd_allocator.alloc_command_buffer(device_ctx, frame_label, "rt-present-subgraph"));
 
         Self {
             realtime_rt_pass,
@@ -57,19 +63,33 @@ impl RtPipelineInner {
             present_cmds,
         }
     }
+
+    fn destroy(self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
+        self.realtime_rt_pass.destroy(resource_ctx, device_ctx);
+        self.denoise_accum_pass.destroy(device_ctx);
+        self.blit_pass.destroy(device_ctx);
+        self.sdr_pass.destroy(device_ctx);
+        self.resolve_pass.destroy(device_ctx);
+    }
 }
 
 impl Plugin for RtPipeline {
     fn init(&mut self, ctx: &mut PluginInitCtx) {
         self.inner = Some(RtPipelineInner::new(
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            ctx.device_info_ctx,
+            ctx.immediate_ctx,
             &ctx.render_world.global_descriptor_sets,
             ctx.render_present.swapchain.as_ref().unwrap(),
             ctx.cmd_allocator,
         ));
     }
 
-    fn shutdown(&mut self, _ctx: &mut PluginShutdownCtx<'_>) {
-        self.inner.take();
+    fn shutdown(&mut self, ctx: &mut PluginShutdownCtx<'_>) {
+        if let Some(inner) = self.inner.take() {
+            inner.destroy(ctx.resource_ctx, ctx.device_ctx);
+        }
     }
 }
 

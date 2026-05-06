@@ -1,7 +1,7 @@
 use ash::vk;
 use ash::vk::Handle;
 
-use crate::{foundation::debug_messenger::DebugType, gfx::Gfx};
+use crate::{foundation::debug_messenger::DebugType, gfx::GfxDeviceCtx};
 
 /// Vulkan semaphore 的唯一所有者。
 ///
@@ -13,8 +13,8 @@ pub struct GfxSemaphore {
 
 // 创建与销毁
 impl GfxSemaphore {
-    pub fn new(debug_name: &str) -> Self {
-        let gfx_device = Gfx::get().gfx_device();
+    pub fn new(ctx: GfxDeviceCtx<'_>, debug_name: &str) -> Self {
+        let gfx_device = ctx.device();
         let semaphore = unsafe { gfx_device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap() };
 
         let semaphore = Self {
@@ -25,8 +25,8 @@ impl GfxSemaphore {
         semaphore
     }
 
-    pub fn new_timeline(initial_value: u64, debug_name: &str) -> Self {
-        let gfx_device = Gfx::get().gfx_device();
+    pub fn new_timeline(ctx: GfxDeviceCtx<'_>, initial_value: u64, debug_name: &str) -> Self {
+        let gfx_device = ctx.device();
         let mut timeline_type_ci = vk::SemaphoreTypeCreateInfo::default()
             .semaphore_type(vk::SemaphoreType::TIMELINE)
             .initial_value(initial_value);
@@ -41,7 +41,7 @@ impl GfxSemaphore {
         semaphore
     }
     #[inline]
-    pub fn destroy(mut self) {
+    pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>) {
         if self.semaphore.is_null() {
             return;
         }
@@ -50,7 +50,7 @@ impl GfxSemaphore {
             self.debug_name,
             self.semaphore.as_raw()
         );
-        let gfx_device = Gfx::get().gfx_device();
+        let gfx_device = ctx.device();
         unsafe {
             gfx_device.destroy_semaphore(self.semaphore, None);
         }
@@ -69,8 +69,8 @@ impl GfxSemaphore {
 // 工具函数
 impl GfxSemaphore {
     #[inline]
-    pub fn wait_timeline(&self, timeline_value: u64, timeout_ns: u64) {
-        let gfx_device = Gfx::get().gfx_device();
+    pub fn wait_timeline(&self, ctx: GfxDeviceCtx<'_>, timeline_value: u64, timeout_ns: u64) {
+        let gfx_device = ctx.device();
         unsafe {
             let wait_semaphore = [self.semaphore];
             let wait_info = vk::SemaphoreWaitInfo::default()

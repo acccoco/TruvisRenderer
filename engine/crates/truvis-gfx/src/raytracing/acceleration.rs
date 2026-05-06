@@ -1,12 +1,17 @@
 //! Ray Tracing 所需的加速结构
 
-use ash::vk;
+use ash::{vk, vk::Handle};
 use itertools::Itertools;
 
 use crate::resources::special_buffers::acceleration_buffer::{
     GfxAccelerationInstanceBuffer, GfxAccelerationScratchBuffer, GfxAccelerationStructureBuffer,
 };
-use crate::{foundation::debug_messenger::DebugType, gfx::Gfx, query::query_pool::GfxQueryPool};
+use crate::{
+    foundation::debug_messenger::DebugType,
+    gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx},
+    query::query_pool::GfxQueryPool,
+    resources::lifecycle::DestroyReason,
+};
 
 pub struct GfxAcceleration {
     /// 加速结构的核心对象
@@ -15,7 +20,7 @@ pub struct GfxAcceleration {
     acceleration_handle: vk::AccelerationStructureKHR,
 
     /// 这里的 buffer 仅仅是用于内存分配，实际的 Acceleration 相关的操作都是通过 acceleration_handle 来进行的
-    _buffer: GfxAccelerationStructureBuffer,
+    buffer: Option<GfxAccelerationStructureBuffer>,
 }
 // 构造与销毁
 impl GfxAcceleration {
@@ -34,6 +39,9 @@ impl GfxAcceleration {
     /// # 参数
     /// - primitives 每个 geometry 的 max primitives 数量
     pub fn build_blas_sync(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
         blas_inputs: &[GfxBlasInputInfo],
         build_flags: vk::BuildAccelerationStructureFlagsKHR,
         debug_name: impl AsRef<str>,
@@ -58,7 +66,7 @@ impl GfxAcceleration {
         // blas 所需的尺寸信息
         let size_info = unsafe {
             let mut size_info = vk::AccelerationStructureBuildSizesInfoKHR::default();
-            Gfx::get().gfx_device().acceleration_structure.get_acceleration_structure_build_sizes(
+            device_ctx.device().acceleration_structure.get_acceleration_structure_build_sizes(
                 vk::AccelerationStructureBuildTypeKHR::DEVICE,
                 &build_geometry_info,
                 &max_primitives, // 每一个 geometry 里面的最大 primitive 数量
@@ -68,12 +76,15 @@ impl GfxAcceleration {
         };
 
         let uncompact_acceleration = Self::new(
+            resource_ctx,
+            device_ctx,
             size_info.acceleration_structure_size,
             vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
             format!("{}-uncompact-blas", debug_name.as_ref()),
         );
 
         let scratch_buffer = GfxAccelerationScratchBuffer::new(
+            resource_ctx,
             size_info.build_scratch_size,
             format!("{}-blas-scratch-buffer", debug_name.as_ref()),
         );
@@ -85,11 +96,12 @@ impl GfxAcceleration {
         };
 
         // 创建一个 QueryPool，用于查询 compact size
-        let mut query_pool = GfxQueryPool::new(vk::QueryType::ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, 1, "");
-        query_pool.reset(0, 1);
+        let mut query_pool =
+            GfxQueryPool::new(device_ctx, vk::QueryType::ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, 1, "");
+        query_pool.reset(device_ctx, 0, 1);
 
         // 等待初步 build 完成
-        Gfx::get().one_time_exec(
+        immediate_ctx.one_time_exec(
             |cmd| {
                 cmd.build_acceleration_structure(&build_geometry_info, &range_infos);
                 // 查询 compact size 属于 read 操作，需要同步
@@ -110,14 +122,16 @@ impl GfxAcceleration {
         );
 
         // 提供更紧凑的 acceleration
-        let compact_size: Vec<vk::DeviceSize> = query_pool.get_query_result(0, 1);
+        let compact_size: Vec<vk::DeviceSize> = query_pool.get_query_result(device_ctx, 0, 1);
         let compact_acceleration = Self::new(
+            resource_ctx,
+            device_ctx,
             compact_size[0],
             vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
             format!("{}-compact-blas", debug_name.as_ref()),
         );
 
-        Gfx::get().one_time_exec(
+        immediate_ctx.one_time_exec(
             |cmd| {
                 cmd.cmd_copy_acceleration_structure(
                     &vk::CopyAccelerationStructureInfoKHR::default()
@@ -131,8 +145,9 @@ impl GfxAcceleration {
 
         // 回收临时资源
         {
-            uncompact_acceleration.destroy();
-            query_pool.destroy();
+            uncompact_acceleration.destroy(resource_ctx, device_ctx, DestroyReason::ScopeDrop);
+            query_pool.destroy(device_ctx);
+            scratch_buffer.destroy(resource_ctx, DestroyReason::ScopeDrop);
         }
 
         compact_acceleration
@@ -143,6 +158,9 @@ impl GfxAcceleration {
     /// 1. 查询构建 tlas 所需的尺寸
     /// 2. 构建 tlas
     pub fn build_tlas_sync(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
         instances: &[vk::AccelerationStructureInstanceKHR],
         build_flags: vk::BuildAccelerationStructureFlagsKHR,
         debug_name: impl AsRef<str>,
@@ -150,10 +168,11 @@ impl GfxAcceleration {
         let _span = tracy_client::span!("GfxAcceleration::build_tlas_sync");
 
         let acceleration_instance_buffer = GfxAccelerationInstanceBuffer::new(
+            resource_ctx,
             size_of_val(instances) as vk::DeviceSize,
             format!("{}-acceleration-instance-buffer", debug_name.as_ref()),
         );
-        acceleration_instance_buffer.transfer_data_sync(instances);
+        acceleration_instance_buffer.transfer_data_sync(resource_ctx, immediate_ctx, instances);
 
         let geometry = vk::AccelerationStructureGeometryKHR::default()
             .geometry_type(vk::GeometryTypeKHR::INSTANCES)
@@ -177,7 +196,7 @@ impl GfxAcceleration {
         // 获得 AccelerationStructure 所需的尺寸
         let size_info = unsafe {
             let mut size_info = vk::AccelerationStructureBuildSizesInfoKHR::default();
-            Gfx::get().gfx_device().acceleration_structure.get_acceleration_structure_build_sizes(
+            device_ctx.device().acceleration_structure.get_acceleration_structure_build_sizes(
                 vk::AccelerationStructureBuildTypeKHR::DEVICE,
                 &build_geometry_info,
                 &[instances.len() as u32],
@@ -188,12 +207,15 @@ impl GfxAcceleration {
         };
 
         let acceleration = Self::new(
+            resource_ctx,
+            device_ctx,
             size_info.acceleration_structure_size,
             vk::AccelerationStructureTypeKHR::TOP_LEVEL,
             format!("{}-tlas", debug_name.as_ref()),
         );
 
         let scratch_buffer = GfxAccelerationScratchBuffer::new(
+            resource_ctx,
             size_info.build_scratch_size,
             format!("{}-tlas-scratch-buffer", debug_name.as_ref()),
         );
@@ -203,40 +225,63 @@ impl GfxAcceleration {
         build_geometry_info.scratch_data.device_address = scratch_buffer.device_address();
 
         // 正式构建 TLAS
-        Gfx::get().one_time_exec(
+        immediate_ctx.one_time_exec(
             |cmd| {
                 cmd.build_acceleration_structure(&build_geometry_info, std::slice::from_ref(&range_info));
             },
             "build-tlas",
         );
+        scratch_buffer.destroy(resource_ctx, DestroyReason::ScopeDrop);
+        acceleration_instance_buffer.destroy(resource_ctx, DestroyReason::ScopeDrop);
 
         acceleration
     }
 
     /// 创建 AccelerationStructure 以及 buffer    
-    fn new(size: vk::DeviceSize, ty: vk::AccelerationStructureTypeKHR, debug_name: impl AsRef<str>) -> Self {
-        let buffer = GfxAccelerationStructureBuffer::new(size, debug_name.as_ref());
+    fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        size: vk::DeviceSize,
+        ty: vk::AccelerationStructureTypeKHR,
+        debug_name: impl AsRef<str>,
+    ) -> Self {
+        let buffer = GfxAccelerationStructureBuffer::new(resource_ctx, size, debug_name.as_ref());
 
         let create_info = vk::AccelerationStructureCreateInfoKHR::default() //
             .ty(ty)
             .size(size)
             .buffer(buffer.vk_buffer());
 
-        let gfx_device = Gfx::get().gfx_device();
+        let gfx_device = device_ctx.device();
         let acceleration_structure =
             unsafe { gfx_device.acceleration_structure.create_acceleration_structure(&create_info, None).unwrap() };
 
         let acc = Self {
             acceleration_handle: acceleration_structure,
-            _buffer: buffer,
+            buffer: Some(buffer),
         };
         gfx_device.set_debug_name(&acc, debug_name);
         acc
     }
 
     #[inline]
-    pub fn destroy(self) {
-        drop(self)
+    pub fn destroy(mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>, reason: DestroyReason) {
+        self.destroy_mut(resource_ctx, device_ctx, reason);
+    }
+
+    fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>, reason: DestroyReason) {
+        if !self.acceleration_handle.is_null() {
+            unsafe {
+                device_ctx
+                    .device()
+                    .acceleration_structure
+                    .destroy_acceleration_structure(self.acceleration_handle, None);
+            }
+            self.acceleration_handle = vk::AccelerationStructureKHR::null();
+        }
+        if let Some(buffer) = self.buffer.take() {
+            buffer.destroy(resource_ctx, reason);
+        }
     }
 }
 // 访问器
@@ -247,9 +292,9 @@ impl GfxAcceleration {
     }
 
     #[inline]
-    pub fn device_address(&self) -> vk::DeviceAddress {
+    pub fn device_address(&self, ctx: GfxDeviceCtx<'_>) -> vk::DeviceAddress {
         unsafe {
-            Gfx::get().gfx_device().acceleration_structure.get_acceleration_structure_device_address(
+            ctx.device().acceleration_structure.get_acceleration_structure_device_address(
                 &vk::AccelerationStructureDeviceAddressInfoKHR::default()
                     .acceleration_structure(self.acceleration_handle),
             )
@@ -258,12 +303,10 @@ impl GfxAcceleration {
 }
 impl Drop for GfxAcceleration {
     fn drop(&mut self) {
-        unsafe {
-            Gfx::get()
-                .gfx_device()
-                .acceleration_structure
-                .destroy_acceleration_structure(self.acceleration_handle, None);
-        }
+        debug_assert!(
+            self.acceleration_handle.is_null() && self.buffer.is_none(),
+            "GfxAcceleration dropped without explicit destroy"
+        );
     }
 }
 impl DebugType for GfxAcceleration {

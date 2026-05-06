@@ -1,9 +1,10 @@
 use std::rc::Rc;
 
 use ash::vk;
+use ash::vk::Handle;
 
 use crate::foundation::debug_messenger::DebugType;
-use crate::gfx::Gfx;
+use crate::gfx::GfxDeviceCtx;
 
 /// 描述符池
 ///
@@ -28,8 +29,8 @@ impl GfxDescriptorPool {
     /// # 返回值
     /// 新的描述符池实例
     #[inline]
-    pub fn new(ci: Rc<GfxDescriptorPoolCreateInfo>, name: &str) -> Self {
-        let gfx_device = Gfx::get().gfx_device();
+    pub fn new(ctx: GfxDeviceCtx<'_>, ci: Rc<GfxDescriptorPoolCreateInfo>, name: &str) -> Self {
+        let gfx_device = ctx.device();
         let pool = unsafe { gfx_device.create_descriptor_pool(&ci.inner, None).unwrap() };
         let pool = Self {
             handle: pool,
@@ -50,15 +51,18 @@ impl GfxDescriptorPool {
     }
 
     #[inline]
-    /// RAII 持有资源的立即释放别名；descriptor set 随 pool 一起释放。
-    pub fn destroy(self) {
-        drop(self)
+    pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>) {
+        if self.handle.is_null() {
+            return;
+        }
+        unsafe { ctx.device().destroy_descriptor_pool(self.handle, None) };
+        self.handle = vk::DescriptorPool::null();
     }
 }
 impl Drop for GfxDescriptorPool {
     /// 释放 Vulkan 描述符池
     fn drop(&mut self) {
-        unsafe { Gfx::get().gfx_device().destroy_descriptor_pool(self.handle, None) };
+        debug_assert!(self.handle.is_null(), "GfxDescriptorPool '{}' dropped without explicit destroy", self._name);
     }
 }
 impl DebugType for GfxDescriptorPool {

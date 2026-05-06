@@ -16,7 +16,7 @@ use truvis_gfx::{
         barrier::{GfxBarrierMask, GfxBufferBarrier},
         submit_info::GfxSubmitInfo,
     },
-    gfx::Gfx,
+    gfx::{Gfx, GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx},
 };
 use truvis_render_interface::bindless_manager::BindlessManager;
 use truvis_render_interface::cmd_allocator::CmdAllocator;
@@ -58,6 +58,8 @@ use crate::present::render_present::RenderPresent;
 /// render_backend.end_frame();
 /// ```
 pub struct RenderBackend {
+    gfx: Gfx,
+
     world: World,
     render_world: RenderWorld,
 
@@ -89,6 +91,10 @@ pub struct RenderBackendUpdateCtx<'a> {
 
 /// Render 阶段上下文，对 GPU 命令录制需要的 RenderBackend 状态进行只读共享借用。
 pub struct RenderBackendRenderCtx<'a> {
+    pub device_ctx: GfxDeviceCtx<'a>,
+    pub resource_ctx: GfxResourceCtx<'a>,
+    pub queue_ctx: GfxQueueCtx<'a>,
+    pub device_info_ctx: GfxDeviceInfoCtx<'a>,
     pub render_world: &'a RenderWorld,
     pub render_present: &'a RenderPresent,
     pub timeline: &'a GfxSemaphore,
@@ -98,6 +104,12 @@ pub struct RenderBackendRenderCtx<'a> {
 ///
 /// 不包含 camera；camera 属于具体 app。
 pub struct RenderBackendInitCtx<'a> {
+    pub device_ctx: GfxDeviceCtx<'a>,
+    pub resource_ctx: GfxResourceCtx<'a>,
+    pub queue_ctx: GfxQueueCtx<'a>,
+    pub device_info_ctx: GfxDeviceInfoCtx<'a>,
+    pub immediate_ctx: GfxImmediateCtx<'a>,
+    pub surface_ctx: GfxSurfaceCtx<'a>,
     pub world: &'a mut World,
     pub render_world: &'a mut RenderWorld,
     pub cmd_allocator: &'a mut CmdAllocator,
@@ -107,12 +119,21 @@ pub struct RenderBackendInitCtx<'a> {
 
 /// Swapchain resize 上下文，仅在 swapchain 实际重建时产生。
 pub struct RenderBackendResizeCtx<'a> {
+    pub device_ctx: GfxDeviceCtx<'a>,
+    pub resource_ctx: GfxResourceCtx<'a>,
+    pub immediate_ctx: GfxImmediateCtx<'a>,
+    pub surface_ctx: GfxSurfaceCtx<'a>,
     pub render_world: &'a mut RenderWorld,
     pub render_present: &'a RenderPresent,
 }
 
 /// Shutdown 阶段上下文，保证 app/plugin 可在 backend 与 Gfx 存活时释放 GPU 资源。
 pub struct RenderBackendShutdownCtx<'a> {
+    pub device_ctx: GfxDeviceCtx<'a>,
+    pub resource_ctx: GfxResourceCtx<'a>,
+    pub queue_ctx: GfxQueueCtx<'a>,
+    pub immediate_ctx: GfxImmediateCtx<'a>,
+    pub surface_ctx: GfxSurfaceCtx<'a>,
     pub render_world: &'a mut RenderWorld,
     pub cmd_allocator: &'a mut CmdAllocator,
 }
@@ -122,12 +143,11 @@ impl RenderBackend {
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
         let _span = tracy_client::span!("RenderBackend::new");
 
-        // 初始化 Gfx 全局上下文。
-        Gfx::init("Truvis".to_string(), extra_instance_ext);
+        let gfx = Gfx::new("Truvis".to_string(), extra_instance_ext);
 
         let frame_settings = FrameSettings {
             color_format: vk::Format::R32G32B32A32_SFLOAT,
-            depth_format: Self::get_depth_format(),
+            depth_format: Self::get_depth_format(gfx.device_info_ctx()),
             frame_extent: vk::Extent2D {
                 width: 400,
                 height: 400,
@@ -136,10 +156,10 @@ impl RenderBackend {
 
         let timer = Timer::default();
         let accum_data = AccumData::default();
-        let fif_timeline_semaphore = GfxSemaphore::new_timeline(0, "render-timeline");
+        let fif_timeline_semaphore = GfxSemaphore::new_timeline(gfx.device_ctx(), 0, "render-timeline");
 
         let mut gfx_resource_manager = GfxResourceManager::new();
-        let mut cmd_allocator = CmdAllocator::new();
+        let mut cmd_allocator = CmdAllocator::new(gfx.device_ctx(), gfx.device_info_ctx());
 
         // 初始值应该是 1，因为 timeline semaphore 初始值是 0
         let init_frame_id = 1;
@@ -147,24 +167,49 @@ impl RenderBackend {
 
         let mut bindless_manager = BindlessManager::new(frame_counter.frame_token());
         let scene_manager = SceneManager::new();
-        let asset_hub = AssetHub::new(&mut gfx_resource_manager, &mut bindless_manager);
-        let gpu_scene = GpuScene::new(&mut gfx_resource_manager, &mut bindless_manager);
-        let fif_buffers =
-            FifBuffers::new(&frame_settings, &mut bindless_manager, &mut gfx_resource_manager, &frame_counter);
+        let asset_hub = AssetHub::new(
+            gfx.resource_ctx(),
+            gfx.device_ctx(),
+            gfx.immediate_ctx(),
+            gfx.queue_ctx(),
+            &mut gfx_resource_manager,
+            &mut bindless_manager,
+        );
+        let gpu_scene = GpuScene::new(
+            gfx.resource_ctx(),
+            gfx.device_ctx(),
+            gfx.immediate_ctx(),
+            &mut gfx_resource_manager,
+            &mut bindless_manager,
+        );
+        let fif_buffers = FifBuffers::new(
+            gfx.resource_ctx(),
+            gfx.device_ctx(),
+            gfx.immediate_ctx(),
+            &frame_settings,
+            &mut bindless_manager,
+            &mut gfx_resource_manager,
+            &frame_counter,
+        );
 
-        let render_descriptor_sets = GlobalDescriptorSets::new();
-        let sampler_manager = RenderSamplerManager::new(&render_descriptor_sets);
+        let render_descriptor_sets = GlobalDescriptorSets::new(gfx.device_ctx());
+        let sampler_manager = RenderSamplerManager::new(gfx.device_ctx(), &render_descriptor_sets);
 
         let per_frame_data_buffers = FrameCounter::frame_labes().map(|frame_label| {
-            GfxStructuredBuffer::<gpu::PerFrameData>::new_ubo(1, format!("per-frame-data-buffer-{frame_label}"))
+            GfxStructuredBuffer::<gpu::PerFrameData>::new_ubo(
+                gfx.resource_ctx(),
+                1,
+                format!("per-frame-data-buffer-{frame_label}"),
+            )
         });
 
         let cmds = FrameCounter::frame_labes()
             .into_iter()
-            .map(|frame_label| cmd_allocator.alloc_command_buffer(frame_label, "gpu-scene-update"))
+            .map(|frame_label| cmd_allocator.alloc_command_buffer(gfx.device_ctx(), frame_label, "gpu-scene-update"))
             .collect();
 
         Self {
+            gfx,
             cmd_allocator,
             timer,
             fif_timeline_semaphore,
@@ -196,44 +241,66 @@ impl RenderBackend {
     }
 
     /// 根据 vulkan 实例和显卡，获取合适的深度格式
-    fn get_depth_format() -> vk::Format {
-        Gfx::get()
-            .find_supported_format(
-                DefaultRenderBackendSettings::DEPTH_FORMAT_CANDIDATES,
-                vk::ImageTiling::OPTIMAL,
-                vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
-            )
-            .first()
-            .copied()
-            .unwrap_or(vk::Format::UNDEFINED)
+    fn get_depth_format(ctx: GfxDeviceInfoCtx<'_>) -> vk::Format {
+        ctx.find_supported_format(
+            DefaultRenderBackendSettings::DEPTH_FORMAT_CANDIDATES,
+            vk::ImageTiling::OPTIMAL,
+            vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
+        )
+        .first()
+        .copied()
+        .unwrap_or(vk::Format::UNDEFINED)
     }
 }
 // 销毁
 impl RenderBackend {
+    /// 等待当前 device 上已提交的 GPU 工作完成。
+    pub fn wait_idle(&self) {
+        self.gfx.wait_idel();
+    }
+
     pub fn destroy(mut self) {
-        Gfx::get().wait_idel();
+        self.gfx.wait_idel();
 
         if let Some(render_present) = self.render_present.take() {
-            render_present.destroy(&mut self.render_world.gfx_resource_manager);
+            render_present.destroy(
+                self.gfx.resource_ctx(),
+                self.gfx.device_ctx(),
+                self.gfx.surface_ctx(),
+                &mut self.render_world.gfx_resource_manager,
+            );
         }
 
         self.render_world.fif_buffers.destroy_mut(
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
             &mut self.render_world.bindless_manager,
             &mut self.render_world.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
-        self.world.scene_manager.destroy();
-        self.world
-            .asset_hub
-            .destroy(&mut self.render_world.gfx_resource_manager, &mut self.render_world.bindless_manager);
-        self.render_world
-            .gpu_scene
-            .destroy_mut(&mut self.render_world.bindless_manager, &mut self.render_world.gfx_resource_manager);
+        self.world.scene_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
+        self.world.asset_hub.destroy(
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            &mut self.render_world.gfx_resource_manager,
+            &mut self.render_world.bindless_manager,
+        );
+        self.render_world.gpu_scene.destroy_mut(
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            &mut self.render_world.bindless_manager,
+            &mut self.render_world.gfx_resource_manager,
+        );
+        for buffer in &mut self.render_world.per_frame_data_buffers {
+            buffer.destroy_mut(self.gfx.resource_ctx(), DestroyReason::Shutdown);
+        }
         self.gpu_scene_update_cmds.clear();
-        self.cmd_allocator.destroy();
-        self.render_world.gfx_resource_manager.destroy();
-        self.fif_timeline_semaphore.destroy();
-        self.render_world.global_descriptor_sets.destroy();
+        self.cmd_allocator.destroy(self.gfx.device_ctx());
+        self.render_world.gfx_resource_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
+        self.fif_timeline_semaphore.destroy(self.gfx.device_ctx());
+        self.render_world.sampler_manager.destroy(self.gfx.device_ctx());
+        self.render_world.global_descriptor_sets.destroy(self.gfx.device_ctx());
+        self.gfx.destroy();
     }
 }
 // ---------------------------------------------------------------------------
@@ -251,12 +318,17 @@ impl RenderBackend {
             let fif_count = FrameCounter::fif_count();
             let wait_frame_id = current_frame_id.saturating_sub(fif_count as u64);
             const WAIT_SEMAPHORE_TIMEOUT_NS: u64 = 30 * 1000 * 1000 * 1000;
-            self.fif_timeline_semaphore.wait_timeline(wait_frame_id, WAIT_SEMAPHORE_TIMEOUT_NS);
+            self.fif_timeline_semaphore.wait_timeline(self.gfx.device_ctx(), wait_frame_id, WAIT_SEMAPHORE_TIMEOUT_NS);
         }
 
         {
-            self.cmd_allocator.reset_frame_commands(self.render_world.frame_counter.frame_label());
-            self.render_world.gfx_resource_manager.cleanup(self.render_world.frame_counter.frame_id());
+            self.cmd_allocator
+                .reset_frame_commands(self.gfx.device_ctx(), self.render_world.frame_counter.frame_label());
+            self.render_world.gfx_resource_manager.cleanup(
+                self.gfx.resource_ctx(),
+                self.gfx.device_ctx(),
+                self.render_world.frame_counter.frame_id(),
+            );
         }
 
         self.render_world.delta_time_s = self.timer.delta_time_s();
@@ -266,9 +338,13 @@ impl RenderBackend {
         self.render_world.bindless_manager.begin_frame(frame_token);
 
         // 资产更新已内聚到 begin_frame 中
-        self.world
-            .asset_hub
-            .update(&mut self.render_world.gfx_resource_manager, &mut self.render_world.bindless_manager);
+        self.world.asset_hub.update(
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            self.gfx.queue_ctx(),
+            &mut self.render_world.gfx_resource_manager,
+            &mut self.render_world.bindless_manager,
+        );
     }
 
     /// 执行内部 frame-settings 同步并获取 swapchain image，
@@ -303,6 +379,10 @@ impl RenderBackend {
     /// 共享借用：render 阶段中 RenderBackend 状态只读。
     pub fn render_phase(&self) -> RenderBackendRenderCtx<'_> {
         RenderBackendRenderCtx {
+            device_ctx: self.gfx.device_ctx(),
+            resource_ctx: self.gfx.resource_ctx(),
+            queue_ctx: self.gfx.queue_ctx(),
+            device_info_ctx: self.gfx.device_info_ctx(),
             render_world: &self.render_world,
             render_present: self.render_present.as_ref().unwrap(),
             timeline: &self.fif_timeline_semaphore,
@@ -311,7 +391,7 @@ impl RenderBackend {
 
     /// 提交 present 命令。
     pub fn present(&mut self) {
-        self.render_present.as_mut().unwrap().present_image();
+        self.render_present.as_mut().unwrap().present_image(self.gfx.surface_ctx(), self.gfx.queue_ctx());
     }
 
     /// 推进帧计数器。
@@ -330,13 +410,22 @@ impl RenderBackend {
         let render_present = self.render_present.as_mut().unwrap();
         render_present.update_window_size(new_size);
 
-        if !render_present.need_resize() {
+        if !render_present.need_resize(self.gfx.surface_ctx()) {
             return None;
         }
 
-        render_present.rebuild_after_resized(&mut self.render_world.gfx_resource_manager);
+        render_present.rebuild_after_resized(
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            self.gfx.surface_ctx(),
+            &mut self.render_world.gfx_resource_manager,
+        );
 
         Some(RenderBackendResizeCtx {
+            device_ctx: self.gfx.device_ctx(),
+            resource_ctx: self.gfx.resource_ctx(),
+            immediate_ctx: self.gfx.immediate_ctx(),
+            surface_ctx: self.gfx.surface_ctx(),
             render_world: &mut self.render_world,
             render_present: self.render_present.as_ref().unwrap(),
         })
@@ -344,6 +433,11 @@ impl RenderBackend {
 
     pub fn shutdown_phase(&mut self) -> RenderBackendShutdownCtx<'_> {
         RenderBackendShutdownCtx {
+            device_ctx: self.gfx.device_ctx(),
+            resource_ctx: self.gfx.resource_ctx(),
+            queue_ctx: self.gfx.queue_ctx(),
+            immediate_ctx: self.gfx.immediate_ctx(),
+            surface_ctx: self.gfx.surface_ctx(),
             render_world: &mut self.render_world,
             cmd_allocator: &mut self.cmd_allocator,
         }
@@ -357,6 +451,9 @@ impl RenderBackend {
         window_physical_size: [u32; 2],
     ) -> RenderBackendInitCtx<'_> {
         self.render_present = Some(RenderPresent::new(
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            self.gfx.surface_ctx(),
             &mut self.render_world.gfx_resource_manager,
             raw_display_handle,
             raw_window_handle,
@@ -367,6 +464,12 @@ impl RenderBackend {
         ));
 
         RenderBackendInitCtx {
+            device_ctx: self.gfx.device_ctx(),
+            resource_ctx: self.gfx.resource_ctx(),
+            queue_ctx: self.gfx.queue_ctx(),
+            device_info_ctx: self.gfx.device_info_ctx(),
+            immediate_ctx: self.gfx.immediate_ctx(),
+            surface_ctx: self.gfx.surface_ctx(),
             world: &mut self.world,
             render_world: &mut self.render_world,
             cmd_allocator: &mut self.cmd_allocator,
@@ -381,7 +484,10 @@ impl RenderBackend {
 // ---------------------------------------------------------------------------
 impl RenderBackend {
     fn acquire_image(&mut self) {
-        self.render_present.as_mut().unwrap().acquire_image(self.render_world.frame_counter.frame_label());
+        self.render_present
+            .as_mut()
+            .unwrap()
+            .acquire_image(self.gfx.surface_ctx(), self.render_world.frame_counter.frame_label());
     }
 
     fn update_frame_settings(&mut self) {
@@ -399,12 +505,13 @@ impl RenderBackend {
     fn resize_frame_buffer(&mut self, new_extent: vk::Extent2D) {
         self.render_world.accum_data.reset();
 
-        unsafe {
-            Gfx::get().gfx_device().device_wait_idle().unwrap();
-        }
+        self.gfx.device_ctx().device().wait_idle();
         self.render_world.frame_settings.frame_extent = new_extent;
 
         self.render_world.fif_buffers.rebuild(
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            self.gfx.immediate_ctx(),
             &mut self.render_world.bindless_manager,
             &mut self.render_world.gfx_resource_manager,
             &self.render_world.frame_settings,
@@ -430,13 +537,18 @@ impl RenderBackend {
             dst_access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::UNIFORM_READ,
         };
 
-        self.render_world
-            .bindless_manager
-            .prepare_render_data(&self.render_world.gfx_resource_manager, &self.render_world.global_descriptor_sets);
+        self.render_world.bindless_manager.prepare_render_data(
+            self.gfx.device_ctx(),
+            &self.render_world.gfx_resource_manager,
+            &self.render_world.global_descriptor_sets,
+        );
 
         let scene_render_data =
             self.world.scene_manager.prepare_render_data(&self.render_world.bindless_manager, &self.world.asset_hub);
         self.render_world.gpu_scene.upload_render_data(
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            self.gfx.immediate_ctx(),
             &cmd,
             transfer_barrier_mask,
             &self.render_world.frame_counter,
@@ -477,7 +589,7 @@ impl RenderBackend {
                 .mask(transfer_barrier_mask)],
         );
         cmd.end();
-        Gfx::get().gfx_queue().submit(vec![GfxSubmitInfo::new(std::slice::from_ref(&cmd))], None);
+        self.gfx.queue_ctx().gfx_queue().submit(vec![GfxSubmitInfo::new(std::slice::from_ref(&cmd))], None);
     }
 
     fn update_perframe_descriptor_set(&mut self) {
@@ -496,7 +608,7 @@ impl RenderBackend {
             vk::DescriptorBufferInfo::default().buffer(gpu_scene_buffer.vk_buffer()).offset(0).range(vk::WHOLE_SIZE),
         ];
 
-        Gfx::get().gfx_device().write_descriptor_sets(&[
+        self.gfx.device_ctx().device().write_descriptor_sets(&[
             PerFrameDescriptorBinding::per_frame_data().write_buffer(perframe_set, 0, perframe_data_buffer_info),
             PerFrameDescriptorBinding::gpu_scene().write_buffer(perframe_set, 0, gpu_scene_buffer_info),
         ]);

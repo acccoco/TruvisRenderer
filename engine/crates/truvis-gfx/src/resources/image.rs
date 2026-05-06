@@ -5,7 +5,7 @@ use vk_mem::{Alloc, Allocation};
 use crate::{
     commands::{barrier::GfxImageBarrier, command_buffer::GfxCommandBuffer},
     foundation::debug_messenger::DebugType,
-    gfx::Gfx,
+    gfx::{GfxImmediateCtx, GfxResourceCtx},
     resources::{buffer::GfxBuffer, lifecycle::DestroyReason, vma_debug::with_vma_debug_name},
 };
 
@@ -94,9 +94,14 @@ impl GfxImage {
 
 // 创建与初始化
 impl GfxImage {
-    pub fn new(image_info: &GfxImageCreateInfo, alloc_info: &vk_mem::AllocationCreateInfo, debug_name: &str) -> Self {
-        let allocator = Gfx::get().allocator();
-        let gfx_device = Gfx::get().gfx_device();
+    pub fn new(
+        ctx: GfxResourceCtx<'_>,
+        image_info: &GfxImageCreateInfo,
+        alloc_info: &vk_mem::AllocationCreateInfo,
+        debug_name: &str,
+    ) -> Self {
+        let allocator = ctx.allocator();
+        let gfx_device = ctx.device();
         let (image, alloc) = with_vma_debug_name(alloc_info, debug_name, |alloc_info| unsafe {
             allocator.create_image(&image_info.as_info(), alloc_info).unwrap()
         });
@@ -112,8 +117,14 @@ impl GfxImage {
         image
     }
 
-    pub fn from_external(image: vk::Image, extent: vk::Extent3D, format: vk::Format, name: impl AsRef<str>) -> Self {
-        let gfx_device = Gfx::get().gfx_device();
+    pub fn from_external(
+        ctx: GfxResourceCtx<'_>,
+        image: vk::Image,
+        extent: vk::Extent3D,
+        format: vk::Format,
+        name: impl AsRef<str>,
+    ) -> Self {
+        let gfx_device = ctx.device();
         let image = Self {
             handle: image,
             source: ImageSource::External,
@@ -128,13 +139,21 @@ impl GfxImage {
 
     // TODO 考虑将 GfxImage::from_rgba8 放入 UploadManager 中，并提供异步版本
     /// 根据 RGBA8_UNORM 的 data 创建 image
-    pub fn from_rgba8(width: u32, height: u32, data: &[u8], name: impl AsRef<str>) -> Self {
+    pub fn from_rgba8(
+        resource_ctx: GfxResourceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        width: u32,
+        height: u32,
+        data: &[u8],
+        name: impl AsRef<str>,
+    ) -> Self {
         let image_create_info = GfxImageCreateInfo::new_image_2d_info(
             vk::Extent2D { width, height },
             vk::Format::R8G8B8A8_UNORM,
             vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
         );
         let image = Self::new(
+            resource_ctx,
             &image_create_info,
             &vk_mem::AllocationCreateInfo {
                 usage: vk_mem::MemoryUsage::AutoPreferDevice,
@@ -143,7 +162,9 @@ impl GfxImage {
             name.as_ref(),
         );
 
-        Gfx::get().one_time_exec(|cmd| image.transfer_data(cmd, data), name.as_ref());
+        let stage_buffer =
+            immediate_ctx.one_time_exec(|cmd| image.transfer_data(resource_ctx, cmd, data), name.as_ref());
+        stage_buffer.destroy(resource_ctx, DestroyReason::ScopeDrop);
 
         image
     }
@@ -160,11 +181,11 @@ impl DebugType for GfxImage {
 
 // 销毁
 impl GfxImage {
-    pub fn destroy(mut self, reason: DestroyReason) {
-        self.release(reason);
+    pub fn destroy(mut self, ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
+        self.release(ctx, reason);
     }
 
-    fn release(&mut self, reason: DestroyReason) {
+    fn release(&mut self, ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
         if self.handle.is_null() {
             return;
         }
@@ -173,9 +194,7 @@ impl GfxImage {
 
         match &mut self.source {
             ImageSource::External => (),
-            ImageSource::Allocated(allocation) => unsafe {
-                Gfx::get().allocator().destroy_image(self.handle, allocation)
-            },
+            ImageSource::Allocated(allocation) => unsafe { ctx.allocator().destroy_image(self.handle, allocation) },
         }
         self.handle = vk::Image::null();
     }
@@ -198,12 +217,18 @@ impl GfxImage {
     /// 3. 进行图像布局转换
     /// 4. 将 staging buffer 的数据复制到图像
     /// 5. 进行图像布局转换
-    pub fn transfer_data(&self, command_buffer: &GfxCommandBuffer, data: &[u8]) -> GfxBuffer {
+    pub fn transfer_data(
+        &self,
+        resource_ctx: GfxResourceCtx<'_>,
+        command_buffer: &GfxCommandBuffer,
+        data: &[u8],
+    ) -> GfxBuffer {
         let pixels_cnt = self.width() * self.height();
         assert_eq!(data.len(), VulkanFormatUtils::pixel_size_in_bytes(self.format()) * pixels_cnt as usize);
 
-        let stage_buffer = GfxBuffer::new_stage_buffer(size_of_val(data) as vk::DeviceSize, "image-stage-buffer");
-        stage_buffer.transfer_data_by_mmap(data);
+        let stage_buffer =
+            GfxBuffer::new_stage_buffer(resource_ctx, size_of_val(data) as vk::DeviceSize, "image-stage-buffer");
+        stage_buffer.transfer_data_by_mmap(resource_ctx, data);
 
         // 1. 转换 image layout
         // 2. 将 buffer 复制到 image

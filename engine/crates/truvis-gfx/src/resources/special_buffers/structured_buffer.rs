@@ -5,7 +5,9 @@ use std::{
 
 use ash::vk;
 
-use crate::{foundation::debug_messenger::DebugType, impl_derive_buffer, resources::buffer::GfxBuffer};
+use crate::{
+    foundation::debug_messenger::DebugType, gfx::GfxResourceCtx, impl_derive_buffer, resources::buffer::GfxBuffer,
+};
 
 /// buffer 内存放的是结构体或者结构体的数组
 pub struct GfxStructuredBuffer<T: Sized> {
@@ -17,8 +19,9 @@ pub struct GfxStructuredBuffer<T: Sized> {
 impl_derive_buffer!(GfxStructuredBuffer<T>, GfxBuffer, inner);
 impl<T> GfxStructuredBuffer<T> {
     #[inline]
-    pub fn new_ssbo(len: usize, debug_name: impl AsRef<str>) -> Self {
+    pub fn new_ssbo(ctx: GfxResourceCtx<'_>, len: usize, debug_name: impl AsRef<str>) -> Self {
         Self::new(
+            ctx,
             debug_name,
             len,
             vk::BufferUsageFlags::STORAGE_BUFFER
@@ -29,24 +32,31 @@ impl<T> GfxStructuredBuffer<T> {
     }
 
     #[inline]
-    pub fn new_ubo(len: usize, debug_name: impl AsRef<str>) -> Self {
-        Self::new(debug_name, len, vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST, false)
+    pub fn new_ubo(ctx: GfxResourceCtx<'_>, len: usize, debug_name: impl AsRef<str>) -> Self {
+        Self::new(
+            ctx,
+            debug_name,
+            len,
+            vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            false,
+        )
     }
 
     #[inline]
-    pub fn new_stage_buffer(len: usize, debug_name: impl AsRef<str>) -> Self {
-        Self::new(debug_name, len, vk::BufferUsageFlags::TRANSFER_SRC, true)
+    pub fn new_stage_buffer(ctx: GfxResourceCtx<'_>, len: usize, debug_name: impl AsRef<str>) -> Self {
+        Self::new(ctx, debug_name, len, vk::BufferUsageFlags::TRANSFER_SRC, true)
     }
 
     #[inline]
     pub fn new(
+        ctx: GfxResourceCtx<'_>,
         debug_name: impl AsRef<str>,
         len: usize,
         buffer_usage_flags: vk::BufferUsageFlags,
         mapped: bool,
     ) -> Self {
         let buffer =
-            GfxBuffer::new((len * size_of::<T>()) as vk::DeviceSize, buffer_usage_flags, None, mapped, debug_name);
+            GfxBuffer::new(ctx, (len * size_of::<T>()) as vk::DeviceSize, buffer_usage_flags, None, mapped, debug_name);
 
         Self {
             inner: buffer,

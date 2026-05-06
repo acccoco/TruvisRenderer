@@ -1,9 +1,10 @@
-use std::{convert::identity, ffi::CStr, rc::Rc};
+use std::{cell::Cell, convert::identity, ffi::CStr, rc::Rc};
 
 use ash::vk;
+use ash::vk::Handle;
 use itertools::Itertools;
 
-use crate::gfx::Gfx;
+use crate::gfx::GfxDeviceCtx;
 use crate::pipelines::shader::GfxShaderModuleCache;
 use crate::{foundation::debug_messenger::DebugType, pipelines::shader::GfxShaderStageInfo};
 
@@ -11,10 +12,11 @@ use crate::{foundation::debug_messenger::DebugType, pipelines::shader::GfxShader
 ///
 /// 包含描述符集布局和 Push Constants 范围定义。
 pub struct GfxPipelineLayout {
-    handle: vk::PipelineLayout,
+    handle: Cell<vk::PipelineLayout>,
 }
 impl GfxPipelineLayout {
     pub fn new(
+        ctx: GfxDeviceCtx<'_>,
         descriptor_set_layouts: &[vk::DescriptorSetLayout],
         push_constant_ranges: &[vk::PushConstantRange],
         debug_name: impl AsRef<str>,
@@ -22,29 +24,34 @@ impl GfxPipelineLayout {
         let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(descriptor_set_layouts)
             .push_constant_ranges(push_constant_ranges);
-        let gfx_device = Gfx::get().gfx_device();
+        let gfx_device = ctx.device();
         let handle = unsafe { gfx_device.create_pipeline_layout(&pipeline_layout_create_info, None).unwrap() };
-        let layout = GfxPipelineLayout { handle };
+        let layout = GfxPipelineLayout {
+            handle: Cell::new(handle),
+        };
         gfx_device.set_debug_name(&layout, debug_name);
         layout
     }
 
     #[inline]
     pub fn handle(&self) -> vk::PipelineLayout {
-        self.handle
+        self.handle.get()
     }
 
     #[inline]
-    /// RAII 持有资源的立即释放别名。
-    pub fn destroy(self) {
-        drop(self)
+    pub fn destroy(&self, ctx: GfxDeviceCtx<'_>) {
+        let handle = self.handle.replace(vk::PipelineLayout::null());
+        if handle.is_null() {
+            return;
+        }
+        unsafe {
+            ctx.device().destroy_pipeline_layout(handle, None);
+        }
     }
 }
 impl Drop for GfxPipelineLayout {
     fn drop(&mut self) {
-        unsafe {
-            Gfx::get().gfx_device().destroy_pipeline_layout(self.handle, None);
-        }
+        debug_assert!(self.handle.get().is_null(), "GfxPipelineLayout dropped without explicit destroy");
     }
 }
 impl DebugType for GfxPipelineLayout {
@@ -53,7 +60,7 @@ impl DebugType for GfxPipelineLayout {
     }
 
     fn vk_handle(&self) -> impl vk::Handle {
-        self.handle
+        self.handle()
     }
 }
 
@@ -65,6 +72,7 @@ pub struct GfxGraphicsPipeline {
 }
 impl GfxGraphicsPipeline {
     pub fn new(
+        ctx: GfxDeviceCtx<'_>,
         create_info: &GfxGraphicsPipelineCreateInfo,
         pipeline_layout: Rc<GfxPipelineLayout>,
         debug_name: &str,
@@ -82,7 +90,7 @@ impl GfxGraphicsPipeline {
             .map(|stage| {
                 vk::PipelineShaderStageCreateInfo::default()
                     .stage(stage.stage)
-                    .module(shader_modules_cache.get_or_load(stage.path()).handle())
+                    .module(shader_modules_cache.get_or_load(ctx, stage.path()).handle())
                     .name(stage.entry_point)
             })
             .collect_vec();
@@ -126,11 +134,11 @@ impl GfxGraphicsPipeline {
             .multisample_state(&msaa_info)
             .color_blend_state(&color_blend_info)
             .depth_stencil_state(&create_info.depth_stencil_info)
-            .layout(pipeline_layout.handle)
+            .layout(pipeline_layout.handle())
             .dynamic_state(&dynamic_state_info)
             .push_next(&mut attach_info);
 
-        let gfx_device = Gfx::get().gfx_device();
+        let gfx_device = ctx.device();
         let pipeline = unsafe {
             gfx_device
                 .create_graphics_pipelines(vk::PipelineCache::null(), std::slice::from_ref(&pipeline_info), None)
@@ -143,7 +151,7 @@ impl GfxGraphicsPipeline {
 
         gfx_device.set_debug_name(&pipeline, debug_name);
 
-        shader_modules_cache.destroy();
+        shader_modules_cache.destroy(ctx);
 
         pipeline
     }
@@ -155,20 +163,26 @@ impl GfxGraphicsPipeline {
 
     #[inline]
     pub fn layout(&self) -> vk::PipelineLayout {
-        self.pipeline_layout.handle
+        self.pipeline_layout.handle()
     }
 
     #[inline]
-    /// RAII 持有资源的立即释放别名。
-    pub fn destroy(self) {
-        drop(self)
+    pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>) {
+        if self.pipeline.is_null() {
+            return;
+        }
+        unsafe {
+            ctx.device().destroy_pipeline(self.pipeline, None);
+        }
+        self.pipeline = vk::Pipeline::null();
+        if Rc::strong_count(&self.pipeline_layout) == 1 {
+            self.pipeline_layout.destroy(ctx);
+        }
     }
 }
 impl Drop for GfxGraphicsPipeline {
     fn drop(&mut self) {
-        unsafe {
-            Gfx::get().gfx_device().destroy_pipeline(self.pipeline, None);
-        }
+        debug_assert!(self.pipeline.is_null(), "GfxGraphicsPipeline dropped without explicit destroy");
     }
 }
 impl DebugType for GfxGraphicsPipeline {

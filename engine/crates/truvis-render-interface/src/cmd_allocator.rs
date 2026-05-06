@@ -2,7 +2,7 @@ use ash::vk;
 
 use truvis_gfx::{
     commands::{command_buffer::GfxCommandBuffer, command_pool::GfxCommandPool},
-    gfx::Gfx,
+    gfx::{GfxDeviceCtx, GfxDeviceInfoCtx},
 };
 
 use crate::frame_counter::FrameCounter;
@@ -31,15 +31,16 @@ pub struct CmdAllocator {
 // 创建与初始化
 impl Default for CmdAllocator {
     fn default() -> Self {
-        Self::new()
+        panic!("CmdAllocator::default requires explicit Gfx Ctx; use CmdAllocator::new")
     }
 }
 
 impl CmdAllocator {
-    pub fn new() -> Self {
+    pub fn new(device_ctx: GfxDeviceCtx<'_>, device_info_ctx: GfxDeviceInfoCtx<'_>) -> Self {
         let graphics_command_pools = FrameCounter::frame_labes().map(|i| {
             GfxCommandPool::new(
-                Gfx::get().gfx_queue_family(),
+                device_ctx,
+                device_info_ctx.gfx_queue_family(),
                 vk::CommandPoolCreateFlags::TRANSIENT,
                 &format!("render_context_graphics_command_pool_{}", i),
             )
@@ -60,11 +61,11 @@ impl Drop for CmdAllocator {
 }
 // 销毁
 impl CmdAllocator {
-    pub fn destroy(mut self) {
-        self.destroy_mut();
+    pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>) {
+        self.destroy_mut(ctx);
     }
 
-    fn destroy_mut(&mut self) {
+    fn destroy_mut(&mut self, ctx: GfxDeviceCtx<'_>) {
         if self.destroyed {
             return;
         }
@@ -72,9 +73,9 @@ impl CmdAllocator {
         for frame_label in 0..FrameCounter::fif_count() {
             let commands = std::mem::take(&mut self.allocated_command_buffers[frame_label]);
             if !commands.is_empty() {
-                self.graphics_command_pools[frame_label].free_command_buffers(commands);
+                self.graphics_command_pools[frame_label].free_command_buffers(ctx, commands);
             }
-            self.graphics_command_pools[frame_label].destroy();
+            self.graphics_command_pools[frame_label].destroy(ctx);
         }
 
         self.destroyed = true;
@@ -83,36 +84,41 @@ impl CmdAllocator {
 // 工具函数
 impl CmdAllocator {
     /// 分配 command buffer，在当前 frame 使用
-    pub fn alloc_command_buffer(&mut self, frame_label: FrameLabel, debug_name: &str) -> GfxCommandBuffer {
+    pub fn alloc_command_buffer(
+        &mut self,
+        ctx: GfxDeviceCtx<'_>,
+        frame_label: FrameLabel,
+        debug_name: &str,
+    ) -> GfxCommandBuffer {
         let name = format!("[{}]{}", frame_label, debug_name);
-        let cmd = GfxCommandBuffer::new(&self.graphics_command_pools[*frame_label], &name);
+        let cmd = GfxCommandBuffer::new(ctx, &self.graphics_command_pools[*frame_label], &name);
 
         self.allocated_command_buffers[*frame_label].push(cmd.clone());
         cmd
     }
 
     /// 重置当前 frame 的 command buffers，这些 command buffers 可以重新录制
-    pub fn reset_frame_commands(&mut self, frame_label: FrameLabel) {
+    pub fn reset_frame_commands(&mut self, ctx: GfxDeviceCtx<'_>, frame_label: FrameLabel) {
         let _span = tracy_client::span!("reset_frame_commands");
 
-        self.graphics_command_pools[*frame_label].reset_command_pool();
+        self.graphics_command_pools[*frame_label].reset_command_pool(ctx);
     }
 
     /// 释放当前 frame 的 command buffers，这些 commands 无法再使用
-    pub fn free_frame_commands(&mut self, frame_label: FrameLabel) {
+    pub fn free_frame_commands(&mut self, ctx: GfxDeviceCtx<'_>, frame_label: FrameLabel) {
         let _span = tracy_client::span!("free_frame_commands");
 
-        self.free_frame_commands_internal(*frame_label);
+        self.free_frame_commands_internal(ctx, *frame_label);
     }
 
-    fn free_frame_commands_internal(&mut self, frame_label: usize) {
+    fn free_frame_commands_internal(&mut self, ctx: GfxDeviceCtx<'_>, frame_label: usize) {
         // 释放当前 frame 的 command buffer 的资源
         let gc_cmds = std::mem::take(&mut self.allocated_command_buffers[frame_label]);
         if !gc_cmds.is_empty() {
-            self.graphics_command_pools[frame_label].free_command_buffers(gc_cmds);
+            self.graphics_command_pools[frame_label].free_command_buffers(ctx, gc_cmds);
         }
 
         // 这个调用并不会释放资源，而是将 pool 内的 command buffer 设置到初始状态
-        self.graphics_command_pools[frame_label].reset_command_pool();
+        self.graphics_command_pools[frame_label].reset_command_pool(ctx);
     }
 }

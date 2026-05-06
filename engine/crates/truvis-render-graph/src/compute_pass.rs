@@ -1,9 +1,10 @@
 use std::ffi::CStr;
 
 use ash::vk;
+use ash::vk::Handle;
 
 use truvis_gfx::basic::bytes::BytesConvert;
-use truvis_gfx::{commands::command_buffer::GfxCommandBuffer, gfx::Gfx, pipelines::shader::GfxShaderModule};
+use truvis_gfx::{commands::command_buffer::GfxCommandBuffer, gfx::GfxDeviceCtx, pipelines::shader::GfxShaderModule};
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::pipeline_settings::FrameLabel;
 
@@ -15,8 +16,13 @@ pub struct ComputePass<P: Sized> {
     _phantom: std::marker::PhantomData<P>,
 }
 impl<P: Sized> ComputePass<P> {
-    pub fn new(global_descriptor_sets: &GlobalDescriptorSets, entry_point: &CStr, shader_path: &str) -> Self {
-        let shader_module = GfxShaderModule::new(std::path::Path::new(shader_path));
+    pub fn new(
+        ctx: GfxDeviceCtx<'_>,
+        global_descriptor_sets: &GlobalDescriptorSets,
+        entry_point: &CStr,
+        shader_path: &str,
+    ) -> Self {
+        let shader_module = GfxShaderModule::new(ctx, std::path::Path::new(shader_path));
         let stage_info = vk::PipelineShaderStageCreateInfo::default()
             .module(shader_module.handle())
             .stage(vk::ShaderStageFlags::COMPUTE)
@@ -33,18 +39,17 @@ impl<P: Sized> ComputePass<P> {
                 .set_layouts(&descriptor_set_layouts)
                 .push_constant_ranges(std::slice::from_ref(&push_constant_range));
 
-            unsafe { Gfx::get().gfx_device().create_pipeline_layout(&pipeline_layout_ci, None).unwrap() }
+            unsafe { ctx.device().create_pipeline_layout(&pipeline_layout_ci, None).unwrap() }
         };
 
         let pipeline_ci = vk::ComputePipelineCreateInfo::default().stage(stage_info).layout(pipeline_layout);
         let pipeline = unsafe {
-            Gfx::get()
-                .gfx_device()
+            ctx.device()
                 .create_compute_pipelines(vk::PipelineCache::null(), std::slice::from_ref(&pipeline_ci), None)
                 .unwrap()[0]
         };
 
-        shader_module.destroy();
+        shader_module.destroy(ctx);
 
         Self {
             pipeline,
@@ -76,17 +81,24 @@ impl<P: Sized> ComputePass<P> {
         cmd.cmd_dispatch(group_cnt);
     }
 
-    /// RAII 持有资源的立即释放别名。
-    pub fn destroy(self) {
-        drop(self)
+    pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>) {
+        if !self.pipeline.is_null() {
+            unsafe {
+                ctx.device().destroy_pipeline(self.pipeline, None);
+            }
+            self.pipeline = vk::Pipeline::null();
+        }
+        if !self.pipeline_layout.is_null() {
+            unsafe {
+                ctx.device().destroy_pipeline_layout(self.pipeline_layout, None);
+            }
+            self.pipeline_layout = vk::PipelineLayout::null();
+        }
     }
 }
 impl<P: Sized> Drop for ComputePass<P> {
     fn drop(&mut self) {
-        let gfx_device = Gfx::get().gfx_device();
-        unsafe {
-            gfx_device.destroy_pipeline(self.pipeline, None);
-            gfx_device.destroy_pipeline_layout(self.pipeline_layout, None);
-        }
+        debug_assert!(self.pipeline.is_null(), "ComputePass pipeline dropped without explicit destroy");
+        debug_assert!(self.pipeline_layout.is_null(), "ComputePass layout dropped without explicit destroy");
     }
 }

@@ -6,6 +6,7 @@ use itertools::Itertools;
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_gfx::{
     commands::command_buffer::GfxCommandBuffer,
+    gfx::GfxDeviceCtx,
     pipelines::{
         graphics_pipeline::{GfxGraphicsPipeline, GfxGraphicsPipelineCreateInfo, GfxPipelineLayout},
         rendering_info::GfxRenderingInfo,
@@ -31,10 +32,10 @@ enumed_map!(ShaderStage<GfxShaderStageInfo>: {
 
 pub struct TrianglePass {
     pipeline: GfxGraphicsPipeline,
-    _pipeline_layout: Rc<GfxPipelineLayout>,
+    pipeline_layout: Rc<GfxPipelineLayout>,
 }
 impl TrianglePass {
-    pub fn new(color_format: vk::Format) -> Self {
+    pub fn new(ctx: GfxDeviceCtx<'_>, color_format: vk::Format) -> Self {
         let mut pipeline_ci = GfxGraphicsPipelineCreateInfo::default();
         pipeline_ci.shader_stages(ShaderStage::iter().map(|stage| stage.value().clone()).collect_vec());
         pipeline_ci.attach_info(vec![color_format], None, Some(vk::Format::UNDEFINED));
@@ -48,13 +49,18 @@ impl TrianglePass {
             [0.0; 4],
         );
 
-        let pipeline_layout = Rc::new(GfxPipelineLayout::new(&[], &[], "hello-triangle"));
-        let pipeline = GfxGraphicsPipeline::new(&pipeline_ci, pipeline_layout.clone(), "hello-triangle-pipeline");
+        let pipeline_layout = Rc::new(GfxPipelineLayout::new(ctx, &[], &[], "hello-triangle"));
+        let pipeline = GfxGraphicsPipeline::new(ctx, &pipeline_ci, pipeline_layout.clone(), "hello-triangle-pipeline");
 
         Self {
-            _pipeline_layout: pipeline_layout,
+            pipeline_layout,
             pipeline,
         }
+    }
+
+    pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
+        self.pipeline.destroy(ctx);
+        self.pipeline_layout.destroy(ctx);
     }
 
     pub fn draw(&self, cmd: &GfxCommandBuffer, canvas_view: &GfxImageView, canvas_extent: vk::Extent2D) {

@@ -1,6 +1,7 @@
 //! 统一的 Plugin trait 与面向 plugin 的阶段上下文。
 
 use truvis_gfx::commands::semaphore::GfxSemaphore;
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
 use truvis_render_backend::present::render_present::RenderPresent;
 use truvis_render_interface::cmd_allocator::CmdAllocator;
@@ -12,6 +13,12 @@ use crate::input_event::InputEvent;
 
 /// 由 app 持有的 plugin 的一次性初始化上下文。
 pub struct PluginInitCtx<'a> {
+    pub device_ctx: GfxDeviceCtx<'a>,
+    pub resource_ctx: GfxResourceCtx<'a>,
+    pub queue_ctx: GfxQueueCtx<'a>,
+    pub device_info_ctx: GfxDeviceInfoCtx<'a>,
+    pub immediate_ctx: GfxImmediateCtx<'a>,
+    pub surface_ctx: GfxSurfaceCtx<'a>,
     pub world: &'a mut World,
     pub render_world: &'a mut RenderWorld,
     pub cmd_allocator: &'a mut CmdAllocator,
@@ -31,6 +38,10 @@ pub struct PluginUpdateCtx<'a> {
 ///
 /// GUI draw data 刻意保留在具体 GUI plugin 内部。
 pub struct PluginRenderCtx<'a> {
+    pub device_ctx: GfxDeviceCtx<'a>,
+    pub resource_ctx: GfxResourceCtx<'a>,
+    pub queue_ctx: GfxQueueCtx<'a>,
+    pub device_info_ctx: GfxDeviceInfoCtx<'a>,
     pub render_world: &'a RenderWorld,
     pub render_present: &'a RenderPresent,
     pub timeline: &'a GfxSemaphore,
@@ -38,12 +49,21 @@ pub struct PluginRenderCtx<'a> {
 
 /// 持有 swapchain 尺寸资源的 plugin 使用的 resize 上下文。
 pub struct PluginResizeCtx<'a> {
+    pub device_ctx: GfxDeviceCtx<'a>,
+    pub resource_ctx: GfxResourceCtx<'a>,
+    pub immediate_ctx: GfxImmediateCtx<'a>,
+    pub surface_ctx: GfxSurfaceCtx<'a>,
     pub render_world: &'a mut RenderWorld,
     pub render_present: &'a RenderPresent,
 }
 
 /// 由 app 持有的 plugin 的 GPU shutdown 上下文。
 pub struct PluginShutdownCtx<'a> {
+    pub device_ctx: GfxDeviceCtx<'a>,
+    pub resource_ctx: GfxResourceCtx<'a>,
+    pub queue_ctx: GfxQueueCtx<'a>,
+    pub immediate_ctx: GfxImmediateCtx<'a>,
+    pub surface_ctx: GfxSurfaceCtx<'a>,
     pub render_world: &'a mut RenderWorld,
     pub cmd_allocator: &'a mut CmdAllocator,
 }

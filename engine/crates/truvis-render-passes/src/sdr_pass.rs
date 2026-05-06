@@ -1,6 +1,7 @@
 use ash::vk;
 
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
+use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_path::TruvisPath;
 use truvis_render_graph::compute_pass::ComputePass;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
@@ -21,14 +22,19 @@ pub struct SdrPass {
     sdr_pass: ComputePass<gpu::sdr::PushConstant>,
 }
 impl SdrPass {
-    pub fn new(render_descriptor_sets: &GlobalDescriptorSets) -> Self {
+    pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets) -> Self {
         let sdr_pass = ComputePass::<gpu::sdr::PushConstant>::new(
+            ctx,
             render_descriptor_sets,
             c"main",
             TruvisPath::shader_build_path_str("pp/sdr.slang").as_str(),
         );
 
         Self { sdr_pass }
+    }
+
+    pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
+        self.sdr_pass.destroy(ctx);
     }
 
     pub fn exec(&self, cmd: &GfxCommandBuffer, data: SdrPassData, render_world: &RenderWorld) {

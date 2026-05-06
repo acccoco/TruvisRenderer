@@ -2,14 +2,16 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 
 use ash::vk;
+use ash::vk::Handle;
 
-use crate::{foundation::debug_messenger::DebugType, gfx::Gfx};
+use crate::{foundation::debug_messenger::DebugType, gfx::GfxDeviceCtx};
 
 /// # 销毁
 ///
 /// 需要手动调用 `destroy` 方法来释放资源。
 pub struct GfxShaderModule {
     handle: vk::ShaderModule,
+    debug_name: String,
 
     #[cfg(debug_assertions)]
     destroyed: bool,
@@ -17,8 +19,8 @@ pub struct GfxShaderModule {
 impl GfxShaderModule {
     /// # 参数
     /// * path - spv shader 文件路径
-    pub fn new(path: &std::path::Path) -> Self {
-        let gfx_device = Gfx::get().gfx_device();
+    pub fn new(ctx: GfxDeviceCtx<'_>, path: &std::path::Path) -> Self {
+        let gfx_device = ctx.device();
         let mut file = std::fs::File::open(path).unwrap();
         let shader_code = ash::util::read_spv(&mut file).unwrap();
 
@@ -28,6 +30,7 @@ impl GfxShaderModule {
             let shader_module = gfx_device.create_shader_module(&shader_module_info, None).unwrap();
             let shader_module = Self {
                 handle: shader_module,
+                debug_name: path.to_string_lossy().to_string(),
 
                 #[cfg(debug_assertions)]
                 destroyed: false,
@@ -43,11 +46,15 @@ impl GfxShaderModule {
     }
 
     #[inline]
-    pub fn destroy(mut self) {
-        let gfx_device = Gfx::get().gfx_device();
+    pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>) {
+        if self.handle.is_null() {
+            return;
+        }
+        let gfx_device = ctx.device();
         unsafe {
             gfx_device.destroy_shader_module(self.handle, None);
         }
+        self.handle = vk::ShaderModule::null();
         #[cfg(debug_assertions)]
         {
             self.destroyed = true;
@@ -57,7 +64,11 @@ impl GfxShaderModule {
 impl Drop for GfxShaderModule {
     fn drop(&mut self) {
         #[cfg(debug_assertions)]
-        debug_assert!(self.destroyed, "ShaderModule must be destroyed manually before drop.");
+        debug_assert!(
+            self.destroyed && self.handle.is_null(),
+            "GfxShaderModule '{}' dropped without explicit destroy",
+            self.debug_name
+        );
     }
 }
 impl DebugType for GfxShaderModule {
@@ -91,12 +102,12 @@ impl GfxShaderModuleCache {
         }
     }
 
-    pub fn get_or_load(&mut self, path: &std::path::Path) -> &GfxShaderModule {
+    pub fn get_or_load(&mut self, ctx: GfxDeviceCtx<'_>, path: &std::path::Path) -> &GfxShaderModule {
         let path_str = path.to_str().unwrap().to_string();
-        self.shader_modules.entry(path_str).or_insert_with(|| GfxShaderModule::new(path))
+        self.shader_modules.entry(path_str).or_insert_with(|| GfxShaderModule::new(ctx, path))
     }
 
-    pub fn destroy(mut self) {
+    pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>) {
         #[cfg(debug_assertions)]
         {
             self.destroyed = true;
@@ -104,7 +115,7 @@ impl GfxShaderModuleCache {
 
         // 使用 std::mem::take 来 move 出 HashMap，留下一个空的 HashMap
         let shader_modules = std::mem::take(&mut self.shader_modules);
-        shader_modules.into_values().for_each(|module| module.destroy());
+        shader_modules.into_values().for_each(|module| module.destroy(ctx));
     }
 }
 impl Drop for GfxShaderModuleCache {

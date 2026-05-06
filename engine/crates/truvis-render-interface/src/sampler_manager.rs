@@ -1,7 +1,7 @@
 use ash::vk;
 use itertools::Itertools;
 
-use truvis_gfx::gfx::Gfx;
+use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_gfx::sampler::{GfxSampler, GfxSamplerDesc};
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_shader_binding::gpu;
@@ -14,8 +14,8 @@ pub struct RenderSamplerManager {
 }
 
 impl RenderSamplerManager {
-    pub fn new(render_descriptor_sets: &GlobalDescriptorSets) -> Self {
-        let samplers = Self::create_sampler();
+    pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets) -> Self {
+        let samplers = Self::create_sampler(ctx);
 
         // sampler 写入 descriptor set
         let write_sampler = StaticDescriptorBinding::samplers().write_image(
@@ -23,12 +23,12 @@ impl RenderSamplerManager {
             0,
             samplers.iter().map(|samlper| vk::DescriptorImageInfo::default().sampler(samlper.handle())).collect_vec(),
         );
-        Gfx::get().gfx_device().write_descriptor_sets(std::slice::from_ref(&write_sampler));
+        ctx.device().write_descriptor_sets(std::slice::from_ref(&write_sampler));
 
         Self { _samplers: samplers }
     }
 
-    fn create_sampler() -> [GfxSampler; gpu::ESamplerType__Count_ as usize] {
+    fn create_sampler(ctx: GfxDeviceCtx<'_>) -> [GfxSampler; gpu::ESamplerType__Count_ as usize] {
         let mut sampler_descs =
             [0; gpu::ESamplerType__Count_ as usize].map(|_| (String::new(), GfxSamplerDesc::default()));
 
@@ -71,9 +71,16 @@ impl RenderSamplerManager {
             },
         );
 
-        sampler_descs.map(|(name, desc)| GfxSampler::new(&desc, format!("bindless-sampler-{}", name)))
+        sampler_descs.map(|(name, desc)| GfxSampler::new(ctx, &desc, format!("bindless-sampler-{}", name)))
     }
 }
 
 // 销毁
-impl RenderSamplerManager {}
+impl RenderSamplerManager {
+    pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
+        let Self { _samplers } = self;
+        for sampler in _samplers {
+            sampler.destroy(ctx);
+        }
+    }
+}

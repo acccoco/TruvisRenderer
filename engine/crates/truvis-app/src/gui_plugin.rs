@@ -7,7 +7,6 @@ use imgui::{DrawData, TextureId, Ui};
 use truvis_frame_api::input_event::{ElementState, InputEvent, MouseButton};
 use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::basic::color::LabelColor;
-use truvis_gfx::gfx::Gfx;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
@@ -101,14 +100,14 @@ impl GuiPlugin {
         let frame_label = ctx.render_world.frame_counter.frame_label();
         let meshes = self.gui_meshes.as_mut().expect("GuiPlugin not initialized");
 
-        Gfx::get().gfx_queue().begin_label("[ui-pass]create-mesh", LabelColor::COLOR_STAGE);
+        ctx.queue_ctx.gfx_queue().begin_label("[ui-pass]create-mesh", LabelColor::COLOR_STAGE);
         {
             let mesh = &mut meshes[*frame_label];
-            mesh.grow_if_needed(draw_data);
-            mesh.fill_vertex_buffer(draw_data);
-            mesh.fill_index_buffer(draw_data);
+            mesh.grow_if_needed(ctx.resource_ctx, draw_data);
+            mesh.fill_vertex_buffer(ctx.resource_ctx, draw_data);
+            mesh.fill_index_buffer(ctx.resource_ctx, draw_data);
         }
-        Gfx::get().gfx_queue().end_label();
+        ctx.queue_ctx.gfx_queue().end_label();
 
         self.tex_map = HashMap::from([(
             imgui::TextureId::new(FONT_TEXTURE_ID),
@@ -171,10 +170,17 @@ impl GuiPlugin {
         io.config_flags |= imgui::ConfigFlags::DOCKING_ENABLE;
 
         let atlas_texture = self.imgui_ctx.fonts().build_rgba32_texture();
-        let fonts_image =
-            GfxImage::from_rgba8(atlas_texture.width, atlas_texture.height, atlas_texture.data, "imgui-fonts");
+        let fonts_image = GfxImage::from_rgba8(
+            ctx.resource_ctx,
+            ctx.immediate_ctx,
+            atlas_texture.width,
+            atlas_texture.height,
+            atlas_texture.data,
+            "imgui-fonts",
+        );
         let fonts_image_handle = ctx.render_world.gfx_resource_manager.register_image(fonts_image);
         let fonts_image_view_handle = ctx.render_world.gfx_resource_manager.get_or_create_image_view(
+            ctx.device_ctx,
             fonts_image_handle,
             GfxImageViewDesc::new_2d(vk::Format::R8G8B8A8_UNORM, vk::ImageAspectFlags::COLOR),
             "imgui-fonts",
@@ -188,9 +194,13 @@ impl GuiPlugin {
 
 impl Plugin for GuiPlugin {
     fn init(&mut self, ctx: &mut PluginInitCtx) {
-        self.gui_pass =
-            Some(GuiPass::new(&ctx.render_world.global_descriptor_sets, ctx.swapchain_image_info.image_format));
-        self.gui_meshes = Some(FrameCounter::frame_labes().map(GuiMesh::new));
+        self.gui_pass = Some(GuiPass::new(
+            ctx.device_ctx,
+            &ctx.render_world.global_descriptor_sets,
+            ctx.swapchain_image_info.image_format,
+        ));
+        self.gui_meshes =
+            Some(FrameCounter::frame_labes().map(|frame_label| GuiMesh::new(ctx.resource_ctx, frame_label)));
         self.init_font(ctx);
     }
 
@@ -242,11 +252,22 @@ impl Plugin for GuiPlugin {
             ctx.render_world.bindless_manager.unregister_srv(view_handle);
         }
         if let Some(image_handle) = self.fonts_image_handle.take() {
-            ctx.render_world.gfx_resource_manager.release_image_immediate(image_handle, DestroyReason::Shutdown);
+            ctx.render_world.gfx_resource_manager.release_image_immediate(
+                ctx.resource_ctx,
+                ctx.device_ctx,
+                image_handle,
+                DestroyReason::Shutdown,
+            );
         }
 
-        self.gui_meshes.take();
-        self.gui_pass.take();
+        if let Some(mut meshes) = self.gui_meshes.take() {
+            for mesh in &mut meshes {
+                mesh.destroy_mut(ctx.resource_ctx);
+            }
+        }
+        if let Some(gui_pass) = self.gui_pass.take() {
+            gui_pass.destroy(ctx.device_ctx);
+        }
     }
 }
 

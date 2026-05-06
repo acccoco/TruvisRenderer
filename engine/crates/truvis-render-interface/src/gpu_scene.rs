@@ -5,6 +5,7 @@ use itertools::Itertools;
 use slotmap::Key;
 
 use truvis_gfx::basic::bytes::BytesConvert;
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::{
     commands::{
@@ -46,61 +47,91 @@ struct GpuSceneBuffers {
 }
 // 初始化与销毁
 impl GpuSceneBuffers {
-    fn new(frame_label: FrameLabel) -> Self {
+    fn new(ctx: GfxResourceCtx<'_>, frame_label: FrameLabel) -> Self {
         let max_light_cnt = 512;
         let max_material_cnt = 1024;
         let max_geometry_cnt = 1024 * 8;
         let max_instance_cnt = 1024;
 
         GpuSceneBuffers {
-            scene_buffer: GfxStructuredBuffer::new_ubo(1, format!("scene buffer-{}", frame_label)),
-            light_buffer: GfxStructuredBuffer::new_ssbo(max_light_cnt, format!("light buffer-{}", frame_label)),
+            scene_buffer: GfxStructuredBuffer::new_ubo(ctx, 1, format!("scene buffer-{}", frame_label)),
+            light_buffer: GfxStructuredBuffer::new_ssbo(ctx, max_light_cnt, format!("light buffer-{}", frame_label)),
             light_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
+                ctx,
                 max_light_cnt,
                 format!("light stage buffer-{}", frame_label),
             ),
             material_buffer: GfxStructuredBuffer::new_ssbo(
+                ctx,
                 max_material_cnt,
                 format!("material buffer-{}", frame_label),
             ),
             material_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
+                ctx,
                 max_material_cnt,
                 format!("material stage buffer-{}", frame_label),
             ),
             geometry_buffer: GfxStructuredBuffer::new_ssbo(
+                ctx,
                 max_geometry_cnt,
                 format!("geometry buffer-{}", frame_label),
             ),
             geometry_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
+                ctx,
                 max_geometry_cnt,
                 format!("geometry stage buffer-{}", frame_label),
             ),
             instance_buffer: GfxStructuredBuffer::new_ssbo(
+                ctx,
                 max_instance_cnt,
                 format!("instance buffer-{}", frame_label),
             ),
             instance_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
+                ctx,
                 max_instance_cnt,
                 format!("instance stage buffer-{}", frame_label),
             ),
             material_indirect_buffer: GfxStructuredBuffer::new_ssbo(
+                ctx,
                 max_instance_cnt * 8,
                 format!("instance material buffer-{}", frame_label),
             ),
             material_indirect_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
+                ctx,
                 max_instance_cnt * 8,
                 format!("instance material stage buffer-{}", frame_label),
             ),
             geometry_indirect_buffer: GfxStructuredBuffer::new_ssbo(
+                ctx,
                 max_instance_cnt * 8,
                 format!("instance geometry buffer-{}", frame_label),
             ),
             geometry_indirect_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
+                ctx,
                 max_instance_cnt * 8,
                 format!("instance geometry stage buffer-{}", frame_label),
             ),
             tlas: None,
         }
+    }
+
+    fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
+        if let Some(tlas) = self.tlas.take() {
+            tlas.destroy(resource_ctx, device_ctx, DestroyReason::Shutdown);
+        }
+        self.scene_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        self.light_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        self.light_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        self.material_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        self.material_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        self.geometry_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        self.geometry_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        self.instance_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        self.instance_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        self.material_indirect_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        self.material_indirect_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        self.geometry_indirect_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        self.geometry_indirect_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
     }
 }
 
@@ -127,18 +158,25 @@ impl GpuScene {
 }
 // 创建与初始化
 impl GpuScene {
-    pub fn new(gfx_resource_manager: &mut GfxResourceManager, bindless_manager: &mut BindlessManager) -> Self {
+    pub fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+        bindless_manager: &mut BindlessManager,
+    ) -> Self {
         let sky_path = TruvisPath::resources_path_str("sky.jpg");
         let uv_checker_path = TruvisPath::resources_path_str("uv_checker.png");
 
-        let sky_image = ImageLoader::load_image(&PathBuf::from(&sky_path));
-        let uv_checker_image = ImageLoader::load_image(&PathBuf::from(&uv_checker_path));
+        let sky_image = ImageLoader::load_image(resource_ctx, immediate_ctx, &PathBuf::from(&sky_path));
+        let uv_checker_image = ImageLoader::load_image(resource_ctx, immediate_ctx, &PathBuf::from(&uv_checker_path));
 
         let sky_image_format = sky_image.format();
         let uv_checker_image_format = uv_checker_image.format();
 
         let sky_image_handle = gfx_resource_manager.register_image(sky_image);
         let sky_view_handle = gfx_resource_manager.get_or_create_image_view(
+            device_ctx,
             sky_image_handle,
             truvis_gfx::resources::image_view::GfxImageViewDesc::new_2d(sky_image_format, vk::ImageAspectFlags::COLOR),
             &sky_path,
@@ -146,6 +184,7 @@ impl GpuScene {
 
         let uv_checker_image_handle = gfx_resource_manager.register_image(uv_checker_image);
         let uv_checker_view_handle = gfx_resource_manager.get_or_create_image_view(
+            device_ctx,
             uv_checker_image_handle,
             truvis_gfx::resources::image_view::GfxImageViewDesc::new_2d(
                 uv_checker_image_format,
@@ -158,7 +197,8 @@ impl GpuScene {
         bindless_manager.register_srv(uv_checker_view_handle);
 
         Self {
-            gpu_scene_buffers: FrameCounter::frame_labes().map(GpuSceneBuffers::new),
+            gpu_scene_buffers: FrameCounter::frame_labes()
+                .map(|frame_label| GpuSceneBuffers::new(resource_ctx, frame_label)),
 
             sky_texture: (sky_image_handle, sky_view_handle),
             uv_checker_texture: (uv_checker_image_handle, uv_checker_view_handle),
@@ -177,11 +217,13 @@ impl Drop for GpuScene {
 impl GpuScene {
     pub fn destroy_mut(
         &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
         bindless_manager: &mut BindlessManager,
         gfx_resource_manager: &mut GfxResourceManager,
     ) {
         for buffers in &mut self.gpu_scene_buffers {
-            buffers.tlas.take();
+            buffers.destroy_mut(resource_ctx, device_ctx);
         }
 
         let (sky_image, sky_view) = self.sky_texture;
@@ -189,7 +231,7 @@ impl GpuScene {
             bindless_manager.unregister_srv(sky_view);
         }
         if !sky_image.is_null() {
-            gfx_resource_manager.release_image_immediate(sky_image, DestroyReason::Shutdown);
+            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, sky_image, DestroyReason::Shutdown);
         }
 
         let (uv_checker_image, uv_checker_view) = self.uv_checker_texture;
@@ -197,7 +239,12 @@ impl GpuScene {
             bindless_manager.unregister_srv(uv_checker_view);
         }
         if !uv_checker_image.is_null() {
-            gfx_resource_manager.release_image_immediate(uv_checker_image, DestroyReason::Shutdown);
+            gfx_resource_manager.release_image_immediate(
+                resource_ctx,
+                device_ctx,
+                uv_checker_image,
+                DestroyReason::Shutdown,
+            );
         }
 
         self.sky_texture = (GfxImageHandle::default(), GfxImageViewHandle::default());
@@ -219,6 +266,9 @@ impl GpuScene {
     /// - `bindless_manager`: 用于获取 sky/uv_checker 等内置纹理的 bindless handle
     pub fn upload_render_data(
         &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
         frame_counter: &FrameCounter,
@@ -227,13 +277,13 @@ impl GpuScene {
     ) {
         let _span = tracy_client::span!("GpuScene::prepare_render_data2");
 
-        self.upload_mesh_buffer(cmd, barrier_mask, render_data, frame_counter);
-        self.upload_instance_buffer(cmd, barrier_mask, render_data, frame_counter);
-        self.upload_material_buffer(cmd, barrier_mask, render_data, frame_counter);
-        self.upload_light_buffer(cmd, barrier_mask, render_data, frame_counter);
+        self.upload_mesh_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
+        self.upload_instance_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
+        self.upload_material_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
+        self.upload_light_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
 
         // 需要确保 instance 先于 tlas 构建
-        self.build_tlas(render_data, frame_counter);
+        self.build_tlas(resource_ctx, device_ctx, immediate_ctx, render_data, frame_counter);
 
         self.upload_scene_buffer(cmd, frame_counter, barrier_mask, render_data, bindless_manager);
     }
@@ -303,6 +353,7 @@ impl GpuScene {
     /// 将 instance 数据上传到 GPU（基于 SceneData2）
     fn upload_instance_buffer(
         &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
         scene_data: &RenderData<'_>,
@@ -359,18 +410,21 @@ impl GpuScene {
         }
 
         helper::flush_copy_and_barrier(
+            resource_ctx,
             cmd,
             crt_instance_stage_buffer,
             &mut crt_gpu_buffers.instance_buffer,
             barrier_mask,
         );
         helper::flush_copy_and_barrier(
+            resource_ctx,
             cmd,
             crt_geometry_indirect_stage_buffer,
             &mut crt_gpu_buffers.geometry_indirect_buffer,
             barrier_mask,
         );
         helper::flush_copy_and_barrier(
+            resource_ctx,
             cmd,
             crt_material_indirect_stage_buffer,
             &mut crt_gpu_buffers.material_indirect_buffer,
@@ -381,6 +435,7 @@ impl GpuScene {
     /// 将 material 数据上传到 GPU（基于 SceneData2）
     fn upload_material_buffer(
         &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
         scene_data: &RenderData<'_>,
@@ -412,6 +467,7 @@ impl GpuScene {
         }
 
         helper::flush_copy_and_barrier(
+            resource_ctx,
             cmd,
             crt_material_stage_buffer,
             &mut crt_gpu_buffers.material_buffer,
@@ -422,6 +478,7 @@ impl GpuScene {
     /// 将 light 数据上传到 GPU（基于 SceneData2）
     fn upload_light_buffer(
         &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
         scene_data: &RenderData<'_>,
@@ -445,12 +502,19 @@ impl GpuScene {
             };
         }
 
-        helper::flush_copy_and_barrier(cmd, crt_light_stage_buffer, &mut crt_gpu_buffers.light_buffer, barrier_mask);
+        helper::flush_copy_and_barrier(
+            resource_ctx,
+            cmd,
+            crt_light_stage_buffer,
+            &mut crt_gpu_buffers.light_buffer,
+            barrier_mask,
+        );
     }
 
     /// 将 mesh 数据以 geometry 的形式上传到 GPU（基于 SceneData2）
     fn upload_mesh_buffer(
         &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
         scene_data: &RenderData<'_>,
@@ -479,6 +543,7 @@ impl GpuScene {
         }
 
         helper::flush_copy_and_barrier(
+            resource_ctx,
             cmd,
             crt_geometry_stage_buffer,
             &mut crt_gpu_buffers.geometry_buffer,
@@ -509,7 +574,14 @@ impl GpuScene {
     }
 
     /// 构建 TLAS（基于 SceneData2）
-    fn build_tlas(&mut self, scene_data: &RenderData<'_>, frame_counter: &FrameCounter) {
+    fn build_tlas(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        scene_data: &RenderData<'_>,
+        frame_counter: &FrameCounter,
+    ) {
         let _span = tracy_client::span!("build_tlas2");
         if scene_data.all_instances.is_empty() {
             // 没有实例数据，直接返回
@@ -529,6 +601,9 @@ impl GpuScene {
             .map(|(idx, ins)| self.get_as_instance_info(ins, idx as u32, scene_data))
             .collect_vec();
         let tlas = GfxAcceleration::build_tlas_sync(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
             &instance_infos,
             vk::BuildAccelerationStructureFlagsKHR::empty(),
             format!("scene2-{}-{}", frame_counter.frame_label(), frame_counter.frame_id()),
@@ -546,6 +621,7 @@ mod helper {
             barrier::{GfxBarrierMask, GfxBufferBarrier},
             command_buffer::GfxCommandBuffer,
         },
+        gfx::GfxResourceCtx,
         resources::buffer::GfxBuffer,
     };
 
@@ -554,6 +630,7 @@ mod helper {
     /// 2. 从 stage buffer 中将 *所有* 数据复制到目标 buffer 中
     /// 3. 添加 barrier，确保后续访问时 Copy 已经完成且数据可用
     pub fn flush_copy_and_barrier(
+        resource_ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
         stage_buffer: &mut GfxBuffer,
         dst: &mut GfxBuffer,
@@ -561,7 +638,7 @@ mod helper {
     ) {
         let buffer_size = stage_buffer.size();
         {
-            stage_buffer.flush(0, buffer_size);
+            stage_buffer.flush(resource_ctx, 0, buffer_size);
         }
         cmd.cmd_copy_buffer(
             stage_buffer,
@@ -596,14 +673,18 @@ mod helper {
     // TODO 临时的图片加载器，后续需要整合到 TextureManager 中
     pub struct ImageLoader {}
     impl ImageLoader {
-        pub fn load_image(tex_path: &std::path::Path) -> GfxImage {
+        pub fn load_image(
+            resource_ctx: GfxResourceCtx<'_>,
+            immediate_ctx: truvis_gfx::gfx::GfxImmediateCtx<'_>,
+            tex_path: &std::path::Path,
+        ) -> GfxImage {
             let img = image::ImageReader::open(tex_path).unwrap().decode().unwrap().to_rgba8();
             let width = img.width();
             let height = img.height();
             let data = img.as_raw();
             let name = tex_path.to_str().unwrap();
 
-            GfxImage::from_rgba8(width, height, data, name)
+            GfxImage::from_rgba8(resource_ctx, immediate_ctx, width, height, data, name)
         }
     }
 }

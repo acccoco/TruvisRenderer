@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use ash::vk;
 use slotmap::{Key, SecondaryMap};
 
-use truvis_gfx::{gfx::Gfx, utilities::descriptor_cursor::GfxDescriptorCursor};
+use truvis_gfx::{gfx::GfxDeviceCtx, utilities::descriptor_cursor::GfxDescriptorCursor};
 use truvis_shader_binding::gpu;
 
 use crate::frame_counter::{FrameCounter, FrameToken};
@@ -139,6 +139,7 @@ impl BindlessManager {
     /// - 对已注销的 slot（`slots[slot] = None`），等 age >= FIF_COUNT 后归还 free_list
     pub fn prepare_render_data(
         &mut self,
+        ctx: GfxDeviceCtx<'_>,
         gfx_resource_manager: &GfxResourceManager,
         render_descriptor_sets: &GlobalDescriptorSets,
     ) {
@@ -206,7 +207,7 @@ impl BindlessManager {
 
         // 提交所有 descriptor 写入
         if !writes.is_empty() {
-            Gfx::get().gfx_device().write_descriptor_sets(&writes);
+            ctx.device().write_descriptor_sets(&writes);
         }
 
         // 清除已处理的 dirty 条目，归还已回收的 slot

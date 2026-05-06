@@ -1,6 +1,7 @@
 use ash::vk;
 
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
+use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_path::TruvisPath;
 use truvis_render_graph::compute_pass::ComputePass;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
@@ -43,14 +44,19 @@ pub struct DenoiseAccumPass {
 }
 
 impl DenoiseAccumPass {
-    pub fn new(render_descriptor_sets: &GlobalDescriptorSets) -> Self {
+    pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets) -> Self {
         let denoise_accum_pass = ComputePass::<gpu::denoise_accum::PushConstant>::new(
+            ctx,
             render_descriptor_sets,
             c"main",
             TruvisPath::shader_build_path_str("pp/denoise_accum.slang").as_str(),
         );
 
         Self { denoise_accum_pass }
+    }
+
+    pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
+        self.denoise_accum_pass.destroy(ctx);
     }
 
     pub fn exec(&self, cmd: &GfxCommandBuffer, data: DenoiseAccumPassData, render_world: &RenderWorld) {

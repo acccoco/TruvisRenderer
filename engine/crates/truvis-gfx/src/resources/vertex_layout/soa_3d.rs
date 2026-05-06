@@ -1,6 +1,7 @@
 use ash::vk;
 use std::ptr;
 
+use crate::gfx::{GfxImmediateCtx, GfxResourceCtx};
 use crate::resources::layout::GfxVertexLayout;
 use crate::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 
@@ -91,6 +92,8 @@ impl GfxVertexLayout for VertexLayoutSoA3D {
 
 impl VertexLayoutSoA3D {
     pub fn create_vertex_buffer(
+        resource_ctx: GfxResourceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
         positions: &[glam::Vec3],
         normals: &[glam::Vec3],
         tangents: &[glam::Vec3],
@@ -100,29 +103,34 @@ impl VertexLayoutSoA3D {
         let vertex_cnt = positions.len();
         assert!(vertex_cnt == normals.len() && vertex_cnt == tangents.len() && vertex_cnt == uvs.len());
 
-        let vertex_buffer = GfxVertexBuffer::new_device_local(vertex_cnt, name.as_ref());
-        vertex_buffer.transfer_data_sync2(Self::buffer_size(vertex_cnt) as vk::DeviceSize, |stage_buffer| unsafe {
-            ptr::copy_nonoverlapping(
-                positions.as_ptr() as *const u8,
-                stage_buffer.mapped_ptr().add(Self::pos_offset(vertex_cnt) as usize),
-                size_of_val(positions),
-            );
-            ptr::copy_nonoverlapping(
-                normals.as_ptr() as *const u8,
-                stage_buffer.mapped_ptr().add(Self::normal_offset(vertex_cnt) as usize),
-                size_of_val(normals),
-            );
-            ptr::copy_nonoverlapping(
-                tangents.as_ptr() as *const u8,
-                stage_buffer.mapped_ptr().add(Self::tangent_offset(vertex_cnt) as usize),
-                size_of_val(tangents),
-            );
-            ptr::copy_nonoverlapping(
-                uvs.as_ptr() as *const u8,
-                stage_buffer.mapped_ptr().add(Self::uv_offset(vertex_cnt) as usize),
-                size_of_val(uvs),
-            );
-        });
+        let vertex_buffer = GfxVertexBuffer::new_device_local(resource_ctx, vertex_cnt, name.as_ref());
+        vertex_buffer.transfer_data_sync2(
+            resource_ctx,
+            immediate_ctx,
+            Self::buffer_size(vertex_cnt) as vk::DeviceSize,
+            |stage_buffer| unsafe {
+                ptr::copy_nonoverlapping(
+                    positions.as_ptr() as *const u8,
+                    stage_buffer.mapped_ptr().add(Self::pos_offset(vertex_cnt) as usize),
+                    size_of_val(positions),
+                );
+                ptr::copy_nonoverlapping(
+                    normals.as_ptr() as *const u8,
+                    stage_buffer.mapped_ptr().add(Self::normal_offset(vertex_cnt) as usize),
+                    size_of_val(normals),
+                );
+                ptr::copy_nonoverlapping(
+                    tangents.as_ptr() as *const u8,
+                    stage_buffer.mapped_ptr().add(Self::tangent_offset(vertex_cnt) as usize),
+                    size_of_val(tangents),
+                );
+                ptr::copy_nonoverlapping(
+                    uvs.as_ptr() as *const u8,
+                    stage_buffer.mapped_ptr().add(Self::uv_offset(vertex_cnt) as usize),
+                    size_of_val(uvs),
+                );
+            },
+        );
 
         vertex_buffer
     }

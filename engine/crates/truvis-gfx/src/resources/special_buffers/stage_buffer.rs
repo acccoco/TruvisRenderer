@@ -5,7 +5,9 @@ use std::{
 
 use ash::{vk, vk::Handle};
 
-use crate::{foundation::debug_messenger::DebugType, gfx::Gfx, impl_derive_buffer, resources::buffer::GfxBuffer};
+use crate::{
+    foundation::debug_messenger::DebugType, gfx::GfxResourceCtx, impl_derive_buffer, resources::buffer::GfxBuffer,
+};
 
 pub struct GfxStageBuffer<T: bytemuck::Pod> {
     inner: GfxBuffer,
@@ -13,8 +15,9 @@ pub struct GfxStageBuffer<T: bytemuck::Pod> {
 }
 impl_derive_buffer!(GfxStageBuffer<T: bytemuck::Pod>, GfxBuffer, inner);
 impl<T: bytemuck::Pod> GfxStageBuffer<T> {
-    pub fn new(debug_name: impl AsRef<str>) -> Self {
+    pub fn new(ctx: GfxResourceCtx<'_>, debug_name: impl AsRef<str>) -> Self {
         let inner = GfxBuffer::new(
+            ctx,
             size_of::<T>() as vk::DeviceSize,
             vk::BufferUsageFlags::TRANSFER_SRC,
             None,
@@ -25,8 +28,7 @@ impl<T: bytemuck::Pod> GfxStageBuffer<T> {
             inner,
             _phantom: PhantomData,
         };
-        let gfx_device = Gfx::get().gfx_device();
-        gfx_device.set_debug_name(&buffer, debug_name);
+        ctx.device().set_debug_name(&buffer, debug_name);
         buffer
     }
 }

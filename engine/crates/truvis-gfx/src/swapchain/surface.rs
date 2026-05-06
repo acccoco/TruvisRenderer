@@ -1,7 +1,8 @@
 use ash::vk;
+use ash::vk::Handle;
 
 use crate::foundation::debug_messenger::DebugType;
-use crate::gfx::Gfx;
+use crate::gfx::GfxSurfaceCtx;
 
 pub struct GfxSurface {
     pub(crate) handle: vk::SurfaceKHR,
@@ -10,10 +11,11 @@ pub struct GfxSurface {
 
 impl GfxSurface {
     pub fn new(
+        ctx: GfxSurfaceCtx<'_>,
         raw_display_handle: raw_window_handle::RawDisplayHandle,
         raw_window_handle: raw_window_handle::RawWindowHandle,
     ) -> Self {
-        let gfx_core = &Gfx::get().gfx_core;
+        let gfx_core = ctx.core();
         let surface_pf = ash::khr::surface::Instance::new(&gfx_core.vk_entry, &gfx_core.instance.ash_instance);
 
         let surface = unsafe {
@@ -40,18 +42,26 @@ impl GfxSurface {
 // 访问器
 impl GfxSurface {
     /// 实时获取 surface 的能力信息
-    pub fn get_capabilities(&self) -> vk::SurfaceCapabilitiesKHR {
+    pub fn get_capabilities(&self, ctx: GfxSurfaceCtx<'_>) -> vk::SurfaceCapabilitiesKHR {
         unsafe {
-            self.pf
-                .get_physical_device_surface_capabilities(Gfx::get().gfx_core.physical_device.vk_handle, self.handle)
-                .unwrap()
+            self.pf.get_physical_device_surface_capabilities(ctx.physical_device().vk_handle, self.handle).unwrap()
         }
+    }
+
+    pub fn destroy(mut self, _ctx: GfxSurfaceCtx<'_>) {
+        if self.handle.is_null() {
+            return;
+        }
+        unsafe {
+            self.pf.destroy_surface(self.handle, None);
+        }
+        self.handle = vk::SurfaceKHR::null();
     }
 }
 
 impl Drop for GfxSurface {
     fn drop(&mut self) {
-        unsafe { self.pf.destroy_surface(self.handle, None) }
+        debug_assert!(self.handle.is_null(), "GfxSurface dropped without explicit destroy");
     }
 }
 

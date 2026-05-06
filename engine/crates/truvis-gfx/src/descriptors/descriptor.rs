@@ -1,8 +1,9 @@
 use ash::vk;
+use ash::vk::Handle;
 
 use truvis_descriptor_layout_trait::DescriptorBindingLayout;
 
-use crate::gfx::Gfx;
+use crate::gfx::GfxDeviceCtx;
 use crate::{descriptors::descriptor_pool::GfxDescriptorPool, foundation::debug_messenger::DebugType};
 
 /// 描述符集布局
@@ -32,7 +33,7 @@ impl<T: DescriptorBindingLayout> GfxDescriptorSetLayout<T> {
     ///
     /// # 返回值
     /// 新的描述符集布局实例
-    pub fn new(flags: vk::DescriptorSetLayoutCreateFlags, debug_name: impl AsRef<str>) -> Self {
+    pub fn new(ctx: GfxDeviceCtx<'_>, flags: vk::DescriptorSetLayoutCreateFlags, debug_name: impl AsRef<str>) -> Self {
         // 从类型 T 获取绑定信息
         let (bindings, binding_flags) = T::get_vk_bindings();
         let mut bind_flags_ci = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&binding_flags);
@@ -41,7 +42,7 @@ impl<T: DescriptorBindingLayout> GfxDescriptorSetLayout<T> {
             vk::DescriptorSetLayoutCreateInfo::default().flags(flags).bindings(&bindings).push_next(&mut bind_flags_ci);
         vk::DescriptorBindingFlags::empty();
 
-        let gfx_device = Gfx::get().gfx_device();
+        let gfx_device = ctx.device();
         // 创建 Vulkan 描述符集布局
         let layout = unsafe { gfx_device.create_descriptor_set_layout(&create_info, None).unwrap() };
         let layout = Self {
@@ -58,16 +59,19 @@ impl<T: DescriptorBindingLayout> GfxDescriptorSetLayout<T> {
     }
 
     #[inline]
-    /// RAII 持有资源的立即释放别名。
-    pub fn destroy(self) {
-        drop(self)
+    pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>) {
+        if self.layout.is_null() {
+            return;
+        }
+        unsafe {
+            ctx.device().destroy_descriptor_set_layout(self.layout, None);
+        }
+        self.layout = vk::DescriptorSetLayout::null();
     }
 }
 impl<T: DescriptorBindingLayout> Drop for GfxDescriptorSetLayout<T> {
     fn drop(&mut self) {
-        unsafe {
-            Gfx::get().gfx_device().destroy_descriptor_set_layout(self.layout, None);
-        }
+        debug_assert!(self.layout.is_null(), "GfxDescriptorSetLayout dropped without explicit destroy");
     }
 }
 impl<T: DescriptorBindingLayout> DebugType for GfxDescriptorSetLayout<T> {
@@ -110,6 +114,7 @@ impl<T: DescriptorBindingLayout> GfxDescriptorSet<T> {
     /// # 返回值
     /// 新的描述符集实例
     pub fn new(
+        ctx: GfxDeviceCtx<'_>,
         descriptor_pool: &GfxDescriptorPool,
         layout: &GfxDescriptorSetLayout<T>,
         debug_name: impl AsRef<str>,
@@ -118,7 +123,7 @@ impl<T: DescriptorBindingLayout> GfxDescriptorSet<T> {
         let alloc_info = vk::DescriptorSetAllocateInfo::default()
             .descriptor_pool(descriptor_pool.handle())
             .set_layouts(std::slice::from_ref(&layout.layout));
-        let gfx_device = Gfx::get().gfx_device();
+        let gfx_device = ctx.device();
         let descriptor_set = unsafe { gfx_device.allocate_descriptor_sets(&alloc_info).unwrap()[0] };
         let set = Self {
             handle: descriptor_set,

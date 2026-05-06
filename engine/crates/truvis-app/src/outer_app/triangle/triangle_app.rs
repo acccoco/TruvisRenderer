@@ -5,7 +5,6 @@ use truvis_frame_api::input_event::InputEvent;
 use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
 use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx, RenderAppShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
-use truvis_gfx::gfx::Gfx;
 use truvis_render_backend::platform::camera::Camera;
 use truvis_render_backend::render_backend::{RenderBackendRenderCtx, RenderBackendUpdateCtx};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
@@ -24,11 +23,13 @@ pub struct TrianglePlugin {
 
 impl Plugin for TrianglePlugin {
     fn init(&mut self, ctx: &mut PluginInitCtx) {
-        self.triangle_pass = Some(TrianglePass::new(ctx.swapchain_image_info.image_format));
+        self.triangle_pass = Some(TrianglePass::new(ctx.device_ctx, ctx.swapchain_image_info.image_format));
     }
 
-    fn shutdown(&mut self, _ctx: &mut PluginShutdownCtx<'_>) {
-        self.triangle_pass.take();
+    fn shutdown(&mut self, ctx: &mut PluginShutdownCtx<'_>) {
+        if let Some(pass) = self.triangle_pass.take() {
+            pass.destroy(ctx.device_ctx);
+        }
     }
 }
 
@@ -75,7 +76,7 @@ impl RenderAppHooks for HelloTriangleApp {
         let cmd_allocator = &mut *ctx.backend.cmd_allocator;
         self.cmds = FrameCounter::frame_labes()
             .iter()
-            .map(|label| cmd_allocator.alloc_command_buffer(*label, "triangle-app"))
+            .map(|label| cmd_allocator.alloc_command_buffer(ctx.backend.device_ctx, *label, "triangle-app"))
             .collect_vec();
     }
 
@@ -127,6 +128,10 @@ impl RenderAppHooks for HelloTriangleApp {
 
     fn render(&mut self, ctx: &RenderBackendRenderCtx) {
         let plugin_ctx = PluginRenderCtx {
+            device_ctx: ctx.device_ctx,
+            resource_ctx: ctx.resource_ctx,
+            queue_ctx: ctx.queue_ctx,
+            device_info_ctx: ctx.device_info_ctx,
             render_world: ctx.render_world,
             render_present: ctx.render_present,
             timeline: ctx.timeline,
@@ -192,7 +197,7 @@ impl RenderAppHooks for HelloTriangleApp {
         cmd.end();
 
         let submit_info = compiled_graph.build_submit_info(std::slice::from_ref(cmd));
-        Gfx::get().gfx_queue().submit(vec![submit_info], None);
+        ctx.queue_ctx.gfx_queue().submit(vec![submit_info], None);
     }
 
     fn camera(&self) -> &Camera {

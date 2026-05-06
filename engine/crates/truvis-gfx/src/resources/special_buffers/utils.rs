@@ -17,6 +17,24 @@ macro_rules! impl_derive_buffer {
                 &mut self.$inner
             }
         }
+
+        impl<$($generic $(: $bound)?),*> $name<$($generic),*> {
+            pub fn destroy_mut(
+                &mut self,
+                ctx: $crate::gfx::GfxResourceCtx<'_>,
+                reason: $crate::resources::lifecycle::DestroyReason,
+            ) {
+                self.$inner.destroy_mut(ctx, reason);
+            }
+
+            pub fn destroy(
+                self,
+                ctx: $crate::gfx::GfxResourceCtx<'_>,
+                reason: $crate::resources::lifecycle::DestroyReason,
+            ) {
+                self.$inner.destroy(ctx, reason);
+            }
+        }
     };
     // 非泛型版本
     ($name:ident, $target:ty, $inner:ident) => {
@@ -31,6 +49,24 @@ macro_rules! impl_derive_buffer {
         impl DerefMut for $name {
             fn deref_mut(&mut self) -> &mut Self::Target {
                 &mut self.$inner
+            }
+        }
+
+        impl $name {
+            pub fn destroy_mut(
+                &mut self,
+                ctx: $crate::gfx::GfxResourceCtx<'_>,
+                reason: $crate::resources::lifecycle::DestroyReason,
+            ) {
+                self.$inner.destroy_mut(ctx, reason);
+            }
+
+            pub fn destroy(
+                self,
+                ctx: $crate::gfx::GfxResourceCtx<'_>,
+                reason: $crate::resources::lifecycle::DestroyReason,
+            ) {
+                self.$inner.destroy(ctx, reason);
             }
         }
     };

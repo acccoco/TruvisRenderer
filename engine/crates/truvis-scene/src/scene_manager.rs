@@ -2,6 +2,7 @@ use indexmap::IndexMap;
 use slotmap::SlotMap;
 
 use truvis_asset::asset_hub::AssetHub;
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_render_interface::bindless_manager::{BindlessManager, BindlessSrvHandle};
 use truvis_render_interface::render_data::{InstanceRenderData, MaterialRenderData, MeshRenderData, RenderData};
 use truvis_shader_binding::gpu;
@@ -196,10 +197,13 @@ impl Drop for SceneManager {
 }
 // 销毁
 impl SceneManager {
-    pub fn destroy(self) {
-        drop(self)
+    pub fn destroy(mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
+        self.destroy_mut(resource_ctx, device_ctx);
     }
-    pub fn destroy_mut(&mut self) {
+    pub fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
+        for (_, mesh) in self.all_meshes.iter_mut() {
+            mesh.destroy_mut(resource_ctx, device_ctx);
+        }
         self.all_mats.clear();
         self.all_instances.clear();
         self.all_meshes.clear();

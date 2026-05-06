@@ -1,8 +1,9 @@
 use std::hash::Hash;
 
 use ash::vk;
+use ash::vk::Handle;
 
-use crate::gfx::Gfx;
+use crate::gfx::GfxDeviceCtx;
 
 // Sampler 描述符
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -33,10 +34,11 @@ impl Default for GfxSamplerDesc {
 
 pub struct GfxSampler {
     handle: vk::Sampler,
+    debug_name: String,
 }
 // 创建与初始化
 impl GfxSampler {
-    pub fn new(desc: &GfxSamplerDesc, name: impl AsRef<str>) -> Self {
+    pub fn new(ctx: GfxDeviceCtx<'_>, desc: &GfxSamplerDesc, name: impl AsRef<str>) -> Self {
         let mut create_info = vk::SamplerCreateInfo::default()
             .mag_filter(desc.mag_filter)
             .min_filter(desc.min_filter)
@@ -60,11 +62,14 @@ impl GfxSampler {
             create_info = create_info.compare_enable(false);
         }
 
-        let sampler =
-            unsafe { Gfx::get().gfx_device().create_sampler(&create_info, None).expect("Failed to create sampler") };
-        Gfx::get().gfx_device().set_object_debug_name(sampler, name.as_ref());
+        let gfx_device = ctx.device();
+        let sampler = unsafe { gfx_device.create_sampler(&create_info, None).expect("Failed to create sampler") };
+        gfx_device.set_object_debug_name(sampler, name.as_ref());
 
-        Self { handle: sampler }
+        Self {
+            handle: sampler,
+            debug_name: name.as_ref().to_string(),
+        }
     }
 }
 // 访问器
@@ -73,11 +78,19 @@ impl GfxSampler {
     pub fn handle(&self) -> vk::Sampler {
         self.handle
     }
+
+    pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>) {
+        if self.handle.is_null() {
+            return;
+        }
+        unsafe {
+            ctx.device().destroy_sampler(self.handle, None);
+        }
+        self.handle = vk::Sampler::null();
+    }
 }
 impl Drop for GfxSampler {
     fn drop(&mut self) {
-        unsafe {
-            Gfx::get().gfx_device().destroy_sampler(self.handle, None);
-        }
+        debug_assert!(self.handle.is_null(), "GfxSampler '{}' dropped without explicit destroy", self.debug_name);
     }
 }

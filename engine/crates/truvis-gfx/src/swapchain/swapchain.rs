@@ -5,7 +5,7 @@ use itertools::Itertools;
 use crate::commands::command_queue::GfxCommandQueue;
 use crate::commands::fence::GfxFence;
 use crate::commands::semaphore::GfxSemaphore;
-use crate::gfx::Gfx;
+use crate::gfx::GfxSurfaceCtx;
 use crate::swapchain::surface::GfxSurface;
 
 pub struct GfxSwapchain {
@@ -21,13 +21,14 @@ pub struct GfxSwapchain {
 // 创建与初始化
 impl GfxSwapchain {
     pub fn new(
+        ctx: GfxSurfaceCtx<'_>,
         surface: &GfxSurface,
         present_mode: vk::PresentModeKHR,
         surface_format: vk::SurfaceFormatKHR,
         window_physical_extent: vk::Extent2D,
         old_swapchain: Option<GfxSwapchain>,
     ) -> Self {
-        let surface_capabilities = surface.get_capabilities();
+        let surface_capabilities = surface.get_capabilities(ctx);
 
         // 确定 window 的 extent 尺寸
         // 如果 surface_capabilities.current_extent 包含特殊值 0xFFFFFFFF，则表示可以自己设置交换链的 extent
@@ -50,6 +51,7 @@ impl GfxSwapchain {
         );
 
         let swapchain_handle = Self::create_swapchain(
+            ctx,
             surface,
             surface_format.format,
             surface_format.color_space,
@@ -58,10 +60,10 @@ impl GfxSwapchain {
             old_swapchain.as_ref().map(|s| s.swapchain_handle),
         );
         if let Some(old_swapchain) = old_swapchain {
-            old_swapchain.destroy();
+            old_swapchain.destroy(ctx);
         }
 
-        let images = unsafe { Gfx::get().gfx_device().swapchain.get_swapchain_images(swapchain_handle).unwrap() };
+        let images = unsafe { ctx.device().swapchain.get_swapchain_images(swapchain_handle).unwrap() };
 
         Self {
             swapchain_handle,
@@ -73,6 +75,7 @@ impl GfxSwapchain {
     }
 
     fn create_swapchain(
+        ctx: GfxSurfaceCtx<'_>,
         surface: &GfxSurface,
         format: vk::Format,
         color_space: vk::ColorSpaceKHR,
@@ -82,7 +85,7 @@ impl GfxSwapchain {
     ) -> vk::SwapchainKHR {
         // 确定 image count
         // max_image_count == 0，表示不限制 image 数量
-        let surface_capabilities = surface.get_capabilities();
+        let surface_capabilities = surface.get_capabilities(ctx);
 
         let image_count = if surface_capabilities.max_image_count == 0 {
             surface_capabilities.min_image_count + 1
@@ -106,7 +109,7 @@ impl GfxSwapchain {
             .old_swapchain(old_swapchain.unwrap_or_default())
             .clipped(true);
 
-        let gfx_device = Gfx::get().gfx_device();
+        let gfx_device = ctx.device();
         unsafe {
             let swapchain_handle = gfx_device.swapchain.create_swapchain(&create_info, None).unwrap();
             gfx_device.set_object_debug_name(swapchain_handle, "main");
@@ -180,12 +183,13 @@ impl GfxSwapchain {
     #[inline]
     pub fn acquire_next_image(
         &mut self,
+        ctx: GfxSurfaceCtx<'_>,
         semaphore: Option<&GfxSemaphore>,
         fence: Option<&GfxFence>,
         timeout: u64,
     ) -> bool {
         let result = unsafe {
-            Gfx::get().gfx_device().swapchain.acquire_next_image(
+            ctx.device().swapchain.acquire_next_image(
                 self.swapchain_handle,
                 timeout,
                 semaphore.map_or(vk::Semaphore::null(), |s| s.handle()),
@@ -213,7 +217,12 @@ impl GfxSwapchain {
 
     /// 返回：需要重建
     #[inline]
-    pub fn present_image(&self, queue: &GfxCommandQueue, wait_semaphores: &[GfxSemaphore]) -> bool {
+    pub fn present_image(
+        &self,
+        ctx: GfxSurfaceCtx<'_>,
+        queue: &GfxCommandQueue,
+        wait_semaphores: &[GfxSemaphore],
+    ) -> bool {
         let wait_semaphores = wait_semaphores.iter().map(|s| s.handle()).collect_vec();
         let image_indices = [self.swapchain_image_index as u32];
         let present_info = vk::PresentInfoKHR::default()
@@ -221,7 +230,7 @@ impl GfxSwapchain {
             .image_indices(&image_indices)
             .swapchains(std::slice::from_ref(&self.swapchain_handle));
 
-        let result = unsafe { Gfx::get().gfx_device().swapchain.queue_present(queue.handle(), &present_info) };
+        let result = unsafe { ctx.device().swapchain.queue_present(queue.handle(), &present_info) };
         match result {
             Ok(is_suboptimal) => {
                 if is_suboptimal {
@@ -242,10 +251,12 @@ impl GfxSwapchain {
 
 // 销毁
 impl GfxSwapchain {
-    pub fn destroy(mut self) {
+    pub fn destroy(mut self, ctx: GfxSurfaceCtx<'_>) {
+        if self.swapchain_handle.is_null() {
+            return;
+        }
         unsafe {
-            let gfx_device = Gfx::get().gfx_device();
-            gfx_device.swapchain.destroy_swapchain(self.swapchain_handle, None);
+            ctx.device().swapchain.destroy_swapchain(self.swapchain_handle, None);
         }
         self.swapchain_handle = vk::SwapchainKHR::null();
     }

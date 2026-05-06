@@ -1,4 +1,5 @@
 use std::ffi::CStr;
+use std::rc::Rc;
 
 use ash::vk;
 
@@ -15,18 +16,188 @@ use crate::{
     },
 };
 
-/// Vulkan 图形上下文单例
+/// 只暴露 Vulkan device 能力的借用视图。
+#[derive(Clone, Copy)]
+pub struct GfxDeviceCtx<'a> {
+    device: &'a Rc<GfxDevice>,
+}
+
+impl<'a> GfxDeviceCtx<'a> {
+    #[inline]
+    pub fn device(self) -> &'a GfxDevice {
+        self.device
+    }
+
+    #[inline]
+    pub(crate) fn device_rc(self) -> Rc<GfxDevice> {
+        self.device.clone()
+    }
+}
+
+/// 资源创建/销毁所需的 device + VMA allocator 借用视图。
+#[derive(Clone, Copy)]
+pub struct GfxResourceCtx<'a> {
+    device: &'a Rc<GfxDevice>,
+    allocator: &'a VMemAllocator,
+}
+
+impl<'a> GfxResourceCtx<'a> {
+    #[inline]
+    pub fn device(self) -> &'a GfxDevice {
+        self.device
+    }
+
+    #[inline]
+    pub fn allocator(self) -> &'a VMemAllocator {
+        self.allocator
+    }
+}
+
+/// 队列提交和队列标签所需的借用视图。
+#[derive(Clone, Copy)]
+pub struct GfxQueueCtx<'a> {
+    gfx_queue: &'a GfxCommandQueue,
+    transfer_queue: &'a GfxCommandQueue,
+}
+
+impl<'a> GfxQueueCtx<'a> {
+    #[inline]
+    pub fn gfx_queue(self) -> &'a GfxCommandQueue {
+        self.gfx_queue
+    }
+
+    #[inline]
+    pub fn transfer_queue(self) -> &'a GfxCommandQueue {
+        self.transfer_queue
+    }
+}
+
+/// 只读设备信息与格式查询能力。
+#[derive(Clone, Copy)]
+pub struct GfxDeviceInfoCtx<'a> {
+    instance: &'a GfxInstance,
+    physical_device: &'a GfxPhysicalDevice,
+}
+
+impl<'a> GfxDeviceInfoCtx<'a> {
+    #[inline]
+    pub fn instance(self) -> &'a GfxInstance {
+        self.instance
+    }
+
+    #[inline]
+    pub fn physical_device(self) -> &'a GfxPhysicalDevice {
+        self.physical_device
+    }
+
+    #[inline]
+    pub fn gfx_queue_family(self) -> GfxQueueFamily {
+        self.physical_device.gfx_queue_family.clone()
+    }
+
+    #[inline]
+    pub fn compute_queue_family(self) -> GfxQueueFamily {
+        self.physical_device.compute_queue_family.as_ref().unwrap().clone()
+    }
+
+    #[inline]
+    pub fn transfer_queue_family(self) -> GfxQueueFamily {
+        self.physical_device.transfer_queue_family.as_ref().unwrap().clone()
+    }
+
+    #[inline]
+    pub fn min_ubo_offset_align(self) -> vk::DeviceSize {
+        self.physical_device.basic_props.limits.min_uniform_buffer_offset_alignment
+    }
+
+    #[inline]
+    pub fn rt_pipeline_props(self) -> &'a vk::PhysicalDeviceRayTracingPipelinePropertiesKHR<'static> {
+        &self.physical_device.rt_pipeline_props
+    }
+
+    /// 根据给定的格式，返回支持的格式。
+    pub fn find_supported_format(
+        self,
+        candidates: &[vk::Format],
+        tiling: vk::ImageTiling,
+        features: vk::FormatFeatureFlags,
+    ) -> Vec<vk::Format> {
+        candidates
+            .iter()
+            .filter(|f| {
+                let props = unsafe {
+                    self.instance
+                        .ash_instance
+                        .get_physical_device_format_properties(self.physical_device.vk_handle, **f)
+                };
+                match tiling {
+                    vk::ImageTiling::LINEAR => props.linear_tiling_features.contains(features),
+                    vk::ImageTiling::OPTIMAL => props.optimal_tiling_features.contains(features),
+                    _ => panic!("not supported tiling."),
+                }
+            })
+            .copied()
+            .collect()
+    }
+}
+
+/// one-time command 执行所需的借用视图。
+#[derive(Clone, Copy)]
+pub struct GfxImmediateCtx<'a> {
+    device: &'a Rc<GfxDevice>,
+    queue: &'a GfxCommandQueue,
+    command_pool: &'a GfxCommandPool,
+}
+
+impl<'a> GfxImmediateCtx<'a> {
+    #[inline]
+    pub fn device(self) -> &'a GfxDevice {
+        self.device
+    }
+
+    #[inline]
+    pub fn queue(self) -> &'a GfxCommandQueue {
+        self.queue
+    }
+
+    #[inline]
+    pub fn command_pool(self) -> &'a GfxCommandPool {
+        self.command_pool
+    }
+
+    #[inline]
+    pub(crate) fn device_rc(self) -> Rc<GfxDevice> {
+        self.device.clone()
+    }
+}
+
+/// WSI surface/swapchain 操作所需的借用视图。
+#[derive(Clone, Copy)]
+pub struct GfxSurfaceCtx<'a> {
+    core: &'a GfxCore,
+}
+
+impl<'a> GfxSurfaceCtx<'a> {
+    #[inline]
+    pub(crate) fn core(self) -> &'a GfxCore {
+        self.core
+    }
+
+    #[inline]
+    pub fn device(self) -> &'a GfxDevice {
+        &self.core.gfx_device
+    }
+
+    #[inline]
+    pub fn physical_device(self) -> &'a GfxPhysicalDevice {
+        &self.core.physical_device
+    }
+}
+
+/// Vulkan 图形上下文 root owner。
 ///
 /// 管理所有 Vulkan 核心资源，包括实例、设备、队列、内存分配器等。
-/// 采用单例模式简化参数传递和生命周期管理，仅适用于单线程环境。
-///
-/// # 初始化流程
-/// ```ignore
-/// Gfx::init("MyApp".to_string(), extra_extensions);
-/// let device = Gfx::get().gfx_device();
-/// // 使用...
-/// Gfx::destroy();
-/// ```
+/// 子资源创建、使用和销毁应通过 typed Ctx 显式接收所需能力。
 pub struct Gfx {
     pub(crate) gfx_core: GfxCore,
     pub(crate) vm_allocator: VMemAllocator,
@@ -40,13 +211,11 @@ impl Gfx {
     // region init 相关
     const ENGINE_NAME: &'static str = "DruvisIII";
 
-    fn new(app_name: String, instance_extra_exts: Vec<&'static CStr>) -> Self {
+    pub fn new(app_name: String, instance_extra_exts: Vec<&'static CStr>) -> Self {
         let _span = tracy_client::span!("Gfx::new");
 
         let gfx_core = GfxCore::new(app_name, Self::ENGINE_NAME.to_string(), instance_extra_exts);
 
-        // 注意：在初始化过程中，我们需要使用传统的参数传递方式
-        // 因为 RenderContext 单例还没有被初始化
         let gfx_command_pool = GfxCommandPool::new_internal(
             gfx_core.gfx_device.clone(),
             gfx_core.physical_device.gfx_queue_family.clone(),
@@ -66,67 +235,18 @@ impl Gfx {
             temp_graphics_command_pool: gfx_command_pool,
         }
     }
-}
 
-// 注意：此静态变量仅用于单线程环境，符合项目要求
-static mut G_GFX: Option<Gfx> = None;
+    /// 销毁 Gfx root owner。调用者必须先显式释放所有子 GPU 资源。
+    pub fn destroy(self) {
+        let Self {
+            gfx_core,
+            vm_allocator,
+            temp_graphics_command_pool,
+        } = self;
 
-// 单例模式
-// - RenderContext 自身的生命周期管理比较简单，因此适合使用单例模式
-// - 让代码变得简单，不再需要考虑复杂的借用规则
-// - 其他类的类型签名也会变得更简单
-impl Gfx {
-    /// 获取单例实例
-    ///
-    /// # Panics
-    /// 如果 RenderContext 还未初始化，此方法会 panic
-    ///
-    /// # Safety
-    /// 此方法仅在单线程环境下安全
-    #[inline]
-    pub fn get() -> &'static Gfx {
-        unsafe {
-            // 使用 addr_of! 避免直接对 static mut 创建引用，编译器不允许这种行为
-            let ptr = std::ptr::addr_of!(G_GFX);
-            (*ptr).as_ref().expect("RenderContext not initialized. Call RenderContext::init() first.")
-        }
-    }
-
-    /// 初始化 RenderContext 单例
-    ///
-    /// # 参数
-    /// - `app_name`: 应用程序名称
-    /// - `instance_extra_exts`: 额外的 Vulkan 实例扩展
-    ///
-    /// # Panics
-    /// 如果 RenderContext 已经被初始化，此方法会 panic
-    ///
-    /// # Safety
-    /// 此方法仅在单线程环境下安全
-    pub fn init(app_name: String, instance_extra_exts: Vec<&'static CStr>) {
-        unsafe {
-            // 使用 addr_of_mut! 避免直接对 static mut 创建可变引用
-            let ptr = std::ptr::addr_of_mut!(G_GFX);
-            assert!((*ptr).is_none(), "RenderContext already initialized");
-            *ptr = Some(Self::new(app_name, instance_extra_exts));
-        }
-    }
-
-    /// 销毁 RenderContext 单例
-    ///
-    /// # Safety
-    /// 调用此方法后，不应再使用 RenderContext::get()
-    /// 此方法仅在单线程环境下安全
-    pub fn destroy() {
-        unsafe {
-            // 使用 addr_of_mut! 避免直接对 static mut 创建可变引用
-            let ptr = std::ptr::addr_of_mut!(G_GFX);
-            let context = (*ptr).take().expect("RenderContext not initialized");
-
-            context.vm_allocator.destroy();
-            context.temp_graphics_command_pool.destroy_internal(&context.gfx_core.gfx_device);
-            context.gfx_core.destroy();
-        }
+        temp_graphics_command_pool.destroy_internal(&gfx_core.gfx_device);
+        vm_allocator.destroy();
+        gfx_core.destroy();
     }
 }
 
@@ -194,6 +314,51 @@ impl Gfx {
     pub fn rt_pipeline_props(&self) -> &vk::PhysicalDeviceRayTracingPipelinePropertiesKHR<'_> {
         &self.gfx_core.physical_device.rt_pipeline_props
     }
+
+    #[inline]
+    pub fn device_ctx(&self) -> GfxDeviceCtx<'_> {
+        GfxDeviceCtx {
+            device: &self.gfx_core.gfx_device,
+        }
+    }
+
+    #[inline]
+    pub fn resource_ctx(&self) -> GfxResourceCtx<'_> {
+        GfxResourceCtx {
+            device: &self.gfx_core.gfx_device,
+            allocator: &self.vm_allocator,
+        }
+    }
+
+    #[inline]
+    pub fn queue_ctx(&self) -> GfxQueueCtx<'_> {
+        GfxQueueCtx {
+            gfx_queue: &self.gfx_core.gfx_queue,
+            transfer_queue: &self.gfx_core.transfer_queue,
+        }
+    }
+
+    #[inline]
+    pub fn device_info_ctx(&self) -> GfxDeviceInfoCtx<'_> {
+        GfxDeviceInfoCtx {
+            instance: &self.gfx_core.instance,
+            physical_device: &self.gfx_core.physical_device,
+        }
+    }
+
+    #[inline]
+    pub fn immediate_ctx(&self) -> GfxImmediateCtx<'_> {
+        GfxImmediateCtx {
+            device: &self.gfx_core.gfx_device,
+            queue: &self.gfx_core.gfx_queue,
+            command_pool: &self.temp_graphics_command_pool,
+        }
+    }
+
+    #[inline]
+    pub fn surface_ctx(&self) -> GfxSurfaceCtx<'_> {
+        GfxSurfaceCtx { core: &self.gfx_core }
+    }
 }
 
 // 工具函数
@@ -228,27 +393,37 @@ impl Gfx {
     where
         F: FnOnce(&GfxCommandBuffer) -> R,
     {
-        let command_buffer =
-            GfxCommandBuffer::new(&self.temp_graphics_command_pool, &format!("one-time-{}", name.as_ref()));
+        self.immediate_ctx().one_time_exec(func, name)
+    }
+
+    pub fn wait_idel(&self) {
+        self.device_ctx().device().wait_idle();
+    }
+}
+
+impl GfxImmediateCtx<'_> {
+    /// 立即执行某个 command，并同步等待执行结果。
+    pub fn one_time_exec<F, R>(self, func: F, name: impl AsRef<str>) -> R
+    where
+        F: FnOnce(&GfxCommandBuffer) -> R,
+    {
+        let command_buffer = GfxCommandBuffer::new_with_device(
+            self.device_rc(),
+            self.command_pool,
+            &format!("one-time-{}", name.as_ref()),
+        );
 
         command_buffer.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, name.as_ref());
         let result = func(&command_buffer);
         command_buffer.end();
 
         let command_buffer_clone = command_buffer.clone();
-        self.gfx_queue().submit(vec![GfxSubmitInfo::new(&[command_buffer_clone])], None);
-        self.gfx_queue().wait_idle();
+        self.queue.submit(vec![GfxSubmitInfo::new(&[command_buffer_clone])], None);
+        self.queue.wait_idle();
         unsafe {
-            self.gfx_device()
-                .free_command_buffers(self.temp_graphics_command_pool.handle(), &[command_buffer.vk_handle()]);
+            self.device.free_command_buffers(self.command_pool.handle(), &[command_buffer.vk_handle()]);
         }
 
         result
-    }
-
-    pub fn wait_idel(&self) {
-        unsafe {
-            self.gfx_device().device_wait_idle().unwrap();
-        }
     }
 }

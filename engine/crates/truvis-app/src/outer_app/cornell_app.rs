@@ -1,7 +1,7 @@
 use truvis_frame_api::input_event::InputEvent;
 use truvis_frame_api::plugin::{Plugin, PluginRenderCtx};
 use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx};
-use truvis_gfx::gfx::Gfx;
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_path::TruvisPath;
 use truvis_render_backend::model_loader::assimp_loader::AssimpSceneLoader;
 use truvis_render_backend::platform::camera::Camera;
@@ -27,7 +27,13 @@ pub struct CornellApp {
 }
 
 impl CornellApp {
-    fn create_scene(world: &mut World, camera: &mut Camera) {
+    fn create_scene(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        world: &mut World,
+        camera: &mut Camera,
+    ) {
         camera.position = glam::vec3(-400.0, 1000.0, 1000.0);
         camera.euler_yaw_deg = 330.0;
         camera.euler_pitch_deg = -27.0;
@@ -53,6 +59,9 @@ impl CornellApp {
 
         log::info!("Loading scene...");
         AssimpSceneLoader::load_scene(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
             TruvisPath::assets_path_str("fbx/cornell-box.fbx").as_ref(),
             &mut world.scene_manager,
             &mut world.asset_hub,
@@ -66,7 +75,13 @@ impl RenderAppHooks for CornellApp {
         self.gui.set_hidpi_factor(ctx.scale_factor);
         self.gui.set_display_size(ctx.window_size);
 
-        Self::create_scene(&mut *ctx.backend.world, self.camera_controller.camera_mut());
+        Self::create_scene(
+            ctx.backend.resource_ctx,
+            ctx.backend.device_ctx,
+            ctx.backend.immediate_ctx,
+            &mut *ctx.backend.world,
+            self.camera_controller.camera_mut(),
+        );
     }
 
     fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
@@ -117,6 +132,10 @@ impl RenderAppHooks for CornellApp {
 
     fn render(&mut self, ctx: &RenderBackendRenderCtx) {
         let plugin_ctx = PluginRenderCtx {
+            device_ctx: ctx.device_ctx,
+            resource_ctx: ctx.resource_ctx,
+            queue_ctx: ctx.queue_ctx,
+            device_info_ctx: ctx.device_info_ctx,
             render_world: ctx.render_world,
             render_present: ctx.render_present,
             timeline: ctx.timeline,
@@ -174,7 +193,7 @@ impl RenderAppHooks for CornellApp {
             compiled_graph.build_submit_info(std::slice::from_ref(cmd))
         };
 
-        Gfx::get().gfx_queue().submit(vec![compute_submit, present_submit], None);
+        ctx.queue_ctx.gfx_queue().submit(vec![compute_submit, present_submit], None);
     }
 
     fn camera(&self) -> &Camera {

@@ -11,7 +11,7 @@ use crate::pipeline_settings::{FrameLabel, FrameSettings};
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::{
     commands::barrier::GfxImageBarrier,
-    gfx::Gfx,
+    gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx},
     resources::image::{GfxImage, GfxImageCreateInfo},
 };
 
@@ -60,6 +60,9 @@ pub struct FifBuffers {
 // 创建与初始化
 impl FifBuffers {
     pub fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
         frame_settigns: &FrameSettings,
         bindless_manager: &mut BindlessManager,
         gfx_resource_manager: &mut GfxResourceManager,
@@ -69,6 +72,9 @@ impl FifBuffers {
         let single_frame_format = frame_settigns.color_format;
         let single_frame_extent = frame_settigns.frame_extent;
         let (single_frame_rt_images, single_frame_rt_views) = Self::create_single_frame_rt_images(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
             gfx_resource_manager,
             single_frame_format,
             single_frame_extent,
@@ -77,17 +83,33 @@ impl FifBuffers {
 
         let accum_format = frame_settigns.color_format;
         let accum_extent = frame_settigns.frame_extent;
-        let (color_image, color_image_view) =
-            Self::create_color_image(gfx_resource_manager, accum_format, accum_extent, frame_counter);
+        let (color_image, color_image_view) = Self::create_color_image(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            accum_format,
+            accum_extent,
+            frame_counter,
+        );
 
         let depth_format = frame_settigns.depth_format;
         let depth_extent = frame_settigns.frame_extent;
-        let (depth_image, depth_image_view) =
-            Self::create_depth_image(gfx_resource_manager, depth_format, depth_extent, frame_counter);
+        let (depth_image, depth_image_view) = Self::create_depth_image(
+            resource_ctx,
+            device_ctx,
+            gfx_resource_manager,
+            depth_format,
+            depth_extent,
+            frame_counter,
+        );
 
         let render_target_format = frame_settigns.color_format;
         let render_target_extent = frame_settigns.frame_extent;
         let (render_target_image_handles, render_target_image_view_handles) = Self::create_render_targets(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
             gfx_resource_manager,
             render_target_format,
             render_target_extent,
@@ -97,6 +119,9 @@ impl FifBuffers {
         // 创建 GBuffer 图像
         let gbuffer_extent = frame_settigns.frame_extent;
         let (gbuffer_a_images, gbuffer_a_views) = Self::create_gbuffer_images(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
             gfx_resource_manager,
             vk::Format::R16G16B16A16_SFLOAT,
             gbuffer_extent,
@@ -104,6 +129,9 @@ impl FifBuffers {
             "gbuffer-a",
         );
         let (gbuffer_b_images, gbuffer_b_views) = Self::create_gbuffer_images(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
             gfx_resource_manager,
             vk::Format::R16G16B16A16_SFLOAT,
             gbuffer_extent,
@@ -111,6 +139,9 @@ impl FifBuffers {
             "gbuffer-b",
         );
         let (gbuffer_c_images, gbuffer_c_views) = Self::create_gbuffer_images(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
             gfx_resource_manager,
             vk::Format::R8G8B8A8_UNORM,
             gbuffer_extent,
@@ -154,13 +185,24 @@ impl FifBuffers {
     /// 尺寸发生变化时，需要重新创建相关的资源
     pub fn rebuild(
         &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
         bindless_manager: &mut BindlessManager,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_settings: &FrameSettings,
         frame_counter: &FrameCounter,
     ) {
-        self.destroy_mut(bindless_manager, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(frame_settings, bindless_manager, gfx_resource_manager, frame_counter);
+        self.destroy_mut(resource_ctx, device_ctx, bindless_manager, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            frame_settings,
+            bindless_manager,
+            gfx_resource_manager,
+            frame_counter,
+        );
     }
 
     fn register_bindless(&self, bindless_manager: &mut BindlessManager) {
@@ -207,6 +249,9 @@ impl FifBuffers {
 
     /// 创建 per-frame 的单帧 RT 输出图像
     fn create_single_frame_rt_images(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         format: vk::Format,
         extent: vk::Extent2D,
@@ -222,6 +267,7 @@ impl FifBuffers {
             );
 
             GfxImage::new(
+                resource_ctx,
                 &image_create_info,
                 &vk_mem::AllocationCreateInfo {
                     usage: vk_mem::MemoryUsage::AutoPreferDevice,
@@ -233,7 +279,7 @@ impl FifBuffers {
         let images = FrameCounter::frame_labes().map(create_one_image);
 
         // 将 layout 设置为 general
-        Gfx::get().one_time_exec(
+        immediate_ctx.one_time_exec(
             |cmd| {
                 let image_barriers = images
                     .iter()
@@ -255,6 +301,7 @@ impl FifBuffers {
         let image_handles = images.map(|image| gfx_resource_manager.register_image(image));
         let image_view_handles = FrameCounter::frame_labes().map(|frame_label| {
             gfx_resource_manager.get_or_create_image_view(
+                device_ctx,
                 image_handles[*frame_label],
                 GfxImageViewDesc::new_2d(format, vk::ImageAspectFlags::COLOR),
                 format!("single-frame-rt-{}-{}", frame_label, frame_counter.frame_id()),
@@ -266,6 +313,9 @@ impl FifBuffers {
 
     /// 创建 RayTracing 需要的 image
     fn create_color_image(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         format: vk::Format,
         extent: vk::Extent2D,
@@ -278,6 +328,7 @@ impl FifBuffers {
         );
 
         let color_image = GfxImage::new(
+            resource_ctx,
             &color_image_create_info,
             &vk_mem::AllocationCreateInfo {
                 usage: vk_mem::MemoryUsage::AutoPreferDevice,
@@ -287,7 +338,7 @@ impl FifBuffers {
         );
 
         // 将 layout 设置为 general
-        Gfx::get().one_time_exec(
+        immediate_ctx.one_time_exec(
             |cmd| {
                 cmd.image_memory_barrier(
                     vk::DependencyFlags::empty(),
@@ -304,6 +355,7 @@ impl FifBuffers {
 
         let color_image_handle = gfx_resource_manager.register_image(color_image);
         let color_image_view_handle = gfx_resource_manager.get_or_create_image_view(
+            device_ctx,
             color_image_handle,
             GfxImageViewDesc::new_2d(format, vk::ImageAspectFlags::COLOR),
             format!("fif-buffer-color-{}", frame_counter.frame_id()),
@@ -313,6 +365,8 @@ impl FifBuffers {
     }
 
     fn create_depth_image(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         format: vk::Format,
         extent: vk::Extent2D,
@@ -321,6 +375,7 @@ impl FifBuffers {
         let depth_image_create_info =
             GfxImageCreateInfo::new_image_2d_info(extent, format, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT);
         let depth_image = GfxImage::new(
+            resource_ctx,
             &depth_image_create_info,
             &vk_mem::AllocationCreateInfo {
                 usage: vk_mem::MemoryUsage::AutoPreferDevice,
@@ -330,6 +385,7 @@ impl FifBuffers {
         );
         let depth_image_handle = gfx_resource_manager.register_image(depth_image);
         let depth_image_view_handle = gfx_resource_manager.get_or_create_image_view(
+            device_ctx,
             depth_image_handle,
             GfxImageViewDesc::new_2d(format, vk::ImageAspectFlags::DEPTH),
             format!("fif-buffer-depth-{}", frame_counter.frame_id()),
@@ -339,6 +395,9 @@ impl FifBuffers {
     }
 
     fn create_render_targets(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         format: vk::Format,
         extent: vk::Extent2D,
@@ -357,6 +416,7 @@ impl FifBuffers {
             );
 
             GfxImage::new(
+                resource_ctx,
                 &image_create_info,
                 &vk_mem::AllocationCreateInfo {
                     usage: vk_mem::MemoryUsage::AutoPreferDevice,
@@ -368,7 +428,7 @@ impl FifBuffers {
         let images = FrameCounter::frame_labes().map(create_one_target);
 
         // 将 layout 设置为 general
-        Gfx::get().one_time_exec(
+        immediate_ctx.one_time_exec(
             |cmd| {
                 let image_barriers = images
                     .iter()
@@ -390,6 +450,7 @@ impl FifBuffers {
         let image_handles = images.map(|image| gfx_resource_manager.register_image(image));
         let image_view_handles = FrameCounter::frame_labes().map(|frame_label| {
             gfx_resource_manager.get_or_create_image_view(
+                device_ctx,
                 image_handles[*frame_label],
                 GfxImageViewDesc::new_2d(format, vk::ImageAspectFlags::COLOR),
                 format!("render-target-{}-{}", frame_label, frame_counter.frame_id()),
@@ -404,6 +465,9 @@ impl FifBuffers {
     /// - GBufferB (R16G16B16A16_SFLOAT)：世界位置 world_position.xyz + 线性深度 linear_depth
     /// - GBufferC (R8G8B8A8_UNORM)：反照率 albedo.rgb + 金属度 metallic
     fn create_gbuffer_images(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         format: vk::Format,
         extent: vk::Extent2D,
@@ -420,6 +484,7 @@ impl FifBuffers {
             );
 
             GfxImage::new(
+                resource_ctx,
                 &image_create_info,
                 &vk_mem::AllocationCreateInfo {
                     usage: vk_mem::MemoryUsage::AutoPreferDevice,
@@ -431,7 +496,7 @@ impl FifBuffers {
         let images = FrameCounter::frame_labes().map(create_one_image);
 
         // 将 layout 设置为 general（用于 storage image）
-        Gfx::get().one_time_exec(
+        immediate_ctx.one_time_exec(
             |cmd| {
                 let image_barriers = images
                     .iter()
@@ -453,6 +518,7 @@ impl FifBuffers {
         let image_handles = images.map(|image| gfx_resource_manager.register_image(image));
         let image_view_handles = FrameCounter::frame_labes().map(|frame_label| {
             gfx_resource_manager.get_or_create_image_view(
+                device_ctx,
                 image_handles[*frame_label],
                 GfxImageViewDesc::new_2d(format, vk::ImageAspectFlags::COLOR),
                 format!("{}-{}-{}", name_prefix, frame_label, frame_counter.frame_id()),
@@ -466,6 +532,8 @@ impl FifBuffers {
 impl FifBuffers {
     pub fn destroy_mut(
         &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
         bindless_manager: &mut BindlessManager,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
@@ -474,26 +542,26 @@ impl FifBuffers {
 
         // 只需销毁 image，view 会跟随销毁
         for single_frame_image in std::mem::take(&mut self.single_frame_rt_images) {
-            gfx_resource_manager.release_image_immediate(single_frame_image, reason);
+            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, single_frame_image, reason);
         }
         for render_target_image in std::mem::take(&mut self.off_screen_target_image_handles) {
-            gfx_resource_manager.release_image_immediate(render_target_image, reason);
+            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, render_target_image, reason);
         }
 
         // 销毁 GBuffer 图像
         for gbuffer_image in std::mem::take(&mut self.gbuffer_a_images) {
-            gfx_resource_manager.release_image_immediate(gbuffer_image, reason);
+            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, gbuffer_image, reason);
         }
         for gbuffer_image in std::mem::take(&mut self.gbuffer_b_images) {
-            gfx_resource_manager.release_image_immediate(gbuffer_image, reason);
+            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, gbuffer_image, reason);
         }
         for gbuffer_image in std::mem::take(&mut self.gbuffer_c_images) {
-            gfx_resource_manager.release_image_immediate(gbuffer_image, reason);
+            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, gbuffer_image, reason);
         }
 
         // image view 无需销毁，只需要销毁 image 即可
-        gfx_resource_manager.release_image_immediate(self.depth_image, reason);
-        gfx_resource_manager.release_image_immediate(self.accum_image, reason);
+        gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, self.depth_image, reason);
+        gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, self.accum_image, reason);
 
         self.single_frame_rt_views = Default::default();
         self.depth_image_view = GfxImageViewHandle::default();

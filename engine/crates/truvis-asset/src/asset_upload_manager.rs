@@ -6,7 +6,7 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::command_pool::GfxCommandPool;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::commands::submit_info::GfxSubmitInfo;
-use truvis_gfx::gfx::Gfx;
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxQueueCtx, GfxResourceCtx};
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::lifecycle::DestroyReason;
@@ -16,7 +16,7 @@ use crate::handle::AssetTextureHandle;
 
 struct PendingUpload {
     semaphore_value: u64,
-    _staging_buffer: GfxBuffer,
+    staging_buffer: GfxBuffer,
     command_buffer: GfxCommandBuffer,
     handle: AssetTextureHandle,
     image: GfxImage,
@@ -42,24 +42,22 @@ pub struct AssetUploadManager {
 
 impl Default for AssetUploadManager {
     fn default() -> Self {
-        Self::new()
+        panic!("AssetUploadManager::default requires explicit Gfx Ctx; use AssetUploadManager::new")
     }
 }
 
 impl AssetUploadManager {
-    pub fn new() -> Self {
-        let gfx = Gfx::get();
-        let transfer_queue = gfx.transfer_queue();
-
+    pub fn new(device_ctx: GfxDeviceCtx<'_>, queue_ctx: GfxQueueCtx<'_>) -> Self {
         // 1. 创建 Command Pool
         let command_pool = GfxCommandPool::new(
-            transfer_queue.queue_family().clone(),
+            device_ctx,
+            queue_ctx.transfer_queue().queue_family().clone(),
             vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
             "AssetTransferPool",
         );
 
         // 2. 创建 Timeline Semaphore
-        let timeline_semaphore = GfxSemaphore::new_timeline(0, "AssetTransferTimeline");
+        let timeline_semaphore = GfxSemaphore::new_timeline(device_ctx, 0, "AssetTransferTimeline");
 
         Self {
             command_pool: Some(command_pool),
@@ -81,9 +79,14 @@ impl AssetUploadManager {
     ///    - Copy：从 Buffer 复制到 Image
     ///    - Barrier：Image 从 TransferDst 转到 ShaderReadOnly
     /// 4. 提交到 Transfer Queue，并设置 Timeline Semaphore 的 Signal 操作。
-    pub fn upload_texture(&mut self, data: RawAssetData) -> anyhow::Result<()> {
+    pub fn upload_texture(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        queue_ctx: GfxQueueCtx<'_>,
+        data: RawAssetData,
+    ) -> anyhow::Result<()> {
         let _span = tracy_client::span!("upload_texture");
-        let gfx = Gfx::get();
 
         // 1. 创建目标 Image
         let image_info = GfxImageCreateInfo::new_image_2d_info(
@@ -96,6 +99,7 @@ impl AssetUploadManager {
         );
 
         let image = GfxImage::new(
+            resource_ctx,
             &image_info,
             &vk_mem::AllocationCreateInfo {
                 usage: vk_mem::MemoryUsage::AutoPreferDevice,
@@ -107,14 +111,14 @@ impl AssetUploadManager {
         // 2. 分配 Command Buffer
         let command_pool = self.command_pool.as_ref().expect("AssetUploadManager used after shutdown");
         let timeline_semaphore = self.timeline_semaphore.as_ref().expect("AssetUploadManager used after shutdown");
-        let command_buffer = GfxCommandBuffer::new(command_pool, "AssetUploadCmd");
+        let command_buffer = GfxCommandBuffer::new(device_ctx, command_pool, "AssetUploadCmd");
 
         // 3. 录制命令
         command_buffer.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "AssetUpload");
 
         // Image2D::transfer_data 负责创建 Staging Buffer，录制 Copy 命令和 Barriers
         // 返回的 Staging Buffer 需要保持存活直到上传完成
-        let staging_buffer = image.transfer_data(&command_buffer, &data.pixels);
+        let staging_buffer = image.transfer_data(resource_ctx, &command_buffer, &data.pixels);
 
         command_buffer.end();
 
@@ -128,12 +132,12 @@ impl AssetUploadManager {
             Some(target_value),
         );
 
-        gfx.transfer_queue().submit(vec![submit_info], None);
+        queue_ctx.transfer_queue().submit(vec![submit_info], None);
 
         // 5. 记录 Pending Upload
         self.pending_uploads.push_back(PendingUpload {
             semaphore_value: target_value,
-            _staging_buffer: staging_buffer,
+            staging_buffer,
             command_buffer,
             handle: data.handle,
             image,
@@ -147,10 +151,13 @@ impl AssetUploadManager {
     /// 必须每帧调用。
     /// 返回已完成上传的资源列表 (Handle + Image)。
     /// 同时负责回收 Staging Buffer 和 Command Buffer。
-    pub fn update(&mut self) -> Vec<(AssetTextureHandle, GfxImage)> {
+    pub fn update(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+    ) -> Vec<(AssetTextureHandle, GfxImage)> {
         let _span = tracy_client::span!("TransferManager::update");
-        let gfx = Gfx::get();
-        let device = gfx.gfx_device();
+        let device = device_ctx.device();
 
         // 查询当前 Timeline Semaphore 的值 (非阻塞)
         let timeline_semaphore = self.timeline_semaphore.as_ref().expect("AssetUploadManager used after shutdown");
@@ -165,9 +172,9 @@ impl AssetUploadManager {
                 let upload = self.pending_uploads.pop_front().unwrap();
 
                 // 释放 Command Buffer
-                command_pool.free_command_buffers(vec![upload.command_buffer]);
+                command_pool.free_command_buffers(device_ctx, vec![upload.command_buffer]);
 
-                // Staging Buffer 会在 upload 被 drop 时自动销毁
+                upload.staging_buffer.destroy(resource_ctx, DestroyReason::DeferredCleanup);
 
                 finished_uploads.push((upload.handle, upload.image));
             } else {
@@ -179,7 +186,7 @@ impl AssetUploadManager {
         finished_uploads
     }
 
-    pub fn shutdown(&mut self) {
+    pub fn shutdown(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
         if self.destroyed {
             return;
         }
@@ -192,17 +199,17 @@ impl AssetUploadManager {
 
         if let Some(last_upload) = self.pending_uploads.back() {
             const WAIT_SEMAPHORE_TIMEOUT_NS: u64 = 30 * 1000 * 1000 * 1000;
-            timeline_semaphore.wait_timeline(last_upload.semaphore_value, WAIT_SEMAPHORE_TIMEOUT_NS);
+            timeline_semaphore.wait_timeline(device_ctx, last_upload.semaphore_value, WAIT_SEMAPHORE_TIMEOUT_NS);
         }
 
         while let Some(upload) = self.pending_uploads.pop_front() {
-            command_pool.free_command_buffers(vec![upload.command_buffer]);
-            upload.image.destroy(DestroyReason::Shutdown);
-            // staging buffer 在 Gfx 仍然存活时释放。
+            command_pool.free_command_buffers(device_ctx, vec![upload.command_buffer]);
+            upload.image.destroy(resource_ctx, DestroyReason::Shutdown);
+            upload.staging_buffer.destroy(resource_ctx, DestroyReason::Shutdown);
         }
 
-        timeline_semaphore.destroy();
-        command_pool.destroy();
+        timeline_semaphore.destroy(device_ctx);
+        command_pool.destroy(device_ctx);
         self.destroyed = true;
     }
 }

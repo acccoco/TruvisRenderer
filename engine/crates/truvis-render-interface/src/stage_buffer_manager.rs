@@ -1,4 +1,6 @@
+use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::buffer::GfxBuffer;
+use truvis_gfx::resources::lifecycle::DestroyReason;
 
 use crate::frame_counter::FrameCounter;
 
@@ -27,14 +29,24 @@ impl Drop for StageBufferManager {
 // 销毁
 impl StageBufferManager {
     /// RAII 持有资源的立即释放别名；已保存的 buffer 通过 `Drop` 释放。
-    pub fn destroy(self) {
-        drop(self)
+    pub fn destroy(mut self, ctx: GfxResourceCtx<'_>) {
+        for buffers in &mut self.buffers {
+            for buffer in buffers.drain(..) {
+                buffer.destroy(ctx, DestroyReason::Shutdown);
+            }
+        }
     }
 }
 // 工具函数
 impl StageBufferManager {
-    pub fn alloc_buffer(&mut self, frame_counter: &FrameCounter, size: u64, debug_name: &str) -> &mut GfxBuffer {
-        let buffer = GfxBuffer::new_stage_buffer(size, debug_name);
+    pub fn alloc_buffer(
+        &mut self,
+        ctx: GfxResourceCtx<'_>,
+        frame_counter: &FrameCounter,
+        size: u64,
+        debug_name: &str,
+    ) -> &mut GfxBuffer {
+        let buffer = GfxBuffer::new_stage_buffer(ctx, size, debug_name);
         let frame_idx = *frame_counter.frame_label();
         self.buffers[frame_idx].push(buffer);
         self.buffers[frame_idx].last_mut().unwrap()
@@ -45,9 +57,11 @@ impl StageBufferManager {
         self.buffers[frame_idx].push(stage_buffer);
     }
 
-    pub fn clear_fif_buffers(&mut self, frame_counter: &FrameCounter) {
+    pub fn clear_fif_buffers(&mut self, ctx: GfxResourceCtx<'_>, frame_counter: &FrameCounter) {
         let frame_idx = *frame_counter.frame_label();
 
-        self.buffers[frame_idx].clear();
+        for buffer in self.buffers[frame_idx].drain(..) {
+            buffer.destroy(ctx, DestroyReason::DeferredCleanup);
+        }
     }
 }

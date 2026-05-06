@@ -1,7 +1,7 @@
 use ash::vk;
 use ash::vk::Handle;
 
-use crate::{foundation::debug_messenger::DebugType, gfx::Gfx, resources::lifecycle::DestroyReason};
+use crate::{foundation::debug_messenger::DebugType, gfx::GfxDeviceCtx, resources::lifecycle::DestroyReason};
 
 pub struct GfxImageView {
     handle: vk::ImageView,
@@ -21,8 +21,8 @@ impl DebugType for GfxImageView {
 }
 // 创建与初始化
 impl GfxImageView {
-    pub fn new(image: vk::Image, view_desc: GfxImageViewDesc, name: impl AsRef<str>) -> Self {
-        let gfx_device = Gfx::get().gfx_device();
+    pub fn new(ctx: GfxDeviceCtx<'_>, image: vk::Image, view_desc: GfxImageViewDesc, name: impl AsRef<str>) -> Self {
+        let gfx_device = ctx.device();
 
         let info = vk::ImageViewCreateInfo {
             image,
@@ -52,19 +52,18 @@ impl GfxImageView {
 }
 // 销毁
 impl GfxImageView {
-    pub fn destroy(mut self, reason: DestroyReason) {
-        self.release(reason);
+    pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>, reason: DestroyReason) {
+        self.release(ctx, reason);
     }
 
-    fn release(&mut self, reason: DestroyReason) {
+    fn release(&mut self, ctx: GfxDeviceCtx<'_>, reason: DestroyReason) {
         if self.handle.is_null() {
             return;
         }
 
         log::debug!("Destroying GfxImageView name={} raw={:#x} reason={}", self.name, self.handle.as_raw(), reason);
         unsafe {
-            let gfx_device = Gfx::get().gfx_device();
-            gfx_device.destroy_image_view(self.handle, None);
+            ctx.device().destroy_image_view(self.handle, None);
         }
         self.handle = vk::ImageView::null();
     }

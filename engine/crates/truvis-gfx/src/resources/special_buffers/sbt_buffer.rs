@@ -2,7 +2,9 @@ use std::ops::{Deref, DerefMut};
 
 use ash::{vk, vk::Handle};
 
-use crate::{foundation::debug_messenger::DebugType, gfx::Gfx, impl_derive_buffer, resources::buffer::GfxBuffer};
+use crate::{
+    foundation::debug_messenger::DebugType, gfx::GfxResourceCtx, impl_derive_buffer, resources::buffer::GfxBuffer,
+};
 
 pub struct GfxSBTBuffer {
     _inner: GfxBuffer,
@@ -10,8 +12,9 @@ pub struct GfxSBTBuffer {
 impl_derive_buffer!(GfxSBTBuffer, GfxBuffer, _inner);
 // 初始化与销毁
 impl GfxSBTBuffer {
-    pub fn new(size: vk::DeviceSize, align: vk::DeviceSize, name: impl AsRef<str>) -> Self {
+    pub fn new(ctx: GfxResourceCtx<'_>, size: vk::DeviceSize, align: vk::DeviceSize, name: impl AsRef<str>) -> Self {
         let inner = GfxBuffer::new(
+            ctx,
             size,
             vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR
                 | vk::BufferUsageFlags::TRANSFER_SRC
@@ -21,8 +24,7 @@ impl GfxSBTBuffer {
             format!("SBTBuffer::{}", name.as_ref()),
         );
         let buffer = Self { _inner: inner };
-        let gfx_device = Gfx::get().gfx_device();
-        gfx_device.set_debug_name(&buffer, name.as_ref());
+        ctx.device().set_debug_name(&buffer, name.as_ref());
         buffer
     }
 }

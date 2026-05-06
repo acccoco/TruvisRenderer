@@ -1,6 +1,7 @@
 use ash::vk;
 
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
+use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_path::TruvisPath;
 use truvis_render_graph::compute_pass::ComputePass;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
@@ -21,14 +22,19 @@ pub struct BlitPass {
     blit_pass: ComputePass<gpu::blit::PushConstant>,
 }
 impl BlitPass {
-    pub fn new(render_descriptor_sets: &GlobalDescriptorSets) -> Self {
+    pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets) -> Self {
         let blit_pass = ComputePass::<gpu::blit::PushConstant>::new(
+            ctx,
             render_descriptor_sets,
             c"main",
             TruvisPath::shader_build_path_str("imgui/blit.slang").as_str(),
         );
 
         Self { blit_pass }
+    }
+
+    pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
+        self.blit_pass.destroy(ctx);
     }
 
     pub fn exec(&self, cmd: &GfxCommandBuffer, data: BlitPassData, render_world: &RenderWorld) {

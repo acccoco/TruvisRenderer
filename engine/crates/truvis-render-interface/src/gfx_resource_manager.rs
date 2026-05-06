@@ -4,6 +4,7 @@ use ash::vk;
 use ash::vk::Handle;
 use slotmap::{Key, SecondaryMap, SlotMap};
 
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageView;
@@ -63,11 +64,16 @@ impl GfxResourceManager {
 }
 // 销毁
 impl GfxResourceManager {
-    pub fn destroy(mut self) {
-        self.destroy_all(DestroyReason::Shutdown);
+    pub fn destroy(mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
+        self.destroy_all(resource_ctx, device_ctx, DestroyReason::Shutdown);
     }
 
-    pub fn destroy_all(&mut self, reason: DestroyReason) {
+    pub fn destroy_all(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        reason: DestroyReason,
+    ) {
         let _span = tracy_client::span!("ResourceManager::destroy_all");
 
         // 销毁 所有的 image views
@@ -79,7 +85,7 @@ impl GfxResourceManager {
                 image_view.handle().as_raw(),
                 reason
             );
-            image_view.destroy(reason)
+            image_view.destroy(device_ctx, reason)
         }
         self.image_view_lookup.clear();
         self.image_to_views.clear();
@@ -93,7 +99,7 @@ impl GfxResourceManager {
                 image.handle().as_raw(),
                 reason
             );
-            image.destroy(reason)
+            image.destroy(resource_ctx, reason)
         }
 
         // 销毁所有 buffers
@@ -105,7 +111,7 @@ impl GfxResourceManager {
                 buffer.vk_buffer().as_raw(),
                 reason
             );
-            buffer.destroy()
+            buffer.destroy(resource_ctx, reason)
         }
 
         // 清空待处理队列
@@ -131,7 +137,7 @@ impl GfxResourceManager {
     /// 清理已过期的资源
     ///
     /// 检查待销毁队列，销毁那些已经不再被 GPU 使用的资源（即提交销毁时的帧索引 <= completed_frame_index）。
-    pub fn cleanup(&mut self, current_frame_id: u64) {
+    pub fn cleanup(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>, current_frame_id: u64) {
         let _span = tracy_client::span!("ResourceManager::cleanup");
 
         const FIF: u64 = FrameCounter::fif_count() as u64;
@@ -155,7 +161,7 @@ impl GfxResourceManager {
                     buffer.vk_buffer().as_raw(),
                     reason
                 );
-                buffer.destroy()
+                buffer.destroy(resource_ctx, reason)
             }
         }
 
@@ -170,7 +176,7 @@ impl GfxResourceManager {
             }
         });
         for (image_handle, reason) in images_to_destroy {
-            self.release_image_now(image_handle, reason);
+            self.release_image_now(resource_ctx, device_ctx, image_handle, reason);
         }
     }
 }
@@ -182,13 +188,14 @@ impl GfxResourceManager {
 
     pub fn create_buffer(
         &mut self,
+        ctx: GfxResourceCtx<'_>,
         buffer_size: vk::DeviceSize,
         buffer_usage: vk::BufferUsageFlags,
         align: Option<vk::DeviceSize>,
         mem_map: bool,
         name: impl AsRef<str>,
     ) -> GfxBufferHandle {
-        let buffer = GfxBuffer::new(buffer_size, buffer_usage, align, mem_map, name.as_ref());
+        let buffer = GfxBuffer::new(ctx, buffer_size, buffer_usage, align, mem_map, name.as_ref());
         self.register_buffer(buffer)
     }
 
@@ -217,11 +224,12 @@ impl GfxResourceManager {
 
     pub fn create_image(
         &mut self,
+        ctx: GfxResourceCtx<'_>,
         image_info: &GfxImageCreateInfo,
         alloc_info: &vk_mem::AllocationCreateInfo,
         debug_name: &str,
     ) -> GfxImageHandle {
-        let image = GfxImage::new(image_info, alloc_info, debug_name);
+        let image = GfxImage::new(ctx, image_info, alloc_info, debug_name);
         self.register_image(image)
     }
 
@@ -240,11 +248,23 @@ impl GfxResourceManager {
     /// 立即销毁 Image 及其关联的所有 ImageView
     ///
     /// 注意：调用者需要确保该资源不再被 GPU 使用，否则可能导致未定义行为。
-    pub fn release_image_immediate(&mut self, handle: GfxImageHandle, reason: DestroyReason) {
-        self.release_image_now(handle, reason);
+    pub fn release_image_immediate(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        handle: GfxImageHandle,
+        reason: DestroyReason,
+    ) {
+        self.release_image_now(resource_ctx, device_ctx, handle, reason);
     }
 
-    fn release_image_now(&mut self, handle: GfxImageHandle, reason: DestroyReason) {
+    fn release_image_now(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        handle: GfxImageHandle,
+        reason: DestroyReason,
+    ) {
         if handle.is_null() {
             return;
         }
@@ -267,7 +287,7 @@ impl GfxResourceManager {
                         image_view.handle().as_raw(),
                         reason
                     );
-                    image_view.destroy(reason)
+                    image_view.destroy(device_ctx, reason)
                 }
             }
         }
@@ -284,7 +304,7 @@ impl GfxResourceManager {
                 image.handle().as_raw(),
                 reason
             );
-            image.destroy(reason)
+            image.destroy(resource_ctx, reason)
         }
     }
 }
@@ -293,6 +313,7 @@ impl GfxResourceManager {
     /// 创建一个 ImageView
     pub fn get_or_create_image_view(
         &mut self,
+        ctx: GfxDeviceCtx<'_>,
         image_handle: GfxImageHandle,
         view_desc: GfxImageViewDesc,
         name: impl AsRef<str>,
@@ -306,7 +327,7 @@ impl GfxResourceManager {
         }
 
         let image = self.image_pool.get(image_handle).expect("Invalid image handle");
-        let image_view = GfxImageView::new(image.handle(), view_desc, name);
+        let image_view = GfxImageView::new(ctx, image.handle(), view_desc, name);
         let image_view_handle = self.image_view_pool.insert(image_view);
 
         // 更新 lookup 表

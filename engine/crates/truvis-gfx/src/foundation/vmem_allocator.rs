@@ -3,7 +3,7 @@ use std::ops::Deref;
 use ash::vk;
 
 pub struct VMemAllocator {
-    inner: vk_mem::Allocator,
+    inner: Option<vk_mem::Allocator>,
 }
 
 impl VMemAllocator {
@@ -18,18 +18,24 @@ impl VMemAllocator {
 
         let vma = unsafe { vk_mem::Allocator::new(vma_ci).unwrap() };
 
-        Self { inner: vma }
+        Self { inner: Some(vma) }
     }
 
-    /// VMA allocator 的 RAII 持有资源立即释放别名。
-    pub fn destroy(self) {
-        drop(self)
+    /// 显式释放 VMA allocator，必须在所有 VMA allocation 销毁后调用。
+    pub fn destroy(mut self) {
+        let _ = self.inner.take();
     }
 }
 
 impl Deref for VMemAllocator {
     type Target = vk_mem::Allocator;
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        self.inner.as_ref().expect("VMemAllocator already destroyed")
+    }
+}
+
+impl Drop for VMemAllocator {
+    fn drop(&mut self) {
+        debug_assert!(self.inner.is_none(), "VMemAllocator dropped without explicit destroy");
     }
 }

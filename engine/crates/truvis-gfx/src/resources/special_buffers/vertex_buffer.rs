@@ -6,7 +6,9 @@ use std::{
 use ash::{vk, vk::Handle};
 
 use crate::resources::layout::GfxVertexLayout;
-use crate::{foundation::debug_messenger::DebugType, gfx::Gfx, impl_derive_buffer, resources::buffer::GfxBuffer};
+use crate::{
+    foundation::debug_messenger::DebugType, gfx::GfxResourceCtx, impl_derive_buffer, resources::buffer::GfxBuffer,
+};
 
 pub struct GfxVertexBuffer<L: GfxVertexLayout> {
     inner: GfxBuffer,
@@ -16,13 +18,14 @@ pub struct GfxVertexBuffer<L: GfxVertexLayout> {
 }
 impl_derive_buffer!(GfxVertexBuffer<L: GfxVertexLayout>, GfxBuffer, inner);
 impl<L: GfxVertexLayout> GfxVertexBuffer<L> {
-    pub fn new_device_local(vertex_cnt: usize, debug_name: impl AsRef<str>) -> Self {
-        Self::new(vertex_cnt, false, debug_name)
+    pub fn new_device_local(ctx: GfxResourceCtx<'_>, vertex_cnt: usize, debug_name: impl AsRef<str>) -> Self {
+        Self::new(ctx, vertex_cnt, false, debug_name)
     }
 
-    pub fn new(vertex_cnt: usize, mmap: bool, debug_name: impl AsRef<str>) -> Self {
+    pub fn new(ctx: GfxResourceCtx<'_>, vertex_cnt: usize, mmap: bool, debug_name: impl AsRef<str>) -> Self {
         let buffer_size = L::buffer_size(vertex_cnt);
         let buffer = GfxBuffer::new(
+            ctx,
             buffer_size as vk::DeviceSize,
             vk::BufferUsageFlags::VERTEX_BUFFER
                 | vk::BufferUsageFlags::TRANSFER_DST
@@ -38,8 +41,7 @@ impl<L: GfxVertexLayout> GfxVertexBuffer<L> {
             vertex_cnt,
             _phantom: PhantomData,
         };
-        let gfx_device = Gfx::get().gfx_device();
-        gfx_device.set_debug_name(&buffer, debug_name);
+        ctx.device().set_debug_name(&buffer, debug_name);
         buffer
     }
 

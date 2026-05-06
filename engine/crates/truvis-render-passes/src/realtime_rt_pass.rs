@@ -1,4 +1,5 @@
 use ash::vk;
+use ash::vk::Handle;
 use itertools::Itertools;
 
 use truvis_descriptor_layout_macro::DescriptorBinding;
@@ -9,7 +10,7 @@ use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuff
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_gfx::{
     commands::{barrier::GfxImageBarrier, command_buffer::GfxCommandBuffer},
-    gfx::Gfx,
+    gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxResourceCtx},
     pipelines::shader::{GfxShaderGroupInfo, GfxShaderModuleCache, GfxShaderStageInfo},
     resources::special_buffers::sbt_buffer::GfxSBTBuffer,
 };
@@ -28,10 +29,23 @@ pub struct GfxRtPipeline {
 }
 impl Drop for GfxRtPipeline {
     fn drop(&mut self) {
-        let gfx_device = Gfx::get().gfx_device();
-        unsafe {
-            gfx_device.destroy_pipeline(self.pipeline, None);
-            gfx_device.destroy_pipeline_layout(self.pipeline_layout, None);
+        debug_assert!(self.pipeline.is_null(), "GfxRtPipeline pipeline dropped without explicit destroy");
+        debug_assert!(self.pipeline_layout.is_null(), "GfxRtPipeline layout dropped without explicit destroy");
+    }
+}
+impl GfxRtPipeline {
+    pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>) {
+        if !self.pipeline.is_null() {
+            unsafe {
+                ctx.device().destroy_pipeline(self.pipeline, None);
+            }
+            self.pipeline = vk::Pipeline::null();
+        }
+        if !self.pipeline_layout.is_null() {
+            unsafe {
+                ctx.device().destroy_pipeline_layout(self.pipeline_layout, None);
+            }
+            self.pipeline_layout = vk::PipelineLayout::null();
         }
     }
 }
@@ -112,8 +126,13 @@ impl SBTRegions {
     const HIT_SBT_REGION: &'static [usize] = &[ShaderGroups::Hit.index()];
     const CALLABLE_SBT_REGION: &'static [usize] = &[ShaderGroups::DiffuseCall.index()];
 
-    pub fn create_sbt(pipeline: &GfxRtPipeline) -> Self {
-        let rt_pipeline_props = Gfx::get().rt_pipeline_props();
+    pub fn create_sbt(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        device_info_ctx: GfxDeviceInfoCtx<'_>,
+        pipeline: &GfxRtPipeline,
+    ) -> Self {
+        let rt_pipeline_props = device_info_ctx.rt_pipeline_props();
 
         // 因为不需要 user data，所以可以直接使用 shader group handle size
         let aligned_shader_group_handle_size = helper::align_up(
@@ -138,6 +157,7 @@ impl SBTRegions {
         );
 
         let sbt_buffer = GfxSBTBuffer::new(
+            resource_ctx,
             (raygen_shader_group_region_size
                 + miss_shader_group_region_size
                 + hit_shader_group_region_size
@@ -179,8 +199,8 @@ impl SBTRegions {
         // binding table 中
         {
             let shader_group_handle_data = unsafe {
-                Gfx::get()
-                    .gfx_device()
+                device_ctx
+                    .device()
                     .ray_tracing_pipeline()
                     .get_ray_tracing_shader_group_handles(
                         pipeline.pipeline,
@@ -233,7 +253,7 @@ impl SBTRegions {
                 );
             }
 
-            sbt_buffer.flush(0, sbt_buffer_size);
+            sbt_buffer.flush(resource_ctx, 0, sbt_buffer_size);
         }
 
         Self {
@@ -244,10 +264,9 @@ impl SBTRegions {
             _sbt_buffer: sbt_buffer,
         }
     }
-}
-impl Drop for SBTRegions {
-    fn drop(&mut self) {
-        log::info!("Destroy SBTRegions");
+
+    pub fn destroy(self, resource_ctx: GfxResourceCtx<'_>) {
+        self._sbt_buffer.destroy(resource_ctx, truvis_gfx::resources::lifecycle::DestroyReason::Shutdown);
     }
 }
 
@@ -317,13 +336,19 @@ pub struct RealtimeRtPass {
     entry_pool: GfxStructuredBuffer<gpu::ic::EntryPool>,
 }
 impl RealtimeRtPass {
-    pub fn new(render_descriptor_sets: &GlobalDescriptorSets) -> Self {
+    pub fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        device_info_ctx: GfxDeviceInfoCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        render_descriptor_sets: &GlobalDescriptorSets,
+    ) -> Self {
         let mut shader_module_cache = GfxShaderModuleCache::new();
         let stage_infos = ShaderStages::iter()
             .map(|stage| stage.value())
             .map(|stage| {
                 vk::PipelineShaderStageCreateInfo::default()
-                    .module(shader_module_cache.get_or_load(stage.path()).handle())
+                    .module(shader_module_cache.get_or_load(device_ctx, stage.path()).handle())
                     .stage(stage.stage)
                     .name(stage.entry_point)
             })
@@ -353,6 +378,7 @@ impl RealtimeRtPass {
             .size(size_of::<gpu::rt::PushConstants>() as u32);
 
         let rt_descriptor_set_layout = GfxDescriptorSetLayout::<RealtimeRtDescriptorBinding>::new(
+            device_ctx,
             vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR,
             "simple-rt-descriptor-set-layout",
         );
@@ -364,9 +390,9 @@ impl RealtimeRtPass {
                 .set_layouts(&descriptor_set_layouts)
                 .push_constant_ranges(std::slice::from_ref(&push_constant_range));
 
-            unsafe { Gfx::get().gfx_device().create_pipeline_layout(&pipeline_layout_ci, None).unwrap() }
+            unsafe { device_ctx.device().create_pipeline_layout(&pipeline_layout_ci, None).unwrap() }
         };
-        Gfx::get().gfx_device().set_object_debug_name(pipeline_layout, "simple-rt-pipeline-layout");
+        device_ctx.device().set_object_debug_name(pipeline_layout, "simple-rt-pipeline-layout");
         let pipeline_ci = vk::RayTracingPipelineCreateInfoKHR::default()
             .stages(&stage_infos)
             .groups(&shader_groups)
@@ -376,8 +402,8 @@ impl RealtimeRtPass {
             .max_pipeline_ray_recursion_depth(2);
 
         let pipeline = unsafe {
-            Gfx::get()
-                .gfx_device()
+            device_ctx
+                .device()
                 .ray_tracing_pipeline()
                 .create_ray_tracing_pipelines(
                     vk::DeferredOperationKHR::null(),
@@ -387,17 +413,18 @@ impl RealtimeRtPass {
                 )
                 .unwrap()[0]
         };
-        Gfx::get().gfx_device().set_object_debug_name(pipeline, "simple-rt-pipeline");
+        device_ctx.device().set_object_debug_name(pipeline, "simple-rt-pipeline");
 
-        shader_module_cache.destroy();
+        shader_module_cache.destroy(device_ctx);
 
         let rt_pipeline = GfxRtPipeline {
             pipeline,
             pipeline_layout,
         };
-        let sbt = SBTRegions::create_sbt(&rt_pipeline);
+        let sbt = SBTRegions::create_sbt(resource_ctx, device_ctx, device_info_ctx, &rt_pipeline);
 
         let mut hash_table = GfxStructuredBuffer::<gpu::ic::Table>::new(
+            resource_ctx,
             "ic-hash-table",
             1,
             vk::BufferUsageFlags::STORAGE_BUFFER
@@ -405,8 +432,9 @@ impl RealtimeRtPass {
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
             false,
         );
-        hash_table.clear();
+        hash_table.clear(immediate_ctx);
         let mut entry_pool = GfxStructuredBuffer::<gpu::ic::EntryPool>::new(
+            resource_ctx,
             "ic-entry-pool",
             1,
             vk::BufferUsageFlags::STORAGE_BUFFER
@@ -414,7 +442,7 @@ impl RealtimeRtPass {
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
             false,
         );
-        entry_pool.clear();
+        entry_pool.clear(immediate_ctx);
 
         Self {
             pipeline: rt_pipeline,
@@ -424,6 +452,21 @@ impl RealtimeRtPass {
             hash_table,
             entry_pool,
         }
+    }
+
+    pub fn destroy(self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
+        let Self {
+            pipeline,
+            _sbt,
+            _rt_descriptor_set_layout,
+            mut hash_table,
+            mut entry_pool,
+        } = self;
+        pipeline.destroy(device_ctx);
+        _sbt.destroy(resource_ctx);
+        _rt_descriptor_set_layout.destroy(device_ctx);
+        hash_table.destroy_mut(resource_ctx, truvis_gfx::resources::lifecycle::DestroyReason::Shutdown);
+        entry_pool.destroy_mut(resource_ctx, truvis_gfx::resources::lifecycle::DestroyReason::Shutdown);
     }
     pub fn ray_trace(&self, render_world: &RenderWorld, cmd: &GfxCommandBuffer, pass_data: RealtimeRtPassData) {
         let frame_label = render_world.frame_counter.frame_label();
@@ -587,12 +630,6 @@ impl RealtimeRtPass {
         cmd.end_label();
     }
 }
-impl Drop for RealtimeRtPass {
-    fn drop(&mut self) {
-        log::info!("Destroy SimlpeRtPass");
-    }
-}
-
 mod helper {
     /// 将 x 向上对齐到 align 的倍数
     pub fn align_up(x: u32, align: u32) -> u32 {

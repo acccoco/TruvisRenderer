@@ -1,3 +1,4 @@
+use truvis_gfx::gfx::{GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 use truvis_render_interface::geometry::RtGeometry;
@@ -153,8 +154,10 @@ impl CubeSoA {
         20, 22, 21, 20, 23, 22, // 右侧面
     ];
 
-    pub fn create_mesh() -> RtGeometry {
+    pub fn create_mesh(resource_ctx: GfxResourceCtx<'_>, immediate_ctx: GfxImmediateCtx<'_>) -> RtGeometry {
         let vertex_buffer = VertexLayoutSoA3D::create_vertex_buffer(
+            resource_ctx,
+            immediate_ctx,
             &Self::POSITIONS,
             &Self::NORMALS,
             &Self::TANGENTS,
@@ -162,8 +165,8 @@ impl CubeSoA {
             "cube-vertex-buffer",
         );
 
-        let index_buffer = GfxIndex32Buffer::new_device_local(Self::INDICES.len(), "cube-index-buffer");
-        index_buffer.transfer_data_sync(&Self::INDICES);
+        let index_buffer = GfxIndex32Buffer::new_device_local(resource_ctx, Self::INDICES.len(), "cube-index-buffer");
+        index_buffer.transfer_data_sync(resource_ctx, immediate_ctx, &Self::INDICES);
 
         RtGeometry {
             vertex_buffer,

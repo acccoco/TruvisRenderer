@@ -6,6 +6,7 @@ use imgui::TextureId;
 use itertools::Itertools;
 
 use truvis_gfx::basic::bytes::BytesConvert;
+use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_gfx::resources::layout::GfxVertexLayout;
 use truvis_gfx::{
     commands::command_buffer::GfxCommandBuffer,
@@ -46,8 +47,9 @@ pub struct GuiPass {
 }
 // 创建与初始化
 impl GuiPass {
-    pub fn new(render_descriptor_sets: &GlobalDescriptorSets, color_format: vk::Format) -> Self {
+    pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets, color_format: vk::Format) -> Self {
         let pipeline_layout = Rc::new(GfxPipelineLayout::new(
+            ctx,
             &render_descriptor_sets.global_set_layouts(),
             &[vk::PushConstantRange {
                 stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
@@ -85,12 +87,17 @@ impl GuiPass {
             // TODO 这里不应该由 depth
             .attach_info(vec![color_format], None, None);
 
-        let pipeline = GfxGraphicsPipeline::new(&create_info, pipeline_layout.clone(), "uipass");
+        let pipeline = GfxGraphicsPipeline::new(ctx, &create_info, pipeline_layout.clone(), "uipass");
 
         Self {
             pipeline,
             pipeline_layout,
         }
+    }
+
+    pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
+        self.pipeline.destroy(ctx);
+        self.pipeline_layout.destroy(ctx);
     }
 }
 // 绘制

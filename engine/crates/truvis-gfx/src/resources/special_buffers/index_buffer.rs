@@ -3,7 +3,12 @@ use std::ops::{Deref, DerefMut};
 use ash::{vk, vk::Handle};
 
 use crate::resources::layout::GfxIndexType;
-use crate::{foundation::debug_messenger::DebugType, gfx::Gfx, impl_derive_buffer, resources::buffer::GfxBuffer};
+use crate::{
+    foundation::debug_messenger::DebugType,
+    gfx::{GfxImmediateCtx, GfxResourceCtx},
+    impl_derive_buffer,
+    resources::buffer::GfxBuffer,
+};
 
 /// 顶点类型是 u32
 pub struct GfxIndexBuffer<T: GfxIndexType> {
@@ -17,13 +22,14 @@ pub struct GfxIndexBuffer<T: GfxIndexType> {
 impl_derive_buffer!(GfxIndexBuffer<T: GfxIndexType>, GfxBuffer, inner);
 // 创建与初始化
 impl<T: GfxIndexType> GfxIndexBuffer<T> {
-    pub fn new_device_local(index_cnt: usize, debug_name: impl AsRef<str>) -> Self {
-        Self::new(index_cnt, false, debug_name)
+    pub fn new_device_local(ctx: GfxResourceCtx<'_>, index_cnt: usize, debug_name: impl AsRef<str>) -> Self {
+        Self::new(ctx, index_cnt, false, debug_name)
     }
 
-    pub fn new(index_cnt: usize, mmap: bool, debug_name: impl AsRef<str>) -> Self {
+    pub fn new(ctx: GfxResourceCtx<'_>, index_cnt: usize, mmap: bool, debug_name: impl AsRef<str>) -> Self {
         let size = index_cnt * T::byte_size();
         let buffer = GfxBuffer::new(
+            ctx,
             size as vk::DeviceSize,
             vk::BufferUsageFlags::INDEX_BUFFER
                 | vk::BufferUsageFlags::TRANSFER_DST
@@ -39,16 +45,20 @@ impl<T: GfxIndexType> GfxIndexBuffer<T> {
             index_cnt,
             _phantom: std::marker::PhantomData,
         };
-        let gfx_device = Gfx::get().gfx_device();
-        gfx_device.set_debug_name(&buffer, debug_name);
+        ctx.device().set_debug_name(&buffer, debug_name);
         buffer
     }
 
     /// 创建 index buffer，并向其内写入数据
     #[inline]
-    pub fn new_with_data(data: &[u32], debug_name: impl AsRef<str>) -> Self {
-        let index_buffer = Self::new_device_local(data.len(), debug_name);
-        index_buffer.transfer_data_sync(data);
+    pub fn new_with_data(
+        resource_ctx: GfxResourceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        data: &[u32],
+        debug_name: impl AsRef<str>,
+    ) -> Self {
+        let index_buffer = Self::new_device_local(resource_ctx, data.len(), debug_name);
+        index_buffer.transfer_data_sync(resource_ctx, immediate_ctx, data);
         index_buffer
     }
 }

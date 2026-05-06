@@ -1,8 +1,10 @@
 use ash::vk;
 
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
+use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::raytracing::acceleration::GfxBlasInputInfo;
 use truvis_gfx::resources::layout::GfxVertexLayout;
+use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
@@ -77,6 +79,15 @@ impl RtGeometry {
 }
 
 impl RtGeometry {
+    pub fn destroy_mut(&mut self, ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
+        self.vertex_buffer.destroy_mut(ctx, reason);
+        self.index_buffer.destroy_mut(ctx, reason);
+    }
+
+    pub fn destroy(mut self, ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
+        self.destroy_mut(ctx, reason);
+    }
+
     #[inline]
     pub fn cmd_bind_index_buffer(&self, cmd: &GfxCommandBuffer) {
         cmd.cmd_bind_index_buffer(&self.index_buffer, 0)

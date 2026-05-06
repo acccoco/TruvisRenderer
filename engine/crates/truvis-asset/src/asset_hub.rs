@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use ash::vk;
 use slotmap::{SecondaryMap, SlotMap};
 
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
@@ -42,8 +43,21 @@ pub struct AssetHub {
 
 // 创建与初始化
 impl AssetHub {
-    pub fn new(gfx_resource_manager: &mut GfxResourceManager, bindless_manager: &mut BindlessManager) -> Self {
-        let fallback_texture = Self::create_fallback_texture(gfx_resource_manager, bindless_manager);
+    pub fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        queue_ctx: GfxQueueCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+        bindless_manager: &mut BindlessManager,
+    ) -> Self {
+        let fallback_texture = Self::create_fallback_texture(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            bindless_manager,
+        );
 
         Self {
             texture_states: SlotMap::with_key(),
@@ -51,23 +65,27 @@ impl AssetHub {
             texture_cache: HashMap::new(),
             fallback_texture,
             asset_loader: AssetLoader::new(),
-            upload_manager: AssetUploadManager::new(),
+            upload_manager: AssetUploadManager::new(device_ctx, queue_ctx),
         }
     }
 
     /// 创建一个 1x1 的粉色纹理 (同步创建)
     /// 这是一个阻塞操作，只在初始化时执行一次。
     fn create_fallback_texture(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         bindless_manager: &mut BindlessManager,
     ) -> AssetTexture {
         // 1. 创建 Image（1x1 粉色）
         let pixels: [u8; 4] = [255, 0, 255, 255];
-        let image = GfxImage::from_rgba8(1, 1, &pixels, "FallbackTexture");
+        let image = GfxImage::from_rgba8(resource_ctx, immediate_ctx, 1, 1, &pixels, "FallbackTexture");
         let image_format = image.format();
 
         let image_handle = gfx_resource_manager.register_image(image);
         let view_handle = gfx_resource_manager.get_or_create_image_view(
+            device_ctx,
             image_handle,
             GfxImageViewDesc::new_2d(image_format, vk::ImageAspectFlags::COLOR),
             "FallbackTextureView",
@@ -86,16 +104,32 @@ impl AssetHub {
 
 // 销毁
 impl AssetHub {
-    pub fn destroy(mut self, gfx_resource_manager: &mut GfxResourceManager, bindless_manager: &mut BindlessManager) {
-        self.upload_manager.shutdown();
+    pub fn destroy(
+        mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+        bindless_manager: &mut BindlessManager,
+    ) {
+        self.upload_manager.shutdown(resource_ctx, device_ctx);
 
         for (_, texture) in self.textures.drain() {
             bindless_manager.unregister_srv(texture.view_handle);
-            gfx_resource_manager.release_image_immediate(texture.image_handle, DestroyReason::Shutdown);
+            gfx_resource_manager.release_image_immediate(
+                resource_ctx,
+                device_ctx,
+                texture.image_handle,
+                DestroyReason::Shutdown,
+            );
         }
 
         bindless_manager.unregister_srv(self.fallback_texture.view_handle);
-        gfx_resource_manager.release_image_immediate(self.fallback_texture.image_handle, DestroyReason::Shutdown);
+        gfx_resource_manager.release_image_immediate(
+            resource_ctx,
+            device_ctx,
+            self.fallback_texture.image_handle,
+            DestroyReason::Shutdown,
+        );
     }
 }
 
@@ -148,7 +182,14 @@ impl AssetHub {
     ///
     /// 1. 检查 IO 线程是否有完成的任务 -> 提交给 TransferManager。
     /// 2. 检查 TransferManager 是否有完成的上传 -> 创建 View/Sampler 并标记为 Ready。
-    pub fn update(&mut self, gfx_resource_manager: &mut GfxResourceManager, bindless_manager: &mut BindlessManager) {
+    pub fn update(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        queue_ctx: GfxQueueCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+        bindless_manager: &mut BindlessManager,
+    ) {
         let _span = tracy_client::span!("AssetHub::update");
         // 1. 处理 IO 完成的消息
         while let Some(result) = self.asset_loader.try_recv_result() {
@@ -167,7 +208,7 @@ impl AssetHub {
                     }
 
                     // 提交给 TransferManager (CPU -> GPU)
-                    if let Err(e) = self.upload_manager.upload_texture(data) {
+                    if let Err(e) = self.upload_manager.upload_texture(resource_ctx, device_ctx, queue_ctx, data) {
                         log::error!("Failed to submit upload task: {}", e);
                         if let Some(status) = self.texture_states.get_mut(handle) {
                             *status = LoadStatus::Failed;
@@ -184,13 +225,14 @@ impl AssetHub {
         }
 
         // 2. 检查 GPU 上传完成
-        let finished_uploads = self.upload_manager.update();
+        let finished_uploads = self.upload_manager.update(resource_ctx, device_ctx);
         for (tex_handle, image) in finished_uploads {
             log::info!("Upload finished for texture handle: {:?}", tex_handle);
 
             let image_format = image.format();
             let image_handle = gfx_resource_manager.register_image(image);
             let view_handle = gfx_resource_manager.get_or_create_image_view(
+                device_ctx,
                 image_handle,
                 GfxImageViewDesc::new_2d(image_format, vk::ImageAspectFlags::COLOR),
                 "TextureView",

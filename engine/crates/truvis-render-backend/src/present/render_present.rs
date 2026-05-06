@@ -4,7 +4,7 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use truvis_gfx::commands::barrier::GfxBarrierMask;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
-use truvis_gfx::gfx::Gfx;
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
@@ -52,13 +52,17 @@ pub struct RenderPresent {
 // 创建与初始化
 impl RenderPresent {
     pub fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        surface_ctx: GfxSurfaceCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         raw_display_handle: RawDisplayHandle,
         raw_window_handle: RawWindowHandle,
         window_physical_extent: vk::Extent2D,
     ) -> Self {
-        let surface = GfxSurface::new(raw_display_handle, raw_window_handle);
+        let surface = GfxSurface::new(surface_ctx, raw_display_handle, raw_window_handle);
         let swapchain = GfxSwapchain::new(
+            surface_ctx,
             &surface,
             DefaultRenderBackendSettings::DEFAULT_PRESENT_MODE,
             DefaultRenderBackendSettings::DEFAULT_SURFACE_FORMAT,
@@ -66,14 +70,14 @@ impl RenderPresent {
             None,
         );
         let (swapchain_image_handles, swapchain_image_view_handles) =
-            Self::create_swapchain_images_and_views(&swapchain, gfx_resource_manager);
+            Self::create_swapchain_images_and_views(resource_ctx, device_ctx, &swapchain, gfx_resource_manager);
 
         let swapchain_image_infos = swapchain.image_infos();
 
         let present_complete_semaphores = FrameCounter::frame_labes()
-            .map(|frame_label| GfxSemaphore::new(&format!("window-present-complete-{}", frame_label)));
+            .map(|frame_label| GfxSemaphore::new(device_ctx, &format!("window-present-complete-{}", frame_label)));
         let render_complete_semaphores = (0..swapchain_image_infos.image_cnt)
-            .map(|i| GfxSemaphore::new(&format!("window-render-complete-{}", i)))
+            .map(|i| GfxSemaphore::new(device_ctx, &format!("window-render-complete-{}", i)))
             .collect_vec();
 
         Self {
@@ -91,6 +95,8 @@ impl RenderPresent {
     }
 
     fn create_swapchain_images_and_views(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
         swapchain: &GfxSwapchain,
         gfx_resource_manager: &mut GfxResourceManager,
     ) -> (Vec<GfxImageHandle>, Vec<GfxImageViewHandle>) {
@@ -101,6 +107,7 @@ impl RenderPresent {
 
         for (image_idx, vk_image) in swapchain.present_images().iter().enumerate() {
             let image = GfxImage::from_external(
+                resource_ctx,
                 *vk_image,
                 swapchain_image_info.image_extent.into(),
                 swapchain_image_info.image_format,
@@ -109,6 +116,7 @@ impl RenderPresent {
             let image_handle = gfx_resource_manager.register_image(image);
 
             let image_view_handle = gfx_resource_manager.get_or_create_image_view(
+                device_ctx,
                 image_handle,
                 GfxImageViewDesc::new_2d(swapchain_image_info.image_format, vk::ImageAspectFlags::COLOR),
                 format!("swapchain-{}", image_idx),
@@ -167,12 +175,12 @@ impl RenderPresent {
     /// 判断是否需要重建 swapchain
     ///
     /// 需要综合判断窗口尺寸是否发生变化，以及当前 surface 的实时状态
-    pub fn need_resize(&mut self) -> bool {
+    pub fn need_resize(&mut self, surface_ctx: GfxSurfaceCtx<'_>) -> bool {
         if !self.need_resize {
             return false;
         }
 
-        let surface_capibilities = self.surface.get_capabilities();
+        let surface_capibilities = self.surface.get_capabilities(surface_ctx);
         let expect_swapchain_extent =
             GfxSwapchain::calculate_swapchain_extent(&surface_capibilities, self.window_physical_extent);
 
@@ -183,41 +191,55 @@ impl RenderPresent {
         self.need_resize
     }
 
-    pub fn rebuild_after_resized(&mut self, gfx_resource_manager: &mut GfxResourceManager) {
-        unsafe {
-            Gfx::get().gfx_device().device_wait_idle().unwrap();
-        }
+    pub fn rebuild_after_resized(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        surface_ctx: GfxSurfaceCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+    ) {
+        device_ctx.device().wait_idle();
 
         for image_handle in std::mem::take(&mut self.swapchain_images) {
-            gfx_resource_manager.release_image_immediate(image_handle, DestroyReason::Resize);
+            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, image_handle, DestroyReason::Resize);
         }
         let old_swapchain = self.swapchain.take();
         self.swapchain = Some(GfxSwapchain::new(
+            surface_ctx,
             &self.surface,
             DefaultRenderBackendSettings::DEFAULT_PRESENT_MODE,
             DefaultRenderBackendSettings::DEFAULT_SURFACE_FORMAT,
             self.window_physical_extent,
             old_swapchain,
         ));
-        (self.swapchain_images, self.swapchain_image_views) =
-            Self::create_swapchain_images_and_views(self.swapchain.as_ref().unwrap(), gfx_resource_manager);
+        (self.swapchain_images, self.swapchain_image_views) = Self::create_swapchain_images_and_views(
+            resource_ctx,
+            device_ctx,
+            self.swapchain.as_ref().unwrap(),
+            gfx_resource_manager,
+        );
 
         self.need_resize = false;
     }
 
-    pub fn acquire_image(&mut self, frame_label: FrameLabel) {
+    pub fn acquire_image(&mut self, surface_ctx: GfxSurfaceCtx<'_>, frame_label: FrameLabel) {
         // 从 swapchain 获取图像
         let swapchain = self.swapchain.as_mut().unwrap();
         let timeout_ns = 10 * 1000 * 1000 * 1000;
 
-        self.need_resize =
-            swapchain.acquire_next_image(Some(&self.present_complete_semaphores[*frame_label]), None, timeout_ns);
+        self.need_resize = swapchain.acquire_next_image(
+            surface_ctx,
+            Some(&self.present_complete_semaphores[*frame_label]),
+            None,
+            timeout_ns,
+        );
     }
 
-    pub fn present_image(&mut self) {
+    pub fn present_image(&mut self, surface_ctx: GfxSurfaceCtx<'_>, queue_ctx: GfxQueueCtx<'_>) {
         let swapchain = self.swapchain.as_ref().unwrap();
         self.need_resize = swapchain.present_image(
-            Gfx::get().gfx_queue(),
+            surface_ctx,
+            queue_ctx.gfx_queue(),
             std::slice::from_ref(&self.render_complete_semaphores[swapchain.current_image_index()]),
         );
     }
@@ -225,20 +247,31 @@ impl RenderPresent {
 
 // 销毁
 impl RenderPresent {
-    pub fn destroy(self, gfx_resource_manager: &mut GfxResourceManager) {
+    pub fn destroy(
+        self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        surface_ctx: GfxSurfaceCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+    ) {
         for semaphore in self.present_complete_semaphores {
-            semaphore.destroy();
+            semaphore.destroy(device_ctx);
         }
         for semaphore in self.render_complete_semaphores {
-            semaphore.destroy();
+            semaphore.destroy(device_ctx);
         }
         for image_handle in self.swapchain_images {
-            gfx_resource_manager.release_image_immediate(image_handle, DestroyReason::Shutdown)
+            gfx_resource_manager.release_image_immediate(
+                resource_ctx,
+                device_ctx,
+                image_handle,
+                DestroyReason::Shutdown,
+            )
         }
         if let Some(swapchain) = self.swapchain {
-            swapchain.destroy();
+            swapchain.destroy(surface_ctx);
         }
 
-        // surface 可以在最后销毁
+        self.surface.destroy(surface_ctx);
     }
 }

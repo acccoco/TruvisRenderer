@@ -6,7 +6,6 @@ use truvis_frame_api::plugin::{PluginInitCtx, PluginResizeCtx, PluginShutdownCtx
 use truvis_frame_api::render_app::{
     RenderApp, RenderAppHooks, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx,
 };
-use truvis_gfx::gfx::Gfx;
 use truvis_render_backend::render_backend::RenderBackend;
 
 /// 将具体 app hooks 转换为 render-loop [`RenderApp`] 的适配器。
@@ -47,9 +46,7 @@ impl<A> RenderAppShell<A> {
     }
 
     fn destroy_render_backend(render_backend: RenderBackend) {
-        Gfx::get().wait_idel();
         render_backend.destroy();
-        Gfx::destroy();
     }
 }
 
@@ -76,6 +73,12 @@ where
 
             let RenderAppInitCtx { backend, .. } = app_ctx;
             let mut plugin_ctx = PluginInitCtx {
+                device_ctx: backend.device_ctx,
+                resource_ctx: backend.resource_ctx,
+                queue_ctx: backend.queue_ctx,
+                device_info_ctx: backend.device_info_ctx,
+                immediate_ctx: backend.immediate_ctx,
+                surface_ctx: backend.surface_ctx,
                 world: backend.world,
                 render_world: backend.render_world,
                 cmd_allocator: backend.cmd_allocator,
@@ -158,6 +161,10 @@ where
 
         let RenderAppResizeCtx { backend, .. } = app_ctx;
         let mut plugin_ctx = PluginResizeCtx {
+            device_ctx: backend.device_ctx,
+            resource_ctx: backend.resource_ctx,
+            immediate_ctx: backend.immediate_ctx,
+            surface_ctx: backend.surface_ctx,
             render_world: backend.render_world,
             render_present: backend.render_present,
         };
@@ -172,7 +179,8 @@ where
 
     fn shutdown(&mut self) {
         if let Some(render_backend) = self.render_backend.as_mut() {
-            Gfx::get().wait_idel();
+            render_backend.wait_idle();
+
             {
                 let backend = render_backend.shutdown_phase();
                 let mut app_ctx = RenderAppShutdownCtx { backend };
@@ -181,6 +189,11 @@ where
             {
                 let backend = render_backend.shutdown_phase();
                 let mut plugin_ctx = PluginShutdownCtx {
+                    device_ctx: backend.device_ctx,
+                    resource_ctx: backend.resource_ctx,
+                    queue_ctx: backend.queue_ctx,
+                    immediate_ctx: backend.immediate_ctx,
+                    surface_ctx: backend.surface_ctx,
                     render_world: backend.render_world,
                     cmd_allocator: backend.cmd_allocator,
                 };
