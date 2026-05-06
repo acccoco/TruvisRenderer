@@ -30,7 +30,24 @@
 
 - **WHEN** `RenderAppShell` receives a backend Ctx
 - **THEN** it SHALL pass the controlled Ctx or shell-level wrapper Ctx to `RenderAppHooks`
-- **AND** concrete app code SHALL use that Ctx to construct any narrower `Plugin*Ctx`
+- **AND** `RenderAppShell` SHALL construct narrower Plugin lifecycle Ctx values for standard lifecycle traversal
+- **AND** concrete app code MAY still construct narrower render Plugin Ctx values when explicitly composing RenderGraph-specific plugin methods
+
+### Requirement: RenderAppHooks SHALL expose standard lifecycle Plugin traversal
+
+Concrete app hooks SHALL expose their app-owned standard lifecycle plugins through a visitor method. `RenderAppShell` SHALL use this visitor to call `Plugin::init`, `Plugin::update`, `Plugin::on_resize`, and `Plugin::shutdown` without knowing concrete plugin types.
+
+#### Scenario: Shell drives plugin lifecycle through app-defined order
+
+- **WHEN** a concrete app implements `RenderAppHooks::visit_plugins_mut`
+- **THEN** `RenderAppShell` SHALL call standard Plugin lifecycle hooks in the app-provided order
+- **AND** `RenderAppShell` SHALL NOT import or reference concrete GUI, overlay, or render pipeline plugin types
+
+#### Scenario: App keeps feature-specific plugin orchestration
+
+- **WHEN** an app needs GUI UI access or RenderGraph pass contribution
+- **THEN** the app SHALL call those feature-specific methods on concrete plugin fields
+- **AND** those feature-specific methods SHALL NOT be invoked by the generic lifecycle visitor
 
 ### Requirement: RenderAppShell run_frame SHALL follow strict phase ordering
 
@@ -39,10 +56,11 @@
 1. `RenderBackend::begin_frame()`
 2. drain shell-owned input event queue and call `RenderAppHooks::on_input(events)`
 3. `RenderBackend::update_phase()` then `RenderAppHooks::update(ctx)`
-4. `RenderBackend::prepare(app.camera())`
-5. `RenderBackend::render_phase()` then `RenderAppHooks::render(ctx)`
-6. `RenderBackend::present()`
-7. `RenderBackend::end_frame()`
+4. construct `PluginUpdateCtx` then call `Plugin::update` through `RenderAppHooks::visit_plugins_mut`
+5. `RenderBackend::prepare(app.camera())`
+6. `RenderBackend::render_phase()` then `RenderAppHooks::render(ctx)`
+7. `RenderBackend::present()`
+8. `RenderBackend::end_frame()`
 
 #### Scenario: Full frame execution order
 
@@ -62,6 +80,7 @@ Resize SHALL be driven through `RenderAppShell`. The shell SHALL call `RenderBac
 
 - **WHEN** `RenderBackend::handle_resize(size)` returns `Some(RenderBackendResizeCtx)`
 - **THEN** `RenderAppShell` SHALL call `RenderAppHooks::on_resize(RenderAppResizeCtx)`
+- **AND** `RenderAppShell` SHALL call `Plugin::on_resize` through `RenderAppHooks::visit_plugins_mut`
 
 #### Scenario: App not notified when no resize
 

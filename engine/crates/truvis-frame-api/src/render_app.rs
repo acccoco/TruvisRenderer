@@ -7,6 +7,7 @@ use truvis_render_backend::render_backend::{
 };
 
 use crate::input_event::InputEvent;
+use crate::plugin::Plugin;
 
 /// 由 render loop 驱动的 object-safe 外部契约。
 pub trait RenderApp {
@@ -47,7 +48,19 @@ pub struct RenderAppResizeCtx<'a> {
 /// 具体 app 持有 GUI、camera/input state、overlay 和 render plugin。
 /// shell 持有 RenderBackend 与输入队列，并通过这些 hook 交出生命周期和帧阶段控制点。
 pub trait RenderAppHooks {
-    fn init(&mut self, ctx: RenderAppInitCtx<'_>);
+    fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>);
+
+    /// 按 app 定义的稳定顺序访问标准生命周期 plugin。
+    ///
+    /// `RenderAppShell` 使用该顺序批量调用 `Plugin::init`、`Plugin::update`
+    /// 和 `Plugin::on_resize`。GUI UI 构建和 RenderGraph pass 贡献等特有能力
+    /// 仍由具体 app 通过具体 plugin 类型显式调用。
+    fn visit_plugins_mut(&mut self, _visit: &mut dyn FnMut(&mut dyn Plugin)) {}
+
+    /// 按 app 定义的 shutdown 顺序访问标准生命周期 plugin。
+    fn visit_plugins_mut_rev(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
+        self.visit_plugins_mut(visit);
+    }
 
     fn on_input(&mut self, events: &[InputEvent]);
 
@@ -57,7 +70,7 @@ pub trait RenderAppHooks {
 
     fn camera(&self) -> &Camera;
 
-    fn on_resize(&mut self, _ctx: RenderAppResizeCtx<'_>) {}
+    fn on_resize(&mut self, _ctx: &mut RenderAppResizeCtx<'_>) {}
 
     fn shutdown(&mut self) {}
 }

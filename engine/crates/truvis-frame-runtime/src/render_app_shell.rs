@@ -2,6 +2,7 @@ use std::ffi::CStr;
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use truvis_frame_api::input_event::InputEvent;
+use truvis_frame_api::plugin::{PluginInitCtx, PluginResizeCtx, PluginUpdateCtx};
 use truvis_frame_api::render_app::{RenderApp, RenderAppHooks, RenderAppInitCtx, RenderAppResizeCtx};
 use truvis_gfx::gfx::Gfx;
 use truvis_render_backend::render_backend::RenderBackend;
@@ -64,10 +65,23 @@ where
         let mut render_backend = Self::new_render_backend(raw_display);
         {
             let backend = render_backend.init_after_window(raw_display, raw_window, window_size);
-            self.app.init(RenderAppInitCtx {
+            let mut app_ctx = RenderAppInitCtx {
                 backend,
                 scale_factor,
                 window_size,
+            };
+            self.app.init(&mut app_ctx);
+
+            let RenderAppInitCtx { backend, .. } = app_ctx;
+            let mut plugin_ctx = PluginInitCtx {
+                world: backend.world,
+                render_world: backend.render_world,
+                cmd_allocator: backend.cmd_allocator,
+                swapchain_image_info: backend.swapchain_image_info,
+                render_present: backend.render_present,
+            };
+            self.app.visit_plugins_mut(&mut |plugin| {
+                plugin.init(&mut plugin_ctx);
             });
         }
         self.render_backend = Some(render_backend);
@@ -93,6 +107,16 @@ where
             let _span = tracy_client::span!("RenderAppShell::update");
             let mut update_ctx = render_backend.update_phase();
             app.update(&mut update_ctx);
+
+            let mut plugin_ctx = PluginUpdateCtx {
+                world: update_ctx.world,
+                pipeline_settings: update_ctx.pipeline_settings,
+                frame_settings: update_ctx.frame_settings,
+                delta_time_s: update_ctx.delta_time_s,
+            };
+            app.visit_plugins_mut(&mut |plugin| {
+                plugin.update(&mut plugin_ctx);
+            });
         }
 
         render_backend.prepare(app.camera());
@@ -124,9 +148,19 @@ where
             return;
         };
 
-        app.on_resize(RenderAppResizeCtx {
+        let mut app_ctx = RenderAppResizeCtx {
             backend,
             window_size: new_size,
+        };
+        app.on_resize(&mut app_ctx);
+
+        let RenderAppResizeCtx { backend, .. } = app_ctx;
+        let mut plugin_ctx = PluginResizeCtx {
+            render_world: backend.render_world,
+            render_present: backend.render_present,
+        };
+        app.visit_plugins_mut(&mut |plugin| {
+            plugin.on_resize(&mut plugin_ctx);
         });
     }
 
@@ -136,6 +170,9 @@ where
 
     fn shutdown(&mut self) {
         self.app.shutdown();
+        self.app.visit_plugins_mut_rev(&mut |plugin| {
+            plugin.shutdown();
+        });
         if let Some(render_backend) = self.render_backend.take() {
             Self::destroy_render_backend(render_backend);
         }

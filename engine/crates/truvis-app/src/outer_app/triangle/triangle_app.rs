@@ -2,8 +2,8 @@ use ash::vk;
 use itertools::Itertools;
 
 use truvis_frame_api::input_event::InputEvent;
-use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx};
-use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx, RenderAppResizeCtx};
+use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx};
+use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::Gfx;
 use truvis_render_backend::platform::camera::Camera;
@@ -64,50 +64,29 @@ pub struct HelloTriangleApp {
 }
 
 impl RenderAppHooks for HelloTriangleApp {
-    fn init(&mut self, ctx: RenderAppInitCtx<'_>) {
-        let RenderAppInitCtx {
-            backend: ctx,
-            scale_factor,
-            window_size,
-        } = ctx;
+    fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
+        self.gui.set_hidpi_factor(ctx.scale_factor);
+        self.gui.set_display_size(ctx.window_size);
 
-        self.gui.set_hidpi_factor(scale_factor);
-        self.gui.set_display_size(window_size);
-
+        let cmd_allocator = &mut *ctx.backend.cmd_allocator;
         self.cmds = FrameCounter::frame_labes()
             .iter()
-            .map(|label| ctx.cmd_allocator.alloc_command_buffer(*label, "triangle-app"))
+            .map(|label| cmd_allocator.alloc_command_buffer(*label, "triangle-app"))
             .collect_vec();
-
-        let mut plugin_ctx = PluginInitCtx {
-            world: ctx.world,
-            render_world: ctx.render_world,
-            cmd_allocator: ctx.cmd_allocator,
-            swapchain_image_info: ctx.swapchain_image_info,
-            render_present: ctx.render_present,
-        };
-        self.triangle.init(&mut plugin_ctx);
-        self.gui.init(&mut plugin_ctx);
-        self.debug_overlay.init(&mut plugin_ctx);
-        self.pipeline_overlay.init(&mut plugin_ctx);
     }
 
-    fn on_resize(&mut self, ctx: RenderAppResizeCtx<'_>) {
-        let ctx = ctx.backend;
-
-        let mut plugin_ctx = PluginResizeCtx {
-            render_world: ctx.render_world,
-            render_present: ctx.render_present,
-        };
-        self.gui.on_resize(&mut plugin_ctx);
-        self.triangle.on_resize(&mut plugin_ctx);
+    fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
+        visit(&mut self.triangle);
+        visit(&mut self.gui);
+        visit(&mut self.debug_overlay);
+        visit(&mut self.pipeline_overlay);
     }
 
-    fn shutdown(&mut self) {
-        self.pipeline_overlay.shutdown();
-        self.debug_overlay.shutdown();
-        self.triangle.shutdown();
-        self.gui.shutdown();
+    fn visit_plugins_mut_rev(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
+        visit(&mut self.pipeline_overlay);
+        visit(&mut self.debug_overlay);
+        visit(&mut self.triangle);
+        visit(&mut self.gui);
     }
 
     fn on_input(&mut self, events: &[InputEvent]) {

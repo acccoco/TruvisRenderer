@@ -9,7 +9,7 @@
 
 - [x] 2.1 Move `BaseApp` fields (`RenderBackend`, input event queue) into `RenderAppShell`.
 - [x] 2.2 Move `BaseApp` lifecycle methods into `RenderAppShell` or private shell helper methods.
-- [x] 2.3 Preserve exact frame order: begin_frame, input, update, prepare, render, present, end_frame.
+- [x] 2.3 Preserve frame order: begin_frame, input, update, plugin update, prepare, render, present, end_frame.
 - [x] 2.4 Preserve resize behavior: call `RenderBackend::handle_resize`, notify hooks only when it returns `Some`.
 - [x] 2.5 Preserve shutdown order: app hooks shutdown before backend/Gfx destroy.
 - [x] 2.6 Remove public `BaseApp` export and delete or privatize obsolete `base_app` module code.
@@ -20,6 +20,7 @@
 - [x] 3.2 Ensure `RenderAppHooks` covers init, on_input, update, render, camera, on_resize, and shutdown.
 - [x] 3.3 Migrate `HelloTriangleApp`, `ShaderToy`, `CornellApp`, and `SponzaApp` to one `RenderAppHooks` impl each.
 - [x] 3.4 Update plugin ctx construction in app hooks without changing plugin behavior.
+- [x] 3.5 Add app-defined Plugin lifecycle traversal and move standard init/update/resize/shutdown dispatch into `RenderAppShell`.
 
 ## 4. Call Sites And Documentation
 

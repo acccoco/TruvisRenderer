@@ -17,6 +17,7 @@
 ## 使用方式
 
 - demo state 实现 `RenderAppHooks`，持有 GUI、相机/输入状态、overlay 和具体 render pipeline plugin
+- demo state 通过 `visit_plugins_mut` 声明标准生命周期 Plugin 顺序，由 `RenderAppShell` 批量调用 init / update / resize / shutdown
 - `src/bin/` 入口用 `RenderAppShell::new(demo_state)` 包装成 `Box<dyn RenderApp>` 后交给 `truvis-winit-app::WinitApp::run_app(...)`
 
 ## 边界约束
@@ -24,3 +25,4 @@
 - 本层承载 demo 与集成逻辑，不向底层反向注入依赖
 - `RenderAppShell` 不持有 GUI、Camera、Overlay 或具体渲染管线
 - App state 在 `RenderAppHooks::render` 中创建 RenderGraph，并显式决定渲染管线与 GUI pass 顺序
+- GUI UI 构建、输入消费和 RenderGraph pass 贡献仍由 App 通过具体 Plugin 类型显式编排

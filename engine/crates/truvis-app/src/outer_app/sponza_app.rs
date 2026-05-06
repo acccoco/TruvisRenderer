@@ -1,6 +1,6 @@
 use truvis_frame_api::input_event::InputEvent;
-use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx};
-use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx, RenderAppResizeCtx};
+use truvis_frame_api::plugin::{Plugin, PluginRenderCtx};
+use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx};
 use truvis_gfx::gfx::Gfx;
 use truvis_path::TruvisPath;
 use truvis_render_backend::model_loader::assimp_loader::AssimpSceneLoader;
@@ -62,47 +62,25 @@ impl SponzaApp {
 }
 
 impl RenderAppHooks for SponzaApp {
-    fn init(&mut self, ctx: RenderAppInitCtx<'_>) {
-        let RenderAppInitCtx {
-            backend: ctx,
-            scale_factor,
-            window_size,
-        } = ctx;
+    fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
+        self.gui.set_hidpi_factor(ctx.scale_factor);
+        self.gui.set_display_size(ctx.window_size);
 
-        self.gui.set_hidpi_factor(scale_factor);
-        self.gui.set_display_size(window_size);
-
-        Self::create_scene(ctx.world, self.camera_controller.camera_mut());
-
-        let mut plugin_ctx = PluginInitCtx {
-            world: ctx.world,
-            render_world: ctx.render_world,
-            cmd_allocator: ctx.cmd_allocator,
-            swapchain_image_info: ctx.swapchain_image_info,
-            render_present: ctx.render_present,
-        };
-        self.rt_pipeline.init(&mut plugin_ctx);
-        self.gui.init(&mut plugin_ctx);
-        self.debug_overlay.init(&mut plugin_ctx);
-        self.pipeline_overlay.init(&mut plugin_ctx);
+        Self::create_scene(&mut *ctx.backend.world, self.camera_controller.camera_mut());
     }
 
-    fn on_resize(&mut self, ctx: RenderAppResizeCtx<'_>) {
-        let ctx = ctx.backend;
-
-        let mut plugin_ctx = PluginResizeCtx {
-            render_world: ctx.render_world,
-            render_present: ctx.render_present,
-        };
-        self.gui.on_resize(&mut plugin_ctx);
-        self.rt_pipeline.on_resize(&mut plugin_ctx);
+    fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
+        visit(&mut self.rt_pipeline);
+        visit(&mut self.gui);
+        visit(&mut self.debug_overlay);
+        visit(&mut self.pipeline_overlay);
     }
 
-    fn shutdown(&mut self) {
-        self.pipeline_overlay.shutdown();
-        self.debug_overlay.shutdown();
-        self.rt_pipeline.shutdown();
-        self.gui.shutdown();
+    fn visit_plugins_mut_rev(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
+        visit(&mut self.pipeline_overlay);
+        visit(&mut self.debug_overlay);
+        visit(&mut self.rt_pipeline);
+        visit(&mut self.gui);
     }
 
     fn on_input(&mut self, events: &[InputEvent]) {
