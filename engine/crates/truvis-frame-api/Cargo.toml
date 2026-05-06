@@ -2,7 +2,7 @@
 name = "truvis-frame-api"
 version = "0.1.0"
 edition = "2024"
-description = "Frame app and plugin contracts for the BaseApp runtime"
+description = "Render app and plugin contracts for the frame runtime"
 
 [dependencies]
 truvis-gfx = { workspace = true }

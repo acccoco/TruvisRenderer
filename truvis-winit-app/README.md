@@ -6,7 +6,7 @@
 
 - 创建并管理 winit `EventLoop` 与窗口生命周期
 - 将平台事件转换为引擎输入事件并转发
-- 驱动渲染线程运行 `Box<dyn FrameApp>`，示例入口通常传入 `FrameAppShell<DemoState>`
+- 驱动渲染线程运行 `Box<dyn RenderApp>`，示例入口通常传入 `RenderAppShell<DemoState>`
 
 ## 入口位置
 
@@ -16,8 +16,8 @@
 
 ## 启动方式
 
-- 入口：`WinitApp::run_app(|| Box<dyn FrameApp>)`
-- 示例：`WinitApp::run_app(|| Box::new(FrameAppShell::new(DemoState::default())))`
+- 入口：`WinitApp::run_app(|| Box<dyn RenderApp>)`
+- 示例：`WinitApp::run_app(|| Box::new(RenderAppShell::new(DemoState::default())))`
 
 ## 模块边界
 

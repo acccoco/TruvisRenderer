@@ -1,6 +1,6 @@
 //! 渲染后端层
 //!
-//! 提供被 `BaseApp` 驱动的 GPU/backend 执行能力，包括 swapchain、present、
+//! 提供被 `RenderAppShell` 驱动的 GPU/backend 执行能力，包括 swapchain、present、
 //! command/sync 生命周期、GPU 场景上传和描述符更新。
 
 pub mod platform;

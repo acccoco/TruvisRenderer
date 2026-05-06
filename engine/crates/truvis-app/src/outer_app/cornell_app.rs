@@ -1,7 +1,6 @@
-use truvis_frame_api::frame_app::FrameAppHooks;
 use truvis_frame_api::input_event::InputEvent;
 use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx};
-use truvis_frame_runtime::{FrameAppInitCtx, FrameAppResizeCtx, FrameAppState};
+use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx, RenderAppResizeCtx};
 use truvis_gfx::gfx::Gfx;
 use truvis_path::TruvisPath;
 use truvis_render_backend::model_loader::assimp_loader::AssimpSceneLoader;
@@ -62,9 +61,9 @@ impl CornellApp {
     }
 }
 
-impl FrameAppState for CornellApp {
-    fn init(&mut self, ctx: FrameAppInitCtx<'_>) {
-        let FrameAppInitCtx {
+impl RenderAppHooks for CornellApp {
+    fn init(&mut self, ctx: RenderAppInitCtx<'_>) {
+        let RenderAppInitCtx {
             backend: ctx,
             scale_factor,
             window_size,
@@ -88,7 +87,7 @@ impl FrameAppState for CornellApp {
         self.pipeline_overlay.init(&mut plugin_ctx);
     }
 
-    fn on_resize(&mut self, ctx: FrameAppResizeCtx<'_>) {
+    fn on_resize(&mut self, ctx: RenderAppResizeCtx<'_>) {
         let ctx = ctx.backend;
 
         let mut plugin_ctx = PluginResizeCtx {
@@ -105,9 +104,7 @@ impl FrameAppState for CornellApp {
         self.rt_pipeline.shutdown();
         self.gui.shutdown();
     }
-}
 
-impl FrameAppHooks for CornellApp {
     fn on_input(&mut self, events: &[InputEvent]) {
         self.input.begin_frame();
         for event in events {

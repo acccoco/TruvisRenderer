@@ -10,6 +10,6 @@
 
 ## 与其他模块关系
 
-- 上承 `truvis-frame-runtime::BaseApp`（帧骨架）与 `truvis-app`（插件编排）
+- 上承 `truvis-frame-runtime::RenderAppShell`（帧骨架）与 `truvis-app`（插件编排）
 - 下接 `truvis-gfx`、`truvis-render-interface`、`truvis-render-graph`
-- 不依赖 `FrameApp`、`Plugin`、GUI plugin 或具体 demo app
+- 不依赖 `RenderApp`、`Plugin`、GUI plugin 或具体 demo app

@@ -1,10 +1,9 @@
 use ash::vk;
 use itertools::Itertools;
 
-use truvis_frame_api::frame_app::FrameAppHooks;
 use truvis_frame_api::input_event::InputEvent;
 use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx};
-use truvis_frame_runtime::{FrameAppInitCtx, FrameAppResizeCtx, FrameAppState};
+use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx, RenderAppResizeCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::Gfx;
 use truvis_render_backend::platform::camera::Camera;
@@ -66,9 +65,9 @@ pub struct ShaderToy {
     cmds: Vec<GfxCommandBuffer>,
 }
 
-impl FrameAppState for ShaderToy {
-    fn init(&mut self, ctx: FrameAppInitCtx<'_>) {
-        let FrameAppInitCtx {
+impl RenderAppHooks for ShaderToy {
+    fn init(&mut self, ctx: RenderAppInitCtx<'_>) {
+        let RenderAppInitCtx {
             backend: ctx,
             scale_factor,
             window_size,
@@ -95,7 +94,7 @@ impl FrameAppState for ShaderToy {
         self.pipeline_overlay.init(&mut plugin_ctx);
     }
 
-    fn on_resize(&mut self, ctx: FrameAppResizeCtx<'_>) {
+    fn on_resize(&mut self, ctx: RenderAppResizeCtx<'_>) {
         let ctx = ctx.backend;
 
         let mut plugin_ctx = PluginResizeCtx {
@@ -112,9 +111,7 @@ impl FrameAppState for ShaderToy {
         self.shader_toy.shutdown();
         self.gui.shutdown();
     }
-}
 
-impl FrameAppHooks for ShaderToy {
     fn on_input(&mut self, events: &[InputEvent]) {
         self.input.begin_frame();
         for event in events {

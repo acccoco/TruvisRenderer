@@ -2,7 +2,7 @@
 name = "truvis-frame-runtime"
 version = "0.1.0"
 edition = "2024"
-description = "BaseApp frame skeleton for RenderBackend lifecycle orchestration"
+description = "Render app shell for RenderBackend lifecycle orchestration"
 
 [dependencies]
 truvis-frame-api = { workspace = true }

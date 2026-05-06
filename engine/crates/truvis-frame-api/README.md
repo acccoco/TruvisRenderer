@@ -4,8 +4,8 @@ Frame API crate 定义 app 和 plugin 的稳定契约，不持有运行时状态
 
 ## 主要职责
 
-- `FrameApp`：render loop 看到的对象安全 App 契约，通常由 `truvis-frame-runtime::FrameAppShell` 实现
-- `FrameAppHooks`：`BaseApp` 在帧骨架内回调 App 的 hook 点
+- `RenderApp`：render loop 看到的对象安全 App 契约，通常由 `truvis-frame-runtime::RenderAppShell` 实现
+- `RenderAppHooks`：`RenderAppShell` 在生命周期和帧骨架内回调 App 的 hook 点
 - `Plugin`：可复用能力单元的标准生命周期
 - `PluginInitCtx` / `PluginUpdateCtx` / `PluginRenderCtx` / `PluginResizeCtx`：App 从 RenderBackend Ctx 裁剪出的 plugin-facing context
 - `InputEvent`：平台输入事件的引擎侧表示

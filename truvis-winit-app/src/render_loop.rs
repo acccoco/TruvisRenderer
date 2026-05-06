@@ -1,17 +1,17 @@
 //! 渲染线程主循环。
 //!
-//! 只通过公开 API 驱动 [`FrameApp`]。
+//! 只通过公开 API 驱动 [`RenderApp`]。
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use truvis_frame_api::frame_app::FrameApp;
+use truvis_frame_api::render_app::RenderApp;
 
 use crate::shared::{RenderInitMsg, SharedState, unpack_size};
 
 /// 渲染线程入口。
-pub fn render_loop(shared: Arc<SharedState>, init_msg: RenderInitMsg, mut app: Box<dyn FrameApp>) {
+pub fn render_loop(shared: Arc<SharedState>, init_msg: RenderInitMsg, mut app: Box<dyn RenderApp>) {
     tracy_client::set_thread_name!("RenderThread");
 
     let raw_display = init_msg.raw_display.0;

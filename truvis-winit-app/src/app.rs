@@ -10,7 +10,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Window, WindowId};
 
-use truvis_frame_api::frame_app::FrameApp;
+use truvis_frame_api::render_app::RenderApp;
 use truvis_frame_runtime::init_env;
 use truvis_path::TruvisPath;
 
@@ -20,13 +20,13 @@ use crate::winit_event_adapter::WinitEventAdapter;
 
 pub struct UserEvent;
 
-type FrameAppFactory = Box<dyn FnOnce() -> Box<dyn FrameApp> + Send + 'static>;
+type RenderAppFactory = Box<dyn FnOnce() -> Box<dyn RenderApp> + Send + 'static>;
 
 /// winit 主线程 app handler。
 pub struct WinitApp {
     window: Option<Window>,
     shared: Option<Arc<SharedState>>,
-    app_factory: Option<FrameAppFactory>,
+    app_factory: Option<RenderAppFactory>,
     render_thread: Option<JoinHandle<()>>,
 }
 
@@ -34,12 +34,12 @@ impl WinitApp {
     /// 主入口。`app_factory` 会在渲染线程上调用一次。
     pub fn run_app<F>(app_factory: F)
     where
-        F: FnOnce() -> Box<dyn FrameApp> + Send + 'static,
+        F: FnOnce() -> Box<dyn RenderApp> + Send + 'static,
     {
         Self::run_inner(Box::new(app_factory));
     }
 
-    fn run_inner(app_factory: FrameAppFactory) {
+    fn run_inner(app_factory: RenderAppFactory) {
         init_env();
 
         let event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event().build().unwrap();
