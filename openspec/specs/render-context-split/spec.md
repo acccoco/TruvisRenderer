@@ -1,22 +1,25 @@
 ## Purpose
 
 定义 `RenderContext` 在分层架构中的归属与依赖边界：完整上下文由 `truvis-render-backend` 持有，`truvis-render-graph` 保持为与 scene/asset 解耦的渲染编排层，避免跨层依赖回流。
-
 ## Requirements
-
 ### Requirement: RenderContext 定义在 truvis-render-backend 中
 
-`RenderContext` 和 `RenderContext2` 结构体 SHALL 定义在 `truvis-render-backend` crate 中（`truvis_render_backend::render_context` 模块），而非 `truvis-render-graph`。
+`RenderContext` 和 `RenderContext2` 结构体 SHALL 被删除。其职责由 `World`（定义在 `truvis-world`）和 `RenderWorld`（定义在 `truvis-render-interface`）接管。
 
-#### Scenario: RenderContext 从 truvis-render-backend 导入
+#### Scenario: RenderContext 不再存在
 
-- **WHEN** 任何 crate 需要使用 `RenderContext` 类型
-- **THEN** 该 crate SHALL 从 `truvis_render_backend::render_context::RenderContext` 导入
+- **WHEN** 搜索 workspace 中的 `struct RenderContext` 定义
+- **THEN** SHALL NOT 找到任何结果
 
-#### Scenario: RenderContext 保持原有字段
+#### Scenario: RenderContext2 不再存在
 
-- **WHEN** `RenderContext` 被搬迁到 truvis-render-backend
-- **THEN** 其所有字段（scene_manager、gpu_scene、asset_hub、fif_buffers、bindless_manager 等）SHALL 保持不变
+- **WHEN** 搜索 workspace 中的 `struct RenderContext2` 定义
+- **THEN** SHALL NOT 找到任何结果
+
+#### Scenario: 原 RenderContext 的字段被 World 和 RenderWorld 完整覆盖
+
+- **WHEN** 对比原 `RenderContext` 的字段列表与新 `World` + `RenderWorld` 的字段列表
+- **THEN** 原有全部字段 SHALL 在 `World` 或 `RenderWorld` 中存在，无遗漏
 
 ### Requirement: truvis-render-graph 不依赖 truvis-scene 和 truvis-asset
 
@@ -34,14 +37,9 @@
 
 ### Requirement: ComputePass::exec 接收具体参数而非 RenderContext
 
-`ComputePass::exec` 方法 SHALL 接收它实际使用的参数（`&FrameCounter` 和 `&GlobalDescriptorSets`），而非完整的 `&RenderContext`。
+`ComputePass::exec` SHALL 继续接收 `&FrameCounter` 和 `&GlobalDescriptorSets`，SHALL NOT 接收 `&RenderContext`（已被删除）或 `&RenderWorld`。
 
 #### Scenario: ComputePass::exec 签名只包含实际使用的类型
 
 - **WHEN** 查看 `ComputePass::exec` 的函数签名
-- **THEN** 参数列表中包含 `frame_counter: &FrameCounter` 和 `global_descriptor_sets: &GlobalDescriptorSets`，不包含 `render_context: &RenderContext`
-
-#### Scenario: ComputePass::exec 功能不变
-
-- **WHEN** 调用 `ComputePass::exec` 传入 frame_counter 和 global_descriptor_sets
-- **THEN** 行为与之前传入 `&RenderContext` 完全一致（绑定 pipeline、push constants、descriptor sets、dispatch）
+- **THEN** 参数列表中包含 `frame_counter: &FrameCounter` 和 `global_descriptor_sets: &GlobalDescriptorSets`，不包含 `render_context` 或 `render_world`

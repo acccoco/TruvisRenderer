@@ -1,82 +1,8 @@
 ## Purpose
 
-定义 runtime/plugin/passes 的能力边界与迁移收口条件，约束 `FramePlugin` typed contexts、`FrameRuntime` 单入口编排、crate 物理拆分以及兼容层下线标准，确保运行时语义可验证且不回退既有分层规范。
+定义 runtime/plugin/passes 的能力边界与迁移收口条件，约束 `FrameApp`、`FrameAppHooks`、`Plugin` typed contexts、`BaseApp` 单入口帧骨架、crate 物理拆分以及兼容层下线标准，确保运行时语义可验证且不回退既有分层规范。
 
 ## Requirements
-
-### Requirement: FramePlugin SHALL 通过 typed contexts 访问运行时能力
-
-`FramePlugin` SHALL 使用按阶段划分的上下文类型访问运行时能力，而非直接接收 `RenderBackend` 全量对象。
-
-#### Scenario: Hook 签名使用上下文类型
-
-- **WHEN** 定义或实现 `FramePlugin` 的 `init/build_ui/update/render/on_resize` hook
-- **THEN** 每个 hook SHALL 接收对应阶段的上下文对象（或等价的受控上下文）
-- **AND** hook 签名中 SHALL NOT 暴露完整 `RenderBackend` 作为通用参数
-
-#### Scenario: 上下文能力面受控
-
-- **WHEN** `FramePlugin` 需要读取帧状态、提交渲染命令、访问 UI 数据或 resize 信息
-- **THEN** SHALL 通过上下文公开的稳定接口完成
-- **AND** 插件代码 SHALL NOT 依赖 `RenderBackend` 内部字段布局
-
-### Requirement: FrameRuntime SHALL 成为帧编排单入口
-
-`FrameRuntime` SHALL 作为渲染线程中的唯一帧编排入口，外部调度方不得绕过 runtime 直接操作其内部状态。
-
-#### Scenario: render loop 仅通过 runtime API 驱动
-
-- **WHEN** 渲染线程主循环推进单帧
-- **THEN** 调度逻辑 SHALL 通过 runtime 的公开 API 完成（输入灌入、重建判定、单帧推进）
-- **AND** render loop SHALL NOT 直接读写 runtime 内部字段
-
-#### Scenario: 帧节流决策点唯一
-
-- **WHEN** 系统判定是否推进下一帧
-- **THEN** `time_to_render` 或等价节流判断 SHALL 仅在单一决策点执行
-- **AND** 不得在 loop 与 runtime 内重复判定导致语义分叉
-
-### Requirement: prepare 阶段职责 SHALL 由 FrameRuntime 唯一持有
-
-prepare 阶段的调度与执行顺序 SHALL 由 `FrameRuntime` 唯一持有；`FramePlugin` 不引入独立 prepare hook。
-
-#### Scenario: 插件契约不包含 prepare hook
-
-- **WHEN** 定义 `FramePlugin` 生命周期 hook
-- **THEN** 契约 SHALL 包含 `init/build_ui/update/render/on_resize/shutdown`（或语义等价集合）
-- **AND** SHALL NOT 暴露独立 `prepare` hook 造成职责分叉
-
-#### Scenario: prepare 在 render 前由 runtime 完成
-
-- **WHEN** 推进单帧执行
-- **THEN** `FrameRuntime` SHALL 在 `render` 前完成 prepare 阶段所需的 runtime/backend 工作
-- **AND** plugin 渲染入口仅消费 prepare 后的稳定输入
-
-### Requirement: Demo SHALL 迁移到上下文化插件契约
-
-四个官方 demo SHALL 完整迁移到 typed contexts 插件契约。
-
-#### Scenario: 四 demo 完成迁移
-
-- **WHEN** 运行 `triangle` / `rt-cornell` / `rt-sponza` / `shader-toy`
-- **THEN** 四者均 SHALL 通过新的上下文化 `FramePlugin` 路径接入 runtime
-- **AND** 不再依赖旧 `OuterApp` 兼容路径
-
-### Requirement: crate 边界 SHALL 映射为 runtime/api/passes 分层
-
-工程 SHALL 完成 runtime/api/passes 的物理拆分，以匹配职责边界。
-
-#### Scenario: app-api 与 frame-runtime 拆分
-
-- **WHEN** 完成 M4 里程碑
-- **THEN** 插件契约与上下文 SHALL 位于 `truvis-frame-api`
-- **AND** 帧编排实现 SHALL 位于 `truvis-frame-runtime`
-
-#### Scenario: render-passes 拆分
-
-- **WHEN** 完成 M5 里程碑
-- **THEN** 通用 pass 实现 SHALL 位于 `truvis-render-passes`
-- **AND** runtime crate SHALL NOT 继续承载通用 pass 逻辑
 
 ### Requirement: gui pass 分层 SHALL 与既有规范保持一致
 
@@ -147,3 +73,81 @@ prepare 阶段的调度与执行顺序 SHALL 由 `FrameRuntime` 唯一持有；`
 - **WHEN** 把模块从旧位置迁移到新 crate
 - **THEN** 旧路径 SHALL 通过 re-export/shim 转发到新实现，或在同里程碑内移除
 - **AND** SHALL NOT 复制一份独立逻辑并长期并行维护
+
+### Requirement: App SHALL 通过 Plugin 和 FrameAppHooks 访问运行时能力
+
+App（通过 `FrameAppHooks`）SHALL 在各 hook 中接收 RenderBackend 的 typed Ctx，并自主裁剪后传给 Plugin。Plugin SHALL 通过 `PluginInitCtx` / `PluginUpdateCtx` / `PluginRenderCtx` / `PluginResizeCtx` 访问能力。
+
+#### Scenario: App hook 接收 RenderBackend Ctx
+
+- **WHEN** `FrameAppHooks::update` 被 BaseApp 调用
+- **THEN** App 接收 `&mut RenderBackendUpdateCtx`，可从中构造 `PluginUpdateCtx` 传给 Plugin
+
+#### Scenario: Plugin 不直接接触 RenderBackend Ctx
+
+- **WHEN** Plugin 需要读取帧状态或提交渲染命令
+- **THEN** SHALL 通过 Plugin 层 Ctx（`PluginInitCtx` / `PluginUpdateCtx` / `PluginRenderCtx`）完成
+- **AND** Plugin 代码 SHALL NOT 依赖 `RenderBackendUpdateCtx` 或 `RenderBackendRenderCtx` 的具体字段布局
+
+### Requirement: BaseApp SHALL 作为帧编排单入口
+
+`BaseApp` SHALL 作为渲染线程中的帧骨架入口，render_loop 通过 `Box<dyn FrameApp>` 驱动帧推进。`FrameApp::run_frame` 内部通过 `BaseApp::run_frame` 执行骨架。
+
+#### Scenario: render loop 通过 FrameApp 驱动
+
+- **WHEN** 渲染线程主循环推进单帧
+- **THEN** 调度逻辑 SHALL 通过 `FrameApp::run_frame()` 完成
+- **AND** render_loop SHALL NOT 直接访问 RenderBackend 或 BaseApp
+
+#### Scenario: winit 入口表达 App 而非 Plugin
+
+- **WHEN** 外部启动 demo app
+- **THEN** SHALL 使用 `WinitApp::run_app(|| Box<dyn FrameApp>)` 或等价 App factory 入口
+- **AND** 新入口命名 SHALL NOT 暗示传入的是单一 `FramePlugin`
+
+#### Scenario: 帧节流决策点唯一
+
+- **WHEN** 系统判定是否推进下一帧
+- **THEN** render_loop SHALL 通过 `FrameApp::time_to_render()` 查询
+- **AND** App SHALL 委托给 `BaseApp::time_to_render()`（内部调 `RenderBackend::time_to_render()`）
+- **AND** 节流判断 SHALL 仅在此单一链路执行
+
+### Requirement: prepare 阶段职责 SHALL 由 BaseApp 帧骨架持有
+
+prepare 阶段的调度与执行 SHALL 由 `BaseApp::run_frame` 的帧骨架固定执行。Plugin 不引入独立 prepare hook。
+
+#### Scenario: Plugin 契约不包含 prepare hook
+
+- **WHEN** 定义 `Plugin` 生命周期 hook
+- **THEN** 契约 SHALL 包含 `init / on_input / update / on_resize / shutdown`
+- **AND** SHALL NOT 暴露独立 `prepare` hook
+
+#### Scenario: prepare 在 render 前由 BaseApp 骨架完成
+
+- **WHEN** BaseApp 执行帧骨架
+- **THEN** SHALL 在 `app.render()` 前调用 `render_backend.prepare(app.camera())`
+
+### Requirement: Demo SHALL 迁移到 FrameApp + Plugin 架构
+
+四个官方 demo SHALL 迁移为实现 `FrameApp` + `FrameAppHooks` 的 App struct，内部持有具体 Plugin。
+
+#### Scenario: 四 demo 完成迁移
+
+- **WHEN** 运行 `triangle` / `rt-cornell` / `rt-sponza` / `shader-toy`
+- **THEN** 四者均 SHALL 实现 `FrameApp` + `FrameAppHooks` trait
+- **AND** 各 app 内部 SHALL 持有 `GuiPlugin` 和对应的渲染 Plugin
+
+### Requirement: crate 边界 SHALL 反映新架构
+
+- `truvis-frame-api`：SHALL 定义 `Plugin` trait、`FrameApp` trait、`FrameAppHooks` trait 和所有 Plugin Ctx 类型
+- `truvis-frame-runtime`：SHALL 定义 `BaseApp` struct 和帧骨架实现
+
+#### Scenario: Plugin trait 和 App trait 在 frame-api 中
+
+- **WHEN** 外部 crate 需要实现 Plugin 或 FrameApp
+- **THEN** SHALL 从 `truvis-frame-api` 导入相关 trait 和 Ctx 类型
+
+#### Scenario: BaseApp 在 frame-runtime 中
+
+- **WHEN** App 需要使用帧骨架
+- **THEN** SHALL 从 `truvis-frame-runtime` 导入 `BaseApp`

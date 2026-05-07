@@ -1,107 +1,86 @@
 ## Purpose
 
-定义主框架帧编排语义（`FrameRuntime`）、应用扩展契约（`FramePlugin`）、显式 phase 编排与 `RenderBackend` 后端职责边界，以及默认 overlay 注册方式与旧 API 兼容收口条件，使 runtime 与 GPU backend 分工可被契约化验证，并与 `render-threading` 既有线程与关闭语义保持兼容。
+定义主框架帧骨架语义（`BaseApp`）、App hook 编排契约、`RenderBackend` lifecycle Ctx 边界，以及旧 API 兼容收口条件，使 App/BaseApp/GPU backend 分工可被契约化验证，并与 `render-threading` 既有线程与关闭语义保持兼容。
 
 ## Requirements
-
-### Requirement: 帧编排类型语义明确为 FrameRuntime
-
-主框架中的帧编排入口 SHALL 以 `FrameRuntime` 语义暴露（位于 `truvis-frame-runtime`），并承担阶段调度职责。
-
-#### Scenario: 帧编排入口唯一
-
-- **WHEN** 调用方引入应用帧编排入口
-- **THEN** SHALL 通过 `truvis_frame_runtime::FrameRuntime` 访问
-- **AND** `truvis-app` 可提供 re-export 转发以简化导入路径
-
-### Requirement: 应用扩展点升级为 FramePlugin（单 trait 多 hook）
-
-应用侧扩展契约 SHALL 采用 `FramePlugin` 单 trait 的多阶段 hook 形式（定义在 `truvis-frame-api`），每个 hook 接收对应阶段的 typed context。
-
-#### Scenario: 新插件契约覆盖现有生命周期
-
-- **WHEN** 应用实现 `FramePlugin`
-- **THEN** SHALL 能表达初始化、更新、UI 构建、渲染相关 hook
-- **AND** 框架 SHALL 按既定阶段顺序调用这些 hook
-
-#### Scenario: Hook 顺序定义与实现保持一致
-
-- **WHEN** `FrameRuntime` 文档化每帧内的 `FramePlugin` hook 调用顺序
-- **THEN** spec、代码注释与实际调用顺序 SHALL 保持一致
-- **AND** 同一 phase 内的子顺序（例如 `build_ui` 与 `update`）SHALL 被明确说明，避免契约歧义
-- **AND** 在当前过渡实现中，`phase_update` 内 SHALL 先调用 `build_ui`，再调用 `update`
-
-#### Scenario: 插件契约覆盖 resize 与关闭语义
-
-- **WHEN** 应用需要在窗口尺寸变化后重建依赖 swapchain 的资源
-- **THEN** `FramePlugin::on_resize` SHALL 在 swapchain 重建完成后、下一帧渲染提交前被调用
-- **AND** `FramePlugin::shutdown` SHALL 在 runtime 销毁前被调用
-
-### Requirement: FrameRuntime SHALL 采用显式 phase 编排
-
-`FrameRuntime` SHALL 以显式阶段函数组织每帧执行流程（至少包含 input/update/prepare/render/present），以替代单体更新函数的隐式边界。
-
-#### Scenario: 阶段顺序稳定
-
-- **WHEN** 运行任意一帧
-- **THEN** input/update/prepare/render/present 阶段 SHALL 按固定顺序执行
-- **AND** GUI、resize、present 的时序 SHALL 与现有行为保持等价
-
-#### Scenario: 每帧阶段执行次数可预测
-
-- **WHEN** 单帧渲染流程被执行
-- **THEN** 每个 phase SHALL 在该帧内至多执行一次
-- **AND** resize/out-of-date 重建路径 SHALL 与 phase 编排共享单一入口
-- **AND** 线程关闭握手语义 SHALL 与 `render-threading` 既有规范保持兼容
-
-#### Scenario: 重建触发条件覆盖 resize 与 out-of-date
-
-- **WHEN** 渲染线程处理单帧前的 swapchain 重建判定
-- **THEN** 在「窗口尺寸变化」或「backend 报告 need_resize（含 out-of-date/suboptimal）」任一条件成立时 SHALL 触发重建
-- **AND** 重建 SHALL 仅通过 runtime 的单一入口执行，不得在其他 phase 中引入分叉重建流程
-- **AND** 重建成功后 SHALL 在下一次渲染提交前调用 `FramePlugin::on_resize`
 
 ### Requirement: RenderBackend SHALL 收敛为 backend 职责
 
 `RenderBackend` SHALL 聚焦 GPU backend 能力（device/swapchain/cmd/sync/submit/present），不得继续承载 scene/asset 侧 world 更新调度职责。
 
-#### Scenario: world 更新由 runtime 驱动
+#### Scenario: world 更新由 App/BaseApp 驱动
 
 - **WHEN** 发生 scene/asset 相关更新推进
-- **THEN** 调度入口 SHALL 位于 `FrameRuntime` 的相应 phase
+- **THEN** 调度入口 SHALL 位于 App hook 或 `BaseApp` 帧骨架的相应 phase
 - **AND** `RenderBackend` SHALL 仅消费已准备好的渲染输入并执行 GPU 提交
-
-### Requirement: Runtime 与 RenderBackend 的职责边界 SHALL 可被契约化验证
-
-`FrameRuntime` 与 `RenderBackend` 之间 SHALL 通过稳定的上下文/接口边界协作，避免应用层直接依赖 backend 内部可变实现细节。
-
-#### Scenario: FramePlugin 通过 typed contexts 访问能力
-
-- **WHEN** `FramePlugin` 在各阶段读取或修改渲染相关状态
-- **THEN** SHALL 通过对应阶段的 typed context（`InitCtx` / `UpdateCtx` / `RenderCtx` / `ResizeCtx`）完成
-- **AND** 不得将 `RenderBackend` 的内部字段布局视为稳定 API
-
-#### Scenario: RenderBackend 不再主动推进应用 world 生命周期
-
-- **WHEN** 触发 asset/scene/world 的 CPU 侧更新决策
-- **THEN** 决策与调度 SHALL 发生在 runtime/plugin 侧
-- **AND** `RenderBackend` SHALL 仅执行 backend 数据上传与 GPU 执行步骤
-
-### Requirement: 默认 overlay SHALL 可注册而非硬编码
-
-默认调试/信息 overlay SHALL 通过可注册模块接入 runtime，而非固定写在核心编排路径中。
-
-#### Scenario: 可替换默认 overlay
-
-- **WHEN** 应用选择禁用或替换默认 overlay
-- **THEN** SHALL 可以在不修改 `FrameRuntime` 核心流程的前提下完成
-- **AND** 默认示例应用的用户体验 SHALL 保持不回归
 
 ### Requirement: 旧兼容接口已下线
 
-`OuterApp` / `LegacyOuterAppAdapter` / `RenderApp` trait / `WinitApp::run` 已移除。四个 demo 全部通过 `FramePlugin` typed contexts 接入。
+`OuterApp` / `LegacyOuterAppAdapter` / `RenderApp` trait / `WinitApp::run` SHALL 保持移除状态。四个 demo SHALL 全部通过当前帧应用入口接入，不得恢复旧兼容层。
 
 #### Scenario: 兼容层已完成收口
 
-- **GIVEN** `triangle`、`rt-cornell`、`rt-sponza`、`shader-toy` 已迁移到 `FrameRuntime` + `FramePlugin`
+- **GIVEN** `triangle`、`rt-cornell`、`rt-sponza`、`shader-toy` 已迁移到 `BaseApp` + `FrameApp` + `Plugin`
 - **THEN** 旧接口已移除，`truvis-app` 中仅保留 re-export shim 简化导入路径
+
+### Requirement: 帧编排类型语义明确为 BaseApp
+
+主框架中的帧编排入口 SHALL 以 `BaseApp` 语义暴露（位于 `truvis-frame-runtime`），承担不变的帧骨架执行职责。`FrameRuntime` 被 `BaseApp` 替代。
+
+#### Scenario: 帧编排入口为 BaseApp
+
+- **WHEN** 调用方需要帧编排基础设施
+- **THEN** SHALL 通过 `truvis_frame_runtime::BaseApp` 访问
+- **AND** `BaseApp` SHALL NOT 持有 Plugin、Camera、GUI context 等 app 特定状态
+
+### Requirement: BaseApp SHALL 采用 hook 回调编排取代直接 plugin 调用
+
+`BaseApp` SHALL 通过 `FrameAppHooks` trait 在帧骨架的变化点回调 App，而非直接调用 `FramePlugin` 的 hook。
+
+#### Scenario: 阶段顺序稳定
+
+- **WHEN** 运行任意一帧
+- **THEN** begin_frame / on_input / update / prepare / render / present / end_frame 阶段 SHALL 按固定顺序执行
+
+#### Scenario: 每帧阶段执行次数可预测
+
+- **WHEN** 单帧渲染流程被执行
+- **THEN** 每个 phase SHALL 在该帧内至多执行一次
+
+### Requirement: BaseApp SHALL 不包含 GUI 编排逻辑
+
+`BaseApp` SHALL NOT 包含 imgui context 管理、GUI font 注册、GUI data submit 或 GUI compile 等逻辑。这些职责 SHALL 由 `GuiPlugin` 承担，由 App 在 hook 中编排。
+
+#### Scenario: BaseApp 源码无 imgui 依赖
+
+- **WHEN** 检查 `BaseApp` 的源码和 crate 依赖
+- **THEN** SHALL NOT 存在对 `imgui`、`GuiHost`、`GuiBackend` 的引用
+
+#### Scenario: GUI 编排由 App hook 完成
+
+- **WHEN** 需要在帧中进行 GUI 编排
+- **THEN** 相关调用 SHALL 出现在 App 的 `FrameAppHooks::update` 和 `FrameAppHooks::render` 实现中
+
+### Requirement: RenderBackend lifecycle Ctx SHALL 保持 App 裁剪入口
+
+`RenderBackend` SHALL 继续通过 lifecycle methods 产出 `RenderBackendInitCtx` / `RenderBackendUpdateCtx` / `RenderBackendRenderCtx` / `RenderBackendResizeCtx`。本 change SHALL NOT 迁移 `World`、`AssetHub` 或 `RenderWorld` 的所有权；App 通过 RenderBackend Ctx 裁剪出 Plugin Ctx。
+
+#### Scenario: RenderBackend Ctx 仍是 Plugin Ctx 的来源
+
+- **WHEN** `FrameAppHooks::update` 或 `FrameAppHooks::render` 被调用
+- **THEN** App SHALL 从对应 RenderBackend Ctx 构造 Plugin 层 Ctx
+- **AND** RenderBackend SHALL NOT 依赖 `FrameApp`、`Plugin`、`GuiPlugin` 或任何 App 具体类型
+
+### Requirement: Camera SHALL 由 App 持有
+
+Camera 和 CameraController SHALL 由 App 持有，而非 BaseApp。BaseApp 通过 `FrameAppHooks::camera()` 在 prepare 阶段获取 camera 引用。
+
+#### Scenario: BaseApp 不持有 Camera
+
+- **WHEN** 检查 `BaseApp` 的字段
+- **THEN** SHALL NOT 包含 `Camera` 或 `CameraController` 字段
+
+#### Scenario: prepare 阶段通过 hook 获取 camera
+
+- **WHEN** BaseApp 执行 prepare 阶段
+- **THEN** SHALL 调用 `app.camera()` 获取 camera 引用传给 `render_backend.prepare(camera)`

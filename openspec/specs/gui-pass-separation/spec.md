@@ -6,40 +6,28 @@
 
 ### Requirement: GuiRgPass 定义在 truvis-app 中
 
-`GuiRgPass` 结构体及其 `impl RgPass` SHALL 定义在 `truvis-app` crate 中，而非 `truvis-gui-backend`。
+GUI render-graph adapter SHALL move from demo app code into `GuiPlugin`'s upper integration crate (`truvis-gui-plugin` or equivalent). It SHALL NOT move into low-level `truvis-gui-backend`.
 
-#### Scenario: GuiRgPass 从 truvis-app 导入
+#### Scenario: GuiRgPass hidden behind GuiPlugin
 
-- **WHEN** 需要在 render graph 中注册 ImGui pass
-- **THEN** SHALL 从 `truvis-app` 中的模块导入 `GuiRgPass`
+- **WHEN** App needs GUI rendering
+- **THEN** App SHALL call `GuiPlugin::contribute_passes`
+- **AND** App SHALL NOT manually construct `GuiRgPass`
 
-#### Scenario: GuiRgPass 功能不变
+#### Scenario: GUI render graph adapter has upper-layer ownership
 
-- **WHEN** `GuiRgPass` 被注册为 render graph pass
-- **THEN** 其 `setup` 方法正确声明 canvas_color 为 COLOR_ATTACHMENT_READ_WRITE，其 `execute` 方法正确调用 `GuiPass::draw` 完成 ImGui 渲染
-
-### Requirement: truvis-gui-backend 不依赖 truvis-render-graph
-
-`truvis-gui-backend` 的 `Cargo.toml` 中 SHALL NOT 包含对 `truvis-render-graph` 的依赖。
-
-#### Scenario: gui-backend Cargo.toml 无 render-graph 依赖
-
-- **WHEN** 检查 `engine/crates/truvis-gui-backend/Cargo.toml`
-- **THEN** 不存在 `truvis-render-graph` 依赖项
-
-#### Scenario: gui-backend 编译不依赖 render-graph
-
-- **WHEN** 运行 `cargo check -p truvis-gui-backend`
-- **THEN** 编译成功且不拉入 truvis-render-graph
+- **WHEN** checking crate ownership
+- **THEN** render graph adapter code SHALL live in `truvis-gui-plugin` or an equivalent upper integration crate
+- **AND** it SHALL NOT live in `truvis-gui-backend`
 
 ### Requirement: GuiPass 保留在 truvis-gui-backend 中
 
-纯 Vulkan 录制的 `GuiPass` 结构体 SHALL 继续定义在 `truvis-gui-backend::gui_pass` 模块中。
+`GuiPass` SHALL remain in `truvis-gui-backend` as the low-level Vulkan command recording component used by the upper `GuiPlugin` integration.
 
-#### Scenario: GuiPass 不受搬迁影响
+#### Scenario: GuiPlugin reuses GuiPass
 
-- **WHEN** 其他 crate 需要使用 ImGui Vulkan 渲染能力
-- **THEN** SHALL 从 `truvis_gui_backend::gui_pass::GuiPass` 导入，API 不变
+- **WHEN** `GuiPlugin` records GUI rendering through RenderGraph
+- **THEN** the low-level draw recording SHALL reuse `truvis_gui_backend::gui_pass::GuiPass` or its equivalent backend component
 
 ### Requirement: truvis-logs 无未使用依赖
 
@@ -54,3 +42,17 @@
 
 - **WHEN** 运行 `cargo check -p truvis-logs`
 - **THEN** 编译成功
+
+### Requirement: truvis-gui-backend 不依赖 truvis-render-graph
+
+`truvis-gui-backend` SHALL remain independent from `truvis-render-graph`. The new `GuiPlugin` integration crate MAY depend on both `truvis-gui-backend` and `truvis-render-graph` to bridge the two.
+
+#### Scenario: Low-level backend stays graph-free
+
+- **WHEN** checking `truvis-gui-backend` dependencies
+- **THEN** there is no dependency on `truvis-render-graph`
+
+#### Scenario: Integration crate bridges GUI backend to RenderGraph
+
+- **WHEN** checking `truvis-gui-plugin` or equivalent
+- **THEN** it MAY depend on `truvis-gui-backend`, `truvis-render-graph`, and `truvis-frame-api`

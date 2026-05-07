@@ -1,40 +1,22 @@
 ## Purpose
 
 定义渲染循环的线程归属、主线程与渲染线程之间的通信契约（事件通道、resize 共享状态、退出握手），以及跨线程生命周期顺序（Vulkan 对象与 winit `Window` 的销毁先后），使渲染节奏与 winit 事件泵解耦并保证资源安全。
-
 ## Requirements
-
 ### Requirement: 渲染循环运行于独立线程
 
-渲染循环 SHALL 在独立于 winit 主线程的 OS 线程中执行。winit 主线程仅负责 window 生命周期与事件 pump，不得直接调用 `FrameRuntime::run_frame` 或任何 Vulkan API。
+渲染循环 SHALL 继续运行于独立于 winit 主线程的 OS 线程。渲染线程内部 SHALL 持有 `Box<dyn FrameApp>`，并通过 `FrameApp` API 驱动 App；不得再创建或调用 `FrameRuntime`。
 
-#### Scenario: 进程启动
+#### Scenario: App factory 创建 FrameApp
 
-- **WHEN** `WinitApp::run_plugin`（或兼容入口 `WinitApp::run`）被调用
-- **THEN** 主线程创建 winit `EventLoop`；在 `resumed` 回调中创建 `Window` 后，spawn 一条渲染线程并传递 window handles
-- **AND** 渲染线程内部完成 `Gfx::init` / `RenderBackend::new` / `init_after_window`
-- **AND** 主线程后续仅执行事件 pump 与退出握手
+- **WHEN** `WinitApp::run_app`（或等价入口）被调用
+- **THEN** winit 主线程创建窗口后 SHALL 将 raw handles 和 App factory 交给渲染线程
+- **AND** 渲染线程 SHALL 创建 `Box<dyn FrameApp>` 并调用 `FrameApp::init_after_window`
 
-#### Scenario: 每帧渲染由渲染线程自主驱动
+#### Scenario: 渲染线程推进 FrameApp
 
-- **WHEN** 渲染线程处于主循环中
-- **THEN** 渲染线程 SHALL 自行决定何时推进帧（通过 `RenderBackend::time_to_render()` 或等价机制），不依赖 winit 的 `RedrawRequested` 事件
-- **AND** 主线程 SHALL NOT 再调用 `Window::request_redraw`
-
-### Requirement: 事件通过 crossbeam-channel 传递
-
-主线程 SHALL 把 winit `WindowEvent` 翻译为 `InputEvent` 后，通过 `crossbeam-channel` 的 unbounded 通道投递给渲染线程。
-
-#### Scenario: 普通输入事件
-
-- **WHEN** winit 在主线程上发出 `KeyboardInput` / `MouseInput` / `MouseMotion` 等事件
-- **THEN** 主线程 SHALL 翻译为 `InputEvent` 并非阻塞地 `send` 到事件通道
-- **AND** 渲染线程 SHALL 在每轮主循环开头一次性 drain 通道中所有事件，灌入 `InputManager`
-
-#### Scenario: 通道满载不阻塞主线程
-
-- **WHEN** 渲染线程因任何原因长时间未消费事件
-- **THEN** 主线程 `send` SHALL 仍然立即返回，不阻塞 winit event loop
+- **WHEN** 渲染线程需要推进一帧
+- **THEN** SHALL 调用 `FrameApp::time_to_render` 和 `FrameApp::run_frame`
+- **AND** SHALL NOT 直接访问 RenderBackend、BaseApp 或 App 内部字段
 
 ### Requirement: Resize 通过 AtomicU64 共享最新尺寸
 
@@ -58,42 +40,24 @@
 
 ### Requirement: 二阶段关闭握手
 
-进程关闭流程 SHALL 保证 winit `Window` 的销毁发生在所有 Vulkan 资源（特别是 `VkSurfaceKHR`）销毁之后。
+关闭流程 SHALL 保持主线程与渲染线程二阶段握手。渲染线程观察到退出信号后 SHALL 调用 `FrameApp::shutdown(&mut self)`，由 App 关闭 Plugin 并销毁 BaseApp/RenderBackend/Gfx。
 
-#### Scenario: 用户关闭窗口
+#### Scenario: App owns shutdown sequencing
 
-- **WHEN** 主线程收到 `WindowEvent::CloseRequested`
-- **THEN** 主线程 SHALL 设置共享状态的 `exit` 标志，且 SHALL NOT 在该回调中调用 `event_loop.exit()`
-- **AND** 主线程 SHALL 继续 pump winit 事件
-
-#### Scenario: 渲染线程响应退出
-
-- **WHEN** 渲染线程在下一轮循环开头观察到 `exit` 标志为 true
-- **THEN** 渲染线程 SHALL 跳出主循环
-- **AND** SHALL 依次执行 `Gfx::wait_idle` → 销毁所有 Vulkan 资源
-- **AND** SHALL 在所有销毁完成后置位共享状态的 `render_finished` 标志
-
-#### Scenario: 主线程触发 event loop 退出
-
-- **WHEN** 主线程在 `about_to_wait` 回调中观察到 `render_finished` 为 true
-- **THEN** 主线程 SHALL 调用 `event_loop.exit()`
-- **AND** 在 `run_app` 返回后 SHALL `join` 渲染线程，然后才允许 `Window` drop
-
-#### Scenario: 渲染线程 panic
-
-- **WHEN** 渲染线程的循环体发生 panic
-- **THEN** panic SHALL 被 `catch_unwind` 捕获
-- **AND** 渲染线程 SHALL 仍然置位 `exit` 与 `render_finished`
-- **AND** 主线程 `join` 时 SHALL 通过 `panic::resume_unwind` 重新抛出原始 panic payload
+- **WHEN** 渲染线程准备退出
+- **THEN** SHALL 调用 `app.shutdown()`
+- **AND** App SHALL 先 shutdown Plugin，再 destroy BaseApp
+- **AND** 主线程仍 SHALL 等待渲染线程完成后再 drop Window
 
 ### Requirement: Vulkan 资源严格线程局部
 
-所有 Vulkan 对象（`Gfx`、`RenderBackend`、`VkSurfaceKHR`、swapchain、command buffer、fence、semaphore 等）SHALL 仅在渲染线程中创建、使用和销毁。主线程 SHALL NOT 直接调用任何 `ash` / `truvis-gfx` API。
+所有 Vulkan 对象（`Gfx` root owner、`RenderBackend`、`VkSurfaceKHR`、swapchain、command buffer、fence、semaphore 等）SHALL 仅在渲染线程中创建、使用和销毁。主线程 SHALL NOT 直接调用任何 `ash` / `truvis-gfx` API。
 
 #### Scenario: Vulkan 初始化位置
 
-- **WHEN** `Gfx::init` / `RenderBackend::new` / `RenderBackend::init_after_window` 被调用
+- **WHEN** `RenderBackend::new` / `RenderBackend::init_after_window` 被调用
 - **THEN** 调用 SHALL 发生在渲染线程中
+- **AND** `Gfx` root owner SHALL 在渲染线程内由 `RenderBackend` 构造和持有
 - **AND** 主线程仅负责把 `RawDisplayHandle` / `RawWindowHandle` / 初始尺寸通过通道投递给渲染线程
 
 #### Scenario: RawWindowHandle 跨线程
@@ -111,3 +75,38 @@
 - **WHEN** 渲染线程启动
 - **THEN** SHALL 调用 `tracy_client::set_thread_name!("RenderThread")`
 - **AND** 线程在操作系统层面的名称 SHALL 被设置为 `"RenderThread"` 或等价标识
+
+### Requirement: App and plugin GPU resources SHALL be released before Gfx teardown
+
+During render-thread shutdown, app-owned and plugin-owned GPU resources SHALL be released on the render thread before `RenderBackend` is destroyed and before `Gfx::destroy()` is called. After `Gfx::destroy()` begins, no remaining app/plugin resource `Drop` implementation may call `Gfx::get()` or any Vulkan/VMA destruction API through the project wrappers.
+
+#### Scenario: Render thread shuts down app-owned plugins
+
+- **WHEN** the render loop observes the exit flag and calls `RenderApp::shutdown`
+- **THEN** the app hooks and standard plugin shutdown traversal SHALL receive typed shutdown context where manager-owned resources need backend manager access
+- **AND** they SHALL release all app/plugin-owned GPU resources while `Gfx` and `RenderBackend` are still alive
+- **AND** `RenderBackend::destroy()` SHALL run only after that release phase
+- **AND** `Gfx::destroy()` SHALL run only after `RenderBackend::destroy()` completes
+
+#### Scenario: Plugin releases manager-owned resources
+
+- **WHEN** a plugin owns bindless registrations or handles to resources stored in `GfxResourceManager`
+- **THEN** `Plugin::shutdown` or the equivalent typed shutdown traversal SHALL expose the required `RenderWorld` manager access
+- **AND** the plugin SHALL unregister bindless references before destroying the associated manager-owned images or views
+- **AND** the manager SHALL perform image-view-before-image destruction ordering
+
+#### Scenario: App value drops after Gfx teardown
+
+- **WHEN** the concrete app value is later dropped by Rust after `RenderApp::shutdown` has returned
+- **THEN** no remaining app/plugin field drop SHALL require `Gfx::get()`
+- **AND** debug builds SHALL surface a lifecycle violation if an app/plugin GPU owner was not released during shutdown
+
+### Requirement: 事件通过 crossbeam-channel 传递
+
+事件仍 SHALL 通过 crossbeam-channel 从 winit 主线程传递到渲染线程。渲染线程 SHALL 将事件推入 `FrameApp::push_input_event`，由 App/BaseApp 在下一帧输入 hook 中处理。
+
+#### Scenario: 输入事件交给 FrameApp
+
+- **WHEN** 渲染线程从 channel drain 到 `InputEvent`
+- **THEN** SHALL 调用 `app.push_input_event(event)`
+- **AND** SHALL NOT 调用 FrameRuntime API
