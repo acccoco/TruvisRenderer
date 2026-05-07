@@ -20,18 +20,19 @@ pub fn init_log() {
                 _ => buf.default_level_style(record.level()),
             };
             let grey_style = info_style.fg_color(Some(anstyle::Color::Rgb(anstyle::RgbColor(110, 110, 110))));
-            let black_style = info_style.fg_color(Some(anstyle::Color::Rgb(anstyle::RgbColor(75, 75, 75))));
+            let _black_style = info_style.fg_color(Some(anstyle::Color::Rgb(anstyle::RgbColor(75, 75, 75))));
 
             let line = record.line().unwrap_or(!0);
-            let file = record.file().unwrap_or("").split("\\").last().unwrap_or("");
+            let file = record.file().unwrap_or("");
+            let _file_name = file.split("\\").last().unwrap_or("");
             let time = chrono::Local::now().format("%H:%M:%S");
             let level = record.level();
-            // let module = record.module_path().unwrap_or("");
+            let module = record.module_path().unwrap_or("");
 
             writeln!(
                 buf,
-                "{level_style}[{time}] {level}{level_style:#} {grey_style}[{file}:{line}]{grey_style:#} \
-                 {black_style}{}{black_style:#}",
+                "{level_style}[{time}] {level} {}{level_style:#}\n\
+                \t {grey_style}In {module} At {file}:{line}{grey_style:#}",
                 record.args()
             )
         })
