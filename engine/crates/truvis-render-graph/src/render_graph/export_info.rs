@@ -11,23 +11,3 @@ pub struct RgExportInfo {
     /// 可选的信号 semaphore
     pub signal_semaphore: Option<RgSemaphoreInfo>,
 }
-
-impl RgExportInfo {
-    /// 创建导出信息（无 semaphore）
-    #[inline]
-    pub fn new(final_state: RgImageState) -> Self {
-        Self {
-            final_state,
-            signal_semaphore: None,
-        }
-    }
-
-    /// 创建导出信息（带 semaphore）
-    #[inline]
-    pub fn with_signal(final_state: RgImageState, signal_semaphore: RgSemaphoreInfo) -> Self {
-        Self {
-            final_state,
-            signal_semaphore: Some(signal_semaphore),
-        }
-    }
-}

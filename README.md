@@ -8,7 +8,7 @@
 ## 项目亮点
 
 - 光线追踪：支持 Cornell Box 与 Sponza 等典型场景
-- RenderGraph：声明式资源依赖与自动同步管理
+- RenderGraph：按 pass 添加顺序录制，并基于 image 声明自动同步
 - Slang 工具链：自动编译 shader 并生成 Rust 绑定
 - Bindless 渲染：统一资源访问模型，降低绑定切换开销
 - ImGui 集成：便于实时调试和参数调整

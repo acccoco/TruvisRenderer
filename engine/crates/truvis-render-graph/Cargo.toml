@@ -22,4 +22,3 @@ log = { workspace = true }
 bytemuck = { workspace = true }
 slotmap = { workspace = true }
 tracy-client = { workspace = true }
-petgraph = { workspace = true }

@@ -11,9 +11,4 @@ new_key_type! {
     /// 用于在 RenderGraph 构建阶段引用图像资源。
     /// 基于 slotmap 实现，自带版本验证机制。
     pub struct RgImageHandle;
-
-    /// Graph 内部的 Buffer 句柄
-    ///
-    /// 用于在 RenderGraph 构建阶段引用缓冲区资源。
-    pub struct RgBufferHandle;
 }

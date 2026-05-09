@@ -12,17 +12,16 @@ use slotmap::SecondaryMap;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::submit_info::GfxSubmitInfo;
 use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
-use truvis_render_interface::handles::{GfxBufferHandle, GfxImageHandle, GfxImageViewHandle};
+use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
 
-use crate::render_graph::barrier::{BufferBarrierDesc, PassBarriers, RgImageBarrierDesc};
+use crate::render_graph::barrier::{PassBarriers, RgImageBarrierDesc};
 use crate::render_graph::export_info::RgExportInfo;
-use crate::render_graph::graph::DependencyGraph;
+use crate::render_graph::image_resource::RgImageResource;
 use crate::render_graph::pass::{RgLambdaPassWrapper, RgPass, RgPassBuilder, RgPassContext, RgPassNode, RgPassWrapper};
-use crate::render_graph::resource_handle::{RgBufferHandle, RgImageHandle};
+use crate::render_graph::resource_handle::RgImageHandle;
 use crate::render_graph::resource_manager::RgResourceManager;
-use crate::render_graph::resource_state::{RgBufferState, RgImageState};
+use crate::render_graph::resource_state::RgImageState;
 use crate::render_graph::semaphore_info::RgSemaphoreInfo;
-use crate::render_graph::{RgBufferDesc, RgBufferResource, RgImageDesc, RgImageResource};
 
 /// RenderGraph 构建器
 ///
@@ -133,24 +132,6 @@ impl<'a> RenderGraphBuilder<'a> {
         self
     }
 
-    /// 导入外部缓冲区资源
-    pub fn import_buffer(
-        &mut self,
-        name: impl Into<String>,
-        buffer_handle: GfxBufferHandle,
-        initial_state: RgBufferState,
-    ) -> RgBufferHandle {
-        self.resources.register_buffer(RgBufferResource::imported(name, buffer_handle, initial_state))
-    }
-
-    pub fn create_image(&mut self, name: impl Into<String>, desc: RgImageDesc) -> RgImageHandle {
-        self.resources.register_image(RgImageResource::transient(name, desc))
-    }
-
-    pub fn create_buffer(&mut self, name: impl Into<String>, desc: RgBufferDesc) -> RgBufferHandle {
-        self.resources.register_buffer(RgBufferResource::transient(name, desc))
-    }
-
     pub fn signal_semaphore(&mut self, semaphore: RgSemaphoreInfo) -> &mut Self {
         self.signal_semaphores.push(semaphore);
         self
@@ -172,8 +153,6 @@ impl<'a> RenderGraphBuilder<'a> {
             name: name.clone(),
             image_reads: Vec::new(),
             image_writes: Vec::new(),
-            buffer_reads: Vec::new(),
-            buffer_writes: Vec::new(),
         };
 
         // 调用 Pass 的 setup 方法
@@ -184,8 +163,6 @@ impl<'a> RenderGraphBuilder<'a> {
             name,
             image_reads: builder.image_reads,
             image_writes: builder.image_writes,
-            buffer_reads: builder.buffer_reads,
-            buffer_writes: builder.buffer_writes,
             executor: Box::new(RgPassWrapper { pass }),
         };
 
@@ -207,33 +184,16 @@ impl<'a> RenderGraphBuilder<'a> {
 impl<'a> RenderGraphBuilder<'a> {
     /// 编译渲染图
     ///
-    /// 执行依赖分析、拓扑排序、barrier 计算。
+    /// 固定 pass 插入顺序并计算每个 pass 前需要的 barrier。
     ///
     /// # 返回
     /// 编译后的 `CompiledGraph`，可以多次执行
     ///
-    /// # Panics
-    /// 如果检测到循环依赖
     pub fn compile(mut self) -> CompiledGraph<'a> {
         let _span = tracy_client::span!("RenderGraphBuilder::compile");
 
         let pass_count = self.passes.len();
-
-        // 收集每个 Pass 的读写资源句柄
-        let image_reads = self.passes.iter().map(|p| p.image_reads.iter().map(|s| s.0).collect_vec()).collect_vec();
-        let image_writes = self.passes.iter().map(|p| p.image_writes.iter().map(|s| s.0).collect_vec()).collect_vec();
-        let buffer_reads = self.passes.iter().map(|p| p.buffer_reads.iter().map(|s| s.0).collect_vec()).collect_vec();
-        let buffer_writes = self.passes.iter().map(|p| p.buffer_writes.iter().map(|s| s.0).collect_vec()).collect_vec();
-
-        // 依赖分析
-        let dep_graph =
-            DependencyGraph::analyze(pass_count, &image_reads, &image_writes, &buffer_reads, &buffer_writes);
-
-        // 拓扑排序
-        let execution_order = dep_graph.topological_sort().unwrap_or_else(|cycle| {
-            let cycle_names: Vec<_> = cycle.iter().map(|&i| &self.passes[i].name).collect();
-            panic!("RenderGraph: Cycle detected involving passes: {:?}", cycle_names);
-        });
+        let execution_order = (0..pass_count).collect_vec();
 
         // 计算每个 Pass 的 barriers（同时返回最终的资源状态用于计算 epilogue barriers）
         let (barriers, final_image_states) = self.compute_barriers(&execution_order);
@@ -254,7 +214,6 @@ impl<'a> RenderGraphBuilder<'a> {
             execution_order,
             barriers,
             epilogue_barriers,
-            dep_graph,
             wait_semaphores,
             signal_semaphores,
         }
@@ -303,14 +262,10 @@ impl<'a> RenderGraphBuilder<'a> {
 
         // 跟踪每个资源的当前状态 (使用 SecondaryMap)
         let mut image_states: SecondaryMap<RgImageHandle, RgImageState> = SecondaryMap::new();
-        let mut buffer_states: SecondaryMap<RgBufferHandle, RgBufferState> = SecondaryMap::new();
 
         // 初始化状态
         for (handle, res) in self.resources.iter_images() {
             image_states.insert(handle, res.current_state);
-        }
-        for (handle, res) in self.resources.iter_buffers() {
-            buffer_states.insert(handle, res.current_state);
         }
 
         let get_image_aspect = |handle: RgImageHandle| {
@@ -345,36 +300,26 @@ impl<'a> RenderGraphBuilder<'a> {
                         RgImageBarrierDesc::new(handle, crt_state, required_state).with_aspect(aspect),
                     );
 
-                    // 如果是写入或 layout 改变，更新状态
-                    if is_write || crt_state.layout != required_state.layout {
-                        image_states.insert(handle, required_state);
-                    }
-                }
-            }
-
-            // 缓冲区使用类似逻辑
-            let mut buffer_usage: HashMap<RgBufferHandle, (bool, RgBufferState)> = HashMap::new();
-
-            for (handle, state) in &pass.buffer_reads {
-                buffer_usage.entry(*handle).or_insert((false, *state));
-            }
-
-            for (handle, state) in &pass.buffer_writes {
-                buffer_usage.insert(*handle, (true, *state));
-            }
-
-            for (handle, (is_write, required)) in buffer_usage {
-                if let Some(&current) = buffer_states.get(handle) {
-                    pass_barriers.add_buffer_barrier(BufferBarrierDesc::new(handle, current, required));
-
-                    if is_write {
-                        buffer_states.insert(handle, required);
-                    }
+                    let next_state = if !is_write
+                        && crt_state.layout == required_state.layout
+                        && crt_state.is_read_only()
+                        && required_state.is_read_only()
+                    {
+                        Self::merge_read_states(crt_state, required_state)
+                    } else {
+                        required_state
+                    };
+                    image_states.insert(handle, next_state);
                 }
             }
         }
 
         (barriers, image_states)
+    }
+
+    /// 合并连续只读访问，保留后续写入所需等待的完整 stage/access 范围。
+    fn merge_read_states(current: RgImageState, required: RgImageState) -> RgImageState {
+        RgImageState::new(current.stage | required.stage, current.access | required.access, current.layout)
     }
 }
 
@@ -391,15 +336,12 @@ pub struct CompiledGraph<'a> {
     resources: RgResourceManager,
     /// Pass 节点列表
     passes: Vec<RgPassNode<'a>>,
-    /// 执行顺序（拓扑排序后）
+    /// 执行顺序（pass 添加顺序）
     execution_order: Vec<usize>,
     /// 每个 Pass 的 barriers（按 pass 索引）
     barriers: Vec<PassBarriers>,
     /// 尾声 barriers：将导出资源转换到最终状态
     epilogue_barriers: PassBarriers,
-    /// 依赖图（用于调试）
-    #[allow(dead_code)]
-    dep_graph: DependencyGraph,
     /// 收集的外部 wait semaphores（来自导入资源）
     wait_semaphores: Vec<RgSemaphoreInfo>,
     /// 收集的外部 signal semaphores（来自导出资源）
@@ -432,18 +374,11 @@ impl CompiledGraph<'_> {
 
         // 构建物理资源查询表（使用 SecondaryMap）
         let mut image_handles: SecondaryMap<RgImageHandle, (GfxImageHandle, GfxImageViewHandle)> = SecondaryMap::new();
-        let mut buffer_handles: SecondaryMap<RgBufferHandle, GfxBufferHandle> = SecondaryMap::new();
 
         for (image_handle, image_resource) in self.resources.iter_images() {
             if let Some(img) = image_resource.physical_handle() {
                 let view = image_resource.physical_view_handle().unwrap_or_default();
                 image_handles.insert(image_handle, (img, view));
-            }
-        }
-
-        for (buffer_handle, buffer_resource) in self.resources.iter_buffers() {
-            if let Some(buf) = buffer_resource.physical_handle() {
-                buffer_handles.insert(buffer_handle, buf);
             }
         }
 
@@ -465,7 +400,6 @@ impl CompiledGraph<'_> {
                 cmd,
                 resource_manager,
                 image_handles: &image_handles,
-                buffer_handles: &buffer_handles,
             };
             pass.executor.execute(&ctx);
 
@@ -555,8 +489,7 @@ impl CompiledGraph<'_> {
             cmd.image_memory_barrier(vk::DependencyFlags::empty(), &image_barriers);
         }
 
-        // 缓冲区 barriers（类似处理）
-        // TODO: 实现缓冲区 barrier 录制
+        // Buffer 图能力暂不对外开放，当前执行路径只录制 image barrier。
     }
 }
 
@@ -564,10 +497,7 @@ impl CompiledGraph<'_> {
 impl CompiledGraph<'_> {
     /// 打印执行计划（用于调试）
     ///
-    /// 输出详细的调试信息，包括：
-    /// - 每个 Pass 的执行顺序
-    /// - 每个 Pass 的 image/buffer 读写信息（包含资源名称）
-    /// - 每个 Pass 的 barrier 详细信息（layout 转换、目标资源名称）
+    /// 输出详细的调试信息，包括 pass 顺序、image 读写和 barrier 细节。
     pub fn print_execution_plan(&self) {
         if !log::log_enabled!(log::Level::Info) {
             return;
@@ -586,24 +516,15 @@ impl CompiledGraph<'_> {
             .map(|(order, &pass_idx)| format!("[{}] {}", order + 1, self.passes[pass_idx].name))
             .join(" -> ");
         let pass_image_barriers = self.barriers.iter().map(PassBarriers::image_barrier_count).sum::<usize>();
-        let pass_buffer_barriers = self.barriers.iter().map(PassBarriers::buffer_barrier_count).sum::<usize>();
 
         let _ = writeln!(plan, "RenderGraph Execution Plan");
         let _ = writeln!(plan, "summary:");
+        let _ = writeln!(plan, "  passes={}, images={}", self.passes.len(), self.resources.image_count());
         let _ = writeln!(
             plan,
-            "  passes={}, images={}, buffers={}",
-            self.passes.len(),
-            self.resources.image_count(),
-            self.resources.buffer_count()
-        );
-        let _ = writeln!(
-            plan,
-            "  pass barriers={} image, {} buffer; epilogue barriers={} image, {} buffer",
+            "  pass barriers={} image; epilogue barriers={} image",
             pass_image_barriers,
-            pass_buffer_barriers,
-            self.epilogue_barriers.image_barrier_count(),
-            self.epilogue_barriers.buffer_barrier_count()
+            self.epilogue_barriers.image_barrier_count()
         );
         let _ = writeln!(
             plan,
@@ -628,11 +549,7 @@ impl CompiledGraph<'_> {
     }
 
     fn write_pass_resources(&self, plan: &mut String, pass: &RgPassNode<'_>) {
-        if pass.image_reads.is_empty()
-            && pass.image_writes.is_empty()
-            && pass.buffer_reads.is_empty()
-            && pass.buffer_writes.is_empty()
-        {
+        if pass.image_reads.is_empty() && pass.image_writes.is_empty() {
             let _ = writeln!(plan, "  resources: none");
             return;
         }
@@ -640,8 +557,6 @@ impl CompiledGraph<'_> {
         let _ = writeln!(plan, "  resources:");
         self.write_image_accesses(plan, "image reads", &pass.image_reads);
         self.write_image_accesses(plan, "image writes", &pass.image_writes);
-        self.write_buffer_accesses(plan, "buffer reads", &pass.buffer_reads);
-        self.write_buffer_accesses(plan, "buffer writes", &pass.buffer_writes);
     }
 
     fn write_image_accesses(&self, plan: &mut String, label: &str, accesses: &[(RgImageHandle, RgImageState)]) {
@@ -662,35 +577,13 @@ impl CompiledGraph<'_> {
         }
     }
 
-    fn write_buffer_accesses(&self, plan: &mut String, label: &str, accesses: &[(RgBufferHandle, RgBufferState)]) {
-        if accesses.is_empty() {
-            return;
-        }
-
-        let _ = writeln!(plan, "    {label}:");
-        for (handle, state) in accesses {
-            let _ = writeln!(
-                plan,
-                "      - {}: stage={}, access={}",
-                self.buffer_name(*handle),
-                Self::format_pipeline_stage(state.stage),
-                Self::format_access_flags(state.access)
-            );
-        }
-    }
-
     fn write_barriers(&self, plan: &mut String, title: &str, barriers: &PassBarriers, indent: &str) {
         if !barriers.has_barriers() {
             let _ = writeln!(plan, "{indent}{title}: none");
             return;
         }
 
-        let _ = writeln!(
-            plan,
-            "{indent}{title}: {} image, {} buffer",
-            barriers.image_barrier_count(),
-            barriers.buffer_barrier_count()
-        );
+        let _ = writeln!(plan, "{indent}{title}: {} image", barriers.image_barrier_count());
 
         let item_indent = format!("{indent}  ");
 
@@ -708,27 +601,10 @@ impl CompiledGraph<'_> {
                 barrier.aspect
             );
         }
-
-        for barrier in &barriers.buffer_barriers {
-            let _ = writeln!(
-                plan,
-                "{}- buffer {}: stage={} -> {}, access={} -> {}",
-                item_indent,
-                self.buffer_name(barrier.handle),
-                Self::format_pipeline_stage(barrier.src_state.stage),
-                Self::format_pipeline_stage(barrier.dst_state.stage),
-                Self::format_access_flags(barrier.src_state.access),
-                Self::format_access_flags(barrier.dst_state.access)
-            );
-        }
     }
 
     fn image_name(&self, handle: RgImageHandle) -> &str {
         self.resources.get_image(handle).map(|r| r.name.as_str()).unwrap_or("<unknown>")
-    }
-
-    fn buffer_name(&self, handle: RgBufferHandle) -> &str {
-        self.resources.get_buffer(handle).map(|r| r.name.as_str()).unwrap_or("<unknown>")
     }
 
     fn format_image_layout_transition(src: vk::ImageLayout, dst: vk::ImageLayout) -> String {
@@ -802,5 +678,212 @@ impl CompiledGraph<'_> {
         ];
 
         if flags.is_empty() { format!("{:?}", access) } else { flags.join(" | ") }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn import_test_image(graph: &mut RenderGraphBuilder<'_>, name: &str, initial_state: RgImageState) -> RgImageHandle {
+        graph.import_image(
+            name,
+            GfxImageHandle::default(),
+            Some(GfxImageViewHandle::default()),
+            vk::Format::R8G8B8A8_UNORM,
+            initial_state,
+            None,
+        )
+    }
+
+    fn add_empty_pass(graph: &mut RenderGraphBuilder<'_>, name: &'static str) {
+        graph.add_pass_lambda(name, |_| {}, |_| {});
+    }
+
+    #[test]
+    fn compile_uses_pass_insertion_order() {
+        let mut graph = RenderGraphBuilder::new();
+        add_empty_pass(&mut graph, "a");
+        add_empty_pass(&mut graph, "b");
+        add_empty_pass(&mut graph, "c");
+
+        let compiled = graph.compile();
+
+        assert_eq!(compiled.execution_order(), &[0, 1, 2]);
+        assert_eq!(compiled.pass_name(0), "a");
+        assert_eq!(compiled.pass_name(1), "b");
+        assert_eq!(compiled.pass_name(2), "c");
+    }
+
+    #[test]
+    fn resource_access_does_not_reorder_passes() {
+        let mut graph = RenderGraphBuilder::new();
+        let image = import_test_image(&mut graph, "target", RgImageState::STORAGE_READ_COMPUTE);
+
+        graph
+            .add_pass_lambda(
+                "read-first",
+                move |builder| {
+                    builder.read_image(image, RgImageState::STORAGE_READ_COMPUTE);
+                },
+                |_| {},
+            )
+            .add_pass_lambda(
+                "write-second",
+                move |builder| {
+                    builder.write_image(image, RgImageState::STORAGE_WRITE_COMPUTE);
+                },
+                |_| {},
+            );
+
+        let compiled = graph.compile();
+
+        assert_eq!(compiled.execution_order(), &[0, 1]);
+        assert_eq!(compiled.pass_name(0), "read-first");
+        assert_eq!(compiled.pass_name(1), "write-second");
+    }
+
+    #[test]
+    fn write_then_read_inserts_barrier_from_write_state() {
+        let mut graph = RenderGraphBuilder::new();
+        let image = import_test_image(&mut graph, "target", RgImageState::UNDEFINED_TOP);
+
+        graph
+            .add_pass_lambda(
+                "write",
+                move |builder| {
+                    builder.write_image(image, RgImageState::STORAGE_WRITE_COMPUTE);
+                },
+                |_| {},
+            )
+            .add_pass_lambda(
+                "read",
+                move |builder| {
+                    builder.read_image(image, RgImageState::STORAGE_READ_COMPUTE);
+                },
+                |_| {},
+            );
+
+        let compiled = graph.compile();
+        let barrier = &compiled.barriers[1].image_barriers[0];
+
+        assert_eq!(barrier.src_state, RgImageState::STORAGE_WRITE_COMPUTE);
+        assert_eq!(barrier.dst_state, RgImageState::STORAGE_READ_COMPUTE);
+    }
+
+    #[test]
+    fn read_then_write_inserts_barrier_from_read_state() {
+        let mut graph = RenderGraphBuilder::new();
+        let image = import_test_image(&mut graph, "target", RgImageState::STORAGE_READ_COMPUTE);
+
+        graph
+            .add_pass_lambda(
+                "read",
+                move |builder| {
+                    builder.read_image(image, RgImageState::STORAGE_READ_COMPUTE);
+                },
+                |_| {},
+            )
+            .add_pass_lambda(
+                "write",
+                move |builder| {
+                    builder.write_image(image, RgImageState::STORAGE_WRITE_COMPUTE);
+                },
+                |_| {},
+            );
+
+        let compiled = graph.compile();
+        let barrier = &compiled.barriers[1].image_barriers[0];
+
+        assert!(compiled.barriers[0].image_barriers.is_empty());
+        assert_eq!(barrier.src_state, RgImageState::STORAGE_READ_COMPUTE);
+        assert_eq!(barrier.dst_state, RgImageState::STORAGE_WRITE_COMPUTE);
+    }
+
+    #[test]
+    fn write_then_write_inserts_barrier_from_previous_write() {
+        let mut graph = RenderGraphBuilder::new();
+        let image = import_test_image(&mut graph, "target", RgImageState::UNDEFINED_TOP);
+
+        graph
+            .add_pass_lambda(
+                "transfer-write",
+                move |builder| {
+                    builder.write_image(image, RgImageState::TRANSFER_DST);
+                },
+                |_| {},
+            )
+            .add_pass_lambda(
+                "storage-write",
+                move |builder| {
+                    builder.write_image(image, RgImageState::STORAGE_WRITE_COMPUTE);
+                },
+                |_| {},
+            );
+
+        let compiled = graph.compile();
+        let barrier = &compiled.barriers[1].image_barriers[0];
+
+        assert_eq!(barrier.src_state, RgImageState::TRANSFER_DST);
+        assert_eq!(barrier.dst_state, RgImageState::STORAGE_WRITE_COMPUTE);
+    }
+
+    #[test]
+    fn layout_transition_inserts_barrier_for_read_only_access() {
+        let mut graph = RenderGraphBuilder::new();
+        let image = import_test_image(&mut graph, "target", RgImageState::SHADER_READ_FRAGMENT);
+
+        graph.add_pass_lambda(
+            "transfer-read",
+            move |builder| {
+                builder.read_image(image, RgImageState::TRANSFER_SRC);
+            },
+            |_| {},
+        );
+
+        let compiled = graph.compile();
+        let barrier = &compiled.barriers[0].image_barriers[0];
+
+        assert_eq!(barrier.src_state, RgImageState::SHADER_READ_FRAGMENT);
+        assert_eq!(barrier.dst_state, RgImageState::TRANSFER_SRC);
+    }
+
+    #[test]
+    fn consecutive_reads_merge_before_later_write() {
+        let mut graph = RenderGraphBuilder::new();
+        let image = import_test_image(&mut graph, "target", RgImageState::SHADER_READ_FRAGMENT);
+
+        graph
+            .add_pass_lambda(
+                "fragment-read",
+                move |builder| {
+                    builder.read_image(image, RgImageState::SHADER_READ_FRAGMENT);
+                },
+                |_| {},
+            )
+            .add_pass_lambda(
+                "compute-read",
+                move |builder| {
+                    builder.read_image(image, RgImageState::SHADER_READ_COMPUTE);
+                },
+                |_| {},
+            )
+            .add_pass_lambda(
+                "write",
+                move |builder| {
+                    builder.write_image(image, RgImageState::STORAGE_WRITE_COMPUTE);
+                },
+                |_| {},
+            );
+
+        let compiled = graph.compile();
+        let write_barrier = &compiled.barriers[2].image_barriers[0];
+
+        assert!(compiled.barriers[0].image_barriers.is_empty());
+        assert!(compiled.barriers[1].image_barriers.is_empty());
+        assert!(write_barrier.src_state.stage.contains(vk::PipelineStageFlags2::FRAGMENT_SHADER));
+        assert!(write_barrier.src_state.stage.contains(vk::PipelineStageFlags2::COMPUTE_SHADER));
+        assert_eq!(write_barrier.src_state.layout, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        assert_eq!(write_barrier.dst_state, RgImageState::STORAGE_WRITE_COMPUTE);
     }
 }

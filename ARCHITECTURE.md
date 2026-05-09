@@ -11,7 +11,7 @@ flowchart TB
     L6["L6 truvis-winit-app<br/>winit 事件循环、窗口生命周期、渲染线程启动"]
     L5["L5 truvis-app<br/>demo app、GuiPlugin、overlay plugin、render pipeline plugin、RenderGraph 编排<br/><br/>L5 truvis-frame-runtime<br/>RenderAppShell 帧骨架 + render-loop 适配层<br/><br/>L5 truvis-frame-api<br/>RenderApp / RenderAppHooks / Plugin 契约与 Plugin Ctx"]
     L4["L4 truvis-render-backend<br/>RenderBackend：World + RenderWorld + swapchain/present/cmd/sync 生命周期"]
-    L3["L3 truvis-render-graph / truvis-scene / truvis-asset / truvis-gui-backend<br/>图调度、CPU 场景、资产加载、底层 ImGui Vulkan 录制"]
+    L3["L3 truvis-render-graph / truvis-scene / truvis-asset / truvis-gui-backend<br/>按帧同步辅助、CPU 场景、资产加载、底层 ImGui Vulkan 录制"]
     L2["L2 truvis-render-interface<br/>RenderWorld、BindlessManager、GpuScene、FrameCounter、CmdAllocator、FifBuffers"]
     L1["L1 truvis-gfx<br/>Vulkan RHI 封装"]
     L0["L0 truvis-utils / truvis-logs / truvis-path / descriptor-layout"]
@@ -178,9 +178,9 @@ flowchart LR
 RenderGraph 规则：
 
 - App 在 `RenderAppHooks::render` 中创建 RenderGraph。
-- 渲染管线 Plugin 只贡献自己的 pass，不决定整个 App 的拓扑。
-- App 显式决定 GUI pass 与渲染管线 pass 的顺序。
-- pass 必须声明资源读写关系，让 RenderGraph 推导同步。
+- 渲染管线 Plugin 只贡献自己的 pass，不决定整个 App 的完整执行顺序。
+- App 显式决定 GUI pass 与渲染管线 pass 的添加顺序，RenderGraph 按该顺序录制，不做自动重排。
+- pass 必须声明 image 读写状态，让 RenderGraph 在线性序列中推导同步与 layout transition。
 
 Triangle / ShaderToy 使用单个 present graph。RT demo 使用 compute graph 与 present graph：App 先让 `RtPipeline` 贡献 compute passes，再在 present graph 中先 resolve，最后调用 `GuiPlugin::contribute_passes` 叠加 GUI。
 
@@ -235,7 +235,7 @@ GPU 资源按用途分类：
 - Swapchain：swapchain image/view、present semaphore、window-sized targets
 - Asset：texture、mesh buffer、material-related GPU resources
 - GUI：imgui font texture、per-frame GUI mesh buffer、texture map
-- RenderGraph transient：图内临时 image/buffer
+- RenderGraph：按帧导入的 image 状态引用与同步计划；图内 transient image/buffer 是未来能力，不作为当前资源生命周期类别
 
 创建路径：
 

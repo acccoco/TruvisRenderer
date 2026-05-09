@@ -3,9 +3,9 @@ use slotmap::SecondaryMap;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageView;
-use truvis_render_interface::handles::{GfxBufferHandle, GfxImageHandle, GfxImageViewHandle};
+use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
 
-use crate::render_graph::{RgBufferHandle, RgBufferState, RgImageHandle, RgImageState};
+use crate::render_graph::{RgImageHandle, RgImageState};
 
 /// Pass 执行时的上下文
 ///
@@ -19,7 +19,6 @@ pub struct RgPassContext<'a> {
 
     /// 物理资源查询表（编译后填充）
     pub(crate) image_handles: &'a SecondaryMap<RgImageHandle, (GfxImageHandle, GfxImageViewHandle)>,
-    pub(crate) buffer_handles: &'a SecondaryMap<RgBufferHandle, GfxBufferHandle>,
 }
 
 impl<'a> RgPassContext<'a> {
@@ -39,12 +38,6 @@ impl<'a> RgPassContext<'a> {
     #[inline]
     pub fn get_image_view_handle(&self, handle: RgImageHandle) -> Option<GfxImageViewHandle> {
         self.image_handles.get(handle).map(|(_, v)| *v)
-    }
-
-    /// 获取缓冲区的物理句柄
-    #[inline]
-    pub fn get_buffer_handle(&self, handle: RgBufferHandle) -> Option<GfxBufferHandle> {
-        self.buffer_handles.get(handle).copied()
     }
 
     #[inline]
@@ -76,10 +69,6 @@ pub struct RgPassBuilder {
     pub(crate) image_reads: Vec<(RgImageHandle, RgImageState)>,
     /// 图像写入列表
     pub(crate) image_writes: Vec<(RgImageHandle, RgImageState)>,
-    /// 缓冲区读取列表
-    pub(crate) buffer_reads: Vec<(RgBufferHandle, RgBufferState)>,
-    /// 缓冲区写入列表
-    pub(crate) buffer_writes: Vec<(RgBufferHandle, RgBufferState)>,
 }
 
 impl RgPassBuilder {
@@ -117,19 +106,6 @@ impl RgPassBuilder {
         self.read_image(handle, state);
         self.write_image(handle, state)
     }
-
-    /// 声明读取缓冲区
-    #[inline]
-    pub fn read_buffer(&mut self, handle: RgBufferHandle, state: RgBufferState) -> RgBufferHandle {
-        self.buffer_reads.push((handle, state));
-        handle
-    }
-
-    /// 声明写入缓冲区
-    pub fn write_buffer(&mut self, handle: RgBufferHandle, state: RgBufferState) -> RgBufferHandle {
-        self.buffer_writes.push((handle, state));
-        handle
-    }
 }
 
 /// Pass 节点数据，最后会存放于 RenderGraph 内
@@ -141,10 +117,6 @@ pub struct RgPassNode<'a> {
     pub image_reads: Vec<(RgImageHandle, RgImageState)>,
     /// 图像写入
     pub image_writes: Vec<(RgImageHandle, RgImageState)>,
-    /// 缓冲区读取
-    pub buffer_reads: Vec<(RgBufferHandle, RgBufferState)>,
-    /// 缓冲区写入
-    pub buffer_writes: Vec<(RgBufferHandle, RgBufferState)>,
 
     /// 执行回调（类型擦除的 Pass 实现）
     pub(crate) executor: Box<dyn RgPassExecutor + 'a>,
