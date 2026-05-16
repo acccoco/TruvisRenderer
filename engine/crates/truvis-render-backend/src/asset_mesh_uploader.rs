@@ -140,7 +140,8 @@ impl MeshUploadManager {
             src_stage: vk::PipelineStageFlags2::TRANSFER,
             src_access: vk::AccessFlags2::TRANSFER_WRITE,
             dst_stage: vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR,
-            dst_access: vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR,
+            // BLAS build 通过 device address 读取 vertex/index 输入，验证层按 shader read 归类。
+            dst_access: vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR | vk::AccessFlags2::SHADER_READ,
         };
         command_buffer.buffer_memory_barrier(
             vk::DependencyFlags::empty(),
