@@ -1,0 +1,4 @@
+interface:
+  display_name: "Analyze Module Architecture"
+  short_description: "Analyze code modules and architecture"
+  default_prompt: "Use $analyze-module-architecture to analyze a module's structure, boundaries, dependencies, flows, data, lifecycle, concurrency, and performance."

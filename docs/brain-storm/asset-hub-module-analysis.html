@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AssetHub 模块架构分析</title>
+  <style>
+    :root {
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --text: #17202a;
+      --muted: #5f6b7a;
+      --line: #d9dee7;
+      --accent: #0f766e;
+      --accent-soft: #e7f4f1;
+      --warn: #9a3412;
+      --warn-soft: #fff3e8;
+      --code: #253044;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family:
+        "Segoe UI",
+        "Microsoft YaHei",
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        sans-serif;
+      line-height: 1.65;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .page {
+      width: min(1120px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 32px 0 56px;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 24px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 34px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 22px;
+      line-height: 1.3;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 18px 0 8px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 12px;
+    }
+
+    code {
+      color: var(--code);
+      background: #eef1f6;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 0.92em;
+    }
+
+    .summary {
+      max-width: 860px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 250px minmax(0, 1fr);
+      gap: 24px;
+      align-items: start;
+    }
+
+    nav {
+      position: sticky;
+      top: 16px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+    }
+
+    nav strong {
+      display: block;
+      margin-bottom: 10px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    nav a {
+      display: block;
+      padding: 6px 0;
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    main {
+      display: grid;
+      gap: 18px;
+    }
+
+    section {
+      padding: 22px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 14px 16px;
+      border-radius: 6px;
+      margin: 12px 0;
+    }
+
+    .warning {
+      border-left-color: var(--warn);
+      background: var(--warn-soft);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfcfe;
+    }
+
+    .item b {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #eef3f8;
+      font-weight: 600;
+    }
+
+    .flow {
+      display: grid;
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .flow-row {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .node {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 10px;
+      border: 1px solid #bfd7d2;
+      background: #f4fbf9;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+
+    .node.render {
+      border-color: #ccd5e6;
+      background: #f4f7fc;
+    }
+
+    .arrow {
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .state-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin: 14px 0;
+    }
+
+    .state {
+      border: 1px solid var(--line);
+      background: #fbfcfe;
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: 14px;
+      white-space: nowrap;
+    }
+
+    .state.ready {
+      border-color: #a7d7c9;
+      background: #edf9f5;
+    }
+
+    .state.failed {
+      border-color: #efc0a0;
+      background: #fff3e8;
+    }
+
+    .file-list {
+      display: grid;
+      gap: 7px;
+      font-size: 14px;
+    }
+
+    footer {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 18px;
+    }
+
+    @media (max-width: 860px) {
+      .page {
+        width: min(100% - 24px, 1120px);
+        padding-top: 20px;
+      }
+
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      nav {
+        position: static;
+      }
+
+      .grid,
+      .flow-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <h1>AssetHub 模块架构分析</h1>
+      <p class="summary">
+        <code>AssetHub</code> 是 <code>truvis-asset</code> 的统一入口，当前负责纹理请求去重、异步 IO/解码、GPU 上传推进、
+        fallback 纹理与状态管理。当前实现已经跨入 GPU 资源和 bindless descriptor 注册边界，这是后续最值得收敛的架构点。
+      </p>
+    </header>
+
+    <div class="layout">
+      <nav aria-label="目录">
+        <strong>目录</strong>
+        <a href="#position">模块定位</a>
+        <a href="#api">对外接口</a>
+        <a href="#structure">内部结构</a>
+        <a href="#runtime">运行流程</a>
+        <a href="#data">数据视角</a>
+        <a href="#deps">依赖关系</a>
+        <a href="#lifecycle">生命周期与状态</a>
+        <a href="#concurrency">并发与性能</a>
+        <a href="#risk">风险与建议</a>
+        <a href="#evidence">证据索引</a>
+      </nav>
+
+      <main>
+        <section id="position">
+          <h2>模块定位</h2>
+          <p>
+            <code>truvis-asset</code> 位于架构 L3，职责是资产加载；<code>AssetHub</code> 是该模块对外的门面。
+            它接收路径加载请求，把磁盘图片推进到 GPU 可采样纹理，并在资源未就绪时提供 fallback。
+          </p>
+          <div class="flow">
+            <div class="flow-row">
+              <div class="node">AssimpSceneLoader<br>发起纹理加载</div>
+              <div class="node">AssetHub<br>门面与状态表</div>
+              <div class="node">AssetLoader<br>IO + 解码</div>
+              <div class="node">AssetUploadManager<br>Transfer Queue</div>
+              <div class="node render">GfxResourceManager<br>image/view</div>
+              <div class="node render">BindlessManager<br>SRV slot</div>
+            </div>
+            <div class="arrow">调用方向：模型加载 → 资产请求 → CPU 解码 → GPU 上传 → 资源注册 → shader 可见绑定</div>
+          </div>
+          <div class="callout warning">
+            当前 <code>AssetHub</code> 不是纯 CPU 资产表，因为 <code>new/update/destroy</code> 都会接触
+            <code>GfxResourceManager</code> 和 <code>BindlessManager</code>。
+          </div>
+        </section>
+
+        <section id="api">
+          <h2>对外接口</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>接口</th>
+                <th>职责</th>
+                <th>边界特征</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>AssetHub::new</code></td>
+                <td>创建 fallback 纹理、启动 loader、创建 upload manager。</td>
+                <td>同步注册 fallback SRV，依赖 render-side manager。</td>
+              </tr>
+              <tr>
+                <td><code>load_texture(path)</code></td>
+                <td>非阻塞加载入口；路径去重，返回 <code>AssetTextureHandle</code>。</td>
+                <td>调用后只保证请求已入队，不保证资源 ready。</td>
+              </tr>
+              <tr>
+                <td><code>get_status(handle)</code></td>
+                <td>查询 <code>Loading / Uploading / Ready / Failed</code>。</td>
+                <td>无效 handle 返回 <code>Failed</code>。</td>
+              </tr>
+              <tr>
+                <td><code>get_texture(handle)</code></td>
+                <td>返回真实纹理或 fallback。</td>
+                <td>调用方不需要阻塞等待资源完成。</td>
+              </tr>
+              <tr>
+                <td><code>get_texture_by_path(path)</code></td>
+                <td>从路径缓存查 handle，再返回纹理。</td>
+                <td>路径不存在会 <code>unwrap</code> panic。</td>
+              </tr>
+              <tr>
+                <td><code>update</code></td>
+                <td>每帧消费 IO 结果、提交上传、检查 timeline、注册 view/SRV。</td>
+                <td>核心推进点，运行在 render thread。</td>
+              </tr>
+              <tr>
+                <td><code>destroy</code></td>
+                <td>关闭上传管理器，注销 SRV，释放 ready 纹理和 fallback。</td>
+                <td>依赖 backend 传入显式 Gfx ctx。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="structure">
+          <h2>内部结构</h2>
+          <div class="grid">
+            <div class="item">
+              <b><code>texture_states</code></b>
+              <p>使用 <code>SlotMap&lt;AssetTextureHandle, LoadStatus&gt;</code> 保存纹理状态。</p>
+            </div>
+            <div class="item">
+              <b><code>textures</code></b>
+              <p>使用 <code>SecondaryMap</code> 保存已 ready 的 <code>AssetTexture</code>。</p>
+            </div>
+            <div class="item">
+              <b><code>texture_cache</code></b>
+              <p>路径到 handle 的缓存，用于避免重复加载同一文件。</p>
+            </div>
+            <div class="item">
+              <b><code>fallback_texture</code></b>
+              <p>1x1 粉色纹理，覆盖 loading、uploading、failed 的访问路径。</p>
+            </div>
+            <div class="item">
+              <b><code>AssetLoader</code></b>
+              <p>dispatch thread + rayon pool，负责磁盘 IO 与图片解码。</p>
+            </div>
+            <div class="item">
+              <b><code>AssetUploadManager</code></b>
+              <p>管理 staging buffer、command buffer、transfer queue 与 timeline semaphore。</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="runtime">
+          <h2>运行流程</h2>
+          <div class="state-line" aria-label="状态流转">
+            <span class="state">Unloaded</span>
+            <span>→</span>
+            <span class="state">Loading</span>
+            <span>→</span>
+            <span class="state">Uploading</span>
+            <span>→</span>
+            <span class="state ready">Ready</span>
+            <span>或</span>
+            <span class="state failed">Failed</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>阶段</th>
+                <th>发生位置</th>
+                <th>行为</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>请求加载</td>
+                <td><code>AssimpSceneLoader::load_scene</code></td>
+                <td>材质包含 diffuse map 时调用 <code>asset_hub.load_texture</code>。</td>
+              </tr>
+              <tr>
+                <td>后台解码</td>
+                <td><code>AssetLoader</code></td>
+                <td><code>image::open</code> 后统一转为 RGBA8，返回 <code>RawAssetData</code>。</td>
+              </tr>
+              <tr>
+                <td>上传提交</td>
+                <td><code>AssetHub::update</code></td>
+                <td>收到 <code>LoadResult::Success</code> 后把状态改为 <code>Uploading</code>，提交给 upload manager。</td>
+              </tr>
+              <tr>
+                <td>上传完成</td>
+                <td><code>AssetUploadManager::update</code></td>
+                <td>查询 timeline semaphore，释放 staging 和 command buffer，返回完成的 image。</td>
+              </tr>
+              <tr>
+                <td>渲染准备</td>
+                <td><code>SceneManager::prepare_render_data</code></td>
+                <td>通过路径查询 texture，再从 bindless manager 解析 shader SRV handle。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="data">
+          <h2>数据视角</h2>
+          <p>
+            输入是材质中的路径字符串或 <code>PathBuf</code>。后台线程输出
+            <code>RawAssetData { pixels, extent, format, handle, mip_levels }</code>。
+            上传完成后，<code>AssetHub</code> 把 <code>GfxImage</code> 注册为 image handle，再创建 image view 并注册 SRV。
+          </p>
+          <div class="callout">
+            当前图片格式固定为 <code>R8G8B8A8_UNORM</code>，mip 固定为 1；<code>AssetHub</code> 内部也有
+            <code>is_srgb</code> 与 <code>mip_levels</code> 的 TODO，说明格式元数据还未完整从加载数据传递。
+          </div>
+        </section>
+
+        <section id="deps">
+          <h2>依赖关系</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>方向</th>
+                <th>对象</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>直接依赖</td>
+                <td><code>truvis-gfx</code></td>
+                <td>创建 image、staging buffer、command buffer、timeline semaphore。</td>
+              </tr>
+              <tr>
+                <td>直接依赖</td>
+                <td><code>truvis-render-interface</code></td>
+                <td>使用 <code>GfxResourceManager</code>、<code>BindlessManager</code> 与资源 handles。</td>
+              </tr>
+              <tr>
+                <td>直接依赖</td>
+                <td><code>image</code>、<code>rayon</code>、<code>crossbeam-channel</code></td>
+                <td>图片解码和后台任务通信。</td>
+              </tr>
+              <tr>
+                <td>反向使用</td>
+                <td><code>truvis-world</code></td>
+                <td><code>World</code> 持有 <code>asset_hub</code>。</td>
+              </tr>
+              <tr>
+                <td>反向使用</td>
+                <td><code>truvis-render-backend</code></td>
+                <td>创建、每帧更新、销毁 <code>AssetHub</code>。</td>
+              </tr>
+              <tr>
+                <td>反向使用</td>
+                <td><code>truvis-scene</code></td>
+                <td>prepare 阶段从 <code>AssetHub</code> 查材质贴图。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="lifecycle">
+          <h2>生命周期与状态</h2>
+          <p>
+            <code>RenderBackend::new</code> 创建 <code>AssetHub</code>。<code>RenderBackend::begin_frame</code>
+            调用 <code>asset_hub.update</code>，把资产更新内聚到帧开始。关闭时 <code>RenderBackend::destroy</code>
+            在 GPU idle 后调用 <code>asset_hub.destroy</code>，保证 upload manager、ready textures 和 fallback 都在
+            <code>Gfx</code> 销毁前释放。
+          </p>
+          <div class="callout">
+            生命周期风格符合项目约束：长期资源不保存 typed Gfx ctx，释放时由 owner 显式传入上下文。
+          </div>
+        </section>
+
+        <section id="concurrency">
+          <h2>并发与性能</h2>
+          <div class="grid">
+            <div class="item">
+              <b>已异步化</b>
+              <p>文件读取和 CPU 解码运行在 dispatch thread 与 rayon worker pool，不阻塞加载调用点。</p>
+            </div>
+            <div class="item">
+              <b>仍在 render thread</b>
+              <p>上传 command buffer 录制、submit、view 创建和 bindless 注册发生在 <code>begin_frame</code>。</p>
+            </div>
+            <div class="item">
+              <b>上传同步</b>
+              <p>使用 timeline semaphore 查询完成进度，pending 队列有序回收 staging buffer 和 command buffer。</p>
+            </div>
+            <div class="item">
+              <b>潜在瓶颈</b>
+              <p>当前每个纹理一次 command buffer 和一次 submit，批量纹理完成时可能造成单帧尖峰。</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="risk">
+          <h2>风险与建议</h2>
+          <div class="callout warning">
+            最大边界风险：<code>AssetHub</code> 直接调用 <code>BindlessManager::register_srv/unregister_srv</code>，
+            使资产层知道 shader-visible descriptor 策略。项目设计讨论已明确认为这个边界过宽。
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>问题</th>
+                <th>影响</th>
+                <th>建议</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>AssetHub</code> 绑定 bindless 策略</td>
+                <td>资产层承担 renderer/backend 责任，后续引入 texture binding cache 会受阻。</td>
+                <td>让 <code>AssetHub::update</code> 返回 <code>AssetTextureEvent</code>，bindless 注册移到 backend。</td>
+              </tr>
+              <tr>
+                <td><code>SceneManager</code> 同时依赖 asset 和 bindless</td>
+                <td>CPU scene 知道 GPU view 和 shader binding 细节。</td>
+                <td>材质加载阶段保存 <code>AssetTextureHandle</code>，prepare 阶段通过 resolver 解析。</td>
+              </tr>
+              <tr>
+                <td><code>get_texture_by_path</code> 使用 <code>unwrap</code></td>
+                <td>调用顺序错误会直接 panic。</td>
+                <td>长期改成返回 <code>Option</code> 或在模型加载阶段消除路径查询。</td>
+              </tr>
+              <tr>
+                <td>上传粒度较细</td>
+                <td>大量纹理同帧完成 IO 时，render thread 可能出现提交尖峰。</td>
+                <td>在 <code>AssetUploadManager</code> 内部批量合并同帧 upload。</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="evidence">
+          <h2>证据索引</h2>
+          <div class="file-list">
+            <a href="../../ARCHITECTURE.md">ARCHITECTURE.md</a>
+            <a href="../../engine/crates/truvis-asset/README.md">engine/crates/truvis-asset/README.md</a>
+            <a href="../../engine/crates/truvis-asset/src/asset_hub.rs">engine/crates/truvis-asset/src/asset_hub.rs</a>
+            <a href="../../engine/crates/truvis-asset/src/asset_loader.rs">engine/crates/truvis-asset/src/asset_loader.rs</a>
+            <a href="../../engine/crates/truvis-asset/src/asset_upload_manager.rs">engine/crates/truvis-asset/src/asset_upload_manager.rs</a>
+            <a href="../../engine/crates/truvis-asset/src/handle.rs">engine/crates/truvis-asset/src/handle.rs</a>
+            <a href="../../engine/crates/truvis-render-backend/src/render_backend.rs">engine/crates/truvis-render-backend/src/render_backend.rs</a>
+            <a href="../../engine/crates/truvis-scene/src/scene_manager.rs">engine/crates/truvis-scene/src/scene_manager.rs</a>
+            <a href="./2026-04-23-assets-bindless-decoupling.md">docs/brain-storm/2026-04-23-assets-bindless-decoupling.md</a>
+            <a href="./threading-model-evolution.md">docs/brain-storm/threading-model-evolution.md</a>
+          </div>
+        </section>
+
+        <footer>
+          本页面为静态 HTML 架构分析文档，基于本地源码和项目文档整理，未改动运行时代码。
+        </footer>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
