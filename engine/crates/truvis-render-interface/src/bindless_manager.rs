@@ -6,13 +6,10 @@ use slotmap::{Key, SecondaryMap};
 use truvis_gfx::{gfx::GfxDeviceCtx, utilities::descriptor_cursor::GfxDescriptorCursor};
 use truvis_shader_binding::gpu;
 
+use crate::descriptor_bindings::{BindlessDescriptorBinding, BindlessDescriptorTarget};
 use crate::frame_counter::{FrameCounter, FrameToken};
 use crate::gfx_resource_manager::GfxResourceManager;
-use crate::global_descriptor_sets::{BindlessDescriptorBinding, GlobalDescriptorSets};
 use crate::handles::GfxImageViewHandle;
-
-/// 每个 bindless 类型（SRV/UAV）允许的最大 slot 数，须与 descriptor layout 的 count 对齐
-const MAX_BINDLESS_COUNT: usize = 128;
 
 #[derive(Copy, Clone)]
 pub struct BindlessUavHandle(pub gpu::UavHandle);
@@ -75,7 +72,7 @@ impl Default for BindlessSrvHandle {
 ///
 /// # 安全性
 /// - `UPDATE_UNUSED_WHILE_PENDING_BIT` 允许 CPU 在有 in-flight 命令时更新 descriptor，
-///     只要该 slot 未被这些命令动态访问。
+///   只要该 slot 未被这些命令动态访问。
 /// - slot 回收机制保证：slot 归还 free_list 时，所有引用它的 in-flight 命令已完成。
 /// - 仅支持 add 和 remove 操作，不支持 update，因此可以确保所有的 dirty slot 都不会被 GPU 同时访问。
 pub struct BindlessManager {
@@ -91,6 +88,7 @@ pub struct BindlessManager {
     srvs_handle_to_slot: SecondaryMap<GfxImageViewHandle, usize>,
     uavs_handle_to_slot: SecondaryMap<GfxImageViewHandle, usize>,
 
+    // TODO 新增专门的 pending remove 和 pending write 字段，而不是使用复杂的方法判断是 add 还是 remove
     /// dirty 列表：key=slot，value=最后修改时的 frame_id
     dirty_srvs: HashMap<usize, u64>,
     dirty_uavs: HashMap<usize, u64>,
@@ -104,11 +102,12 @@ pub struct BindlessManager {
 // 创建与初始化
 impl BindlessManager {
     pub fn new(frame_token: FrameToken) -> Self {
+        let bindless_count = BindlessDescriptorBinding::descriptor_count();
         // 降序填充，使得 pop() 优先分配较小 slot（方便调试观察）
-        let free_slots: Vec<usize> = (0..MAX_BINDLESS_COUNT).rev().collect();
+        let free_slots: Vec<usize> = (0..bindless_count).rev().collect();
         Self {
-            srvs_slots: vec![None; MAX_BINDLESS_COUNT],
-            uavs_slots: vec![None; MAX_BINDLESS_COUNT],
+            srvs_slots: vec![None; bindless_count],
+            uavs_slots: vec![None; bindless_count],
             srvs_free_slots: free_slots.clone(),
             uavs_free_slots: free_slots,
             srvs_handle_to_slot: SecondaryMap::new(),
@@ -141,11 +140,11 @@ impl BindlessManager {
         &mut self,
         ctx: GfxDeviceCtx<'_>,
         gfx_resource_manager: &GfxResourceManager,
-        render_descriptor_sets: &GlobalDescriptorSets,
+        bindless_target: BindlessDescriptorTarget,
     ) {
         let _span = tracy_client::span!("BindlessManager::prepare_render_data");
 
-        let bindless_set = render_descriptor_sets.bindless_set().handle();
+        let bindless_set = bindless_target.set;
         let fif = FrameCounter::fif_count() as u64;
         let mut writes = Vec::new();
 

@@ -3,62 +3,16 @@ use std::rc::Rc;
 use ash::vk;
 use itertools::Itertools;
 
-use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::descriptors::descriptor::{GfxDescriptorSet, GfxDescriptorSetLayout};
 use truvis_gfx::descriptors::descriptor_pool::{GfxDescriptorPool, GfxDescriptorPoolCreateInfo};
 use truvis_gfx::gfx::GfxDeviceCtx;
 
+pub use crate::descriptor_bindings::{
+    BindlessDescriptorBinding, BindlessDescriptorTarget, PerFrameDescriptorBinding, StaticDescriptorBinding,
+    StaticSamplerDescriptorTarget,
+};
 use crate::frame_counter::FrameCounter;
 use crate::pipeline_settings::FrameLabel;
-
-#[derive(DescriptorBinding)]
-pub struct StaticDescriptorBinding {
-    #[binding = 0]
-    #[descriptor_type = "SAMPLER"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
-    #[count = 32]
-    #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND"]
-    _samplers: (),
-}
-
-#[derive(DescriptorBinding)]
-pub struct BindlessDescriptorBinding {
-    #[binding = 0]
-    #[descriptor_type = "COMBINED_IMAGE_SAMPLER"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
-    #[count = 128]
-    #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING"]
-    _textures: (),
-
-    #[binding = 1]
-    #[descriptor_type = "STORAGE_IMAGE"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
-    #[count = 128]
-    #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING"]
-    _uavs: (),
-
-    #[binding = 2]
-    #[descriptor_type = "SAMPLED_IMAGE"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
-    #[count = 128]
-    #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING"]
-    _srvs: (),
-}
-
-#[derive(DescriptorBinding)]
-pub struct PerFrameDescriptorBinding {
-    #[binding = 0]
-    #[descriptor_type = "UNIFORM_BUFFER"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
-    #[count = 1]
-    _per_frame_data: (),
-
-    #[binding = 1]
-    #[descriptor_type = "UNIFORM_BUFFER"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
-    #[count = 1]
-    _gpu_scene: (),
-}
 
 pub struct GlobalDescriptorSets {
     layout_0_static: GfxDescriptorSetLayout<StaticDescriptorBinding>,
@@ -179,6 +133,20 @@ impl GlobalDescriptorSets {
 }
 // 访问器
 impl GlobalDescriptorSets {
+    #[inline]
+    pub fn static_sampler_target(&self) -> StaticSamplerDescriptorTarget {
+        StaticSamplerDescriptorTarget {
+            set: self.set_0_static.handle(),
+        }
+    }
+
+    #[inline]
+    pub fn bindless_target(&self) -> BindlessDescriptorTarget {
+        BindlessDescriptorTarget {
+            set: self.set_1_bindless.handle(),
+        }
+    }
+
     #[inline]
     pub fn sampler_set(&self) -> &GfxDescriptorSet<StaticDescriptorBinding> {
         &self.set_0_static

@@ -193,7 +193,8 @@ impl RenderBackend {
         );
 
         let render_descriptor_sets = GlobalDescriptorSets::new(gfx.device_ctx());
-        let sampler_manager = RenderSamplerManager::new(gfx.device_ctx(), &render_descriptor_sets);
+        let sampler_manager =
+            RenderSamplerManager::new(gfx.device_ctx(), render_descriptor_sets.static_sampler_target());
 
         let per_frame_data_buffers = FrameCounter::frame_labes().map(|frame_label| {
             GfxStructuredBuffer::<gpu::PerFrameData>::new_ubo(
@@ -537,10 +538,11 @@ impl RenderBackend {
             dst_access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::UNIFORM_READ,
         };
 
+        let bindless_target = self.render_world.global_descriptor_sets.bindless_target();
         self.render_world.bindless_manager.prepare_render_data(
             self.gfx.device_ctx(),
             &self.render_world.gfx_resource_manager,
-            &self.render_world.global_descriptor_sets,
+            bindless_target,
         );
 
         let scene_render_data =

@@ -1,5 +1,6 @@
 pub mod bindless_manager;
 pub mod cmd_allocator;
+pub mod descriptor_bindings;
 pub mod fif_buffer;
 pub mod frame_counter;
 pub mod geometry;

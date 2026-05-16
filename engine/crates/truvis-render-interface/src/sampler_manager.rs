@@ -6,7 +6,7 @@ use truvis_gfx::sampler::{GfxSampler, GfxSamplerDesc};
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_shader_binding::gpu;
 
-use crate::global_descriptor_sets::{GlobalDescriptorSets, StaticDescriptorBinding};
+use crate::descriptor_bindings::{StaticDescriptorBinding, StaticSamplerDescriptorTarget};
 
 // Sampler 管理器
 pub struct RenderSamplerManager {
@@ -14,12 +14,12 @@ pub struct RenderSamplerManager {
 }
 
 impl RenderSamplerManager {
-    pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets) -> Self {
+    pub fn new(ctx: GfxDeviceCtx<'_>, sampler_target: StaticSamplerDescriptorTarget) -> Self {
         let samplers = Self::create_sampler(ctx);
 
         // sampler 写入 descriptor set
         let write_sampler = StaticDescriptorBinding::samplers().write_image(
-            render_descriptor_sets.sampler_set().handle(),
+            sampler_target.set,
             0,
             samplers.iter().map(|samlper| vk::DescriptorImageInfo::default().sampler(samlper.handle())).collect_vec(),
         );

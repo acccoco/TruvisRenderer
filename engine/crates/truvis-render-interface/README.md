@@ -16,6 +16,7 @@
 - `RenderWorld` 不包含 CPU scene 或 asset hub；这些数据属于 `truvis-world::World`。
 - render 阶段通常只借出 `&RenderWorld`，使 pass adapter 能读取 GPU 状态并录制命令，但不能随意改写 frame state。
 - resize / shutdown 阶段通过 mutable context 暴露 `RenderWorld`，用于重建或释放 manager-owned GPU resources。
+- `GlobalDescriptorSets` 只作为全局 pipeline 绑定聚合；资源 manager 更新 descriptor 时只能接收专用 target，避免依赖完整全局绑定策略。
 
 ## 资源管理规则
 
@@ -24,6 +25,7 @@
 - 延迟销毁通过 frame id 入队，`cleanup()` 到达安全帧后释放，并记录 `DestroyReason::DeferredCleanup`。
 - resize / shutdown / immediate release 必须使用带 `DestroyReason` 的 release API，便于把日志关联到项目资源名、raw Vulkan handle 与 manager handle。
 - `FifBuffers` 只保存 manager handle；resize 和 shutdown 时先注销 bindless，再通过 `GfxResourceManager` 释放 image，view 随 image 释放。
+- `BindlessManager`、`RenderSamplerManager` 等 manager 只依赖自身 descriptor binding 契约和窄 target，不以 `GlobalDescriptorSets` 作为更新入口。
 - `CmdAllocator`、`GlobalDescriptorSets`、`RenderSamplerManager`、`GpuScene` 等 owner 在 shutdown 时接收 phase Ctx 并显式销毁自身持有的 GPU 资源。
 - `Drop` 只保留诊断职责，不作为 Vulkan/VMA 释放路径。
 

@@ -227,6 +227,7 @@ flowchart LR
 - 叶子 Vulkan/VMA/WSI wrapper 通过 `destroy(self, ctx, reason)` 或 `destroy_mut(&mut self, ctx, reason)` 释放，释放所需依赖由 owner 在调用点传入 typed `Gfx` Ctx。
 - `Drop` 不调用 Vulkan/VMA/WSI release API，只通过 debug assertion 暴露遗漏的显式销毁。
 - `RenderWorld`、manager、plugin 字段和长期资源 wrapper 不保存 typed `Gfx` Ctx、`&Gfx`、`&GfxDevice` 或 `&VMemAllocator` 引用。
+- manager 更新 descriptor 时只接收自身所需的窄 target；`GlobalDescriptorSets` 保持为全局 pipeline 绑定聚合，不作为下层 manager 的更新入口。
 
 GPU 资源按用途分类：
 
