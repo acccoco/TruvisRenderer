@@ -8,6 +8,14 @@
 - `CmdAllocator`
 - `GfxResourceManager`（Handle + 生命周期管理）
 - `BindlessManager` / `GlobalDescriptorSets`
+- `RenderWorld`
+
+## RenderWorld
+
+- `RenderWorld` 是 GPU 侧运行时状态集合，包含 `GpuScene`、`BindlessManager`、`GlobalDescriptorSets`、`GfxResourceManager`、`FifBuffers`、sampler manager、per-frame data、frame counter 和 frame/pipeline settings。
+- `RenderWorld` 不包含 CPU scene 或 asset hub；这些数据属于 `truvis-world::World`。
+- render 阶段通常只借出 `&RenderWorld`，使 pass adapter 能读取 GPU 状态并录制命令，但不能随意改写 frame state。
+- resize / shutdown 阶段通过 mutable context 暴露 `RenderWorld`，用于重建或释放 manager-owned GPU resources。
 
 ## 资源管理规则
 
@@ -23,3 +31,4 @@
 
 - 位于 RHI 与上层渲染逻辑之间
 - 提供稳定的数据契约，减少上层直接触碰底层细节
+- 不依赖 App、Plugin、scene loading 或窗口平台语义

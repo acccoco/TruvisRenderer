@@ -9,13 +9,29 @@
 - 产出 `RenderBackendInitCtx` / `RenderBackendUpdateCtx` / `RenderBackendRenderCtx` / `RenderBackendResizeCtx` / `RenderBackendShutdownCtx`
 - 与 swapchain / command 提交 / 同步机制对接
 
+## 状态所有权
+
+- `RenderBackend` 持有 `Gfx` root owner，并负责在所有子资源之后销毁它。
+- `World` 承载 CPU 侧 scene/assets，供 update / prepare 阶段读取或修改。
+- `RenderWorld` 承载 GPU 侧 frame state、global descriptors、bindless、manager-owned resources、FIF buffers 和 frame settings。
+- `RenderPresent` 管理 surface、swapchain、present image 和窗口尺寸相关资源。
+
 ## 生命周期边界
 
 - `RenderBackend::new` 创建 `Gfx` 并通过 typed Ctx 初始化 backend-owned GPU 资源。
 - `RenderBackend::init_after_window` 创建 surface、swapchain 与 `RenderPresent`，并把 init 阶段所需的 typed Ctx 交给 app/plugin。
+- `update_phase` 产出可修改 `World` 和相关帧设置的 `RenderBackendUpdateCtx`。
+- `prepare(camera)` 在 update 与 render 之间同步 CPU 语义数据到 GPU 可见资源。
 - `render_phase`、`handle_resize`、`shutdown_phase` 只暴露当前阶段需要的 device/resource/queue/surface/immediate/device-info Ctx。
 - `wait_idle` 由 runtime 在 app/plugin shutdown 前调用，确保 plugin-owned pipeline、buffer、descriptor 等资源销毁前 GPU 不再引用上一帧 command buffer。
 - `destroy` 先等待 GPU idle，再释放 present、FIF、assets、GPU scene、command allocator、sync、descriptor 等子资源，最后销毁 `Gfx` root owner。
+
+## 设计意图
+
+- backend 不依赖 `RenderApp`、`RenderAppHooks`、`Plugin` 或具体 demo，因此可以作为 App shell 之下的纯渲染执行层。
+- 上层只能通过 lifecycle methods 和 `RenderBackend*Ctx` 访问阶段能力，避免长期保存完整 `&Gfx` 或直接借用 backend 内部字段。
+- `prepare` 接收 App 提供的 camera，保持 camera/input state 归属 App，而不是放入 backend。
+- GUI draw data 不进入 backend 通用 Ctx；GUI 的 RenderGraph 集成由 `truvis-app::gui_plugin::GuiPlugin` 完成。
 
 ## 与其他模块关系
 
