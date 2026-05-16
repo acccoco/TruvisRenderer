@@ -612,7 +612,9 @@ App / tool
   `TextureResolver` 和 `TextureBinding` 已迁移到 `truvis-render-backend` 私有模块；
   `truvis-scene` 不再持有 material GPU buffer owner。
 - `truvis-scene` 删除旧 `MeshHandle` / `MaterialHandle` / `ManagedMeshHandle`、
-  旧 mesh/material 组件存储、`mesh_manager` 和未使用的 shape 同步 GPU 创建路径。
+  旧 mesh/material 组件存储、`mesh_manager` 和 shape 同步 GPU 创建路径。
+- `floor` / `rect` / `cube` / `triangle` 已恢复为 CPU-only 程序化 mesh 数据，
+  通过 `procedural_mesh` 输出 `LoadedMeshData` 和稳定 `MeshAssetKey`，用于辅助构建场景。
 - `render-backend::model_loader` 旧 loader facade 已删除，scene 导入入口统一为
   `AssetHub::load_scene()` + `SceneManager::spawn_scene_asset()`。
 - `truvis-scene` 去掉对 `truvis-gfx` 的依赖，保留 `MaterialSlotResolver` /
