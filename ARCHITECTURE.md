@@ -167,15 +167,20 @@ CPU 语义数据从 `World` 进入 RenderBackend。资产加载先由 `AssetHub`
 upload-ready CPU bytes，再由 `AssetTextureUploader` 在渲染线程上传到 GPU 并注册
 bindless。material 参数由 render-side `MaterialBridge` 从 `AssetHub` 同步到
 `MaterialManager`，mesh CPU 数据由 `AssetMeshUploader` 在 graphics queue 上上传
-vertex/index buffer 并构建 BLAS。`SceneManager` 保存 runtime instance 语义，
-`InstanceBridge` 负责稳定 GPU instance slot、ready gate 和 active render list。
+vertex/index buffer 并构建 BLAS。Assimp scene 读取由 `AssetHub::load_scene`
+在后台完成，只产出 scene asset / prefab CPU 数据；`SceneManager` 根据 ready 的
+scene asset spawn runtime instances 并保存运行时语义，`InstanceBridge` 负责稳定
+GPU instance slot、ready gate 和 active render list。
 
 ```mermaid
 flowchart LR
-    AssetHub["AssetHub<br/>path/key -> CPU bytes"] --> TextureUploader["AssetTextureUploader<br/>texture GPU upload + bindless"]
+    AssetHub["AssetHub<br/>path/key -> CPU asset data"] --> TextureUploader["AssetTextureUploader<br/>texture GPU upload + bindless"]
     AssetHub --> MeshUploader["AssetMeshUploader<br/>mesh buffer upload + BLAS"]
     AssetHub --> MaterialBridge["MaterialBridge / MaterialManager<br/>stable material slot + material buffer"]
-    Scene["SceneManager<br/>runtime instance / light"] --> InstanceBridge["InstanceBridge<br/>stable instance slot + ready gate"]
+    AssetHub --> SceneAsset["LoadedSceneData<br/>prefab asset"]
+    SceneAsset --> SceneSpawner["SceneManager::spawn_scene_asset"]
+    SceneSpawner --> Scene["SceneManager<br/>runtime instance / light"]
+    Scene --> InstanceBridge["InstanceBridge<br/>stable instance slot + ready gate"]
     TextureUploader --> MaterialBridge
     MeshUploader --> InstanceBridge
     Scene --> Prepare["RenderBackend::prepare(camera)"]
@@ -247,7 +252,7 @@ GPU 资源按用途分类：
 - Persistent：pipeline、sampler、descriptor layout、shader binding
 - Frame：command buffer、per-frame buffer、FIF resources
 - Swapchain：swapchain image/view、present semaphore、window-sized targets
-- Asset：`AssetHub` 持有 texture / mesh / material 内容资产 handle 与 CPU 加载状态；`AssetTextureUploader` 持有 texture 的 GPU image/view/bindless 绑定；`AssetMeshUploader` 持有 mesh vertex/index buffer、BLAS 和 GPU ready 状态；`MaterialBridge` / `MaterialManager` 持有 material GPU buffer 与稳定 slot；`InstanceBridge` 持有 runtime instance 到稳定 GPU instance slot 的映射
+- Asset：`AssetHub` 持有 texture / mesh / material / scene 内容资产 handle 与 CPU 加载状态，并负责 Assimp scene 到 owned CPU 数据的导入；`AssetTextureUploader` 持有 texture 的 GPU image/view/bindless 绑定；`AssetMeshUploader` 持有 mesh vertex/index buffer、BLAS 和 GPU ready 状态；`MaterialBridge` / `MaterialManager` 持有 material GPU buffer 与稳定 slot；`SceneManager` 将 ready scene asset spawn 为 runtime instances；`InstanceBridge` 持有 runtime instance 到稳定 GPU instance slot 的映射
 - GUI：imgui font texture、per-frame GUI mesh buffer、texture map
 - RenderGraph：按帧导入的 image 状态引用与同步计划；图内 transient image/buffer 是未来能力，不作为当前资源生命周期类别
 

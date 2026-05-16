@@ -522,8 +522,7 @@ App / tool
 剩余限制：
 
 - `GpuScene` 仍整块上传 instance / geometry / indirect buffer，尚未按 dirty slot 做局部更新。
-- TLAS 仍是 revision 触发的整棵 rebuild；spawn / despawn / transform / mesh change 的完整 dirty API
-  和更清晰的 owner 边界留给 Phase 4。
+- TLAS 仍是 revision 触发的整棵 rebuild；Phase 4 已将该过渡机制正式作为当前 dirty/rebuild 策略。
 - 旧 `MeshHandle` / `MaterialHandle`、`SceneManager::Mesh` / `SceneManager::Material` 仍作为兼容残留存在，
   后续在 Phase 6 清理。
 - Assimp scene 文件读取仍是同步入口，尚未迁移到 `AssetHub::load_scene()`。
@@ -542,6 +541,19 @@ App / tool
 - despawn 后 TLAS 不再包含旧 instance。
 - 不再依赖 “每个 FIF 第一次构建后永不更新” 的行为。
 
+完成记录（2026-05-17）：
+
+- `GpuScene` 为每个 FIF buffer 记录 `tlas_revision`；当前 FIF 的 TLAS 不存在或 revision 落后时重建。
+- `AssetMeshUploader::ready_revision()` 与 `InstanceBridge::revision()` 合并为 render-side scene revision，
+  覆盖 mesh ready、instance active/deactivate/despawn 和 transform dirty。
+- TLAS `instance_custom_index` 使用稳定 `GpuInstanceSlot`，并保留 Vulkan 24-bit 上限检查。
+- 当前帧 TLAS 为空时 `RealtimeRtPass` 跳过 ray tracing pass，避免 scene asset 或 mesh 尚未 ready 时 panic。
+
+剩余限制：
+
+- 当前策略仍是整棵 rebuild，不做 TLAS refit 或 dirty slot 局部更新。
+- `GpuScene` 仍持有 TLAS 与 instance/geometry buffer，后续 Phase 6 再收敛 owner 边界。
+
 ### Phase 5：Assimp 读取集成到 AssetHub
 
 目标：
@@ -557,6 +569,26 @@ App / tool
 - 旧同步 `AssimpSceneLoader::load_scene()` 可被新路径替代。
 - `AssetSceneHandle` 能查询内部 mesh/material/texture handles。
 - 同一 scene 多次 spawn 产生独立 runtime instances。
+
+完成记录（2026-05-17）：
+
+- `truvis-asset` 新增 `AssetSceneHandle`、`SceneAssetKey`、`LoadedSceneData` 和
+  `LoadedSceneInstanceData`，scene asset 表示导入结果 / prefab，不持有 live `InstanceHandle`。
+- `AssetHub::load_scene(path)` 通过 `AssetLoader` 后台 task 调用 Assimp FFI，task 内复制 owned CPU
+  mesh/material/instance 数据并释放 `TruvixxSceneHandle`。
+- `AssetHub::update()` 将 raw scene 数据转换为内部 `AssetMeshHandle` / `AssetMaterialHandle` /
+  `AssetTextureHandle`，同帧发出 mesh upload 事件和 scene ready / failed 事件。
+- `SceneManager::spawn_scene_asset()` 根据 `LoadedSceneData` 创建 runtime instances，同一 scene asset
+  可多次 spawn 并产生独立 `InstanceHandle`。
+- Cornell / Sponza demo 改为 init 阶段请求 scene asset、update 阶段 ready 后 spawn，不再直接调用旧同步 loader。
+- `AssimpSceneLoader` 降级为兼容 facade，不再持有 C++ FFI 导入逻辑；render-backend 去掉对
+  `truvis-cxx-binding` 的直接依赖。
+- C++ FFI 中 `truvixx_mesh_fill_tangents` 已修正为读取 tangent 数据。
+
+剩余限制：
+
+- texture path 解析沿用导入结果中的路径字符串，暂不做模型目录相对路径归一化。
+- scene load 失败原因仍来自 Rust 侧路径检查和 FFI 结果转换，C++ importer 的详细错误信息尚未向上暴露。
 
 ### Phase 6：清理旧路径
 
@@ -586,7 +618,7 @@ App / tool
 4. Material texture readiness 默认策略。
    已确认 Phase 3 继续使用 Fallback，之后可支持 Strict。
 5. C++ Assimp FFI 需要专项检查。
-   迁移时顺带确认 `truvixx_mesh_fill_tangents` 是否正确读取 tangent 数据。
+   已确认并修正 `truvixx_mesh_fill_tangents`，当前实现读取 tangent 数据。
 
 ## 风险
 

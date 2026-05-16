@@ -1,261 +1,32 @@
-use itertools::Itertools;
-
 use truvis_asset::asset_hub::AssetHub;
-use truvis_asset::handle::{
-    AssetMaterialHandle, AssetMeshHandle, LoadedMaterialData, LoadedMeshData, MaterialAssetKey, MeshAssetKey,
-};
-use truvis_cxx_binding::truvixx;
-use truvis_scene::components::instance::Instance;
-use truvis_scene::components::material::Material;
 use truvis_scene::guid_new_type::InstanceHandle;
 use truvis_scene::scene_manager::SceneManager;
 
-/// Assimp 场景加载器
+/// Assimp scene loader 的兼容入口。
 ///
-/// 封装 Assimp 库，提供场景加载功能。支持多种 3D 模型格式（FBX、GLTF、OBJ 等）。
-///
-/// # 使用示例
-/// ```ignore
-/// let instances = AssimpSceneLoader::load_scene(
-///     Path::new("model.fbx"),
-///     &mut scene_manager,
-///     &mut asset_hub,
-/// );
-/// ```
-pub struct AssimpSceneLoader {
-    scene_handle: truvixx::TruvixxSceneHandle,
-    source_path: std::path::PathBuf,
-    model_name: String,
+/// Assimp CPU 导入已经迁移到 `AssetHub::load_scene()`。此类型只保留旧 API 形状，
+/// 方便未迁移调用方请求 scene asset；如果 scene 已经 CPU ready，则立即 spawn。
+#[deprecated(note = "Use AssetHub::load_scene() and SceneManager::spawn_scene_asset() instead")]
+pub struct AssimpSceneLoader;
 
-    meshes: Vec<AssetMeshHandle>,
-    mats: Vec<AssetMaterialHandle>,
-    instances: Vec<InstanceHandle>,
-}
-
+#[allow(deprecated)]
 impl AssimpSceneLoader {
-    /// # 返回
-    /// 返回整个场景的所有 instance id
+    /// 请求加载 scene，并在已有 ready 数据时 spawn runtime instances。
+    ///
+    /// 新路径是异步的；首次调用通常只会返回空 Vec，调用方应在后续 update 阶段检查
+    /// `AssetHub::get_scene_status()` 并显式 spawn。
+    #[deprecated(note = "Use AssetHub::load_scene() and SceneManager::spawn_scene_asset() instead")]
     pub fn load_scene(
         model_file: &std::path::Path,
         scene_manager: &mut SceneManager,
         asset_hub: &mut AssetHub,
     ) -> Vec<InstanceHandle> {
-        let _span = tracy_client::span!("AssimpSceneLoader::load_scene");
-
-        let source_path = model_file.to_path_buf();
-        let model_file_str = model_file.to_str().unwrap();
-        let c_model_file = std::ffi::CString::new(model_file_str).unwrap();
-
-        let loader = unsafe {
-            let _span = tracy_client::span!("truvixx_scene_load");
-            truvixx::truvixx_scene_load(c_model_file.as_ptr())
-        };
-        let model_name = model_file.file_name().and_then(|name| name.to_str()).unwrap_or(model_file_str);
-
-        let mut scene_loader = AssimpSceneLoader {
-            scene_handle: loader,
-            source_path,
-            model_name: model_name.to_string(),
-            meshes: vec![],
-            mats: vec![],
-            instances: vec![],
+        let scene_handle = asset_hub.load_scene(model_file.to_path_buf());
+        let Some(scene_data) = asset_hub.get_scene_data(scene_handle) else {
+            log::warn!("AssimpSceneLoader compatibility path requested {:?}; scene data is not ready yet", model_file);
+            return Vec::new();
         };
 
-        scene_loader.load_mesh(asset_hub);
-        scene_loader.load_mats(asset_hub);
-        scene_loader.load_instance(|ins| scene_manager.register_instance(ins));
-
-        {
-            let _span = tracy_client::span!("truvixx_scene_free");
-            unsafe { truvixx::truvixx_scene_free(loader) };
-        }
-
-        scene_loader.instances
-    }
-
-    unsafe fn create_mesh_data(
-        scene_handle: truvixx::TruvixxSceneHandle,
-        mesh_idx: u32,
-        model_name: &str,
-    ) -> LoadedMeshData {
-        unsafe {
-            let mut mesh_info = truvixx::TruvixxMeshInfo::default();
-            let res = truvixx::truvixx_mesh_get_info(scene_handle, mesh_idx, &mut mesh_info as *mut _);
-            if res != truvixx::ResType_ResTypeSuccess {
-                panic!("Failed to get mesh info for mesh {}", mesh_idx);
-            }
-
-            let position_ptr = truvixx::truvixx_mesh_get_positions(scene_handle, mesh_idx);
-            let normal_ptr = truvixx::truvixx_mesh_get_normals(scene_handle, mesh_idx);
-            let tangent_ptr = truvixx::truvixx_mesh_get_tangents(scene_handle, mesh_idx);
-            let uv_ptr = truvixx::truvixx_mesh_get_uvs(scene_handle, mesh_idx);
-            if position_ptr.is_null() || normal_ptr.is_null() || tangent_ptr.is_null() || uv_ptr.is_null() {
-                panic!("Mesh {} is missing vertex attributes", mesh_idx);
-            }
-
-            let positions =
-                std::slice::from_raw_parts(position_ptr as *const glam::Vec3, mesh_info.vertex_count as usize);
-            let normals = std::slice::from_raw_parts(normal_ptr as *const glam::Vec3, mesh_info.vertex_count as usize);
-            let tangents =
-                std::slice::from_raw_parts(tangent_ptr as *const glam::Vec3, mesh_info.vertex_count as usize);
-            let uvs = std::slice::from_raw_parts(uv_ptr as *const glam::Vec2, mesh_info.vertex_count as usize);
-
-            let indices_ptr = truvixx::truvixx_mesh_get_indices(scene_handle, mesh_idx);
-            if indices_ptr.is_null() {
-                panic!("Mesh {} has no index data", mesh_idx);
-            }
-
-            let indices = std::slice::from_raw_parts(indices_ptr, mesh_info.index_count as usize);
-
-            LoadedMeshData {
-                positions: positions.to_vec(),
-                normals: normals.to_vec(),
-                tangents: tangents.to_vec(),
-                uvs: uvs.to_vec(),
-                indices: indices.to_vec(),
-                name: format!("{}-{}", model_name, mesh_idx),
-            }
-        }
-    }
-
-    /// 加载场景中基础的几何体
-    fn load_mesh(&mut self, asset_hub: &mut AssetHub) {
-        let _span = tracy_client::span!("load_mesh");
-        let mesh_cnt = unsafe { truvixx::truvixx_scene_mesh_count(self.scene_handle) };
-
-        let mesh_uuids = (0..mesh_cnt)
-            .map(|mesh_idx| unsafe {
-                let data = Self::create_mesh_data(self.scene_handle, mesh_idx, &self.model_name);
-                asset_hub.register_mesh_data(
-                    MeshAssetKey {
-                        source_path: self.source_path.clone(),
-                        mesh_index: mesh_idx,
-                    },
-                    data,
-                )
-            })
-            .collect_vec();
-
-        self.meshes = mesh_uuids;
-    }
-
-    unsafe fn create_mat(scene_handle: truvixx::TruvixxSceneHandle, mat_idx: u32) -> Material {
-        unsafe {
-            let mut mat = truvixx::TruvixxMat::default();
-            let res = truvixx::truvixx_material_get(scene_handle, mat_idx, &mut mat as *mut _);
-            if res != truvixx::ResType_ResTypeSuccess {
-                panic!("Failed to get material {}", mat_idx);
-            }
-
-            Material {
-                base_color: std::mem::transmute::<truvixx::TruvixxFloat4, glam::Vec4>(mat.base_color),
-                emissive: std::mem::transmute::<truvixx::TruvixxFloat4, glam::Vec4>(mat.emissive),
-                metallic: mat.metallic,
-                roughness: mat.roughness,
-                opaque: mat.opacity,
-
-                diffuse_map: std::ffi::CStr::from_ptr(mat.diffuse_map.as_ptr()).to_str().unwrap().to_string(),
-                normal_map: std::ffi::CStr::from_ptr(mat.normal_map.as_ptr()).to_str().unwrap().to_string(),
-                diffuse_texture: None,
-                normal_texture: None,
-            }
-        }
-    }
-
-    /// 加载场景中的所有材质
-    fn load_mats(&mut self, asset_hub: &mut AssetHub) {
-        let _span = tracy_client::span!("load_mats");
-        let mat_cnt = unsafe { truvixx::truvixx_scene_material_count(self.scene_handle) };
-
-        let mat_uuids = (0..mat_cnt)
-            .map(|mat_idx| unsafe {
-                let mut mat = Self::create_mat(self.scene_handle, mat_idx);
-                if !mat.diffuse_map.is_empty() {
-                    mat.diffuse_texture = Some(asset_hub.load_texture(std::path::PathBuf::from(&mat.diffuse_map)));
-                }
-                if !mat.normal_map.is_empty() {
-                    mat.normal_texture = Some(asset_hub.load_texture(std::path::PathBuf::from(&mat.normal_map)));
-                }
-
-                asset_hub.register_material_data(
-                    MaterialAssetKey {
-                        source_path: self.source_path.clone(),
-                        material_index: mat_idx,
-                    },
-                    LoadedMaterialData {
-                        base_color: mat.base_color,
-                        emissive: mat.emissive,
-                        metallic: mat.metallic,
-                        roughness: mat.roughness,
-                        opaque: mat.opaque,
-                        diffuse_texture: mat.diffuse_texture,
-                        normal_texture: mat.normal_texture,
-                        name: format!("{}-mat-{}", self.model_name, mat_idx),
-                    },
-                )
-            })
-            .collect_vec();
-
-        self.mats = mat_uuids;
-    }
-
-    unsafe fn create_instance(&self, instance_idx: u32, instance: truvixx::TruvixxInstance) -> Vec<Instance> {
-        let mut mesh_indices = vec![0_u32; instance.mesh_count as usize];
-        let mut mat_indices = vec![0_u32; instance.mesh_count as usize];
-
-        let res = unsafe {
-            truvixx::truvixx_instance_get_refs(
-                self.scene_handle,
-                instance_idx,
-                mesh_indices.as_mut_ptr(),
-                mat_indices.as_mut_ptr(),
-            )
-        };
-        if res != truvixx::ResType_ResTypeSuccess {
-            panic!("Failed to get instance {} refs", instance_idx);
-        }
-
-        let mesh_uuids = mesh_indices.iter().map(|mesh_idx| self.meshes[*mesh_idx as usize]);
-        let mat_uuids = mat_indices.iter().map(|mat_idx| self.mats[*mat_idx as usize]);
-
-        std::iter::zip(mesh_uuids, mat_uuids)
-            .map(|(mesh_uuid, mat_uuid)| Instance {
-                transform: unsafe {
-                    std::mem::transmute::<truvixx::TruvixxFloat4x4, glam::Mat4>(instance.world_transform)
-                },
-                mesh: mesh_uuid,
-                materials: vec![mat_uuid],
-            })
-            .collect_vec()
-    }
-
-    /// 加载场景中的所有 instance
-    ///
-    /// 由于 Assimp 的复用层级是 geometry，而应用需要的复用层级是 mesh
-    ///
-    /// 因此将 Assimp 中的一个 Instance 拆分为多个 Instance，将其 geometry
-    /// 提升为 mesh
-    fn load_instance(&mut self, instance_register: impl FnMut(Instance) -> InstanceHandle) {
-        let _span = tracy_client::span!("load_instance");
-        let instance_cnt = unsafe { truvixx::truvixx_scene_instance_count(self.scene_handle) };
-        let instances = (0..instance_cnt)
-            .filter_map(|instance_idx| {
-                let mut instance = truvixx::TruvixxInstance::default();
-                let res =
-                    unsafe { truvixx::truvixx_instance_get(self.scene_handle, instance_idx, &mut instance as *mut _) };
-                if res != truvixx::ResType_ResTypeSuccess {
-                    panic!("Failed to get instance {}", instance_idx);
-                }
-
-                // 排除空间点，比如 camera, light
-                if instance.mesh_count == 0 { None } else { Some((instance_idx, instance)) }
-            })
-            .flat_map(|(instance_idx, instance_info)| unsafe {
-                self.create_instance(instance_idx, instance_info).into_iter()
-            })
-            .map(instance_register)
-            .collect_vec();
-
-        self.instances = instances
+        scene_manager.spawn_scene_asset(scene_data)
     }
 }

@@ -7,6 +7,7 @@ use ash::vk;
 new_key_type! { pub struct AssetTextureHandle; }
 new_key_type! { pub struct AssetMeshHandle; }
 new_key_type! { pub struct AssetMaterialHandle; }
+new_key_type! { pub struct AssetSceneHandle; }
 
 /// 解码后的纹理数据。
 ///
@@ -36,10 +37,18 @@ pub struct MaterialAssetKey {
     pub material_index: u32,
 }
 
+/// 一个导入源对应的 scene / prefab 资产身份。
+///
+/// `AssetSceneHandle` 只代表导入结果，不代表已经 spawn 到运行时场景中的 instance。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SceneAssetKey {
+    pub source_path: PathBuf,
+}
+
 /// upload-ready 的 CPU mesh 数据。
 ///
 /// 数据已经从导入库的临时内存复制到 Rust owned buffer，但还没有创建 GPU buffer 或 BLAS。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LoadedMeshData {
     pub positions: Vec<glam::Vec3>,
     pub normals: Vec<glam::Vec3>,
@@ -63,6 +72,65 @@ pub struct LoadedMaterialData {
     pub diffuse_texture: Option<AssetTextureHandle>,
     pub normal_texture: Option<AssetTextureHandle>,
     pub name: String,
+}
+
+/// Scene asset 内部的一个可 spawn runtime instance 记录。
+///
+/// mesh/material 引用已经转换为 `Asset*Handle`，但这里不拥有 live `InstanceHandle`。
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoadedSceneInstanceData {
+    pub mesh: AssetMeshHandle,
+    pub materials: Vec<AssetMaterialHandle>,
+    pub transform: glam::Mat4,
+    pub name: String,
+}
+
+/// 导入后的 scene / prefab CPU 数据。
+///
+/// 它保存导入结果内部引用关系，可被多次 spawn 到 `SceneManager`。
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoadedSceneData {
+    pub source_path: PathBuf,
+    pub name: String,
+    pub meshes: Vec<AssetMeshHandle>,
+    pub materials: Vec<AssetMaterialHandle>,
+    pub instances: Vec<LoadedSceneInstanceData>,
+}
+
+/// 后台 Assimp task 产出的 owned material CPU 数据。
+///
+/// texture 仍以路径表达，交回 `AssetHub::update()` 统一分配 texture handle。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RawLoadedMaterialData {
+    pub base_color: glam::Vec4,
+    pub emissive: glam::Vec4,
+    pub metallic: f32,
+    pub roughness: f32,
+    pub opaque: f32,
+    pub diffuse_texture_path: Option<PathBuf>,
+    pub normal_texture_path: Option<PathBuf>,
+    pub name: String,
+}
+
+/// 后台 Assimp task 产出的 owned instance CPU 数据。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RawLoadedSceneInstanceData {
+    pub mesh_index: u32,
+    pub material_indices: Vec<u32>,
+    pub transform: glam::Mat4,
+    pub name: String,
+}
+
+/// 后台 Assimp task 产出的 owned scene CPU 数据。
+///
+/// 这里不保存任何 C++ handle 或 raw pointer，`truvixx_scene_free` 已经在 task 内完成。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RawLoadedSceneData {
+    pub source_path: PathBuf,
+    pub name: String,
+    pub meshes: Vec<LoadedMeshData>,
+    pub materials: Vec<RawLoadedMaterialData>,
+    pub instances: Vec<RawLoadedSceneInstanceData>,
 }
 
 /// 资源加载状态机

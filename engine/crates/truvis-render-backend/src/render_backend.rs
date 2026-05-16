@@ -423,6 +423,12 @@ impl RenderBackend {
                 event @ LoadedAssetEvent::MeshLoaded { .. } => {
                     mesh_events.push(event);
                 }
+                LoadedAssetEvent::SceneLoaded { handle } => {
+                    log::debug!("Scene asset {:?} CPU data is ready", handle);
+                }
+                LoadedAssetEvent::SceneFailed { handle, error } => {
+                    log::error!("Scene asset {:?} failed to load: {}", handle, error);
+                }
             }
         }
         self.asset_texture_uploader.update(

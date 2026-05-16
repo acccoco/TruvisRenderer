@@ -207,7 +207,7 @@ ResType truvixx_mesh_fill_tangents(const TruvixxSceneHandle scene, const uint32_
         return ResTypeFail;
 
     const auto& mesh_info = scene_data->mesh_infos[mesh_index];
-    const auto tangent_ptr = scene->importer.get_normal(mesh_index);
+    const auto tangent_ptr = scene->importer.get_tangent(mesh_index);
     if (!mesh_info.has_tangent || !tangent_ptr)
         return ResTypeFail;
 

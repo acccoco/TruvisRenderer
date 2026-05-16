@@ -1,18 +1,19 @@
 //! 资产 CPU 数据与加载事件系统
 //!
-//! 将纹理磁盘 IO 和 CPU 解码放到后台执行，同时接收导入器复制出来的 owned mesh CPU 数据。
+//! 将纹理磁盘 IO、CPU 解码和 Assimp scene 导入放到后台执行，同时接收导入器复制出来的
+//! owned mesh/material/instance CPU 数据。
 //! GPU 上传、image/view 创建、vertex/index buffer、BLAS 和 bindless 注册由渲染后端负责。
 //!
 //! # 加载 Pipeline
 //!
 //! ```text
-//! load_texture(path) / register_mesh_data(key, data)
+//! load_texture(path) / load_scene(path) / register_mesh_data(key, data)
 //!       │
 //!       ▼
-//!   ┌────────┐   rayon / importer   ┌──────────────┐
-//!   │Loading │ ───────────────────▶ │ CPU data     │
-//!   │/ Ready │                      │ texture/mesh │
-//!   └────────┘                      └──────────────┘
+//!   ┌────────┐   rayon / importer   ┌─────────────────────┐
+//!   │Loading │ ───────────────────▶ │ CPU asset data      │
+//!   │/ Ready │                      │ texture/mesh/scene  │
+//!   └────────┘                      └─────────────────────┘
 //! ```
 //!
 //! - [`AssetHub`](asset_hub::AssetHub) — 统一接口、路径去重、状态管理

@@ -1,8 +1,8 @@
+use truvis_asset::handle::{AssetSceneHandle, LoadStatus};
 use truvis_frame_api::input_event::InputEvent;
 use truvis_frame_api::plugin::{Plugin, PluginRenderCtx};
 use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx};
 use truvis_path::TruvisPath;
-use truvis_render_backend::model_loader::assimp_loader::AssimpSceneLoader;
 use truvis_render_backend::platform::camera::Camera;
 use truvis_render_backend::render_backend::{RenderBackendRenderCtx, RenderBackendUpdateCtx};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
@@ -23,10 +23,12 @@ pub struct SponzaApp {
     input: InputManager,
     debug_overlay: DebugInfoOverlay,
     pipeline_overlay: PipelineControlsOverlay,
+    scene_asset: Option<AssetSceneHandle>,
+    scene_spawned: bool,
 }
 
 impl SponzaApp {
-    fn create_scene(world: &mut World, camera: &mut Camera) {
+    fn request_scene(world: &mut World, camera: &mut Camera) -> AssetSceneHandle {
         camera.position = glam::vec3(270.0, 194.0, -64.0);
         camera.euler_yaw_deg = 90.0;
         camera.euler_pitch_deg = 0.0;
@@ -51,12 +53,31 @@ impl SponzaApp {
         });
 
         log::info!("start load sponza scene");
-        AssimpSceneLoader::load_scene(
-            &TruvisPath::assets_path("fbx/sponza/sponza.fbx"),
-            &mut world.scene_manager,
-            &mut world.asset_hub,
-        );
-        log::info!("finished load sponza scene");
+        world.asset_hub.load_scene(TruvisPath::assets_path("fbx/sponza/sponza.fbx"))
+    }
+
+    fn spawn_scene_if_ready(&mut self, world: &mut World) {
+        if self.scene_spawned {
+            return;
+        }
+
+        let Some(scene_asset) = self.scene_asset else {
+            return;
+        };
+
+        match world.asset_hub.get_scene_status(scene_asset) {
+            LoadStatus::Ready => {
+                let scene_data = world.asset_hub.get_scene_data(scene_asset).expect("ready scene asset missing data");
+                let instances = world.scene_manager.spawn_scene_asset(scene_data);
+                self.scene_spawned = true;
+                log::info!("Sponza scene spawned {} runtime instances.", instances.len());
+            }
+            LoadStatus::Failed => {
+                self.scene_spawned = true;
+                log::error!("Sponza scene failed to load.");
+            }
+            LoadStatus::Unloaded | LoadStatus::Loading => {}
+        }
     }
 }
 
@@ -65,7 +86,7 @@ impl RenderAppHooks for SponzaApp {
         self.gui.set_hidpi_factor(ctx.scale_factor);
         self.gui.set_display_size(ctx.window_size);
 
-        Self::create_scene(&mut *ctx.backend.world, self.camera_controller.camera_mut());
+        self.scene_asset = Some(Self::request_scene(&mut *ctx.backend.world, self.camera_controller.camera_mut()));
     }
 
     fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
@@ -92,6 +113,8 @@ impl RenderAppHooks for SponzaApp {
     }
 
     fn update(&mut self, ctx: &mut RenderBackendUpdateCtx) {
+        self.spawn_scene_if_ready(ctx.world);
+
         let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
         self.gui.begin_frame(delta);
         {

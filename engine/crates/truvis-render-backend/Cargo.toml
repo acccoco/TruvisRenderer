@@ -11,7 +11,6 @@ truvis-render-graph = { workspace = true }
 truvis-render-interface = { workspace = true }
 truvis-scene = { workspace = true }
 truvis-world = { workspace = true }
-truvis-cxx-binding = { workspace = true }
 
 
 ash = { workspace = true }

@@ -3434,6 +3434,7 @@ dependencies = [
  "rayon",
  "slotmap",
  "tracy-client",
+ "truvis-cxx-binding",
 ]
 
 [[package]]
@@ -3579,7 +3580,6 @@ dependencies = [
  "slotmap",
  "tracy-client",
  "truvis-asset",
- "truvis-cxx-binding",
  "truvis-gfx",
  "truvis-render-graph",
  "truvis-render-interface",
