@@ -447,8 +447,6 @@ App / tool
 
 - `MaterialManager` 仍位于 `truvis-scene`，但实际持有 GPU buffer；后续应迁移到
   render-side crate 或专门的 render-scene 模块。
-- 运行时 instance slot、mesh uploader、TLAS dirty/rebuild 和 `AssetMaterialHandle`
-  仍留给后续阶段。
 
 ### Phase 2：Mesh AssetHub 管理 + AssetMeshUploader
 
@@ -475,7 +473,7 @@ App / tool
   `AssetTextureUploader` 和 `AssetMeshUploader`。
 - `AssetMeshUploader` 在 graphics queue 上提交 vertex/index buffer copy 与 BLAS build，
   使用 timeline semaphore 轮询完成；mesh ready 后提供 `MeshRenderResolver` 给
-  `SceneManager::prepare_render_data()`。
+  后续 render-side scene bridge。
 - 旧 `AssimpSceneLoader::load_scene()` 不再接收 GPU ctx，也不再同步创建 vertex/index buffer
   或调用 `Mesh::build_blas()`。
 - `SceneManager` 中的 `Mesh` 变为轻量 proxy，只保存 `AssetMeshHandle` 和名称；mesh 未 GPU ready
@@ -488,12 +486,8 @@ App / tool
 
 - BLAS build 已异步提交，但第一版不做 compaction，后续可在 uploader 内补充 compact 流程。
 - Assimp scene 文件读取仍是同步入口，尚未迁移到 `AssetHub::load_scene()`。
-- Runtime instance 仍使用旧 `InstanceHandle -> MeshHandle / MaterialHandle` 语义，
-  尚未迁移到 `AssetMeshHandle` / `AssetMaterialHandle` 直接引用。
-- `GpuScene` 的 TLAS revision 只覆盖 mesh ready 触发的粗粒度重建；spawn / despawn /
-  transform / mesh change 的完整 dirty 系统仍留给 Phase 4。
-- draw / shader index 仍依赖 `RenderData.all_instances` 的临时 Vec index，稳定
-  `GpuInstanceSlot` 留给 Phase 3。
+- Phase 2 完成时 TLAS revision 只覆盖 mesh ready 触发的粗粒度重建；Phase 3 已补上
+  instance active/despawn/transform 的过渡期 revision，完整 dirty API 仍留给 Phase 4。
 
 ### Phase 3：Instance 稳定 slot 和 ready gate
 
@@ -509,6 +503,30 @@ App / tool
 - Instance 生命周期内 slot 不变化。
 - Mesh/Material 未 ready 时不会访问无效 BLAS 或 material slot。
 - transform 更新只 dirty 对应 instance slot。
+
+完成记录（2026-05-17）：
+
+- `truvis-asset` 新增 `AssetMaterialHandle`、`MaterialAssetKey` 和 `LoadedMaterialData`，
+  `AssetHub` 负责 material CPU record、路径内去重和 CPU ready 状态。
+- Assimp 同步入口保留，但导入结果改为先注册 `AssetMeshHandle` / `AssetMaterialHandle`，
+  runtime `Instance` 直接引用 asset handles，不再依赖临时 `MeshHandle / MaterialHandle`。
+- `RenderBackend` 新增 `InstanceBridge`，维护 `InstanceHandle -> GpuInstanceSlot` 稳定映射、
+  pending/active 状态、FIF 延迟 slot 回收和 transform dirty revision。
+- `MaterialBridge` 改为从 `AssetHub` 同步 `AssetMaterialHandle -> ManagedMaterialHandle -> stable material slot`，
+  material ready 采用 fallback texture 策略，texture 未 ready 不阻塞 instance active。
+- `RenderData` 的 active instance 携带 `GpuInstanceSlot`；`GpuScene` 按 slot 写入 instance buffer，
+  raster push constant、TLAS `instance_custom_index` 和 RT shader instance 查询都使用稳定 slot。
+- `InstanceBridge` revision 与 `AssetMeshUploader::ready_revision()` 合并为过渡期 scene revision，
+  mesh ready、instance active/despawn/transform 会触发当前 FIF TLAS 重建检查。
+
+剩余限制：
+
+- `GpuScene` 仍整块上传 instance / geometry / indirect buffer，尚未按 dirty slot 做局部更新。
+- TLAS 仍是 revision 触发的整棵 rebuild；spawn / despawn / transform / mesh change 的完整 dirty API
+  和更清晰的 owner 边界留给 Phase 4。
+- 旧 `MeshHandle` / `MaterialHandle`、`SceneManager::Mesh` / `SceneManager::Material` 仍作为兼容残留存在，
+  后续在 Phase 6 清理。
+- Assimp scene 文件读取仍是同步入口，尚未迁移到 `AssetHub::load_scene()`。
 
 ### Phase 4：TLAS dirty/rebuild
 
@@ -557,16 +575,16 @@ App / tool
 
 ## 待确认问题
 
-这些不是阻断设计的问题，但实施前需要逐项确认：
+这些不是阻断设计的问题，已实施项保留结论，未实施项继续作为后续检查点：
 
 1. `AssetMaterialHandle` 是否放在 `truvis-asset::handle` 中。
-   推荐放入，因为它表示内容资产身份。
+   已确认并实施，因为它表示内容资产身份。
 2. `ManagedMaterialHandle` / `ManagedMeshHandle` 是否保留。
    推荐逐步退场，避免与 `Asset*Handle` 和 GPU slot 三套身份混用。
 3. Mesh 的 global geometry table 最终归属。
    推荐先由 `GpuScene` 过渡，最终迁移到 `AssetMeshUploader`。
 4. Material texture readiness 默认策略。
-   推荐第一阶段使用 Fallback，之后支持 Strict。
+   已确认 Phase 3 继续使用 Fallback，之后可支持 Strict。
 5. C++ Assimp FFI 需要专项检查。
    迁移时顺带确认 `truvixx_mesh_fill_tangents` 是否正确读取 tangent 数据。
 

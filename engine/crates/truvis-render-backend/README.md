@@ -16,7 +16,8 @@
 - `RenderWorld` 承载 GPU 侧 frame state、global descriptors、bindless、manager-owned resources、FIF buffers 和 frame settings。
 - `AssetTextureUploader` 消费 `AssetHub` 的 texture CPU bytes，负责 GPU image / view / bindless 注册。
 - `AssetMeshUploader` 消费 `AssetHub` 的 mesh CPU 数据，负责 vertex/index buffer 上传、BLAS build 和 mesh GPU ready 查询。
-- 过渡期 `MaterialBridge` 由 backend 持有，负责把 `SceneManager` 的 CPU material 同步为稳定 GPU material slot 和 material buffer。
+- `MaterialBridge` 由 backend 持有，负责把 `AssetHub` 的 CPU material 同步为稳定 GPU material slot 和 material buffer。
+- `InstanceBridge` 由 backend 持有，负责 `InstanceHandle -> GpuInstanceSlot` 稳定映射、ready gate 和 active render list。
 - `RenderPresent` 管理 surface、swapchain、present image 和窗口尺寸相关资源。
 
 ## 生命周期边界

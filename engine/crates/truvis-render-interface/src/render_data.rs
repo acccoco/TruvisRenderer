@@ -4,12 +4,40 @@ use truvis_shader_binding::gpu;
 
 use crate::geometry::RtGeometry;
 
+/// Instance 在 GPU scene instance buffer 中的稳定 slot。
+///
+/// slot 只保证在当前运行时 instance 生命周期内稳定；销毁后会延迟回收。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GpuInstanceSlot(u32);
+
+impl GpuInstanceSlot {
+    pub const TLAS_CUSTOM_INDEX_MAX: u32 = 0x00FF_FFFF;
+
+    pub fn new(index: u32) -> Self {
+        Self(index)
+    }
+
+    pub fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    pub fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+
+    pub fn validate_tlas_custom_index(self) {
+        assert!(self.0 <= Self::TLAS_CUSTOM_INDEX_MAX, "TLAS instance custom index exceeds Vulkan 24-bit limit");
+    }
+}
+
 /// 用于渲染的完整实例数据（只读快照）
 ///
 /// 包含从 SceneManager 中提取的所有必要信息，
 /// 使得 GpuScene 可以独立于 SceneManager 完成 GPU buffer 的构建和上传。
 #[derive(Clone)]
 pub struct InstanceRenderData {
+    /// 该实例在 GPU instance buffer 中的稳定 slot
+    pub instance_slot: GpuInstanceSlot,
     /// 该实例使用的 mesh 在 `SceneData2::all_meshes` 中的索引
     pub mesh_index: usize,
     /// 该实例的每个 submesh 对应的稳定 GPU material slot
@@ -30,19 +58,19 @@ pub struct MeshRenderData<'a> {
     pub name: &'a str,
 }
 
-/// 由 SceneManager 构建的完整场景数据快照（只读）
+/// 由 render-side scene bridge 构建的完整场景数据快照（只读）
 ///
 /// 这是一个自包含的场景数据结构，GpuScene 可以仅凭此结构完成
 /// GPU buffer 的构建和上传，无需访问 SceneManager。
 ///
 /// # 设计原则
-/// - 所有数据都是只读的，由 SceneManager 负责构建
+/// - 所有数据都是只读的，由 render-side bridge 负责构建
 /// - 使用索引 / 稳定 slot 引用而非 Handle，简化 GPU 端数据查找
 /// - 保持数据顺序一致性，确保索引有效
 ///
 /// # 生命周期
 /// 由于 `all_meshes` 持有对 Mesh geometries 的引用，
-/// SceneData2 的生命周期受限于 SceneManager 中的 Mesh 数据。
+/// SceneData2 的生命周期受限于 render-side mesh uploader 中的 Mesh 数据。
 pub struct RenderData<'a> {
     /// 所有实例数据（按顺序）
     pub all_instances: Vec<InstanceRenderData>,
@@ -90,5 +118,29 @@ impl<'a> RenderData<'a> {
 impl Default for RenderData<'_> {
     fn default() -> Self {
         Self::empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gpu_instance_slot_keeps_raw_index() {
+        let slot = GpuInstanceSlot::new(42);
+
+        assert_eq!(slot.as_u32(), 42);
+        assert_eq!(slot.as_usize(), 42);
+    }
+
+    #[test]
+    fn gpu_instance_slot_accepts_vulkan_24_bit_custom_index_limit() {
+        GpuInstanceSlot::new(GpuInstanceSlot::TLAS_CUSTOM_INDEX_MAX).validate_tlas_custom_index();
+    }
+
+    #[test]
+    #[should_panic(expected = "TLAS instance custom index exceeds Vulkan 24-bit limit")]
+    fn gpu_instance_slot_rejects_custom_index_over_vulkan_limit() {
+        GpuInstanceSlot::new(GpuInstanceSlot::TLAS_CUSTOM_INDEX_MAX + 1).validate_tlas_custom_index();
     }
 }

@@ -1,4 +1,4 @@
-use truvis_asset::handle::AssetTextureHandle;
+use truvis_asset::handle::{AssetTextureHandle, LoadedMaterialData};
 
 /// CPU 侧的材质数据
 #[derive(Default)]
@@ -33,6 +33,20 @@ pub struct ManagedMaterialParams {
 
 impl From<&Material> for ManagedMaterialParams {
     fn from(mat: &Material) -> Self {
+        Self {
+            base_color: mat.base_color,
+            emissive: mat.emissive,
+            metallic: mat.metallic,
+            roughness: mat.roughness,
+            opaque: mat.opaque,
+            diffuse_texture: mat.diffuse_texture,
+            normal_texture: mat.normal_texture,
+        }
+    }
+}
+
+impl From<&LoadedMaterialData> for ManagedMaterialParams {
+    fn from(mat: &LoadedMaterialData) -> Self {
         Self {
             base_color: mat.base_color,
             emissive: mat.emissive,

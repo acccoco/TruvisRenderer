@@ -428,6 +428,10 @@ impl AssetMeshUploader {
 }
 
 impl MeshRenderResolver for AssetMeshUploader {
+    fn is_mesh_ready(&self, handle: AssetMeshHandle) -> bool {
+        self.is_mesh_ready(handle)
+    }
+
     fn resolve_mesh(&self, handle: AssetMeshHandle) -> Option<MeshRenderData<'_>> {
         let mesh = self.meshes.get(handle)?;
         Some(MeshRenderData {

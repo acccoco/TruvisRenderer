@@ -1,9 +1,8 @@
-use indexmap::IndexMap;
 use slotmap::SlotMap;
 
-use truvis_asset::handle::AssetMeshHandle;
+use truvis_asset::handle::{AssetMaterialHandle, AssetMeshHandle};
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
-use truvis_render_interface::render_data::{InstanceRenderData, MeshRenderData, RenderData};
+use truvis_render_interface::render_data::MeshRenderData;
 use truvis_shader_binding::gpu;
 
 use crate::components::instance::Instance;
@@ -11,19 +10,27 @@ use crate::components::material::Material;
 use crate::components::mesh::Mesh;
 use crate::guid_new_type::{InstanceHandle, LightHandle, MaterialHandle, MeshHandle};
 
-/// CPU material handle 到稳定 GPU material slot 的解析接口。
+/// asset material handle 到稳定 GPU material slot 的解析接口。
 ///
-/// 由 render-side material bridge 实现，SceneManager 只依赖 slot 结果，
+/// 由 render-side material bridge 实现，scene 层只依赖 slot 结果，
 /// 不接触 texture、bindless 或 GPU material buffer 的细节。
 pub trait MaterialSlotResolver {
-    fn resolve_material_slot(&self, handle: MaterialHandle) -> Option<u32>;
+    fn resolve_material_slot(&self, handle: AssetMaterialHandle) -> Option<u32>;
+
+    fn is_material_ready(&self, handle: AssetMaterialHandle) -> bool {
+        self.resolve_material_slot(handle).is_some()
+    }
 }
 
-/// CPU mesh handle 到 GPU-ready mesh 数据的解析接口。
+/// asset mesh handle 到 GPU-ready mesh 数据的解析接口。
 ///
-/// 由 render-side mesh uploader 实现，SceneManager 只依赖资产 mesh 是否已经可渲染，
+/// 由 render-side mesh uploader 实现，scene 层只依赖资产 mesh 是否已经可渲染，
 /// 不接触 vertex/index buffer 上传或 BLAS 构建细节。
 pub trait MeshRenderResolver {
+    fn is_mesh_ready(&self, handle: AssetMeshHandle) -> bool {
+        self.resolve_mesh(handle).is_some()
+    }
+
     fn resolve_mesh(&self, handle: AssetMeshHandle) -> Option<MeshRenderData<'_>>;
 }
 
@@ -67,77 +74,6 @@ impl SceneManager {
             && self.all_mats.is_empty()
             && self.all_point_lights.is_empty()
     }
-
-    /// 构建完整的场景数据快照（SceneData2）
-    ///
-    /// 该方法会遍历所有场景数据，构建一个自包含的 SceneData2 结构，
-    /// 使得 GpuScene 可以独立于 SceneManager 完成 GPU buffer 的构建和上传。
-    ///
-    /// # 参数
-    /// - `material_slot_resolver`: 用于把 CPU material handle 解析为稳定 GPU slot
-    ///
-    /// # 返回
-    /// 包含完整场景信息的 SceneData2 结构
-    pub fn prepare_render_data<'a>(
-        &'a self,
-        material_slot_resolver: &dyn MaterialSlotResolver,
-        mesh_resolver: &'a dyn MeshRenderResolver,
-    ) -> RenderData<'a> {
-        if self.is_empty() {
-            return RenderData::empty();
-        }
-
-        // 1. 构建 mesh handle -> index 映射，以及 mesh 数据
-        let mut mesh_handle_to_index: IndexMap<MeshHandle, usize> = IndexMap::new();
-        let mut all_meshes: Vec<MeshRenderData<'a>> = Vec::with_capacity(self.all_meshes.len());
-        let mut mesh_geometry_start_indices: Vec<usize> = Vec::with_capacity(self.all_meshes.len());
-        let mut total_geometry_count: usize = 0;
-
-        for (handle, mesh) in self.all_meshes.iter() {
-            if let Some(mesh_render_data) = mesh_resolver.resolve_mesh(mesh.asset_mesh) {
-                let index = all_meshes.len();
-                mesh_handle_to_index.insert(handle, index);
-                mesh_geometry_start_indices.push(total_geometry_count);
-                total_geometry_count += mesh_render_data.geometries.len();
-                all_meshes.push(mesh_render_data);
-            }
-        }
-
-        // 2. 构建 instance 数据，材质引用写入稳定 GPU material slot
-        let mut all_instances: Vec<InstanceRenderData> = Vec::with_capacity(self.all_instances.len());
-
-        for (_handle, instance) in self.all_instances.iter() {
-            let Some(&mesh_index) = mesh_handle_to_index.get(&instance.mesh) else {
-                continue;
-            };
-            let material_slots: Vec<u32> = instance
-                .materials
-                .iter()
-                .map(|&mat_handle| {
-                    material_slot_resolver
-                        .resolve_material_slot(mat_handle)
-                        .expect("Material slot not found for instance")
-                })
-                .collect();
-
-            all_instances.push(InstanceRenderData {
-                mesh_index,
-                material_slots,
-                transform: instance.transform,
-            });
-        }
-
-        // 3. 构建点光源数据
-        let all_point_lights: Vec<gpu::PointLight> = self.all_point_lights.iter().map(|(_, light)| *light).collect();
-
-        RenderData {
-            all_instances,
-            all_meshes,
-            all_point_lights,
-            mesh_geometry_start_indices,
-            total_geometry_count,
-        }
-    }
 }
 // 工具函数
 impl SceneManager {
@@ -169,6 +105,18 @@ impl SceneManager {
     /// 向场景中添加 instance
     pub fn register_instance(&mut self, instance: Instance) -> InstanceHandle {
         self.all_instances.insert(instance)
+    }
+
+    pub fn remove_instance(&mut self, handle: InstanceHandle) -> Option<Instance> {
+        self.all_instances.remove(handle)
+    }
+
+    pub fn update_instance_transform(&mut self, handle: InstanceHandle, transform: glam::Mat4) -> bool {
+        let Some(instance) = self.all_instances.get_mut(handle) else {
+            return false;
+        };
+        instance.transform = transform;
+        true
     }
 
     /// 向场景中添加点光源

@@ -314,13 +314,13 @@ impl GpuScene {
     /// - `before_draw`: 每次绘制前的回调函数 (instance_idx, submesh_idx)
     pub fn draw(&self, cmd: &GfxCommandBuffer, scene_data: &RenderData<'_>, mut before_draw: impl FnMut(u32, u32)) {
         let _span = tracy_client::span!("GpuScene::draw2");
-        for (instance_idx, instance) in scene_data.all_instances.iter().enumerate() {
+        for instance in scene_data.all_instances.iter() {
             let mesh = &scene_data.all_meshes[instance.mesh_index];
             for (submesh_idx, geometry) in mesh.geometries.iter().enumerate() {
                 geometry.cmd_bind_index_buffer(cmd);
                 geometry.cmd_bind_vertex_buffers(cmd);
 
-                before_draw(instance_idx as u32, submesh_idx as u32);
+                before_draw(instance.instance_slot.as_u32(), submesh_idx as u32);
                 cmd.draw_indexed(geometry.index_cnt(), 0, 1, 0, 0);
             }
         }
@@ -388,13 +388,14 @@ impl GpuScene {
         let material_indirect_buffer_slices = crt_material_indirect_stage_buffer.mapped_slice();
         let geometry_indirect_buffer_slices = crt_geometry_indirect_stage_buffer.mapped_slice();
 
-        if instance_buffer_slices.len() < scene_data.all_instances.len() {
-            panic!("instance cnt can not be larger than buffer");
-        }
-
         let mut crt_geometry_indirect_idx = 0;
         let mut crt_material_indirect_idx = 0;
-        for (instance_idx, instance) in scene_data.all_instances.iter().enumerate() {
+        for instance in scene_data.all_instances.iter() {
+            let instance_slot = instance.instance_slot.as_usize();
+            if instance_buffer_slices.len() <= instance_slot {
+                panic!("instance slot can not be larger than buffer");
+            }
+
             let submesh_cnt = instance.material_slots.len();
             if geometry_indirect_buffer_slices.len() < crt_geometry_indirect_idx + submesh_cnt {
                 panic!("instance geometry cnt can not be larger than buffer");
@@ -403,7 +404,7 @@ impl GpuScene {
                 panic!("instance material cnt can not be larger than buffer");
             }
 
-            instance_buffer_slices[instance_idx] = gpu::Instance {
+            instance_buffer_slices[instance_slot] = gpu::Instance {
                 geometry_indirect_idx: crt_geometry_indirect_idx as u32,
                 geometry_count: submesh_cnt as u32,
                 material_indirect_idx: crt_material_indirect_idx as u32,
@@ -577,12 +578,9 @@ impl GpuScene {
         let instance_infos = scene_data
             .all_instances
             .iter()
-            .enumerate()
-            .map(|(idx, ins)| {
-                if idx > 0x00FF_FFFF {
-                    panic!("TLAS instance custom index exceeds Vulkan 24-bit limit");
-                }
-                self.get_as_instance_info(ins, idx as u32, scene_data)
+            .map(|ins| {
+                ins.instance_slot.validate_tlas_custom_index();
+                self.get_as_instance_info(ins, ins.instance_slot.as_u32(), scene_data)
             })
             .collect_vec();
 

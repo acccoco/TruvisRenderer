@@ -1,12 +1,13 @@
 use itertools::Itertools;
 
 use truvis_asset::asset_hub::AssetHub;
-use truvis_asset::handle::{LoadedMeshData, MeshAssetKey};
+use truvis_asset::handle::{
+    AssetMaterialHandle, AssetMeshHandle, LoadedMaterialData, LoadedMeshData, MaterialAssetKey, MeshAssetKey,
+};
 use truvis_cxx_binding::truvixx;
 use truvis_scene::components::instance::Instance;
 use truvis_scene::components::material::Material;
-use truvis_scene::components::mesh::Mesh;
-use truvis_scene::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle};
+use truvis_scene::guid_new_type::InstanceHandle;
 use truvis_scene::scene_manager::SceneManager;
 
 /// Assimp 场景加载器
@@ -26,8 +27,8 @@ pub struct AssimpSceneLoader {
     source_path: std::path::PathBuf,
     model_name: String,
 
-    meshes: Vec<MeshHandle>,
-    mats: Vec<MaterialHandle>,
+    meshes: Vec<AssetMeshHandle>,
+    mats: Vec<AssetMaterialHandle>,
     instances: Vec<InstanceHandle>,
 }
 
@@ -60,16 +61,8 @@ impl AssimpSceneLoader {
             instances: vec![],
         };
 
-        scene_loader.load_mesh(scene_manager, asset_hub);
-        scene_loader.load_mats(|mut mat| {
-            if !mat.diffuse_map.is_empty() {
-                mat.diffuse_texture = Some(asset_hub.load_texture(std::path::PathBuf::from(&mat.diffuse_map)));
-            }
-            if !mat.normal_map.is_empty() {
-                mat.normal_texture = Some(asset_hub.load_texture(std::path::PathBuf::from(&mat.normal_map)));
-            }
-            scene_manager.register_mat(mat)
-        });
+        scene_loader.load_mesh(asset_hub);
+        scene_loader.load_mats(asset_hub);
         scene_loader.load_instance(|ins| scene_manager.register_instance(ins));
 
         {
@@ -126,25 +119,20 @@ impl AssimpSceneLoader {
     }
 
     /// 加载场景中基础的几何体
-    fn load_mesh(&mut self, scene_manager: &mut SceneManager, asset_hub: &mut AssetHub) {
+    fn load_mesh(&mut self, asset_hub: &mut AssetHub) {
         let _span = tracy_client::span!("load_mesh");
         let mesh_cnt = unsafe { truvixx::truvixx_scene_mesh_count(self.scene_handle) };
 
         let mesh_uuids = (0..mesh_cnt)
             .map(|mesh_idx| unsafe {
                 let data = Self::create_mesh_data(self.scene_handle, mesh_idx, &self.model_name);
-                let mesh_name = data.name.clone();
-                let asset_mesh = asset_hub.register_mesh_data(
+                asset_hub.register_mesh_data(
                     MeshAssetKey {
                         source_path: self.source_path.clone(),
                         mesh_index: mesh_idx,
                     },
                     data,
-                );
-                scene_manager.register_mesh(Mesh {
-                    asset_mesh,
-                    name: mesh_name,
-                })
+                )
             })
             .collect_vec();
 
@@ -175,14 +163,36 @@ impl AssimpSceneLoader {
     }
 
     /// 加载场景中的所有材质
-    fn load_mats(&mut self, mut mat_register: impl FnMut(Material) -> MaterialHandle) {
+    fn load_mats(&mut self, asset_hub: &mut AssetHub) {
         let _span = tracy_client::span!("load_mats");
         let mat_cnt = unsafe { truvixx::truvixx_scene_material_count(self.scene_handle) };
 
         let mat_uuids = (0..mat_cnt)
             .map(|mat_idx| unsafe {
-                let mat = Self::create_mat(self.scene_handle, mat_idx);
-                mat_register(mat)
+                let mut mat = Self::create_mat(self.scene_handle, mat_idx);
+                if !mat.diffuse_map.is_empty() {
+                    mat.diffuse_texture = Some(asset_hub.load_texture(std::path::PathBuf::from(&mat.diffuse_map)));
+                }
+                if !mat.normal_map.is_empty() {
+                    mat.normal_texture = Some(asset_hub.load_texture(std::path::PathBuf::from(&mat.normal_map)));
+                }
+
+                asset_hub.register_material_data(
+                    MaterialAssetKey {
+                        source_path: self.source_path.clone(),
+                        material_index: mat_idx,
+                    },
+                    LoadedMaterialData {
+                        base_color: mat.base_color,
+                        emissive: mat.emissive,
+                        metallic: mat.metallic,
+                        roughness: mat.roughness,
+                        opaque: mat.opaque,
+                        diffuse_texture: mat.diffuse_texture,
+                        normal_texture: mat.normal_texture,
+                        name: format!("{}-mat-{}", self.model_name, mat_idx),
+                    },
+                )
             })
             .collect_vec();
 

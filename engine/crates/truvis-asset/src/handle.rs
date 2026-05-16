@@ -6,6 +6,7 @@ use ash::vk;
 
 new_key_type! { pub struct AssetTextureHandle; }
 new_key_type! { pub struct AssetMeshHandle; }
+new_key_type! { pub struct AssetMaterialHandle; }
 
 /// 解码后的纹理数据。
 ///
@@ -26,6 +27,15 @@ pub struct MeshAssetKey {
     pub mesh_index: u32,
 }
 
+/// 一个导入源内的 material 资产身份。
+///
+/// `AssetHub` 使用它做路径 + material index 去重；它不代表 GPU material slot。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MaterialAssetKey {
+    pub source_path: PathBuf,
+    pub material_index: u32,
+}
+
 /// upload-ready 的 CPU mesh 数据。
 ///
 /// 数据已经从导入库的临时内存复制到 Rust owned buffer，但还没有创建 GPU buffer 或 BLAS。
@@ -36,6 +46,22 @@ pub struct LoadedMeshData {
     pub tangents: Vec<glam::Vec3>,
     pub uvs: Vec<glam::Vec2>,
     pub indices: Vec<u32>,
+    pub name: String,
+}
+
+/// CPU 侧材质资产数据。
+///
+/// 这里保存的是内容材质身份关联的参数和 texture handle，不包含 GPU material slot。
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoadedMaterialData {
+    pub base_color: glam::Vec4,
+    pub emissive: glam::Vec4,
+    pub metallic: f32,
+    pub roughness: f32,
+    pub opaque: f32,
+
+    pub diffuse_texture: Option<AssetTextureHandle>,
+    pub normal_texture: Option<AssetTextureHandle>,
     pub name: String,
 }
 

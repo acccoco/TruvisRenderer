@@ -37,6 +37,7 @@ use truvis_world::World;
 
 use crate::asset_mesh_uploader::AssetMeshUploader;
 use crate::asset_texture_uploader::AssetTextureUploader;
+use crate::instance_bridge::InstanceBridge;
 use crate::material_bridge::MaterialBridge;
 use crate::platform::camera::Camera;
 use crate::platform::timer::Timer;
@@ -68,6 +69,7 @@ pub struct RenderBackend {
     asset_texture_uploader: AssetTextureUploader,
     asset_mesh_uploader: AssetMeshUploader,
     material_bridge: MaterialBridge,
+    instance_bridge: InstanceBridge,
 
     cmd_allocator: CmdAllocator,
 
@@ -204,6 +206,10 @@ impl RenderBackend {
             let _span = tracy_client::span!("RenderBackend::new/material_bridge");
             MaterialBridge::new(gfx.resource_ctx(), frame_counter.frame_token())
         };
+        let instance_bridge = {
+            let _span = tracy_client::span!("RenderBackend::new/instance_bridge");
+            InstanceBridge::new(frame_counter.frame_token())
+        };
         let scene_manager = {
             let _span = tracy_client::span!("RenderBackend::new/scene_manager");
             SceneManager::new()
@@ -282,6 +288,7 @@ impl RenderBackend {
                 asset_texture_uploader,
                 asset_mesh_uploader,
                 material_bridge,
+                instance_bridge,
                 render_world: RenderWorld {
                     gpu_scene,
                     bindless_manager,
@@ -403,6 +410,7 @@ impl RenderBackend {
         let frame_token = self.render_world.frame_counter.frame_token();
         self.render_world.bindless_manager.begin_frame(frame_token);
         self.material_bridge.begin_frame(frame_token);
+        self.instance_bridge.begin_frame(frame_token);
 
         let loaded_asset_events = self.world.asset_hub.update();
         let mut texture_events = Vec::new();
@@ -631,7 +639,7 @@ impl RenderBackend {
             bindless_target,
         );
 
-        self.material_bridge.sync_scene_materials(&self.world.scene_manager);
+        self.material_bridge.sync_asset_materials(&self.world.asset_hub);
         self.material_bridge.update_textures(&self.asset_texture_uploader);
         self.material_bridge.upload(
             self.gfx.resource_ctx(),
@@ -641,9 +649,13 @@ impl RenderBackend {
             &self.asset_texture_uploader,
         );
 
-        let scene_render_data =
-            self.world.scene_manager.prepare_render_data(&self.material_bridge, &self.asset_mesh_uploader);
+        let scene_render_data = self.instance_bridge.prepare_render_data(
+            &self.world.scene_manager,
+            &self.material_bridge,
+            &self.asset_mesh_uploader,
+        );
         let material_buffer_device_address = self.material_bridge.material_buffer_device_address(frame_label);
+        let scene_revision = self.asset_mesh_uploader.ready_revision().saturating_add(self.instance_bridge.revision());
         self.render_world.gpu_scene.upload_render_data(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -653,7 +665,7 @@ impl RenderBackend {
             &self.render_world.frame_counter,
             &scene_render_data,
             material_buffer_device_address,
-            self.asset_mesh_uploader.ready_revision(),
+            scene_revision,
             &self.render_world.bindless_manager,
         );
 

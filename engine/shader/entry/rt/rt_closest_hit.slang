@@ -28,7 +28,7 @@ MaterialType determine_material_type(PBRMaterial* mat)
 [shader("closesthit")]
 void main_closest_hit(inout HitPayload payload, in BuiltInTriangleIntersectionAttributes attr)
 {
-    const uint instance_id = InstanceIndex();
+    const uint instance_id = InstanceID();
     const uint geometry_id = GeometryIndex();
     const uint primitive_id = PrimitiveIndex();
 
@@ -91,4 +91,3 @@ void main_closest_hit(inout HitPayload payload, in BuiltInTriangleIntersectionAt
     // 材质类型
     payload.info.material_type = determine_material_type(mat);
 }
-

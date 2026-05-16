@@ -5,7 +5,7 @@
 [shader("anyhit")]
 void trans_any(inout HitPayload payload, in BuiltInTriangleIntersectionAttributes attr)
 {
-    const uint instance_id = InstanceIndex();
+    const uint instance_id = InstanceID();
     const uint geometry_id = GeometryIndex();
     const uint primitive_id = PrimitiveIndex();
 

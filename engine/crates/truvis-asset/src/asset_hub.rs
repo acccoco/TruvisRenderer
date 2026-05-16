@@ -5,7 +5,8 @@ use slotmap::SlotMap;
 
 use crate::asset_loader::{AssetLoadRequest, AssetLoader, LoadResult};
 use crate::handle::{
-    AssetMeshHandle, AssetTextureHandle, LoadStatus, LoadedMeshData, LoadedTextureBytes, MeshAssetKey,
+    AssetMaterialHandle, AssetMeshHandle, AssetTextureHandle, LoadStatus, LoadedMaterialData, LoadedMeshData,
+    LoadedTextureBytes, MaterialAssetKey, MeshAssetKey,
 };
 
 pub struct TextureAssetRecord {
@@ -17,6 +18,12 @@ pub struct MeshAssetRecord {
     pub key: MeshAssetKey,
     pub status: LoadStatus,
     pub data: LoadedMeshData,
+}
+
+pub struct MaterialAssetRecord {
+    pub key: MaterialAssetKey,
+    pub status: LoadStatus,
+    pub data: LoadedMaterialData,
 }
 
 pub enum LoadedAssetEvent {
@@ -40,8 +47,10 @@ pub enum LoadedAssetEvent {
 pub struct AssetHub {
     textures: SlotMap<AssetTextureHandle, TextureAssetRecord>,
     meshes: SlotMap<AssetMeshHandle, MeshAssetRecord>,
+    materials: SlotMap<AssetMaterialHandle, MaterialAssetRecord>,
     path_to_texture: HashMap<PathBuf, AssetTextureHandle>,
     key_to_mesh: HashMap<MeshAssetKey, AssetMeshHandle>,
+    key_to_material: HashMap<MaterialAssetKey, AssetMaterialHandle>,
     pending_events: VecDeque<LoadedAssetEvent>,
     loader: AssetLoader,
 }
@@ -60,8 +69,10 @@ impl AssetHub {
         Self {
             textures: SlotMap::with_key(),
             meshes: SlotMap::with_key(),
+            materials: SlotMap::with_key(),
             path_to_texture: HashMap::new(),
             key_to_mesh: HashMap::new(),
+            key_to_material: HashMap::new(),
             pending_events: VecDeque::new(),
             loader: AssetLoader::new(),
         }
@@ -104,12 +115,28 @@ impl AssetHub {
         self.meshes.get(handle).map(|record| record.status).unwrap_or(LoadStatus::Failed)
     }
 
+    pub fn get_material_status(&self, handle: AssetMaterialHandle) -> LoadStatus {
+        self.materials.get(handle).map(|record| record.status).unwrap_or(LoadStatus::Failed)
+    }
+
     pub fn texture_handle_by_path(&self, path: &Path) -> Option<AssetTextureHandle> {
         self.path_to_texture.get(path).copied()
     }
 
     pub fn mesh_handle_by_key(&self, key: &MeshAssetKey) -> Option<AssetMeshHandle> {
         self.key_to_mesh.get(key).copied()
+    }
+
+    pub fn material_handle_by_key(&self, key: &MaterialAssetKey) -> Option<AssetMaterialHandle> {
+        self.key_to_material.get(key).copied()
+    }
+
+    pub fn get_material_data(&self, handle: AssetMaterialHandle) -> Option<&LoadedMaterialData> {
+        self.materials.get(handle).map(|record| &record.data)
+    }
+
+    pub fn iter_materials(&self) -> impl Iterator<Item = (AssetMaterialHandle, &LoadedMaterialData)> + '_ {
+        self.materials.iter().map(|(handle, record)| (handle, &record.data))
     }
 
     /// 注册已经位于 CPU 内存中的 mesh 数据。
@@ -129,6 +156,24 @@ impl AssetHub {
         });
         self.key_to_mesh.insert(key, handle);
         self.pending_events.push_back(LoadedAssetEvent::MeshLoaded { handle, data });
+        handle
+    }
+
+    /// 注册已经位于 CPU 内存中的 material 数据。
+    ///
+    /// GPU material slot 由 render-side `MaterialBridge` 分配，`AssetHub` 只保存内容身份和参数。
+    pub fn register_material_data(&mut self, key: MaterialAssetKey, data: LoadedMaterialData) -> AssetMaterialHandle {
+        let _span = tracy_client::span!("AssetHub::register_material_data");
+        if let Some(&handle) = self.key_to_material.get(&key) {
+            return handle;
+        }
+
+        let handle = self.materials.insert(MaterialAssetRecord {
+            key: key.clone(),
+            status: LoadStatus::Ready,
+            data,
+        });
+        self.key_to_material.insert(key, handle);
         handle
     }
 
@@ -186,6 +231,26 @@ mod tests {
         }
     }
 
+    fn material_key() -> MaterialAssetKey {
+        MaterialAssetKey {
+            source_path: PathBuf::from("assets/model.fbx"),
+            material_index: 3,
+        }
+    }
+
+    fn material_data(name: &str) -> LoadedMaterialData {
+        LoadedMaterialData {
+            base_color: glam::Vec4::ONE,
+            emissive: glam::Vec4::ZERO,
+            metallic: 0.1,
+            roughness: 0.6,
+            opaque: 1.0,
+            diffuse_texture: None,
+            normal_texture: None,
+            name: name.to_string(),
+        }
+    }
+
     #[test]
     fn register_mesh_data_deduplicates_by_key() {
         let mut hub = AssetHub::new();
@@ -218,5 +283,30 @@ mod tests {
             }
             _ => panic!("expected mesh loaded event"),
         }
+    }
+
+    #[test]
+    fn register_material_data_deduplicates_by_key() {
+        let mut hub = AssetHub::new();
+        let key = material_key();
+
+        let first = hub.register_material_data(key.clone(), material_data("first"));
+        let second = hub.register_material_data(key, material_data("second"));
+
+        assert_eq!(first, second);
+        assert_eq!(hub.get_material_status(first), LoadStatus::Ready);
+        assert_eq!(hub.get_material_data(first).unwrap().name, "first");
+    }
+
+    #[test]
+    fn register_material_data_can_be_iterated() {
+        let mut hub = AssetHub::new();
+        let handle = hub.register_material_data(material_key(), material_data("mat"));
+
+        let materials = hub.iter_materials().collect::<Vec<_>>();
+
+        assert_eq!(materials.len(), 1);
+        assert_eq!(materials[0].0, handle);
+        assert_eq!(materials[0].1.name, "mat");
     }
 }
