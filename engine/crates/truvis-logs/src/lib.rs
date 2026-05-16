@@ -6,43 +6,36 @@
 use std::{io::Write, thread};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct ThreadLogContext
-{
+struct ThreadLogContext {
     name: String,
     tid: String,
 }
 
-impl ThreadLogContext
-{
+impl ThreadLogContext {
     const UNNAMED_THREAD_NAME: &str = "unnamed";
 
-    fn capture() -> Self
-    {
+    fn capture() -> Self {
         Self {
             name: Self::capture_thread_name(),
             tid: Self::capture_thread_id(),
         }
     }
 
-    fn with_thread_log_context<R>(f: impl FnOnce(&Self) -> R) -> R
-    {
+    fn with_thread_log_context<R>(f: impl FnOnce(&Self) -> R) -> R {
         THREAD_LOG_CONTEXT.with(f)
     }
 
-    fn capture_thread_name() -> String
-    {
+    fn capture_thread_name() -> String {
         let current = thread::current();
         current.name().unwrap_or(Self::UNNAMED_THREAD_NAME).to_owned()
     }
 
-    fn capture_thread_id() -> String
-    {
+    fn capture_thread_id() -> String {
         let debug_id = format!("{:?}", thread::current().id());
         Self::normalize_thread_id(&debug_id).to_owned()
     }
 
-    fn normalize_thread_id(debug_id: &str) -> &str
-    {
+    fn normalize_thread_id(debug_id: &str) -> &str {
         // `ThreadId::as_u64` 仍未稳定；先集中裁剪 Debug 展示，避免业务日志调用点感知格式细节。
         debug_id.strip_prefix("ThreadId(").and_then(|id| id.strip_suffix(')')).unwrap_or(debug_id)
     }
@@ -52,8 +45,7 @@ thread_local! {
     static THREAD_LOG_CONTEXT: ThreadLogContext = ThreadLogContext::capture();
 }
 
-pub fn init_log()
-{
+pub fn init_log() {
     env_logger::Builder::new()
         .format(|buf, record| {
             let info_style = buf
@@ -98,13 +90,11 @@ pub fn init_log()
 }
 
 #[cfg(test)]
-mod tests
-{
+mod tests {
     use super::*;
 
     #[test]
-    fn named_thread_uses_rust_thread_name()
-    {
+    fn named_thread_uses_rust_thread_name() {
         let ctx = thread::Builder::new()
             .name("RenderThread".to_string())
             .spawn(ThreadLogContext::capture)
@@ -117,8 +107,7 @@ mod tests
     }
 
     #[test]
-    fn unnamed_thread_uses_stable_placeholder()
-    {
+    fn unnamed_thread_uses_stable_placeholder() {
         let ctx = thread::spawn(ThreadLogContext::capture).join().expect("unnamed test thread panicked");
 
         assert_eq!(ctx.name, ThreadLogContext::UNNAMED_THREAD_NAME);
@@ -126,15 +115,13 @@ mod tests
     }
 
     #[test]
-    fn thread_id_omits_rust_debug_wrapper()
-    {
+    fn thread_id_omits_rust_debug_wrapper() {
         assert_eq!(ThreadLogContext::normalize_thread_id("ThreadId(123)"), "123");
         assert_eq!(ThreadLogContext::normalize_thread_id("native-123"), "native-123");
     }
 
     #[test]
-    fn same_thread_reuses_cached_context()
-    {
+    fn same_thread_reuses_cached_context() {
         thread::Builder::new()
             .name("CacheTestThread".to_string())
             .spawn(|| {

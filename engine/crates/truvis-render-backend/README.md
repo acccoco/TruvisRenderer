@@ -16,10 +16,10 @@
 - `RenderWorld` 承载 GPU 侧 frame state、global descriptors、bindless、manager-owned resources、FIF buffers 和 frame settings。
 - `AssetTextureUploader` 消费 `AssetHub` 的 texture CPU bytes，负责 GPU image / view / bindless 注册。
 - `AssetMeshUploader` 消费 `AssetHub` 的 mesh CPU 数据，负责 vertex/index buffer 上传、BLAS build 和 mesh GPU ready 查询；copy 后到 BLAS build 前必须同步 `TRANSFER_WRITE -> ACCELERATION_STRUCTURE_BUILD_KHR`，并覆盖 device address 输入的 `SHADER_READ` 访问。
-- `MaterialBridge` 由 backend 持有，负责把 `AssetHub` 的 CPU material 同步为稳定 GPU material slot 和 material buffer。
+- `MaterialBridge` 由 backend 持有，负责把 `AssetHub` 的 CPU material 同步为稳定 GPU material slot；backend 私有 `MaterialManager` 持有 material buffer、dirty 上传和延迟 slot 回收。
 - `InstanceBridge` 由 backend 持有，负责 `InstanceHandle -> GpuInstanceSlot` 稳定映射、ready gate 和 active render list。
 - Assimp scene 文件读取不在 backend 内执行；backend 只消费 `AssetHub` 产出的 texture / mesh CPU 事件，并忽略或记录 scene ready / failed 事件。
-- `model_loader::AssimpSceneLoader` 仅保留为兼容 facade，实际迁移入口是 `AssetHub::load_scene()` 和 `SceneManager::spawn_scene_asset()`。
+- backend 不再保留 `model_loader::AssimpSceneLoader` 兼容 facade；scene 导入入口统一为 `AssetHub::load_scene()` 和 `SceneManager::spawn_scene_asset()`。
 - `RenderPresent` 管理 surface、swapchain、present image 和窗口尺寸相关资源。
 
 ## 生命周期边界

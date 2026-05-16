@@ -7,10 +7,9 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_render_interface::frame_counter::FrameToken;
 use truvis_render_interface::pipeline_settings::FrameLabel;
-use truvis_scene::components::material::ManagedMaterialParams;
-use truvis_scene::guid_new_type::ManagedMaterialHandle;
-use truvis_scene::material_manager::{MaterialManager, TextureResolver};
 use truvis_scene::scene_manager::MaterialSlotResolver;
+
+use crate::material_manager::{ManagedMaterialHandle, ManagedMaterialParams, MaterialManager, TextureResolver};
 
 struct MaterialBinding {
     managed_handle: ManagedMaterialHandle,
@@ -73,7 +72,7 @@ impl MaterialBridge {
                     .get_slot_index(managed_handle)
                     .expect("registered material must have a slot");
                 self.bindings.insert(handle, MaterialBinding { managed_handle, params });
-                log::debug!(
+                log::trace!(
                     "MaterialBridge: register asset_handle={:?} managed_handle={:?} stable_slot={}",
                     handle,
                     managed_handle,

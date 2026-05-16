@@ -281,7 +281,7 @@ impl GfxResourceManager {
                 }
                 // 销毁 image view
                 if let Some(image_view) = self.image_view_pool.remove(image_view_handle) {
-                    log::debug!(
+                    log::trace!(
                         "GfxResourceManager releasing image view manager={:?} parent={:?} name={} raw={:#x} reason={}",
                         image_view_handle,
                         handle,
@@ -299,7 +299,7 @@ impl GfxResourceManager {
 
         // 销毁 image 本身
         if let Some(image) = self.image_pool.remove(handle) {
-            log::debug!(
+            log::trace!(
                 "GfxResourceManager releasing image manager={:?} name={} raw={:#x} reason={}",
                 handle,
                 image.debug_name(),

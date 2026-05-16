@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use ash::vk;
 use slotmap::SlotMap;
+use slotmap::new_key_type;
 
-use truvis_asset::handle::AssetTextureHandle;
+use truvis_asset::handle::{AssetTextureHandle, LoadedMaterialData};
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
@@ -14,8 +15,50 @@ use truvis_render_interface::frame_counter::{FrameCounter, FrameToken};
 use truvis_render_interface::pipeline_settings::FrameLabel;
 use truvis_shader_binding::gpu;
 
-use crate::components::material::ManagedMaterialParams;
-use crate::guid_new_type::ManagedMaterialHandle;
+new_key_type! {pub struct ManagedMaterialHandle;}
+
+/// MaterialManager 使用的 CPU 侧材质参数。
+///
+/// texture 字段使用 `AssetTextureHandle`，支持异步加载和 bindless 绑定。
+#[derive(Clone, PartialEq)]
+pub struct ManagedMaterialParams {
+    pub base_color: glam::Vec4,
+    pub emissive: glam::Vec4,
+    pub metallic: f32,
+    pub roughness: f32,
+    pub opaque: f32,
+
+    pub diffuse_texture: Option<AssetTextureHandle>,
+    pub normal_texture: Option<AssetTextureHandle>,
+}
+
+impl From<&LoadedMaterialData> for ManagedMaterialParams {
+    fn from(mat: &LoadedMaterialData) -> Self {
+        Self {
+            base_color: mat.base_color,
+            emissive: mat.emissive,
+            metallic: mat.metallic,
+            roughness: mat.roughness,
+            opaque: mat.opaque,
+            diffuse_texture: mat.diffuse_texture,
+            normal_texture: mat.normal_texture,
+        }
+    }
+}
+
+impl Default for ManagedMaterialParams {
+    fn default() -> Self {
+        Self {
+            base_color: glam::Vec4::ONE,
+            emissive: glam::Vec4::ZERO,
+            metallic: 0.0,
+            roughness: 0.5,
+            opaque: 1.0,
+            diffuse_texture: None,
+            normal_texture: None,
+        }
+    }
+}
 
 const MAX_MATERIAL_COUNT: usize = 1024;
 
@@ -177,7 +220,7 @@ impl MaterialManager {
             self.pending_texture_ready.insert(handle);
         }
 
-        log::debug!("MaterialManager: register slot={} handle={:?}", slot, handle);
+        log::trace!("MaterialManager: register slot={} handle={:?}", slot, handle);
         handle
     }
 
@@ -269,7 +312,7 @@ impl MaterialManager {
                     fif_dirty: [true; FrameCounter::fif_count()],
                     dirty_frame_id: frame_id,
                 });
-            log::debug!("MaterialManager: textures ready handle={:?} slot={}; dirty all FIF buffers", handle, slot);
+            log::trace!("MaterialManager: textures ready handle={:?} slot={}; dirty all FIF buffers", handle, slot);
         }
     }
 
@@ -369,25 +412,6 @@ impl MaterialManager {
     #[inline]
     pub fn material_buffer_device_address(&self, frame_label: FrameLabel) -> vk::DeviceAddress {
         self.buffers[*frame_label].material_buffer.device_address()
-    }
-
-    /// 获取材质的 CPU 参数
-    #[inline]
-    pub fn get_params(&self, handle: ManagedMaterialHandle) -> Option<&ManagedMaterialParams> {
-        let &slot = self.handle_to_slot.get(handle)?;
-        self.slots[slot].as_ref().map(|e| e)
-    }
-
-    /// 获取当前已注册的材质数量
-    #[inline]
-    pub fn material_count(&self) -> usize {
-        self.handle_to_slot.len()
-    }
-
-    /// 获取当前 dirty 的 slot 数量
-    #[inline]
-    pub fn dirty_count(&self) -> usize {
-        self.dirty_slots.len()
     }
 }
 

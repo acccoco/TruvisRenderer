@@ -190,7 +190,7 @@ impl MeshUploadManager {
         );
         queue_ctx.gfx_queue().submit(vec![submit_info], None);
 
-        log::debug!("AssetMeshUploader: submitted mesh {:?} '{}' timeline={}", handle, name, target_value);
+        log::trace!("AssetMeshUploader: submitted mesh {:?} '{}' timeline={}", handle, name, target_value);
         self.pending_uploads.push_back(PendingMeshUpload {
             semaphore_value: target_value,
             handle,
@@ -401,7 +401,7 @@ impl AssetMeshUploader {
         }
 
         let blas_device_address = finished.blas.device_address(device_ctx);
-        log::debug!(
+        log::trace!(
             "AssetMeshUploader: mesh {:?} '{}' is GPU ready, blas_address={:#x}",
             finished.handle,
             finished.name,

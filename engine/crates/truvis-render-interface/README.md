@@ -26,7 +26,7 @@
 - `RenderData` 的 active instance 列表只包含 mesh/material 都 GPU-ready 的 instance。
 - `GpuScene` 持有 instance、geometry、light、indirect map 和 TLAS 等 buffer。
 - `GpuScene` 不再拥有 material buffer；`gpu::GPUScene.all_mats` 由调用方传入的 material buffer device address 填充。
-- 当前 material buffer 的 owner 是 render-backend 侧 `MaterialBridge` 委托的 `MaterialManager`，后续可迁移到专门 render-side asset/scene 模块。
+- 当前 material buffer 的 owner 是 render-backend 私有 `MaterialManager`，由 `MaterialBridge` 驱动；后续可迁移到专门 render-side asset/scene 模块。
 
 ## 资源管理规则
 

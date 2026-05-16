@@ -11,5 +11,5 @@ pub mod asset_mesh_uploader;
 pub mod asset_texture_uploader;
 mod instance_bridge;
 mod material_bridge;
-pub mod model_loader;
+mod material_manager;
 pub mod render_backend;

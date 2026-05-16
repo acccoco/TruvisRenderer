@@ -348,7 +348,7 @@ impl RenderBackend {
             &mut self.render_world.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
-        self.world.scene_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
+        self.world.scene_manager.destroy();
         self.material_bridge.destroy(self.gfx.resource_ctx());
         self.asset_texture_uploader.destroy(
             self.gfx.resource_ctx(),

@@ -161,12 +161,12 @@ impl InstanceBridge {
                 (InstanceState::Pending, true) => {
                     binding.state = InstanceState::Active;
                     self.revision = self.revision.saturating_add(1);
-                    log::debug!("InstanceBridge: activate handle={:?} stable_slot={}", handle, binding.slot.as_u32());
+                    log::trace!("InstanceBridge: activate handle={:?} stable_slot={}", handle, binding.slot.as_u32());
                 }
                 (InstanceState::Active, false) => {
                     binding.state = InstanceState::Pending;
                     self.revision = self.revision.saturating_add(1);
-                    log::debug!("InstanceBridge: deactivate handle={:?} stable_slot={}", handle, binding.slot.as_u32());
+                    log::trace!("InstanceBridge: deactivate handle={:?} stable_slot={}", handle, binding.slot.as_u32());
                 }
                 _ => {}
             }
@@ -183,7 +183,7 @@ impl InstanceBridge {
                 last_transform: instance.transform,
             },
         );
-        log::debug!("InstanceBridge: register handle={:?} stable_slot={}", handle, slot.as_u32());
+        log::trace!("InstanceBridge: register handle={:?} stable_slot={}", handle, slot.as_u32());
     }
 
     fn retire_stale_instances(&mut self, scene_manager: &SceneManager) {

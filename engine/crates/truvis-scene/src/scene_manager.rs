@@ -1,14 +1,11 @@
 use slotmap::SlotMap;
 
 use truvis_asset::handle::{AssetMaterialHandle, AssetMeshHandle, LoadedSceneData};
-use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_render_interface::render_data::MeshRenderData;
 use truvis_shader_binding::gpu;
 
 use crate::components::instance::Instance;
-use crate::components::material::Material;
-use crate::components::mesh::Mesh;
-use crate::guid_new_type::{InstanceHandle, LightHandle, MaterialHandle, MeshHandle};
+use crate::guid_new_type::{InstanceHandle, LightHandle};
 
 /// asset material handle 到稳定 GPU material slot 的解析接口。
 ///
@@ -37,10 +34,7 @@ pub trait MeshRenderResolver {
 /// 在 CPU 侧管理场景数据
 #[derive(Default)]
 pub struct SceneManager {
-    all_mats: SlotMap<MaterialHandle, Material>,
     all_instances: SlotMap<InstanceHandle, Instance>,
-    all_meshes: SlotMap<MeshHandle, Mesh>,
-
     all_point_lights: SlotMap<LightHandle, gpu::PointLight>,
 }
 // 创建与初始化
@@ -52,16 +46,8 @@ impl SceneManager {
 // 访问器
 impl SceneManager {
     #[inline]
-    pub fn mat_map(&self) -> &SlotMap<MaterialHandle, Material> {
-        &self.all_mats
-    }
-    #[inline]
     pub fn instance_map(&self) -> &SlotMap<InstanceHandle, Instance> {
         &self.all_instances
-    }
-    #[inline]
-    pub fn mesh_map(&self) -> &SlotMap<MeshHandle, Mesh> {
-        &self.all_meshes
     }
     #[inline]
     pub fn point_light_map(&self) -> &SlotMap<LightHandle, gpu::PointLight> {
@@ -69,10 +55,7 @@ impl SceneManager {
     }
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.all_instances.is_empty()
-            && self.all_meshes.is_empty()
-            && self.all_mats.is_empty()
-            && self.all_point_lights.is_empty()
+        self.all_instances.is_empty() && self.all_point_lights.is_empty()
     }
 }
 // 工具函数
@@ -80,26 +63,6 @@ impl SceneManager {
     #[inline]
     pub fn get_instance(&self, handle: InstanceHandle) -> Option<&Instance> {
         self.all_instances.get(handle)
-    }
-
-    #[inline]
-    pub fn get_mesh(&self, handle: MeshHandle) -> Option<&Mesh> {
-        self.all_meshes.get(handle)
-    }
-
-    #[inline]
-    pub fn get_material(&self, handle: MaterialHandle) -> Option<&Material> {
-        self.all_mats.get(handle)
-    }
-
-    /// 向场景中添加材质
-    pub fn register_mat(&mut self, mat: Material) -> MaterialHandle {
-        self.all_mats.insert(mat)
-    }
-
-    /// 向场景中添加 mesh
-    pub fn register_mesh(&mut self, mesh: Mesh) -> MeshHandle {
-        self.all_meshes.insert(mesh)
     }
 
     /// 向场景中添加 instance
@@ -149,14 +112,11 @@ impl Drop for SceneManager {
 }
 // 销毁
 impl SceneManager {
-    pub fn destroy(mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
-        self.destroy_mut(resource_ctx, device_ctx);
+    pub fn destroy(mut self) {
+        self.destroy_mut();
     }
-    pub fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
-        let _ = (resource_ctx, device_ctx);
-        self.all_mats.clear();
+    pub fn destroy_mut(&mut self) {
         self.all_instances.clear();
-        self.all_meshes.clear();
         self.all_point_lights.clear();
     }
 }

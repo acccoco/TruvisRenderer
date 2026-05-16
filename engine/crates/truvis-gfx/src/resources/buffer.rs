@@ -128,7 +128,7 @@ impl GfxBuffer {
             return;
         }
 
-        log::debug!("Destroying GfxBuffer name={} raw={:#x} reason={}", self.debug_name, self.handle.as_raw(), reason);
+        log::trace!("Destroying GfxBuffer name={} raw={:#x} reason={}", self.debug_name, self.handle.as_raw(), reason);
 
         let Some(mut allocation) = self.allocation.take() else {
             debug_assert!(false, "GfxBuffer '{}' has handle but no VMA allocation", self.debug_name);

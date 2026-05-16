@@ -33,7 +33,7 @@ GPU 上传、bindless 注册、BLAS 构建和 shader 可见绑定由 render-side
 - Mesh 的 vertex/index buffer 上传和 BLAS 构建走异步队列，不阻塞模型加载路径。
 - Material 和 Instance 在 GPU scene 中拥有生命周期内稳定 slot。
 - Instance 进入 GPU 可见状态前，必须确认引用的 Mesh 和 Material 已经达到 GPU 可用状态。
-- Assimp 的文件读取与 CPU 数据抽取进入 `AssetHub`，旧的同步 `AssimpSceneLoader` 逐步退场。
+- Assimp 的文件读取与 CPU 数据抽取进入 `AssetHub`，旧的同步 `AssimpSceneLoader` 已退场。
 - 每一步都能独立编译、运行现有示例，并保留可回滚的兼容路径。
 
 ## 非目标
@@ -200,9 +200,8 @@ AssetMaterialUploader
   pending_texture_ready -> handles
 ```
 
-现有 `truvis-scene::material_manager::MaterialManager` 已经包含 slot、dirty、
-FIF 延迟回收和 texture resolver 方向，可以作为第一版实现基础。后续应考虑
-把它移动或重命名到 render-side，因为它持有 GPU buffer。
+backend 私有 `MaterialManager` 已经包含 slot、dirty、FIF 延迟回收和
+texture resolver 方向，由 `MaterialBridge` 驱动并作为当前 render-side owner。
 
 ### Texture readiness 策略
 
@@ -443,10 +442,10 @@ App / tool
 - `PhongPass` 改为接收 `RenderData`，`truvis-render-passes` 不再依赖
   `truvis-world` / `truvis-scene`。
 
-剩余限制：
+后续调整（2026-05-17 Phase 6a）：
 
-- `MaterialManager` 仍位于 `truvis-scene`，但实际持有 GPU buffer；后续应迁移到
-  render-side crate 或专门的 render-scene 模块。
+- `MaterialManager` 已从 `truvis-scene` 移到 `truvis-render-backend` 私有模块，
+  `ManagedMaterialHandle` / `TextureResolver` / `TextureBinding` 同步迁移到 render-side。
 
 ### Phase 2：Mesh AssetHub 管理 + AssetMeshUploader
 
@@ -523,9 +522,9 @@ App / tool
 
 - `GpuScene` 仍整块上传 instance / geometry / indirect buffer，尚未按 dirty slot 做局部更新。
 - TLAS 仍是 revision 触发的整棵 rebuild；Phase 4 已将该过渡机制正式作为当前 dirty/rebuild 策略。
-- 旧 `MeshHandle` / `MaterialHandle`、`SceneManager::Mesh` / `SceneManager::Material` 仍作为兼容残留存在，
-  后续在 Phase 6 清理。
-- Assimp scene 文件读取仍是同步入口，尚未迁移到 `AssetHub::load_scene()`。
+- 旧 `MeshHandle` / `MaterialHandle`、`SceneManager::Mesh` / `SceneManager::Material`
+  已在 Phase 6a 清理。
+- Assimp scene 文件读取已迁移到 `AssetHub::load_scene()`，兼容 facade 已在 Phase 6a 删除。
 
 ### Phase 4：TLAS dirty/rebuild
 
@@ -581,8 +580,8 @@ App / tool
 - `SceneManager::spawn_scene_asset()` 根据 `LoadedSceneData` 创建 runtime instances，同一 scene asset
   可多次 spawn 并产生独立 `InstanceHandle`。
 - Cornell / Sponza demo 改为 init 阶段请求 scene asset、update 阶段 ready 后 spawn，不再直接调用旧同步 loader。
-- `AssimpSceneLoader` 降级为兼容 facade，不再持有 C++ FFI 导入逻辑；render-backend 去掉对
-  `truvis-cxx-binding` 的直接依赖。
+- `AssimpSceneLoader` 先降级为兼容 facade，不再持有 C++ FFI 导入逻辑；render-backend 去掉对
+  `truvis-cxx-binding` 的直接依赖。Phase 6a 已删除该兼容 facade。
 - C++ FFI 中 `truvixx_mesh_fill_tangents` 已修正为读取 tangent 数据。
 
 剩余限制：
@@ -594,7 +593,9 @@ App / tool
 
 目标：
 
-- 删除或降级旧 `AssimpSceneLoader` 中同步 GPU buffer 创建和 BLAS 构建路径。
+- 删除旧 `AssimpSceneLoader` 兼容 facade 和未使用的 loader 残留。
+- 将持有 GPU buffer 的 `MaterialManager` 从 `truvis-scene` 移到 render-side。
+- 清理旧 scene mesh/material 兼容身份和同步 mesh manager。
 - 移除 `SceneManager::prepare_render_data()` 对临时 Vec index 的核心依赖。
 - 逐步将 `GpuScene` / `RenderData` 从 `truvis-render-interface` 上移到 renderer 集成层。
 - 更新 `ARCHITECTURE.md` 和相关模块 README。
@@ -605,6 +606,25 @@ App / tool
 - `cargo fmt` / `cargo check` 通过。
 - 文档描述与实际模块边界一致。
 
+完成记录（2026-05-17 Phase 6a）：
+
+- `MaterialManager`、`ManagedMaterialHandle`、`ManagedMaterialParams`、
+  `TextureResolver` 和 `TextureBinding` 已迁移到 `truvis-render-backend` 私有模块；
+  `truvis-scene` 不再持有 material GPU buffer owner。
+- `truvis-scene` 删除旧 `MeshHandle` / `MaterialHandle` / `ManagedMeshHandle`、
+  旧 mesh/material 组件存储、`mesh_manager` 和未使用的 shape 同步 GPU 创建路径。
+- `render-backend::model_loader` 旧 loader facade 已删除，scene 导入入口统一为
+  `AssetHub::load_scene()` + `SceneManager::spawn_scene_asset()`。
+- `truvis-scene` 去掉对 `truvis-gfx` 的依赖，保留 `MaterialSlotResolver` /
+  `MeshRenderResolver` 作为 scene 到 render-side 的过渡契约。
+
+剩余限制：
+
+- `GpuScene` / `RenderData` 仍位于 `truvis-render-interface`，后续可上移到 backend
+  或专门 render-scene 模块。
+- `GpuScene` 仍整块上传 instance / geometry / indirect buffer，尚未按 dirty slot 做局部更新。
+- `SceneManager` 仍通过 `MeshRenderResolver` 的返回类型引用 `RenderData` 契约，后续需要继续收敛。
+
 ## 待确认问题
 
 这些不是阻断设计的问题，已实施项保留结论，未实施项继续作为后续检查点：
@@ -612,7 +632,8 @@ App / tool
 1. `AssetMaterialHandle` 是否放在 `truvis-asset::handle` 中。
    已确认并实施，因为它表示内容资产身份。
 2. `ManagedMaterialHandle` / `ManagedMeshHandle` 是否保留。
-   推荐逐步退场，避免与 `Asset*Handle` 和 GPU slot 三套身份混用。
+   已处理：`ManagedMeshHandle` 已删除；`ManagedMaterialHandle` 仅作为 backend 私有
+   `MaterialManager` 内部身份保留，不再暴露在 `truvis-scene`。
 3. Mesh 的 global geometry table 最终归属。
    推荐先由 `GpuScene` 过渡，最终迁移到 `AssetMeshUploader`。
 4. Material texture readiness 默认策略。

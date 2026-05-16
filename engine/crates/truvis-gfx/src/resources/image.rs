@@ -190,7 +190,7 @@ impl GfxImage {
             return;
         }
 
-        log::debug!("Destroying GfxImage name={} raw={:#x} reason={}", self.name, self.handle.as_raw(), reason);
+        log::trace!("Destroying GfxImage name={} raw={:#x} reason={}", self.name, self.handle.as_raw(), reason);
 
         match &mut self.source {
             ImageSource::External => (),

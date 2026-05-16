@@ -471,7 +471,7 @@ impl RealtimeRtPass {
     pub fn ray_trace(&self, render_world: &RenderWorld, cmd: &GfxCommandBuffer, pass_data: RealtimeRtPassData) {
         let frame_label = render_world.frame_counter.frame_label();
         let Some(tlas) = render_world.gpu_scene.tlas(frame_label) else {
-            log::debug!("RealtimeRtPass: skip ray tracing because TLAS is not ready for {}", frame_label);
+            log::trace!("RealtimeRtPass: skip ray tracing because TLAS is not ready for {}", frame_label);
             return;
         };
 

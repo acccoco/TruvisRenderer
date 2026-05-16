@@ -61,7 +61,7 @@ impl GfxImageView {
             return;
         }
 
-        log::debug!("Destroying GfxImageView name={} raw={:#x} reason={}", self.name, self.handle.as_raw(), reason);
+        log::trace!("Destroying GfxImageView name={} raw={:#x} reason={}", self.name, self.handle.as_raw(), reason);
         unsafe {
             ctx.device().destroy_image_view(self.handle, None);
         }

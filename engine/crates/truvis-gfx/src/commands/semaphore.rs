@@ -45,7 +45,7 @@ impl GfxSemaphore {
         if self.semaphore.is_null() {
             return;
         }
-        log::debug!(
+        log::trace!(
             "Destroying GfxSemaphore name={} raw={:#x} reason=shutdown",
             self.debug_name,
             self.semaphore.as_raw()
