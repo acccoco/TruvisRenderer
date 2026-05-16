@@ -3,6 +3,10 @@ set shell := ["powershell.exe", "-c"]
 build-all: shader cxx
 	cargo build --all
 
+# 拉取资源
+fetch-res:
+    cargo run --bin fetch-res
+
 # 编译着色器
 shader:
 	cargo run --bin shader-build
