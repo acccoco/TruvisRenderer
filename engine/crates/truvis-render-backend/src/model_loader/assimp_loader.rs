@@ -68,9 +68,12 @@ impl AssimpSceneLoader {
             mesh.build_blas(resource_ctx, device_ctx, immediate_ctx);
             scene_manager.register_mesh(mesh)
         });
-        scene_loader.load_mats(|mat| {
+        scene_loader.load_mats(|mut mat| {
             if !mat.diffuse_map.is_empty() {
-                asset_hub.load_texture(std::path::PathBuf::from(&mat.diffuse_map));
+                mat.diffuse_texture = Some(asset_hub.load_texture(std::path::PathBuf::from(&mat.diffuse_map)));
+            }
+            if !mat.normal_map.is_empty() {
+                mat.normal_texture = Some(asset_hub.load_texture(std::path::PathBuf::from(&mat.normal_map)));
             }
             scene_manager.register_mat(mat)
         });
@@ -188,6 +191,8 @@ impl AssimpSceneLoader {
 
                 diffuse_map: std::ffi::CStr::from_ptr(mat.diffuse_map.as_ptr()).to_str().unwrap().to_string(),
                 normal_map: std::ffi::CStr::from_ptr(mat.normal_map.as_ptr()).to_str().unwrap().to_string(),
+                diffuse_texture: None,
+                normal_texture: None,
             }
         }
     }

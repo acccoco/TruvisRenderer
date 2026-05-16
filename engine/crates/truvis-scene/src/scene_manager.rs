@@ -1,9 +1,8 @@
 use indexmap::IndexMap;
 use slotmap::SlotMap;
 
-use truvis_asset::asset_hub::AssetHub;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
-use truvis_render_interface::bindless_manager::{BindlessManager, BindlessSrvHandle};
+use truvis_render_interface::bindless_manager::BindlessSrvHandle;
 use truvis_render_interface::render_data::{InstanceRenderData, MaterialRenderData, MeshRenderData, RenderData};
 use truvis_shader_binding::gpu;
 
@@ -11,6 +10,7 @@ use crate::components::instance::Instance;
 use crate::components::material::Material;
 use crate::components::mesh::Mesh;
 use crate::guid_new_type::{InstanceHandle, LightHandle, MaterialHandle, MeshHandle};
+use crate::material_manager::TextureResolver;
 
 /// 在 CPU 侧管理场景数据
 #[derive(Default)]
@@ -59,16 +59,11 @@ impl SceneManager {
     /// 使得 GpuScene 可以独立于 SceneManager 完成 GPU buffer 的构建和上传。
     ///
     /// # 参数
-    /// - `bindless_manager`: 用于获取材质贴图的 bindless handle
-    /// - `asset_hub`: 用于根据路径获取纹理 handle
+    /// - `texture_resolver`: 用于把材质中的 asset texture handle 解析为可渲染 binding
     ///
     /// # 返回
     /// 包含完整场景信息的 SceneData2 结构
-    pub fn prepare_render_data<'a>(
-        &'a self,
-        bindless_manager: &BindlessManager,
-        asset_hub: &AssetHub,
-    ) -> RenderData<'a> {
+    pub fn prepare_render_data<'a>(&'a self, texture_resolver: &dyn TextureResolver) -> RenderData<'a> {
         if self.is_empty() {
             return RenderData::empty();
         }
@@ -100,16 +95,14 @@ impl SceneManager {
             let index = all_materials.len();
             mat_handle_to_index.insert(handle, index);
 
-            // 获取漫反射贴图的 bindless handle
-            let diffuse_bindless_handle = if !mat.diffuse_map.is_empty() {
-                let asset_texture = asset_hub.get_texture_by_path(std::path::Path::new(&mat.diffuse_map));
-                bindless_manager.get_shader_srv_handle(asset_texture.view_handle)
-            } else {
-                BindlessSrvHandle::null()
-            };
-
-            // 暂不支持法线贴图
-            let normal_bindless_handle = BindlessSrvHandle::null();
+            let diffuse_bindless_handle = mat
+                .diffuse_texture
+                .map(|handle| texture_resolver.resolve_texture(handle).srv_handle)
+                .unwrap_or(BindlessSrvHandle::null());
+            let normal_bindless_handle = mat
+                .normal_texture
+                .map(|handle| texture_resolver.resolve_texture(handle).srv_handle)
+                .unwrap_or(BindlessSrvHandle::null());
 
             all_materials.push(MaterialRenderData {
                 base_color: mat.base_color,

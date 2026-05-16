@@ -11,6 +11,8 @@ pub struct Material {
 
     pub diffuse_map: String,
     pub normal_map: String,
+    pub diffuse_texture: Option<AssetTextureHandle>,
+    pub normal_texture: Option<AssetTextureHandle>,
 }
 
 /// MaterialManager 使用的 CPU 侧材质参数

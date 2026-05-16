@@ -3425,7 +3425,6 @@ dependencies = [
 name = "truvis-asset"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "ash",
  "crossbeam-channel",
  "crossbeam-utils",
@@ -3434,10 +3433,6 @@ dependencies = [
  "rayon",
  "slotmap",
  "tracy-client",
- "truvis-gfx",
- "truvis-render-interface",
- "truvis-shader-binding",
- "vk-mem",
 ]
 
 [[package]]
@@ -3573,12 +3568,14 @@ dependencies = [
 name = "truvis-render-backend"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ash",
  "bytemuck",
  "glam",
  "itertools 0.10.5",
  "log",
  "raw-window-handle",
+ "slotmap",
  "tracy-client",
  "truvis-asset",
  "truvis-cxx-binding",
@@ -3588,6 +3585,7 @@ dependencies = [
  "truvis-scene",
  "truvis-shader-binding",
  "truvis-world",
+ "vk-mem",
 ]
 
 [[package]]
@@ -3646,6 +3644,7 @@ dependencies = [
  "truvis-path",
  "truvis-render-graph",
  "truvis-render-interface",
+ "truvis-scene",
  "truvis-shader-binding",
  "truvis-utils",
  "truvis-world",

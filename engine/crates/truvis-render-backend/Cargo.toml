@@ -21,3 +21,6 @@ tracy-client = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 raw-window-handle = { workspace = true }
+slotmap = { workspace = true }
+vk-mem = { workspace = true }
+anyhow = { workspace = true }

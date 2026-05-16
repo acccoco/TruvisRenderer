@@ -35,6 +35,7 @@ use truvis_shader_binding::gpu;
 use truvis_render_interface::render_world::RenderWorld;
 use truvis_world::World;
 
+use crate::asset_texture_uploader::AssetTextureUploader;
 use crate::platform::camera::Camera;
 use crate::platform::timer::Timer;
 use crate::present::render_present::RenderPresent;
@@ -62,6 +63,7 @@ pub struct RenderBackend {
 
     world: World,
     render_world: RenderWorld,
+    asset_texture_uploader: AssetTextureUploader,
 
     cmd_allocator: CmdAllocator,
 
@@ -96,6 +98,7 @@ pub struct RenderBackendRenderCtx<'a> {
     pub queue_ctx: GfxQueueCtx<'a>,
     pub device_info_ctx: GfxDeviceInfoCtx<'a>,
     pub render_world: &'a RenderWorld,
+    pub asset_texture_uploader: &'a AssetTextureUploader,
     pub render_present: &'a RenderPresent,
     pub timeline: &'a GfxSemaphore,
 }
@@ -166,8 +169,7 @@ impl RenderBackend {
         let frame_counter = FrameCounter::new(init_frame_id, 60.0);
 
         let mut bindless_manager = BindlessManager::new(frame_counter.frame_token());
-        let scene_manager = SceneManager::new();
-        let asset_hub = AssetHub::new(
+        let asset_texture_uploader = AssetTextureUploader::new(
             gfx.resource_ctx(),
             gfx.device_ctx(),
             gfx.immediate_ctx(),
@@ -175,6 +177,8 @@ impl RenderBackend {
             &mut gfx_resource_manager,
             &mut bindless_manager,
         );
+        let scene_manager = SceneManager::new();
+        let asset_hub = AssetHub::new();
         let gpu_scene = GpuScene::new(
             gfx.resource_ctx(),
             gfx.device_ctx(),
@@ -221,6 +225,7 @@ impl RenderBackend {
                 scene_manager,
                 asset_hub,
             },
+            asset_texture_uploader,
             render_world: RenderWorld {
                 gpu_scene,
                 bindless_manager,
@@ -280,12 +285,13 @@ impl RenderBackend {
             DestroyReason::Shutdown,
         );
         self.world.scene_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
-        self.world.asset_hub.destroy(
+        self.asset_texture_uploader.destroy(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             &mut self.render_world.gfx_resource_manager,
             &mut self.render_world.bindless_manager,
         );
+        self.world.asset_hub.destroy();
         self.render_world.gpu_scene.destroy_mut(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -338,8 +344,9 @@ impl RenderBackend {
         let frame_token = self.render_world.frame_counter.frame_token();
         self.render_world.bindless_manager.begin_frame(frame_token);
 
-        // 资产更新已内聚到 begin_frame 中
-        self.world.asset_hub.update(
+        let loaded_asset_events = self.world.asset_hub.update();
+        self.asset_texture_uploader.update(
+            loaded_asset_events,
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.queue_ctx(),
@@ -385,6 +392,7 @@ impl RenderBackend {
             queue_ctx: self.gfx.queue_ctx(),
             device_info_ctx: self.gfx.device_info_ctx(),
             render_world: &self.render_world,
+            asset_texture_uploader: &self.asset_texture_uploader,
             render_present: self.render_present.as_ref().unwrap(),
             timeline: &self.fif_timeline_semaphore,
         }
@@ -545,8 +553,7 @@ impl RenderBackend {
             bindless_target,
         );
 
-        let scene_render_data =
-            self.world.scene_manager.prepare_render_data(&self.render_world.bindless_manager, &self.world.asset_hub);
+        let scene_render_data = self.world.scene_manager.prepare_render_data(&self.asset_texture_uploader);
         self.render_world.gpu_scene.upload_render_data(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),

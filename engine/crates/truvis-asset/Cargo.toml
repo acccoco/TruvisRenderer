@@ -4,18 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-truvis-gfx = { workspace = true }
-truvis-render-interface = { workspace = true }
-truvis-shader-binding = { workspace = true }
-
-
 ash = { workspace = true }
 log = { workspace = true }
-anyhow = { workspace = true }
 slotmap = { workspace = true }
 crossbeam-channel = { workspace = true }
 crossbeam-utils = { workspace = true }
 rayon = { workspace = true }
 image = { workspace = true }
-vk-mem = { workspace = true }
 tracy-client = { workspace = true }

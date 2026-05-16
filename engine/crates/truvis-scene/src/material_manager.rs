@@ -19,17 +19,30 @@ use crate::guid_new_type::ManagedMaterialHandle;
 
 const MAX_MATERIAL_COUNT: usize = 1024;
 
+#[derive(Clone, Copy)]
+pub struct TextureBinding {
+    pub srv_handle: BindlessSrvHandle,
+    pub sampler: gpu::ESamplerType,
+}
+
+impl TextureBinding {
+    pub fn null() -> Self {
+        Self {
+            srv_handle: BindlessSrvHandle::null(),
+            sampler: gpu::ESamplerType_LinearRepeat,
+        }
+    }
+}
+
 /// Texture 状态查询 trait
 ///
-/// 由外部实现（如 AssetHub + BindlessManager 的组合），在 `update()` / `upload()` 时传入，
-/// 避免 MaterialManager 直接耦合 AssetHub。
+/// 由渲染侧纹理上传/绑定缓存实现，避免 scene 直接耦合 AssetHub 或 BindlessManager。
 pub trait TextureResolver {
     /// texture 是否处于 Ready 状态
     fn is_texture_ready(&self, handle: AssetTextureHandle) -> bool;
 
-    /// 获取 texture 在 bindless descriptor 中的 SRV handle。
-    /// 返回 None 表示 texture 尚未就绪。
-    fn get_srv_handle(&self, handle: AssetTextureHandle) -> Option<BindlessSrvHandle>;
+    /// 获取可渲染的 texture binding；未就绪时由实现返回 fallback。
+    fn resolve_texture(&self, handle: AssetTextureHandle) -> TextureBinding;
 }
 
 /// 单个 slot 在 dirty_slots 中维护的状态
@@ -395,20 +408,20 @@ impl MaterialManager {
 
     // TODO 是否可以改成 Default texture，而不是 null
     fn build_gpu_material(params: &ManagedMaterialParams, resolver: &dyn TextureResolver) -> gpu::PBRMaterial {
-        let diffuse_srv =
-            params.diffuse_texture.and_then(|h| resolver.get_srv_handle(h)).unwrap_or(BindlessSrvHandle::null());
-        let normal_srv =
-            params.normal_texture.and_then(|h| resolver.get_srv_handle(h)).unwrap_or(BindlessSrvHandle::null());
+        let diffuse_binding =
+            params.diffuse_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
+        let normal_binding =
+            params.normal_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
 
         gpu::PBRMaterial {
             base_color: params.base_color.truncate().into(),
             emissive: params.emissive.truncate().into(),
             metallic: params.metallic,
             roughness: params.roughness,
-            diffuse_map: diffuse_srv.0,
-            diffuse_map_sampler_type: gpu::ESamplerType_LinearRepeat,
-            normal_map: normal_srv.0,
-            normal_map_sampler_type: gpu::ESamplerType_LinearRepeat,
+            diffuse_map: diffuse_binding.srv_handle.0,
+            diffuse_map_sampler_type: diffuse_binding.sampler,
+            normal_map: normal_binding.srv_handle.0,
+            normal_map_sampler_type: normal_binding.sampler,
             opaque: params.opaque,
             _padding_1: Default::default(),
             _padding_2: Default::default(),
