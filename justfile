@@ -19,12 +19,28 @@ cxx-preset-clang:
 	cmake --preset clang-cl-debug
 
 [working-directory: "engine/cxx"]
+cxx-preset-vs2022:
+	cmake --preset vs2022
+
+[working-directory: "engine/cxx"]
 cxx-preset-vs:
 	cmake --preset vs2022
 
 [working-directory: "engine/cxx"]
+cxx-preset-vs2026:
+	cmake --preset vs2026
+
+[working-directory: "engine/cxx"]
+cxx-build-vs2022:
+	cmake --build --preset vs2022-build-debug
+
+[working-directory: "engine/cxx"]
 cxx-build-vs:
 	cmake --build --preset vs2022-build-debug
+
+[working-directory: "engine/cxx"]
+cxx-build-vs2026:
+	cmake --build --preset vs2026-build-debug
 
 [working-directory: "engine/cxx"]
 cxx-build-clang:
@@ -43,4 +59,3 @@ cornell: shader cxx
 
 sponza: shader cxx
 	cargo run --bin rt-sponza
-
