@@ -3428,6 +3428,7 @@ dependencies = [
  "ash",
  "crossbeam-channel",
  "crossbeam-utils",
+ "glam",
  "image",
  "log",
  "rayon",

@@ -42,6 +42,7 @@ struct GpuSceneBuffers {
 
     // TODO 使用 frame id 来标记是否过期，scene manager 里面也需要有相应的标记
     tlas: Option<GfxAcceleration>,
+    tlas_revision: u64,
 }
 // 初始化与销毁
 impl GpuSceneBuffers {
@@ -99,6 +100,7 @@ impl GpuSceneBuffers {
                 format!("instance geometry stage buffer-{}", frame_label),
             ),
             tlas: None,
+            tlas_revision: 0,
         }
     }
 
@@ -281,6 +283,7 @@ impl GpuScene {
         frame_counter: &FrameCounter,
         render_data: &RenderData<'_>,
         material_buffer_device_address: vk::DeviceAddress,
+        tlas_revision: u64,
         bindless_manager: &BindlessManager,
     ) {
         let _span = tracy_client::span!("GpuScene::prepare_render_data2");
@@ -290,7 +293,7 @@ impl GpuScene {
         self.upload_light_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
 
         // 需要确保 instance 先于 tlas 构建
-        self.build_tlas(resource_ctx, device_ctx, immediate_ctx, render_data, frame_counter);
+        self.build_tlas(resource_ctx, device_ctx, immediate_ctx, render_data, frame_counter, tlas_revision);
 
         self.upload_scene_buffer(
             cmd,
@@ -553,15 +556,21 @@ impl GpuScene {
         immediate_ctx: GfxImmediateCtx<'_>,
         scene_data: &RenderData<'_>,
         frame_counter: &FrameCounter,
+        tlas_revision: u64,
     ) {
         let _span = tracy_client::span!("build_tlas2");
+        let frame_index = *frame_counter.frame_label();
         if scene_data.all_instances.is_empty() {
-            // 没有实例数据，直接返回
+            if let Some(tlas) = self.gpu_scene_buffers[frame_index].tlas.take() {
+                tlas.destroy(resource_ctx, device_ctx, DestroyReason::ImmediateRelease);
+            }
+            self.gpu_scene_buffers[frame_index].tlas_revision = tlas_revision;
             return;
         }
 
-        if self.gpu_scene_buffers[*frame_counter.frame_label()].tlas.is_some() {
-            // 已经构建过 tlas，直接返回
+        if self.gpu_scene_buffers[frame_index].tlas.is_some()
+            && self.gpu_scene_buffers[frame_index].tlas_revision == tlas_revision
+        {
             return;
         }
 
@@ -569,9 +578,18 @@ impl GpuScene {
             .all_instances
             .iter()
             .enumerate()
-            // BUG custom idx 的有效位数只有 24 位，如果场景内 instance 过多，可能会溢出
-            .map(|(idx, ins)| self.get_as_instance_info(ins, idx as u32, scene_data))
+            .map(|(idx, ins)| {
+                if idx > 0x00FF_FFFF {
+                    panic!("TLAS instance custom index exceeds Vulkan 24-bit limit");
+                }
+                self.get_as_instance_info(ins, idx as u32, scene_data)
+            })
             .collect_vec();
+
+        if let Some(tlas) = self.gpu_scene_buffers[frame_index].tlas.take() {
+            tlas.destroy(resource_ctx, device_ctx, DestroyReason::ImmediateRelease);
+        }
+
         let tlas = GfxAcceleration::build_tlas_sync(
             resource_ctx,
             device_ctx,
@@ -581,7 +599,8 @@ impl GpuScene {
             format!("scene2-{}-{}", frame_counter.frame_label(), frame_counter.frame_id()),
         );
 
-        self.gpu_scene_buffers[*frame_counter.frame_label()].tlas = Some(tlas);
+        self.gpu_scene_buffers[frame_index].tlas = Some(tlas);
+        self.gpu_scene_buffers[frame_index].tlas_revision = tlas_revision;
     }
 }
 

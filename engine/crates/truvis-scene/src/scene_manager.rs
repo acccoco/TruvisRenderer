@@ -1,6 +1,7 @@
 use indexmap::IndexMap;
 use slotmap::SlotMap;
 
+use truvis_asset::handle::AssetMeshHandle;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_render_interface::render_data::{InstanceRenderData, MeshRenderData, RenderData};
 use truvis_shader_binding::gpu;
@@ -16,6 +17,14 @@ use crate::guid_new_type::{InstanceHandle, LightHandle, MaterialHandle, MeshHand
 /// 不接触 texture、bindless 或 GPU material buffer 的细节。
 pub trait MaterialSlotResolver {
     fn resolve_material_slot(&self, handle: MaterialHandle) -> Option<u32>;
+}
+
+/// CPU mesh handle 到 GPU-ready mesh 数据的解析接口。
+///
+/// 由 render-side mesh uploader 实现，SceneManager 只依赖资产 mesh 是否已经可渲染，
+/// 不接触 vertex/index buffer 上传或 BLAS 构建细节。
+pub trait MeshRenderResolver {
+    fn resolve_mesh(&self, handle: AssetMeshHandle) -> Option<MeshRenderData<'_>>;
 }
 
 /// 在 CPU 侧管理场景数据
@@ -69,7 +78,11 @@ impl SceneManager {
     ///
     /// # 返回
     /// 包含完整场景信息的 SceneData2 结构
-    pub fn prepare_render_data<'a>(&'a self, material_slot_resolver: &dyn MaterialSlotResolver) -> RenderData<'a> {
+    pub fn prepare_render_data<'a>(
+        &'a self,
+        material_slot_resolver: &dyn MaterialSlotResolver,
+        mesh_resolver: &'a dyn MeshRenderResolver,
+    ) -> RenderData<'a> {
         if self.is_empty() {
             return RenderData::empty();
         }
@@ -81,23 +94,22 @@ impl SceneManager {
         let mut total_geometry_count: usize = 0;
 
         for (handle, mesh) in self.all_meshes.iter() {
-            let index = all_meshes.len();
-            mesh_handle_to_index.insert(handle, index);
-            mesh_geometry_start_indices.push(total_geometry_count);
-            total_geometry_count += mesh.geometries.len();
-
-            all_meshes.push(MeshRenderData {
-                geometries: &mesh.geometries,
-                blas_device_address: mesh.blas_device_address,
-                name: &mesh.name,
-            });
+            if let Some(mesh_render_data) = mesh_resolver.resolve_mesh(mesh.asset_mesh) {
+                let index = all_meshes.len();
+                mesh_handle_to_index.insert(handle, index);
+                mesh_geometry_start_indices.push(total_geometry_count);
+                total_geometry_count += mesh_render_data.geometries.len();
+                all_meshes.push(mesh_render_data);
+            }
         }
 
         // 2. 构建 instance 数据，材质引用写入稳定 GPU material slot
         let mut all_instances: Vec<InstanceRenderData> = Vec::with_capacity(self.all_instances.len());
 
         for (_handle, instance) in self.all_instances.iter() {
-            let mesh_index = *mesh_handle_to_index.get(&instance.mesh).expect("Mesh not found for instance");
+            let Some(&mesh_index) = mesh_handle_to_index.get(&instance.mesh) else {
+                continue;
+            };
             let material_slots: Vec<u32> = instance
                 .materials
                 .iter()
@@ -175,9 +187,7 @@ impl SceneManager {
         self.destroy_mut(resource_ctx, device_ctx);
     }
     pub fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
-        for (_, mesh) in self.all_meshes.iter_mut() {
-            mesh.destroy_mut(resource_ctx, device_ctx);
-        }
+        let _ = (resource_ctx, device_ctx);
         self.all_mats.clear();
         self.all_instances.clear();
         self.all_meshes.clear();

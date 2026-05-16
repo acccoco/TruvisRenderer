@@ -470,6 +470,10 @@ impl RealtimeRtPass {
     }
     pub fn ray_trace(&self, render_world: &RenderWorld, cmd: &GfxCommandBuffer, pass_data: RealtimeRtPassData) {
         let frame_label = render_world.frame_counter.frame_label();
+        let Some(tlas) = render_world.gpu_scene.tlas(frame_label) else {
+            log::debug!("RealtimeRtPass: skip ray tracing because TLAS is not ready for {}", frame_label);
+            return;
+        };
 
         let _rt_handle = render_world.bindless_manager.get_shader_uav_handle(pass_data.single_frame_output_view);
         let rt_image = render_world.gfx_resource_manager.get_image(pass_data.single_frame_output).unwrap().handle();
@@ -493,11 +497,7 @@ impl RealtimeRtPass {
             self.pipeline.pipeline_layout,
             gpu::RT_SET_NUM,
             &[
-                RealtimeRtDescriptorBinding::tlas().write_tals(
-                    vk::DescriptorSet::null(),
-                    0,
-                    vec![render_world.gpu_scene.tlas(frame_label).unwrap().handle()],
-                ),
+                RealtimeRtDescriptorBinding::tlas().write_tals(vk::DescriptorSet::null(), 0, vec![tlas.handle()]),
                 RealtimeRtDescriptorBinding::rt_single_frame_output().write_image(
                     vk::DescriptorSet::null(),
                     0,

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use slotmap::new_key_type;
 
 use ash::vk;
@@ -15,10 +17,31 @@ pub struct LoadedTextureBytes {
     pub format: vk::Format,
 }
 
+/// 一个导入源内的 mesh 资产身份。
+///
+/// `AssetHub` 使用它做路径 + mesh index 去重；它不代表运行时 instance。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MeshAssetKey {
+    pub source_path: PathBuf,
+    pub mesh_index: u32,
+}
+
+/// upload-ready 的 CPU mesh 数据。
+///
+/// 数据已经从导入库的临时内存复制到 Rust owned buffer，但还没有创建 GPU buffer 或 BLAS。
+#[derive(Debug, Clone)]
+pub struct LoadedMeshData {
+    pub positions: Vec<glam::Vec3>,
+    pub normals: Vec<glam::Vec3>,
+    pub tangents: Vec<glam::Vec3>,
+    pub uvs: Vec<glam::Vec2>,
+    pub indices: Vec<u32>,
+    pub name: String,
+}
+
 /// 资源加载状态机
 ///
-/// 状态流转: Unloaded -> Loading -> Ready
-///                        \-> Failed
+/// 对 `AssetHub` 而言，`Ready` 只表示 CPU 侧数据已经可用，不表示 GPU 可用。
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum LoadStatus {
     /// 初始状态，资源尚未请求加载

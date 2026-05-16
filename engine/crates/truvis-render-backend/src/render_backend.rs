@@ -3,7 +3,7 @@ use std::ffi::CStr;
 use ash::vk;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use truvis_asset::asset_hub::AssetHub;
+use truvis_asset::asset_hub::{AssetHub, LoadedAssetEvent};
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
@@ -35,6 +35,7 @@ use truvis_shader_binding::gpu;
 use truvis_render_interface::render_world::RenderWorld;
 use truvis_world::World;
 
+use crate::asset_mesh_uploader::AssetMeshUploader;
 use crate::asset_texture_uploader::AssetTextureUploader;
 use crate::material_bridge::MaterialBridge;
 use crate::platform::camera::Camera;
@@ -65,6 +66,7 @@ pub struct RenderBackend {
     world: World,
     render_world: RenderWorld,
     asset_texture_uploader: AssetTextureUploader,
+    asset_mesh_uploader: AssetMeshUploader,
     material_bridge: MaterialBridge,
 
     cmd_allocator: CmdAllocator,
@@ -194,6 +196,10 @@ impl RenderBackend {
                 &mut bindless_manager,
             )
         };
+        let asset_mesh_uploader = {
+            let _span = tracy_client::span!("RenderBackend::new/asset_mesh_uploader");
+            AssetMeshUploader::new(gfx.device_ctx(), gfx.queue_ctx())
+        };
         let material_bridge = {
             let _span = tracy_client::span!("RenderBackend::new/material_bridge");
             MaterialBridge::new(gfx.resource_ctx(), frame_counter.frame_token())
@@ -274,6 +280,7 @@ impl RenderBackend {
                     asset_hub,
                 },
                 asset_texture_uploader,
+                asset_mesh_uploader,
                 material_bridge,
                 render_world: RenderWorld {
                     gpu_scene,
@@ -349,6 +356,7 @@ impl RenderBackend {
             &mut self.render_world.bindless_manager,
             &mut self.render_world.gfx_resource_manager,
         );
+        self.asset_mesh_uploader.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
         for buffer in &mut self.render_world.per_frame_data_buffers {
             buffer.destroy_mut(self.gfx.resource_ctx(), DestroyReason::Shutdown);
         }
@@ -397,13 +405,31 @@ impl RenderBackend {
         self.material_bridge.begin_frame(frame_token);
 
         let loaded_asset_events = self.world.asset_hub.update();
+        let mut texture_events = Vec::new();
+        let mut mesh_events = Vec::new();
+        for event in loaded_asset_events {
+            match event {
+                event @ (LoadedAssetEvent::TextureLoaded { .. } | LoadedAssetEvent::TextureFailed { .. }) => {
+                    texture_events.push(event);
+                }
+                event @ LoadedAssetEvent::MeshLoaded { .. } => {
+                    mesh_events.push(event);
+                }
+            }
+        }
         self.asset_texture_uploader.update(
-            loaded_asset_events,
+            texture_events,
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.queue_ctx(),
             &mut self.render_world.gfx_resource_manager,
             &mut self.render_world.bindless_manager,
+        );
+        self.asset_mesh_uploader.update(
+            mesh_events,
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            self.gfx.queue_ctx(),
         );
     }
 
@@ -615,7 +641,8 @@ impl RenderBackend {
             &self.asset_texture_uploader,
         );
 
-        let scene_render_data = self.world.scene_manager.prepare_render_data(&self.material_bridge);
+        let scene_render_data =
+            self.world.scene_manager.prepare_render_data(&self.material_bridge, &self.asset_mesh_uploader);
         let material_buffer_device_address = self.material_bridge.material_buffer_device_address(frame_label);
         self.render_world.gpu_scene.upload_render_data(
             self.gfx.resource_ctx(),
@@ -626,6 +653,7 @@ impl RenderBackend {
             &self.render_world.frame_counter,
             &scene_render_data,
             material_buffer_device_address,
+            self.asset_mesh_uploader.ready_revision(),
             &self.render_world.bindless_manager,
         );
 

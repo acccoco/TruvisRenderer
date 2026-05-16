@@ -24,6 +24,54 @@ pub struct GfxAcceleration {
 }
 // 构造与销毁
 impl GfxAcceleration {
+    /// 创建用于外部 command buffer 录制 build 的 BLAS 和 scratch buffer。
+    ///
+    /// 该函数只分配 acceleration storage 和 scratch，不提交任何 GPU 工作。
+    /// 调用方必须使用返回的 scratch buffer 录制 `cmd_build_acceleration_structures`，
+    /// 并在 GPU build 完成后再释放 scratch buffer。
+    pub fn new_blas_for_build(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        blas_inputs: &[GfxBlasInputInfo],
+        build_flags: vk::BuildAccelerationStructureFlagsKHR,
+        debug_name: impl AsRef<str>,
+    ) -> (Self, GfxAccelerationScratchBuffer) {
+        let geometries = blas_inputs.iter().map(|blas_input| blas_input.geometry).collect_vec();
+        let max_primitives = blas_inputs.iter().map(|blas_input| blas_input.range.primitive_count).collect_vec();
+
+        let build_geometry_info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
+            .ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
+            .flags(build_flags | vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+            .geometries(&geometries)
+            .mode(vk::BuildAccelerationStructureModeKHR::BUILD);
+
+        let size_info = unsafe {
+            let mut size_info = vk::AccelerationStructureBuildSizesInfoKHR::default();
+            device_ctx.device().acceleration_structure.get_acceleration_structure_build_sizes(
+                vk::AccelerationStructureBuildTypeKHR::DEVICE,
+                &build_geometry_info,
+                &max_primitives,
+                &mut size_info,
+            );
+            size_info
+        };
+
+        let acceleration = Self::new(
+            resource_ctx,
+            device_ctx,
+            size_info.acceleration_structure_size,
+            vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+            format!("{}-blas", debug_name.as_ref()),
+        );
+        let scratch_buffer = GfxAccelerationScratchBuffer::new(
+            resource_ctx,
+            size_info.build_scratch_size,
+            format!("{}-blas-scratch-buffer", debug_name.as_ref()),
+        );
+
+        (acceleration, scratch_buffer)
+    }
+
     /// 同步构建 blas
     ///
     /// 需要指定每个 geometry 的信息，以及每个 geometry 拥有的 max primitives

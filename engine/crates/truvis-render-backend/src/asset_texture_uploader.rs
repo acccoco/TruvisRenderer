@@ -274,6 +274,7 @@ impl AssetTextureUploader {
                 LoadedAssetEvent::TextureFailed { handle, error } => {
                     log::error!("Texture load failed {:?}: {}", handle, error);
                 }
+                LoadedAssetEvent::MeshLoaded { .. } => {}
             }
         }
 

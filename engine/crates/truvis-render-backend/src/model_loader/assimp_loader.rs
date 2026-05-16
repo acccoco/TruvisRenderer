@@ -1,11 +1,8 @@
 use itertools::Itertools;
 
 use truvis_asset::asset_hub::AssetHub;
+use truvis_asset::handle::{LoadedMeshData, MeshAssetKey};
 use truvis_cxx_binding::truvixx;
-use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
-use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
-use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
-use truvis_render_interface::geometry::RtGeometry;
 use truvis_scene::components::instance::Instance;
 use truvis_scene::components::material::Material;
 use truvis_scene::components::mesh::Mesh;
@@ -20,13 +17,13 @@ use truvis_scene::scene_manager::SceneManager;
 /// ```ignore
 /// let instances = AssimpSceneLoader::load_scene(
 ///     Path::new("model.fbx"),
-///     |ins| scene_manager.register_instance(ins),
-///     |mesh| scene_manager.register_mesh(mesh),
-///     |mat| scene_manager.register_material(mat),
+///     &mut scene_manager,
+///     &mut asset_hub,
 /// );
 /// ```
 pub struct AssimpSceneLoader {
     scene_handle: truvixx::TruvixxSceneHandle,
+    source_path: std::path::PathBuf,
     model_name: String,
 
     meshes: Vec<MeshHandle>,
@@ -38,36 +35,32 @@ impl AssimpSceneLoader {
     /// # 返回
     /// 返回整个场景的所有 instance id
     pub fn load_scene(
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
         model_file: &std::path::Path,
         scene_manager: &mut SceneManager,
         asset_hub: &mut AssetHub,
     ) -> Vec<InstanceHandle> {
         let _span = tracy_client::span!("AssimpSceneLoader::load_scene");
 
-        let model_file = model_file.to_str().unwrap();
-        let c_model_file = std::ffi::CString::new(model_file).unwrap();
+        let source_path = model_file.to_path_buf();
+        let model_file_str = model_file.to_str().unwrap();
+        let c_model_file = std::ffi::CString::new(model_file_str).unwrap();
 
         let loader = unsafe {
             let _span = tracy_client::span!("truvixx_scene_load");
             truvixx::truvixx_scene_load(c_model_file.as_ptr())
         };
-        let model_name = model_file.split('/').next_back().unwrap();
+        let model_name = model_file.file_name().and_then(|name| name.to_str()).unwrap_or(model_file_str);
 
         let mut scene_loader = AssimpSceneLoader {
             scene_handle: loader,
+            source_path,
             model_name: model_name.to_string(),
             meshes: vec![],
             mats: vec![],
             instances: vec![],
         };
 
-        scene_loader.load_mesh(resource_ctx, immediate_ctx, |mut mesh| {
-            mesh.build_blas(resource_ctx, device_ctx, immediate_ctx);
-            scene_manager.register_mesh(mesh)
-        });
+        scene_loader.load_mesh(scene_manager, asset_hub);
         scene_loader.load_mats(|mut mat| {
             if !mat.diffuse_map.is_empty() {
                 mat.diffuse_texture = Some(asset_hub.load_texture(std::path::PathBuf::from(&mat.diffuse_map)));
@@ -87,13 +80,11 @@ impl AssimpSceneLoader {
         scene_loader.instances
     }
 
-    unsafe fn create_mesh(
-        resource_ctx: GfxResourceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
+    unsafe fn create_mesh_data(
         scene_handle: truvixx::TruvixxSceneHandle,
         mesh_idx: u32,
         model_name: &str,
-    ) -> Mesh {
+    ) -> LoadedMeshData {
         unsafe {
             let mut mesh_info = truvixx::TruvixxMeshInfo::default();
             let res = truvixx::truvixx_mesh_get_info(scene_handle, mesh_idx, &mut mesh_info as *mut _);
@@ -116,16 +107,6 @@ impl AssimpSceneLoader {
                 std::slice::from_raw_parts(tangent_ptr as *const glam::Vec3, mesh_info.vertex_count as usize);
             let uvs = std::slice::from_raw_parts(uv_ptr as *const glam::Vec2, mesh_info.vertex_count as usize);
 
-            let vertex_buffer = VertexLayoutSoA3D::create_vertex_buffer(
-                resource_ctx,
-                immediate_ctx,
-                positions,
-                normals,
-                tangents,
-                uvs,
-                format!("{}-mesh-{}", model_name, mesh_idx),
-            );
-
             let indices_ptr = truvixx::truvixx_mesh_get_indices(scene_handle, mesh_idx);
             if indices_ptr.is_null() {
                 panic!("Mesh {} has no index data", mesh_idx);
@@ -133,41 +114,37 @@ impl AssimpSceneLoader {
 
             let indices = std::slice::from_raw_parts(indices_ptr, mesh_info.index_count as usize);
 
-            let index_buffer = GfxIndex32Buffer::new_device_local(
-                resource_ctx,
-                indices.len(),
-                format!("{}-mesh-{}-indices", model_name, mesh_idx),
-            );
-            index_buffer.transfer_data_sync(resource_ctx, immediate_ctx, indices);
-
-            // 只有 single geometry 的 mesh
-            Mesh {
-                geometries: vec![RtGeometry {
-                    vertex_buffer,
-                    index_buffer,
-                }],
-                blas: None,
-                blas_device_address: None,
+            LoadedMeshData {
+                positions: positions.to_vec(),
+                normals: normals.to_vec(),
+                tangents: tangents.to_vec(),
+                uvs: uvs.to_vec(),
+                indices: indices.to_vec(),
                 name: format!("{}-{}", model_name, mesh_idx),
             }
         }
     }
 
     /// 加载场景中基础的几何体
-    fn load_mesh(
-        &mut self,
-        resource_ctx: GfxResourceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
-        mut mesh_register: impl FnMut(Mesh) -> MeshHandle,
-    ) {
+    fn load_mesh(&mut self, scene_manager: &mut SceneManager, asset_hub: &mut AssetHub) {
         let _span = tracy_client::span!("load_mesh");
         let mesh_cnt = unsafe { truvixx::truvixx_scene_mesh_count(self.scene_handle) };
 
         let mesh_uuids = (0..mesh_cnt)
             .map(|mesh_idx| unsafe {
-                let mesh =
-                    Self::create_mesh(resource_ctx, immediate_ctx, self.scene_handle, mesh_idx, &self.model_name);
-                mesh_register(mesh)
+                let data = Self::create_mesh_data(self.scene_handle, mesh_idx, &self.model_name);
+                let mesh_name = data.name.clone();
+                let asset_mesh = asset_hub.register_mesh_data(
+                    MeshAssetKey {
+                        source_path: self.source_path.clone(),
+                        mesh_index: mesh_idx,
+                    },
+                    data,
+                );
+                scene_manager.register_mesh(Mesh {
+                    asset_mesh,
+                    name: mesh_name,
+                })
             })
             .collect_vec();
 

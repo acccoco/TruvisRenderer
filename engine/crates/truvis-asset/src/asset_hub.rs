@@ -1,14 +1,22 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
 use slotmap::SlotMap;
 
 use crate::asset_loader::{AssetLoadRequest, AssetLoader, LoadResult};
-use crate::handle::{AssetTextureHandle, LoadStatus, LoadedTextureBytes};
+use crate::handle::{
+    AssetMeshHandle, AssetTextureHandle, LoadStatus, LoadedMeshData, LoadedTextureBytes, MeshAssetKey,
+};
 
 pub struct TextureAssetRecord {
     pub path: PathBuf,
     pub status: LoadStatus,
+}
+
+pub struct MeshAssetRecord {
+    pub key: MeshAssetKey,
+    pub status: LoadStatus,
+    pub data: LoadedMeshData,
 }
 
 pub enum LoadedAssetEvent {
@@ -20,6 +28,10 @@ pub enum LoadedAssetEvent {
         handle: AssetTextureHandle,
         error: String,
     },
+    MeshLoaded {
+        handle: AssetMeshHandle,
+        data: LoadedMeshData,
+    },
 }
 
 /// 资产中心。
@@ -27,7 +39,10 @@ pub enum LoadedAssetEvent {
 /// 只负责资产身份、路径去重和文件到 CPU bytes 的加载流程。
 pub struct AssetHub {
     textures: SlotMap<AssetTextureHandle, TextureAssetRecord>,
+    meshes: SlotMap<AssetMeshHandle, MeshAssetRecord>,
     path_to_texture: HashMap<PathBuf, AssetTextureHandle>,
+    key_to_mesh: HashMap<MeshAssetKey, AssetMeshHandle>,
+    pending_events: VecDeque<LoadedAssetEvent>,
     loader: AssetLoader,
 }
 
@@ -44,7 +59,10 @@ impl AssetHub {
 
         Self {
             textures: SlotMap::with_key(),
+            meshes: SlotMap::with_key(),
             path_to_texture: HashMap::new(),
+            key_to_mesh: HashMap::new(),
+            pending_events: VecDeque::new(),
             loader: AssetLoader::new(),
         }
     }
@@ -82,14 +100,46 @@ impl AssetHub {
         self.textures.get(handle).map(|record| record.status).unwrap_or(LoadStatus::Failed)
     }
 
+    pub fn get_mesh_status(&self, handle: AssetMeshHandle) -> LoadStatus {
+        self.meshes.get(handle).map(|record| record.status).unwrap_or(LoadStatus::Failed)
+    }
+
     pub fn texture_handle_by_path(&self, path: &Path) -> Option<AssetTextureHandle> {
         self.path_to_texture.get(path).copied()
+    }
+
+    pub fn mesh_handle_by_key(&self, key: &MeshAssetKey) -> Option<AssetMeshHandle> {
+        self.key_to_mesh.get(key).copied()
+    }
+
+    /// 注册已经位于 CPU 内存中的 mesh 数据。
+    ///
+    /// 这通常由同步导入器或未来的后台 scene loader 调用；同一个 key 只会产出一次
+    /// `MeshLoaded` 事件，GPU 上传由 render-side uploader 消费事件后完成。
+    pub fn register_mesh_data(&mut self, key: MeshAssetKey, data: LoadedMeshData) -> AssetMeshHandle {
+        let _span = tracy_client::span!("AssetHub::register_mesh_data");
+        if let Some(&handle) = self.key_to_mesh.get(&key) {
+            return handle;
+        }
+
+        let handle = self.meshes.insert(MeshAssetRecord {
+            key: key.clone(),
+            status: LoadStatus::Ready,
+            data: data.clone(),
+        });
+        self.key_to_mesh.insert(key, handle);
+        self.pending_events.push_back(LoadedAssetEvent::MeshLoaded { handle, data });
+        handle
     }
 
     /// 收集后台加载任务完成事件。
     pub fn update(&mut self) -> Vec<LoadedAssetEvent> {
         let _span = tracy_client::span!("AssetHub::update");
         let mut events = Vec::new();
+
+        while let Some(event) = self.pending_events.pop_front() {
+            events.push(event);
+        }
 
         while let Some(result) = self.loader.try_recv_result() {
             match result {
@@ -111,5 +161,62 @@ impl AssetHub {
         }
 
         events
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mesh_key() -> MeshAssetKey {
+        MeshAssetKey {
+            source_path: PathBuf::from("assets/model.fbx"),
+            mesh_index: 7,
+        }
+    }
+
+    fn mesh_data(name: &str) -> LoadedMeshData {
+        LoadedMeshData {
+            positions: vec![glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Y],
+            normals: vec![glam::Vec3::Z; 3],
+            tangents: vec![glam::Vec3::X; 3],
+            uvs: vec![glam::Vec2::ZERO; 3],
+            indices: vec![0, 1, 2],
+            name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn register_mesh_data_deduplicates_by_key() {
+        let mut hub = AssetHub::new();
+        let key = mesh_key();
+
+        let first = hub.register_mesh_data(key.clone(), mesh_data("first"));
+        let second = hub.register_mesh_data(key, mesh_data("second"));
+
+        assert_eq!(first, second);
+        assert_eq!(hub.get_mesh_status(first), LoadStatus::Ready);
+        assert_eq!(hub.update().len(), 1);
+        assert!(hub.update().is_empty());
+    }
+
+    #[test]
+    fn register_mesh_data_emits_loaded_event_once() {
+        let mut hub = AssetHub::new();
+        let key = mesh_key();
+        let handle = hub.register_mesh_data(key, mesh_data("mesh"));
+
+        let events = hub.update();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            LoadedAssetEvent::MeshLoaded {
+                handle: event_handle,
+                data,
+            } => {
+                assert_eq!(*event_handle, handle);
+                assert_eq!(data.name, "mesh");
+            }
+            _ => panic!("expected mesh loaded event"),
+        }
     }
 }

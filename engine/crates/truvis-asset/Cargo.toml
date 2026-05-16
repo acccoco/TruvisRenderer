@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 ash = { workspace = true }
+glam = { workspace = true }
 log = { workspace = true }
 slotmap = { workspace = true }
 crossbeam-channel = { workspace = true }

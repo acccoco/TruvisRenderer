@@ -7,6 +7,7 @@ pub mod platform;
 pub mod present;
 pub mod subsystems;
 
+pub mod asset_mesh_uploader;
 pub mod asset_texture_uploader;
 mod material_bridge;
 pub mod model_loader;

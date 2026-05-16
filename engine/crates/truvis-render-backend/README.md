@@ -14,6 +14,8 @@
 - `RenderBackend` 持有 `Gfx` root owner，并负责在所有子资源之后销毁它。
 - `World` 承载 CPU 侧 scene/assets，供 update / prepare 阶段读取或修改。
 - `RenderWorld` 承载 GPU 侧 frame state、global descriptors、bindless、manager-owned resources、FIF buffers 和 frame settings。
+- `AssetTextureUploader` 消费 `AssetHub` 的 texture CPU bytes，负责 GPU image / view / bindless 注册。
+- `AssetMeshUploader` 消费 `AssetHub` 的 mesh CPU 数据，负责 vertex/index buffer 上传、BLAS build 和 mesh GPU ready 查询。
 - 过渡期 `MaterialBridge` 由 backend 持有，负责把 `SceneManager` 的 CPU material 同步为稳定 GPU material slot 和 material buffer。
 - `RenderPresent` 管理 surface、swapchain、present image 和窗口尺寸相关资源。
 
@@ -25,7 +27,7 @@
 - `prepare(camera)` 在 update 与 render 之间同步 CPU 语义数据到 GPU 可见资源。
 - `render_phase`、`handle_resize`、`shutdown_phase` 只暴露当前阶段需要的 device/resource/queue/surface/immediate/device-info Ctx。
 - `wait_idle` 由 runtime 在 app/plugin shutdown 前调用，确保 plugin-owned pipeline、buffer、descriptor 等资源销毁前 GPU 不再引用上一帧 command buffer。
-- `destroy` 先等待 GPU idle，再释放 present、FIF、assets、GPU scene、command allocator、sync、descriptor 等子资源，最后销毁 `Gfx` root owner。
+- `destroy` 先等待 GPU idle，再释放 present、FIF、assets、GPU scene、mesh uploader、command allocator、sync、descriptor 等子资源，最后销毁 `Gfx` root owner。
 
 ## Tracy 初始化埋点
 

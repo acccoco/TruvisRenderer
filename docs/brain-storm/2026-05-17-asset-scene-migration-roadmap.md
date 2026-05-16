@@ -465,6 +465,36 @@ App / tool
 - BLAS 未 ready 时不会 panic。
 - GPU resources 在 shutdown 时显式销毁。
 
+完成记录（2026-05-17）：
+
+- `AssetHub` 新增 `AssetMeshHandle` 对应的 CPU mesh 记录，通过
+  `MeshAssetKey { source_path, mesh_index }` 做同一导入源内去重。
+- `LoadedMeshData` 保存 positions / normals / tangents / uvs / indices / name，
+  Assimp 导入阶段只把 C++ 临时 scene 数据复制到 Rust owned CPU buffer。
+- `LoadedAssetEvent` 新增 `MeshLoaded`，`RenderBackend::begin_frame()` 将 asset 事件拆分给
+  `AssetTextureUploader` 和 `AssetMeshUploader`。
+- `AssetMeshUploader` 在 graphics queue 上提交 vertex/index buffer copy 与 BLAS build，
+  使用 timeline semaphore 轮询完成；mesh ready 后提供 `MeshRenderResolver` 给
+  `SceneManager::prepare_render_data()`。
+- 旧 `AssimpSceneLoader::load_scene()` 不再接收 GPU ctx，也不再同步创建 vertex/index buffer
+  或调用 `Mesh::build_blas()`。
+- `SceneManager` 中的 `Mesh` 变为轻量 proxy，只保存 `AssetMeshHandle` 和名称；mesh 未 GPU ready
+  时，对应 instance 会被跳过，不写入本帧 `RenderData`。
+- `GpuScene` 引入过渡期 TLAS revision；当 mesh uploader 有新 mesh ready 时，当前 FIF 的 TLAS
+  会按 revision 重建。`RealtimeRtPass` 在当前帧 TLAS 尚未 ready 时跳过 ray tracing pass，
+  避免启动早期帧 panic。
+
+剩余限制：
+
+- BLAS build 已异步提交，但第一版不做 compaction，后续可在 uploader 内补充 compact 流程。
+- Assimp scene 文件读取仍是同步入口，尚未迁移到 `AssetHub::load_scene()`。
+- Runtime instance 仍使用旧 `InstanceHandle -> MeshHandle / MaterialHandle` 语义，
+  尚未迁移到 `AssetMeshHandle` / `AssetMaterialHandle` 直接引用。
+- `GpuScene` 的 TLAS revision 只覆盖 mesh ready 触发的粗粒度重建；spawn / despawn /
+  transform / mesh change 的完整 dirty 系统仍留给 Phase 4。
+- draw / shader index 仍依赖 `RenderData.all_instances` 的临时 Vec index，稳定
+  `GpuInstanceSlot` 留给 Phase 3。
+
 ### Phase 3：Instance 稳定 slot 和 ready gate
 
 目标：
