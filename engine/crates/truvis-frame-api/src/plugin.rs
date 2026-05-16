@@ -6,6 +6,7 @@ use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
 use truvis_render_backend::present::render_present::RenderPresent;
 use truvis_render_interface::cmd_allocator::CmdAllocator;
 use truvis_render_interface::pipeline_settings::{FrameSettings, PipelineSettings};
+use truvis_render_interface::render_scene_view::RenderSceneView;
 use truvis_render_interface::render_world::RenderWorld;
 use truvis_world::World;
 
@@ -43,6 +44,7 @@ pub struct PluginRenderCtx<'a> {
     pub queue_ctx: GfxQueueCtx<'a>,
     pub device_info_ctx: GfxDeviceInfoCtx<'a>,
     pub render_world: &'a RenderWorld,
+    pub render_scene: &'a dyn RenderSceneView,
     pub render_present: &'a RenderPresent,
     pub timeline: &'a GfxSemaphore,
 }

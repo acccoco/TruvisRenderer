@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use slotmap::SlotMap;
 
@@ -247,15 +247,19 @@ impl AssetHub {
         handle
     }
 
-    fn material_data_from_raw(&mut self, raw: RawLoadedMaterialData) -> LoadedMaterialData {
+    fn material_data_from_raw(&mut self, source_path: &Path, raw: RawLoadedMaterialData) -> LoadedMaterialData {
         LoadedMaterialData {
             base_color: raw.base_color,
             emissive: raw.emissive,
             metallic: raw.metallic,
             roughness: raw.roughness,
             opaque: raw.opaque,
-            diffuse_texture: raw.diffuse_texture_path.map(|path| self.load_texture(path)),
-            normal_texture: raw.normal_texture_path.map(|path| self.load_texture(path)),
+            diffuse_texture: raw
+                .diffuse_texture_path
+                .map(|path| self.load_texture(resolve_scene_texture_path(source_path, path))),
+            normal_texture: raw
+                .normal_texture_path
+                .map(|path| self.load_texture(resolve_scene_texture_path(source_path, path))),
             name: raw.name,
         }
     }
@@ -284,7 +288,7 @@ impl AssetHub {
 
         let mut material_handles = Vec::with_capacity(raw.materials.len());
         for (material_index, material_data) in raw.materials.into_iter().enumerate() {
-            let data = self.material_data_from_raw(material_data);
+            let data = self.material_data_from_raw(&source_path, material_data);
             let handle = self.register_material_data_inner(
                 MaterialAssetKey {
                     source_path: source_path.clone(),
@@ -385,6 +389,40 @@ impl AssetHub {
     }
 }
 
+/// 将 scene 内引用的 texture path 解析为 `AssetHub` 使用的内容路径。
+///
+/// Assimp 通常返回模型文件内的相对路径；这里只做词法归一化，不访问文件系统，
+/// 让纹理暂缺时仍沿用 `load_texture` 的失败路径。
+fn resolve_scene_texture_path(source_path: &Path, texture_path: PathBuf) -> PathBuf {
+    let path = if texture_path.is_absolute() {
+        texture_path
+    } else {
+        source_path.parent().unwrap_or_else(|| Path::new("")).join(texture_path)
+    };
+
+    normalize_path_lexically(path)
+}
+
+fn normalize_path_lexically(path: PathBuf) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+
+    normalized
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,6 +487,19 @@ mod tests {
                 transform: glam::Mat4::IDENTITY,
                 name: "instance".to_string(),
             }],
+        }
+    }
+
+    fn raw_material_with_texture(name: &str, texture_path: impl Into<PathBuf>) -> RawLoadedMaterialData {
+        RawLoadedMaterialData {
+            base_color: glam::Vec4::ONE,
+            emissive: glam::Vec4::ZERO,
+            metallic: 0.0,
+            roughness: 1.0,
+            opaque: 1.0,
+            diffuse_texture_path: Some(texture_path.into()),
+            normal_texture_path: None,
+            name: name.to_string(),
         }
     }
 
@@ -524,6 +575,53 @@ mod tests {
         assert_eq!(scene_data.instances[0].materials, vec![scene_data.materials[0]]);
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], LoadedAssetEvent::MeshLoaded { .. }));
+    }
+
+    #[test]
+    fn ingest_loaded_scene_resolves_relative_texture_paths_from_scene_dir() {
+        let mut hub = AssetHub::new();
+        let mut raw = raw_scene_data();
+        raw.source_path = PathBuf::from("assets/fbx/sponza/sponza.fbx");
+        raw.materials[0] = raw_material_with_texture("mat", "textures/albedo.png");
+
+        let (scene_data, _) = hub.ingest_loaded_scene(raw).unwrap();
+
+        let expected_path = PathBuf::from("assets/fbx/sponza/textures/albedo.png");
+        let material = hub.get_material_data(scene_data.materials[0]).unwrap();
+        assert_eq!(material.diffuse_texture, hub.texture_handle_by_path(&expected_path));
+    }
+
+    #[test]
+    fn ingest_loaded_scene_keeps_absolute_texture_paths() {
+        let mut hub = AssetHub::new();
+        let texture_path = std::env::current_dir().unwrap().join("assets/textures/albedo.png");
+        let mut raw = raw_scene_data();
+        raw.source_path = PathBuf::from("assets/fbx/sponza/sponza.fbx");
+        raw.materials[0] = raw_material_with_texture("mat", texture_path.clone());
+
+        let (scene_data, _) = hub.ingest_loaded_scene(raw).unwrap();
+
+        let material = hub.get_material_data(scene_data.materials[0]).unwrap();
+        assert_eq!(material.diffuse_texture, hub.texture_handle_by_path(&texture_path));
+    }
+
+    #[test]
+    fn ingest_loaded_scene_reuses_texture_handle_after_path_resolution() {
+        let mut hub = AssetHub::new();
+        let mut raw = raw_scene_data();
+        raw.source_path = PathBuf::from("assets/fbx/sponza/sponza.fbx");
+        raw.materials = vec![
+            raw_material_with_texture("first", "textures/shared.png"),
+            raw_material_with_texture("second", "./textures/shared.png"),
+        ];
+
+        let (scene_data, _) = hub.ingest_loaded_scene(raw).unwrap();
+
+        let first = hub.get_material_data(scene_data.materials[0]).unwrap().diffuse_texture;
+        let second = hub.get_material_data(scene_data.materials[1]).unwrap().diffuse_texture;
+        let expected_path = PathBuf::from("assets/fbx/sponza/textures/shared.png");
+        assert_eq!(first, second);
+        assert_eq!(first, hub.texture_handle_by_path(&expected_path));
     }
 
     #[test]

@@ -285,6 +285,16 @@ impl GfxCommandBuffer {
         }
     }
 
+    /// 绑定已经缓存过的 raw index buffer 信息。
+    ///
+    /// 用于 render-side draw cache，避免 render pass 重新持有 mesh owner 引用。
+    #[inline]
+    pub fn cmd_bind_index_buffer_raw(&self, buffer: vk::Buffer, offset: vk::DeviceSize, index_type: vk::IndexType) {
+        unsafe {
+            self.gfx_device.cmd_bind_index_buffer(self.vk_handle, buffer, offset, index_type);
+        }
+    }
+
     /// - 命令类型：state
     /// - 支持的 queue 类型：graphics
     #[inline]

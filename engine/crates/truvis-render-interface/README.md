@@ -8,25 +8,22 @@
 - `CmdAllocator`
 - `GfxResourceManager`（Handle + 生命周期管理）
 - `BindlessManager` / `GlobalDescriptorSets`
-- `GpuScene` / `RenderData`
+- `RenderSceneView`
 - `RenderWorld`
 
 ## RenderWorld
 
-- `RenderWorld` 是 GPU 侧运行时状态集合，包含 `GpuScene`、`BindlessManager`、`GlobalDescriptorSets`、`GfxResourceManager`、`FifBuffers`、sampler manager、per-frame data、frame counter 和 frame/pipeline settings。
+- `RenderWorld` 是 GPU 侧运行时状态集合，包含 `BindlessManager`、`GlobalDescriptorSets`、`GfxResourceManager`、`FifBuffers`、sampler manager、per-frame data、frame counter 和 frame/pipeline settings。
 - `RenderWorld` 不包含 CPU scene 或 asset hub；这些数据属于 `truvis-world::World`。
 - render 阶段通常只借出 `&RenderWorld`，使 pass adapter 能读取 GPU 状态并录制命令，但不能随意改写 frame state。
 - resize / shutdown 阶段通过 mutable context 暴露 `RenderWorld`，用于重建或释放 manager-owned GPU resources。
 - `GlobalDescriptorSets` 只作为全局 pipeline 绑定聚合；资源 manager 更新 descriptor 时只能接收专用 target，避免依赖完整全局绑定策略。
 
-## GpuScene / RenderData
+## RenderSceneView
 
-- `GpuInstanceSlot` 表示 instance 在 GPU instance buffer 中的稳定位置，TLAS custom index 和 raster push constant 都使用该 slot。
-- `RenderData` 使用稳定 GPU material slot 表达 instance 到 material 的关系，不携带完整 material 参数。
-- `RenderData` 的 active instance 列表只包含 mesh/material 都 GPU-ready 的 instance。
-- `GpuScene` 持有 instance、geometry、light、indirect map 和 TLAS 等 buffer。
-- `GpuScene` 不再拥有 material buffer；`gpu::GPUScene.all_mats` 由调用方传入的 material buffer device address 填充。
-- 当前 material buffer 的 owner 是 render-backend 私有 `MaterialManager`，由 `MaterialBridge` 驱动；后续可迁移到专门 render-side asset/scene 模块。
+- `RenderSceneView` 是 render pass 访问 GPU scene 的窄只读契约。
+- concrete `GpuScene`、`RenderData`、稳定 instance slot 与 raster draw cache 属于 `truvis-render-backend` 私有实现。
+- render pass 只能通过 `RenderSceneView` 读取 scene root buffer device address、当前 FIF TLAS handle，并提交光栅化 draw；不直接依赖 backend 私有场景上传数据。
 
 ## 资源管理规则
 
@@ -36,7 +33,7 @@
 - resize / shutdown / immediate release 必须使用带 `DestroyReason` 的 release API，便于把日志关联到项目资源名、raw Vulkan handle 与 manager handle。
 - `FifBuffers` 只保存 manager handle；resize 和 shutdown 时先注销 bindless，再通过 `GfxResourceManager` 释放 image，view 随 image 释放。
 - `BindlessManager`、`RenderSamplerManager` 等 manager 只依赖自身 descriptor binding 契约和窄 target，不以 `GlobalDescriptorSets` 作为更新入口。
-- `CmdAllocator`、`GlobalDescriptorSets`、`RenderSamplerManager`、`GpuScene` 等 owner 在 shutdown 时接收 phase Ctx 并显式销毁自身持有的 GPU 资源。
+- `CmdAllocator`、`GlobalDescriptorSets`、`RenderSamplerManager` 等 owner 在 shutdown 时接收 phase Ctx 并显式销毁自身持有的 GPU 资源。
 - `Drop` 只保留诊断职责，不作为 Vulkan/VMA 释放路径。
 
 ## 模块定位

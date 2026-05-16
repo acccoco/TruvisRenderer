@@ -24,10 +24,10 @@ use truvis_render_interface::fif_buffer::FifBuffers;
 use truvis_render_interface::frame_counter::FrameCounter;
 use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
 use truvis_render_interface::global_descriptor_sets::{GlobalDescriptorSets, PerFrameDescriptorBinding};
-use truvis_render_interface::gpu_scene::GpuScene;
 use truvis_render_interface::pipeline_settings::{
     AccumData, DefaultRenderBackendSettings, FrameSettings, PipelineSettings,
 };
+use truvis_render_interface::render_scene_view::RenderSceneView;
 use truvis_render_interface::sampler_manager::RenderSamplerManager;
 use truvis_scene::scene_manager::SceneManager;
 use truvis_shader_binding::gpu;
@@ -42,6 +42,7 @@ use crate::material_bridge::MaterialBridge;
 use crate::platform::camera::Camera;
 use crate::platform::timer::Timer;
 use crate::present::render_present::RenderPresent;
+use crate::render_scene::gpu_scene::GpuScene;
 
 /// 渲染后端核心。
 ///
@@ -66,6 +67,7 @@ pub struct RenderBackend {
 
     world: World,
     render_world: RenderWorld,
+    gpu_scene: GpuScene,
     asset_texture_uploader: AssetTextureUploader,
     asset_mesh_uploader: AssetMeshUploader,
     material_bridge: MaterialBridge,
@@ -104,6 +106,7 @@ pub struct RenderBackendRenderCtx<'a> {
     pub queue_ctx: GfxQueueCtx<'a>,
     pub device_info_ctx: GfxDeviceInfoCtx<'a>,
     pub render_world: &'a RenderWorld,
+    pub render_scene: &'a dyn RenderSceneView,
     pub asset_texture_uploader: &'a AssetTextureUploader,
     pub render_present: &'a RenderPresent,
     pub timeline: &'a GfxSemaphore,
@@ -289,8 +292,8 @@ impl RenderBackend {
                 asset_mesh_uploader,
                 material_bridge,
                 instance_bridge,
+                gpu_scene,
                 render_world: RenderWorld {
-                    gpu_scene,
                     bindless_manager,
                     global_descriptor_sets: render_descriptor_sets,
                     gfx_resource_manager,
@@ -357,7 +360,7 @@ impl RenderBackend {
             &mut self.render_world.bindless_manager,
         );
         self.world.asset_hub.destroy();
-        self.render_world.gpu_scene.destroy_mut(
+        self.gpu_scene.destroy_mut(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             &mut self.render_world.bindless_manager,
@@ -484,6 +487,7 @@ impl RenderBackend {
             queue_ctx: self.gfx.queue_ctx(),
             device_info_ctx: self.gfx.device_info_ctx(),
             render_world: &self.render_world,
+            render_scene: &self.gpu_scene,
             asset_texture_uploader: &self.asset_texture_uploader,
             render_present: self.render_present.as_ref().unwrap(),
             timeline: &self.fif_timeline_semaphore,
@@ -662,7 +666,7 @@ impl RenderBackend {
         );
         let material_buffer_device_address = self.material_bridge.material_buffer_device_address(frame_label);
         let scene_revision = self.asset_mesh_uploader.ready_revision().saturating_add(self.instance_bridge.revision());
-        self.render_world.gpu_scene.upload_render_data(
+        self.gpu_scene.upload_render_data(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.immediate_ctx(),
@@ -714,7 +718,7 @@ impl RenderBackend {
     fn update_perframe_descriptor_set(&mut self) {
         let frame_label = self.render_world.frame_counter.frame_label();
         let per_frame_data_buffer = &self.render_world.per_frame_data_buffers[*frame_label];
-        let gpu_scene_buffer = self.render_world.gpu_scene.scene_buffer(frame_label);
+        let gpu_scene_buffer = self.gpu_scene.scene_buffer(frame_label);
         let perframe_set = self.render_world.global_descriptor_sets.current_perframe_set(frame_label).handle();
 
         let perframe_data_buffer_info = vec![

@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use slotmap::SecondaryMap;
 
 use truvis_render_interface::frame_counter::{FrameCounter, FrameToken};
-use truvis_render_interface::render_data::{GpuInstanceSlot, InstanceRenderData, MeshRenderData, RenderData};
 use truvis_scene::components::instance::Instance;
 use truvis_scene::guid_new_type::InstanceHandle;
 use truvis_scene::scene_manager::SceneManager;
 use truvis_shader_binding::gpu;
 
+use crate::render_scene::render_data::{GpuInstanceSlot, InstanceRenderData, MeshRenderData, RenderData};
 use crate::scene_bridge::{MaterialSlotResolver, MeshRenderResolver};
 
 const MAX_INSTANCE_COUNT: u32 = 1024;
@@ -127,7 +127,6 @@ impl InstanceBridge {
             all_meshes,
             all_point_lights,
             mesh_geometry_start_indices,
-            total_geometry_count,
         }
     }
 

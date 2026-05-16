@@ -144,6 +144,7 @@ impl RenderAppHooks for CornellApp {
             queue_ctx: ctx.queue_ctx,
             device_info_ctx: ctx.device_info_ctx,
             render_world: ctx.render_world,
+            render_scene: ctx.render_scene,
             render_present: ctx.render_present,
             timeline: ctx.timeline,
         };

@@ -176,8 +176,8 @@ render-side 负责：
 - TLAS。
 - `gpu::GPUScene` 根 buffer。
 
-长期看，`GpuScene` 与 `RenderData` 更像 renderer 集成层，后续可以从
-`truvis-render-interface` 上移到 `truvis-render-backend` 或专门的 render-scene crate。
+`GpuScene` 与 `RenderData` 更像 renderer 集成层；Phase 6c 已将它们从
+`truvis-render-interface` 上移到 `truvis-render-backend` 私有模块。
 
 ## Material 设计
 
@@ -551,7 +551,8 @@ App / tool
 剩余限制：
 
 - 当前策略仍是整棵 rebuild，不做 TLAS refit 或 dirty slot 局部更新。
-- `GpuScene` 仍持有 TLAS 与 instance/geometry buffer，后续 Phase 6 再收敛 owner 边界。
+- `GpuScene` 持有 TLAS 与 instance/geometry buffer 的 owner 边界已在 Phase 6c
+  收敛到 backend 私有模块；dirty slot 局部更新仍留作后续。
 
 ### Phase 5：Assimp 读取集成到 AssetHub
 
@@ -584,10 +585,22 @@ App / tool
   `truvis-cxx-binding` 的直接依赖。Phase 6a 已删除该兼容 facade。
 - C++ FFI 中 `truvixx_mesh_fill_tangents` 已修正为读取 tangent 数据。
 
-剩余限制：
+后续调整（2026-05-17 Phase 7a）：
 
-- texture path 解析沿用导入结果中的路径字符串，暂不做模型目录相对路径归一化。
-- scene load 失败原因仍来自 Rust 侧路径检查和 FFI 结果转换，C++ importer 的详细错误信息尚未向上暴露。
+- scene material 中的相对 texture path 已在 `AssetHub` ingest scene 阶段按 scene 文件所在目录解析，
+  绝对路径保持不变。
+- texture path 只做词法归一化，不调用 `canonicalize`，因此纹理暂缺时仍走现有
+  `load_texture` 失败和 render-side fallback 路径。
+- 解析后的 texture path 继续通过 `AssetHub::load_texture()` 去重，同一归一化路径只分配一个
+  `AssetTextureHandle`。
+
+后续调整（2026-05-17 Phase 7b）：
+
+- C++ Assimp importer 现在保存最近一次失败原因，并通过 C ABI 暴露
+  `truvixx_scene_is_loaded()` / `truvixx_scene_last_error()`。
+- `AssetLoader` 在 `truvixx_scene_load()` 返回非空 handle 后会先检查 scene 是否真的 loaded；
+  加载失败时转为 `SceneFailed`，不再把失败导入当作空 scene 成功处理。
+- 失败信息会带上 C++ importer 的错误字符串，便于定位格式错误、Assimp 解析失败等问题。
 
 ### Phase 6：清理旧路径
 
@@ -597,7 +610,8 @@ App / tool
 - 将持有 GPU buffer 的 `MaterialManager` 从 `truvis-scene` 移到 render-side。
 - 清理旧 scene mesh/material 兼容身份和同步 mesh manager。
 - 移除 `SceneManager::prepare_render_data()` 对临时 Vec index 的核心依赖。
-- 逐步将 `GpuScene` / `RenderData` 从 `truvis-render-interface` 上移到 renderer 集成层。
+- 将 `GpuScene` / `RenderData` 从 `truvis-render-interface` 上移到 renderer 集成层
+  （Phase 6c 已落到 backend 私有模块）。
 - 更新 `ARCHITECTURE.md` 和相关模块 README。
 
 验收：
@@ -631,13 +645,79 @@ App / tool
 - `SceneManager` 不再通过 `MeshRenderResolver` 的返回类型引用 `RenderData`
   契约，scene 到 render-side 的过渡逻辑收敛到 backend。
 
+完成记录（2026-05-17 Phase 6c）：
+
+- `GpuScene`、`RenderData`、`GpuInstanceSlot`、`MeshRenderData` 和 `RtGeometry`
+  已从 `truvis-render-interface` 迁移到 `truvis-render-backend` 私有
+  `render_scene` 模块。
+- `RenderBackend` 直接持有 backend 私有 `GpuScene`；`RenderWorld` 不再包含
+  concrete GPU scene owner。
+- `truvis-render-interface` 新增窄接口 `RenderSceneView`，render pass 只通过它读取
+  scene buffer device address、当前 FIF TLAS handle 和光栅化 draw 能力。
+- `GpuScene::upload_render_data()` 在 prepare 阶段维护当前 FIF 的 raster draw cache，
+  `PhongPass` 不再接收 `RenderData`，`RealtimeRtPass` 不再直接访问 concrete
+  `GpuScene`。
+- `truvis-render-interface` 去掉 `gpu_scene`、`render_data` 和 `geometry` 公开模块，
+  只保留帧调度、资源管理和 render pass 所需契约。
+
 剩余限制：
 
-- `GpuScene` / `RenderData` 仍位于 `truvis-render-interface`，后续可上移到 backend
-  或专门 render-scene 模块。
 - `GpuScene` 仍整块上传 instance / geometry / indirect buffer，尚未按 dirty slot 做局部更新。
-- `MeshRenderResolver` 仍返回 `MeshRenderData`，但该契约已经属于 backend 私有 bridge；
-  后续 Phase 6c 可继续评估 `RenderData` / `GpuScene` 的最终归属。
+- `MeshRenderResolver` 仍返回 backend 私有 `MeshRenderData`；后续若拆出独立
+  render-scene crate，需要重新评估该私有契约是否上移。
+
+### Phase 7a：Scene 纹理路径归一化
+
+目标：
+
+- 消除 Assimp scene 导入后 texture path 仍按原始字符串加载的问题。
+- 相对 texture path 以 scene 文件所在目录为基准解析；绝对 texture path 不拼接 scene 目录。
+- 保持 `AssetHub` 只负责 CPU asset 身份和加载状态，不引入 GPU 或 bindless 策略。
+
+验收：
+
+- `assets/fbx/sponza/sponza.fbx` 引用 `textures/albedo.png` 时，
+  texture asset path 解析为 `assets/fbx/sponza/textures/albedo.png`。
+- 绝对 texture path 保持原样。
+- 两个 material 引用同一归一化 texture path 时复用同一个 `AssetTextureHandle`。
+
+完成记录（2026-05-17）：
+
+- `AssetHub` 在 scene material ingest 阶段解析 `diffuse_texture_path` 和 `normal_texture_path`，
+  再调用 `load_texture()` 分配 / 复用 `AssetTextureHandle`。
+- 新增私有词法路径归一化 helper，不访问文件系统，避免纹理文件暂缺时改变失败语义。
+- `truvis-asset` 单元测试覆盖相对路径、绝对路径和归一化后 handle 去重。
+
+剩余限制：
+
+- embedded texture（如 Assimp 的 `*0`）暂未专项处理，仍按普通路径进入现有加载 / fallback 流程。
+
+### Phase 7b：Assimp Scene 加载失败传播
+
+目标：
+
+- 修正 `truvixx_scene_load()` 失败时返回非空 handle 被 Rust 侧误判为 scene loaded 的问题。
+- C++ importer 保存详细失败原因，并通过 C ABI 提供状态和错误查询。
+- Rust asset loader 在复制 scene CPU 数据前显式检查加载状态，失败时产出 `SceneFailed`。
+
+验收：
+
+- 存在但内容非法的 scene 文件不会生成空 `LoadedSceneData`。
+- scene load 失败日志 / 事件包含 C++ importer 返回的具体错误信息。
+- 成功导入路径、texture fallback、GPU 上传和 scene spawn 流程不受影响。
+
+完成记录（2026-05-17）：
+
+- `SceneImporter` 新增 `last_error()`，文件不存在或 Assimp 解析失败时记录具体错误。
+- C ABI 新增 `truvixx_scene_is_loaded()` 与 `truvixx_scene_last_error()`；
+  `truvixx_scene_load()` 保留失败时返回 handle 的行为，方便调用方读取错误后释放。
+- `AssetLoader::load_scene_task_inner()` 在 `TruvixxSceneGuard` 建立后立即检查 loaded 状态，
+  失败时读取 importer 错误并返回 `SceneFailure`。
+- 新增 `truvis-asset` 单元测试覆盖非法 scene 文件不会被当作成功导入。
+
+剩余限制：
+
+- embedded texture（如 Assimp 的 `*0`）暂未专项处理，仍按普通路径进入现有加载 / fallback 流程。
 
 ## 待确认问题
 
@@ -664,9 +744,9 @@ App / tool
 - 如果 TLAS 不加 dirty/revision，异步加载完成后的 mesh/instance 不会稳定进入 ray tracing scene。
 - 如果 draw path 继续使用临时 Vec index，就无法保证 instance slot 生命周期内稳定。
 
-## 推荐第一批实施任务
+## 历史：推荐第一批实施任务
 
-第一批任务只做设计落地的最小闭环：
+以下是路线起始时的第一批任务，当前已完成并保留作历史记录：
 
 1. 补齐 handle / status 命名和文档。
 2. 将现有 `MaterialManager` 接入主渲染路径，让 material slot 稳定。

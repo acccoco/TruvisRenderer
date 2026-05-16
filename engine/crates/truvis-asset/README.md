@@ -26,4 +26,6 @@
 - `AssetMaterialHandle` 表示内容材质身份，不表示 GPU material slot
 - `AssetSceneHandle` 表示 scene asset / prefab，不表示 live runtime instance
 - Assimp 导入任务只在后台复制 owned CPU 数据，完成后释放 C++ scene handle
+- Assimp 导入失败会读取 C++ importer 的详细错误并转为 `SceneFailed` 事件
+- scene material 引用的相对纹理路径按 scene 文件所在目录解析，绝对路径保持不变；路径只做词法归一化，不访问文件系统
 - 保持 asset 层不依赖 GPU 资源缓存或 bindless 绑定策略

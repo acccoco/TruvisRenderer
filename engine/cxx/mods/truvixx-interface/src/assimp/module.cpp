@@ -47,6 +47,22 @@ TruvixxSceneHandle truvixx_scene_load(const char* path)
     return scene;
 }
 
+ResType truvixx_scene_is_loaded(const TruvixxSceneHandle scene)
+{
+    if (!scene || !scene->importer.is_loaded())
+        return ResTypeFail;
+
+    return ResTypeSuccess;
+}
+
+const char* truvixx_scene_last_error(const TruvixxSceneHandle scene)
+{
+    if (!scene)
+        return "";
+
+    return scene->importer.last_error().c_str();
+}
+
 void truvixx_scene_free(const TruvixxSceneHandle scene)
 {
     delete scene;

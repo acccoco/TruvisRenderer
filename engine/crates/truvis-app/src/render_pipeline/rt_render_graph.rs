@@ -179,6 +179,7 @@ impl RtPipeline {
                 RealtimeRtRgPass {
                     rt_pass: &inner.realtime_rt_pass,
                     render_world,
+                    render_scene: ctx.render_scene,
                     single_frame_image,
                     single_frame_extent: render_world.frame_settings.frame_extent,
                     gbuffer_a,

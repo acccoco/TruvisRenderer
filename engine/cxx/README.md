@@ -19,3 +19,5 @@
 
 - 对外接口保持 C ABI 与 POD 数据结构稳定。
 - 变更 FFI 结构时需同步检查 Rust 侧绑定与内存布局兼容性。
+- Assimp scene 加载失败时，`truvixx_scene_load` 可能返回可查询错误的非空句柄；调用方必须通过
+  `truvixx_scene_is_loaded` 判断成功状态，并通过 `truvixx_scene_last_error` 读取详细失败原因。

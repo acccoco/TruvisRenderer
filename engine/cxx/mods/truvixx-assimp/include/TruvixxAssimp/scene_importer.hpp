@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <string>
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 
@@ -34,6 +35,9 @@ public:
     /// 是否已成功加载场景
     [[nodiscard]] bool is_loaded() const noexcept;
 
+    /// 最近一次加载失败的错误信息
+    [[nodiscard]] const std::string& last_error() const noexcept;
+
     TruvixxFloat3* get_position(uint32_t mesh_idx) const;
     TruvixxFloat3* get_normal(uint32_t mesh_idx) const;
     TruvixxFloat3* get_tangent(uint32_t mesh_idx) const;
@@ -60,6 +64,7 @@ private:
 
     SceneData scene_data_;      ///< 转换后的场景数据
     std::filesystem::path dir_; ///< 场景文件所在目录
+    std::string last_error_;    ///< 最近一次加载失败的错误信息
     bool is_loaded_ = false;    ///< 加载状态
 };
 

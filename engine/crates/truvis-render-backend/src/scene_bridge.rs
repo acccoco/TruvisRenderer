@@ -1,5 +1,6 @@
 use truvis_asset::handle::{AssetMaterialHandle, AssetMeshHandle};
-use truvis_render_interface::render_data::MeshRenderData;
+
+use crate::render_scene::render_data::MeshRenderData;
 
 /// asset material handle 到稳定 GPU material slot 的解析接口。
 ///

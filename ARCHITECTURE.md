@@ -10,9 +10,9 @@
 flowchart TB
     L6["L6 truvis-winit-app<br/>winit 事件循环、窗口生命周期、渲染线程启动"]
     L5["L5 truvis-app<br/>demo app、GuiPlugin、overlay plugin、render pipeline plugin、RenderGraph 编排<br/><br/>L5 truvis-frame-runtime<br/>RenderAppShell 帧骨架 + render-loop 适配层<br/><br/>L5 truvis-frame-api<br/>RenderApp / RenderAppHooks / Plugin 契约与 Plugin Ctx"]
-    L4["L4 truvis-render-backend<br/>RenderBackend：World + RenderWorld + swapchain/present/cmd/sync 生命周期"]
+    L4["L4 truvis-render-backend<br/>RenderBackend：World + RenderWorld + GpuScene + swapchain/present/cmd/sync 生命周期"]
     L3["L3 truvis-render-graph / truvis-scene / truvis-asset / truvis-gui-backend<br/>按帧同步辅助、CPU 场景、资产加载、底层 ImGui Vulkan 录制"]
-    L2["L2 truvis-render-interface<br/>RenderWorld、BindlessManager、GpuScene、FrameCounter、CmdAllocator、FifBuffers"]
+    L2["L2 truvis-render-interface<br/>RenderWorld、BindlessManager、RenderSceneView、FrameCounter、CmdAllocator、FifBuffers"]
     L1["L1 truvis-gfx<br/>Vulkan RHI 封装"]
     L0["L0 truvis-utils / truvis-logs / truvis-path / descriptor-layout"]
 
@@ -79,6 +79,7 @@ RenderBackend
   -> Gfx         Vulkan root owner + typed Ctx factory
   -> World       CPU scene + assets
   -> RenderWorld GPU resources + frame state
+  -> GpuScene    backend 私有 GPU scene buffer / TLAS / raster draw cache
   -> RenderPresent swapchain/present resources
 ```
 
@@ -172,7 +173,9 @@ vertex/index buffer 并构建 BLAS。Assimp scene 读取由 `AssetHub::load_scen
 scene asset spawn runtime instances 并保存运行时语义，`InstanceBridge` 负责稳定
 GPU instance slot、ready gate 和 active render list。mesh/material ready 查询通过
 `truvis-render-backend` 私有 scene bridge trait 连接到 `AssetMeshUploader` 与
-`MaterialBridge`，这些 resolver 不属于 `truvis-scene`。
+`MaterialBridge`，这些 resolver 不属于 `truvis-scene`。`GpuScene` 与 `RenderData`
+是 backend 私有 scene 翻译层；render pass 只通过 `RenderSceneView` 访问 scene
+buffer、TLAS handle 和光栅化 draw。
 
 ```mermaid
 flowchart LR
@@ -188,7 +191,7 @@ flowchart LR
     Scene --> Prepare["RenderBackend::prepare(camera)"]
     MaterialBridge --> InstanceBridge
     InstanceBridge --> Prepare
-    Prepare --> GpuResources["GpuScene / BindlessManager / GlobalDescriptorSets"]
+    Prepare --> GpuResources["GpuScene(RenderBackend) / BindlessManager / GlobalDescriptorSets"]
     GpuResources --> BuildGraph["App render hook builds RenderGraph"]
     BuildGraph --> RecordCommands["pass command recording"]
     RecordCommands --> Submit["queue submit"]
@@ -255,6 +258,7 @@ GPU 资源按用途分类：
 - Frame：command buffer、per-frame buffer、FIF resources
 - Swapchain：swapchain image/view、present semaphore、window-sized targets
 - Asset：`AssetHub` 持有 texture / mesh / material / scene 内容资产 handle 与 CPU 加载状态，并负责 Assimp scene 到 owned CPU 数据的导入；`AssetTextureUploader` 持有 texture 的 GPU image/view/bindless 绑定；`AssetMeshUploader` 持有 mesh vertex/index buffer、BLAS 和 GPU ready 状态；backend 私有 `MaterialManager` 由 `MaterialBridge` 驱动，持有 material GPU buffer 与稳定 slot；`SceneManager` 将 ready scene asset spawn 为 runtime instances；`InstanceBridge` 持有 runtime instance 到稳定 GPU instance slot 的映射
+- Scene GPU：backend 私有 `GpuScene` 持有 instance / geometry / light / indirect buffer、TLAS 和当前 FIF 的 raster draw cache，并通过 `RenderSceneView` 向 render pass 暴露只读能力
 - GUI：imgui font texture、per-frame GUI mesh buffer、texture map
 - RenderGraph：按帧导入的 image 状态引用与同步计划；图内 transient image/buffer 是未来能力，不作为当前资源生命周期类别
 

@@ -2,30 +2,30 @@ use ash::vk;
 
 use truvis_shader_binding::gpu;
 
-use crate::geometry::RtGeometry;
+use super::geometry::RtGeometry;
 
 /// Instance 在 GPU scene instance buffer 中的稳定 slot。
 ///
 /// slot 只保证在当前运行时 instance 生命周期内稳定；销毁后会延迟回收。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct GpuInstanceSlot(u32);
+pub(crate) struct GpuInstanceSlot(u32);
 
 impl GpuInstanceSlot {
-    pub const TLAS_CUSTOM_INDEX_MAX: u32 = 0x00FF_FFFF;
+    pub(crate) const TLAS_CUSTOM_INDEX_MAX: u32 = 0x00FF_FFFF;
 
-    pub fn new(index: u32) -> Self {
+    pub(crate) fn new(index: u32) -> Self {
         Self(index)
     }
 
-    pub fn as_u32(self) -> u32 {
+    pub(crate) fn as_u32(self) -> u32 {
         self.0
     }
 
-    pub fn as_usize(self) -> usize {
+    pub(crate) fn as_usize(self) -> usize {
         self.0 as usize
     }
 
-    pub fn validate_tlas_custom_index(self) {
+    pub(crate) fn validate_tlas_custom_index(self) {
         assert!(self.0 <= Self::TLAS_CUSTOM_INDEX_MAX, "TLAS instance custom index exceeds Vulkan 24-bit limit");
     }
 }
@@ -35,27 +35,25 @@ impl GpuInstanceSlot {
 /// 包含从 SceneManager 中提取的所有必要信息，
 /// 使得 GpuScene 可以独立于 SceneManager 完成 GPU buffer 的构建和上传。
 #[derive(Clone)]
-pub struct InstanceRenderData {
+pub(crate) struct InstanceRenderData {
     /// 该实例在 GPU instance buffer 中的稳定 slot
-    pub instance_slot: GpuInstanceSlot,
+    pub(crate) instance_slot: GpuInstanceSlot,
     /// 该实例使用的 mesh 在 `SceneData2::all_meshes` 中的索引
-    pub mesh_index: usize,
+    pub(crate) mesh_index: usize,
     /// 该实例的每个 submesh 对应的稳定 GPU material slot
-    pub material_slots: Vec<u32>,
+    pub(crate) material_slots: Vec<u32>,
     /// 实例的变换矩阵
-    pub transform: glam::Mat4,
+    pub(crate) transform: glam::Mat4,
 }
 
 /// 用于渲染的完整 Mesh 数据引用（只读快照）
 ///
 /// 注意：由于 RtGeometry 包含 GPU buffer，这里使用引用而非拷贝
-pub struct MeshRenderData<'a> {
+pub(crate) struct MeshRenderData<'a> {
     /// 该 mesh 包含的所有几何体数据
-    pub geometries: &'a [RtGeometry],
+    pub(crate) geometries: &'a [RtGeometry],
     /// BLAS 的设备地址（用于 TLAS 构建）
-    pub blas_device_address: Option<vk::DeviceAddress>,
-    /// Mesh 名称
-    pub name: &'a str,
+    pub(crate) blas_device_address: Option<vk::DeviceAddress>,
 }
 
 /// 由 render-side scene bridge 构建的完整场景数据快照（只读）
@@ -71,48 +69,27 @@ pub struct MeshRenderData<'a> {
 /// # 生命周期
 /// 由于 `all_meshes` 持有对 Mesh geometries 的引用，
 /// SceneData2 的生命周期受限于 render-side mesh uploader 中的 Mesh 数据。
-pub struct RenderData<'a> {
+pub(crate) struct RenderData<'a> {
     /// 所有实例数据（按顺序）
-    pub all_instances: Vec<InstanceRenderData>,
+    pub(crate) all_instances: Vec<InstanceRenderData>,
     /// 所有 mesh 数据引用（按顺序）
-    pub all_meshes: Vec<MeshRenderData<'a>>,
+    pub(crate) all_meshes: Vec<MeshRenderData<'a>>,
     /// 所有点光源数据
-    pub all_point_lights: Vec<gpu::PointLight>,
+    pub(crate) all_point_lights: Vec<gpu::PointLight>,
 
     /// 每个 mesh 在 geometry buffer 中的起始索引（预计算）
     /// 长度与 all_meshes 相同
-    pub mesh_geometry_start_indices: Vec<usize>,
-    /// 总 geometry 数量（预计算）
-    pub total_geometry_count: usize,
+    pub(crate) mesh_geometry_start_indices: Vec<usize>,
 }
 impl<'a> RenderData<'a> {
     /// 创建一个空的场景数据
-    pub fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             all_instances: Vec::new(),
             all_meshes: Vec::new(),
             all_point_lights: Vec::new(),
             mesh_geometry_start_indices: Vec::new(),
-            total_geometry_count: 0,
         }
-    }
-
-    /// 检查场景是否为空
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.all_instances.is_empty() && self.all_meshes.is_empty() && self.all_point_lights.is_empty()
-    }
-
-    /// 获取指定 mesh 的 geometry 数据
-    #[inline]
-    pub fn get_mesh_geometries(&self, mesh_index: usize) -> Option<&[RtGeometry]> {
-        self.all_meshes.get(mesh_index).map(|m| m.geometries)
-    }
-
-    /// 获取指定 mesh 在 geometry buffer 中的起始索引
-    #[inline]
-    pub fn get_mesh_geometry_start_index(&self, mesh_index: usize) -> Option<usize> {
-        self.mesh_geometry_start_indices.get(mesh_index).copied()
     }
 }
 impl Default for RenderData<'_> {

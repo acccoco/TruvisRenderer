@@ -26,7 +26,8 @@ bool SceneImporter::load(const std::filesystem::path& path)
     // 验证文件存在
     if (!std::filesystem::exists(path) || !std::filesystem::is_regular_file(path))
     {
-        std::cerr << std::format("File not found: {}", path.string()) << "\n";
+        last_error_ = std::format("File not found: {}", path.string());
+        std::cerr << last_error_ << "\n";
         return false;
     }
 
@@ -49,7 +50,8 @@ bool SceneImporter::load(const std::filesystem::path& path)
 
     if (!ai_scene_ || (ai_scene_->mFlags & AI_SCENE_FLAGS_INCOMPLETE) || !ai_scene_->mRootNode)
     {
-        std::cerr << std::format("Assimp error: {}", importer_->GetErrorString()) << "\n";
+        last_error_ = std::format("Assimp error: {}", importer_->GetErrorString());
+        std::cerr << last_error_ << "\n";
         return false;
     }
 
@@ -86,6 +88,11 @@ bool SceneImporter::is_loaded() const noexcept
     return is_loaded_;
 }
 
+const std::string& SceneImporter::last_error() const noexcept
+{
+    return last_error_;
+}
+
 TruvixxFloat3* SceneImporter::get_position(const uint32_t mesh_idx) const
 {
     const auto ai_mesh = ai_scene_->mMeshes[mesh_idx];
@@ -111,6 +118,7 @@ void SceneImporter::clear()
 {
     scene_data_ = {};
     ai_scene_ = nullptr;
+    last_error_.clear();
     is_loaded_ = false;
 
     // 重置 Importer（释放之前加载的场景）

@@ -39,6 +39,12 @@ int main(const int argc, char* argv[])
         std::cerr << "Failed to load scene." << "\n";
         return -1;
     }
+    if (!truvixx_scene_is_loaded(scene))
+    {
+        std::cerr << "Failed to load scene: " << truvixx_scene_last_error(scene) << "\n";
+        truvixx_scene_free(scene);
+        return -1;
+    }
 
     const auto mesh_cnt = truvixx_scene_mesh_count(scene);
     const auto mat_cnt = truvixx_scene_material_count(scene);

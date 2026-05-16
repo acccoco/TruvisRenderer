@@ -6,6 +6,9 @@ use anyhow::{Result, bail};
 use ash::vk;
 use slotmap::SecondaryMap;
 
+use crate::render_scene::geometry::RtGeometry;
+use crate::render_scene::render_data::MeshRenderData;
+use crate::scene_bridge::MeshRenderResolver;
 use truvis_asset::asset_hub::LoadedAssetEvent;
 use truvis_asset::handle::{AssetMeshHandle, LoadedMeshData};
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
@@ -22,10 +25,6 @@ use truvis_gfx::resources::special_buffers::acceleration_buffer::GfxAcceleration
 use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
-use truvis_render_interface::geometry::RtGeometry;
-use truvis_render_interface::render_data::MeshRenderData;
-
-use crate::scene_bridge::MeshRenderResolver;
 
 struct PendingMeshUpload {
     semaphore_value: u64,
@@ -340,7 +339,6 @@ struct UploadedMesh {
     geometry: RtGeometry,
     blas: GfxAcceleration,
     blas_device_address: vk::DeviceAddress,
-    name: String,
 }
 
 /// 渲染侧 mesh 资产上传与 BLAS 缓存。
@@ -414,7 +412,6 @@ impl AssetMeshUploader {
                 geometry: finished.geometry,
                 blas: finished.blas,
                 blas_device_address,
-                name: finished.name,
             },
         );
     }
@@ -439,7 +436,6 @@ impl MeshRenderResolver for AssetMeshUploader {
         Some(MeshRenderData {
             geometries: std::slice::from_ref(&mesh.geometry),
             blas_device_address: Some(mesh.blas_device_address),
-            name: &mesh.name,
         })
     }
 }

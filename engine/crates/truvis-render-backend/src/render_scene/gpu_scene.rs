@@ -18,13 +18,17 @@ use truvis_gfx::{
 use truvis_path::TruvisPath;
 use truvis_shader_binding::gpu;
 
-use crate::bindless_manager::BindlessManager;
-use crate::frame_counter::FrameCounter;
-use crate::gfx_resource_manager::GfxResourceManager;
-use crate::gpu_scene::helper::ImageLoader;
-use crate::handles::{GfxImageHandle, GfxImageViewHandle};
-use crate::pipeline_settings::FrameLabel;
-use crate::render_data::RenderData;
+use truvis_gfx::resources::layout::GfxVertexLayout;
+use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
+use truvis_render_interface::bindless_manager::BindlessManager;
+use truvis_render_interface::frame_counter::FrameCounter;
+use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
+use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_interface::pipeline_settings::FrameLabel;
+use truvis_render_interface::render_scene_view::RenderSceneView;
+
+use self::helper::ImageLoader;
+use super::render_data::{InstanceRenderData, RenderData};
 
 /// 构建 Gpu Scene 所需的所有 buffer
 struct GpuSceneBuffers {
@@ -43,6 +47,16 @@ struct GpuSceneBuffers {
     // TODO 使用 frame id 来标记是否过期，scene manager 里面也需要有相应的标记
     tlas: Option<GfxAcceleration>,
     tlas_revision: u64,
+}
+
+#[derive(Clone, Copy)]
+struct RasterDrawItem {
+    index_buffer: vk::Buffer,
+    index_count: u32,
+    vertex_buffers: [vk::Buffer; 4],
+    vertex_offsets: [vk::DeviceSize; 4],
+    instance_slot: u32,
+    submesh_idx: u32,
 }
 // 初始化与销毁
 impl GpuSceneBuffers {
@@ -125,6 +139,7 @@ impl GpuSceneBuffers {
 /// 用于构建传输到 GPU 的场景数据
 pub struct GpuScene {
     gpu_scene_buffers: [GpuSceneBuffers; FrameCounter::fif_count()],
+    raster_draws: [Vec<RasterDrawItem>; FrameCounter::fif_count()],
 
     // TODO sky texture handle 不应该放在 GPU scene 里面
     sky_texture: (GfxImageHandle, GfxImageViewHandle),
@@ -208,6 +223,7 @@ impl GpuScene {
 
         Self {
             gpu_scene_buffers,
+            raster_draws: FrameCounter::frame_labes().map(|_| Vec::new()),
 
             sky_texture: (sky_image_handle, sky_view_handle),
             uv_checker_texture: (uv_checker_image_handle, uv_checker_view_handle),
@@ -288,6 +304,7 @@ impl GpuScene {
     ) {
         let _span = tracy_client::span!("GpuScene::prepare_render_data2");
 
+        self.update_raster_draw_cache(render_data, frame_counter.frame_label());
         self.upload_mesh_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
         self.upload_instance_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
         self.upload_light_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
@@ -305,23 +322,27 @@ impl GpuScene {
         );
     }
 
-    // TODO 改成：返回 Raster 模式的 RenderData
-    /// 绘制场景中的所有实例（基于 SceneData2）
-    ///
-    /// # 参数
-    /// - `cmd`: 命令缓冲区
-    /// - `scene_data`: 场景数据
-    /// - `before_draw`: 每次绘制前的回调函数 (instance_idx, submesh_idx)
-    pub fn draw(&self, cmd: &GfxCommandBuffer, scene_data: &RenderData<'_>, mut before_draw: impl FnMut(u32, u32)) {
-        let _span = tracy_client::span!("GpuScene::draw2");
+    fn update_raster_draw_cache(&mut self, scene_data: &RenderData<'_>, frame_label: FrameLabel) {
+        let draw_cache = &mut self.raster_draws[*frame_label];
+        draw_cache.clear();
+
         for instance in scene_data.all_instances.iter() {
             let mesh = &scene_data.all_meshes[instance.mesh_index];
             for (submesh_idx, geometry) in mesh.geometries.iter().enumerate() {
-                geometry.cmd_bind_index_buffer(cmd);
-                geometry.cmd_bind_vertex_buffers(cmd);
-
-                before_draw(instance.instance_slot.as_u32(), submesh_idx as u32);
-                cmd.draw_indexed(geometry.index_cnt(), 0, 1, 0, 0);
+                let vertex_count = geometry.vertex_buffer.vertex_cnt();
+                draw_cache.push(RasterDrawItem {
+                    index_buffer: geometry.index_buffer.vk_buffer(),
+                    index_count: geometry.index_cnt(),
+                    vertex_buffers: [geometry.vertex_buffer.vk_buffer(); 4],
+                    vertex_offsets: [
+                        VertexLayoutSoA3D::pos_offset(vertex_count),
+                        VertexLayoutSoA3D::normal_offset(vertex_count),
+                        VertexLayoutSoA3D::tangent_offset(vertex_count),
+                        VertexLayoutSoA3D::uv_offset(vertex_count),
+                    ],
+                    instance_slot: instance.instance_slot.as_u32(),
+                    submesh_idx: submesh_idx as u32,
+                });
             }
         }
     }
@@ -530,7 +551,7 @@ impl GpuScene {
     /// 根据 SceneData2 的 instance 信息获得加速结构的 instance 信息
     fn get_as_instance_info(
         &self,
-        instance: &crate::render_data::InstanceRenderData,
+        instance: &InstanceRenderData,
         custom_idx: u32,
         scene_data: &RenderData<'_>,
     ) -> vk::AccelerationStructureInstanceKHR {
@@ -599,6 +620,27 @@ impl GpuScene {
 
         self.gpu_scene_buffers[frame_index].tlas = Some(tlas);
         self.gpu_scene_buffers[frame_index].tlas_revision = tlas_revision;
+    }
+}
+
+impl RenderSceneView for GpuScene {
+    fn scene_buffer_device_address(&self, frame_label: FrameLabel) -> vk::DeviceAddress {
+        self.scene_buffer(frame_label).device_address()
+    }
+
+    fn tlas_handle(&self, frame_label: FrameLabel) -> Option<vk::AccelerationStructureKHR> {
+        self.tlas(frame_label).map(|tlas| tlas.handle())
+    }
+
+    fn draw_raster(&self, frame_label: FrameLabel, cmd: &GfxCommandBuffer, before_draw: &mut dyn FnMut(u32, u32)) {
+        let _span = tracy_client::span!("GpuScene::draw_raster");
+        for draw in &self.raster_draws[*frame_label] {
+            cmd.cmd_bind_index_buffer_raw(draw.index_buffer, 0, super::geometry::RtGeometry::index_type());
+            cmd.cmd_bind_vertex_buffers(0, &draw.vertex_buffers, &draw.vertex_offsets);
+
+            before_draw(draw.instance_slot, draw.submesh_idx);
+            cmd.draw_indexed(draw.index_count, 0, 1, 0, 0);
+        }
     }
 }
 

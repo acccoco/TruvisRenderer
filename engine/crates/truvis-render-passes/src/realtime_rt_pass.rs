@@ -18,6 +18,7 @@ use truvis_path::TruvisPath;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_interface::render_scene_view::RenderSceneView;
 use truvis_render_interface::render_world::RenderWorld;
 use truvis_shader_binding::gpu;
 use truvis_utils::count_indexed_array;
@@ -468,9 +469,15 @@ impl RealtimeRtPass {
         hash_table.destroy_mut(resource_ctx, truvis_gfx::resources::lifecycle::DestroyReason::Shutdown);
         entry_pool.destroy_mut(resource_ctx, truvis_gfx::resources::lifecycle::DestroyReason::Shutdown);
     }
-    pub fn ray_trace(&self, render_world: &RenderWorld, cmd: &GfxCommandBuffer, pass_data: RealtimeRtPassData) {
+    pub fn ray_trace(
+        &self,
+        render_world: &RenderWorld,
+        render_scene: &dyn RenderSceneView,
+        cmd: &GfxCommandBuffer,
+        pass_data: RealtimeRtPassData,
+    ) {
         let frame_label = render_world.frame_counter.frame_label();
-        let Some(tlas) = render_world.gpu_scene.tlas(frame_label) else {
+        let Some(tlas) = render_scene.tlas_handle(frame_label) else {
             log::trace!("RealtimeRtPass: skip ray tracing because TLAS is not ready for {}", frame_label);
             return;
         };
@@ -497,7 +504,7 @@ impl RealtimeRtPass {
             self.pipeline.pipeline_layout,
             gpu::RT_SET_NUM,
             &[
-                RealtimeRtDescriptorBinding::tlas().write_tals(vk::DescriptorSet::null(), 0, vec![tlas.handle()]),
+                RealtimeRtDescriptorBinding::tlas().write_tals(vk::DescriptorSet::null(), 0, vec![tlas]),
                 RealtimeRtDescriptorBinding::rt_single_frame_output().write_image(
                     vk::DescriptorSet::null(),
                     0,
@@ -644,6 +651,7 @@ pub struct RealtimeRtRgPass<'a> {
 
     // TODO 暂时使用这个肮脏的实现
     pub render_world: &'a RenderWorld,
+    pub render_scene: &'a dyn RenderSceneView,
 
     /// 单帧 RT 输出图像（只写）
     pub single_frame_image: RgImageHandle,
@@ -677,6 +685,7 @@ impl RgPass for RealtimeRtRgPass<'_> {
 
         self.rt_pass.ray_trace(
             self.render_world,
+            self.render_scene,
             ctx.cmd,
             RealtimeRtPassData {
                 single_frame_output: single_frame_image,

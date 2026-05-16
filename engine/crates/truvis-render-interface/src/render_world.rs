@@ -6,7 +6,6 @@ use crate::fif_buffer::FifBuffers;
 use crate::frame_counter::FrameCounter;
 use crate::gfx_resource_manager::GfxResourceManager;
 use crate::global_descriptor_sets::GlobalDescriptorSets;
-use crate::gpu_scene::GpuScene;
 use crate::pipeline_settings::{AccumData, FrameSettings, PipelineSettings};
 use crate::sampler_manager::RenderSamplerManager;
 
@@ -16,7 +15,6 @@ use crate::sampler_manager::RenderSamplerManager;
 /// 保持 plain struct（公开字段），利用 Rust 的 disjoint field borrowing
 /// 避免 `&mut self` 方法导致的借用冲突。
 pub struct RenderWorld {
-    pub gpu_scene: GpuScene,
     pub bindless_manager: BindlessManager,
     pub global_descriptor_sets: GlobalDescriptorSets,
     pub gfx_resource_manager: GfxResourceManager,

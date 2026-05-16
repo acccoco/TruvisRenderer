@@ -17,7 +17,7 @@ use truvis_gfx::{
 use truvis_path::TruvisPath;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::pipeline_settings::FrameLabel;
-use truvis_render_interface::render_data::RenderData;
+use truvis_render_interface::render_scene_view::RenderSceneView;
 use truvis_render_interface::render_world::RenderWorld;
 use truvis_shader_binding::gpu;
 
@@ -105,7 +105,7 @@ impl PhongPass {
         );
     }
 
-    pub fn draw(&self, cmd: &GfxCommandBuffer, render_world: &RenderWorld, scene_data: &RenderData<'_>) {
+    pub fn draw(&self, cmd: &GfxCommandBuffer, render_world: &RenderWorld, render_scene: &dyn RenderSceneView) {
         let frame_label = render_world.frame_counter.frame_label();
 
         let (_, render_target_view_handle) = render_world.fif_buffers.render_target_handle(frame_label);
@@ -133,7 +133,7 @@ impl PhongPass {
             &render_world.frame_settings.frame_extent.into(),
             &gpu::raster::PushConstants {
                 frame_data: render_world.per_frame_data_buffers[*frame_label].device_address(),
-                scene: render_world.gpu_scene.scene_buffer(frame_label).device_address(),
+                scene: render_scene.scene_buffer_device_address(frame_label),
 
                 submesh_idx: 0,
                 instance_idx: 0,
@@ -143,7 +143,7 @@ impl PhongPass {
             },
             frame_label,
         );
-        render_world.gpu_scene.draw(cmd, scene_data, &mut |ins_idx, submesh_idx| {
+        render_scene.draw_raster(frame_label, cmd, &mut |ins_idx, submesh_idx| {
             let data = [ins_idx, submesh_idx];
             cmd.cmd_push_constants(
                 self.pipeline.layout(),

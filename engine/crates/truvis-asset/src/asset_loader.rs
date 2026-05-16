@@ -178,7 +178,21 @@ fn load_scene_task_inner(path: &PathBuf) -> Result<RawLoadedSceneData, String> {
     }
 
     let scene = TruvixxSceneGuard { handle: scene_handle };
+    if unsafe { truvixx::truvixx_scene_is_loaded(scene.handle) } != truvixx::ResType_ResTypeSuccess {
+        return Err(unsafe { scene_import_error(scene.handle) });
+    }
+
     unsafe { copy_scene_data(scene.handle, path) }
+}
+
+unsafe fn scene_import_error(scene_handle: truvixx::TruvixxSceneHandle) -> String {
+    let error = unsafe { truvixx::truvixx_scene_last_error(scene_handle) };
+    if error.is_null() {
+        return "scene import failed without error detail".to_string();
+    }
+
+    let error = unsafe { std::ffi::CStr::from_ptr(error) }.to_string_lossy().into_owned();
+    if error.is_empty() { "scene import failed without error detail".to_string() } else { error }
 }
 
 struct TruvixxSceneGuard {
@@ -345,4 +359,29 @@ unsafe fn copy_instance_data(
         .collect();
 
     Ok(instances)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_scene_task_reports_importer_error_for_invalid_scene_file() {
+        let file_name = format!(
+            "truvis-invalid-scene-{}-{}.fbx",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        );
+        let path = std::env::temp_dir().join(file_name);
+        std::fs::write(&path, b"not a valid scene").unwrap();
+
+        let result = load_scene_task_inner(&path);
+        let _ = std::fs::remove_file(&path);
+
+        let error = result.expect_err("invalid scene file should fail import");
+        assert!(!error.is_empty());
+        assert_ne!(error, "truvixx_scene_load returned null");
+        assert_ne!(error, "scene import failed without error detail");
+        assert!(error.contains("Assimp error"), "unexpected importer error: {error}");
+    }
 }

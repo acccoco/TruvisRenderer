@@ -1,6 +1,5 @@
 use ash::vk;
 
-use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::raytracing::acceleration::GfxBlasInputInfo;
 use truvis_gfx::resources::layout::GfxVertexLayout;
@@ -86,25 +85,5 @@ impl RtGeometry {
 
     pub fn destroy(mut self, ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
         self.destroy_mut(ctx, reason);
-    }
-
-    #[inline]
-    pub fn cmd_bind_index_buffer(&self, cmd: &GfxCommandBuffer) {
-        cmd.cmd_bind_index_buffer(&self.index_buffer, 0)
-    }
-
-    #[inline]
-    pub fn cmd_bind_vertex_buffers(&self, cmd: &GfxCommandBuffer) {
-        let vertex_cnt = self.vertex_buffer.vertex_cnt();
-        cmd.cmd_bind_vertex_buffers(
-            0,
-            &[self.vertex_buffer.vk_buffer(); 4],
-            &[
-                VertexLayoutSoA3D::pos_offset(vertex_cnt),
-                VertexLayoutSoA3D::normal_offset(vertex_cnt),
-                VertexLayoutSoA3D::tangent_offset(vertex_cnt),
-                VertexLayoutSoA3D::uv_offset(vertex_cnt),
-            ],
-        );
     }
 }

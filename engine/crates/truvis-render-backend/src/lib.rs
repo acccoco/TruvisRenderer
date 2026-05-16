@@ -13,4 +13,5 @@ mod instance_bridge;
 mod material_bridge;
 mod material_manager;
 pub mod render_backend;
+mod render_scene;
 mod scene_bridge;
