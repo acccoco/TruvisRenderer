@@ -1,3 +1,5 @@
+mod visual_studio;
+
 use truvis_logs::init_log;
 use truvis_path::TruvisPath;
 
@@ -18,6 +20,25 @@ impl BuildType {
             BuildType::Release => "release",
         }
     }
+}
+
+fn run_cmake(cmake_project: &std::path::Path, args: &[&str], action: &str) -> Result<(), String> {
+    log::info!("Run cmake {}: cmake {}", action, args.join(" "));
+
+    let status = std::process::Command::new("cmake")
+        .current_dir(cmake_project)
+        .args(args)
+        .status()
+        .map_err(|err| format!("无法执行 cmake {action}: {err}"))?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "cmake {action} 失败，退出码: {}",
+        status.code().map_or_else(|| "unknown".to_string(), |code| code.to_string())
+    ))
 }
 
 /// 将 cxx 编译结果复制到 Rust 侧
@@ -51,7 +72,7 @@ fn copy_to_rust(cmake_project: &std::path::Path, cargo_target_dir: &std::path::P
     log::info!("Copied files to {}: {:#?}", cargo_output_path.display(), all_copy_files);
 }
 
-fn main() {
+fn main() -> Result<(), String> {
     init_log();
 
     let workspace_dir = TruvisPath::workspace_path();
@@ -63,23 +84,21 @@ fn main() {
     let cxx_project_dir = TruvisPath::cxx_root_path();
     log::info!("cxx_project_dir: {:?}", cxx_project_dir);
 
-    std::process::Command::new("cmake")
-        .current_dir(&cxx_project_dir)
-        .args(["--preset", "vs2022"])
-        .status()
-        .expect("Failed to run cmake");
+    let cmake_preset = visual_studio::select_cmake_preset()?;
+    log::info!(
+        "Using {} CMake presets: {}, {}, {}",
+        cmake_preset.visual_studio_name,
+        cmake_preset.configure,
+        cmake_preset.build_debug,
+        cmake_preset.build_release
+    );
 
-    std::process::Command::new("cmake")
-        .current_dir(&cxx_project_dir)
-        .args(["--build", "--preset", "vs2022-build-debug"])
-        .status()
-        .expect("Failed to run cmake build");
-    std::process::Command::new("cmake")
-        .current_dir(&cxx_project_dir)
-        .args(["--build", "--preset", "vs2022-build-release"])
-        .status()
-        .expect("Failed to run cmake build");
+    run_cmake(&cxx_project_dir, &["--preset", cmake_preset.configure], "configure")?;
+    run_cmake(&cxx_project_dir, &["--build", "--preset", cmake_preset.build_debug], "build debug")?;
+    run_cmake(&cxx_project_dir, &["--build", "--preset", cmake_preset.build_release], "build release")?;
 
     copy_to_rust(&cxx_project_dir, &target_dir, BuildType::Debug);
     copy_to_rust(&cxx_project_dir, &target_dir, BuildType::Release);
+
+    Ok(())
 }
