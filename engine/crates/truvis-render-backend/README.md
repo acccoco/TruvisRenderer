@@ -14,6 +14,7 @@
 - `RenderBackend` 持有 `Gfx` root owner，并负责在所有子资源之后销毁它。
 - `World` 承载 CPU 侧 scene/assets，供 update / prepare 阶段读取或修改。
 - `RenderWorld` 承载 GPU 侧 frame state、global descriptors、bindless、manager-owned resources、FIF buffers 和 frame settings。
+- 过渡期 `MaterialBridge` 由 backend 持有，负责把 `SceneManager` 的 CPU material 同步为稳定 GPU material slot 和 material buffer。
 - `RenderPresent` 管理 surface、swapchain、present image 和窗口尺寸相关资源。
 
 ## 生命周期边界
@@ -28,7 +29,7 @@
 
 ## Tracy 初始化埋点
 
-- `RenderBackend::new` 使用一级 span 标记 backend 启动阶段的主要初始化步骤，例如 `Gfx`、manager、asset texture uploader、GPU scene、FIF buffers、global descriptors、sampler、per-frame buffer 和 command buffer 创建。
+- `RenderBackend::new` 使用一级 span 标记 backend 启动阶段的主要初始化步骤，例如 `Gfx`、manager、asset texture uploader、material bridge、GPU scene、FIF buffers、global descriptors、sampler、per-frame buffer 和 command buffer 创建。
 - 启动耗时较明显的下层构造函数继续使用二级 span 细分，例如 `AssetTextureUploader::new`、`GpuScene::new`、`FifBuffers::new`、`GlobalDescriptorSets::new`、`CmdAllocator::new` 和 `RenderSamplerManager::new`。
 - `SceneManager::new` 不在 `truvis-scene` 内部添加 Tracy 依赖；它只通过 `RenderBackend::new/scene_manager` 这个一级 span 表示。
 

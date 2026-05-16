@@ -19,7 +19,7 @@ pub struct Material {
 ///
 /// 与 `Material` 的区别：texture 字段使用 `AssetTextureHandle` 而非路径字符串，
 /// 支持异步加载和 bindless 绑定。
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct ManagedMaterialParams {
     pub base_color: glam::Vec4,
     pub emissive: glam::Vec4,
@@ -29,6 +29,20 @@ pub struct ManagedMaterialParams {
 
     pub diffuse_texture: Option<AssetTextureHandle>,
     pub normal_texture: Option<AssetTextureHandle>,
+}
+
+impl From<&Material> for ManagedMaterialParams {
+    fn from(mat: &Material) -> Self {
+        Self {
+            base_color: mat.base_color,
+            emissive: mat.emissive,
+            metallic: mat.metallic,
+            roughness: mat.roughness,
+            opaque: mat.opaque,
+            diffuse_texture: mat.diffuse_texture,
+            normal_texture: mat.normal_texture,
+        }
+    }
 }
 
 impl Default for ManagedMaterialParams {

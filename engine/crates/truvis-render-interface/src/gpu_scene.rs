@@ -31,8 +31,6 @@ struct GpuSceneBuffers {
     scene_buffer: GfxStructuredBuffer<gpu::GPUScene>,
     light_buffer: GfxStructuredBuffer<gpu::PointLight>,
     light_stage_buffer: GfxStructuredBuffer<gpu::PointLight>,
-    material_buffer: GfxStructuredBuffer<gpu::PBRMaterial>,
-    material_stage_buffer: GfxStructuredBuffer<gpu::PBRMaterial>,
     geometry_buffer: GfxStructuredBuffer<gpu::Geometry>,
     geometry_stage_buffer: GfxStructuredBuffer<gpu::Geometry>,
     instance_buffer: GfxStructuredBuffer<gpu::Instance>,
@@ -49,7 +47,6 @@ struct GpuSceneBuffers {
 impl GpuSceneBuffers {
     fn new(ctx: GfxResourceCtx<'_>, frame_label: FrameLabel) -> Self {
         let max_light_cnt = 512;
-        let max_material_cnt = 1024;
         let max_geometry_cnt = 1024 * 8;
         let max_instance_cnt = 1024;
 
@@ -60,16 +57,6 @@ impl GpuSceneBuffers {
                 ctx,
                 max_light_cnt,
                 format!("light stage buffer-{}", frame_label),
-            ),
-            material_buffer: GfxStructuredBuffer::new_ssbo(
-                ctx,
-                max_material_cnt,
-                format!("material buffer-{}", frame_label),
-            ),
-            material_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
-                ctx,
-                max_material_cnt,
-                format!("material stage buffer-{}", frame_label),
             ),
             geometry_buffer: GfxStructuredBuffer::new_ssbo(
                 ctx,
@@ -122,8 +109,6 @@ impl GpuSceneBuffers {
         self.scene_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
         self.light_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
         self.light_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.material_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.material_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
         self.geometry_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
         self.geometry_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
         self.instance_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
@@ -295,19 +280,26 @@ impl GpuScene {
         barrier_mask: GfxBarrierMask,
         frame_counter: &FrameCounter,
         render_data: &RenderData<'_>,
+        material_buffer_device_address: vk::DeviceAddress,
         bindless_manager: &BindlessManager,
     ) {
         let _span = tracy_client::span!("GpuScene::prepare_render_data2");
 
         self.upload_mesh_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
         self.upload_instance_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
-        self.upload_material_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
         self.upload_light_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
 
         // 需要确保 instance 先于 tlas 构建
         self.build_tlas(resource_ctx, device_ctx, immediate_ctx, render_data, frame_counter);
 
-        self.upload_scene_buffer(cmd, frame_counter, barrier_mask, render_data, bindless_manager);
+        self.upload_scene_buffer(
+            cmd,
+            frame_counter,
+            barrier_mask,
+            render_data,
+            material_buffer_device_address,
+            bindless_manager,
+        );
     }
 
     // TODO 改成：返回 Raster 模式的 RenderData
@@ -341,12 +333,13 @@ impl GpuScene {
         frame_counter: &FrameCounter,
         barrier_mask: GfxBarrierMask,
         scene_data: &RenderData<'_>,
+        material_buffer_device_address: vk::DeviceAddress,
         bindless_manager: &BindlessManager,
     ) {
         let crt_gpu_buffers = &self.gpu_scene_buffers[*frame_counter.frame_label()];
         let gpu_scene_data = gpu::GPUScene {
             all_instances: crt_gpu_buffers.instance_buffer.device_address(),
-            all_mats: crt_gpu_buffers.material_buffer.device_address(),
+            all_mats: material_buffer_device_address,
             all_geometries: crt_gpu_buffers.geometry_buffer.device_address(),
             instance_material_map: crt_gpu_buffers.material_indirect_buffer.device_address(),
             instance_geometry_map: crt_gpu_buffers.geometry_indirect_buffer.device_address(),
@@ -399,7 +392,7 @@ impl GpuScene {
         let mut crt_geometry_indirect_idx = 0;
         let mut crt_material_indirect_idx = 0;
         for (instance_idx, instance) in scene_data.all_instances.iter().enumerate() {
-            let submesh_cnt = instance.material_indices.len();
+            let submesh_cnt = instance.material_slots.len();
             if geometry_indirect_buffer_slices.len() < crt_geometry_indirect_idx + submesh_cnt {
                 panic!("instance geometry cnt can not be larger than buffer");
             }
@@ -424,9 +417,9 @@ impl GpuScene {
             }
             crt_geometry_indirect_idx += submesh_cnt;
 
-            // 将 material 索引写入间接索引 buffer
-            for material_index in instance.material_indices.iter() {
-                material_indirect_buffer_slices[crt_material_indirect_idx] = *material_index as u32;
+            // 将稳定 material slot 写入间接索引 buffer
+            for material_slot in instance.material_slots.iter() {
+                material_indirect_buffer_slices[crt_material_indirect_idx] = *material_slot;
                 crt_material_indirect_idx += 1;
             }
         }
@@ -450,49 +443,6 @@ impl GpuScene {
             cmd,
             crt_material_indirect_stage_buffer,
             &mut crt_gpu_buffers.material_indirect_buffer,
-            barrier_mask,
-        );
-    }
-
-    /// 将 material 数据上传到 GPU（基于 SceneData2）
-    fn upload_material_buffer(
-        &mut self,
-        resource_ctx: GfxResourceCtx<'_>,
-        cmd: &GfxCommandBuffer,
-        barrier_mask: GfxBarrierMask,
-        scene_data: &RenderData<'_>,
-        frame_counter: &FrameCounter,
-    ) {
-        let _span = tracy_client::span!("upload_material_buffer2");
-        let crt_gpu_buffers = &mut self.gpu_scene_buffers[*frame_counter.frame_label()];
-        let crt_material_stage_buffer = &mut crt_gpu_buffers.material_stage_buffer;
-        let material_buffer_slices = crt_material_stage_buffer.mapped_slice();
-        if material_buffer_slices.len() < scene_data.all_materials.len() {
-            panic!("material cnt can not be larger than buffer");
-        }
-
-        for (mat_idx, mat) in scene_data.all_materials.iter().enumerate() {
-            material_buffer_slices[mat_idx] = gpu::PBRMaterial {
-                base_color: mat.base_color.truncate().into(),
-                emissive: mat.emissive.truncate().into(),
-                metallic: mat.metallic,
-                roughness: mat.roughness,
-                diffuse_map: mat.diffuse_bindless_handle.0,
-                diffuse_map_sampler_type: gpu::ESamplerType_LinearRepeat,
-                normal_map: mat.normal_bindless_handle.0,
-                normal_map_sampler_type: gpu::ESamplerType_LinearRepeat,
-                opaque: mat.opaque,
-                _padding_1: Default::default(),
-                _padding_2: Default::default(),
-                _padding_3: Default::default(),
-            };
-        }
-
-        helper::flush_copy_and_barrier(
-            resource_ctx,
-            cmd,
-            crt_material_stage_buffer,
-            &mut crt_gpu_buffers.material_buffer,
             barrier_mask,
         );
     }

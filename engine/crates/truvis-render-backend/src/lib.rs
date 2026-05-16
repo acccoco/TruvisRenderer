@@ -8,5 +8,6 @@ pub mod present;
 pub mod subsystems;
 
 pub mod asset_texture_uploader;
+mod material_bridge;
 pub mod model_loader;
 pub mod render_backend;

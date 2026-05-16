@@ -8,6 +8,7 @@
 - `CmdAllocator`
 - `GfxResourceManager`（Handle + 生命周期管理）
 - `BindlessManager` / `GlobalDescriptorSets`
+- `GpuScene` / `RenderData`
 - `RenderWorld`
 
 ## RenderWorld
@@ -17,6 +18,13 @@
 - render 阶段通常只借出 `&RenderWorld`，使 pass adapter 能读取 GPU 状态并录制命令，但不能随意改写 frame state。
 - resize / shutdown 阶段通过 mutable context 暴露 `RenderWorld`，用于重建或释放 manager-owned GPU resources。
 - `GlobalDescriptorSets` 只作为全局 pipeline 绑定聚合；资源 manager 更新 descriptor 时只能接收专用 target，避免依赖完整全局绑定策略。
+
+## GpuScene / RenderData
+
+- `RenderData` 使用稳定 GPU material slot 表达 instance 到 material 的关系，不携带完整 material 参数。
+- `GpuScene` 持有 instance、geometry、light、indirect map 和 TLAS 等 buffer。
+- `GpuScene` 不再拥有 material buffer；`gpu::GPUScene.all_mats` 由调用方传入的 material buffer device address 填充。
+- 当前 material buffer 的 owner 是 render-backend 侧 `MaterialBridge` 委托的 `MaterialManager`，后续可迁移到专门 render-side asset/scene 模块。
 
 ## 资源管理规则
 

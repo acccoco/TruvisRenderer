@@ -17,10 +17,9 @@ use truvis_gfx::{
 use truvis_path::TruvisPath;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_interface::pipeline_settings::FrameLabel;
+use truvis_render_interface::render_data::RenderData;
 use truvis_render_interface::render_world::RenderWorld;
-use truvis_scene::material_manager::TextureResolver;
 use truvis_shader_binding::gpu;
-use truvis_world::World;
 
 pub struct PhongPass {
     pipeline: GfxGraphicsPipeline,
@@ -106,13 +105,7 @@ impl PhongPass {
         );
     }
 
-    pub fn draw(
-        &self,
-        cmd: &GfxCommandBuffer,
-        render_world: &RenderWorld,
-        world: &World,
-        texture_resolver: &dyn TextureResolver,
-    ) {
+    pub fn draw(&self, cmd: &GfxCommandBuffer, render_world: &RenderWorld, scene_data: &RenderData<'_>) {
         let frame_label = render_world.frame_counter.frame_label();
 
         let (_, render_target_view_handle) = render_world.fif_buffers.render_target_handle(frame_label);
@@ -150,19 +143,15 @@ impl PhongPass {
             },
             frame_label,
         );
-        render_world.gpu_scene.draw(
-            cmd,
-            &world.scene_manager.prepare_render_data(texture_resolver),
-            &mut |ins_idx, submesh_idx| {
-                let data = [ins_idx, submesh_idx];
-                cmd.cmd_push_constants(
-                    self.pipeline.layout(),
-                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                    offset_of!(gpu::raster::PushConstants, instance_idx) as u32,
-                    bytemuck::bytes_of(&data),
-                );
-            },
-        );
+        render_world.gpu_scene.draw(cmd, scene_data, &mut |ins_idx, submesh_idx| {
+            let data = [ins_idx, submesh_idx];
+            cmd.cmd_push_constants(
+                self.pipeline.layout(),
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                offset_of!(gpu::raster::PushConstants, instance_idx) as u32,
+                bytemuck::bytes_of(&data),
+            );
+        });
 
         cmd.end_label();
         cmd.end_rendering();

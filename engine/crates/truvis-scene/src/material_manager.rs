@@ -269,6 +269,7 @@ impl MaterialManager {
                     fif_dirty: [true; FrameCounter::fif_count()],
                     dirty_frame_id: frame_id,
                 });
+            log::debug!("MaterialManager: textures ready handle={:?} slot={}; dirty all FIF buffers", handle, slot);
         }
     }
 

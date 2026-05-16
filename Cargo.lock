@@ -3644,10 +3644,8 @@ dependencies = [
  "truvis-path",
  "truvis-render-graph",
  "truvis-render-interface",
- "truvis-scene",
  "truvis-shader-binding",
  "truvis-utils",
- "truvis-world",
 ]
 
 [[package]]

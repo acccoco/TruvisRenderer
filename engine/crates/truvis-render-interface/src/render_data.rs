@@ -2,7 +2,6 @@ use ash::vk;
 
 use truvis_shader_binding::gpu;
 
-use crate::bindless_manager::BindlessSrvHandle;
 use crate::geometry::RtGeometry;
 
 /// 用于渲染的完整实例数据（只读快照）
@@ -13,25 +12,10 @@ use crate::geometry::RtGeometry;
 pub struct InstanceRenderData {
     /// 该实例使用的 mesh 在 `SceneData2::all_meshes` 中的索引
     pub mesh_index: usize,
-    /// 该实例的每个 submesh 对应的材质索引（在 `SceneData2::all_materials` 中）
-    pub material_indices: Vec<usize>,
+    /// 该实例的每个 submesh 对应的稳定 GPU material slot
+    pub material_slots: Vec<u32>,
     /// 实例的变换矩阵
     pub transform: glam::Mat4,
-}
-
-/// 用于渲染的完整材质数据（只读快照）
-#[derive(Clone, Default)]
-pub struct MaterialRenderData {
-    pub base_color: glam::Vec4,
-    pub emissive: glam::Vec4,
-    pub metallic: f32,
-    pub roughness: f32,
-    pub opaque: f32,
-
-    /// 漫反射贴图的 Bindless Handle（如果没有则为 null）
-    pub diffuse_bindless_handle: BindlessSrvHandle,
-    /// 法线贴图的 Bindless Handle（如果没有则为 null）
-    pub normal_bindless_handle: BindlessSrvHandle,
 }
 
 /// 用于渲染的完整 Mesh 数据引用（只读快照）
@@ -53,7 +37,7 @@ pub struct MeshRenderData<'a> {
 ///
 /// # 设计原则
 /// - 所有数据都是只读的，由 SceneManager 负责构建
-/// - 使用索引引用而非 Handle，简化 GPU 端数据查找
+/// - 使用索引 / 稳定 slot 引用而非 Handle，简化 GPU 端数据查找
 /// - 保持数据顺序一致性，确保索引有效
 ///
 /// # 生命周期
@@ -64,8 +48,6 @@ pub struct RenderData<'a> {
     pub all_instances: Vec<InstanceRenderData>,
     /// 所有 mesh 数据引用（按顺序）
     pub all_meshes: Vec<MeshRenderData<'a>>,
-    /// 所有材质数据（按顺序）
-    pub all_materials: Vec<MaterialRenderData>,
     /// 所有点光源数据
     pub all_point_lights: Vec<gpu::PointLight>,
 
@@ -81,7 +63,6 @@ impl<'a> RenderData<'a> {
         Self {
             all_instances: Vec::new(),
             all_meshes: Vec::new(),
-            all_materials: Vec::new(),
             all_point_lights: Vec::new(),
             mesh_geometry_start_indices: Vec::new(),
             total_geometry_count: 0,
@@ -91,10 +72,7 @@ impl<'a> RenderData<'a> {
     /// 检查场景是否为空
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.all_instances.is_empty()
-            && self.all_meshes.is_empty()
-            && self.all_materials.is_empty()
-            && self.all_point_lights.is_empty()
+        self.all_instances.is_empty() && self.all_meshes.is_empty() && self.all_point_lights.is_empty()
     }
 
     /// 获取指定 mesh 的 geometry 数据

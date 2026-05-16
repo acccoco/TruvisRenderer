@@ -2,15 +2,21 @@ use indexmap::IndexMap;
 use slotmap::SlotMap;
 
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
-use truvis_render_interface::bindless_manager::BindlessSrvHandle;
-use truvis_render_interface::render_data::{InstanceRenderData, MaterialRenderData, MeshRenderData, RenderData};
+use truvis_render_interface::render_data::{InstanceRenderData, MeshRenderData, RenderData};
 use truvis_shader_binding::gpu;
 
 use crate::components::instance::Instance;
 use crate::components::material::Material;
 use crate::components::mesh::Mesh;
 use crate::guid_new_type::{InstanceHandle, LightHandle, MaterialHandle, MeshHandle};
-use crate::material_manager::TextureResolver;
+
+/// CPU material handle 到稳定 GPU material slot 的解析接口。
+///
+/// 由 render-side material bridge 实现，SceneManager 只依赖 slot 结果，
+/// 不接触 texture、bindless 或 GPU material buffer 的细节。
+pub trait MaterialSlotResolver {
+    fn resolve_material_slot(&self, handle: MaterialHandle) -> Option<u32>;
+}
 
 /// 在 CPU 侧管理场景数据
 #[derive(Default)]
@@ -59,11 +65,11 @@ impl SceneManager {
     /// 使得 GpuScene 可以独立于 SceneManager 完成 GPU buffer 的构建和上传。
     ///
     /// # 参数
-    /// - `texture_resolver`: 用于把材质中的 asset texture handle 解析为可渲染 binding
+    /// - `material_slot_resolver`: 用于把 CPU material handle 解析为稳定 GPU slot
     ///
     /// # 返回
     /// 包含完整场景信息的 SceneData2 结构
-    pub fn prepare_render_data<'a>(&'a self, texture_resolver: &dyn TextureResolver) -> RenderData<'a> {
+    pub fn prepare_render_data<'a>(&'a self, material_slot_resolver: &dyn MaterialSlotResolver) -> RenderData<'a> {
         if self.is_empty() {
             return RenderData::empty();
         }
@@ -87,59 +93,34 @@ impl SceneManager {
             });
         }
 
-        // 2. 构建 material handle -> index 映射，以及 material 数据
-        let mut mat_handle_to_index: IndexMap<MaterialHandle, usize> = IndexMap::new();
-        let mut all_materials: Vec<MaterialRenderData> = Vec::with_capacity(self.all_mats.len());
-
-        for (handle, mat) in self.all_mats.iter() {
-            let index = all_materials.len();
-            mat_handle_to_index.insert(handle, index);
-
-            let diffuse_bindless_handle = mat
-                .diffuse_texture
-                .map(|handle| texture_resolver.resolve_texture(handle).srv_handle)
-                .unwrap_or(BindlessSrvHandle::null());
-            let normal_bindless_handle = mat
-                .normal_texture
-                .map(|handle| texture_resolver.resolve_texture(handle).srv_handle)
-                .unwrap_or(BindlessSrvHandle::null());
-
-            all_materials.push(MaterialRenderData {
-                base_color: mat.base_color,
-                emissive: mat.emissive,
-                metallic: mat.metallic,
-                roughness: mat.roughness,
-                opaque: mat.opaque,
-                diffuse_bindless_handle,
-                normal_bindless_handle,
-            });
-        }
-
-        // 3. 构建 instance 数据
+        // 2. 构建 instance 数据，材质引用写入稳定 GPU material slot
         let mut all_instances: Vec<InstanceRenderData> = Vec::with_capacity(self.all_instances.len());
 
         for (_handle, instance) in self.all_instances.iter() {
             let mesh_index = *mesh_handle_to_index.get(&instance.mesh).expect("Mesh not found for instance");
-            let material_indices: Vec<usize> = instance
+            let material_slots: Vec<u32> = instance
                 .materials
                 .iter()
-                .map(|mat_handle| *mat_handle_to_index.get(mat_handle).expect("Material not found for instance"))
+                .map(|&mat_handle| {
+                    material_slot_resolver
+                        .resolve_material_slot(mat_handle)
+                        .expect("Material slot not found for instance")
+                })
                 .collect();
 
             all_instances.push(InstanceRenderData {
                 mesh_index,
-                material_indices,
+                material_slots,
                 transform: instance.transform,
             });
         }
 
-        // 4. 构建点光源数据
+        // 3. 构建点光源数据
         let all_point_lights: Vec<gpu::PointLight> = self.all_point_lights.iter().map(|(_, light)| *light).collect();
 
         RenderData {
             all_instances,
             all_meshes,
-            all_materials,
             all_point_lights,
             mesh_geometry_start_indices,
             total_geometry_count,

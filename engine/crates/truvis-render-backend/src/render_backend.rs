@@ -36,6 +36,7 @@ use truvis_render_interface::render_world::RenderWorld;
 use truvis_world::World;
 
 use crate::asset_texture_uploader::AssetTextureUploader;
+use crate::material_bridge::MaterialBridge;
 use crate::platform::camera::Camera;
 use crate::platform::timer::Timer;
 use crate::present::render_present::RenderPresent;
@@ -64,6 +65,7 @@ pub struct RenderBackend {
     world: World,
     render_world: RenderWorld,
     asset_texture_uploader: AssetTextureUploader,
+    material_bridge: MaterialBridge,
 
     cmd_allocator: CmdAllocator,
 
@@ -192,6 +194,10 @@ impl RenderBackend {
                 &mut bindless_manager,
             )
         };
+        let material_bridge = {
+            let _span = tracy_client::span!("RenderBackend::new/material_bridge");
+            MaterialBridge::new(gfx.resource_ctx(), frame_counter.frame_token())
+        };
         let scene_manager = {
             let _span = tracy_client::span!("RenderBackend::new/scene_manager");
             SceneManager::new()
@@ -268,6 +274,7 @@ impl RenderBackend {
                     asset_hub,
                 },
                 asset_texture_uploader,
+                material_bridge,
                 render_world: RenderWorld {
                     gpu_scene,
                     bindless_manager,
@@ -328,6 +335,7 @@ impl RenderBackend {
             DestroyReason::Shutdown,
         );
         self.world.scene_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
+        self.material_bridge.destroy(self.gfx.resource_ctx());
         self.asset_texture_uploader.destroy(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -386,6 +394,7 @@ impl RenderBackend {
 
         let frame_token = self.render_world.frame_counter.frame_token();
         self.render_world.bindless_manager.begin_frame(frame_token);
+        self.material_bridge.begin_frame(frame_token);
 
         let loaded_asset_events = self.world.asset_hub.update();
         self.asset_texture_uploader.update(
@@ -596,7 +605,18 @@ impl RenderBackend {
             bindless_target,
         );
 
-        let scene_render_data = self.world.scene_manager.prepare_render_data(&self.asset_texture_uploader);
+        self.material_bridge.sync_scene_materials(&self.world.scene_manager);
+        self.material_bridge.update_textures(&self.asset_texture_uploader);
+        self.material_bridge.upload(
+            self.gfx.resource_ctx(),
+            &cmd,
+            transfer_barrier_mask,
+            frame_label,
+            &self.asset_texture_uploader,
+        );
+
+        let scene_render_data = self.world.scene_manager.prepare_render_data(&self.material_bridge);
+        let material_buffer_device_address = self.material_bridge.material_buffer_device_address(frame_label);
         self.render_world.gpu_scene.upload_render_data(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -605,6 +625,7 @@ impl RenderBackend {
             transfer_barrier_mask,
             &self.render_world.frame_counter,
             &scene_render_data,
+            material_buffer_device_address,
             &self.render_world.bindless_manager,
         );
 
