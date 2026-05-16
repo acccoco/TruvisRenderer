@@ -11,7 +11,7 @@
 ## 线程上下文
 
 - 线程名称优先使用 Rust thread name；未命名线程使用稳定占位名称。
-- tid 初版使用 Rust `ThreadId` 的可显示形式，用于在当前进程内区分线程。
+- tid 初版使用 Rust `ThreadId` 的数字展示，用于在当前进程内区分线程；formatter 输出形如 `[main(123)]`。
 - tid 捕获被封装在独立函数中；如果后续需要对齐 OS native tid，可以局部替换实现，不影响业务日志调用点。
 
 ## 边界约束

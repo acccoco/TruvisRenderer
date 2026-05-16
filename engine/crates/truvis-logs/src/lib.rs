@@ -1,10 +1,9 @@
 //! Truvis 日志初始化入口。
 //!
-//! 日志格式由本 crate 统一维护。每条日志会输出当前线程名称和 Rust `ThreadId`，
+//! 日志格式由本 crate 统一维护。每条日志会输出当前线程名称和 Rust `ThreadId` 的数字部分，
 //! 线程上下文通过 thread-local 缓存，保证同一线程只在首次写日志时捕获名称和 tid。
 
 use std::{io::Write, thread};
-
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ThreadLogContext
@@ -38,15 +37,20 @@ impl ThreadLogContext
 
     fn capture_thread_id() -> String
     {
-        // 初版使用 Rust 进程内唯一线程标识；未来如需 native tid，只需要替换此函数。
-        format!("{:?}", thread::current().id())
+        let debug_id = format!("{:?}", thread::current().id());
+        Self::normalize_thread_id(&debug_id).to_owned()
+    }
+
+    fn normalize_thread_id(debug_id: &str) -> &str
+    {
+        // `ThreadId::as_u64` 仍未稳定；先集中裁剪 Debug 展示，避免业务日志调用点感知格式细节。
+        debug_id.strip_prefix("ThreadId(").and_then(|id| id.strip_suffix(')')).unwrap_or(debug_id)
     }
 }
 
 thread_local! {
     static THREAD_LOG_CONTEXT: ThreadLogContext = ThreadLogContext::capture();
 }
-
 
 pub fn init_log()
 {
@@ -81,7 +85,7 @@ pub fn init_log()
             ThreadLogContext::with_thread_log_context(|thread_ctx| {
                 writeln!(
                     buf,
-                    "{level_style}[{time}] {level} [{thread_name} {tid}] {}{level_style:#}\n\t {grey_style}In \
+                    "{level_style}[{time}] {level} [{thread_name}({tid})] {}{level_style:#}\n\t {grey_style}In \
                      {module} At {file}:{line}{grey_style:#}",
                     record.args(),
                     thread_name = thread_ctx.name.as_str(),
@@ -119,6 +123,13 @@ mod tests
 
         assert_eq!(ctx.name, ThreadLogContext::UNNAMED_THREAD_NAME);
         assert!(!ctx.tid.is_empty());
+    }
+
+    #[test]
+    fn thread_id_omits_rust_debug_wrapper()
+    {
+        assert_eq!(ThreadLogContext::normalize_thread_id("ThreadId(123)"), "123");
+        assert_eq!(ThreadLogContext::normalize_thread_id("native-123"), "native-123");
     }
 
     #[test]
