@@ -1,35 +1,10 @@
 use slotmap::SlotMap;
 
-use truvis_asset::handle::{AssetMaterialHandle, AssetMeshHandle, LoadedSceneData};
-use truvis_render_interface::render_data::MeshRenderData;
+use truvis_asset::handle::LoadedSceneData;
 use truvis_shader_binding::gpu;
 
 use crate::components::instance::Instance;
 use crate::guid_new_type::{InstanceHandle, LightHandle};
-
-/// asset material handle 到稳定 GPU material slot 的解析接口。
-///
-/// 由 render-side material bridge 实现，scene 层只依赖 slot 结果，
-/// 不接触 texture、bindless 或 GPU material buffer 的细节。
-pub trait MaterialSlotResolver {
-    fn resolve_material_slot(&self, handle: AssetMaterialHandle) -> Option<u32>;
-
-    fn is_material_ready(&self, handle: AssetMaterialHandle) -> bool {
-        self.resolve_material_slot(handle).is_some()
-    }
-}
-
-/// asset mesh handle 到 GPU-ready mesh 数据的解析接口。
-///
-/// 由 render-side mesh uploader 实现，scene 层只依赖资产 mesh 是否已经可渲染，
-/// 不接触 vertex/index buffer 上传或 BLAS 构建细节。
-pub trait MeshRenderResolver {
-    fn is_mesh_ready(&self, handle: AssetMeshHandle) -> bool {
-        self.resolve_mesh(handle).is_some()
-    }
-
-    fn resolve_mesh(&self, handle: AssetMeshHandle) -> Option<MeshRenderData<'_>>;
-}
 
 /// 在 CPU 侧管理场景数据
 #[derive(Default)]

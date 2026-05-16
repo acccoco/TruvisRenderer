@@ -3660,7 +3660,6 @@ dependencies = [
  "log",
  "slotmap",
  "truvis-asset",
- "truvis-render-interface",
  "truvis-shader-binding",
 ]
 

@@ -617,15 +617,27 @@ App / tool
   通过 `procedural_mesh` 输出 `LoadedMeshData` 和稳定 `MeshAssetKey`，用于辅助构建场景。
 - `render-backend::model_loader` 旧 loader facade 已删除，scene 导入入口统一为
   `AssetHub::load_scene()` + `SceneManager::spawn_scene_asset()`。
-- `truvis-scene` 去掉对 `truvis-gfx` 的依赖，保留 `MaterialSlotResolver` /
+- `truvis-scene` 去掉对 `truvis-gfx` 的依赖，暂时保留 `MaterialSlotResolver` /
   `MeshRenderResolver` 作为 scene 到 render-side 的过渡契约。
+
+完成记录（2026-05-17 Phase 6b）：
+
+- `MaterialSlotResolver` / `MeshRenderResolver` 已从 `truvis-scene::scene_manager`
+  移到 `truvis-render-backend` 私有 `scene_bridge` 模块。
+- `MaterialBridge` 和 `AssetMeshUploader` 实现 backend 内部 resolver trait，
+  `InstanceBridge` 通过这些 render-side 契约构建 active `RenderData`。
+- `truvis-scene` 已移除对 `truvis-render-interface` 的依赖，只保留 runtime
+  instance / light 存储、asset handle 引用和 scene asset spawn 语义。
+- `SceneManager` 不再通过 `MeshRenderResolver` 的返回类型引用 `RenderData`
+  契约，scene 到 render-side 的过渡逻辑收敛到 backend。
 
 剩余限制：
 
 - `GpuScene` / `RenderData` 仍位于 `truvis-render-interface`，后续可上移到 backend
   或专门 render-scene 模块。
 - `GpuScene` 仍整块上传 instance / geometry / indirect buffer，尚未按 dirty slot 做局部更新。
-- `SceneManager` 仍通过 `MeshRenderResolver` 的返回类型引用 `RenderData` 契约，后续需要继续收敛。
+- `MeshRenderResolver` 仍返回 `MeshRenderData`，但该契约已经属于 backend 私有 bridge；
+  后续 Phase 6c 可继续评估 `RenderData` / `GpuScene` 的最终归属。
 
 ## 待确认问题
 

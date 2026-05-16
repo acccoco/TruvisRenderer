@@ -24,7 +24,8 @@ use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 use truvis_render_interface::geometry::RtGeometry;
 use truvis_render_interface::render_data::MeshRenderData;
-use truvis_scene::scene_manager::MeshRenderResolver;
+
+use crate::scene_bridge::MeshRenderResolver;
 
 struct PendingMeshUpload {
     semaphore_value: u64,

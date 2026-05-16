@@ -7,9 +7,9 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_render_interface::frame_counter::FrameToken;
 use truvis_render_interface::pipeline_settings::FrameLabel;
-use truvis_scene::scene_manager::MaterialSlotResolver;
 
 use crate::material_manager::{ManagedMaterialHandle, ManagedMaterialParams, MaterialManager, TextureResolver};
+use crate::scene_bridge::MaterialSlotResolver;
 
 struct MaterialBinding {
     managed_handle: ManagedMaterialHandle,

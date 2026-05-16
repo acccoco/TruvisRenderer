@@ -170,7 +170,9 @@ backend 私有 `MaterialManager`，mesh CPU 数据由 `AssetMeshUploader` 在 gr
 vertex/index buffer 并构建 BLAS。Assimp scene 读取由 `AssetHub::load_scene`
 在后台完成，只产出 scene asset / prefab CPU 数据；`SceneManager` 根据 ready 的
 scene asset spawn runtime instances 并保存运行时语义，`InstanceBridge` 负责稳定
-GPU instance slot、ready gate 和 active render list。
+GPU instance slot、ready gate 和 active render list。mesh/material ready 查询通过
+`truvis-render-backend` 私有 scene bridge trait 连接到 `AssetMeshUploader` 与
+`MaterialBridge`，这些 resolver 不属于 `truvis-scene`。
 
 ```mermaid
 flowchart LR
