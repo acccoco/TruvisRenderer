@@ -40,6 +40,8 @@ impl Default for AssetHub {
 // 创建与初始化
 impl AssetHub {
     pub fn new() -> Self {
+        let _span = tracy_client::span!("AssetHub::new");
+
         Self {
             textures: SlotMap::with_key(),
             path_to_texture: HashMap::new(),

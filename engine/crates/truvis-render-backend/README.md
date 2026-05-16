@@ -26,6 +26,12 @@
 - `wait_idle` 由 runtime 在 app/plugin shutdown 前调用，确保 plugin-owned pipeline、buffer、descriptor 等资源销毁前 GPU 不再引用上一帧 command buffer。
 - `destroy` 先等待 GPU idle，再释放 present、FIF、assets、GPU scene、command allocator、sync、descriptor 等子资源，最后销毁 `Gfx` root owner。
 
+## Tracy 初始化埋点
+
+- `RenderBackend::new` 使用一级 span 标记 backend 启动阶段的主要初始化步骤，例如 `Gfx`、manager、asset texture uploader、GPU scene、FIF buffers、global descriptors、sampler、per-frame buffer 和 command buffer 创建。
+- 启动耗时较明显的下层构造函数继续使用二级 span 细分，例如 `AssetTextureUploader::new`、`GpuScene::new`、`FifBuffers::new`、`GlobalDescriptorSets::new`、`CmdAllocator::new` 和 `RenderSamplerManager::new`。
+- `SceneManager::new` 不在 `truvis-scene` 内部添加 Tracy 依赖；它只通过 `RenderBackend::new/scene_manager` 这个一级 span 表示。
+
 ## 设计意图
 
 - backend 不依赖 `RenderApp`、`RenderAppHooks`、`Plugin` 或具体 demo，因此可以作为 App shell 之下的纯渲染执行层。

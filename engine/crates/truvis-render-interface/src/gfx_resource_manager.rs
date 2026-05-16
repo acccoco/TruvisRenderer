@@ -48,6 +48,8 @@ impl Default for GfxResourceManager {
 impl GfxResourceManager {
     /// 创建一个新的资源管理器
     pub fn new() -> Self {
+        let _span = tracy_client::span!("GfxResourceManager::new");
+
         Self {
             buffer_pool: SlotMap::with_key(),
             image_pool: SlotMap::with_key(),

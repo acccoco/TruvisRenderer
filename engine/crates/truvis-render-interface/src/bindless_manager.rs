@@ -102,6 +102,8 @@ pub struct BindlessManager {
 // 创建与初始化
 impl BindlessManager {
     pub fn new(frame_token: FrameToken) -> Self {
+        let _span = tracy_client::span!("BindlessManager::new");
+
         let bindless_count = BindlessDescriptorBinding::descriptor_count();
         // 降序填充，使得 pop() 优先分配较小 slot（方便调试观察）
         let free_slots: Vec<usize> = (0..bindless_count).rev().collect();

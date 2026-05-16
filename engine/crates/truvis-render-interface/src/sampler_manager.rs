@@ -15,15 +15,26 @@ pub struct RenderSamplerManager {
 
 impl RenderSamplerManager {
     pub fn new(ctx: GfxDeviceCtx<'_>, sampler_target: StaticSamplerDescriptorTarget) -> Self {
-        let samplers = Self::create_sampler(ctx);
+        let _span = tracy_client::span!("RenderSamplerManager::new");
+
+        let samplers = {
+            let _span = tracy_client::span!("RenderSamplerManager::new/sampler_creation");
+            Self::create_sampler(ctx)
+        };
 
         // sampler 写入 descriptor set
-        let write_sampler = StaticDescriptorBinding::samplers().write_image(
-            sampler_target.set,
-            0,
-            samplers.iter().map(|samlper| vk::DescriptorImageInfo::default().sampler(samlper.handle())).collect_vec(),
-        );
-        ctx.device().write_descriptor_sets(std::slice::from_ref(&write_sampler));
+        {
+            let _span = tracy_client::span!("RenderSamplerManager::new/descriptor_write");
+            let write_sampler = StaticDescriptorBinding::samplers().write_image(
+                sampler_target.set,
+                0,
+                samplers
+                    .iter()
+                    .map(|samlper| vk::DescriptorImageInfo::default().sampler(samlper.handle()))
+                    .collect_vec(),
+            );
+            ctx.device().write_descriptor_sets(std::slice::from_ref(&write_sampler));
+        }
 
         Self { _samplers: samplers }
     }

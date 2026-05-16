@@ -68,86 +68,109 @@ impl FifBuffers {
         gfx_resource_manager: &mut GfxResourceManager,
         frame_counter: &FrameCounter,
     ) -> Self {
+        let _span = tracy_client::span!("FifBuffers::new");
+
         // 创建 per-frame 的单帧 RT 输出图像
         let single_frame_format = frame_settigns.color_format;
         let single_frame_extent = frame_settigns.frame_extent;
-        let (single_frame_rt_images, single_frame_rt_views) = Self::create_single_frame_rt_images(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            single_frame_format,
-            single_frame_extent,
-            frame_counter,
-        );
+        let (single_frame_rt_images, single_frame_rt_views) = {
+            let _span = tracy_client::span!("FifBuffers::new/single_frame_rt");
+            Self::create_single_frame_rt_images(
+                resource_ctx,
+                device_ctx,
+                immediate_ctx,
+                gfx_resource_manager,
+                single_frame_format,
+                single_frame_extent,
+                frame_counter,
+            )
+        };
 
         let accum_format = frame_settigns.color_format;
         let accum_extent = frame_settigns.frame_extent;
-        let (color_image, color_image_view) = Self::create_color_image(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            accum_format,
-            accum_extent,
-            frame_counter,
-        );
+        let (color_image, color_image_view) = {
+            let _span = tracy_client::span!("FifBuffers::new/accum");
+            Self::create_color_image(
+                resource_ctx,
+                device_ctx,
+                immediate_ctx,
+                gfx_resource_manager,
+                accum_format,
+                accum_extent,
+                frame_counter,
+            )
+        };
 
         let depth_format = frame_settigns.depth_format;
         let depth_extent = frame_settigns.frame_extent;
-        let (depth_image, depth_image_view) = Self::create_depth_image(
-            resource_ctx,
-            device_ctx,
-            gfx_resource_manager,
-            depth_format,
-            depth_extent,
-            frame_counter,
-        );
+        let (depth_image, depth_image_view) = {
+            let _span = tracy_client::span!("FifBuffers::new/depth");
+            Self::create_depth_image(
+                resource_ctx,
+                device_ctx,
+                gfx_resource_manager,
+                depth_format,
+                depth_extent,
+                frame_counter,
+            )
+        };
 
         let render_target_format = frame_settigns.color_format;
         let render_target_extent = frame_settigns.frame_extent;
-        let (render_target_image_handles, render_target_image_view_handles) = Self::create_render_targets(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            render_target_format,
-            render_target_extent,
-            frame_counter,
-        );
+        let (render_target_image_handles, render_target_image_view_handles) = {
+            let _span = tracy_client::span!("FifBuffers::new/render_targets");
+            Self::create_render_targets(
+                resource_ctx,
+                device_ctx,
+                immediate_ctx,
+                gfx_resource_manager,
+                render_target_format,
+                render_target_extent,
+                frame_counter,
+            )
+        };
 
         // 创建 GBuffer 图像
         let gbuffer_extent = frame_settigns.frame_extent;
-        let (gbuffer_a_images, gbuffer_a_views) = Self::create_gbuffer_images(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            vk::Format::R16G16B16A16_SFLOAT,
-            gbuffer_extent,
-            frame_counter,
-            "gbuffer-a",
-        );
-        let (gbuffer_b_images, gbuffer_b_views) = Self::create_gbuffer_images(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            vk::Format::R16G16B16A16_SFLOAT,
-            gbuffer_extent,
-            frame_counter,
-            "gbuffer-b",
-        );
-        let (gbuffer_c_images, gbuffer_c_views) = Self::create_gbuffer_images(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            vk::Format::R8G8B8A8_UNORM,
-            gbuffer_extent,
-            frame_counter,
-            "gbuffer-c",
-        );
+        let (gbuffer_a_images, gbuffer_a_views) = {
+            let _span = tracy_client::span!("FifBuffers::new/gbuffer_a");
+            Self::create_gbuffer_images(
+                resource_ctx,
+                device_ctx,
+                immediate_ctx,
+                gfx_resource_manager,
+                vk::Format::R16G16B16A16_SFLOAT,
+                gbuffer_extent,
+                frame_counter,
+                "gbuffer-a",
+            )
+        };
+        let (gbuffer_b_images, gbuffer_b_views) = {
+            let _span = tracy_client::span!("FifBuffers::new/gbuffer_b");
+            Self::create_gbuffer_images(
+                resource_ctx,
+                device_ctx,
+                immediate_ctx,
+                gfx_resource_manager,
+                vk::Format::R16G16B16A16_SFLOAT,
+                gbuffer_extent,
+                frame_counter,
+                "gbuffer-b",
+            )
+        };
+        let (gbuffer_c_images, gbuffer_c_views) = {
+            let _span = tracy_client::span!("FifBuffers::new/gbuffer_c");
+            Self::create_gbuffer_images(
+                resource_ctx,
+                device_ctx,
+                immediate_ctx,
+                gfx_resource_manager,
+                vk::Format::R8G8B8A8_UNORM,
+                gbuffer_extent,
+                frame_counter,
+                "gbuffer-c",
+            )
+        };
 
         let fif_buffers = Self {
             single_frame_rt_images,
@@ -178,7 +201,10 @@ impl FifBuffers {
             gbuffer_c_views,
             gbuffer_extent,
         };
-        fif_buffers.register_bindless(bindless_manager);
+        {
+            let _span = tracy_client::span!("FifBuffers::new/register_bindless");
+            fif_buffers.register_bindless(bindless_manager);
+        }
         fif_buffers
     }
 

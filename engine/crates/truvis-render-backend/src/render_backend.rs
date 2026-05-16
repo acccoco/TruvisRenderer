@@ -146,103 +146,146 @@ impl RenderBackend {
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
         let _span = tracy_client::span!("RenderBackend::new");
 
-        let gfx = Gfx::new("Truvis".to_string(), extra_instance_ext);
-
-        let frame_settings = FrameSettings {
-            color_format: vk::Format::R32G32B32A32_SFLOAT,
-            depth_format: Self::get_depth_format(gfx.device_info_ctx()),
-            frame_extent: vk::Extent2D {
-                width: 400,
-                height: 400,
-            },
+        let gfx = {
+            let _span = tracy_client::span!("RenderBackend::new/Gfx");
+            Gfx::new("Truvis".to_string(), extra_instance_ext)
         };
 
-        let timer = Timer::default();
-        let accum_data = AccumData::default();
-        let fif_timeline_semaphore = GfxSemaphore::new_timeline(gfx.device_ctx(), 0, "render-timeline");
+        let frame_settings = {
+            let _span = tracy_client::span!("RenderBackend::new/frame_settings");
+            FrameSettings {
+                color_format: vk::Format::R32G32B32A32_SFLOAT,
+                depth_format: Self::get_depth_format(gfx.device_info_ctx()),
+                frame_extent: vk::Extent2D {
+                    width: 400,
+                    height: 400,
+                },
+            }
+        };
 
-        let mut gfx_resource_manager = GfxResourceManager::new();
-        let mut cmd_allocator = CmdAllocator::new(gfx.device_ctx(), gfx.device_info_ctx());
+        let (timer, accum_data, fif_timeline_semaphore) = {
+            let _span = tracy_client::span!("RenderBackend::new/sync");
+            (Timer::default(), AccumData::default(), GfxSemaphore::new_timeline(gfx.device_ctx(), 0, "render-timeline"))
+        };
 
-        // 初始值应该是 1，因为 timeline semaphore 初始值是 0
-        let init_frame_id = 1;
-        let frame_counter = FrameCounter::new(init_frame_id, 60.0);
+        let (mut gfx_resource_manager, mut cmd_allocator, frame_counter, mut bindless_manager) = {
+            let _span = tracy_client::span!("RenderBackend::new/managers");
+            let gfx_resource_manager = GfxResourceManager::new();
+            let cmd_allocator = CmdAllocator::new(gfx.device_ctx(), gfx.device_info_ctx());
 
-        let mut bindless_manager = BindlessManager::new(frame_counter.frame_token());
-        let asset_texture_uploader = AssetTextureUploader::new(
-            gfx.resource_ctx(),
-            gfx.device_ctx(),
-            gfx.immediate_ctx(),
-            gfx.queue_ctx(),
-            &mut gfx_resource_manager,
-            &mut bindless_manager,
-        );
-        let scene_manager = SceneManager::new();
-        let asset_hub = AssetHub::new();
-        let gpu_scene = GpuScene::new(
-            gfx.resource_ctx(),
-            gfx.device_ctx(),
-            gfx.immediate_ctx(),
-            &mut gfx_resource_manager,
-            &mut bindless_manager,
-        );
-        let fif_buffers = FifBuffers::new(
-            gfx.resource_ctx(),
-            gfx.device_ctx(),
-            gfx.immediate_ctx(),
-            &frame_settings,
-            &mut bindless_manager,
-            &mut gfx_resource_manager,
-            &frame_counter,
-        );
+            // 初始值应该是 1，因为 timeline semaphore 初始值是 0
+            let init_frame_id = 1;
+            let frame_counter = FrameCounter::new(init_frame_id, 60.0);
+            let bindless_manager = BindlessManager::new(frame_counter.frame_token());
 
-        let render_descriptor_sets = GlobalDescriptorSets::new(gfx.device_ctx());
-        let sampler_manager =
-            RenderSamplerManager::new(gfx.device_ctx(), render_descriptor_sets.static_sampler_target());
+            (gfx_resource_manager, cmd_allocator, frame_counter, bindless_manager)
+        };
 
-        let per_frame_data_buffers = FrameCounter::frame_labes().map(|frame_label| {
-            GfxStructuredBuffer::<gpu::PerFrameData>::new_ubo(
+        let asset_texture_uploader = {
+            let _span = tracy_client::span!("RenderBackend::new/asset_texture_uploader");
+            AssetTextureUploader::new(
                 gfx.resource_ctx(),
-                1,
-                format!("per-frame-data-buffer-{frame_label}"),
+                gfx.device_ctx(),
+                gfx.immediate_ctx(),
+                gfx.queue_ctx(),
+                &mut gfx_resource_manager,
+                &mut bindless_manager,
             )
-        });
+        };
+        let scene_manager = {
+            let _span = tracy_client::span!("RenderBackend::new/scene_manager");
+            SceneManager::new()
+        };
+        let asset_hub = {
+            let _span = tracy_client::span!("RenderBackend::new/asset_hub");
+            AssetHub::new()
+        };
+        let gpu_scene = {
+            let _span = tracy_client::span!("RenderBackend::new/gpu_scene");
+            GpuScene::new(
+                gfx.resource_ctx(),
+                gfx.device_ctx(),
+                gfx.immediate_ctx(),
+                &mut gfx_resource_manager,
+                &mut bindless_manager,
+            )
+        };
+        let fif_buffers = {
+            let _span = tracy_client::span!("RenderBackend::new/fif_buffers");
+            FifBuffers::new(
+                gfx.resource_ctx(),
+                gfx.device_ctx(),
+                gfx.immediate_ctx(),
+                &frame_settings,
+                &mut bindless_manager,
+                &mut gfx_resource_manager,
+                &frame_counter,
+            )
+        };
 
-        let cmds = FrameCounter::frame_labes()
-            .into_iter()
-            .map(|frame_label| cmd_allocator.alloc_command_buffer(gfx.device_ctx(), frame_label, "gpu-scene-update"))
-            .collect();
+        let render_descriptor_sets = {
+            let _span = tracy_client::span!("RenderBackend::new/global_descriptors");
+            GlobalDescriptorSets::new(gfx.device_ctx())
+        };
+        let sampler_manager = {
+            let _span = tracy_client::span!("RenderBackend::new/samplers");
+            RenderSamplerManager::new(gfx.device_ctx(), render_descriptor_sets.static_sampler_target())
+        };
 
-        Self {
-            gfx,
-            cmd_allocator,
-            timer,
-            fif_timeline_semaphore,
-            gpu_scene_update_cmds: cmds,
-            render_present: None,
+        let per_frame_data_buffers = {
+            let _span = tracy_client::span!("RenderBackend::new/per_frame_data_buffers");
+            FrameCounter::frame_labes().map(|frame_label| {
+                GfxStructuredBuffer::<gpu::PerFrameData>::new_ubo(
+                    gfx.resource_ctx(),
+                    1,
+                    format!("per-frame-data-buffer-{frame_label}"),
+                )
+            })
+        };
 
-            world: World {
-                scene_manager,
-                asset_hub,
-            },
-            asset_texture_uploader,
-            render_world: RenderWorld {
-                gpu_scene,
-                bindless_manager,
-                global_descriptor_sets: render_descriptor_sets,
-                gfx_resource_manager,
-                fif_buffers,
-                sampler_manager,
-                per_frame_data_buffers,
+        let cmds = {
+            let _span = tracy_client::span!("RenderBackend::new/gpu_scene_update_cmds");
+            FrameCounter::frame_labes()
+                .into_iter()
+                .map(|frame_label| {
+                    cmd_allocator.alloc_command_buffer(gfx.device_ctx(), frame_label, "gpu-scene-update")
+                })
+                .collect()
+        };
 
-                frame_counter,
-                frame_settings,
-                pipeline_settings: PipelineSettings::default(),
+        {
+            let _span = tracy_client::span!("RenderBackend::new/assemble_state");
+            Self {
+                gfx,
+                cmd_allocator,
+                timer,
+                fif_timeline_semaphore,
+                gpu_scene_update_cmds: cmds,
+                render_present: None,
 
-                delta_time_s: 0.0,
-                total_time_s: 0.0,
-                accum_data,
-            },
+                world: World {
+                    scene_manager,
+                    asset_hub,
+                },
+                asset_texture_uploader,
+                render_world: RenderWorld {
+                    gpu_scene,
+                    bindless_manager,
+                    global_descriptor_sets: render_descriptor_sets,
+                    gfx_resource_manager,
+                    fif_buffers,
+                    sampler_manager,
+                    per_frame_data_buffers,
+
+                    frame_counter,
+                    frame_settings,
+                    pipeline_settings: PipelineSettings::default(),
+
+                    delta_time_s: 0.0,
+                    total_time_s: 0.0,
+                    accum_data,
+                },
+            }
         }
     }
 

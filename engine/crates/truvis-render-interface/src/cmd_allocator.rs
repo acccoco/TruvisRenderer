@@ -37,15 +37,23 @@ impl Default for CmdAllocator {
 
 impl CmdAllocator {
     pub fn new(device_ctx: GfxDeviceCtx<'_>, device_info_ctx: GfxDeviceInfoCtx<'_>) -> Self {
-        let graphics_command_pools = FrameCounter::frame_labes().map(|i| {
-            GfxCommandPool::new(
-                device_ctx,
-                device_info_ctx.gfx_queue_family(),
-                vk::CommandPoolCreateFlags::TRANSIENT,
-                &format!("render_context_graphics_command_pool_{}", i),
-            )
-        });
-        let allocated_command_buffers = FrameCounter::frame_labes().map(|_| Vec::new());
+        let _span = tracy_client::span!("CmdAllocator::new");
+
+        let graphics_command_pools = {
+            let _span = tracy_client::span!("CmdAllocator::new/graphics_command_pools");
+            FrameCounter::frame_labes().map(|i| {
+                GfxCommandPool::new(
+                    device_ctx,
+                    device_info_ctx.gfx_queue_family(),
+                    vk::CommandPoolCreateFlags::TRANSIENT,
+                    &format!("render_context_graphics_command_pool_{}", i),
+                )
+            })
+        };
+        let allocated_command_buffers = {
+            let _span = tracy_client::span!("CmdAllocator::new/allocated_command_buffers");
+            FrameCounter::frame_labes().map(|_| Vec::new())
+        };
 
         Self {
             graphics_command_pools,

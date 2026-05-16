@@ -165,40 +165,62 @@ impl GpuScene {
         gfx_resource_manager: &mut GfxResourceManager,
         bindless_manager: &mut BindlessManager,
     ) -> Self {
+        let _span = tracy_client::span!("GpuScene::new");
+
         let sky_path = TruvisPath::resources_path_str("sky.jpg");
         let uv_checker_path = TruvisPath::resources_path_str("uv_checker.png");
 
-        let sky_image = ImageLoader::load_image(resource_ctx, immediate_ctx, &PathBuf::from(&sky_path));
-        let uv_checker_image = ImageLoader::load_image(resource_ctx, immediate_ctx, &PathBuf::from(&uv_checker_path));
+        let (sky_image, uv_checker_image) = {
+            let _span = tracy_client::span!("GpuScene::new/load_images");
+            (
+                ImageLoader::load_image(resource_ctx, immediate_ctx, &PathBuf::from(&sky_path)),
+                ImageLoader::load_image(resource_ctx, immediate_ctx, &PathBuf::from(&uv_checker_path)),
+            )
+        };
 
         let sky_image_format = sky_image.format();
         let uv_checker_image_format = uv_checker_image.format();
 
-        let sky_image_handle = gfx_resource_manager.register_image(sky_image);
-        let sky_view_handle = gfx_resource_manager.get_or_create_image_view(
-            device_ctx,
-            sky_image_handle,
-            truvis_gfx::resources::image_view::GfxImageViewDesc::new_2d(sky_image_format, vk::ImageAspectFlags::COLOR),
-            &sky_path,
-        );
+        let (sky_image_handle, sky_view_handle, uv_checker_image_handle, uv_checker_view_handle) = {
+            let _span = tracy_client::span!("GpuScene::new/register_image_views");
+            let sky_image_handle = gfx_resource_manager.register_image(sky_image);
+            let sky_view_handle = gfx_resource_manager.get_or_create_image_view(
+                device_ctx,
+                sky_image_handle,
+                truvis_gfx::resources::image_view::GfxImageViewDesc::new_2d(
+                    sky_image_format,
+                    vk::ImageAspectFlags::COLOR,
+                ),
+                &sky_path,
+            );
 
-        let uv_checker_image_handle = gfx_resource_manager.register_image(uv_checker_image);
-        let uv_checker_view_handle = gfx_resource_manager.get_or_create_image_view(
-            device_ctx,
-            uv_checker_image_handle,
-            truvis_gfx::resources::image_view::GfxImageViewDesc::new_2d(
-                uv_checker_image_format,
-                vk::ImageAspectFlags::COLOR,
-            ),
-            &uv_checker_path,
-        );
+            let uv_checker_image_handle = gfx_resource_manager.register_image(uv_checker_image);
+            let uv_checker_view_handle = gfx_resource_manager.get_or_create_image_view(
+                device_ctx,
+                uv_checker_image_handle,
+                truvis_gfx::resources::image_view::GfxImageViewDesc::new_2d(
+                    uv_checker_image_format,
+                    vk::ImageAspectFlags::COLOR,
+                ),
+                &uv_checker_path,
+            );
 
-        bindless_manager.register_srv(sky_view_handle);
-        bindless_manager.register_srv(uv_checker_view_handle);
+            (sky_image_handle, sky_view_handle, uv_checker_image_handle, uv_checker_view_handle)
+        };
+
+        {
+            let _span = tracy_client::span!("GpuScene::new/register_bindless");
+            bindless_manager.register_srv(sky_view_handle);
+            bindless_manager.register_srv(uv_checker_view_handle);
+        }
+
+        let gpu_scene_buffers = {
+            let _span = tracy_client::span!("GpuScene::new/per_frame_buffers");
+            FrameCounter::frame_labes().map(|frame_label| GpuSceneBuffers::new(resource_ctx, frame_label))
+        };
 
         Self {
-            gpu_scene_buffers: FrameCounter::frame_labes()
-                .map(|frame_label| GpuSceneBuffers::new(resource_ctx, frame_label)),
+            gpu_scene_buffers,
 
             sky_texture: (sky_image_handle, sky_view_handle),
             uv_checker_texture: (uv_checker_image_handle, uv_checker_view_handle),

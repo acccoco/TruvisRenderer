@@ -199,17 +199,27 @@ impl AssetTextureUploader {
         gfx_resource_manager: &mut GfxResourceManager,
         bindless_manager: &mut BindlessManager,
     ) -> Self {
-        let fallback = Self::create_fallback_texture(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            bindless_manager,
-        );
+        let _span = tracy_client::span!("AssetTextureUploader::new");
+
+        let fallback = {
+            let _span = tracy_client::span!("AssetTextureUploader::new/fallback_texture");
+            Self::create_fallback_texture(
+                resource_ctx,
+                device_ctx,
+                immediate_ctx,
+                gfx_resource_manager,
+                bindless_manager,
+            )
+        };
+
+        let uploader = {
+            let _span = tracy_client::span!("AssetTextureUploader::new/upload_manager");
+            TextureUploadManager::new(device_ctx, queue_ctx)
+        };
 
         Self {
             textures: SecondaryMap::new(),
-            uploader: TextureUploadManager::new(device_ctx, queue_ctx),
+            uploader,
             fallback,
         }
     }
