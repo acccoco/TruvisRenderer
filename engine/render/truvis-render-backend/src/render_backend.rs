@@ -499,6 +499,7 @@ impl RenderBackend {
             &mut self.world.asset_hub,
             &mut self.asset_texture_uploader,
             &mut self.asset_mesh_uploader,
+            &mut self.material_bridge,
             &self.gfx,
             &mut self.render_world,
         );

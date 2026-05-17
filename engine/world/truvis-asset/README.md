@@ -12,10 +12,10 @@ runtime instance。
 ## 主要组件
 
 - `AssetHub`：对外统一入口，负责路径/key 去重、handle 分配、状态表和完成事件汇聚
-- `AssetLoadedEvent`：CPU 数据完成事件，交给渲染后端继续上传或交给 scene 层 spawn
+- `AssetLoadedEvent`：CPU 数据完成事件，交给渲染后端继续上传、分配 material slot 或交给 scene 层 spawn
 - `TextureBytes`：从图片文件解码出的 owned CPU 纹理 bytes，只通过事件交给 uploader
 - `MeshData`：从导入器复制出来的 owned CPU mesh 数据，只通过事件交给 mesh uploader
-- `MaterialData`：导入后的 CPU material 参数和 texture handle 引用
+- `MaterialData`：导入后的 CPU material 参数和 texture handle 引用，通过 `MaterialLoaded` 事件进入 render-side bridge
 - `SceneData`：导入后的 scene / prefab CPU 数据和内部 asset handle 引用
 - `AssetMeshKey`：同一导入源内的 mesh 去重 key
 - `AssetMaterialKey`：同一导入源内的 material 去重 key

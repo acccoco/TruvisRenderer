@@ -329,6 +329,7 @@ impl AssetTextureUploader {
                     log::error!("Texture load failed {:?}: {}", handle, error);
                 }
                 AssetLoadedEvent::MeshLoaded { .. }
+                | AssetLoadedEvent::MaterialLoaded { .. }
                 | AssetLoadedEvent::SceneLoaded { .. }
                 | AssetLoadedEvent::SceneFailed { .. } => {
                     // AssetUploadStage 是事件分流边界；如果这里收到非 texture 事件，

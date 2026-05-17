@@ -20,25 +20,27 @@ use crate::render_scene::gpu_scene::GpuScene;
 
 /// 每帧 asset loaded 事件到 render-side uploader 的分发阶段。
 ///
-/// `RenderBackend::begin_frame` 只负责推进帧生命周期；具体 texture/mesh 事件如何进入
+/// `RenderBackend::begin_frame` 只负责推进帧生命周期；具体 texture/mesh/material 事件如何进入
 /// uploader 由这个 stage 内聚，避免 backend owner 直接承载 asset 事件分类细节。
 pub(crate) struct AssetUploadStage;
 
 impl AssetUploadStage {
     /// 消费 `AssetHub::update` 产出的加载事件，并转发给对应 render-side uploader。
     ///
-    /// texture 与 mesh 事件会进入 GPU 上传队列；scene 事件只表示 CPU 数据可被 scene 层读取，
-    /// 具体实例化仍由 app/scene manager 控制，不在 backend 自动创建运行时实例。
+    /// texture 与 mesh 事件会进入 GPU 上传队列；material 事件会进入稳定 slot 映射；
+    /// scene 事件只表示 CPU 数据可被 scene 层读取，具体实例化仍由 app/scene manager 控制。
     pub(crate) fn update(
         asset_hub: &mut AssetHub,
         asset_texture_uploader: &mut AssetTextureUploader,
         asset_mesh_uploader: &mut AssetMeshUploader,
+        material_bridge: &mut MaterialBridge,
         gfx: &Gfx,
         render_world: &mut RenderWorld,
     ) {
         let loaded_asset_events = asset_hub.update();
         let mut texture_events = Vec::new();
         let mut mesh_events = Vec::new();
+        let mut material_events = Vec::new();
         for event in loaded_asset_events {
             // 事件分流集中在这里，避免 RenderBackend 生命周期入口直接知道每种 asset
             // 对应的 uploader 细节，也让 uploader 可以用更窄的事件集合维护自身契约。
@@ -48,6 +50,9 @@ impl AssetUploadStage {
                 }
                 event @ AssetLoadedEvent::MeshLoaded { .. } => {
                     mesh_events.push(event);
+                }
+                event @ AssetLoadedEvent::MaterialLoaded { .. } => {
+                    material_events.push(event);
                 }
                 AssetLoadedEvent::SceneLoaded { handle } => {
                     log::debug!("Scene asset {:?} CPU data is ready", handle);
@@ -67,6 +72,7 @@ impl AssetUploadStage {
             &mut render_world.bindless_manager,
         );
         asset_mesh_uploader.update(mesh_events, gfx.resource_ctx(), gfx.device_ctx(), gfx.queue_ctx());
+        material_bridge.apply_material_events(material_events);
     }
 }
 
@@ -161,9 +167,8 @@ impl PreparePipeline {
             bindless_target,
         );
 
-        // material 阶段以 AssetHub 为事实来源同步稳定 slot，再根据 texture ready/fallback
+        // material loaded 事件已在 begin_frame 进入稳定 slot；这里只根据 texture ready/fallback
         // 状态写当前 FIF 的 material buffer。
-        ctx.material_bridge.sync_asset_materials(&ctx.world.asset_hub);
         ctx.material_bridge.update_textures(ctx.asset_texture_uploader);
         ctx.material_bridge.upload(
             ctx.gfx.resource_ctx(),

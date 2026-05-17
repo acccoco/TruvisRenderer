@@ -29,8 +29,9 @@ pub(crate) struct AssetSceneRecord {
 
 /// asset 层向外发布的 CPU ready 事件。
 ///
-/// 渲染后端消费 texture / mesh 事件继续做 GPU 上传；scene 事件表示 prefab CPU
-/// 数据已经可被 `SceneManager` 查询并 spawn。失败事件只描述 CPU 加载或导入失败。
+/// 渲染后端消费 texture / mesh / material 事件继续做 GPU 上传或 slot 分配；scene
+/// 事件表示 prefab CPU 数据已经可被 `SceneManager` 查询并 spawn。失败事件只描述
+/// CPU 加载或导入失败。
 #[derive(Debug)]
 pub enum AssetLoadedEvent {
     /// 纹理文件已经完成 CPU 解码。
@@ -51,6 +52,14 @@ pub enum AssetLoadedEvent {
     /// 事件通常来自 scene 导入或显式 `register_mesh_data`。消费方需要继续创建
     /// vertex/index buffer，并在需要 ray tracing 时构建 BLAS。
     MeshLoaded { handle: AssetMeshHandle, data: MeshData },
+    /// material CPU 参数已经可用于渲染侧 slot 分配。
+    ///
+    /// 事件通常来自 scene 导入或显式 `register_material_data`。消费方需要继续分配
+    /// shader 可见 material slot，并按 texture ready 状态写入 material buffer。
+    MaterialLoaded {
+        handle: AssetMaterialHandle,
+        data: MaterialData,
+    },
     /// scene / prefab 的 CPU 数据已经写入 `AssetHub`。
     ///
     /// 这只表示 `get_scene_data` 可以取得 prefab 数据；live runtime instance 仍需由
@@ -188,7 +197,11 @@ impl AssetHub {
     /// 参数和 texture handle 引用。
     pub fn register_material_data(&mut self, key: AssetMaterialKey, data: MaterialData) -> AssetMaterialHandle {
         let _span = tracy_client::span!("AssetHub::register_material_data");
-        self.register_material_data_inner(key, data)
+        let (handle, event) = self.register_material_data_inner(key, data);
+        if let Some(event) = event {
+            self.pending_events.push_back(event);
+        }
+        handle
     }
 
     /// 收集后台加载任务完成事件。
@@ -197,8 +210,9 @@ impl AssetHub {
     /// pending events，再把异步结果写回 `AssetHub` 状态表，并返回需要后续系统消费的
     /// CPU ready / failed 事件。
     ///
-    /// 调用方通常每帧调用一次，并按事件类型分发给 texture uploader、mesh uploader
-    /// 或 scene 层。返回后的事件队列已经被消费，`AssetHub` 不会再次重放同一事件。
+    /// 调用方通常每帧调用一次，并按事件类型分发给 texture uploader、mesh uploader、
+    /// material bridge 或 scene 层。返回后的事件队列已经被消费，`AssetHub` 不会再次
+    /// 重放同一事件。
     pub fn update(&mut self) -> Vec<AssetLoadedEvent> {
         let _span = tracy_client::span!("AssetHub::update");
         let mut events = Vec::new();
@@ -357,21 +371,31 @@ impl AssetHub {
         (handle, Some(AssetLoadedEvent::MeshLoaded { handle, data }))
     }
 
-    /// 内部 material 注册路径。
+    /// 内部 material 注册路径，供同步注册和 scene ingest 复用。
     ///
-    /// material 没有单独 loaded event；render-side `MaterialBridge` 以 `iter_materials`
-    /// 为事实来源同步新增或变化的 CPU material。
-    fn register_material_data_inner(&mut self, key: AssetMaterialKey, data: MaterialData) -> AssetMaterialHandle {
+    /// 返回的事件只在第一次看到 key 时产生，避免重复分配同一份 material GPU slot。
+    fn register_material_data_inner(
+        &mut self,
+        key: AssetMaterialKey,
+        data: MaterialData,
+    ) -> (AssetMaterialHandle, Option<AssetLoadedEvent>) {
         if let Some(&handle) = self.key_to_material.get(&key) {
-            return handle;
+            return (handle, None);
         }
 
+        let event_data = data.clone();
         let handle = self.materials.insert(AssetMaterialRecord {
             status: LoadStatus::Ready,
             data,
         });
         self.key_to_material.insert(key, handle);
-        handle
+        (
+            handle,
+            Some(AssetLoadedEvent::MaterialLoaded {
+                handle,
+                data: event_data,
+            }),
+        )
     }
 
     /// 将后台导入器返回的 raw material 转为 asset 层 material 数据。
@@ -422,7 +446,7 @@ impl AssetHub {
         let mut material_handles = Vec::with_capacity(raw.materials.len());
         for (material_index, material_data) in raw.materials.into_iter().enumerate() {
             let data = self.material_data_from_raw(&source_path, material_data);
-            let handle = self.register_material_data_inner(
+            let (handle, event) = self.register_material_data_inner(
                 AssetMaterialKey {
                     source_path: source_path.clone(),
                     material_index: material_index as u32,
@@ -430,6 +454,9 @@ impl AssetHub {
                 data,
             );
             material_handles.push(handle);
+            if let Some(event) = event {
+                immediate_events.push(event);
+            }
         }
 
         let mut instances = Vec::with_capacity(raw.instances.len());
@@ -638,6 +665,30 @@ mod tests {
     }
 
     #[test]
+    fn register_material_data_emits_loaded_event_once() {
+        let mut hub = AssetHub::new();
+        let key = material_key();
+        let handle = hub.register_material_data(key.clone(), material_data("mat"));
+        let duplicate = hub.register_material_data(key, material_data("duplicate"));
+
+        let events = hub.update();
+
+        assert_eq!(handle, duplicate);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssetLoadedEvent::MaterialLoaded {
+                handle: event_handle,
+                data,
+            } => {
+                assert_eq!(*event_handle, handle);
+                assert_eq!(data.name, "mat");
+            }
+            _ => panic!("expected material loaded event"),
+        }
+        assert!(hub.update().is_empty());
+    }
+
+    #[test]
     fn register_material_data_can_be_iterated() {
         let mut hub = AssetHub::new();
         let handle = hub.register_material_data(material_key(), material_data("mat"));
@@ -662,8 +713,9 @@ mod tests {
         assert_eq!(scene_data.instances[0].materials, vec![scene_data.materials[0]]);
         assert_eq!(hub.get_mesh_status(scene_data.meshes[0]), LoadStatus::Ready);
         assert_eq!(hub.get_material_status(scene_data.materials[0]), LoadStatus::Ready);
-        assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], AssetLoadedEvent::MeshLoaded { .. }));
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().any(|event| matches!(event, AssetLoadedEvent::MeshLoaded { .. })));
+        assert!(events.iter().any(|event| matches!(event, AssetLoadedEvent::MaterialLoaded { .. })));
     }
 
     #[test]

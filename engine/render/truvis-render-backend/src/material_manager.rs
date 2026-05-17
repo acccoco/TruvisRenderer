@@ -4,7 +4,7 @@ use ash::vk;
 use slotmap::SlotMap;
 use slotmap::new_key_type;
 
-use truvis_asset::handle::{AssetTextureHandle, MaterialData};
+use truvis_asset::handle::AssetTextureHandle;
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
@@ -35,20 +35,6 @@ pub struct ManagedMaterialParams {
 
     pub diffuse_texture: Option<AssetTextureHandle>,
     pub normal_texture: Option<AssetTextureHandle>,
-}
-
-impl From<&MaterialData> for ManagedMaterialParams {
-    fn from(mat: &MaterialData) -> Self {
-        Self {
-            base_color: mat.base_color,
-            emissive: mat.emissive,
-            metallic: mat.metallic,
-            roughness: mat.roughness,
-            opaque: mat.opaque,
-            diffuse_texture: mat.diffuse_texture,
-            normal_texture: mat.normal_texture,
-        }
-    }
 }
 
 impl Default for ManagedMaterialParams {
@@ -278,6 +264,8 @@ impl MaterialManager {
     ///
     /// slot 内容不再上传，但 slot index 会继续保留至少 `FIF_COUNT` 帧，避免在飞命令仍用旧 index
     /// 访问 material buffer 时被新材质复用。
+    /// 当前 asset 层尚未发出 MaterialRemoved 事件，该入口保留给后续删除路径复用。
+    #[allow(dead_code)]
     pub fn unregister(&mut self, handle: GpuMaterialHandle) {
         let slot = self.handle_to_slot.remove(handle).expect("MaterialManager: invalid handle");
 
