@@ -34,6 +34,8 @@ struct RetiredSlot {
 ///
 /// 它为 `InstanceHandle` 分配生命周期内稳定的 GPU instance slot，并在 mesh/material
 /// 都 GPU ready 前保持 pending，避免 draw/TLAS 访问未就绪资源。
+/// bridge 是 CPU `SceneManager` 与 backend 私有 `RenderData` 之间的翻译层：SceneManager
+/// 保存语义实例，GpuScene 只接收按稳定 slot 排序、依赖已就绪的渲染快照。
 pub struct InstanceBridge {
     bindings: SecondaryMap<InstanceHandle, InstanceBinding>,
     free_slots: Vec<GpuInstanceSlot>,
@@ -55,6 +57,7 @@ impl InstanceBridge {
     }
 
     pub fn begin_frame(&mut self, frame_token: FrameToken) {
+        // slot 回收以 frame id 为准推进；每帧开始时回收已经跨过 FIF 窗口的旧 slot。
         self.frame_token = frame_token;
         self.reclaim_retired_slots();
     }
@@ -71,6 +74,8 @@ impl InstanceBridge {
     ) -> RenderData<'a> {
         self.sync_scene_instances(scene_manager, material_slot_resolver, mesh_resolver);
 
+        // RenderData 是提交给 GpuScene 的只读快照。这里按稳定 slot 排序，保证 raster draw、
+        // TLAS custom index 和 GPU instance buffer 使用同一套 instance slot 语义。
         let mut mesh_handle_to_index = HashMap::new();
         let mut all_meshes: Vec<MeshRenderData<'a>> = Vec::new();
         let mut mesh_geometry_start_indices: Vec<usize> = Vec::new();
@@ -149,6 +154,8 @@ impl InstanceBridge {
             if binding.last_transform != instance.transform {
                 binding.last_transform = instance.transform;
                 if binding.state == InstanceState::Active {
+                    // transform 变化会影响 instance buffer 与 TLAS transform，
+                    // revision 用来让 GpuScene 知道当前帧需要重建 TLAS。
                     self.revision = self.revision.saturating_add(1);
                     log::debug!(
                         "InstanceBridge: transform dirty handle={:?} stable_slot={}",
@@ -160,11 +167,14 @@ impl InstanceBridge {
 
             match (binding.state, ready) {
                 (InstanceState::Pending, true) => {
+                    // mesh/material 都 ready 后才激活，避免 draw/TLAS 使用空 BLAS 或无效 material slot。
                     binding.state = InstanceState::Active;
                     self.revision = self.revision.saturating_add(1);
                     log::trace!("InstanceBridge: activate handle={:?} stable_slot={}", handle, binding.slot.as_u32());
                 }
                 (InstanceState::Active, false) => {
+                    // asset 重新加载或材质被移除时，已激活实例会退回 pending，
+                    // 直到 resolver 再次提供完整 GPU 数据。
                     binding.state = InstanceState::Pending;
                     self.revision = self.revision.saturating_add(1);
                     log::trace!("InstanceBridge: deactivate handle={:?} stable_slot={}", handle, binding.slot.as_u32());
@@ -175,6 +185,7 @@ impl InstanceBridge {
     }
 
     fn register_instance(&mut self, handle: InstanceHandle, instance: &Instance) {
+        // 新实例先拿到稳定 slot，但初始状态保持 pending；ready gate 由 resolver 决定。
         let slot = self.free_slots.pop().expect("InstanceBridge: GPU instance slots exhausted");
         self.bindings.insert(
             handle,
@@ -218,6 +229,8 @@ impl InstanceBridge {
 
         for retired in self.retired_slots.drain(..) {
             if current_frame_id.saturating_sub(retired.retired_frame_id) >= fif_count {
+                // 延迟到 FIF 窗口之后再复用 slot，保证旧 command buffer 中的 instance index
+                // 不会突然指向新实例。
                 log::debug!("InstanceBridge: reclaimed stable_slot={}", retired.slot.as_u32());
                 self.free_slots.push(retired.slot);
             } else {

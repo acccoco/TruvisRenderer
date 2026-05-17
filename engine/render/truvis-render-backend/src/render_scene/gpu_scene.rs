@@ -30,7 +30,10 @@ use truvis_render_interface::render_scene_view::RenderSceneView;
 use self::helper::ImageLoader;
 use super::render_data::{InstanceRenderData, RenderData};
 
-/// 构建 Gpu Scene 所需的所有 buffer
+/// 构建 GPU scene 所需的 per-FIF buffer 集。
+///
+/// 每个 frame label 拥有独立的 scene/instance/geometry/light/material-indirect buffer，
+/// 避免 CPU 准备下一帧数据时覆盖 GPU 仍在读取的上一帧 buffer。
 struct GpuSceneBuffers {
     scene_buffer: GfxStructuredBuffer<gpu::GPUScene>,
     light_buffer: GfxStructuredBuffer<gpu::PointLight>,
@@ -49,6 +52,10 @@ struct GpuSceneBuffers {
     tlas_revision: u64,
 }
 
+/// 光栅化 pass 的轻量 draw cache。
+///
+/// `GpuScene` 在 prepare 阶段从 `RenderData` 展开出每个 submesh 的 buffer 绑定信息，
+/// render pass 只遍历这个 cache，不再接触 scene/asset bridge。
 #[derive(Clone, Copy)]
 struct RasterDrawItem {
     index_buffer: vk::Buffer,
@@ -136,7 +143,11 @@ impl GpuSceneBuffers {
     }
 }
 
-/// 用于构建传输到 GPU 的场景数据
+/// backend 私有的 GPU scene 翻译层。
+///
+/// 它把 `InstanceBridge` 产出的 `RenderData` 转换成 shader 可读的 GPU buffer、TLAS 和
+/// 光栅化 draw cache，并通过 `RenderSceneView` 向 render pass 暴露只读能力。
+/// `GpuScene` 不拥有 CPU scene；它只保存当前 FIF 可用的 GPU 表示。
 pub struct GpuScene {
     gpu_scene_buffers: [GpuSceneBuffers; FrameCounter::fif_count()],
     raster_draws: [Vec<RasterDrawItem>; FrameCounter::fif_count()],
@@ -278,17 +289,13 @@ impl GpuScene {
 }
 // 工具函数
 impl GpuScene {
-    /// # 阶段：Before Render (基于 SceneData2)
+    /// # 阶段：Before Render
     ///
-    /// 将已经准备好的 GPU 格式的场景数据写入 Device Buffer 中。
-    /// 此方法不依赖 SceneManager，仅使用 SceneData2 中的数据。
+    /// 将 backend bridge 已经整理好的 `RenderData` 写入当前 FIF 的 device buffer。
+    /// 此方法不依赖 `SceneManager`，这是 CPU scene 与 GPU scene 的边界。
     ///
-    /// # 参数
-    /// - `cmd`: 用于提交 GPU 命令的命令缓冲区
-    /// - `barrier_mask`: 用于同步的屏障掩码
-    /// - `frame_counter`: 帧计数器，用于获取当前帧的 buffer
-    /// - `scene_data`: 包含完整场景信息的 SceneData2
-    /// - `bindless_manager`: 用于获取 sky/uv_checker 等内置纹理的 bindless handle
+    /// 上传顺序刻意保持为 draw cache、mesh/instance/light buffer、TLAS、scene root buffer：
+    /// scene root buffer 最后写入，确保它记录的 device address 与本帧实际 buffer/TLAS 对齐。
     pub fn upload_render_data(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -323,6 +330,8 @@ impl GpuScene {
     }
 
     fn update_raster_draw_cache(&mut self, scene_data: &RenderData<'_>, frame_label: FrameLabel) {
+        // 光栅化绘制需要的 buffer 绑定在 prepare 阶段展开，避免 render pass 每次 draw
+        // 再走 mesh/instance/material 的跨模块解析。
         let draw_cache = &mut self.raster_draws[*frame_label];
         draw_cache.clear();
 
@@ -348,9 +357,11 @@ impl GpuScene {
     }
 }
 
-// 基于 SceneData2 的新方法
+// 基于 RenderData 快照的 GPU 数据上传方法
 impl GpuScene {
-    /// 将整个场景的数据上传到 scene buffer 中去（基于 SceneData2）
+    /// 将 GPU scene root 数据上传到 scene buffer。
+    ///
+    /// 这个 buffer 只保存 device address、bindless handle 和计数，是 shader 访问整套场景数据的入口。
     fn upload_scene_buffer(
         &mut self,
         cmd: &GfxCommandBuffer,
@@ -389,7 +400,10 @@ impl GpuScene {
         );
     }
 
-    /// 将 instance 数据上传到 GPU（基于 SceneData2）
+    /// 将 instance 数据上传到 GPU。
+    ///
+    /// `instance_slot` 是全局稳定 slot；geometry/material indirect buffer 则是本帧紧凑列表，
+    /// 用于把一个 instance 映射到它的 submesh geometry 与 material slot。
     fn upload_instance_buffer(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -434,7 +448,8 @@ impl GpuScene {
                 inv_model: instance.transform.inverse().into(),
             };
 
-            // 将 geometry 索引写入间接索引 buffer
+            // 将 geometry 索引写入间接索引 buffer。
+            // mesh 在 RenderData 中去重，instance 只保存它引用的 submesh 范围。
             let mesh_startup_index = scene_data.mesh_geometry_start_indices[instance.mesh_index];
             for submesh_idx in 0..submesh_cnt {
                 let geometry_idx = mesh_startup_index + submesh_idx;
@@ -442,7 +457,8 @@ impl GpuScene {
             }
             crt_geometry_indirect_idx += submesh_cnt;
 
-            // 将稳定 material slot 写入间接索引 buffer
+            // 将稳定 material slot 写入间接索引 buffer。
+            // material slot 来自 MaterialManager，可被 shader 直接索引材质 buffer。
             for material_slot in instance.material_slots.iter() {
                 material_indirect_buffer_slices[crt_material_indirect_idx] = *material_slot;
                 crt_material_indirect_idx += 1;
@@ -508,7 +524,9 @@ impl GpuScene {
         );
     }
 
-    /// 将 mesh 数据以 geometry 的形式上传到 GPU（基于 SceneData2）
+    /// 将 mesh 数据以 geometry 表的形式上传到 GPU。
+    ///
+    /// geometry 表只保存 device address；实际 vertex/index buffer 生命周期由 mesh uploader 持有。
     fn upload_mesh_buffer(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -548,7 +566,9 @@ impl GpuScene {
         );
     }
 
-    /// 根据 SceneData2 的 instance 信息获得加速结构的 instance 信息
+    /// 根据 `RenderData` 的 instance 信息生成 TLAS instance 描述。
+    ///
+    /// `custom_idx` 使用稳定 instance slot，ray tracing shader 可以用它回查 GPU instance buffer。
     fn get_as_instance_info(
         &self,
         instance: &InstanceRenderData,
@@ -570,7 +590,10 @@ impl GpuScene {
         }
     }
 
-    /// 构建 TLAS（基于 SceneData2）
+    /// 构建当前 FIF 的 TLAS。
+    ///
+    /// `tlas_revision` 由 mesh ready revision 与 instance bridge revision 组成；当 mesh BLAS ready、
+    /// instance 增删、激活状态或 transform 改变时才重建，避免每帧无意义重建 TLAS。
     fn build_tlas(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -634,6 +657,8 @@ impl RenderSceneView for GpuScene {
 
     fn draw_raster(&self, frame_label: FrameLabel, cmd: &GfxCommandBuffer, before_draw: &mut dyn FnMut(u32, u32)) {
         let _span = tracy_client::span!("GpuScene::draw_raster");
+        // render pass 只获得只读 view。每次 draw 前回调 instance slot/submesh index，
+        // 让具体 pass 能绑定 push constants 或 descriptor，而不暴露 GpuScene 内部缓存结构。
         for draw in &self.raster_draws[*frame_label] {
             cmd.cmd_bind_index_buffer_raw(draw.index_buffer, 0, super::geometry::RtGeometry::index_type());
             cmd.cmd_bind_vertex_buffers(0, &draw.vertex_buffers, &draw.vertex_offsets);

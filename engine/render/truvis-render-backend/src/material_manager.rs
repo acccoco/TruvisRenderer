@@ -131,6 +131,7 @@ impl MaterialBuffers {
 /// 将 CPU 材质参数、GPU slot 映射、dirty 状态和增量上传逻辑聚合为独立模块，
 /// 而非分散在 SceneManager（CPU 数据）和 GpuScene（GPU buffer）之间。
 /// 这与 `BindlessManager` 的设计模式一致——每种 GPU 资源由专门的 Manager 自治管理。
+/// 在 backend 分层中，它是材质数据从 asset 世界进入 shader 可见 buffer 的最后一道 owner。
 ///
 /// # Slot 稳定性
 ///
@@ -254,6 +255,9 @@ impl MaterialManager {
     }
 
     /// 移除材质，延迟回收 slot
+    ///
+    /// slot 内容不再上传，但 slot index 会继续保留至少 `FIF_COUNT` 帧，避免在飞命令仍用旧 index
+    /// 访问 material buffer 时被新材质复用。
     pub fn unregister(&mut self, handle: ManagedMaterialHandle) {
         let slot = self.handle_to_slot.remove(handle).expect("MaterialManager: invalid handle");
 
@@ -284,6 +288,9 @@ impl MaterialManager {
     }
 
     /// 检查 texture 异步加载状态，尝试新增 dirty 标记
+    ///
+    /// 材质可以先用 fallback/null texture 上传；当 resolver 报告真实 texture ready 时，
+    /// 再把所有 FIF buffer 标记为 dirty，让 shader 在后续帧看到真实绑定。
     pub fn update(&mut self, texture_resolver: &dyn TextureResolver) {
         let frame_id = self.frame_token.frame_id();
 
@@ -317,6 +324,9 @@ impl MaterialManager {
     }
 
     /// 将 dirty slot 写入当前帧对应的 GPU buffer，或者回收 slot 到 free list 中
+    ///
+    /// dirty 状态按 FIF buffer 拆分：当前帧只处理 `frame_label` 对应的 staging/device buffer。
+    /// 这样每个 frame-in-flight 都能在自己的时机收到材质更新，同时避免覆盖 GPU 仍可能读取的 buffer。
     pub fn upload(
         &mut self,
         ctx: GfxResourceCtx<'_>,

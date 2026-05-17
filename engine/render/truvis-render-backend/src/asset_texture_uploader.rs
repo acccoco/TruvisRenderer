@@ -31,7 +31,9 @@ struct PendingUpload {
 
 /// 纹理上传队列。
 ///
-/// 只在渲染线程使用，负责把 AssetHub 产出的 CPU bytes 提交到 transfer queue。
+/// 只在渲染线程使用，负责把 `AssetHub` 产出的 CPU bytes 提交到 transfer queue。
+/// 完成检测不阻塞帧循环，而是通过 queue-local timeline semaphore 在后续 `update` 中回收
+/// command/staging 资源，并把已完成 image 交给上层注册到 `GfxResourceManager` 与 bindless。
 struct TextureUploadManager {
     command_pool: Option<GfxCommandPool>,
     timeline_semaphore: Option<GfxSemaphore>,
@@ -69,6 +71,8 @@ impl TextureUploadManager {
     ) -> anyhow::Result<()> {
         let _span = tracy_client::span!("TextureUploadManager::upload_texture");
 
+        // image 先保持在 uploader 私有状态中，只有 timeline 表明确认 copy 完成后，
+        // 才注册为 shader 可见资源，避免 bindless 句柄指向仍在上传中的 texture。
         let image_info = GfxImageCreateInfo::new_image_2d_info(
             vk::Extent2D {
                 width: data.extent.width,
@@ -98,6 +102,8 @@ impl TextureUploadManager {
         let target_value = self.next_timeline_value;
         self.next_timeline_value += 1;
 
+        // 每次上传使用单调递增的 timeline value。update 阶段只查询 semaphore counter，
+        // 不等待 GPU，因此纹理 ready 状态天然是异步推进的。
         let submit_info = GfxSubmitInfo::new(std::slice::from_ref(&command_buffer)).signal(
             timeline_semaphore,
             vk::PipelineStageFlags2::ALL_COMMANDS,
@@ -133,6 +139,8 @@ impl TextureUploadManager {
                 break;
             }
 
+            // GPU 已经完成 copy，staging buffer 与一次性 command buffer 可以立即释放；
+            // device-local image 的所有权转交给 AssetTextureUploader 注册 view/bindless。
             let upload = self.pending_uploads.pop_front().unwrap();
             command_pool.free_command_buffers(device_ctx, vec![upload.command_buffer]);
             upload.staging_buffer.destroy(resource_ctx, DestroyReason::DeferredCleanup);
@@ -158,6 +166,7 @@ impl TextureUploadManager {
             timeline_semaphore.wait_timeline(device_ctx, last_upload.semaphore_value, WAIT_SEMAPHORE_TIMEOUT_NS);
         }
 
+        // shutdown 必须等待所有 pending 上传完成，因为这些 image/staging/command 仍可能被 transfer queue 引用。
         while let Some(upload) = self.pending_uploads.pop_front() {
             command_pool.free_command_buffers(device_ctx, vec![upload.command_buffer]);
             upload.image.destroy(resource_ctx, DestroyReason::Shutdown);
@@ -176,6 +185,10 @@ impl Drop for TextureUploadManager {
     }
 }
 
+/// shader 可见的纹理绑定缓存。
+///
+/// `image_handle`/`view_handle` 归 `GfxResourceManager` 管理，`srv_handle` 是 bindless 表中的稳定引用。
+/// 材质解析只需要后两者，不直接接触上传队列或 `AssetHub`。
 #[derive(Clone, Copy)]
 pub struct UploadedAssetTexture {
     pub image_handle: GfxImageHandle,
@@ -185,6 +198,9 @@ pub struct UploadedAssetTexture {
 }
 
 /// 渲染侧纹理资产上传与绑定缓存。
+///
+/// 它是 `AssetTextureHandle -> shader texture binding` 的唯一转换点。加载失败或尚未完成上传时，
+/// `TextureResolver` 会返回 fallback 纹理，使材质 GPU 数据始终可被 shader 安全读取。
 pub struct AssetTextureUploader {
     textures: SecondaryMap<AssetTextureHandle, UploadedAssetTexture>,
     uploader: TextureUploadManager,
@@ -232,6 +248,8 @@ impl AssetTextureUploader {
         gfx_resource_manager: &mut GfxResourceManager,
         bindless_manager: &mut BindlessManager,
     ) -> UploadedAssetTexture {
+        // fallback 使用醒目的 1x1 洋红色纹理，目的是让缺失/未就绪纹理在画面中容易定位；
+        // 它在 uploader 生命周期内常驻 bindless，避免材质上传阶段产生空 SRV。
         let pixels: [u8; 4] = [255, 0, 255, 255];
         let image = GfxImage::from_rgba8(resource_ctx, immediate_ctx, 1, 1, &pixels, "FallbackTexture");
         let image_format = image.format();
@@ -303,6 +321,8 @@ impl AssetTextureUploader {
         image: GfxImage,
     ) {
         if let Some(old_texture) = self.textures.remove(handle) {
+            // 同一个 asset handle 重新加载时，旧 view 必须先退出 bindless，再释放 manager-owned image。
+            // 这里立即释放的前提是 begin_frame 已经等待过 FIF timeline，旧资源不会再被在飞帧引用。
             bindless_manager.unregister_srv(old_texture.view_handle);
             gfx_resource_manager.release_image_immediate(
                 resource_ctx,
@@ -313,6 +333,8 @@ impl AssetTextureUploader {
         }
 
         let image_format = image.format();
+        // 只有上传完成的 image 才进入全局资源管理器和 bindless 表。
+        // 从这一步开始，材质桥接层解析同一个 AssetTextureHandle 时会拿到真实 SRV。
         let image_handle = gfx_resource_manager.register_image(image);
         let view_handle = gfx_resource_manager.get_or_create_image_view(
             device_ctx,

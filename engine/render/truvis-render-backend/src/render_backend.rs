@@ -49,6 +49,10 @@ use crate::render_scene::gpu_scene::GpuScene;
 /// 只通过返回类型化 Ctx 结构的生命周期方法暴露状态。
 /// 生命周期由外部代码驱动；RenderBackend 不感知 Plugin、GUI 或 app 编排概念。
 ///
+/// 它位于 `RenderAppShell` 之下、`truvis-gfx`/`RenderWorld` 之上，是 CPU scene、
+/// render-side 资产上传、GPU scene 翻译、swapchain/present 和 FIF 同步的聚合 owner。
+/// 上层只能在对应阶段拿到窄化后的 Ctx，不能长期保存完整 `Gfx` 或 backend 内部字段。
+///
 /// # 生命周期调用顺序
 /// ```ignore
 /// render_backend.begin_frame();
@@ -90,6 +94,7 @@ pub struct RenderBackend {
 /// Update 阶段上下文，借用 CPU 端更新需要的 RenderBackend 字段。
 ///
 /// 在 app 执行 update 工作期间保持存活；drop 前 RenderBackend 会保持借用锁定。
+/// 这个阶段允许修改 `World` 与管线设置，但还没有把 CPU 语义数据翻译到 GPU scene。
 pub struct RenderBackendUpdateCtx<'a> {
     pub world: &'a mut World,
     pub pipeline_settings: &'a mut PipelineSettings,
@@ -100,6 +105,9 @@ pub struct RenderBackendUpdateCtx<'a> {
 }
 
 /// Render 阶段上下文，对 GPU 命令录制需要的 RenderBackend 状态进行只读共享借用。
+///
+/// 到达这个阶段时 `prepare` 已经完成 per-frame descriptor、material buffer、scene buffer、
+/// TLAS 和 raster draw cache 的更新；pass 只能读取这些结果并录制命令。
 pub struct RenderBackendRenderCtx<'a> {
     pub device_ctx: GfxDeviceCtx<'a>,
     pub resource_ctx: GfxResourceCtx<'a>,
@@ -115,6 +123,8 @@ pub struct RenderBackendRenderCtx<'a> {
 /// Init 阶段上下文，用于 window/surface 创建后的一次性设置。
 ///
 /// 不包含 camera；camera 属于具体 app。
+/// 这里暴露 `World`、`RenderWorld` 和 `CmdAllocator` 的可变借用，供 app/plugin 创建长期 GPU 资源；
+/// 初始化完成后这些能力会重新收敛回 backend 的阶段化生命周期。
 pub struct RenderBackendInitCtx<'a> {
     pub device_ctx: GfxDeviceCtx<'a>,
     pub resource_ctx: GfxResourceCtx<'a>,
@@ -130,6 +140,8 @@ pub struct RenderBackendInitCtx<'a> {
 }
 
 /// Swapchain resize 上下文，仅在 swapchain 实际重建时产生。
+///
+/// 上层只在收到 `Some(ctx)` 时重建窗口尺寸相关资源；连续 resize 事件会在 present 层合并。
 pub struct RenderBackendResizeCtx<'a> {
     pub device_ctx: GfxDeviceCtx<'a>,
     pub resource_ctx: GfxResourceCtx<'a>,
@@ -140,6 +152,9 @@ pub struct RenderBackendResizeCtx<'a> {
 }
 
 /// Shutdown 阶段上下文，保证 app/plugin 可在 backend 与 Gfx 存活时释放 GPU 资源。
+///
+/// `RenderAppShell` 会在 backend 自身销毁前把这个上下文交给 app/plugin，确保 plugin-owned
+/// pipeline、buffer、descriptor 等资源仍能通过 typed Ctx 显式释放。
 pub struct RenderBackendShutdownCtx<'a> {
     pub device_ctx: GfxDeviceCtx<'a>,
     pub resource_ctx: GfxResourceCtx<'a>,
@@ -384,6 +399,9 @@ impl RenderBackend {
 // ---------------------------------------------------------------------------
 impl RenderBackend {
     /// 自包含的帧开始流程：timer tick、FIF 等待、资源清理、bindless 推进和资产更新。
+    ///
+    /// 这里是 backend 每帧唯一的资源回收入口。先等待当前 FIF 槽位不再被 GPU 使用，
+    /// 再重置命令池和延迟释放队列，最后消费 `AssetHub` 的异步事件并推进上传队列。
     pub fn begin_frame(&mut self) {
         let _span = tracy_client::span!("RenderBackend::begin_frame");
         self.timer.tick();
@@ -452,6 +470,9 @@ impl RenderBackend {
 
     /// 执行内部 frame-settings 同步并获取 swapchain image，
     /// 然后返回供外部 CPU 端更新使用的上下文。
+    ///
+    /// `acquire_image` 放在 update 前，保证本帧的 swapchain image、frame extent 和后续
+    /// render graph 导入的 present target 指向同一个窗口状态。
     pub fn update_phase(&mut self) -> RenderBackendUpdateCtx<'_> {
         let _span = tracy_client::span!("RenderBackend::update_phase");
 
@@ -469,6 +490,10 @@ impl RenderBackend {
     }
 
     /// 更新累积帧跟踪，并上传 GPU scene/descriptor 数据。
+    ///
+    /// 这是 update 与 render 之间的语义翻译边界：App 仍拥有 camera/input state，
+    /// backend 只读取 camera 快照，并把 `World`、asset/material/instance bridge 的状态整理成
+    /// render pass 可读取的 `RenderSceneView`。
     pub fn prepare(&mut self, camera: &Camera) {
         let _span = tracy_client::span!("RenderBackend::prepare");
 
@@ -480,6 +505,9 @@ impl RenderBackend {
     }
 
     /// 共享借用：render 阶段中 RenderBackend 状态只读。
+    ///
+    /// 这个 Ctx 面向 RenderGraph/pass 录制。它故意不暴露 `World` 的可变借用，避免 render
+    /// 阶段继续改变 CPU scene，破坏 `prepare` 已经生成的 GPU scene 快照。
     pub fn render_phase(&self) -> RenderBackendRenderCtx<'_> {
         RenderBackendRenderCtx {
             device_ctx: self.gfx.device_ctx(),
@@ -495,11 +523,17 @@ impl RenderBackend {
     }
 
     /// 提交 present 命令。
+    ///
+    /// 渲染命令提交由上层 render graph 完成；这里仅把当前 swapchain image 交给 present queue，
+    /// 并让 present 层记录是否需要在后续帧重建 swapchain。
     pub fn present(&mut self) {
         self.render_present.as_mut().unwrap().present_image(self.gfx.surface_ctx(), self.gfx.queue_ctx());
     }
 
     /// 推进帧计数器。
+    ///
+    /// 所有依赖 `FrameCounter` 的 FIF 资源都在此之后切到下一帧标签；因此必须放在
+    /// present 之后，作为本帧生命周期的最后一步。
     pub fn end_frame(&mut self) {
         let _span = tracy_client::span!("RenderBackend::end_frame");
         self.render_world.frame_counter.next_frame();
@@ -549,6 +583,9 @@ impl RenderBackend {
     }
 
     /// window/surface 创建后的一次性初始化。返回用于 plugin 初始化的上下文。
+    ///
+    /// `RenderBackend::new` 不触碰窗口系统对象；surface/swapchain 必须等平台层提供 raw handle 后
+    /// 才能创建。这样可以保持 backend 初始化和窗口生命周期之间的清晰边界。
     pub fn init_after_window(
         &mut self,
         raw_display_handle: RawDisplayHandle,
@@ -629,6 +666,8 @@ impl RenderBackend {
         let frame_extent = self.render_world.frame_settings.frame_extent;
         let frame_label = self.render_world.frame_counter.frame_label();
 
+        // GPU scene 更新使用独立命令缓冲，把 material/instance/geometry/light/scene buffer
+        // 的 staging copy 和 barrier 串在一起，作为 render graph 录制前的固定准备阶段。
         let cmd = self.gpu_scene_update_cmds[*frame_label].clone();
         cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "[update-draw-buffer]stage-to-ubo");
 
@@ -665,6 +704,8 @@ impl RenderBackend {
             &self.asset_mesh_uploader,
         );
         let material_buffer_device_address = self.material_bridge.material_buffer_device_address(frame_label);
+        // mesh ready 与 instance 变化都会影响 TLAS；两个 revision 合成一条 scene revision，
+        // 交给 GpuScene 判断当前 FIF 的 TLAS 是否需要重建。
         let scene_revision = self.asset_mesh_uploader.ready_revision().saturating_add(self.instance_bridge.revision());
         self.gpu_scene.upload_render_data(
             self.gfx.resource_ctx(),

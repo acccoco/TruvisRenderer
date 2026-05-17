@@ -48,6 +48,7 @@ struct FinishedMeshUpload {
 ///
 /// 只在渲染线程使用。它在 graphics queue 上提交 vertex/index buffer copy 和 BLAS build，
 /// 因为 acceleration structure build 不应假设 transfer queue 支持。
+/// 完成检测同样通过 timeline semaphore 异步推进，避免帧循环在资产加载期间被 GPU 上传阻塞。
 struct MeshUploadManager {
     command_pool: Option<GfxCommandPool>,
     timeline_semaphore: Option<GfxSemaphore>,
@@ -86,6 +87,8 @@ impl MeshUploadManager {
         let _span = tracy_client::span!("MeshUploadManager::submit_mesh_upload");
         Self::validate_mesh_data(&data)?;
 
+        // CPU mesh 数据在这里被转换为 render-side SoA 顶点布局与 index buffer。
+        // `RtGeometry` 从创建开始就同时服务光栅化 draw 和 BLAS 输入，避免两套 mesh GPU 表示。
         let vertex_count = data.positions.len();
         let index_count = data.indices.len();
         let name = data.name.clone();
@@ -136,6 +139,9 @@ impl MeshUploadManager {
             }],
         );
 
+        // vertex/index copy 与 BLAS build 在同一个 graphics command buffer 中录制。
+        // Vulkan 验证层会把 BLAS 的 device-address 输入视为 shader read，因此 barrier 同时覆盖
+        // ACCELERATION_STRUCTURE_READ 和 SHADER_READ，防止 copy 后立即 build 的同步漏洞。
         let transfer_to_blas_mask = GfxBarrierMask {
             src_stage: vk::PipelineStageFlags2::TRANSFER,
             src_access: vk::AccessFlags2::TRANSFER_WRITE,
@@ -171,6 +177,8 @@ impl MeshUploadManager {
                 device_address: scratch_buffer.device_address(),
             });
         command_buffer.build_acceleration_structure(&build_geometry_info, &range_infos);
+        // BLAS build 完成后马上建立 read barrier，保证后续 TLAS build 或 ray tracing shader
+        // 读取同一个 BLAS handle/device address 时能看到完整加速结构内容。
         command_buffer.memory_barrier(&[vk::MemoryBarrier2 {
             src_stage_mask: vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR,
             src_access_mask: vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR,
@@ -183,6 +191,8 @@ impl MeshUploadManager {
 
         let target_value = self.next_timeline_value;
         self.next_timeline_value += 1;
+        // 每个 mesh upload 对应一个 timeline value；完成前 geometry/BLAS 都保留在 pending 队列，
+        // 只有完成后才进入 resolver 可见的 `meshes` map。
         let submit_info = GfxSubmitInfo::new(std::slice::from_ref(&command_buffer)).signal(
             timeline_semaphore,
             vk::PipelineStageFlags2::ALL_COMMANDS,
@@ -218,6 +228,8 @@ impl MeshUploadManager {
                 break;
             }
 
+            // staging 和 scratch 只服务本次上传/build，timeline 到达后即可释放；
+            // geometry 与 BLAS 则转交给 AssetMeshUploader，成为 render pass 可解析的数据。
             let upload = self.pending_uploads.pop_front().unwrap();
             command_pool.free_command_buffers(device_ctx, vec![upload.command_buffer]);
             for staging_buffer in upload.staging_buffers {
@@ -251,6 +263,8 @@ impl MeshUploadManager {
             timeline_semaphore.wait_timeline(device_ctx, last_upload.semaphore_value, WAIT_SEMAPHORE_TIMEOUT_NS);
         }
 
+        // shutdown 时 pending 队列中的 geometry/BLAS 尚未进入 uploaded cache，
+        // 因此必须在等待 timeline 后由 upload manager 自己销毁。
         while let Some(upload) = self.pending_uploads.pop_front() {
             command_pool.free_command_buffers(device_ctx, vec![upload.command_buffer]);
             for staging_buffer in upload.staging_buffers {
@@ -342,6 +356,9 @@ struct UploadedMesh {
 }
 
 /// 渲染侧 mesh 资产上传与 BLAS 缓存。
+///
+/// 它把 `AssetMeshHandle` 解析为光栅化和 ray tracing 共用的 GPU 几何数据。
+/// `ready_revision` 在 mesh 首次 ready 或替换时递增，供 `GpuScene` 判断 TLAS 是否需要重建。
 pub struct AssetMeshUploader {
     meshes: SecondaryMap<AssetMeshHandle, UploadedMesh>,
     uploader: MeshUploadManager,
@@ -395,11 +412,14 @@ impl AssetMeshUploader {
         finished: FinishedMeshUpload,
     ) {
         if let Some(old_mesh) = self.meshes.remove(finished.handle) {
+            // 同一 handle 的 mesh 重新上传时，旧 geometry/BLAS 不能继续被 resolver 返回。
+            // 当前实现依赖帧开始的 FIF 等待保证立即释放不会撞上在飞命令。
             old_mesh.geometry.destroy(resource_ctx, DestroyReason::ImmediateRelease);
             old_mesh.blas.destroy(resource_ctx, device_ctx, DestroyReason::ImmediateRelease);
         }
 
         let blas_device_address = finished.blas.device_address(device_ctx);
+        // 缓存 BLAS device address，后续构建 TLAS 时无需重新查询 Vulkan handle。
         log::trace!(
             "AssetMeshUploader: mesh {:?} '{}' is GPU ready, blas_address={:#x}",
             finished.handle,

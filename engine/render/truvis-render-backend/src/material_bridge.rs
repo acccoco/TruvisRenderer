@@ -20,6 +20,7 @@ struct MaterialBinding {
 ///
 /// 它把 `AssetHub` 中的 `AssetMaterialHandle` 同步到 `MaterialManager` 的稳定 GPU slot。
 /// shader 可见材质 buffer 和 texture fallback/dirty 策略由这里委托给 `MaterialManager`。
+/// 因此 CPU scene 只需要保存 asset handle，render pass 看到的始终是稳定 slot 和 GPU buffer。
 pub struct MaterialBridge {
     material_manager: Option<MaterialManager>,
     bindings: SecondaryMap<AssetMaterialHandle, MaterialBinding>,
@@ -38,6 +39,8 @@ impl MaterialBridge {
     }
 
     pub fn sync_asset_materials(&mut self, asset_hub: &AssetHub) {
+        // AssetHub 是 CPU 资产事实来源；bridge 每帧以它为准同步新增、修改和删除。
+        // 删除不会立刻复用 slot，真正的 FIF 延迟回收由 MaterialManager 负责。
         let stale_handles: Vec<AssetMaterialHandle> = self
             .bindings
             .iter()
@@ -98,6 +101,8 @@ impl MaterialBridge {
     }
 
     pub fn update_textures(&mut self, texture_resolver: &dyn TextureResolver) {
+        // texture ready 状态属于纹理上传器，material bridge 只把 resolver 注入给 manager，
+        // 由 manager 决定哪些材质需要从 fallback/null binding 切换到真实 SRV。
         self.material_manager_mut().update(texture_resolver);
     }
 
@@ -109,6 +114,8 @@ impl MaterialBridge {
         frame_label: FrameLabel,
         texture_resolver: &dyn TextureResolver,
     ) {
+        // upload 只写当前 frame label 对应的材质 buffer，其他 FIF buffer 的 dirty 状态保留到
+        // 它们各自成为当前帧时再处理，避免跨帧 buffer 被 CPU/GPU 同时改写。
         self.material_manager_mut().upload(ctx, cmd, barrier_mask, frame_label, texture_resolver);
     }
 

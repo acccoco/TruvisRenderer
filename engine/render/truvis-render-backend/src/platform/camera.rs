@@ -1,3 +1,7 @@
+/// backend 默认相机数据结构。
+///
+/// 相机仍由 app 层持有和更新，backend 只在 `prepare` 阶段读取它生成 per-frame GPU 数据。
+/// 坐标约定为右手系、Y 轴向上，未旋转时朝向 -Z；投影矩阵的 NDC 细节保持在 `glam` 投影函数约定内。
 pub struct Camera {
     pub position: glam::Vec3,
 
@@ -12,17 +16,19 @@ pub struct Camera {
 
 // 一些常量
 impl Camera {
-    /// 相机的上参考向量
+    /// 世界空间的上方向，也是 look_to_rh 的 up 参考。
     const CAMERA_UP: glam::Vec3 = glam::Vec3::new(0.0, 1.0, 0.0);
 
-    /// YXZ 表示 Y(yaw)-X(Pitch)-Z(Roll) 的旋转顺序
+    /// YXZ 表示 Y(yaw)-X(pitch)-Z(roll) 的旋转顺序，匹配第一人称相机的控制语义。
     const CAMERA_EULER: glam::EulerRot = glam::EulerRot::YXZ;
 
-    /// 没有旋转的情况下，相机看向的是 -Z
+    /// 没有旋转的情况下，相机看向的是 -Z。
     const CAMERA_FORWAED: glam::Vec3 = glam::Vec3::new(0.0, 0.0, -1.0);
 
+    /// 没有旋转的情况下，相机右方向是 +X。
     const CAMERA_RIGHT: glam::Vec3 = glam::Vec3::new(1.0, 0.0, 0.0);
 
+    /// pitch 限制在接近正负 90 度以内，避免 look direction 与 up 向量退化。
     const K_PITCH: f32 = 89.5;
 }
 
@@ -50,7 +56,9 @@ impl Camera {
         glam::Mat4::look_to_rh(self.position, dir, Self::CAMERA_UP)
     }
 
-    /// 从 RightHand-Y-Up 的 ViewSpace 转换到 LeftHand-Y-Up 的 NDC
+    /// 生成右手系、Y-Up 的无限远透视投影矩阵。
+    ///
+    /// 调用侧应把这里当作 backend 的统一投影入口，避免在 shader/pass 中重复引入坐标修正。
     pub fn get_projection_matrix(&self) -> glam::Mat4 {
         glam::Mat4::perspective_infinite_rh(self.fov_deg_vertical.to_radians(), self.asp, self.near)
     }
@@ -83,6 +91,7 @@ impl Camera {
         self.position += self.camera_forward() * length;
     }
 
+    /// 沿当前相机局部右方向移动。
     pub fn move_right(&mut self, length: f32) {
         self.position += self.camera_right() * length;
     }
@@ -97,6 +106,7 @@ impl Camera {
     }
 
     pub fn rotate_yaw(&mut self, angle: f32) {
+        // yaw 保持在 [0, 360) 内，避免长时间运行后角度无限增长影响调试输出。
         self.euler_yaw_deg += angle;
         self.euler_yaw_deg %= 360.0;
         if self.euler_yaw_deg < 0.0 {
@@ -105,6 +115,7 @@ impl Camera {
     }
 
     pub fn rotate_pitch(&mut self, angle: f32) {
+        // pitch 不允许跨过正负 90 度，保持 camera_up 与 view direction 的关系稳定。
         self.euler_pitch_deg += angle;
         self.euler_pitch_deg = self.euler_pitch_deg.clamp(-Self::K_PITCH, Self::K_PITCH);
     }
