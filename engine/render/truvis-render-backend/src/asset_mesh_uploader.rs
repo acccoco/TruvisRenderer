@@ -9,8 +9,8 @@ use slotmap::SecondaryMap;
 use crate::render_scene::geometry::RtGeometry;
 use crate::render_scene::render_data::MeshRenderData;
 use crate::scene_bridge::MeshRenderResolver;
-use truvis_asset::asset_hub::LoadedAssetEvent;
-use truvis_asset::handle::{AssetMeshHandle, LoadedMeshData};
+use truvis_asset::asset_hub::AssetLoadedEvent;
+use truvis_asset::handle::{AssetMeshHandle, MeshData};
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::command_pool::GfxCommandPool;
@@ -94,7 +94,7 @@ impl MeshUploadManager {
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
         handle: AssetMeshHandle,
-        data: LoadedMeshData,
+        data: MeshData,
     ) -> Result<()> {
         let _span = tracy_client::span!("MeshUploadManager::submit_mesh_upload");
         Self::validate_mesh_data(&data)?;
@@ -306,7 +306,7 @@ impl MeshUploadManager {
     ///
     /// 当前后端按三角形索引构建 BLAS，并要求 SoA 顶点属性一一对应；这里提前失败，
     /// 避免创建部分 GPU 资源后再在 Vulkan build 阶段暴露难定位的问题。
-    fn validate_mesh_data(data: &LoadedMeshData) -> Result<()> {
+    fn validate_mesh_data(data: &MeshData) -> Result<()> {
         let vertex_count = data.positions.len();
         if vertex_count == 0 {
             bail!("mesh '{}' has no vertices", data.name);
@@ -326,7 +326,7 @@ impl MeshUploadManager {
     fn create_vertex_stage_buffer(
         resource_ctx: GfxResourceCtx<'_>,
         vertex_count: usize,
-        data: &LoadedMeshData,
+        data: &MeshData,
         debug_name: impl AsRef<str>,
     ) -> GfxBuffer {
         let total_size = VertexLayoutSoA3D::buffer_size(vertex_count) as vk::DeviceSize;
@@ -416,7 +416,7 @@ impl AssetMeshUploader {
     /// 可见的 `meshes` map，因此 instance bridge 会继续把依赖它的实例保持为 pending。
     pub fn update(
         &mut self,
-        events: Vec<LoadedAssetEvent>,
+        events: Vec<AssetLoadedEvent>,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
@@ -424,7 +424,7 @@ impl AssetMeshUploader {
         let _span = tracy_client::span!("AssetMeshUploader::update");
 
         for event in events {
-            if let LoadedAssetEvent::MeshLoaded { handle, data } = event {
+            if let AssetLoadedEvent::MeshLoaded { handle, data } = event {
                 // AssetUploadStage 已经把事件按类型分流；这里仍保持宽松匹配，便于调用侧
                 // 未来传入空列表或过滤后的列表时不需要额外包装。
                 if let Err(err) = self.uploader.submit_mesh_upload(resource_ctx, device_ctx, queue_ctx, handle, data) {

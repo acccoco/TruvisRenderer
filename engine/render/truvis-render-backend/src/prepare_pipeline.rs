@@ -1,6 +1,6 @@
 use ash::vk;
 
-use truvis_asset::asset_hub::{AssetHub, LoadedAssetEvent};
+use truvis_asset::asset_hub::{AssetHub, AssetLoadedEvent};
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -43,16 +43,16 @@ impl AssetUploadStage {
             // 事件分流集中在这里，避免 RenderBackend 生命周期入口直接知道每种 asset
             // 对应的 uploader 细节，也让 uploader 可以用更窄的事件集合维护自身契约。
             match event {
-                event @ (LoadedAssetEvent::TextureLoaded { .. } | LoadedAssetEvent::TextureFailed { .. }) => {
+                event @ (AssetLoadedEvent::TextureLoaded { .. } | AssetLoadedEvent::TextureFailed { .. }) => {
                     texture_events.push(event);
                 }
-                event @ LoadedAssetEvent::MeshLoaded { .. } => {
+                event @ AssetLoadedEvent::MeshLoaded { .. } => {
                     mesh_events.push(event);
                 }
-                LoadedAssetEvent::SceneLoaded { handle } => {
+                AssetLoadedEvent::SceneLoaded { handle } => {
                     log::debug!("Scene asset {:?} CPU data is ready", handle);
                 }
-                LoadedAssetEvent::SceneFailed { handle, error } => {
+                AssetLoadedEvent::SceneFailed { handle, error } => {
                     log::error!("Scene asset {:?} failed to load: {}", handle, error);
                 }
             }

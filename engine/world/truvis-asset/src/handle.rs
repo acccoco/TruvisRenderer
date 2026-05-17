@@ -16,9 +16,9 @@ new_key_type! {
 new_key_type! {
     /// mesh 内容资产身份。
     ///
-    /// 该 handle 指向 `AssetHub` 内的 CPU mesh 数据。渲染侧会用它建立
-    /// vertex/index buffer 与 BLAS 映射，但这些 GPU 资源的生命周期和 ready
-    /// 状态不由 asset 层维护。
+    /// 该 handle 由 `AssetHub` 按 key 去重后分配。mesh CPU 数据只通过
+    /// `AssetLoadedEvent::MeshLoaded` 一次性交给渲染侧上传器，asset 层只维护
+    /// 内容身份和 CPU 加载状态，不保存可查询的 mesh 数据副本。
     pub struct AssetMeshHandle;
 }
 
@@ -47,7 +47,7 @@ new_key_type! {
 /// `source_path` 使用调用方传入或导入结果保留的路径表达；这里不做文件系统
 /// canonicalize，因此调用方需要在入口处维持一致的路径策略。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MeshAssetKey {
+pub struct AssetMeshKey {
     pub source_path: PathBuf,
     pub mesh_index: u32,
 }
@@ -61,7 +61,7 @@ pub struct MeshAssetKey {
 /// 与 mesh key 一样，`source_path` 是词法路径身份的一部分；不同路径写法会被视为
 /// 不同导入源。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MaterialAssetKey {
+pub struct AssetMaterialKey {
     pub source_path: PathBuf,
     pub material_index: u32,
 }
@@ -74,7 +74,7 @@ pub struct MaterialAssetKey {
 /// `source_path` 是 scene 去重 key 的完整内容，`AssetHub::load_scene` 不会在这里
 /// 解析 symlink 或访问文件系统做 canonicalize。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SceneAssetKey {
+pub struct AssetSceneKey {
     pub source_path: PathBuf,
 }
 
@@ -85,10 +85,10 @@ pub struct SceneAssetKey {
 /// image、image view 或 bindless descriptor。
 ///
 /// 与 mesh / material / scene 不同，当前纹理 bytes 只通过
-/// `LoadedAssetEvent::TextureLoaded` 交给 uploader，`AssetHub` 本身只保存路径和
+/// `AssetLoadedEvent::TextureLoaded` 交给 uploader，`AssetHub` 本身只保存路径和
 /// CPU 加载状态。
 #[derive(Debug)]
-pub struct LoadedTextureBytes {
+pub struct TextureBytes {
     pub pixels: Vec<u8>,
     pub extent: vk::Extent3D,
     pub format: vk::Format,
@@ -103,7 +103,7 @@ pub struct LoadedTextureBytes {
 /// 调用方应保持顶点属性数组长度一致，`indices` 使用 `u32` 索引。asset 层不在
 /// 注册时重建或修复几何拓扑。
 #[derive(Debug, Clone, PartialEq)]
-pub struct LoadedMeshData {
+pub struct MeshData {
     pub positions: Vec<glam::Vec3>,
     pub normals: Vec<glam::Vec3>,
     pub tangents: Vec<glam::Vec3>,
@@ -121,7 +121,7 @@ pub struct LoadedMeshData {
 /// 材质本身 `Ready` 只表示这些 CPU 参数已经可读取。引用的 texture 是否存在真实
 /// SRV 需要渲染侧通过 texture resolver 再检查。
 #[derive(Debug, Clone, PartialEq)]
-pub struct LoadedMaterialData {
+pub struct MaterialData {
     pub base_color: glam::Vec4,
     pub emissive: glam::Vec4,
     pub metallic: f32,
@@ -139,7 +139,7 @@ pub struct LoadedMaterialData {
 /// `SceneManager::spawn_scene_asset`。这里不拥有 live `InstanceHandle`，也不表达
 /// GPU instance slot。
 #[derive(Debug, Clone, PartialEq)]
-pub struct LoadedSceneInstanceData {
+pub struct SceneInstanceData {
     pub mesh: AssetMeshHandle,
     pub materials: Vec<AssetMaterialHandle>,
     pub transform: glam::Mat4,
@@ -150,14 +150,14 @@ pub struct LoadedSceneInstanceData {
 ///
 /// 它保存导入结果的 mesh、material 和 instance 引用关系，是 asset 层交给
 /// scene 层的 prefab 数据。多个 runtime scene instance 可以共享同一个
-/// `LoadedSceneData` 中的 asset handle。
+/// `SceneData` 中的 asset handle。
 #[derive(Debug, Clone, PartialEq)]
-pub struct LoadedSceneData {
+pub struct SceneData {
     pub source_path: PathBuf,
     pub name: String,
     pub meshes: Vec<AssetMeshHandle>,
     pub materials: Vec<AssetMaterialHandle>,
-    pub instances: Vec<LoadedSceneInstanceData>,
+    pub instances: Vec<SceneInstanceData>,
 }
 
 /// 后台 Assimp task 产出的 owned material CPU 数据。
@@ -166,7 +166,7 @@ pub struct LoadedSceneData {
 /// `AssetHub::update()` 在 render/world 侧收敛任务结果后统一解析相对路径、
 /// 分配 texture handle，并维持路径去重表。
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RawLoadedMaterialData {
+pub(crate) struct RawMaterialData {
     pub base_color: glam::Vec4,
     pub emissive: glam::Vec4,
     pub metallic: f32,
@@ -182,7 +182,7 @@ pub(crate) struct RawLoadedMaterialData {
 /// 仍使用导入源内的 mesh/material index，稍后由 `AssetHub` 转换成稳定
 /// asset handle，避免把半成品 handle 分配逻辑放入 FFI copy 任务。
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RawLoadedSceneInstanceData {
+pub(crate) struct RawSceneInstanceData {
     pub mesh_index: u32,
     pub material_indices: Vec<u32>,
     pub transform: glam::Mat4,
@@ -194,12 +194,12 @@ pub(crate) struct RawLoadedSceneInstanceData {
 /// 这里不保存任何 C++ handle 或 raw pointer。Assimp / C++ scene 的生命周期
 /// 被限制在后台 task 内，`truvixx_scene_free` 已经在返回该结构前完成。
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RawLoadedSceneData {
+pub(crate) struct RawSceneData {
     pub source_path: PathBuf,
     pub name: String,
-    pub meshes: Vec<LoadedMeshData>,
-    pub materials: Vec<RawLoadedMaterialData>,
-    pub instances: Vec<RawLoadedSceneInstanceData>,
+    pub meshes: Vec<MeshData>,
+    pub materials: Vec<RawMaterialData>,
+    pub instances: Vec<RawSceneInstanceData>,
 }
 
 /// asset 层的 CPU 加载状态机。

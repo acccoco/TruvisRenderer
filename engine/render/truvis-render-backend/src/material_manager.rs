@@ -4,7 +4,7 @@ use ash::vk;
 use slotmap::SlotMap;
 use slotmap::new_key_type;
 
-use truvis_asset::handle::{AssetTextureHandle, LoadedMaterialData};
+use truvis_asset::handle::{AssetTextureHandle, MaterialData};
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
@@ -16,10 +16,10 @@ use truvis_render_interface::pipeline_settings::FrameLabel;
 use truvis_shader_binding::gpu;
 
 new_key_type! {
-    /// backend 私有的 material manager handle。
+    /// backend 私有的 GPU material handle。
     ///
     /// 它与 `AssetMaterialHandle` 分离，用于保持 shader 可见 material slot 的稳定性。
-    pub struct ManagedMaterialHandle;
+    pub struct GpuMaterialHandle;
 }
 
 /// MaterialManager 使用的 CPU 侧材质参数。
@@ -37,8 +37,8 @@ pub struct ManagedMaterialParams {
     pub normal_texture: Option<AssetTextureHandle>,
 }
 
-impl From<&LoadedMaterialData> for ManagedMaterialParams {
-    fn from(mat: &LoadedMaterialData) -> Self {
+impl From<&MaterialData> for ManagedMaterialParams {
+    fn from(mat: &MaterialData) -> Self {
         Self {
             base_color: mat.base_color,
             emissive: mat.emissive,
@@ -163,8 +163,8 @@ impl MaterialBuffers {
 /// texture 异步加载过程中使用占位数据（null texture），就绪后自动标记 dirty 并更新到 GPU。
 /// GPU 端始终有合法数据可用。
 pub struct MaterialManager {
-    /// 核心映射：ManagedMaterialHandle -> shader 可见 material buffer slot。
-    handle_to_slot: SlotMap<ManagedMaterialHandle, usize>,
+    /// 核心映射：GpuMaterialHandle -> shader 可见 material buffer slot。
+    handle_to_slot: SlotMap<GpuMaterialHandle, usize>,
 
     /// slot 数据：index = GPU buffer 中的位置；None 表示已 unregister、等待延迟回收。
     slots: Vec<Option<ManagedMaterialParams>>,
@@ -176,7 +176,7 @@ pub struct MaterialManager {
     dirty_slots: HashMap<usize, SlotDirtyInfo>,
 
     /// 等待 texture 就绪的材质 handle；ready 后会重新 dirty 所有 FIF buffer。
-    pending_texture_ready: HashSet<ManagedMaterialHandle>,
+    pending_texture_ready: HashSet<GpuMaterialHandle>,
 
     /// FIF 套 GPU buffer，避免 CPU 覆盖 GPU 仍在读取的 material buffer。
     buffers: [MaterialBuffers; FrameCounter::fif_count()],
@@ -221,7 +221,7 @@ impl MaterialManager {
     /// 注册新材质，分配稳定的 GPU slot
     ///
     /// 返回的 handle 在材质整个生命周期内保持不变，对应的 slot 索引也是稳定的。
-    pub fn register(&mut self, params: ManagedMaterialParams) -> ManagedMaterialHandle {
+    pub fn register(&mut self, params: ManagedMaterialParams) -> GpuMaterialHandle {
         let slot = self.free_slots.pop().expect("MaterialManager: slots exhausted");
         let handle = self.handle_to_slot.insert(slot);
 
@@ -247,7 +247,7 @@ impl MaterialManager {
     /// 更新已注册材质的参数
     ///
     /// 会标记所有 FIF buffer 为 dirty，后续帧会逐个更新。
-    pub fn update_params(&mut self, handle: ManagedMaterialHandle, params: ManagedMaterialParams) {
+    pub fn update_params(&mut self, handle: GpuMaterialHandle, params: ManagedMaterialParams) {
         let &slot = self.handle_to_slot.get(handle).expect("MaterialManager: invalid handle");
 
         let has_textures = params.diffuse_texture.is_some() || params.normal_texture.is_some();
@@ -278,7 +278,7 @@ impl MaterialManager {
     ///
     /// slot 内容不再上传，但 slot index 会继续保留至少 `FIF_COUNT` 帧，避免在飞命令仍用旧 index
     /// 访问 material buffer 时被新材质复用。
-    pub fn unregister(&mut self, handle: ManagedMaterialHandle) {
+    pub fn unregister(&mut self, handle: GpuMaterialHandle) {
         let slot = self.handle_to_slot.remove(handle).expect("MaterialManager: invalid handle");
 
         self.slots[slot] = None;
@@ -315,7 +315,7 @@ impl MaterialManager {
     pub fn update(&mut self, texture_resolver: &dyn TextureResolver) {
         let frame_id = self.frame_token.frame_id();
 
-        let now_ready: Vec<ManagedMaterialHandle> = self
+        let now_ready: Vec<GpuMaterialHandle> = self
             .pending_texture_ready
             .iter()
             .copied()
@@ -439,7 +439,7 @@ impl MaterialManager {
 impl MaterialManager {
     /// 获取材质在 GPU buffer 中的 slot index
     #[inline]
-    pub fn get_slot_index(&self, handle: ManagedMaterialHandle) -> Option<usize> {
+    pub fn get_slot_index(&self, handle: GpuMaterialHandle) -> Option<usize> {
         self.handle_to_slot.get(handle).copied()
     }
 

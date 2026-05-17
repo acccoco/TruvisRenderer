@@ -8,14 +8,14 @@ use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_render_interface::frame_counter::FrameToken;
 use truvis_render_interface::pipeline_settings::FrameLabel;
 
-use crate::material_manager::{ManagedMaterialHandle, ManagedMaterialParams, MaterialManager, TextureResolver};
+use crate::material_manager::{GpuMaterialHandle, ManagedMaterialParams, MaterialManager, TextureResolver};
 use crate::scene_bridge::MaterialSlotResolver;
 
-/// asset material 到 manager-owned material 的桥接记录。
+/// asset material 到 GPU material handle 的桥接记录。
 ///
 /// `params` 缓存上一次同步的 CPU 材质参数，用于每帧和 `AssetHub` 比较并决定是否 dirty。
 struct MaterialBinding {
-    managed_handle: ManagedMaterialHandle,
+    gpu_handle: GpuMaterialHandle,
     params: ManagedMaterialParams,
 }
 
@@ -48,7 +48,7 @@ impl MaterialBridge {
     /// 以 `AssetHub` 为 CPU 事实来源，同步 asset material 到稳定 GPU material slot。
     ///
     /// 新增 material 会注册到 `MaterialManager`，参数变化会标记 dirty，删除则交给 manager
-    /// 做 FIF 延迟回收。CPU scene 仍只保存 `AssetMaterialHandle`，不感知 managed handle。
+    /// 做 FIF 延迟回收。CPU scene 仍只保存 `AssetMaterialHandle`，不感知 GPU handle。
     pub fn sync_asset_materials(&mut self, asset_hub: &AssetHub) {
         // AssetHub 是 CPU 资产事实来源；bridge 每帧以它为准同步新增、修改和删除。
         // 删除不会立刻复用 slot，真正的 FIF 延迟回收由 MaterialManager 负责。
@@ -60,55 +60,51 @@ impl MaterialBridge {
 
         for handle in stale_handles {
             let binding = self.bindings.remove(handle).expect("stale material binding missing");
-            let slot = self.material_manager().get_slot_index(binding.managed_handle);
-            self.material_manager_mut().unregister(binding.managed_handle);
+            let slot = self.material_manager().get_slot_index(binding.gpu_handle);
+            self.material_manager_mut().unregister(binding.gpu_handle);
             log::debug!(
-                "MaterialBridge: unregister asset_handle={:?} managed_handle={:?} slot={:?}; reclaim delayed by FIF",
+                "MaterialBridge: unregister asset_handle={:?} gpu_handle={:?} slot={:?}; reclaim delayed by FIF",
                 handle,
-                binding.managed_handle,
+                binding.gpu_handle,
                 slot
             );
         }
 
         for (handle, mat) in asset_hub.iter_materials() {
             let params = ManagedMaterialParams::from(mat);
-            let mut changed_managed_handle = None;
+            let mut changed_gpu_handle = None;
 
             if let Some(binding) = self.bindings.get_mut(handle) {
                 // asset material handle 保持不变时，只要 CPU 参数变化，就保留原 stable slot
-                // 并把对应 managed material 标记为 dirty。
+                // 并把对应 GPU material 标记为 dirty。
                 if binding.params != params {
                     binding.params = params.clone();
-                    changed_managed_handle = Some(binding.managed_handle);
+                    changed_gpu_handle = Some(binding.gpu_handle);
                 }
             } else {
-                // 新 asset material 进入 render-side 后拿到独立 managed handle 和稳定 GPU slot。
+                // 新 asset material 进入 render-side 后拿到独立 GPU handle 和稳定 GPU slot。
                 // 这个 slot 会被 instance bridge 解析进 RenderData。
-                let managed_handle = self.material_manager_mut().register(params.clone());
-                let slot = self
-                    .material_manager()
-                    .get_slot_index(managed_handle)
-                    .expect("registered material must have a slot");
-                self.bindings.insert(handle, MaterialBinding { managed_handle, params });
+                let gpu_handle = self.material_manager_mut().register(params.clone());
+                let slot =
+                    self.material_manager().get_slot_index(gpu_handle).expect("registered material must have a slot");
+                self.bindings.insert(handle, MaterialBinding { gpu_handle, params });
                 log::trace!(
-                    "MaterialBridge: register asset_handle={:?} managed_handle={:?} stable_slot={}",
+                    "MaterialBridge: register asset_handle={:?} gpu_handle={:?} stable_slot={}",
                     handle,
-                    managed_handle,
+                    gpu_handle,
                     slot
                 );
                 continue;
             }
 
-            if let Some(managed_handle) = changed_managed_handle {
-                let slot = self
-                    .material_manager()
-                    .get_slot_index(managed_handle)
-                    .expect("updated material must keep its slot");
-                self.material_manager_mut().update_params(managed_handle, params);
+            if let Some(gpu_handle) = changed_gpu_handle {
+                let slot =
+                    self.material_manager().get_slot_index(gpu_handle).expect("updated material must keep its slot");
+                self.material_manager_mut().update_params(gpu_handle, params);
                 log::debug!(
-                    "MaterialBridge: update asset_handle={:?} managed_handle={:?} stable_slot={}; dirty all FIF buffers",
+                    "MaterialBridge: update asset_handle={:?} gpu_handle={:?} stable_slot={}; dirty all FIF buffers",
                     handle,
-                    managed_handle,
+                    gpu_handle,
                     slot
                 );
             }
@@ -118,7 +114,7 @@ impl MaterialBridge {
     /// 根据纹理上传器的 ready 状态更新材质 dirty 标记。
     ///
     /// 当材质引用的贴图从 fallback/null 变成真实 SRV 时，MaterialManager 会把所有 FIF buffer
-    /// 标记为 dirty，让每个在飞帧对应的 material buffer 都逐步更新。
+    /// 标记为 dirty，让每个在flight-frame对应的 material buffer 都逐步更新。
     pub fn update_textures(&mut self, texture_resolver: &dyn TextureResolver) {
         // texture ready 状态属于纹理上传器，material bridge 只把 resolver 注入给 manager，
         // 由 manager 决定哪些材质需要从 fallback/null binding 切换到真实 SRV。
@@ -149,7 +145,7 @@ impl MaterialBridge {
         self.material_manager().material_buffer_device_address(frame_label)
     }
 
-    /// 销毁 material GPU buffer 并清空 asset 到 managed material 的映射。
+    /// 销毁 material GPU buffer 并清空 asset 到 GPU material handle 的映射。
     pub fn destroy(&mut self, ctx: GfxResourceCtx<'_>) {
         if let Some(material_manager) = self.material_manager.take() {
             material_manager.destroy(ctx);
@@ -171,7 +167,7 @@ impl MaterialSlotResolver for MaterialBridge {
         // resolver 是 InstanceBridge 能看到的唯一 material 接口；找不到 binding 表示
         // CPU scene 仍引用了未加载或已删除的 material，实例应保持 pending。
         let binding = self.bindings.get(handle)?;
-        let slot = self.material_manager().get_slot_index(binding.managed_handle)?;
+        let slot = self.material_manager().get_slot_index(binding.gpu_handle)?;
         u32::try_from(slot).ok()
     }
 }

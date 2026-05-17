@@ -5,43 +5,26 @@ use slotmap::SlotMap;
 
 use crate::asset_loader::{AssetLoader, LoadResult, SceneLoadRequest, TextureLoadRequest};
 use crate::handle::{
-    AssetMaterialHandle, AssetMeshHandle, AssetSceneHandle, AssetTextureHandle, LoadStatus, LoadedMaterialData,
-    LoadedMeshData, LoadedSceneData, LoadedSceneInstanceData, LoadedTextureBytes, MaterialAssetKey, MeshAssetKey,
-    RawLoadedMaterialData, RawLoadedSceneData, SceneAssetKey,
+    AssetMaterialHandle, AssetMaterialKey, AssetMeshHandle, AssetMeshKey, AssetSceneHandle, AssetSceneKey,
+    AssetTextureHandle, LoadStatus, MaterialData, MeshData, RawMaterialData, RawSceneData, SceneData,
+    SceneInstanceData, TextureBytes,
 };
-
-/// `AssetHub` 内部的 texture 记录。
-///
-/// 记录只保存 CPU 加载状态；路径身份由 `path_to_texture` 去重表维护，GPU
-/// image/view/bindless 绑定由 render-side `AssetTextureUploader` 持有。
-pub(crate) struct TextureAssetRecord {
-    pub(crate) status: LoadStatus,
-}
-
-/// `AssetHub` 内部的 mesh 记录。
-///
-/// `data` 是上传友好的 CPU mesh 数据，后续是否已经上传到 GPU buffer 或构建 BLAS
-/// 不在该记录中表达。
-pub(crate) struct MeshAssetRecord {
-    pub(crate) status: LoadStatus,
-    pub(crate) data: LoadedMeshData,
-}
 
 /// `AssetHub` 内部的 material 记录。
 ///
 /// 这里的 material 是内容资产身份和 CPU 参数，不是渲染后端的稳定 material slot。
-pub(crate) struct MaterialAssetRecord {
+pub(crate) struct AssetMaterialRecord {
     pub(crate) status: LoadStatus,
-    pub(crate) data: LoadedMaterialData,
+    pub(crate) data: MaterialData,
 }
 
 /// `AssetHub` 内部的 scene / prefab 记录。
 ///
 /// `data` 在后台导入完成并完成内部 mesh/material handle 映射后才会填入。
 /// runtime instance 由 scene 层根据该 prefab 数据显式 spawn。
-pub(crate) struct SceneAssetRecord {
+pub(crate) struct AssetSceneRecord {
     pub(crate) status: LoadStatus,
-    pub(crate) data: Option<LoadedSceneData>,
+    pub(crate) data: Option<SceneData>,
 }
 
 /// asset 层向外发布的 CPU ready 事件。
@@ -49,7 +32,7 @@ pub(crate) struct SceneAssetRecord {
 /// 渲染后端消费 texture / mesh 事件继续做 GPU 上传；scene 事件表示 prefab CPU
 /// 数据已经可被 `SceneManager` 查询并 spawn。失败事件只描述 CPU 加载或导入失败。
 #[derive(Debug)]
-pub enum LoadedAssetEvent {
+pub enum AssetLoadedEvent {
     /// 纹理文件已经完成 CPU 解码。
     ///
     /// 事件携带一次性的 upload-ready bytes，预期由 render backend 的
@@ -57,7 +40,7 @@ pub enum LoadedAssetEvent {
     /// `AssetHub` 不保留这份像素数据。
     TextureLoaded {
         handle: AssetTextureHandle,
-        data: LoadedTextureBytes,
+        data: TextureBytes,
     },
     /// 纹理 CPU 加载或解码失败。
     ///
@@ -67,10 +50,7 @@ pub enum LoadedAssetEvent {
     ///
     /// 事件通常来自 scene 导入或显式 `register_mesh_data`。消费方需要继续创建
     /// vertex/index buffer，并在需要 ray tracing 时构建 BLAS。
-    MeshLoaded {
-        handle: AssetMeshHandle,
-        data: LoadedMeshData,
-    },
+    MeshLoaded { handle: AssetMeshHandle, data: MeshData },
     /// scene / prefab 的 CPU 数据已经写入 `AssetHub`。
     ///
     /// 这只表示 `get_scene_data` 可以取得 prefab 数据；live runtime instance 仍需由
@@ -88,17 +68,17 @@ pub enum LoadedAssetEvent {
 /// CPU 加载状态和后台任务结果汇聚。它不创建 GPU 资源，也不保存 runtime scene
 /// instance；这些职责分别属于 render backend uploader / bridge 和 `SceneManager`。
 pub struct AssetHub {
-    textures: SlotMap<AssetTextureHandle, TextureAssetRecord>,
-    meshes: SlotMap<AssetMeshHandle, MeshAssetRecord>,
-    materials: SlotMap<AssetMaterialHandle, MaterialAssetRecord>,
-    scenes: SlotMap<AssetSceneHandle, SceneAssetRecord>,
+    textures: SlotMap<AssetTextureHandle, LoadStatus>,
+    meshes: SlotMap<AssetMeshHandle, LoadStatus>,
+    materials: SlotMap<AssetMaterialHandle, AssetMaterialRecord>,
+    scenes: SlotMap<AssetSceneHandle, AssetSceneRecord>,
 
     path_to_texture: HashMap<PathBuf, AssetTextureHandle>,
-    key_to_mesh: HashMap<MeshAssetKey, AssetMeshHandle>,
-    key_to_material: HashMap<MaterialAssetKey, AssetMaterialHandle>,
-    key_to_scene: HashMap<SceneAssetKey, AssetSceneHandle>,
+    key_to_mesh: HashMap<AssetMeshKey, AssetMeshHandle>,
+    key_to_material: HashMap<AssetMaterialKey, AssetMaterialHandle>,
+    key_to_scene: HashMap<AssetSceneKey, AssetSceneHandle>,
 
-    pending_events: VecDeque<LoadedAssetEvent>,
+    pending_events: VecDeque<AssetLoadedEvent>,
 
     loader: AssetLoader,
 }
@@ -154,9 +134,7 @@ impl AssetHub {
             return handle;
         }
 
-        let handle = self.textures.insert(TextureAssetRecord {
-            status: LoadStatus::Loading,
-        });
+        let handle = self.textures.insert(LoadStatus::Loading);
         self.path_to_texture.insert(path.clone(), handle);
 
         log::info!("Request load texture: {:?}", path);
@@ -172,14 +150,14 @@ impl AssetHub {
     /// runtime instance 需要在 scene ready 后由 `SceneManager` 显式 spawn。
     pub fn load_scene(&mut self, path: PathBuf) -> AssetSceneHandle {
         let _span = tracy_client::span!("AssetHub::load_scene");
-        let key = SceneAssetKey {
+        let key = AssetSceneKey {
             source_path: path.clone(),
         };
         if let Some(&handle) = self.key_to_scene.get(&key) {
             return handle;
         }
 
-        let handle = self.scenes.insert(SceneAssetRecord {
+        let handle = self.scenes.insert(AssetSceneRecord {
             status: LoadStatus::Loading,
             data: None,
         });
@@ -195,7 +173,7 @@ impl AssetHub {
     ///
     /// 这通常用于导入器已经复制完 owned mesh 数据的场景。同一个 key 只会产出一次
     /// `MeshLoaded` 事件；事件被渲染后端消费后才会进入 GPU 上传和 BLAS 构建流程。
-    pub fn register_mesh_data(&mut self, key: MeshAssetKey, data: LoadedMeshData) -> AssetMeshHandle {
+    pub fn register_mesh_data(&mut self, key: AssetMeshKey, data: MeshData) -> AssetMeshHandle {
         let _span = tracy_client::span!("AssetHub::register_mesh_data");
         let (handle, event) = self.register_mesh_data_inner(key, data);
         if let Some(event) = event {
@@ -208,7 +186,7 @@ impl AssetHub {
     ///
     /// GPU material slot 由 render-side `MaterialBridge` 分配，`AssetHub` 只保存内容身份、
     /// 参数和 texture handle 引用。
-    pub fn register_material_data(&mut self, key: MaterialAssetKey, data: LoadedMaterialData) -> AssetMaterialHandle {
+    pub fn register_material_data(&mut self, key: AssetMaterialKey, data: MaterialData) -> AssetMaterialHandle {
         let _span = tracy_client::span!("AssetHub::register_material_data");
         self.register_material_data_inner(key, data)
     }
@@ -221,7 +199,7 @@ impl AssetHub {
     ///
     /// 调用方通常每帧调用一次，并按事件类型分发给 texture uploader、mesh uploader
     /// 或 scene 层。返回后的事件队列已经被消费，`AssetHub` 不会再次重放同一事件。
-    pub fn update(&mut self) -> Vec<LoadedAssetEvent> {
+    pub fn update(&mut self) -> Vec<AssetLoadedEvent> {
         let _span = tracy_client::span!("AssetHub::update");
         let mut events = Vec::new();
 
@@ -232,33 +210,33 @@ impl AssetHub {
         while let Some(result) = self.loader.try_recv_result() {
             match result {
                 LoadResult::TextureSuccess { handle, data } => {
-                    if let Some(record) = self.textures.get_mut(handle) {
-                        record.status = LoadStatus::Ready;
+                    if let Some(status) = self.textures.get_mut(handle) {
+                        *status = LoadStatus::Ready;
                     }
 
-                    events.push(LoadedAssetEvent::TextureLoaded { handle, data });
+                    events.push(AssetLoadedEvent::TextureLoaded { handle, data });
                 }
                 LoadResult::TextureFailure(handle, error) => {
-                    if let Some(record) = self.textures.get_mut(handle) {
-                        record.status = LoadStatus::Failed;
+                    if let Some(status) = self.textures.get_mut(handle) {
+                        *status = LoadStatus::Failed;
                     }
 
-                    events.push(LoadedAssetEvent::TextureFailed { handle, error });
+                    events.push(AssetLoadedEvent::TextureFailed { handle, error });
                 }
-                LoadResult::SceneSuccess { handle, data } => match self.ingest_loaded_scene(data) {
+                LoadResult::SceneSuccess { handle, data } => match self.register_loaded_scene(data) {
                     Ok((scene_data, mut scene_events)) => {
                         if let Some(record) = self.scenes.get_mut(handle) {
                             record.status = LoadStatus::Ready;
                             record.data = Some(scene_data);
                         }
                         events.append(&mut scene_events);
-                        events.push(LoadedAssetEvent::SceneLoaded { handle });
+                        events.push(AssetLoadedEvent::SceneLoaded { handle });
                     }
                     Err(error) => {
                         if let Some(record) = self.scenes.get_mut(handle) {
                             record.status = LoadStatus::Failed;
                         }
-                        events.push(LoadedAssetEvent::SceneFailed { handle, error });
+                        events.push(AssetLoadedEvent::SceneFailed { handle, error });
                     }
                 },
                 LoadResult::SceneFailure(handle, error) => {
@@ -266,7 +244,7 @@ impl AssetHub {
                         record.status = LoadStatus::Failed;
                     }
 
-                    events.push(LoadedAssetEvent::SceneFailed { handle, error });
+                    events.push(AssetLoadedEvent::SceneFailed { handle, error });
                 }
             }
         }
@@ -282,14 +260,14 @@ impl AssetHub {
     /// 无效或已不属于当前 `AssetHub` 的 handle 会返回 `Failed`。调用方如果需要区分
     /// “加载失败”和“handle 不存在”，应先通过路径/key 查询确认 handle 身份。
     pub fn get_status(&self, handle: AssetTextureHandle) -> LoadStatus {
-        self.textures.get(handle).map(|record| record.status).unwrap_or(LoadStatus::Failed)
+        self.textures.get(handle).copied().unwrap_or(LoadStatus::Failed)
     }
 
     /// 查询 mesh CPU 加载状态。
     ///
-    /// 无效 handle 返回 `Failed`；`Ready` 只表示 CPU mesh data 已在 asset 层可用。
+    /// 无效 handle 返回 `Failed`；`Ready` 只表示 CPU mesh data 已经注册并发出过上传事件。
     pub fn get_mesh_status(&self, handle: AssetMeshHandle) -> LoadStatus {
-        self.meshes.get(handle).map(|record| record.status).unwrap_or(LoadStatus::Failed)
+        self.meshes.get(handle).copied().unwrap_or(LoadStatus::Failed)
     }
 
     /// 查询 material CPU 加载状态。
@@ -316,14 +294,14 @@ impl AssetHub {
     /// 按 mesh key 查询已分配 handle。
     ///
     /// 只有先前通过 scene 导入或 `register_mesh_data` 注册过的 key 才会命中。
-    pub fn mesh_handle_by_key(&self, key: &MeshAssetKey) -> Option<AssetMeshHandle> {
+    pub fn mesh_handle_by_key(&self, key: &AssetMeshKey) -> Option<AssetMeshHandle> {
         self.key_to_mesh.get(key).copied()
     }
 
     /// 按 material key 查询已分配 handle。
     ///
     /// 该查询不触发加载，也不检查对应 texture handle 的 GPU ready 状态。
-    pub fn material_handle_by_key(&self, key: &MaterialAssetKey) -> Option<AssetMaterialHandle> {
+    pub fn material_handle_by_key(&self, key: &AssetMaterialKey) -> Option<AssetMaterialHandle> {
         self.key_to_material.get(key).copied()
     }
 
@@ -331,7 +309,7 @@ impl AssetHub {
     ///
     /// 查询只反映 `AssetHub` 的去重表；返回 handle 后仍需通过 `get_scene_status`
     /// 或 `get_scene_data` 判断 CPU 数据是否可用。
-    pub fn scene_handle_by_key(&self, key: &SceneAssetKey) -> Option<AssetSceneHandle> {
+    pub fn scene_handle_by_key(&self, key: &AssetSceneKey) -> Option<AssetSceneHandle> {
         self.key_to_scene.get(key).copied()
     }
 
@@ -339,23 +317,15 @@ impl AssetHub {
     ///
     /// 返回 `None` 表示 handle 无效或 material 尚未注册。返回的数据仍可能引用尚未
     /// CPU/GPU ready 的 texture handle。
-    pub fn get_material_data(&self, handle: AssetMaterialHandle) -> Option<&LoadedMaterialData> {
+    pub fn get_material_data(&self, handle: AssetMaterialHandle) -> Option<&MaterialData> {
         self.materials.get(handle).map(|record| &record.data)
-    }
-
-    /// 获取 CPU mesh 数据。
-    ///
-    /// 返回 `None` 表示 handle 无效或 mesh 尚未注册。返回的数据仍只是 upload-ready
-    /// CPU 几何数据，不表示 vertex/index buffer 或 BLAS 已经可用。
-    pub fn get_mesh_data(&self, handle: AssetMeshHandle) -> Option<&LoadedMeshData> {
-        self.meshes.get(handle).map(|record| &record.data)
     }
 
     /// 获取 scene / prefab CPU 数据。
     ///
     /// 只有 scene 导入并经过 `update()` 写回后才会返回 `Some`。调用方不应把返回数据
     /// 当作 live scene；需要交给 `SceneManager` spawn。
-    pub fn get_scene_data(&self, handle: AssetSceneHandle) -> Option<&LoadedSceneData> {
+    pub fn get_scene_data(&self, handle: AssetSceneHandle) -> Option<&SceneData> {
         self.scenes.get(handle).and_then(|record| record.data.as_ref())
     }
 
@@ -363,7 +333,7 @@ impl AssetHub {
     ///
     /// render-side `MaterialBridge` 通过该视图把 asset material 同步为 GPU material
     /// slot；遍历本身不产生事件，也不推进 texture 上传。
-    pub fn iter_materials(&self) -> impl Iterator<Item = (AssetMaterialHandle, &LoadedMaterialData)> + '_ {
+    pub fn iter_materials(&self) -> impl Iterator<Item = (AssetMaterialHandle, &MaterialData)> + '_ {
         self.materials.iter().map(|(handle, record)| (handle, &record.data))
     }
 }
@@ -375,31 +345,28 @@ impl AssetHub {
     /// 返回的事件只在第一次看到 key 时产生，避免重复上传同一份 mesh 内容。
     fn register_mesh_data_inner(
         &mut self,
-        key: MeshAssetKey,
-        data: LoadedMeshData,
-    ) -> (AssetMeshHandle, Option<LoadedAssetEvent>) {
+        key: AssetMeshKey,
+        data: MeshData,
+    ) -> (AssetMeshHandle, Option<AssetLoadedEvent>) {
         if let Some(&handle) = self.key_to_mesh.get(&key) {
             return (handle, None);
         }
 
-        let handle = self.meshes.insert(MeshAssetRecord {
-            status: LoadStatus::Ready,
-            data: data.clone(),
-        });
+        let handle = self.meshes.insert(LoadStatus::Ready);
         self.key_to_mesh.insert(key, handle);
-        (handle, Some(LoadedAssetEvent::MeshLoaded { handle, data }))
+        (handle, Some(AssetLoadedEvent::MeshLoaded { handle, data }))
     }
 
     /// 内部 material 注册路径。
     ///
     /// material 没有单独 loaded event；render-side `MaterialBridge` 以 `iter_materials`
     /// 为事实来源同步新增或变化的 CPU material。
-    fn register_material_data_inner(&mut self, key: MaterialAssetKey, data: LoadedMaterialData) -> AssetMaterialHandle {
+    fn register_material_data_inner(&mut self, key: AssetMaterialKey, data: MaterialData) -> AssetMaterialHandle {
         if let Some(&handle) = self.key_to_material.get(&key) {
             return handle;
         }
 
-        let handle = self.materials.insert(MaterialAssetRecord {
+        let handle = self.materials.insert(AssetMaterialRecord {
             status: LoadStatus::Ready,
             data,
         });
@@ -411,8 +378,8 @@ impl AssetHub {
     ///
     /// texture 路径在这里按 scene 源路径解析，并通过 `load_texture` 进入统一的路径去重
     /// 和异步纹理加载流程。
-    fn material_data_from_raw(&mut self, source_path: &Path, raw: RawLoadedMaterialData) -> LoadedMaterialData {
-        LoadedMaterialData {
+    fn material_data_from_raw(&mut self, source_path: &Path, raw: RawMaterialData) -> MaterialData {
+        MaterialData {
             base_color: raw.base_color,
             emissive: raw.emissive,
             metallic: raw.metallic,
@@ -433,17 +400,14 @@ impl AssetHub {
     /// 这里是 raw importer index 和稳定 asset handle 的转换点：mesh/material 会先注册
     /// 到 hub，instance 内部引用再从 index 映射到 handle。任何越界引用都会转换为
     /// `SceneFailed` 事件，而不是留下半初始化的 scene data。
-    fn ingest_loaded_scene(
-        &mut self,
-        raw: RawLoadedSceneData,
-    ) -> Result<(LoadedSceneData, Vec<LoadedAssetEvent>), String> {
+    fn register_loaded_scene(&mut self, raw: RawSceneData) -> Result<(SceneData, Vec<AssetLoadedEvent>), String> {
         let source_path = raw.source_path;
         let mut immediate_events = Vec::new();
 
         let mut mesh_handles = Vec::with_capacity(raw.meshes.len());
         for (mesh_index, mesh_data) in raw.meshes.into_iter().enumerate() {
             let (handle, event) = self.register_mesh_data_inner(
-                MeshAssetKey {
+                AssetMeshKey {
                     source_path: source_path.clone(),
                     mesh_index: mesh_index as u32,
                 },
@@ -459,7 +423,7 @@ impl AssetHub {
         for (material_index, material_data) in raw.materials.into_iter().enumerate() {
             let data = self.material_data_from_raw(&source_path, material_data);
             let handle = self.register_material_data_inner(
-                MaterialAssetKey {
+                AssetMaterialKey {
                     source_path: source_path.clone(),
                     material_index: material_index as u32,
                 },
@@ -483,7 +447,7 @@ impl AssetHub {
                 materials.push(material);
             }
 
-            instances.push(LoadedSceneInstanceData {
+            instances.push(SceneInstanceData {
                 mesh,
                 materials,
                 transform: instance.transform,
@@ -492,7 +456,7 @@ impl AssetHub {
         }
 
         Ok((
-            LoadedSceneData {
+            SceneData {
                 source_path,
                 name: raw.name,
                 meshes: mesh_handles,
@@ -545,17 +509,17 @@ mod helper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::handle::RawLoadedSceneInstanceData;
+    use crate::handle::RawSceneInstanceData;
 
-    fn mesh_key() -> MeshAssetKey {
-        MeshAssetKey {
+    fn mesh_key() -> AssetMeshKey {
+        AssetMeshKey {
             source_path: PathBuf::from("assets/model.fbx"),
             mesh_index: 7,
         }
     }
 
-    fn mesh_data(name: &str) -> LoadedMeshData {
-        LoadedMeshData {
+    fn mesh_data(name: &str) -> MeshData {
+        MeshData {
             positions: vec![glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Y],
             normals: vec![glam::Vec3::Z; 3],
             tangents: vec![glam::Vec3::X; 3],
@@ -565,15 +529,15 @@ mod tests {
         }
     }
 
-    fn material_key() -> MaterialAssetKey {
-        MaterialAssetKey {
+    fn material_key() -> AssetMaterialKey {
+        AssetMaterialKey {
             source_path: PathBuf::from("assets/model.fbx"),
             material_index: 3,
         }
     }
 
-    fn material_data(name: &str) -> LoadedMaterialData {
-        LoadedMaterialData {
+    fn material_data(name: &str) -> MaterialData {
+        MaterialData {
             base_color: glam::Vec4::ONE,
             emissive: glam::Vec4::ZERO,
             metallic: 0.1,
@@ -585,40 +549,38 @@ mod tests {
         }
     }
 
-    fn raw_scene_data() -> RawLoadedSceneData {
-        RawLoadedSceneData {
-            source_path: PathBuf::from("assets/model.fbx"),
-            name: "model.fbx".to_string(),
-            meshes: vec![mesh_data("mesh")],
-            materials: vec![RawLoadedMaterialData {
-                base_color: glam::Vec4::ONE,
-                emissive: glam::Vec4::ZERO,
-                metallic: 0.0,
-                roughness: 1.0,
-                opaque: 1.0,
-                diffuse_texture_path: None,
-                normal_texture_path: None,
-                name: "mat".to_string(),
-            }],
-            instances: vec![RawLoadedSceneInstanceData {
-                mesh_index: 0,
-                material_indices: vec![0],
-                transform: glam::Mat4::IDENTITY,
-                name: "instance".to_string(),
-            }],
-        }
-    }
-
-    fn raw_material_with_texture(name: &str, texture_path: impl Into<PathBuf>) -> RawLoadedMaterialData {
-        RawLoadedMaterialData {
+    fn raw_material(name: &str) -> RawMaterialData {
+        RawMaterialData {
             base_color: glam::Vec4::ONE,
             emissive: glam::Vec4::ZERO,
             metallic: 0.0,
             roughness: 1.0,
             opaque: 1.0,
-            diffuse_texture_path: Some(texture_path.into()),
+            diffuse_texture_path: None,
             normal_texture_path: None,
             name: name.to_string(),
+        }
+    }
+
+    fn raw_material_with_texture(name: &str, texture_path: impl Into<PathBuf>) -> RawMaterialData {
+        RawMaterialData {
+            diffuse_texture_path: Some(texture_path.into()),
+            ..raw_material(name)
+        }
+    }
+
+    fn raw_scene_data() -> RawSceneData {
+        RawSceneData {
+            source_path: PathBuf::from("assets/model.fbx"),
+            name: "model.fbx".to_string(),
+            meshes: vec![mesh_data("mesh")],
+            materials: vec![raw_material("mat")],
+            instances: vec![RawSceneInstanceData {
+                mesh_index: 0,
+                material_indices: vec![0],
+                transform: glam::Mat4::IDENTITY,
+                name: "instance".to_string(),
+            }],
         }
     }
 
@@ -628,9 +590,10 @@ mod tests {
         let key = mesh_key();
 
         let first = hub.register_mesh_data(key.clone(), mesh_data("first"));
-        let second = hub.register_mesh_data(key, mesh_data("second"));
+        let second = hub.register_mesh_data(key.clone(), mesh_data("second"));
 
         assert_eq!(first, second);
+        assert_eq!(hub.mesh_handle_by_key(&key), Some(first));
         assert_eq!(hub.get_mesh_status(first), LoadStatus::Ready);
         assert_eq!(hub.update().len(), 1);
         assert!(hub.update().is_empty());
@@ -640,12 +603,15 @@ mod tests {
     fn register_mesh_data_emits_loaded_event_once() {
         let mut hub = AssetHub::new();
         let key = mesh_key();
-        let handle = hub.register_mesh_data(key, mesh_data("mesh"));
+        let handle = hub.register_mesh_data(key.clone(), mesh_data("mesh"));
+        let duplicate = hub.register_mesh_data(key, mesh_data("duplicate"));
 
         let events = hub.update();
+
+        assert_eq!(handle, duplicate);
         assert_eq!(events.len(), 1);
         match &events[0] {
-            LoadedAssetEvent::MeshLoaded {
+            AssetLoadedEvent::MeshLoaded {
                 handle: event_handle,
                 data,
             } => {
@@ -654,6 +620,7 @@ mod tests {
             }
             _ => panic!("expected mesh loaded event"),
         }
+        assert!(hub.update().is_empty());
     }
 
     #[test]
@@ -662,9 +629,10 @@ mod tests {
         let key = material_key();
 
         let first = hub.register_material_data(key.clone(), material_data("first"));
-        let second = hub.register_material_data(key, material_data("second"));
+        let second = hub.register_material_data(key.clone(), material_data("second"));
 
         assert_eq!(first, second);
+        assert_eq!(hub.material_handle_by_key(&key), Some(first));
         assert_eq!(hub.get_material_status(first), LoadStatus::Ready);
         assert_eq!(hub.get_material_data(first).unwrap().name, "first");
     }
@@ -682,28 +650,30 @@ mod tests {
     }
 
     #[test]
-    fn ingest_loaded_scene_registers_internal_asset_handles() {
+    fn register_loaded_scene_registers_internal_asset_handles() {
         let mut hub = AssetHub::new();
 
-        let (scene_data, events) = hub.ingest_loaded_scene(raw_scene_data()).unwrap();
+        let (scene_data, events) = hub.register_loaded_scene(raw_scene_data()).unwrap();
 
         assert_eq!(scene_data.meshes.len(), 1);
         assert_eq!(scene_data.materials.len(), 1);
         assert_eq!(scene_data.instances.len(), 1);
         assert_eq!(scene_data.instances[0].mesh, scene_data.meshes[0]);
         assert_eq!(scene_data.instances[0].materials, vec![scene_data.materials[0]]);
+        assert_eq!(hub.get_mesh_status(scene_data.meshes[0]), LoadStatus::Ready);
+        assert_eq!(hub.get_material_status(scene_data.materials[0]), LoadStatus::Ready);
         assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], LoadedAssetEvent::MeshLoaded { .. }));
+        assert!(matches!(events[0], AssetLoadedEvent::MeshLoaded { .. }));
     }
 
     #[test]
-    fn ingest_loaded_scene_resolves_relative_texture_paths_from_scene_dir() {
+    fn register_loaded_scene_resolves_relative_texture_paths_from_scene_dir() {
         let mut hub = AssetHub::new();
         let mut raw = raw_scene_data();
         raw.source_path = PathBuf::from("assets/fbx/sponza/sponza.fbx");
         raw.materials[0] = raw_material_with_texture("mat", "textures/albedo.png");
 
-        let (scene_data, _) = hub.ingest_loaded_scene(raw).unwrap();
+        let (scene_data, _) = hub.register_loaded_scene(raw).unwrap();
 
         let expected_path = PathBuf::from("assets/fbx/sponza/textures/albedo.png");
         let material = hub.get_material_data(scene_data.materials[0]).unwrap();
@@ -711,21 +681,21 @@ mod tests {
     }
 
     #[test]
-    fn ingest_loaded_scene_keeps_absolute_texture_paths() {
+    fn register_loaded_scene_keeps_absolute_texture_paths() {
         let mut hub = AssetHub::new();
         let texture_path = std::env::current_dir().unwrap().join("assets/textures/albedo.png");
         let mut raw = raw_scene_data();
         raw.source_path = PathBuf::from("assets/fbx/sponza/sponza.fbx");
         raw.materials[0] = raw_material_with_texture("mat", texture_path.clone());
 
-        let (scene_data, _) = hub.ingest_loaded_scene(raw).unwrap();
+        let (scene_data, _) = hub.register_loaded_scene(raw).unwrap();
 
         let material = hub.get_material_data(scene_data.materials[0]).unwrap();
         assert_eq!(material.diffuse_texture, hub.texture_handle_by_path(&texture_path));
     }
 
     #[test]
-    fn ingest_loaded_scene_reuses_texture_handle_after_path_resolution() {
+    fn register_loaded_scene_reuses_texture_handle_after_path_resolution() {
         let mut hub = AssetHub::new();
         let mut raw = raw_scene_data();
         raw.source_path = PathBuf::from("assets/fbx/sponza/sponza.fbx");
@@ -734,7 +704,7 @@ mod tests {
             raw_material_with_texture("second", "./textures/shared.png"),
         ];
 
-        let (scene_data, _) = hub.ingest_loaded_scene(raw).unwrap();
+        let (scene_data, _) = hub.register_loaded_scene(raw).unwrap();
 
         let first = hub.get_material_data(scene_data.materials[0]).unwrap().diffuse_texture;
         let second = hub.get_material_data(scene_data.materials[1]).unwrap().diffuse_texture;
@@ -752,7 +722,7 @@ mod tests {
         let second = hub.load_scene(path.clone());
 
         assert_eq!(first, second);
-        assert_eq!(hub.scene_handle_by_key(&SceneAssetKey { source_path: path }), Some(first));
+        assert_eq!(hub.scene_handle_by_key(&AssetSceneKey { source_path: path }), Some(first));
         assert_eq!(hub.get_scene_status(first), LoadStatus::Loading);
     }
 }

@@ -1,11 +1,12 @@
 //! 内容资产的 CPU 侧身份、加载状态与完成事件系统。
 //!
 //! 本 crate 位于 World 层和 RenderBackend 之间：[`AssetHub`](asset_hub::AssetHub)
-//! 持有 texture / mesh / material / scene 的内容 handle、去重表和 CPU ready 数据；
-//! 渲染后端通过加载事件把这些数据交给 `AssetTextureUploader`、
+//! 持有 texture / mesh / material / scene 的内容 handle、去重表和 CPU 加载状态；
+//! texture bytes 与 mesh 数据通过加载事件一次性交给 `AssetTextureUploader`、
 //! `AssetMeshUploader`、`MaterialBridge` 继续创建 GPU image、buffer、BLAS 与
-//! bindless / material slot。scene asset 只保存可重复 spawn 的 prefab CPU 数据，
-//! 运行时 instance 由 `truvis-scene` 的 `SceneManager` 创建和管理。
+//! bindless / material slot。material 和 scene asset 的 CPU 数据仍保存在 asset 层，
+//! scene asset 只保存可重复 spawn 的 prefab 数据，运行时 instance 由
+//! `truvis-scene` 的 `SceneManager` 创建和管理。
 //!
 //! 这里所有 `Ready` 状态都只表示 CPU 数据已经可读取，不表示 GPU 资源或 shader
 //! 可见绑定已经完成。
@@ -22,7 +23,7 @@
 //!   └──────────────┘                      └────────────────────────┘
 //!          │
 //!          ▼
-//!   LoadedAssetEvent -> render backend uploader / SceneManager
+//!   AssetLoadedEvent -> render backend uploader / SceneManager
 //! ```
 //!
 //! - [`AssetHub`](asset_hub::AssetHub) — 统一入口、内容去重、CPU 状态管理和完成事件汇聚

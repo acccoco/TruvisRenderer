@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use ash::vk;
 use slotmap::SecondaryMap;
 
-use truvis_asset::asset_hub::LoadedAssetEvent;
-use truvis_asset::handle::{AssetTextureHandle, LoadedTextureBytes};
+use truvis_asset::asset_hub::AssetLoadedEvent;
+use truvis_asset::handle::{AssetTextureHandle, TextureBytes};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::command_pool::GfxCommandPool;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
@@ -79,7 +79,7 @@ impl TextureUploadQueue {
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
         handle: AssetTextureHandle,
-        data: LoadedTextureBytes,
+        data: TextureBytes,
     ) -> anyhow::Result<()> {
         let _span = tracy_client::span!("TextureUploadQueue::upload_texture");
 
@@ -307,7 +307,7 @@ impl AssetTextureUploader {
     /// 注册到 `GfxResourceManager` 与 bindless 表；尚未完成的贴图继续通过 fallback 解析。
     pub fn update(
         &mut self,
-        events: Vec<LoadedAssetEvent>,
+        events: Vec<AssetLoadedEvent>,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
@@ -318,19 +318,19 @@ impl AssetTextureUploader {
 
         for event in events {
             match event {
-                LoadedAssetEvent::TextureLoaded { handle, data } => {
+                AssetLoadedEvent::TextureLoaded { handle, data } => {
                     if let Err(err) =
                         self.upload_queue.upload_texture(resource_ctx, device_ctx, queue_ctx, handle, data)
                     {
                         log::error!("Failed to submit texture upload {:?}: {}", handle, err);
                     }
                 }
-                LoadedAssetEvent::TextureFailed { handle, error } => {
+                AssetLoadedEvent::TextureFailed { handle, error } => {
                     log::error!("Texture load failed {:?}: {}", handle, error);
                 }
-                LoadedAssetEvent::MeshLoaded { .. }
-                | LoadedAssetEvent::SceneLoaded { .. }
-                | LoadedAssetEvent::SceneFailed { .. } => {
+                AssetLoadedEvent::MeshLoaded { .. }
+                | AssetLoadedEvent::SceneLoaded { .. }
+                | AssetLoadedEvent::SceneFailed { .. } => {
                     // AssetUploadStage 是事件分流边界；如果这里收到非 texture 事件，
                     // 说明 backend prepare 流程的分层契约被调用侧破坏。
                     unreachable!("Unexpected asset event in AssetTextureUploader: {:?}", event);
@@ -363,7 +363,7 @@ impl AssetTextureUploader {
         // 解析为真实 SRV，material manager 在后续 dirty 检测中把 fallback 替换出去。
         if let Some(old_texture) = self.textures.remove(handle) {
             // 同一个 asset handle 重新加载时，旧 view 必须先退出 bindless，再释放 manager-owned image。
-            // 这里立即释放的前提是 begin_frame 已经等待过 FIF timeline，旧资源不会再被在飞帧引用。
+            // 这里立即释放的前提是 begin_frame 已经等待过 FIF timeline，旧资源不会再被在flight-frame引用。
             bindless_manager.unregister_srv(old_texture.view_handle);
             gfx_resource_manager.release_image_immediate(
                 resource_ctx,

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use truvis_asset::handle::{LoadedMeshData, MeshAssetKey};
+use truvis_asset::handle::{AssetMeshKey, MeshData};
 
 /// 内置程序化 mesh 类型。
 ///
@@ -25,14 +25,14 @@ impl ProceduralMeshKind {
     }
 
     /// 用于注册到 `AssetHub` 的稳定 key。
-    pub fn asset_key(self) -> MeshAssetKey {
-        MeshAssetKey {
+    pub fn asset_key(self) -> AssetMeshKey {
+        AssetMeshKey {
             source_path: PathBuf::from(format!("procedural://{}", self.name())),
             mesh_index: 0,
         }
     }
 
-    pub fn mesh_data(self) -> LoadedMeshData {
+    pub fn mesh_data(self) -> MeshData {
         match self {
             Self::Triangle => triangle(),
             Self::Rect => rect(),
@@ -43,8 +43,8 @@ impl ProceduralMeshKind {
 }
 
 /// 位于 XY 平面、法线 +Z 的正立三角形。
-pub fn triangle() -> LoadedMeshData {
-    LoadedMeshData {
+pub fn triangle() -> MeshData {
+    MeshData {
         positions: vec![
             glam::vec3(-1.0, -1.0, 0.0),
             glam::vec3(1.0, -1.0, 0.0),
@@ -59,8 +59,8 @@ pub fn triangle() -> LoadedMeshData {
 }
 
 /// 位于 XY 平面、法线 +Z 的矩形。
-pub fn rect() -> LoadedMeshData {
-    LoadedMeshData {
+pub fn rect() -> MeshData {
+    MeshData {
         positions: vec![
             glam::vec3(-1.0, 1.0, 0.0),
             glam::vec3(1.0, 1.0, 0.0),
@@ -81,8 +81,8 @@ pub fn rect() -> LoadedMeshData {
 }
 
 /// 位于 XZ 平面、朝向 +Y 的地面面片。
-pub fn floor() -> LoadedMeshData {
-    LoadedMeshData {
+pub fn floor() -> MeshData {
+    MeshData {
         positions: vec![
             glam::vec3(1.0, 0.0, 1.0),
             glam::vec3(1.0, 0.0, -1.0),
@@ -103,8 +103,8 @@ pub fn floor() -> LoadedMeshData {
 }
 
 /// 单位 cube，右手系，X 向右，Y 向上。
-pub fn cube() -> LoadedMeshData {
-    LoadedMeshData {
+pub fn cube() -> MeshData {
+    MeshData {
         positions: vec![
             glam::vec3(0.5, 0.5, -0.5),
             glam::vec3(-0.5, 0.5, -0.5),

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use truvis_cxx_binding::truvixx;
 
 use crate::asset_loader::{LoadResult, SceneLoadRequest};
-use crate::handle::{LoadedMeshData, RawLoadedMaterialData, RawLoadedSceneData, RawLoadedSceneInstanceData};
+use crate::handle::{MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData};
 
 /// 实际的 scene 导入任务。
 ///
@@ -29,7 +29,7 @@ pub(crate) fn load_scene_task(req: SceneLoadRequest) -> LoadResult {
     }
 }
 
-fn load_scene_task_inner(path: &PathBuf) -> Result<RawLoadedSceneData, String> {
+fn load_scene_task_inner(path: &PathBuf) -> Result<RawSceneData, String> {
     if !path.exists() {
         return Err(format!("scene file does not exist: {:?}", path));
     }
@@ -94,7 +94,7 @@ impl Drop for TruvixxSceneGuard {
 unsafe fn copy_scene_data(
     scene_handle: truvixx::TruvixxSceneHandle,
     source_path: &std::path::Path,
-) -> Result<RawLoadedSceneData, String> {
+) -> Result<RawSceneData, String> {
     // 这里是 FFI 生命周期边界：所有 mesh/material/instance 数据都必须复制进
     // Rust owned buffer，返回后 `TruvixxSceneGuard` 会释放 C++ scene。
     let model_name = source_path.file_name().and_then(|name| name.to_str()).unwrap_or("scene").to_string();
@@ -128,7 +128,7 @@ unsafe fn copy_scene_data(
         instances.extend(unsafe { copy_instance_data(scene_handle, instance_index, instance)? });
     }
 
-    Ok(RawLoadedSceneData {
+    Ok(RawSceneData {
         source_path: source_path.to_path_buf(),
         name: model_name,
         meshes,
@@ -148,7 +148,7 @@ unsafe fn copy_mesh_data(
     scene_handle: truvixx::TruvixxSceneHandle,
     mesh_index: u32,
     model_name: &str,
-) -> Result<LoadedMeshData, String> {
+) -> Result<MeshData, String> {
     let mut mesh_info = truvixx::TruvixxMeshInfo::default();
     let res = unsafe { truvixx::truvixx_mesh_get_info(scene_handle, mesh_index, &mut mesh_info as *mut _) };
     if res != truvixx::ResType_ResTypeSuccess {
@@ -177,7 +177,7 @@ unsafe fn copy_mesh_data(
 
     let indices = unsafe { std::slice::from_raw_parts(indices_ptr, mesh_info.index_count as usize) };
 
-    Ok(LoadedMeshData {
+    Ok(MeshData {
         positions: positions.to_vec(),
         normals: normals.to_vec(),
         tangents: tangents.to_vec(),
@@ -196,7 +196,7 @@ unsafe fn copy_mesh_data(
 unsafe fn copy_material_data(
     scene_handle: truvixx::TruvixxSceneHandle,
     material_index: u32,
-) -> Result<RawLoadedMaterialData, String> {
+) -> Result<RawMaterialData, String> {
     let mut mat = truvixx::TruvixxMat::default();
     let res = unsafe { truvixx::truvixx_material_get(scene_handle, material_index, &mut mat as *mut _) };
     if res != truvixx::ResType_ResTypeSuccess {
@@ -208,7 +208,7 @@ unsafe fn copy_material_data(
     let name = unsafe { std::ffi::CStr::from_ptr(mat.name.as_ptr()) }.to_string_lossy().into_owned();
 
     // texture 路径保持为导入器原始表达，稍后由 AssetHub 根据 scene 路径统一解析。
-    Ok(RawLoadedMaterialData {
+    Ok(RawMaterialData {
         base_color: unsafe { std::mem::transmute::<truvixx::TruvixxFloat4, glam::Vec4>(mat.base_color) },
         emissive: unsafe { std::mem::transmute::<truvixx::TruvixxFloat4, glam::Vec4>(mat.emissive) },
         metallic: mat.metallic,
@@ -230,7 +230,7 @@ unsafe fn copy_instance_data(
     scene_handle: truvixx::TruvixxSceneHandle,
     instance_index: u32,
     instance: truvixx::TruvixxInstance,
-) -> Result<Vec<RawLoadedSceneInstanceData>, String> {
+) -> Result<Vec<RawSceneInstanceData>, String> {
     let mesh_count = instance.mesh_count as usize;
     let mut mesh_indices = vec![0_u32; mesh_count];
     let mut material_indices = vec![0_u32; mesh_count];
@@ -255,7 +255,7 @@ unsafe fn copy_instance_data(
         .into_iter()
         .zip(material_indices)
         .enumerate()
-        .map(|(submesh_index, (mesh_index, material_index))| RawLoadedSceneInstanceData {
+        .map(|(submesh_index, (mesh_index, material_index))| RawSceneInstanceData {
             mesh_index,
             material_indices: vec![material_index],
             transform,

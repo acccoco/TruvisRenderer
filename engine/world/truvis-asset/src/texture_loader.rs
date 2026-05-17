@@ -2,12 +2,12 @@ use ash::vk;
 use image::GenericImageView;
 
 use crate::asset_loader::{LoadResult, TextureLoadRequest};
-use crate::handle::LoadedTextureBytes;
+use crate::handle::TextureBytes;
 
 /// 实际的纹理加载任务，运行在 Rayon 线程池中。
 ///
 /// 执行顺序是文件读取 -> image crate 解码 -> 统一转换为 RGBA8 upload-ready bytes。
-/// 这里不创建 Vulkan image，返回的 `LoadedTextureBytes` 只用于后续 render-side 上传。
+/// 这里不创建 Vulkan image，返回的 `TextureBytes` 只用于后续 render-side 上传。
 pub(crate) fn load_texture_task(req: TextureLoadRequest) -> LoadResult {
     let _span = tracy_client::span!("load_texture_task");
     log::info!("Loading texture: {:?}", req.path);
@@ -21,7 +21,7 @@ pub(crate) fn load_texture_task(req: TextureLoadRequest) -> LoadResult {
             let img = img.into_rgba8();
             let pixels = img.into_raw();
 
-            let data = LoadedTextureBytes {
+            let data = TextureBytes {
                 pixels,
                 extent: vk::Extent3D {
                     width,

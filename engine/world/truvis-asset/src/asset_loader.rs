@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crossbeam_channel::{Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
 
-use crate::handle::{AssetSceneHandle, AssetTextureHandle, LoadedTextureBytes, RawLoadedSceneData};
+use crate::handle::{AssetSceneHandle, AssetTextureHandle, RawSceneData, TextureBytes};
 use crate::texture_loader::load_texture_task;
 use crate::truvixx_scene_loader::load_scene_task;
 
@@ -32,12 +32,12 @@ pub(crate) struct SceneLoadRequest {
 pub(crate) enum LoadResult {
     TextureSuccess {
         handle: AssetTextureHandle,
-        data: LoadedTextureBytes,
+        data: TextureBytes,
     },
     TextureFailure(AssetTextureHandle, String),
     SceneSuccess {
         handle: AssetSceneHandle,
-        data: RawLoadedSceneData,
+        data: RawSceneData,
     },
     SceneFailure(AssetSceneHandle, String),
 }

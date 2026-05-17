@@ -208,7 +208,7 @@ flowchart LR
     AssetHub["AssetHub<br/>path/key -> CPU asset data"] --> TextureUploader["AssetTextureUploader<br/>texture GPU upload + bindless"]
     AssetHub --> MeshUploader["AssetMeshUploader<br/>mesh buffer upload + BLAS"]
     AssetHub --> MaterialBridge["MaterialBridge / MaterialManager<br/>stable material slot + material buffer"]
-    AssetHub --> SceneAsset["LoadedSceneData<br/>prefab asset"]
+    AssetHub --> SceneAsset["SceneData<br/>prefab asset"]
     SceneAsset --> SceneSpawner["SceneManager::spawn_scene_asset"]
     SceneSpawner --> Scene["SceneManager<br/>runtime instance / light"]
     Scene --> InstanceBridge["InstanceBridge<br/>stable instance slot + ready gate"]
