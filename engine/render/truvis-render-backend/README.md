@@ -40,6 +40,8 @@
 
 - crate 公开入口保持在 `platform`、`present`、`subsystems` 和 `render_backend`。
 - asset uploader、material bridge、instance bridge、GPU scene 数据结构和 prepare pipeline 都是 backend 私有实现。
+- 生命周期 Ctx 在 `render_backend` 内部子模块定义，并由 `render_backend` 重新导出；
+  调用方仍通过 `truvis_render_backend::render_backend::*Ctx` 使用这些阶段契约。
 - `RenderBackendRenderCtx` 只暴露 `RenderWorld`、`RenderSceneView`、`PresentView` 和 timeline；
   不暴露 texture/mesh uploader owner，pass 不能绕过 backend 私有 bridge 读取上传缓存。
 
