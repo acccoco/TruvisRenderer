@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    mem::size_of,
+};
 
 use ash::vk;
 use slotmap::SlotMap;
@@ -321,7 +324,7 @@ impl MaterialManager {
 
         let dirty_slot_indices: Vec<usize> = self.dirty_slots.keys().copied().collect();
 
-        let mut any_written = false;
+        let mut written_slots: Vec<usize> = Vec::new();
         let mut slots_done: Vec<usize> = Vec::new();
         let mut slots_to_reclaim: Vec<usize> = Vec::new();
 
@@ -348,15 +351,12 @@ impl MaterialManager {
 
                 let params = self.slots[slot].as_ref().unwrap();
                 stage_slice[slot] = Self::build_gpu_material(params, texture_resolver);
-                any_written = true;
+                written_slots.push(slot);
             }
         }
 
         // 更新 dirty 标记（此时 stage_slice borrow 已释放）。
-        for &slot in &dirty_slot_indices {
-            if self.slots[slot].is_none() {
-                continue;
-            }
+        for &slot in &written_slots {
             let info = match self.dirty_slots.get_mut(&slot) {
                 Some(i) => i,
                 None => continue,
@@ -379,16 +379,16 @@ impl MaterialManager {
             log::debug!("MaterialManager: reclaimed slot={}", slot);
         }
 
-        if any_written {
-            // 当前实现按整段 material buffer copy，保证简单可靠；dirty slot 只决定是否需要
-            // 发起本 FIF 的 copy，后续可再细化为 region copy。
+        if !written_slots.is_empty() {
+            let copy_regions = Self::material_copy_regions(&mut written_slots);
             let buf = &mut self.buffers[fif_idx];
-            Self::flush_copy_and_barrier(
+            Self::flush_copy_regions_and_barrier(
                 ctx,
                 cmd,
                 &mut buf.material_stage_buffer,
                 &mut buf.material_buffer,
                 barrier_mask,
+                &copy_regions,
             );
         }
     }
@@ -453,30 +453,86 @@ impl MaterialManager {
         }
     }
 
-    // TODO 可以细化更新 regions
-    /// 将当前 staging material buffer 刷新、复制到 device buffer，并建立 shader-read barrier。
+    /// 根据实际写入的 material slot 生成连续 copy regions。
+    ///
+    /// dirty slot 在 HashMap 中无序保存；上传前按 slot 排序并合并相邻范围，避免把未变化
+    /// 的 material 一起复制到 GPU，也避免每个 slot 都录制单独 copy。
+    fn material_copy_regions(written_slots: &mut Vec<usize>) -> Vec<vk::BufferCopy> {
+        let element_size = size_of::<gpu::PBRMaterial>() as vk::DeviceSize;
+        debug_assert!(element_size > 0);
+        debug_assert_eq!(element_size % 4, 0, "PBRMaterial size must satisfy Vulkan buffer copy alignment");
+
+        written_slots.sort_unstable();
+        written_slots.dedup();
+
+        let mut regions = Vec::new();
+        let Some(&first_slot) = written_slots.first() else {
+            return regions;
+        };
+
+        let mut range_start = first_slot;
+        let mut prev_slot = first_slot;
+
+        for &slot in written_slots.iter().skip(1) {
+            if slot == prev_slot + 1 {
+                prev_slot = slot;
+                continue;
+            }
+
+            regions.push(Self::material_slot_region(range_start, prev_slot, element_size));
+            range_start = slot;
+            prev_slot = slot;
+        }
+
+        regions.push(Self::material_slot_region(range_start, prev_slot, element_size));
+        regions
+    }
+
+    /// 将闭区间 slot 范围转换为同 offset 的 staging -> device copy region。
+    fn material_slot_region(start_slot: usize, end_slot: usize, element_size: vk::DeviceSize) -> vk::BufferCopy {
+        let slot_count = end_slot - start_slot + 1;
+        let offset = start_slot as vk::DeviceSize * element_size;
+        let size = slot_count as vk::DeviceSize * element_size;
+        vk::BufferCopy {
+            src_offset: offset,
+            dst_offset: offset,
+            size,
+        }
+    }
+
+    /// 将当前 staging material buffer 的 dirty regions 刷新、复制到 device buffer，并建立 shader-read barrier。
     ///
     /// `barrier_mask` 来自 `RenderBackend::prepare_gpu_scene`，和 scene/per-frame buffer 使用同一套可见性约定。
-    fn flush_copy_and_barrier(
+    fn flush_copy_regions_and_barrier(
         ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
         stage_buffer: &mut GfxStructuredBuffer<gpu::PBRMaterial>,
         dst_buffer: &mut GfxStructuredBuffer<gpu::PBRMaterial>,
         barrier_mask: GfxBarrierMask,
+        regions: &[vk::BufferCopy],
     ) {
-        let buffer_size = stage_buffer.size();
-        stage_buffer.flush(ctx, 0, buffer_size);
-        cmd.cmd_copy_buffer(
-            stage_buffer,
-            dst_buffer,
-            &[vk::BufferCopy {
-                size: buffer_size,
-                ..Default::default()
-            }],
-        );
-        cmd.buffer_memory_barrier(
-            vk::DependencyFlags::empty(),
-            &[GfxBufferBarrier::default().mask(barrier_mask).buffer(dst_buffer.vk_buffer(), 0, vk::WHOLE_SIZE)],
-        );
+        debug_assert!(!regions.is_empty());
+
+        for region in regions {
+            debug_assert!(region.size > 0);
+            debug_assert_eq!(region.src_offset, region.dst_offset);
+            debug_assert!(region.src_offset + region.size <= stage_buffer.size());
+            debug_assert!(region.dst_offset + region.size <= dst_buffer.size());
+            stage_buffer.flush(ctx, region.src_offset, region.size);
+        }
+
+        cmd.cmd_copy_buffer(stage_buffer, dst_buffer, regions);
+
+        let barriers: Vec<GfxBufferBarrier> = regions
+            .iter()
+            .map(|region| {
+                GfxBufferBarrier::default().mask(barrier_mask).buffer(
+                    dst_buffer.vk_buffer(),
+                    region.dst_offset,
+                    region.size,
+                )
+            })
+            .collect();
+        cmd.buffer_memory_barrier(vk::DependencyFlags::empty(), &barriers);
     }
 }

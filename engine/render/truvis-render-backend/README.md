@@ -30,7 +30,7 @@
 - `AssetMeshUploader` 消费 `AssetHub` 的 mesh CPU 数据，在 graphics queue 上完成 vertex/index
   buffer copy 和 BLAS build；mesh 完成前不会被 `InstanceBridge` 激活。
 - `MaterialBridge` 消费 `MaterialLoaded` 事件并维护 `AssetMaterialHandle -> GpuMaterialHandle` 桥接，
-  底层 `MaterialManager` 负责 stable material slot、FIF material buffer、dirty 上传、texture ready 检查和延迟 slot 回收。
+  底层 `MaterialManager` 负责 stable material slot、FIF material buffer、dirty region 上传、texture ready 检查和延迟 slot 回收。
 - `InstanceBridge` 同步 `InstanceHandle -> GpuInstanceSlot`，在 mesh/material 都 GPU ready 前保持
   pending，并按稳定 slot 输出 active render list。
 - `RenderPresent` 拥有 surface、swapchain wrapper、swapchain image/view handle 和 present 同步对象；
@@ -73,7 +73,7 @@
 - `RenderBackend::prepare` 是 update 与 render 之间的固定桥接阶段，按 bindless、material、instance、
   GPU scene、per-frame data 的顺序准备渲染可见数据。
 - `MaterialBridge` 在 begin-frame 阶段消费 `MaterialLoaded` 事件并同步到 `MaterialManager`，
-  prepare 阶段再通过 `TextureResolver` 把 texture fallback/ready 状态写入 material buffer。
+  prepare 阶段再通过 `TextureResolver` 把 texture fallback/ready 状态按 dirty slot 局部写入 material buffer。
 - `InstanceBridge` 读取 `SceneManager`，并通过 `MaterialSlotResolver` 与 `MeshRenderResolver`
   做 ready gate，只有完整可渲染的实例才进入 `RenderData`。
 - `GpuScene` 消费 `RenderData`，按当前 FIF 上传 geometry、instance、light、indirect 和 scene
