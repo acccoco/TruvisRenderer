@@ -12,7 +12,6 @@ runtime instance。
 ## 主要组件
 
 - `AssetHub`：对外统一入口，负责路径/key 去重、handle 分配、状态表和完成事件汇聚
-- `AssetLoader`：后台 IO、CPU 解码与 Assimp scene 导入，不直接修改 `AssetHub`
 - `LoadedAssetEvent`：CPU 数据完成事件，交给渲染后端继续上传或交给 scene 层 spawn
 - `LoadedMeshData`：从导入器复制出来的 owned CPU mesh 数据
 - `LoadedMaterialData`：导入后的 CPU material 参数和 texture handle 引用
@@ -20,6 +19,13 @@ runtime instance。
 - `MeshAssetKey`：同一导入源内的 mesh 去重 key
 - `MaterialAssetKey`：同一导入源内的 material 去重 key
 - `SceneAssetKey`：scene 导入源路径去重 key
+
+## 内部结构
+
+- `asset_loader`：crate 内部后台调度层，只持有 Rayon 线程池、结果 channel 和任务等待逻辑。
+- `texture_loader`：crate 内部纹理任务实现，只负责 image 文件读取、CPU 解码和 RGBA8 bytes 输出。
+- `truvixx_scene_loader`：crate 内部 scene 导入任务实现，只负责 C++ importer 生命周期和 owned CPU scene 数据复制。
+- 外部调用方不直接使用 loader 模块；加载请求、状态查询和完成事件都通过 `AssetHub` 进入或离开 asset 层。
 
 ## 设计目标
 

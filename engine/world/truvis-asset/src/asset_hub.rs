@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 
 use slotmap::SlotMap;
 
-use crate::asset_loader::{TextureLoadRequest, AssetLoader, LoadResult, SceneLoadRequest};
+use crate::asset_loader::{AssetLoader, LoadResult, SceneLoadRequest, TextureLoadRequest};
 use crate::handle::{
     AssetMaterialHandle, AssetMeshHandle, AssetSceneHandle, AssetTextureHandle, LoadStatus, LoadedMaterialData,
     LoadedMeshData, LoadedSceneData, LoadedSceneInstanceData, LoadedTextureBytes, MaterialAssetKey, MeshAssetKey,
@@ -12,40 +12,36 @@ use crate::handle::{
 
 /// `AssetHub` 内部的 texture 记录。
 ///
-/// 记录只保存内容路径和 CPU 加载状态；GPU image/view/bindless 绑定由
-/// render-side `AssetTextureUploader` 持有。
-pub struct TextureAssetRecord {
-    pub path: PathBuf,
-    pub status: LoadStatus,
+/// 记录只保存 CPU 加载状态；路径身份由 `path_to_texture` 去重表维护，GPU
+/// image/view/bindless 绑定由 render-side `AssetTextureUploader` 持有。
+pub(crate) struct TextureAssetRecord {
+    pub(crate) status: LoadStatus,
 }
 
 /// `AssetHub` 内部的 mesh 记录。
 ///
 /// `data` 是上传友好的 CPU mesh 数据，后续是否已经上传到 GPU buffer 或构建 BLAS
 /// 不在该记录中表达。
-pub struct MeshAssetRecord {
-    pub key: MeshAssetKey,
-    pub status: LoadStatus,
-    pub data: LoadedMeshData,
+pub(crate) struct MeshAssetRecord {
+    pub(crate) status: LoadStatus,
+    pub(crate) data: LoadedMeshData,
 }
 
 /// `AssetHub` 内部的 material 记录。
 ///
 /// 这里的 material 是内容资产身份和 CPU 参数，不是渲染后端的稳定 material slot。
-pub struct MaterialAssetRecord {
-    pub key: MaterialAssetKey,
-    pub status: LoadStatus,
-    pub data: LoadedMaterialData,
+pub(crate) struct MaterialAssetRecord {
+    pub(crate) status: LoadStatus,
+    pub(crate) data: LoadedMaterialData,
 }
 
 /// `AssetHub` 内部的 scene / prefab 记录。
 ///
 /// `data` 在后台导入完成并完成内部 mesh/material handle 映射后才会填入。
 /// runtime instance 由 scene 层根据该 prefab 数据显式 spawn。
-pub struct SceneAssetRecord {
-    pub key: SceneAssetKey,
-    pub status: LoadStatus,
-    pub data: Option<LoadedSceneData>,
+pub(crate) struct SceneAssetRecord {
+    pub(crate) status: LoadStatus,
+    pub(crate) data: Option<LoadedSceneData>,
 }
 
 /// asset 层向外发布的 CPU ready 事件。
@@ -158,7 +154,6 @@ impl AssetHub {
         }
 
         let handle = self.textures.insert(TextureAssetRecord {
-            path: path.clone(),
             status: LoadStatus::Loading,
         });
         self.path_to_texture.insert(path.clone(), handle);
@@ -184,7 +179,6 @@ impl AssetHub {
         }
 
         let handle = self.scenes.insert(SceneAssetRecord {
-            key: key.clone(),
             status: LoadStatus::Loading,
             data: None,
         });
@@ -262,6 +256,14 @@ impl AssetHub {
         self.materials.get(handle).map(|record| &record.data)
     }
 
+    /// 获取 CPU mesh 数据。
+    ///
+    /// 返回 `None` 表示 handle 无效或 mesh 尚未注册。返回的数据仍只是 upload-ready
+    /// CPU 几何数据，不表示 vertex/index buffer 或 BLAS 已经可用。
+    pub fn get_mesh_data(&self, handle: AssetMeshHandle) -> Option<&LoadedMeshData> {
+        self.meshes.get(handle).map(|record| &record.data)
+    }
+
     /// 获取 scene / prefab CPU 数据。
     ///
     /// 只有 scene 导入并经过 `update()` 写回后才会返回 `Some`。调用方不应把返回数据
@@ -313,7 +315,6 @@ impl AssetHub {
         }
 
         let handle = self.meshes.insert(MeshAssetRecord {
-            key: key.clone(),
             status: LoadStatus::Ready,
             data: data.clone(),
         });
@@ -331,7 +332,6 @@ impl AssetHub {
         }
 
         let handle = self.materials.insert(MaterialAssetRecord {
-            key: key.clone(),
             status: LoadStatus::Ready,
             data,
         });

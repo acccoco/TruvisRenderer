@@ -38,22 +38,6 @@ new_key_type! {
     pub struct AssetSceneHandle;
 }
 
-/// 解码后的纹理 CPU 数据。
-///
-/// 这是 asset 层传给渲染后端 uploader 的边界格式：像素已经位于 owned
-/// CPU buffer，并带有 Vulkan 上传所需的 extent / format 元数据，但还没有创建
-/// image、image view 或 bindless descriptor。
-///
-/// 与 mesh / material / scene 不同，当前纹理 bytes 只通过
-/// `LoadedAssetEvent::TextureLoaded` 交给 uploader，`AssetHub` 本身只保存路径和
-/// CPU 加载状态。
-#[derive(Debug)]
-pub struct LoadedTextureBytes {
-    pub pixels: Vec<u8>,
-    pub extent: vk::Extent3D,
-    pub format: vk::Format,
-}
-
 /// 一个导入源内的 mesh 内容身份。
 ///
 /// `AssetHub` 使用 `source_path + mesh_index` 做去重，保证同一 scene / prefab
@@ -92,6 +76,22 @@ pub struct MaterialAssetKey {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SceneAssetKey {
     pub source_path: PathBuf,
+}
+
+/// 解码后的纹理 CPU 数据。
+///
+/// 这是 asset 层传给渲染后端 uploader 的边界格式：像素已经位于 owned
+/// CPU buffer，并带有 Vulkan 上传所需的 extent / format 元数据，但还没有创建
+/// image、image view 或 bindless descriptor。
+///
+/// 与 mesh / material / scene 不同，当前纹理 bytes 只通过
+/// `LoadedAssetEvent::TextureLoaded` 交给 uploader，`AssetHub` 本身只保存路径和
+/// CPU 加载状态。
+#[derive(Debug)]
+pub struct LoadedTextureBytes {
+    pub pixels: Vec<u8>,
+    pub extent: vk::Extent3D,
+    pub format: vk::Format,
 }
 
 /// upload-ready 的 CPU mesh 数据。
