@@ -5,6 +5,7 @@
 ## 子目录
 
 - `foundation/`：基础工具 crate，如日志与通用数据结构。
+- `utils/`：引擎内部工具 crate，如路径管理与资源拉取。
 - `gfx/`：Vulkan RHI 封装与 descriptor-layout 宏/trait。
 - `world/`：CPU 侧资产、场景与 `World` 聚合。
 - `render/`：渲染资源状态、RenderGraph、通用 pass、GUI 后端与 RenderBackend。

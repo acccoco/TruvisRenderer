@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
 members = [
-    # tools
-    "tools/truvis-fetch-res",
-    "tools/truvis-path",
+    # utils
+    "engine/utils/truvis-fetch-res",
+    "engine/utils/truvis-path",
     # foundation
     "engine/foundation/truvis-utils",
     "engine/foundation/truvis-logs",
@@ -49,9 +49,9 @@ panic = 'abort'    # panic 时直接终止，进一步减小体积
 
 
 [workspace.dependencies]
-# tools
-truvis-fetch-res = { path = "tools/truvis-fetch-res" }
-truvis-path = { path = "tools/truvis-path" }
+# utils
+truvis-fetch-res = { path = "engine/utils/truvis-fetch-res" }
+truvis-path = { path = "engine/utils/truvis-path" }
 # foundation
 truvis-logs = { path = "engine/foundation/truvis-logs" }
 truvis-utils = { path = "engine/foundation/truvis-utils" }

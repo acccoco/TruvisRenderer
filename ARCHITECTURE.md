@@ -32,7 +32,7 @@ GUI 的 RenderGraph 适配位于 `truvis-app::gui_plugin`，底层 `truvis-gui-b
 
 ```mermaid
 flowchart LR
-    Foundation["foundation / tools<br/>utils、logs、path"]
+    Foundation["foundation / utils<br/>utils、logs、path"]
     Gfx["gfx + shader/cxx bindings<br/>RHI、descriptor-layout、FFI/binding"]
     Core["render-interface + world<br/>GPU 资源状态、CPU scene/assets 聚合"]
     RenderDomain["render-graph / render-passes / gui-backend<br/>pass 编排、通用 pass、GUI Vulkan 后端"]
