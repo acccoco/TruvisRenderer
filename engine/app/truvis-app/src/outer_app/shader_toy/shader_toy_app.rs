@@ -146,7 +146,8 @@ impl RenderAppHooks for ShaderToy {
         let frame_label = ctx.render_world.frame_counter.frame_label();
         let frame_id = ctx.render_world.frame_counter.frame_id();
         let render_present = ctx.render_present;
-        let (swapchain_image_handle, swapchain_view_handle) = render_present.current_image_and_view();
+        let present_target = render_present.current_target(frame_label);
+        let swapchain_extent = present_target.swapchain_image_info.image_extent;
 
         let mut graph = RenderGraphBuilder::new();
         graph.signal_semaphore(RgSemaphoreInfo::timeline(
@@ -157,12 +158,12 @@ impl RenderAppHooks for ShaderToy {
 
         let swapchain_image = graph.import_image(
             "swapchain-image",
-            swapchain_image_handle,
-            Some(swapchain_view_handle),
-            render_present.swapchain_image_info().image_format,
+            present_target.render_target_image_handle,
+            Some(present_target.render_target_view_handle),
+            present_target.swapchain_image_info.image_format,
             RgImageState::UNDEFINED_BOTTOM,
             Some(RgSemaphoreInfo::binary(
-                render_present.current_present_complete_semaphore(frame_label).handle(),
+                present_target.present_complete_semaphore.handle(),
                 vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
             )),
         );
@@ -171,23 +172,13 @@ impl RenderAppHooks for ShaderToy {
             swapchain_image,
             RgImageState::PRESENT_BOTTOM,
             Some(RgSemaphoreInfo::binary(
-                render_present.current_render_compute_semaphore().handle(),
+                present_target.render_complete_semaphore.handle(),
                 vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
             )),
         );
 
-        self.shader_toy.contribute_passes(
-            &mut graph,
-            &plugin_ctx,
-            swapchain_image,
-            render_present.swapchain_image_info().image_extent,
-        );
-        self.gui.contribute_passes(
-            &mut graph,
-            &plugin_ctx,
-            swapchain_image,
-            render_present.swapchain_image_info().image_extent,
-        );
+        self.shader_toy.contribute_passes(&mut graph, &plugin_ctx, swapchain_image, swapchain_extent);
+        self.gui.contribute_passes(&mut graph, &plugin_ctx, swapchain_image, swapchain_extent);
 
         let compiled_graph = graph.compile();
         if log::log_enabled!(log::Level::Debug) {

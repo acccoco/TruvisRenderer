@@ -13,12 +13,13 @@ pub mod present;
 pub mod subsystems;
 
 /// AssetHub mesh 事件到 vertex/index buffer 与 BLAS 的渲染侧上传器。
-pub mod asset_mesh_uploader;
+mod asset_mesh_uploader;
 /// AssetHub 纹理事件到 GPU image/view/bindless 绑定的渲染侧上传器。
-pub mod asset_texture_uploader;
+mod asset_texture_uploader;
 mod instance_bridge;
 mod material_bridge;
 mod material_manager;
+mod prepare_pipeline;
 /// `RenderBackend` 及其阶段化上下文，是上层 runtime 直接驱动的主入口。
 pub mod render_backend;
 mod render_scene;

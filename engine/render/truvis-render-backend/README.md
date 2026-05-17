@@ -23,6 +23,8 @@
   FIF buffers、frame settings 和 pipeline settings。
 - `GpuScene` 是 backend 私有的 scene GPU 翻译层，持有 scene/instance/geometry/light/indirect
   buffer、TLAS 和当前 FIF 的 raster draw cache；render pass 只通过 `RenderSceneView` 读取它。
+- `DefaultEnvironment` 持有 sky / uv checker 等默认环境贴图，向 `GpuScene` 提供 scene root
+  buffer 需要写入的 bindless handle；动态 scene 上传不再负责从路径加载默认贴图。
 - `AssetTextureUploader` 消费 `AssetHub` 的 texture CPU bytes，异步上传 GPU image，并注册
   image view 与 bindless SRV；未 ready 或失败时通过 fallback texture 保证材质仍可安全读取。
 - `AssetMeshUploader` 消费 `AssetHub` 的 mesh CPU 数据，在 graphics queue 上完成 vertex/index
@@ -31,7 +33,15 @@
   负责 FIF material buffer、dirty 上传、texture ready 检查和延迟 slot 回收。
 - `InstanceBridge` 同步 `InstanceHandle -> GpuInstanceSlot`，在 mesh/material 都 GPU ready 前保持
   pending，并按稳定 slot 输出 active render list。
-- `RenderPresent` 拥有 surface、swapchain wrapper、swapchain image/view handle 和 present 同步对象。
+- `RenderPresent` 拥有 surface、swapchain wrapper、swapchain image/view handle 和 present 同步对象；
+  app/plugin 只通过 `PresentView` / `PresentTargetView` 读取当前窗口 target 和 semaphore，不直接访问 owner 字段。
+
+## 对外接口
+
+- crate 公开入口保持在 `platform`、`present`、`subsystems` 和 `render_backend`。
+- asset uploader、material bridge、instance bridge、GPU scene 数据结构和 prepare pipeline 都是 backend 私有实现。
+- `RenderBackendRenderCtx` 只暴露 `RenderWorld`、`RenderSceneView`、`PresentView` 和 timeline；
+  不暴露 texture/mesh uploader owner，pass 不能绕过 backend 私有 bridge 读取上传缓存。
 
 ## 生命周期
 
@@ -40,12 +50,14 @@
 - `RenderBackend::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
   swapchain 与 `RenderPresent`，并返回 init Ctx 供 app/plugin 创建长期 GPU 资源。
 - `begin_frame` 是每帧资源回收入口：timer tick、等待当前 FIF slot、重置 frame command pool、
-  清理延迟释放队列、推进 bindless/material/instance frame token，并消费 AssetHub 事件。
+  清理延迟释放队列、推进 bindless/material/instance frame token，并通过 `AssetUploadStage`
+  消费 AssetHub 事件。
 - `update_phase` 同步 frame settings、acquire 当前 swapchain image，并返回 CPU update Ctx。
 - `prepare(camera)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 app 提供的 camera，
-  同步 material/instance/mesh/texture 状态，上传 GPU scene 和 per-frame descriptor。
+  调用 backend 私有 `PreparePipeline` 同步 material/instance/mesh/texture 状态、上传 GPU scene
+  和 per-frame data，再刷新 per-frame descriptor。
 - `render_phase` 返回只读 render Ctx；pass 只能读取 `RenderWorld`、`RenderSceneView`、
-  texture uploader 和 present target，不再修改 CPU scene。
+  present target 和 timeline，不再修改 CPU scene 或接触 uploader owner。
 - `present` 只提交当前 swapchain image 到 present queue；渲染命令提交由上层 render graph 完成。
 - `end_frame` 推进 frame counter，切换下一帧的 FIF label。
 - `wait_idle` 在 app/plugin shutdown 前调用，确保上层资源释放时不再被 GPU command 引用。
@@ -54,8 +66,10 @@
 
 ## Prepare 数据流
 
-- `AssetHub::update()` 产出的 texture 事件交给 `AssetTextureUploader`，mesh 事件交给
+- `AssetUploadStage` 将 `AssetHub::update()` 产出的 texture 事件交给 `AssetTextureUploader`，mesh 事件交给
   `AssetMeshUploader`；scene loaded/failed 只记录日志，scene 实例化入口仍在 asset/scene 层。
+- `PreparePipeline` 是 update 与 render 之间的固定桥接阶段，按 bindless、material、instance、
+  GPU scene、per-frame data 的顺序准备渲染可见数据。
 - `MaterialBridge` 每帧以 `AssetHub` 为 CPU 事实来源，同步新增、修改和删除的 material，
   再通过 `TextureResolver` 把 texture fallback/ready 状态写入 material buffer。
 - `InstanceBridge` 读取 `SceneManager`，并通过 `MaterialSlotResolver` 与 `MeshRenderResolver`

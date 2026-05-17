@@ -7,7 +7,7 @@
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
-use truvis_render_backend::present::render_present::RenderPresent;
+use truvis_render_backend::present::render_present::PresentView;
 use truvis_render_interface::cmd_allocator::CmdAllocator;
 use truvis_render_interface::pipeline_settings::{FrameSettings, PipelineSettings};
 use truvis_render_interface::render_scene_view::RenderSceneView;
@@ -43,7 +43,7 @@ pub struct PluginInitCtx<'a> {
     /// 当前 swapchain image 信息，供创建尺寸或格式相关资源。
     pub swapchain_image_info: GfxSwapchainImageInfo,
     /// present 资源只读视图，供 Plugin 查询 swapchain/present 相关句柄。
-    pub render_present: &'a RenderPresent,
+    pub render_present: PresentView<'a>,
 }
 
 /// 由 app 持有的 plugin 的 CPU 更新上下文。
@@ -80,7 +80,7 @@ pub struct PluginRenderCtx<'a> {
     /// backend 准备好的场景只读视图，供 pass 访问 scene buffer、TLAS 和 draw 数据。
     pub render_scene: &'a dyn RenderSceneView,
     /// present 资源只读视图，供 pass 导入 swapchain 或 present target。
-    pub render_present: &'a RenderPresent,
+    pub render_present: PresentView<'a>,
     /// 帧 timeline semaphore，供需要显式同步信息的渲染路径引用。
     pub timeline: &'a GfxSemaphore,
 }
@@ -102,7 +102,7 @@ pub struct PluginResizeCtx<'a> {
     /// 可变渲染世界，供 Plugin 更新或释放其注册的 GPU 资源。
     pub render_world: &'a mut RenderWorld,
     /// 新的 present 资源只读视图，供 Plugin 查询重建后的 swapchain 状态。
-    pub render_present: &'a RenderPresent,
+    pub render_present: PresentView<'a>,
 }
 
 /// 由 app 持有的 plugin 的 GPU shutdown 上下文。

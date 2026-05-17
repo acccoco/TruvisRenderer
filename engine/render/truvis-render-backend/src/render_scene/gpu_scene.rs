@@ -1,147 +1,19 @@
-use std::path::PathBuf;
-
 use ash::vk;
-use itertools::Itertools;
-use slotmap::Key;
 
-use truvis_gfx::basic::bytes::BytesConvert;
+use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
-use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_gfx::{
-    commands::{
-        barrier::{GfxBarrierMask, GfxBufferBarrier},
-        command_buffer::GfxCommandBuffer,
-    },
-    raytracing::acceleration::GfxAcceleration,
-    resources::special_buffers::structured_buffer::GfxStructuredBuffer,
-};
-use truvis_path::TruvisPath;
-use truvis_shader_binding::gpu;
-
-use truvis_gfx::resources::layout::GfxVertexLayout;
-use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
+use truvis_gfx::raytracing::acceleration::GfxAcceleration;
+use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_interface::bindless_manager::BindlessManager;
 use truvis_render_interface::frame_counter::FrameCounter;
 use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
-use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_interface::pipeline_settings::FrameLabel;
 use truvis_render_interface::render_scene_view::RenderSceneView;
+use truvis_shader_binding::gpu;
 
-use self::helper::ImageLoader;
-use super::render_data::{InstanceRenderData, RenderData};
-
-/// 构建 GPU scene 所需的 per-FIF buffer 集。
-///
-/// 每个 frame label 拥有独立的 scene/instance/geometry/light/material-indirect buffer，
-/// 避免 CPU 准备下一帧数据时覆盖 GPU 仍在读取的上一帧 buffer。
-struct GpuSceneBuffers {
-    scene_buffer: GfxStructuredBuffer<gpu::GPUScene>,
-    light_buffer: GfxStructuredBuffer<gpu::PointLight>,
-    light_stage_buffer: GfxStructuredBuffer<gpu::PointLight>,
-    geometry_buffer: GfxStructuredBuffer<gpu::Geometry>,
-    geometry_stage_buffer: GfxStructuredBuffer<gpu::Geometry>,
-    instance_buffer: GfxStructuredBuffer<gpu::Instance>,
-    instance_stage_buffer: GfxStructuredBuffer<gpu::Instance>,
-    material_indirect_buffer: GfxStructuredBuffer<u32>,
-    material_indirect_stage_buffer: GfxStructuredBuffer<u32>,
-    geometry_indirect_buffer: GfxStructuredBuffer<u32>,
-    geometry_indirect_stage_buffer: GfxStructuredBuffer<u32>,
-
-    // TODO 使用 frame id 来标记是否过期，scene manager 里面也需要有相应的标记
-    tlas: Option<GfxAcceleration>,
-    tlas_revision: u64,
-}
-
-/// 光栅化 pass 的轻量 draw cache。
-///
-/// `GpuScene` 在 prepare 阶段从 `RenderData` 展开出每个 submesh 的 buffer 绑定信息，
-/// render pass 只遍历这个 cache，不再接触 scene/asset bridge。
-#[derive(Clone, Copy)]
-struct RasterDrawItem {
-    index_buffer: vk::Buffer,
-    index_count: u32,
-    vertex_buffers: [vk::Buffer; 4],
-    vertex_offsets: [vk::DeviceSize; 4],
-    instance_slot: u32,
-    submesh_idx: u32,
-}
-// 初始化与销毁
-impl GpuSceneBuffers {
-    fn new(ctx: GfxResourceCtx<'_>, frame_label: FrameLabel) -> Self {
-        let max_light_cnt = 512;
-        let max_geometry_cnt = 1024 * 8;
-        let max_instance_cnt = 1024;
-
-        GpuSceneBuffers {
-            scene_buffer: GfxStructuredBuffer::new_ubo(ctx, 1, format!("scene buffer-{}", frame_label)),
-            light_buffer: GfxStructuredBuffer::new_ssbo(ctx, max_light_cnt, format!("light buffer-{}", frame_label)),
-            light_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
-                ctx,
-                max_light_cnt,
-                format!("light stage buffer-{}", frame_label),
-            ),
-            geometry_buffer: GfxStructuredBuffer::new_ssbo(
-                ctx,
-                max_geometry_cnt,
-                format!("geometry buffer-{}", frame_label),
-            ),
-            geometry_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
-                ctx,
-                max_geometry_cnt,
-                format!("geometry stage buffer-{}", frame_label),
-            ),
-            instance_buffer: GfxStructuredBuffer::new_ssbo(
-                ctx,
-                max_instance_cnt,
-                format!("instance buffer-{}", frame_label),
-            ),
-            instance_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
-                ctx,
-                max_instance_cnt,
-                format!("instance stage buffer-{}", frame_label),
-            ),
-            material_indirect_buffer: GfxStructuredBuffer::new_ssbo(
-                ctx,
-                max_instance_cnt * 8,
-                format!("instance material buffer-{}", frame_label),
-            ),
-            material_indirect_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
-                ctx,
-                max_instance_cnt * 8,
-                format!("instance material stage buffer-{}", frame_label),
-            ),
-            geometry_indirect_buffer: GfxStructuredBuffer::new_ssbo(
-                ctx,
-                max_instance_cnt * 8,
-                format!("instance geometry buffer-{}", frame_label),
-            ),
-            geometry_indirect_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
-                ctx,
-                max_instance_cnt * 8,
-                format!("instance geometry stage buffer-{}", frame_label),
-            ),
-            tlas: None,
-            tlas_revision: 0,
-        }
-    }
-
-    fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
-        if let Some(tlas) = self.tlas.take() {
-            tlas.destroy(resource_ctx, device_ctx, DestroyReason::Shutdown);
-        }
-        self.scene_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.light_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.light_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.geometry_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.geometry_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.instance_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.instance_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.material_indirect_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.material_indirect_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.geometry_indirect_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.geometry_indirect_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-    }
-}
+use super::buffers::GpuSceneBuffers;
+use super::default_environment::DefaultEnvironment;
+use super::raster_draw_cache::{RasterDrawItem, draw_raster_cache};
 
 /// backend 私有的 GPU scene 翻译层。
 ///
@@ -149,14 +21,11 @@ impl GpuSceneBuffers {
 /// 光栅化 draw cache，并通过 `RenderSceneView` 向 render pass 暴露只读能力。
 /// `GpuScene` 不拥有 CPU scene；它只保存当前 FIF 可用的 GPU 表示。
 pub struct GpuScene {
-    gpu_scene_buffers: [GpuSceneBuffers; FrameCounter::fif_count()],
-    raster_draws: [Vec<RasterDrawItem>; FrameCounter::fif_count()],
-
-    // TODO sky texture handle 不应该放在 GPU scene 里面
-    sky_texture: (GfxImageHandle, GfxImageViewHandle),
-    // TODO uv checker texture handle 不应该放在 GPU scene 里面
-    uv_checker_texture: (GfxImageHandle, GfxImageViewHandle),
+    pub(super) gpu_scene_buffers: [GpuSceneBuffers; FrameCounter::fif_count()],
+    pub(super) raster_draws: [Vec<RasterDrawItem>; FrameCounter::fif_count()],
+    pub(super) environment: DefaultEnvironment,
 }
+
 // 访问器
 impl GpuScene {
     #[inline]
@@ -169,6 +38,7 @@ impl GpuScene {
         &self.gpu_scene_buffers[*frame_label].scene_buffer
     }
 }
+
 // 创建与初始化
 impl GpuScene {
     pub fn new(
@@ -180,52 +50,10 @@ impl GpuScene {
     ) -> Self {
         let _span = tracy_client::span!("GpuScene::new");
 
-        let sky_path = TruvisPath::resources_path_str("sky.jpg");
-        let uv_checker_path = TruvisPath::resources_path_str("uv_checker.png");
-
-        let (sky_image, uv_checker_image) = {
-            let _span = tracy_client::span!("GpuScene::new/load_images");
-            (
-                ImageLoader::load_image(resource_ctx, immediate_ctx, &PathBuf::from(&sky_path)),
-                ImageLoader::load_image(resource_ctx, immediate_ctx, &PathBuf::from(&uv_checker_path)),
-            )
+        let environment = {
+            let _span = tracy_client::span!("GpuScene::new/default_environment");
+            DefaultEnvironment::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, bindless_manager)
         };
-
-        let sky_image_format = sky_image.format();
-        let uv_checker_image_format = uv_checker_image.format();
-
-        let (sky_image_handle, sky_view_handle, uv_checker_image_handle, uv_checker_view_handle) = {
-            let _span = tracy_client::span!("GpuScene::new/register_image_views");
-            let sky_image_handle = gfx_resource_manager.register_image(sky_image);
-            let sky_view_handle = gfx_resource_manager.get_or_create_image_view(
-                device_ctx,
-                sky_image_handle,
-                truvis_gfx::resources::image_view::GfxImageViewDesc::new_2d(
-                    sky_image_format,
-                    vk::ImageAspectFlags::COLOR,
-                ),
-                &sky_path,
-            );
-
-            let uv_checker_image_handle = gfx_resource_manager.register_image(uv_checker_image);
-            let uv_checker_view_handle = gfx_resource_manager.get_or_create_image_view(
-                device_ctx,
-                uv_checker_image_handle,
-                truvis_gfx::resources::image_view::GfxImageViewDesc::new_2d(
-                    uv_checker_image_format,
-                    vk::ImageAspectFlags::COLOR,
-                ),
-                &uv_checker_path,
-            );
-
-            (sky_image_handle, sky_view_handle, uv_checker_image_handle, uv_checker_view_handle)
-        };
-
-        {
-            let _span = tracy_client::span!("GpuScene::new/register_bindless");
-            bindless_manager.register_srv(sky_view_handle);
-            bindless_manager.register_srv(uv_checker_view_handle);
-        }
 
         let gpu_scene_buffers = {
             let _span = tracy_client::span!("GpuScene::new/per_frame_buffers");
@@ -235,20 +63,11 @@ impl GpuScene {
         Self {
             gpu_scene_buffers,
             raster_draws: FrameCounter::frame_labes().map(|_| Vec::new()),
-
-            sky_texture: (sky_image_handle, sky_view_handle),
-            uv_checker_texture: (uv_checker_image_handle, uv_checker_view_handle),
+            environment,
         }
     }
 }
-impl Drop for GpuScene {
-    fn drop(&mut self) {
-        debug_assert!(self.sky_texture.0.is_null());
-        debug_assert!(self.sky_texture.1.is_null());
-        debug_assert!(self.uv_checker_texture.0.is_null());
-        debug_assert!(self.uv_checker_texture.1.is_null());
-    }
-}
+
 // 销毁
 impl GpuScene {
     pub fn destroy_mut(
@@ -262,387 +81,7 @@ impl GpuScene {
             buffers.destroy_mut(resource_ctx, device_ctx);
         }
 
-        let (sky_image, sky_view) = self.sky_texture;
-        if !sky_view.is_null() {
-            bindless_manager.unregister_srv(sky_view);
-        }
-        if !sky_image.is_null() {
-            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, sky_image, DestroyReason::Shutdown);
-        }
-
-        let (uv_checker_image, uv_checker_view) = self.uv_checker_texture;
-        if !uv_checker_view.is_null() {
-            bindless_manager.unregister_srv(uv_checker_view);
-        }
-        if !uv_checker_image.is_null() {
-            gfx_resource_manager.release_image_immediate(
-                resource_ctx,
-                device_ctx,
-                uv_checker_image,
-                DestroyReason::Shutdown,
-            );
-        }
-
-        self.sky_texture = (GfxImageHandle::default(), GfxImageViewHandle::default());
-        self.uv_checker_texture = (GfxImageHandle::default(), GfxImageViewHandle::default());
-    }
-}
-// 工具函数
-impl GpuScene {
-    /// # 阶段：Before Render
-    ///
-    /// 将 backend bridge 已经整理好的 `RenderData` 写入当前 FIF 的 device buffer。
-    /// 此方法不依赖 `SceneManager`，这是 CPU scene 与 GPU scene 的边界。
-    ///
-    /// 上传顺序刻意保持为 draw cache、mesh/instance/light buffer、TLAS、scene root buffer：
-    /// scene root buffer 最后写入，确保它记录的 device address 与本帧实际 buffer/TLAS 对齐。
-    pub fn upload_render_data(
-        &mut self,
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
-        cmd: &GfxCommandBuffer,
-        barrier_mask: GfxBarrierMask,
-        frame_counter: &FrameCounter,
-        render_data: &RenderData<'_>,
-        material_buffer_device_address: vk::DeviceAddress,
-        tlas_revision: u64,
-        bindless_manager: &BindlessManager,
-    ) {
-        let _span = tracy_client::span!("GpuScene::prepare_render_data2");
-
-        self.update_raster_draw_cache(render_data, frame_counter.frame_label());
-        self.upload_mesh_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
-        self.upload_instance_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
-        self.upload_light_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
-
-        // 需要确保 instance 先于 tlas 构建
-        self.build_tlas(resource_ctx, device_ctx, immediate_ctx, render_data, frame_counter, tlas_revision);
-
-        self.upload_scene_buffer(
-            cmd,
-            frame_counter,
-            barrier_mask,
-            render_data,
-            material_buffer_device_address,
-            bindless_manager,
-        );
-    }
-
-    fn update_raster_draw_cache(&mut self, scene_data: &RenderData<'_>, frame_label: FrameLabel) {
-        // 光栅化绘制需要的 buffer 绑定在 prepare 阶段展开，避免 render pass 每次 draw
-        // 再走 mesh/instance/material 的跨模块解析。
-        let draw_cache = &mut self.raster_draws[*frame_label];
-        draw_cache.clear();
-
-        for instance in scene_data.all_instances.iter() {
-            let mesh = &scene_data.all_meshes[instance.mesh_index];
-            for (submesh_idx, geometry) in mesh.geometries.iter().enumerate() {
-                let vertex_count = geometry.vertex_buffer.vertex_cnt();
-                draw_cache.push(RasterDrawItem {
-                    index_buffer: geometry.index_buffer.vk_buffer(),
-                    index_count: geometry.index_cnt(),
-                    vertex_buffers: [geometry.vertex_buffer.vk_buffer(); 4],
-                    vertex_offsets: [
-                        VertexLayoutSoA3D::pos_offset(vertex_count),
-                        VertexLayoutSoA3D::normal_offset(vertex_count),
-                        VertexLayoutSoA3D::tangent_offset(vertex_count),
-                        VertexLayoutSoA3D::uv_offset(vertex_count),
-                    ],
-                    instance_slot: instance.instance_slot.as_u32(),
-                    submesh_idx: submesh_idx as u32,
-                });
-            }
-        }
-    }
-}
-
-// 基于 RenderData 快照的 GPU 数据上传方法
-impl GpuScene {
-    /// 将 GPU scene root 数据上传到 scene buffer。
-    ///
-    /// 这个 buffer 只保存 device address、bindless handle 和计数，是 shader 访问整套场景数据的入口。
-    fn upload_scene_buffer(
-        &mut self,
-        cmd: &GfxCommandBuffer,
-        frame_counter: &FrameCounter,
-        barrier_mask: GfxBarrierMask,
-        scene_data: &RenderData<'_>,
-        material_buffer_device_address: vk::DeviceAddress,
-        bindless_manager: &BindlessManager,
-    ) {
-        let crt_gpu_buffers = &self.gpu_scene_buffers[*frame_counter.frame_label()];
-        let gpu_scene_data = gpu::GPUScene {
-            all_instances: crt_gpu_buffers.instance_buffer.device_address(),
-            all_mats: material_buffer_device_address,
-            all_geometries: crt_gpu_buffers.geometry_buffer.device_address(),
-            instance_material_map: crt_gpu_buffers.material_indirect_buffer.device_address(),
-            instance_geometry_map: crt_gpu_buffers.geometry_indirect_buffer.device_address(),
-            point_lights: crt_gpu_buffers.light_buffer.device_address(),
-            spot_lights: 0, // TODO 暂时无用
-            point_light_count: scene_data.all_point_lights.len() as u32,
-            spot_light_count: 0, // TODO 暂时无用
-
-            sky: bindless_manager.get_shader_srv_handle(self.sky_texture.1).0,
-            sky_sampler_type: gpu::ESamplerType_LinearClamp,
-            uv_checker: bindless_manager.get_shader_srv_handle(self.uv_checker_texture.1).0,
-            uv_checker_sampler_type: gpu::ESamplerType_LinearClamp,
-        };
-
-        cmd.cmd_update_buffer(crt_gpu_buffers.scene_buffer.vk_buffer(), 0, BytesConvert::bytes_of(&gpu_scene_data));
-        cmd.buffer_memory_barrier(
-            vk::DependencyFlags::empty(),
-            &[GfxBufferBarrier::default().mask(barrier_mask).buffer(
-                crt_gpu_buffers.scene_buffer.vk_buffer(),
-                0,
-                vk::WHOLE_SIZE,
-            )],
-        );
-    }
-
-    /// 将 instance 数据上传到 GPU。
-    ///
-    /// `instance_slot` 是全局稳定 slot；geometry/material indirect buffer 则是本帧紧凑列表，
-    /// 用于把一个 instance 映射到它的 submesh geometry 与 material slot。
-    fn upload_instance_buffer(
-        &mut self,
-        resource_ctx: GfxResourceCtx<'_>,
-        cmd: &GfxCommandBuffer,
-        barrier_mask: GfxBarrierMask,
-        scene_data: &RenderData<'_>,
-        frame_counter: &FrameCounter,
-    ) {
-        let _span = tracy_client::span!("upload_instance_buffer2");
-        let crt_gpu_buffers = &mut self.gpu_scene_buffers[*frame_counter.frame_label()];
-
-        let crt_instance_stage_buffer = &mut crt_gpu_buffers.instance_stage_buffer;
-        let crt_geometry_indirect_stage_buffer = &mut crt_gpu_buffers.geometry_indirect_stage_buffer;
-        let crt_material_indirect_stage_buffer = &mut crt_gpu_buffers.material_indirect_stage_buffer;
-
-        let instance_buffer_slices = crt_instance_stage_buffer.mapped_slice();
-        let material_indirect_buffer_slices = crt_material_indirect_stage_buffer.mapped_slice();
-        let geometry_indirect_buffer_slices = crt_geometry_indirect_stage_buffer.mapped_slice();
-
-        let mut crt_geometry_indirect_idx = 0;
-        let mut crt_material_indirect_idx = 0;
-        for instance in scene_data.all_instances.iter() {
-            let instance_slot = instance.instance_slot.as_usize();
-            if instance_buffer_slices.len() <= instance_slot {
-                panic!("instance slot can not be larger than buffer");
-            }
-
-            let submesh_cnt = instance.material_slots.len();
-            if geometry_indirect_buffer_slices.len() < crt_geometry_indirect_idx + submesh_cnt {
-                panic!("instance geometry cnt can not be larger than buffer");
-            }
-            if material_indirect_buffer_slices.len() < crt_material_indirect_idx + submesh_cnt {
-                panic!("instance material cnt can not be larger than buffer");
-            }
-
-            instance_buffer_slices[instance_slot] = gpu::Instance {
-                geometry_indirect_idx: crt_geometry_indirect_idx as u32,
-                geometry_count: submesh_cnt as u32,
-                material_indirect_idx: crt_material_indirect_idx as u32,
-                material_count: submesh_cnt as u32,
-                model: instance.transform.into(),
-                inv_model: instance.transform.inverse().into(),
-            };
-
-            // 将 geometry 索引写入间接索引 buffer。
-            // mesh 在 RenderData 中去重，instance 只保存它引用的 submesh 范围。
-            let mesh_startup_index = scene_data.mesh_geometry_start_indices[instance.mesh_index];
-            for submesh_idx in 0..submesh_cnt {
-                let geometry_idx = mesh_startup_index + submesh_idx;
-                geometry_indirect_buffer_slices[crt_geometry_indirect_idx + submesh_idx] = geometry_idx as u32;
-            }
-            crt_geometry_indirect_idx += submesh_cnt;
-
-            // 将稳定 material slot 写入间接索引 buffer。
-            // material slot 来自 MaterialManager，可被 shader 直接索引材质 buffer。
-            for material_slot in instance.material_slots.iter() {
-                material_indirect_buffer_slices[crt_material_indirect_idx] = *material_slot;
-                crt_material_indirect_idx += 1;
-            }
-        }
-
-        helper::flush_copy_and_barrier(
-            resource_ctx,
-            cmd,
-            crt_instance_stage_buffer,
-            &mut crt_gpu_buffers.instance_buffer,
-            barrier_mask,
-        );
-        helper::flush_copy_and_barrier(
-            resource_ctx,
-            cmd,
-            crt_geometry_indirect_stage_buffer,
-            &mut crt_gpu_buffers.geometry_indirect_buffer,
-            barrier_mask,
-        );
-        helper::flush_copy_and_barrier(
-            resource_ctx,
-            cmd,
-            crt_material_indirect_stage_buffer,
-            &mut crt_gpu_buffers.material_indirect_buffer,
-            barrier_mask,
-        );
-    }
-
-    /// 将 light 快照上传到当前 FIF 的 GPU buffer。
-    fn upload_light_buffer(
-        &mut self,
-        resource_ctx: GfxResourceCtx<'_>,
-        cmd: &GfxCommandBuffer,
-        barrier_mask: GfxBarrierMask,
-        scene_data: &RenderData<'_>,
-        frame_counter: &FrameCounter,
-    ) {
-        let _span = tracy_client::span!("upload_light_buffer2");
-        let crt_gpu_buffers = &mut self.gpu_scene_buffers[*frame_counter.frame_label()];
-        let crt_light_stage_buffer = &mut crt_gpu_buffers.light_stage_buffer;
-        let light_buffer_slices = crt_light_stage_buffer.mapped_slice();
-        if light_buffer_slices.len() < scene_data.all_point_lights.len() {
-            panic!("light cnt can not be larger than buffer");
-        }
-
-        for (light_idx, point_light) in scene_data.all_point_lights.iter().enumerate() {
-            light_buffer_slices[light_idx] = gpu::PointLight {
-                pos: point_light.pos,
-                color: point_light.color,
-
-                _color_padding: Default::default(),
-                _pos_padding: Default::default(),
-            };
-        }
-
-        helper::flush_copy_and_barrier(
-            resource_ctx,
-            cmd,
-            crt_light_stage_buffer,
-            &mut crt_gpu_buffers.light_buffer,
-            barrier_mask,
-        );
-    }
-
-    /// 将 mesh 数据以 geometry 表的形式上传到 GPU。
-    ///
-    /// geometry 表只保存 device address；实际 vertex/index buffer 生命周期由 mesh uploader 持有。
-    fn upload_mesh_buffer(
-        &mut self,
-        resource_ctx: GfxResourceCtx<'_>,
-        cmd: &GfxCommandBuffer,
-        barrier_mask: GfxBarrierMask,
-        scene_data: &RenderData<'_>,
-        frame_counter: &FrameCounter,
-    ) {
-        let _span = tracy_client::span!("upload_mesh_buffer2");
-        let crt_gpu_buffers = &mut self.gpu_scene_buffers[*frame_counter.frame_label()];
-        let crt_geometry_stage_buffer = &mut crt_gpu_buffers.geometry_stage_buffer;
-        let geometry_buffer_slices = crt_geometry_stage_buffer.mapped_slice();
-
-        let mut crt_geometry_idx = 0;
-        for mesh in scene_data.all_meshes.iter() {
-            if geometry_buffer_slices.len() < crt_geometry_idx + mesh.geometries.len() {
-                panic!("geometry cnt can not be larger than buffer");
-            }
-            for (submesh_idx, geometry) in mesh.geometries.iter().enumerate() {
-                geometry_buffer_slices[crt_geometry_idx + submesh_idx] = gpu::Geometry {
-                    position_buffer: geometry.vertex_buffer.pos_address(),
-                    normal_buffer: geometry.vertex_buffer.normal_address(),
-                    tangent_buffer: geometry.vertex_buffer.tangent_address(),
-                    uv_buffer: geometry.vertex_buffer.uv_address(),
-                    index_buffer: geometry.index_buffer.device_address(),
-                };
-            }
-            crt_geometry_idx += mesh.geometries.len();
-        }
-
-        helper::flush_copy_and_barrier(
-            resource_ctx,
-            cmd,
-            crt_geometry_stage_buffer,
-            &mut crt_gpu_buffers.geometry_buffer,
-            barrier_mask,
-        );
-    }
-
-    /// 根据 `RenderData` 的 instance 信息生成 TLAS instance 描述。
-    ///
-    /// `custom_idx` 使用稳定 instance slot，ray tracing shader 可以用它回查 GPU instance buffer。
-    fn get_as_instance_info(
-        &self,
-        instance: &InstanceRenderData,
-        custom_idx: u32,
-        scene_data: &RenderData<'_>,
-    ) -> vk::AccelerationStructureInstanceKHR {
-        let mesh = &scene_data.all_meshes[instance.mesh_index];
-        vk::AccelerationStructureInstanceKHR {
-            // 3x4 row-major 矩阵
-            transform: helper::get_rt_matrix(&instance.transform),
-            instance_custom_index_and_mask: vk::Packed24_8::new(custom_idx, 0xFF),
-            instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(
-                0, // TODO 暂时使用同一个 hit group
-                vk::GeometryInstanceFlagsKHR::TRIANGLE_FACING_CULL_DISABLE.as_raw() as u8,
-            ),
-            acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
-                device_handle: mesh.blas_device_address.expect("BLAS not built for mesh"),
-            },
-        }
-    }
-
-    /// 构建当前 FIF 的 TLAS。
-    ///
-    /// `tlas_revision` 由 mesh ready revision 与 instance bridge revision 组成；当 mesh BLAS ready、
-    /// instance 增删、激活状态或 transform 改变时才重建，避免每帧无意义重建 TLAS。
-    fn build_tlas(
-        &mut self,
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
-        scene_data: &RenderData<'_>,
-        frame_counter: &FrameCounter,
-        tlas_revision: u64,
-    ) {
-        let _span = tracy_client::span!("build_tlas2");
-        let frame_index = *frame_counter.frame_label();
-        if scene_data.all_instances.is_empty() {
-            if let Some(tlas) = self.gpu_scene_buffers[frame_index].tlas.take() {
-                tlas.destroy(resource_ctx, device_ctx, DestroyReason::ImmediateRelease);
-            }
-            self.gpu_scene_buffers[frame_index].tlas_revision = tlas_revision;
-            return;
-        }
-
-        if self.gpu_scene_buffers[frame_index].tlas.is_some()
-            && self.gpu_scene_buffers[frame_index].tlas_revision == tlas_revision
-        {
-            return;
-        }
-
-        let instance_infos = scene_data
-            .all_instances
-            .iter()
-            .map(|ins| {
-                ins.instance_slot.validate_tlas_custom_index();
-                self.get_as_instance_info(ins, ins.instance_slot.as_u32(), scene_data)
-            })
-            .collect_vec();
-
-        if let Some(tlas) = self.gpu_scene_buffers[frame_index].tlas.take() {
-            tlas.destroy(resource_ctx, device_ctx, DestroyReason::ImmediateRelease);
-        }
-
-        let tlas = GfxAcceleration::build_tlas_sync(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            &instance_infos,
-            vk::BuildAccelerationStructureFlagsKHR::empty(),
-            format!("scene2-{}-{}", frame_counter.frame_label(), frame_counter.frame_id()),
-        );
-
-        self.gpu_scene_buffers[frame_index].tlas = Some(tlas);
-        self.gpu_scene_buffers[frame_index].tlas_revision = tlas_revision;
+        self.environment.destroy_mut(resource_ctx, device_ctx, bindless_manager, gfx_resource_manager);
     }
 }
 
@@ -657,90 +96,6 @@ impl RenderSceneView for GpuScene {
 
     fn draw_raster(&self, frame_label: FrameLabel, cmd: &GfxCommandBuffer, before_draw: &mut dyn FnMut(u32, u32)) {
         let _span = tracy_client::span!("GpuScene::draw_raster");
-        // render pass 只获得只读 view。每次 draw 前回调 instance slot/submesh index，
-        // 让具体 pass 能绑定 push constants 或 descriptor，而不暴露 GpuScene 内部缓存结构。
-        for draw in &self.raster_draws[*frame_label] {
-            cmd.cmd_bind_index_buffer_raw(draw.index_buffer, 0, super::geometry::RtGeometry::index_type());
-            cmd.cmd_bind_vertex_buffers(0, &draw.vertex_buffers, &draw.vertex_offsets);
-
-            before_draw(draw.instance_slot, draw.submesh_idx);
-            cmd.draw_indexed(draw.index_count, 0, 1, 0, 0);
-        }
-    }
-}
-
-mod helper {
-    use ash::vk;
-    use truvis_gfx::resources::image::GfxImage;
-    use truvis_gfx::{
-        commands::{
-            barrier::{GfxBarrierMask, GfxBufferBarrier},
-            command_buffer::GfxCommandBuffer,
-        },
-        gfx::GfxResourceCtx,
-        resources::buffer::GfxBuffer,
-    };
-
-    /// 三个操作：
-    /// 1. 将 stage buffer 的数据 *全部* flush 到 buffer 中
-    /// 2. 从 stage buffer 中将 *所有* 数据复制到目标 buffer 中
-    /// 3. 添加 barrier，确保后续访问时 Copy 已经完成且数据可用
-    pub fn flush_copy_and_barrier(
-        resource_ctx: GfxResourceCtx<'_>,
-        cmd: &GfxCommandBuffer,
-        stage_buffer: &mut GfxBuffer,
-        dst: &mut GfxBuffer,
-        barrier_mask: GfxBarrierMask,
-    ) {
-        let buffer_size = stage_buffer.size();
-        {
-            stage_buffer.flush(resource_ctx, 0, buffer_size);
-        }
-        cmd.cmd_copy_buffer(
-            stage_buffer,
-            dst,
-            &[vk::BufferCopy {
-                size: buffer_size,
-                ..Default::default()
-            }],
-        );
-        cmd.buffer_memory_barrier(
-            vk::DependencyFlags::empty(),
-            &[GfxBufferBarrier::default().mask(barrier_mask).buffer(dst.vk_buffer(), 0, vk::WHOLE_SIZE)],
-        );
-    }
-
-    pub fn get_rt_matrix(trans: &glam::Mat4) -> vk::TransformMatrixKHR {
-        let c1 = &trans.x_axis;
-        let c2 = &trans.y_axis;
-        let c3 = &trans.z_axis;
-        let c4 = &trans.w_axis;
-
-        // 3x4 矩阵，row-major 顺序
-        vk::TransformMatrixKHR {
-            matrix: [
-                c1.x, c2.x, c3.x, c4.x, // 第 1 行
-                c1.y, c2.y, c3.y, c4.y, // 第 2 行
-                c1.z, c2.z, c3.z, c4.z, // 第 3 行
-            ],
-        }
-    }
-
-    // TODO 临时的图片加载器，后续需要整合到 TextureManager 中
-    pub struct ImageLoader {}
-    impl ImageLoader {
-        pub fn load_image(
-            resource_ctx: GfxResourceCtx<'_>,
-            immediate_ctx: truvis_gfx::gfx::GfxImmediateCtx<'_>,
-            tex_path: &std::path::Path,
-        ) -> GfxImage {
-            let img = image::ImageReader::open(tex_path).unwrap().decode().unwrap().to_rgba8();
-            let width = img.width();
-            let height = img.height();
-            let data = img.as_raw();
-            let name = tex_path.to_str().unwrap();
-
-            GfxImage::from_rgba8(resource_ctx, immediate_ctx, width, height, data, name)
-        }
+        draw_raster_cache(&self.raster_draws[*frame_label], cmd, before_draw);
     }
 }

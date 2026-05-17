@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use slotmap::SlotMap;
 
@@ -141,7 +141,7 @@ impl AssetHub {
     pub fn destroy(self) {}
 }
 
-// 访问器
+// 对外接口
 impl AssetHub {
     /// 请求加载纹理。
     ///
@@ -190,6 +190,92 @@ impl AssetHub {
         handle
     }
 
+    /// 注册已经位于 CPU 内存中的 mesh 数据。
+    ///
+    /// 这通常用于导入器已经复制完 owned mesh 数据的场景。同一个 key 只会产出一次
+    /// `MeshLoaded` 事件；事件被渲染后端消费后才会进入 GPU 上传和 BLAS 构建流程。
+    pub fn register_mesh_data(&mut self, key: MeshAssetKey, data: LoadedMeshData) -> AssetMeshHandle {
+        let _span = tracy_client::span!("AssetHub::register_mesh_data");
+        let (handle, event) = self.register_mesh_data_inner(key, data);
+        if let Some(event) = event {
+            self.pending_events.push_back(event);
+        }
+        handle
+    }
+
+    /// 注册已经位于 CPU 内存中的 material 数据。
+    ///
+    /// GPU material slot 由 render-side `MaterialBridge` 分配，`AssetHub` 只保存内容身份、
+    /// 参数和 texture handle 引用。
+    pub fn register_material_data(&mut self, key: MaterialAssetKey, data: LoadedMaterialData) -> AssetMaterialHandle {
+        let _span = tracy_client::span!("AssetHub::register_material_data");
+        self.register_material_data_inner(key, data)
+    }
+
+    /// 收集后台加载任务完成事件。
+    ///
+    /// 该函数是后台 loader 和外部渲染/scene 系统之间的同步点：它先排出同步注册产生的
+    /// pending events，再把异步结果写回 `AssetHub` 状态表，并返回需要后续系统消费的
+    /// CPU ready / failed 事件。
+    ///
+    /// 调用方通常每帧调用一次，并按事件类型分发给 texture uploader、mesh uploader
+    /// 或 scene 层。返回后的事件队列已经被消费，`AssetHub` 不会再次重放同一事件。
+    pub fn update(&mut self) -> Vec<LoadedAssetEvent> {
+        let _span = tracy_client::span!("AssetHub::update");
+        let mut events = Vec::new();
+
+        while let Some(event) = self.pending_events.pop_front() {
+            events.push(event);
+        }
+
+        while let Some(result) = self.loader.try_recv_result() {
+            match result {
+                LoadResult::TextureSuccess { handle, data } => {
+                    if let Some(record) = self.textures.get_mut(handle) {
+                        record.status = LoadStatus::Ready;
+                    }
+
+                    events.push(LoadedAssetEvent::TextureLoaded { handle, data });
+                }
+                LoadResult::TextureFailure(handle, error) => {
+                    if let Some(record) = self.textures.get_mut(handle) {
+                        record.status = LoadStatus::Failed;
+                    }
+
+                    events.push(LoadedAssetEvent::TextureFailed { handle, error });
+                }
+                LoadResult::SceneSuccess { handle, data } => match self.ingest_loaded_scene(data) {
+                    Ok((scene_data, mut scene_events)) => {
+                        if let Some(record) = self.scenes.get_mut(handle) {
+                            record.status = LoadStatus::Ready;
+                            record.data = Some(scene_data);
+                        }
+                        events.append(&mut scene_events);
+                        events.push(LoadedAssetEvent::SceneLoaded { handle });
+                    }
+                    Err(error) => {
+                        if let Some(record) = self.scenes.get_mut(handle) {
+                            record.status = LoadStatus::Failed;
+                        }
+                        events.push(LoadedAssetEvent::SceneFailed { handle, error });
+                    }
+                },
+                LoadResult::SceneFailure(handle, error) => {
+                    if let Some(record) = self.scenes.get_mut(handle) {
+                        record.status = LoadStatus::Failed;
+                    }
+
+                    events.push(LoadedAssetEvent::SceneFailed { handle, error });
+                }
+            }
+        }
+
+        events
+    }
+}
+
+// 访问与查询
+impl AssetHub {
     /// 查询纹理 CPU 加载状态。
     ///
     /// 无效或已不属于当前 `AssetHub` 的 handle 会返回 `Failed`。调用方如果需要区分
@@ -279,29 +365,10 @@ impl AssetHub {
     pub fn iter_materials(&self) -> impl Iterator<Item = (AssetMaterialHandle, &LoadedMaterialData)> + '_ {
         self.materials.iter().map(|(handle, record)| (handle, &record.data))
     }
+}
 
-    /// 注册已经位于 CPU 内存中的 mesh 数据。
-    ///
-    /// 这通常用于导入器已经复制完 owned mesh 数据的场景。同一个 key 只会产出一次
-    /// `MeshLoaded` 事件；事件被渲染后端消费后才会进入 GPU 上传和 BLAS 构建流程。
-    pub fn register_mesh_data(&mut self, key: MeshAssetKey, data: LoadedMeshData) -> AssetMeshHandle {
-        let _span = tracy_client::span!("AssetHub::register_mesh_data");
-        let (handle, event) = self.register_mesh_data_inner(key, data);
-        if let Some(event) = event {
-            self.pending_events.push_back(event);
-        }
-        handle
-    }
-
-    /// 注册已经位于 CPU 内存中的 material 数据。
-    ///
-    /// GPU material slot 由 render-side `MaterialBridge` 分配，`AssetHub` 只保存内容身份、
-    /// 参数和 texture handle 引用。
-    pub fn register_material_data(&mut self, key: MaterialAssetKey, data: LoadedMaterialData) -> AssetMaterialHandle {
-        let _span = tracy_client::span!("AssetHub::register_material_data");
-        self.register_material_data_inner(key, data)
-    }
-
+// 实现细节
+impl AssetHub {
     /// 内部 mesh 注册路径，供同步注册和 scene ingest 复用。
     ///
     /// 返回的事件只在第一次看到 key 时产生，避免重复上传同一份 mesh 内容。
@@ -352,10 +419,10 @@ impl AssetHub {
             opaque: raw.opaque,
             diffuse_texture: raw
                 .diffuse_texture_path
-                .map(|path| self.load_texture(resolve_scene_texture_path(source_path, path))),
+                .map(|path| self.load_texture(helper::resolve_scene_texture_path(source_path, path))),
             normal_texture: raw
                 .normal_texture_path
-                .map(|path| self.load_texture(resolve_scene_texture_path(source_path, path))),
+                .map(|path| self.load_texture(helper::resolve_scene_texture_path(source_path, path))),
             name: raw.name,
         }
     }
@@ -434,101 +501,44 @@ impl AssetHub {
             immediate_events,
         ))
     }
+}
 
-    /// 收集后台加载任务完成事件。
+mod helper {
+    use std::path::{Component, Path, PathBuf};
+
+    /// 将 scene 内引用的 texture path 解析为 `AssetHub` 使用的内容路径。
     ///
-    /// 该函数是后台 loader 和外部渲染/scene 系统之间的同步点：它先排出同步注册产生的
-    /// pending events，再把异步结果写回 `AssetHub` 状态表，并返回需要后续系统消费的
-    /// CPU ready / failed 事件。
-    ///
-    /// 调用方通常每帧调用一次，并按事件类型分发给 texture uploader、mesh uploader
-    /// 或 scene 层。返回后的事件队列已经被消费，`AssetHub` 不会再次重放同一事件。
-    pub fn update(&mut self) -> Vec<LoadedAssetEvent> {
-        let _span = tracy_client::span!("AssetHub::update");
-        let mut events = Vec::new();
+    /// Assimp 通常返回模型文件内的相对路径；这里只做词法归一化，不访问文件系统，
+    /// 让纹理暂缺时仍沿用 `load_texture` 的失败路径。
+    pub(super) fn resolve_scene_texture_path(source_path: &Path, texture_path: PathBuf) -> PathBuf {
+        let path = if texture_path.is_absolute() {
+            texture_path
+        } else {
+            source_path.parent().unwrap_or_else(|| Path::new("")).join(texture_path)
+        };
 
-        while let Some(event) = self.pending_events.pop_front() {
-            events.push(event);
-        }
-
-        while let Some(result) = self.loader.try_recv_result() {
-            match result {
-                LoadResult::TextureSuccess { handle, data } => {
-                    if let Some(record) = self.textures.get_mut(handle) {
-                        record.status = LoadStatus::Ready;
-                    }
-
-                    events.push(LoadedAssetEvent::TextureLoaded { handle, data });
-                }
-                LoadResult::TextureFailure(handle, error) => {
-                    if let Some(record) = self.textures.get_mut(handle) {
-                        record.status = LoadStatus::Failed;
-                    }
-
-                    events.push(LoadedAssetEvent::TextureFailed { handle, error });
-                }
-                LoadResult::SceneSuccess { handle, data } => match self.ingest_loaded_scene(data) {
-                    Ok((scene_data, mut scene_events)) => {
-                        if let Some(record) = self.scenes.get_mut(handle) {
-                            record.status = LoadStatus::Ready;
-                            record.data = Some(scene_data);
-                        }
-                        events.append(&mut scene_events);
-                        events.push(LoadedAssetEvent::SceneLoaded { handle });
-                    }
-                    Err(error) => {
-                        if let Some(record) = self.scenes.get_mut(handle) {
-                            record.status = LoadStatus::Failed;
-                        }
-                        events.push(LoadedAssetEvent::SceneFailed { handle, error });
-                    }
-                },
-                LoadResult::SceneFailure(handle, error) => {
-                    if let Some(record) = self.scenes.get_mut(handle) {
-                        record.status = LoadStatus::Failed;
-                    }
-
-                    events.push(LoadedAssetEvent::SceneFailed { handle, error });
-                }
-            }
-        }
-
-        events
+        normalize_path_lexically(path)
     }
-}
 
-/// 将 scene 内引用的 texture path 解析为 `AssetHub` 使用的内容路径。
-///
-/// Assimp 通常返回模型文件内的相对路径；这里只做词法归一化，不访问文件系统，
-/// 让纹理暂缺时仍沿用 `load_texture` 的失败路径。
-fn resolve_scene_texture_path(source_path: &Path, texture_path: PathBuf) -> PathBuf {
-    let path = if texture_path.is_absolute() {
-        texture_path
-    } else {
-        source_path.parent().unwrap_or_else(|| Path::new("")).join(texture_path)
-    };
+    pub(super) fn normalize_path_lexically(path: PathBuf) -> PathBuf {
+        let mut normalized = PathBuf::new();
 
-    normalize_path_lexically(path)
-}
-
-fn normalize_path_lexically(path: PathBuf) -> PathBuf {
-    let mut normalized = PathBuf::new();
-
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !normalized.pop() {
+        for component in path.components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if !normalized.pop() {
+                        normalized.push(component.as_os_str());
+                    }
+                }
+                Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
                     normalized.push(component.as_os_str());
                 }
             }
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
         }
-    }
 
-    normalized
+        normalized
+    }
 }
 
 #[cfg(test)]

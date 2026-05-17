@@ -3,7 +3,7 @@ use ash::vk;
 use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxResourceCtx};
-use truvis_gfx::swapchain::swapchain::GfxSwapchain;
+use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
 use truvis_render_interface::cmd_allocator::CmdAllocator;
 use truvis_render_interface::fif_buffer::FifBuffers;
@@ -38,7 +38,7 @@ impl RtPipelineInner {
         device_info_ctx: GfxDeviceInfoCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         global_descriptor_sets: &GlobalDescriptorSets,
-        swapchain: &GfxSwapchain,
+        swapchain_image_info: GfxSwapchainImageInfo,
         cmd_allocator: &mut CmdAllocator,
     ) -> Self {
         let realtime_rt_pass =
@@ -46,7 +46,7 @@ impl RtPipelineInner {
         let denoise_accum_pass = DenoiseAccumPass::new(device_ctx, global_descriptor_sets);
         let blit_pass = BlitPass::new(device_ctx, global_descriptor_sets);
         let sdr_pass = SdrPass::new(device_ctx, global_descriptor_sets);
-        let resolve_pass = ResolvePass::new(device_ctx, global_descriptor_sets, swapchain.image_infos().image_format);
+        let resolve_pass = ResolvePass::new(device_ctx, global_descriptor_sets, swapchain_image_info.image_format);
 
         let compute_cmds = FrameCounter::frame_labes()
             .map(|frame_label| cmd_allocator.alloc_command_buffer(device_ctx, frame_label, "rt-compute-subgraph"));
@@ -81,7 +81,7 @@ impl Plugin for RtPipeline {
             ctx.device_info_ctx,
             ctx.immediate_ctx,
             &ctx.render_world.global_descriptor_sets,
-            ctx.render_present.swapchain.as_ref().unwrap(),
+            ctx.render_present.swapchain_image_info(),
             ctx.cmd_allocator,
         ));
     }
@@ -245,15 +245,15 @@ impl RtPipeline {
             None,
         );
 
-        let (present_image_handle, present_view_handle) = render_present.current_image_and_view();
+        let present_target = render_present.current_target(frame_label);
         let present_image = rg_builder.import_image(
             "present-image",
-            present_image_handle,
-            Some(present_view_handle),
-            render_present.swapchain_image_info().image_format,
+            present_target.render_target_image_handle,
+            Some(present_target.render_target_view_handle),
+            present_target.swapchain_image_info.image_format,
             RgImageState::UNDEFINED_BOTTOM,
             Some(RgSemaphoreInfo::binary(
-                render_present.current_present_complete_semaphore(frame_label).handle(),
+                present_target.present_complete_semaphore.handle(),
                 vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
             )),
         );
@@ -262,7 +262,7 @@ impl RtPipeline {
             present_image,
             RgImageState::PRESENT_BOTTOM,
             Some(RgSemaphoreInfo::binary(
-                render_present.current_render_compute_semaphore().handle(),
+                present_target.render_complete_semaphore.handle(),
                 vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
             )),
         );
@@ -274,7 +274,7 @@ impl RtPipeline {
                 render_world,
                 render_target,
                 swapchain_image: present_image,
-                swapchain_extent: render_present.swapchain_image_info().image_extent,
+                swapchain_extent: present_target.swapchain_image_info.image_extent,
             },
         );
 
