@@ -28,28 +28,6 @@ impl From<&MaterialData> for RenderMaterialParams {
     }
 }
 
-/// `MaterialBridge` 写入稳定 material slot 的窄接口。
-///
-/// 生产实现由 `MaterialManager` 提供；测试可以替换成轻量 fake，避免构造 Vulkan buffer。
-trait MaterialSlotWriter {
-    fn register_params(&mut self, params: RenderMaterialParams) -> (GpuMaterialHandle, usize);
-    fn update_params_keep_slot(&mut self, handle: GpuMaterialHandle, params: RenderMaterialParams) -> usize;
-}
-
-impl MaterialSlotWriter for MaterialManager {
-    fn register_params(&mut self, params: RenderMaterialParams) -> (GpuMaterialHandle, usize) {
-        let handle = self.register(params);
-        let slot = self.get_slot_index(handle).expect("registered material must have a slot");
-        (handle, slot)
-    }
-
-    fn update_params_keep_slot(&mut self, handle: GpuMaterialHandle, params: RenderMaterialParams) -> usize {
-        let slot = self.get_slot_index(handle).expect("updated material must keep its slot");
-        MaterialManager::update_params(self, handle, params);
-        slot
-    }
-}
-
 /// Render-side 材质桥接层。
 ///
 /// 它把 `AssetHub` 产出的 `MaterialLoaded` 事件转换为 backend 私有的 GPU material handle。
@@ -100,22 +78,14 @@ impl MaterialBridge {
     }
 
     fn apply_material_loaded(&mut self, handle: AssetMaterialHandle, data: &MaterialData) {
-        let writer = self.material_manager.as_mut().expect("MaterialBridge used after shutdown");
-        Self::apply_material_loaded_with_writer(&mut self.bindings, writer, handle, data);
-    }
-
-    fn apply_material_loaded_with_writer(
-        bindings: &mut SecondaryMap<AssetMaterialHandle, GpuMaterialHandle>,
-        writer: &mut dyn MaterialSlotWriter,
-        handle: AssetMaterialHandle,
-        data: &MaterialData,
-    ) {
         let params = RenderMaterialParams::from(data);
 
-        if let Some(&gpu_handle) = bindings.get(handle) {
+        if let Some(&gpu_handle) = self.bindings.get(handle) {
             // 重复 loaded event 属于防御路径：asset material handle 保持不变时，复用原
             // GPU material handle，具体参数比较、dirty 和 texture ready 状态由 manager 负责。
-            let slot = writer.update_params_keep_slot(gpu_handle, params);
+            let material_manager = self.material_manager_mut();
+            let slot = material_manager.get_slot_index(gpu_handle).expect("updated material must keep its slot");
+            material_manager.update_params(gpu_handle, params);
             log::debug!(
                 "MaterialBridge: update asset_handle={:?} gpu_handle={:?} stable_slot={}; dirty all FIF buffers",
                 handle,
@@ -127,8 +97,10 @@ impl MaterialBridge {
 
         // 新 asset material 进入 render-side 后拿到独立 GPU handle 和稳定 GPU slot。
         // 这个 slot 会被 instance bridge 解析进 RenderData。
-        let (gpu_handle, slot) = writer.register_params(params);
-        bindings.insert(handle, gpu_handle);
+        let material_manager = self.material_manager_mut();
+        let gpu_handle = material_manager.register(params);
+        let slot = material_manager.get_slot_index(gpu_handle).expect("registered material must have a slot");
+        self.bindings.insert(handle, gpu_handle);
         log::trace!(
             "MaterialBridge: register asset_handle={:?} gpu_handle={:?} stable_slot={}",
             handle,
