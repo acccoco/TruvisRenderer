@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 
 use slotmap::SlotMap;
 
-use crate::asset_loader::{AssetLoadRequest, AssetLoader, LoadResult, SceneLoadRequest};
+use crate::asset_loader::{TextureLoadRequest, AssetLoader, LoadResult, SceneLoadRequest};
 use crate::handle::{
     AssetMaterialHandle, AssetMeshHandle, AssetSceneHandle, AssetTextureHandle, LoadStatus, LoadedMaterialData,
     LoadedMeshData, LoadedSceneData, LoadedSceneInstanceData, LoadedTextureBytes, MaterialAssetKey, MeshAssetKey,
@@ -95,11 +95,14 @@ pub struct AssetHub {
     meshes: SlotMap<AssetMeshHandle, MeshAssetRecord>,
     materials: SlotMap<AssetMaterialHandle, MaterialAssetRecord>,
     scenes: SlotMap<AssetSceneHandle, SceneAssetRecord>,
+
     path_to_texture: HashMap<PathBuf, AssetTextureHandle>,
     key_to_mesh: HashMap<MeshAssetKey, AssetMeshHandle>,
     key_to_material: HashMap<MaterialAssetKey, AssetMaterialHandle>,
     key_to_scene: HashMap<SceneAssetKey, AssetSceneHandle>,
+
     pending_events: VecDeque<LoadedAssetEvent>,
+
     loader: AssetLoader,
 }
 
@@ -161,7 +164,7 @@ impl AssetHub {
         self.path_to_texture.insert(path.clone(), handle);
 
         log::info!("Request load texture: {:?}", path);
-        self.loader.request_load(AssetLoadRequest { path, handle });
+        self.loader.request_load_texture(TextureLoadRequest { path, handle });
 
         handle
     }
