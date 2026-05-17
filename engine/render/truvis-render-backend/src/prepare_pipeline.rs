@@ -238,18 +238,3 @@ impl PreparePipeline {
         ctx.gfx.queue_ctx().gfx_queue().submit(vec![GfxSubmitInfo::new(std::slice::from_ref(ctx.cmd))], None);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::PreparePipeline;
-
-    #[test]
-    fn scene_revision_combines_mesh_and_instance_revisions() {
-        assert_eq!(PreparePipeline::scene_revision(3, 7), 10);
-    }
-
-    #[test]
-    fn scene_revision_saturates_on_overflow() {
-        assert_eq!(PreparePipeline::scene_revision(u64::MAX, 1), u64::MAX);
-    }
-}

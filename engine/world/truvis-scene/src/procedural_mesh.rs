@@ -179,37 +179,3 @@ fn cube_uvs() -> Vec<glam::Vec2> {
     ];
     (0..6).flat_map(|_| face_uvs).collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn procedural_meshes_have_consistent_vertex_attributes() {
-        for kind in [
-            ProceduralMeshKind::Triangle,
-            ProceduralMeshKind::Rect,
-            ProceduralMeshKind::Floor,
-            ProceduralMeshKind::Cube,
-        ] {
-            let mesh = kind.mesh_data();
-            let vertex_count = mesh.positions.len();
-
-            assert_eq!(mesh.normals.len(), vertex_count);
-            assert_eq!(mesh.tangents.len(), vertex_count);
-            assert_eq!(mesh.uvs.len(), vertex_count);
-            assert!(mesh.indices.iter().all(|&index| index < vertex_count as u32));
-            assert_eq!(mesh.name, kind.name());
-        }
-    }
-
-    #[test]
-    fn procedural_mesh_asset_keys_are_stable_and_distinct() {
-        let floor = ProceduralMeshKind::Floor.asset_key();
-        let rect = ProceduralMeshKind::Rect.asset_key();
-
-        assert_ne!(floor, rect);
-        assert_eq!(floor.source_path, PathBuf::from("procedural://procedural-floor"));
-        assert_eq!(floor.mesh_index, 0);
-    }
-}

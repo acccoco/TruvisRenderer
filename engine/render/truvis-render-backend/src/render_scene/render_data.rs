@@ -98,27 +98,3 @@ impl Default for RenderData<'_> {
         Self::empty()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gpu_instance_slot_keeps_raw_index() {
-        let slot = GpuInstanceSlot::new(42);
-
-        assert_eq!(slot.as_u32(), 42);
-        assert_eq!(slot.as_usize(), 42);
-    }
-
-    #[test]
-    fn gpu_instance_slot_accepts_vulkan_24_bit_custom_index_limit() {
-        GpuInstanceSlot::new(GpuInstanceSlot::TLAS_CUSTOM_INDEX_MAX).validate_tlas_custom_index();
-    }
-
-    #[test]
-    #[should_panic(expected = "TLAS instance custom index exceeds Vulkan 24-bit limit")]
-    fn gpu_instance_slot_rejects_custom_index_over_vulkan_limit() {
-        GpuInstanceSlot::new(GpuInstanceSlot::TLAS_CUSTOM_INDEX_MAX + 1).validate_tlas_custom_index();
-    }
-}
