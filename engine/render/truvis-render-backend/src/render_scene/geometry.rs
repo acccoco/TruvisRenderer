@@ -8,26 +8,27 @@ use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 
-/// 几何体数据（包含顶点和索引缓冲）
+/// render-side mesh 的 GPU 几何资源。
 ///
-/// 封装 GPU 顶点缓冲和索引缓冲，支持泛型顶点布局。
-/// 可用于光栅化渲染和光线追踪加速结构构建。
-///
-/// # 类型别名
-/// - `GeometryAoS3D`: AoS 3D 顶点布局（Position + Normal + TexCoord）
-/// - `GeometrySoA3D`: SoA 3D 顶点布局（分离存储）
+/// 当前统一使用 `VertexLayoutSoA3D`，同一份 vertex/index buffer 同时服务光栅化 draw、
+/// BLAS build 和 shader device address 读取。资源所有权由 `AssetMeshUploader` 持有，
+/// `GpuScene` 只借用它生成 geometry table、TLAS instance 和 raster draw cache。
 pub struct RtGeometry {
+    /// SoA 顶点 buffer，按 position/normal/tangent/uv 四段提供 device address。
     pub vertex_buffer: GfxVertexBuffer<VertexLayoutSoA3D>,
+    /// 32-bit index buffer；ray tracing 和 raster pass 使用同一索引类型。
     pub index_buffer: GfxIndex32Buffer,
 }
 
 // 访问器
 impl RtGeometry {
+    /// 当前 geometry 统一使用 32-bit index，必须与 mesh uploader 创建的 index buffer 保持一致。
     #[inline]
     pub fn index_type() -> vk::IndexType {
         vk::IndexType::UINT32
     }
 
+    /// index 数量，供 raster draw 和 BLAS primitive_count 计算使用。
     #[inline]
     pub fn index_cnt(&self) -> u32 {
         self.index_buffer.index_cnt() as u32
@@ -36,6 +37,10 @@ impl RtGeometry {
 
 // 工具函数
 impl RtGeometry {
+    /// 构造 BLAS build 所需的 Vulkan geometry/range 描述。
+    ///
+    /// 输入 buffer 已经由 mesh 上传路径写入 device-local 内存；调用者需要在 copy 后建立
+    /// `TRANSFER_WRITE -> ACCELERATION_STRUCTURE_BUILD` 的同步，再执行 BLAS build。
     pub fn get_blas_geometry_info(&self) -> GfxBlasInputInfo<'_> {
         let geometry_triangle = vk::AccelerationStructureGeometryTrianglesDataKHR {
             vertex_format: vk::Format::R32G32B32_SFLOAT,
@@ -78,11 +83,13 @@ impl RtGeometry {
 }
 
 impl RtGeometry {
+    /// 显式销毁几何资源；调用者负责确保没有在飞命令继续读取这些 buffer。
     pub fn destroy_mut(&mut self, ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
         self.vertex_buffer.destroy_mut(ctx, reason);
         self.index_buffer.destroy_mut(ctx, reason);
     }
 
+    /// 消费 owner 并销毁几何资源。
     pub fn destroy(mut self, ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
         self.destroy_mut(ctx, reason);
     }

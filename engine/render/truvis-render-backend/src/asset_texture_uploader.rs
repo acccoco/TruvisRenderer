@@ -191,9 +191,13 @@ impl Drop for TextureUploadManager {
 /// 材质解析只需要后两者，不直接接触上传队列或 `AssetHub`。
 #[derive(Clone, Copy)]
 pub struct UploadedAssetTexture {
+    /// 注册到 `GfxResourceManager` 的 image owner handle。
     pub image_handle: GfxImageHandle,
+    /// shader SRV 使用的 image view handle。
     pub view_handle: GfxImageViewHandle,
+    /// bindless 表中的稳定 SRV 引用。
     pub srv_handle: BindlessSrvHandle,
+    /// 材质写入 GPU buffer 时使用的 sampler 类型。
     pub sampler: gpu::ESamplerType,
 }
 
@@ -208,6 +212,10 @@ pub struct AssetTextureUploader {
 }
 
 impl AssetTextureUploader {
+    /// 创建纹理上传器，并注册常驻 fallback texture。
+    ///
+    /// fallback texture 在真实贴图未加载、加载失败或上传未完成时被 `TextureResolver` 返回，
+    /// 因此材质 buffer 永远不会写入无效 SRV。
     pub fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
@@ -272,6 +280,10 @@ impl AssetTextureUploader {
         }
     }
 
+    /// 消费 AssetHub 的 texture 事件，并推进已提交上传的完成检测。
+    ///
+    /// 该方法只查询 transfer queue timeline semaphore，不等待 GPU。上传完成的 image 会在这里
+    /// 注册到 `GfxResourceManager` 与 bindless 表；尚未完成的贴图继续通过 fallback 解析。
     pub fn update(
         &mut self,
         events: Vec<LoadedAssetEvent>,
@@ -354,6 +366,10 @@ impl AssetTextureUploader {
         self.textures.insert(handle, texture);
     }
 
+    /// 关闭上传队列并释放所有已注册纹理。
+    ///
+    /// shutdown 会等待 pending transfer 完成，因为 staging/image/command buffer 可能仍被 queue 引用。
+    /// 调用后 uploader 不应再被 `TextureResolver` 使用。
     pub fn destroy(
         mut self,
         resource_ctx: GfxResourceCtx<'_>,

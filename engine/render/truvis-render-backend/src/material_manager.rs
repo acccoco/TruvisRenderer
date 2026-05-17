@@ -15,7 +15,12 @@ use truvis_render_interface::frame_counter::{FrameCounter, FrameToken};
 use truvis_render_interface::pipeline_settings::FrameLabel;
 use truvis_shader_binding::gpu;
 
-new_key_type! {pub struct ManagedMaterialHandle;}
+new_key_type! {
+    /// backend 私有的 material manager handle。
+    ///
+    /// 它与 `AssetMaterialHandle` 分离，用于保持 shader 可见 material slot 的稳定性。
+    pub struct ManagedMaterialHandle;
+}
 
 /// MaterialManager 使用的 CPU 侧材质参数。
 ///
@@ -77,30 +82,30 @@ impl TextureBinding {
     }
 }
 
-/// Texture 状态查询 trait
+/// 纹理 ready 状态与 shader binding 查询接口。
 ///
 /// 由渲染侧纹理上传/绑定缓存实现，避免 scene 直接耦合 AssetHub 或 BindlessManager。
 pub trait TextureResolver {
-    /// texture 是否处于 Ready 状态
+    /// texture 是否已经拥有真实 GPU image/view/bindless binding。
     fn is_texture_ready(&self, handle: AssetTextureHandle) -> bool;
 
     /// 获取可渲染的 texture binding；未就绪时由实现返回 fallback。
     fn resolve_texture(&self, handle: AssetTextureHandle) -> TextureBinding;
 }
 
-/// 单个 slot 在 dirty_slots 中维护的状态
+/// 单个 material slot 在 dirty 列表中的 FIF 写入与回收状态。
 struct SlotDirtyInfo {
-    /// 各 FIF buffer 是否需要更新（true = 需要写入该帧对应的 GPU buffer）
+    /// 各 FIF buffer 是否需要更新；true 表示需要写入该帧对应的 GPU buffer。
     fif_dirty: [bool; FrameCounter::fif_count()],
-    /// 本次 dirty（或 unregister）发生时的 frame_id，用于回收计时
+    /// 本次 dirty 或 unregister 发生时的 frame id，用于延迟回收计时。
     dirty_frame_id: u64,
 }
 
-/// 材质 GPU buffer（FIF 套）
+/// 单个 FIF frame label 对应的材质 GPU buffer 与 staging buffer。
 struct MaterialBuffers {
-    /// Device-local SSBO，shader 直接读取
+    /// Device-local SSBO，shader 通过 scene root buffer 中的 device address 读取。
     material_buffer: GfxStructuredBuffer<gpu::PBRMaterial>,
-    /// host-mapped staging buffer，CPU 写入后复制到 SSBO
+    /// Host-mapped staging buffer，CPU 写入后在 prepare 命令中复制到 SSBO。
     material_stage_buffer: GfxStructuredBuffer<gpu::PBRMaterial>,
 }
 
@@ -171,6 +176,7 @@ pub struct MaterialManager {
 
 // 创建与初始化
 impl MaterialManager {
+    /// 创建 FIF 套材质 buffer，并初始化可分配 slot 池。
     pub fn new(ctx: GfxResourceCtx<'_>, frame_token: FrameToken) -> Self {
         let free_slots: Vec<usize> = (0..MAX_MATERIAL_COUNT).rev().collect();
         Self {
@@ -187,6 +193,7 @@ impl MaterialManager {
 
 // 销毁
 impl MaterialManager {
+    /// 销毁所有 FIF material buffer。
     pub fn destroy(mut self, ctx: GfxResourceCtx<'_>) {
         for buffer in &mut self.buffers {
             buffer.destroy_mut(ctx);

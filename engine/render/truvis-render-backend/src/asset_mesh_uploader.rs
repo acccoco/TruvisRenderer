@@ -366,6 +366,9 @@ pub struct AssetMeshUploader {
 }
 
 impl AssetMeshUploader {
+    /// 创建 mesh 上传器。
+    ///
+    /// 内部 command pool 绑定 graphics queue family，因为 BLAS build 不能假设 transfer queue 支持。
     pub fn new(device_ctx: GfxDeviceCtx<'_>, queue_ctx: GfxQueueCtx<'_>) -> Self {
         Self {
             meshes: SecondaryMap::new(),
@@ -374,6 +377,10 @@ impl AssetMeshUploader {
         }
     }
 
+    /// 消费 AssetHub 的 mesh loaded 事件，并推进 GPU 上传/BLAS build 完成检测。
+    ///
+    /// 该方法只查询 graphics queue timeline semaphore，不等待 GPU；完成前 mesh 不会进入 resolver
+    /// 可见的 `meshes` map，因此 instance bridge 会继续把依赖它的实例保持为 pending。
     pub fn update(
         &mut self,
         events: Vec<LoadedAssetEvent>,
@@ -397,10 +404,15 @@ impl AssetMeshUploader {
         }
     }
 
+    /// 查询指定 mesh 是否已经完成 vertex/index 上传和 BLAS build。
     pub fn is_mesh_ready(&self, handle: AssetMeshHandle) -> bool {
         self.meshes.contains_key(handle)
     }
 
+    /// 返回 mesh ready 状态的单调递增 revision。
+    ///
+    /// `RenderBackend` 会把它与 instance revision 合成 scene revision，供 `GpuScene` 判断
+    /// 当前 FIF 的 TLAS 是否需要重建。
     pub fn ready_revision(&self) -> u64 {
         self.ready_revision
     }
@@ -436,6 +448,9 @@ impl AssetMeshUploader {
         );
     }
 
+    /// 关闭上传队列并释放所有 mesh GPU 资源。
+    ///
+    /// pending 队列会先等待对应 timeline value，确保 staging/scratch/geometry/BLAS 不再被 graphics queue 引用。
     pub fn destroy(mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
         self.uploader.shutdown(resource_ctx, device_ctx);
 

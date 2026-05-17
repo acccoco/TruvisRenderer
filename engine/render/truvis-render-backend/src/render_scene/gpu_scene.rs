@@ -488,7 +488,7 @@ impl GpuScene {
         );
     }
 
-    /// 将 light 数据上传到 GPU（基于 SceneData2）
+    /// 将 light 快照上传到当前 FIF 的 GPU buffer。
     fn upload_light_buffer(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,

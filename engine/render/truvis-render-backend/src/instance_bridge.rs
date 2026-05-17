@@ -45,6 +45,10 @@ pub struct InstanceBridge {
 }
 
 impl InstanceBridge {
+    /// 创建 instance bridge，并预分配稳定 GPU instance slot 池。
+    ///
+    /// slot 数量当前与 `GpuScene` instance buffer 容量保持一致；耗尽表示 CPU scene 中可渲染实例
+    /// 已超过 backend 当前固定容量。
     pub fn new(frame_token: FrameToken) -> Self {
         let free_slots = (0..MAX_INSTANCE_COUNT).rev().map(GpuInstanceSlot::new).collect();
         Self {
@@ -56,16 +60,25 @@ impl InstanceBridge {
         }
     }
 
+    /// 帧开始时推进 frame token，并回收已经跨过 FIF 窗口的 retired slot。
     pub fn begin_frame(&mut self, frame_token: FrameToken) {
         // slot 回收以 frame id 为准推进；每帧开始时回收已经跨过 FIF 窗口的旧 slot。
         self.frame_token = frame_token;
         self.reclaim_retired_slots();
     }
 
+    /// 返回影响 TLAS/instance buffer 的 instance-side revision。
+    ///
+    /// 实例增删、ready 状态变化和 active transform 变化都会推进该值。
     pub fn revision(&self) -> u64 {
         self.revision
     }
 
+    /// 从 CPU `SceneManager` 构建本帧可渲染的 `RenderData` 快照。
+    ///
+    /// 该阶段会先同步 instance 生命周期与依赖 ready 状态；只有 mesh/material 都能被 resolver
+    /// 解析到 GPU 数据的实例才进入 active 列表。输出按稳定 slot 排序，保证 raster draw、
+    /// TLAS custom index 和 GPU instance buffer 共享同一套 instance slot 语义。
     pub fn prepare_render_data<'a>(
         &mut self,
         scene_manager: &SceneManager,

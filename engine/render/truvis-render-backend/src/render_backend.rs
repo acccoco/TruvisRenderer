@@ -52,6 +52,8 @@ use crate::render_scene::gpu_scene::GpuScene;
 /// 它位于 `RenderAppShell` 之下、`truvis-gfx`/`RenderWorld` 之上，是 CPU scene、
 /// render-side 资产上传、GPU scene 翻译、swapchain/present 和 FIF 同步的聚合 owner。
 /// 上层只能在对应阶段拿到窄化后的 Ctx，不能长期保存完整 `Gfx` 或 backend 内部字段。
+/// 这保证资源销毁顺序仍由 backend 集中控制：plugin/app 可以在生命周期阶段创建或释放资源，
+/// 但不能越过 Ctx 长期持有内部 owner。
 ///
 /// # 生命周期调用顺序
 /// ```ignore
@@ -96,11 +98,17 @@ pub struct RenderBackend {
 /// 在 app 执行 update 工作期间保持存活；drop 前 RenderBackend 会保持借用锁定。
 /// 这个阶段允许修改 `World` 与管线设置，但还没有把 CPU 语义数据翻译到 GPU scene。
 pub struct RenderBackendUpdateCtx<'a> {
+    /// CPU 语义世界；update 阶段允许 app/plugin 修改 scene、asset 请求和运行时实例。
     pub world: &'a mut World,
+    /// 可变管线设置；修改会影响后续 prepare/render 阶段的 pass 行为。
     pub pipeline_settings: &'a mut PipelineSettings,
+    /// 当前帧尺寸和格式快照，已在 acquire 前与 swapchain 同步。
     pub frame_settings: &'a FrameSettings,
+    /// 累积渲染状态，只读暴露给上层 UI 或调试逻辑。
     pub accum_data: &'a AccumData,
+    /// 当前 swapchain extent，便于 app 在 update 阶段同步相机纵横比。
     pub swapchain_extent: vk::Extent2D,
+    /// `begin_frame` 计算出的上一帧 delta time，单位秒。
     pub delta_time_s: f32,
 }
 
@@ -109,14 +117,23 @@ pub struct RenderBackendUpdateCtx<'a> {
 /// 到达这个阶段时 `prepare` 已经完成 per-frame descriptor、material buffer、scene buffer、
 /// TLAS 和 raster draw cache 的更新；pass 只能读取这些结果并录制命令。
 pub struct RenderBackendRenderCtx<'a> {
+    /// Vulkan device 能力，只用于命令录制和对象访问，不转移所有权。
     pub device_ctx: GfxDeviceCtx<'a>,
+    /// GPU 资源分配/释放上下文；render 阶段通常只应使用已有资源，避免临时 owner 泄漏。
     pub resource_ctx: GfxResourceCtx<'a>,
+    /// 队列上下文，供 render graph submit 使用。
     pub queue_ctx: GfxQueueCtx<'a>,
+    /// 设备能力查询上下文，供 pass 根据硬件限制选择路径。
     pub device_info_ctx: GfxDeviceInfoCtx<'a>,
+    /// GPU 侧 frame state、descriptor、manager-owned resources 和 per-frame buffer。
     pub render_world: &'a RenderWorld,
+    /// backend 私有 `GpuScene` 的只读视图；pass 不能访问 concrete scene owner。
     pub render_scene: &'a dyn RenderSceneView,
+    /// 纹理 bindless 解析只读入口，主要供需要直接查询 asset texture 的 pass 使用。
     pub asset_texture_uploader: &'a AssetTextureUploader,
+    /// 当前窗口 present target 与同步对象。
     pub render_present: &'a RenderPresent,
+    /// backend 全局 FIF timeline，用于 render graph signal 当前 frame id。
     pub timeline: &'a GfxSemaphore,
 }
 
@@ -126,16 +143,27 @@ pub struct RenderBackendRenderCtx<'a> {
 /// 这里暴露 `World`、`RenderWorld` 和 `CmdAllocator` 的可变借用，供 app/plugin 创建长期 GPU 资源；
 /// 初始化完成后这些能力会重新收敛回 backend 的阶段化生命周期。
 pub struct RenderBackendInitCtx<'a> {
+    /// 初始化长期 GPU 资源所需的 device 上下文。
     pub device_ctx: GfxDeviceCtx<'a>,
+    /// 初始化长期 GPU 资源所需的资源上下文。
     pub resource_ctx: GfxResourceCtx<'a>,
+    /// 初始化阶段可用的队列上下文。
     pub queue_ctx: GfxQueueCtx<'a>,
+    /// 初始化阶段可用的设备能力查询上下文。
     pub device_info_ctx: GfxDeviceInfoCtx<'a>,
+    /// 一次性上传/初始化资源使用的 immediate 上下文。
     pub immediate_ctx: GfxImmediateCtx<'a>,
+    /// surface/swapchain 相关操作所需上下文。
     pub surface_ctx: GfxSurfaceCtx<'a>,
+    /// CPU 语义世界，供 app/plugin 注册初始 scene、asset 和实例。
     pub world: &'a mut World,
+    /// GPU frame state，供 app/plugin 创建长期 descriptor、buffer、pipeline 依赖。
     pub render_world: &'a mut RenderWorld,
+    /// 命令分配器，供初始化阶段创建长期或一次性 command buffer。
     pub cmd_allocator: &'a mut CmdAllocator,
+    /// 初始 swapchain image 信息，供上层创建窗口尺寸相关资源。
     pub swapchain_image_info: GfxSwapchainImageInfo,
+    /// 初始化后可用的 present owner 只读引用。
     pub render_present: &'a RenderPresent,
 }
 
@@ -143,11 +171,17 @@ pub struct RenderBackendInitCtx<'a> {
 ///
 /// 上层只在收到 `Some(ctx)` 时重建窗口尺寸相关资源；连续 resize 事件会在 present 层合并。
 pub struct RenderBackendResizeCtx<'a> {
+    /// resize 后重建上层 GPU 资源需要的 device 上下文。
     pub device_ctx: GfxDeviceCtx<'a>,
+    /// resize 后重建上层 GPU 资源需要的资源上下文。
     pub resource_ctx: GfxResourceCtx<'a>,
+    /// 需要立即上传 resize 相关资源时使用。
     pub immediate_ctx: GfxImmediateCtx<'a>,
+    /// resize 路径访问 surface/swapchain 所需上下文。
     pub surface_ctx: GfxSurfaceCtx<'a>,
+    /// resize 后的 GPU frame state，可用于重建窗口尺寸相关资源。
     pub render_world: &'a mut RenderWorld,
+    /// 已重建完成的 present owner。
     pub render_present: &'a RenderPresent,
 }
 
@@ -156,17 +190,29 @@ pub struct RenderBackendResizeCtx<'a> {
 /// `RenderAppShell` 会在 backend 自身销毁前把这个上下文交给 app/plugin，确保 plugin-owned
 /// pipeline、buffer、descriptor 等资源仍能通过 typed Ctx 显式释放。
 pub struct RenderBackendShutdownCtx<'a> {
+    /// 释放 plugin/app-owned GPU 对象所需 device 上下文。
     pub device_ctx: GfxDeviceCtx<'a>,
+    /// 释放 plugin/app-owned GPU 对象所需资源上下文。
     pub resource_ctx: GfxResourceCtx<'a>,
+    /// 某些上层资源需要显式队列上下文完成 shutdown。
     pub queue_ctx: GfxQueueCtx<'a>,
+    /// 释放前需要做最后一次 immediate 操作时使用。
     pub immediate_ctx: GfxImmediateCtx<'a>,
+    /// surface 相关上层资源释放时使用。
     pub surface_ctx: GfxSurfaceCtx<'a>,
+    /// 仍然存活的 GPU frame state；shutdown 完成后由 backend destroy 接管。
     pub render_world: &'a mut RenderWorld,
+    /// 命令分配器仍然存活，供上层显式释放自己创建的 command 资源。
     pub cmd_allocator: &'a mut CmdAllocator,
 }
 
 // 创建与初始化
 impl RenderBackend {
+    /// 创建不依赖窗口系统的 backend root state。
+    ///
+    /// 这里会初始化 `Gfx`、CPU `World`、GPU `RenderWorld`、资产上传器、material/instance bridge、
+    /// 私有 `GpuScene`、FIF 资源和全局描述符，但不会创建 surface/swapchain。窗口相关资源必须等
+    /// `init_after_window` 收到平台层 raw handle 后再创建。
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
         let _span = tracy_client::span!("RenderBackend::new");
 
@@ -343,10 +389,18 @@ impl RenderBackend {
 // 销毁
 impl RenderBackend {
     /// 等待当前 device 上已提交的 GPU 工作完成。
+    ///
+    /// runtime 在 app/plugin shutdown 前调用它，确保上层持有的 pipeline、descriptor、buffer
+    /// 等资源被释放时，不会仍被上一帧 command buffer 引用。
     pub fn wait_idle(&self) {
         self.gfx.wait_idel();
     }
 
+    /// 销毁 backend 拥有的所有 GPU/CPU 子资源，并最后销毁 `Gfx` root owner。
+    ///
+    /// 调用前应已经完成 app/plugin shutdown。销毁顺序刻意从依赖 `Gfx` 的子资源开始，
+    /// 先释放 present/FIF/asset/GpuScene/command/descriptor 等对象，最后销毁 `Gfx`，
+    /// 这样所有 Vulkan wrapper 都能通过有效的 typed Ctx 显式释放。
     pub fn destroy(mut self) {
         self.gfx.wait_idel();
 
@@ -540,11 +594,16 @@ impl RenderBackend {
     }
 
     /// 查询是否已经到达下一帧的渲染时间。
+    ///
+    /// 该方法只做时间判断，不推进 frame counter，也不会等待 GPU。
     pub fn time_to_render(&self) -> bool {
         self.render_world.frame_counter.frame_delta_time_limit_us() < self.timer.elapsed_since_tick().as_micros() as f32
     }
 
-    /// 处理窗口 resize。只有实际重建 swapchain 时才返回 `Some(ctx)`。
+    /// 处理窗口 resize。只有 present 层实际重建 swapchain 时才返回 `Some(ctx)`。
+    ///
+    /// 上层应只在返回上下文时重建与窗口尺寸绑定的 pipeline/render target 资源。
+    /// 连续窗口事件会先在 `RenderPresent` 中合并为 latest-size 标记，避免每个事件都触发重建。
     pub fn handle_resize(&mut self, new_size: [u32; 2]) -> Option<RenderBackendResizeCtx<'_>> {
         let render_present = self.render_present.as_mut().unwrap();
         render_present.update_window_size(new_size);
@@ -570,6 +629,10 @@ impl RenderBackend {
         })
     }
 
+    /// 生成 shutdown 阶段上下文，供 app/plugin 在 backend 子资源销毁前释放自己持有的 GPU 资源。
+    ///
+    /// 这个阶段仍暴露 `RenderWorld` 与 `CmdAllocator` 的可变借用，但不再允许继续进入 update/render
+    /// 帧流程；调用者应在 `wait_idle` 后使用它清理长期资源，再让 `destroy` 接管 backend-owned 资源。
     pub fn shutdown_phase(&mut self) -> RenderBackendShutdownCtx<'_> {
         RenderBackendShutdownCtx {
             device_ctx: self.gfx.device_ctx(),
