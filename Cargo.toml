@@ -1,28 +1,32 @@
 [workspace]
 resolver = "3"
 members = [
-    # 通用部分
+    # tools
     "tools/truvis-fetch-res",
     "tools/truvis-path",
-    "engine/crates/truvis-utils",
-    "engine/crates/truvis-logs",
-    # RenderApp 层级
-    "engine/crates/truvis-gfx",
-    "engine/crates/truvis-render-interface",
-    "engine/crates/truvis-render-graph",
-    "engine/crates/truvis-asset",
-    "engine/crates/truvis-scene",
-    "engine/crates/truvis-world",
-    "engine/crates/truvis-render-backend",
-    "engine/crates/truvis-frame-api",
-    "engine/crates/truvis-frame-runtime",
-    "engine/crates/truvis-render-passes",
-    "engine/crates/truvis-app",
-    # imgui 后端
-    "engine/crates/truvis-gui-backend",
+    # foundation
+    "engine/foundation/truvis-utils",
+    "engine/foundation/truvis-logs",
+    # gfx
+    "engine/gfx/truvis-gfx",
+    "engine/gfx/truvis-descriptor-layout-macro",
+    "engine/gfx/truvis-descriptor-layout-trait",
+    # render
+    "engine/render/truvis-render-interface",
+    "engine/render/truvis-render-graph",
+    "engine/render/truvis-render-backend",
+    "engine/render/truvis-render-passes",
+    "engine/render/truvis-gui-backend",
+    # world
+    "engine/world/truvis-asset",
+    "engine/world/truvis-scene",
+    "engine/world/truvis-world",
+    # frame
+    "engine/frame/truvis-frame-api",
+    "engine/frame/truvis-frame-runtime",
+    # app
+    "engine/app/truvis-app",
     # shader 绑定相关
-    "engine/crates/truvis-descriptor-layout/truvis-descriptor-layout-macro",
-    "engine/crates/truvis-descriptor-layout/truvis-descriptor-layout-trait",
     "engine/shader/truvis-shader-binding",
     "engine/shader/truvis-shader-build",
     # cxx 绑定相关
@@ -45,26 +49,35 @@ panic = 'abort'    # panic 时直接终止，进一步减小体积
 
 
 [workspace.dependencies]
+# tools
 truvis-fetch-res = { path = "tools/truvis-fetch-res" }
-truvis-logs = { path = "engine/crates/truvis-logs" }
 truvis-path = { path = "tools/truvis-path" }
-truvis-utils = { path = "engine/crates/truvis-utils" }
-truvis-gfx = { path = "engine/crates/truvis-gfx" }
-truvis-render-interface = { path = "engine/crates/truvis-render-interface" }
-truvis-render-graph = { path = "engine/crates/truvis-render-graph" }
-truvis-asset = { path = "engine/crates/truvis-asset" }
-truvis-scene = { path = "engine/crates/truvis-scene" }
-truvis-world = { path = "engine/crates/truvis-world" }
-truvis-render-backend = { path = "engine/crates/truvis-render-backend" }
-truvis-frame-api = { path = "engine/crates/truvis-frame-api" }
-truvis-frame-runtime = { path = "engine/crates/truvis-frame-runtime" }
-truvis-render-passes = { path = "engine/crates/truvis-render-passes" }
-truvis-app = { path = "engine/crates/truvis-app" }
-truvis-gui-backend = { path = "engine/crates/truvis-gui-backend" }
-truvis-descriptor-layout-macro = { path = "engine/crates/truvis-descriptor-layout/truvis-descriptor-layout-macro" }
-truvis-descriptor-layout-trait = { path = "engine/crates/truvis-descriptor-layout/truvis-descriptor-layout-trait" }
+# foundation
+truvis-logs = { path = "engine/foundation/truvis-logs" }
+truvis-utils = { path = "engine/foundation/truvis-utils" }
+# gfx
+truvis-gfx = { path = "engine/gfx/truvis-gfx" }
+truvis-descriptor-layout-macro = { path = "engine/gfx/truvis-descriptor-layout-macro" }
+truvis-descriptor-layout-trait = { path = "engine/gfx/truvis-descriptor-layout-trait" }
+# render
+truvis-render-interface = { path = "engine/render/truvis-render-interface" }
+truvis-render-graph = { path = "engine/render/truvis-render-graph" }
+truvis-render-passes = { path = "engine/render/truvis-render-passes" }
+truvis-render-backend = { path = "engine/render/truvis-render-backend" }
+truvis-gui-backend = { path = "engine/render/truvis-gui-backend" }
+# world
+truvis-asset = { path = "engine/world/truvis-asset" }
+truvis-scene = { path = "engine/world/truvis-scene" }
+truvis-world = { path = "engine/world/truvis-world" }
+# frame
+truvis-frame-api = { path = "engine/frame/truvis-frame-api" }
+truvis-frame-runtime = { path = "engine/frame/truvis-frame-runtime" }
+# app
+truvis-app = { path = "engine/app/truvis-app" }
+# shader
 truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
 truvis-shader-build = { path = "engine/shader/truvis-shader-build" }
+# cxx
 truvis-cxx-binding = { path = "engine/cxx/truvis-cxx-binding" }
 truvis-cxx-build = { path = "engine/cxx/truvis-cxx-build" }
 
@@ -145,4 +158,3 @@ rand_derive = "0.5.0"
 reqwest = { version = "0.11", features = ["blocking"] }
 zip = "0.6"
 toml = "0.8"
-

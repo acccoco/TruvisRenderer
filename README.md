@@ -64,7 +64,7 @@ cargo run --bin shader-toy
 
 - 架构总览：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
 - AI 协作规则：[`AGENTS.md`](./AGENTS.md)
-- 模块说明：各关键目录下 `README.md`（如 `engine/`、`engine/crates/`、`engine/shader/`）
+- 模块说明：各关键目录下 `README.md`（如 `engine/`、`engine/shader/`）
 
 ## 展示特性
 

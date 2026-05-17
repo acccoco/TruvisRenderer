@@ -30,5 +30,5 @@
 ## 模块边界
 
 - 本模块不实现具体渲染算法，只负责平台与线程编排。
-- App / Plugin 契约定义在 `engine/crates/truvis-frame-api`，帧骨架在 `engine/crates/truvis-frame-runtime`。
-- 渲染后端在 `engine/crates/truvis-render-backend`，通用 pass 在 `engine/crates/truvis-render-passes`。
+- App / Plugin 契约定义在 `engine/frame/truvis-frame-api`，帧骨架在 `engine/frame/truvis-frame-runtime`。
+- 渲染后端在 `engine/render/truvis-render-backend`，通用 pass 在 `engine/render/truvis-render-passes`。
