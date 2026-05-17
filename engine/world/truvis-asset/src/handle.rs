@@ -4,16 +4,49 @@ use slotmap::new_key_type;
 
 use ash::vk;
 
-new_key_type! { pub struct AssetTextureHandle; }
-new_key_type! { pub struct AssetMeshHandle; }
-new_key_type! { pub struct AssetMaterialHandle; }
-new_key_type! { pub struct AssetSceneHandle; }
+new_key_type! {
+    /// 纹理内容资产身份。
+    ///
+    /// 该 handle 由 `AssetHub` 按路径去重后分配，只用于跨 world / render
+    /// 边界引用同一份纹理内容。它不表示 Vulkan image、image view、bindless
+    /// descriptor 或 shader 可见 binding 已经存在。
+    pub struct AssetTextureHandle;
+}
+
+new_key_type! {
+    /// mesh 内容资产身份。
+    ///
+    /// 该 handle 指向 `AssetHub` 内的 CPU mesh 数据。渲染侧会用它建立
+    /// vertex/index buffer 与 BLAS 映射，但这些 GPU 资源的生命周期和 ready
+    /// 状态不由 asset 层维护。
+    pub struct AssetMeshHandle;
+}
+
+new_key_type! {
+    /// material 内容资产身份。
+    ///
+    /// 该 handle 指向 CPU 侧材质参数和 texture asset 引用。它不是
+    /// `MaterialManager` 的稳定 GPU material slot，也不承诺引用的 texture 已经上传。
+    pub struct AssetMaterialHandle;
+}
+
+new_key_type! {
+    /// scene / prefab 内容资产身份。
+    ///
+    /// 该 handle 指向后台导入得到的可重复 spawn 的 prefab CPU 数据，不是
+    /// `SceneManager` 中的 live runtime instance handle。
+    pub struct AssetSceneHandle;
+}
 
 /// 解码后的纹理 CPU 数据。
 ///
 /// 这是 asset 层传给渲染后端 uploader 的边界格式：像素已经位于 owned
 /// CPU buffer，并带有 Vulkan 上传所需的 extent / format 元数据，但还没有创建
 /// image、image view 或 bindless descriptor。
+///
+/// 与 mesh / material / scene 不同，当前纹理 bytes 只通过
+/// `LoadedAssetEvent::TextureLoaded` 交给 uploader，`AssetHub` 本身只保存路径和
+/// CPU 加载状态。
 #[derive(Debug)]
 pub struct LoadedTextureBytes {
     pub pixels: Vec<u8>,
@@ -26,6 +59,9 @@ pub struct LoadedTextureBytes {
 /// `AssetHub` 使用 `source_path + mesh_index` 做去重，保证同一 scene / prefab
 /// 导入结果内的 mesh 只对应一个稳定 asset handle。它不代表运行时 instance，
 /// 也不代表渲染后端已经创建的 vertex/index buffer 或 BLAS。
+///
+/// `source_path` 使用调用方传入或导入结果保留的路径表达；这里不做文件系统
+/// canonicalize，因此调用方需要在入口处维持一致的路径策略。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MeshAssetKey {
     pub source_path: PathBuf,
@@ -37,6 +73,9 @@ pub struct MeshAssetKey {
 /// `AssetHub` 使用 `source_path + material_index` 做去重。对应 handle 表示 CPU
 /// material 参数和 texture 引用身份，不表示 render-side `MaterialManager`
 /// 分配出的 GPU material slot。
+///
+/// 与 mesh key 一样，`source_path` 是词法路径身份的一部分；不同路径写法会被视为
+/// 不同导入源。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MaterialAssetKey {
     pub source_path: PathBuf,
@@ -47,6 +86,9 @@ pub struct MaterialAssetKey {
 ///
 /// `AssetSceneHandle` 只代表后台导入得到的 prefab CPU 数据。它可以被
 /// `SceneManager` 多次 spawn 成运行时 instance，但自身不持有 live scene 状态。
+///
+/// `source_path` 是 scene 去重 key 的完整内容，`AssetHub::load_scene` 不会在这里
+/// 解析 symlink 或访问文件系统做 canonicalize。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SceneAssetKey {
     pub source_path: PathBuf,
@@ -57,6 +99,9 @@ pub struct SceneAssetKey {
 /// 数据已经从导入库的临时内存复制到 Rust owned buffer。asset 层在这里停止，
 /// 后续的 vertex/index buffer 创建、BLAS 构建和 GPU ready 状态由
 /// `AssetMeshUploader` 维护。
+///
+/// 调用方应保持顶点属性数组长度一致，`indices` 使用 `u32` 索引。asset 层不在
+/// 注册时重建或修复几何拓扑。
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoadedMeshData {
     pub positions: Vec<glam::Vec3>,
@@ -72,6 +117,9 @@ pub struct LoadedMeshData {
 /// 这里保存的是内容材质身份关联的 PBR 参数和 texture asset handle 引用。
 /// texture handle 可能仍在 Loading；GPU material slot、material buffer 写入和
 /// texture ready gate 都属于 render-side `MaterialBridge` / `MaterialManager`。
+///
+/// 材质本身 `Ready` 只表示这些 CPU 参数已经可读取。引用的 texture 是否存在真实
+/// SRV 需要渲染侧通过 texture resolver 再检查。
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoadedMaterialData {
     pub base_color: glam::Vec4,

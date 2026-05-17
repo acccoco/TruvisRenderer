@@ -53,25 +53,36 @@ pub struct SceneAssetRecord {
 /// 渲染后端消费 texture / mesh 事件继续做 GPU 上传；scene 事件表示 prefab CPU
 /// 数据已经可被 `SceneManager` 查询并 spawn。失败事件只描述 CPU 加载或导入失败。
 pub enum LoadedAssetEvent {
+    /// 纹理文件已经完成 CPU 解码。
+    ///
+    /// 事件携带一次性的 upload-ready bytes，预期由 render backend 的
+    /// `AssetTextureUploader` 消费并创建 GPU image / view / bindless binding。
+    /// `AssetHub` 不保留这份像素数据。
     TextureLoaded {
         handle: AssetTextureHandle,
         data: LoadedTextureBytes,
     },
-    TextureFailed {
-        handle: AssetTextureHandle,
-        error: String,
-    },
+    /// 纹理 CPU 加载或解码失败。
+    ///
+    /// 失败只覆盖 asset 层的文件读取和解码阶段；它不描述 GPU 上传失败。
+    TextureFailed { handle: AssetTextureHandle, error: String },
+    /// mesh CPU 数据已经可用于渲染侧上传。
+    ///
+    /// 事件通常来自 scene 导入或显式 `register_mesh_data`。消费方需要继续创建
+    /// vertex/index buffer，并在需要 ray tracing 时构建 BLAS。
     MeshLoaded {
         handle: AssetMeshHandle,
         data: LoadedMeshData,
     },
-    SceneLoaded {
-        handle: AssetSceneHandle,
-    },
-    SceneFailed {
-        handle: AssetSceneHandle,
-        error: String,
-    },
+    /// scene / prefab 的 CPU 数据已经写入 `AssetHub`。
+    ///
+    /// 这只表示 `get_scene_data` 可以取得 prefab 数据；live runtime instance 仍需由
+    /// `SceneManager` 显式 spawn。
+    SceneLoaded { handle: AssetSceneHandle },
+    /// scene 文件读取、Assimp 导入或 raw 数据转换失败。
+    ///
+    /// 失败不代表已经 spawn 的 runtime instance 或 GPU scene 数据发生变化。
+    SceneFailed { handle: AssetSceneHandle, error: String },
 }
 
 /// 资产中心。
@@ -100,6 +111,10 @@ impl Default for AssetHub {
 
 // 创建与初始化
 impl AssetHub {
+    /// 创建空的资产中心。
+    ///
+    /// 新实例没有任何内容 handle，也没有未消费事件。后台 loader 会随 hub 一起创建，
+    /// 后续所有异步结果都必须通过 `update()` 回到调用线程。
     pub fn new() -> Self {
         let _span = tracy_client::span!("AssetHub::new");
 
@@ -120,6 +135,10 @@ impl AssetHub {
 
 // 销毁
 impl AssetHub {
+    /// 消耗资产中心。
+    ///
+    /// 当前 asset 层没有额外显式释放逻辑；真正需要等待的是内部 `AssetLoader` 的
+    /// `Drop`，它会在 hub 被消费后等待后台任务结束。
     pub fn destroy(self) {}
 }
 
@@ -174,46 +193,84 @@ impl AssetHub {
         handle
     }
 
+    /// 查询纹理 CPU 加载状态。
+    ///
+    /// 无效或已不属于当前 `AssetHub` 的 handle 会返回 `Failed`。调用方如果需要区分
+    /// “加载失败”和“handle 不存在”，应先通过路径/key 查询确认 handle 身份。
     pub fn get_status(&self, handle: AssetTextureHandle) -> LoadStatus {
         self.textures.get(handle).map(|record| record.status).unwrap_or(LoadStatus::Failed)
     }
 
+    /// 查询 mesh CPU 加载状态。
+    ///
+    /// 无效 handle 返回 `Failed`；`Ready` 只表示 CPU mesh data 已在 asset 层可用。
     pub fn get_mesh_status(&self, handle: AssetMeshHandle) -> LoadStatus {
         self.meshes.get(handle).map(|record| record.status).unwrap_or(LoadStatus::Failed)
     }
 
+    /// 查询 material CPU 加载状态。
+    ///
+    /// 无效 handle 返回 `Failed`；`Ready` 不表示 GPU material slot 或引用 texture 已就绪。
     pub fn get_material_status(&self, handle: AssetMaterialHandle) -> LoadStatus {
         self.materials.get(handle).map(|record| record.status).unwrap_or(LoadStatus::Failed)
     }
 
+    /// 查询 scene / prefab CPU 加载状态。
+    ///
+    /// 无效 handle 返回 `Failed`；`Ready` 只表示 prefab 数据可被查询并用于 spawn。
     pub fn get_scene_status(&self, handle: AssetSceneHandle) -> LoadStatus {
         self.scenes.get(handle).map(|record| record.status).unwrap_or(LoadStatus::Failed)
     }
 
+    /// 按内容路径查询纹理 handle。
+    ///
+    /// 查询使用 `PathBuf` 的精确词法匹配，不做 canonicalize、symlink 解析或文件访问。
     pub fn texture_handle_by_path(&self, path: &Path) -> Option<AssetTextureHandle> {
         self.path_to_texture.get(path).copied()
     }
 
+    /// 按 mesh key 查询已分配 handle。
+    ///
+    /// 只有先前通过 scene 导入或 `register_mesh_data` 注册过的 key 才会命中。
     pub fn mesh_handle_by_key(&self, key: &MeshAssetKey) -> Option<AssetMeshHandle> {
         self.key_to_mesh.get(key).copied()
     }
 
+    /// 按 material key 查询已分配 handle。
+    ///
+    /// 该查询不触发加载，也不检查对应 texture handle 的 GPU ready 状态。
     pub fn material_handle_by_key(&self, key: &MaterialAssetKey) -> Option<AssetMaterialHandle> {
         self.key_to_material.get(key).copied()
     }
 
+    /// 按 scene key 查询已分配 handle。
+    ///
+    /// 查询只反映 `AssetHub` 的去重表；返回 handle 后仍需通过 `get_scene_status`
+    /// 或 `get_scene_data` 判断 CPU 数据是否可用。
     pub fn scene_handle_by_key(&self, key: &SceneAssetKey) -> Option<AssetSceneHandle> {
         self.key_to_scene.get(key).copied()
     }
 
+    /// 获取 CPU material 数据。
+    ///
+    /// 返回 `None` 表示 handle 无效或 material 尚未注册。返回的数据仍可能引用尚未
+    /// CPU/GPU ready 的 texture handle。
     pub fn get_material_data(&self, handle: AssetMaterialHandle) -> Option<&LoadedMaterialData> {
         self.materials.get(handle).map(|record| &record.data)
     }
 
+    /// 获取 scene / prefab CPU 数据。
+    ///
+    /// 只有 scene 导入并经过 `update()` 写回后才会返回 `Some`。调用方不应把返回数据
+    /// 当作 live scene；需要交给 `SceneManager` spawn。
     pub fn get_scene_data(&self, handle: AssetSceneHandle) -> Option<&LoadedSceneData> {
         self.scenes.get(handle).and_then(|record| record.data.as_ref())
     }
 
+    /// 遍历所有已注册的 CPU material 数据。
+    ///
+    /// render-side `MaterialBridge` 通过该视图把 asset material 同步为 GPU material
+    /// slot；遍历本身不产生事件，也不推进 texture 上传。
     pub fn iter_materials(&self) -> impl Iterator<Item = (AssetMaterialHandle, &LoadedMaterialData)> + '_ {
         self.materials.iter().map(|(handle, record)| (handle, &record.data))
     }
@@ -240,6 +297,9 @@ impl AssetHub {
         self.register_material_data_inner(key, data)
     }
 
+    /// 内部 mesh 注册路径，供同步注册和 scene ingest 复用。
+    ///
+    /// 返回的事件只在第一次看到 key 时产生，避免重复上传同一份 mesh 内容。
     fn register_mesh_data_inner(
         &mut self,
         key: MeshAssetKey,
@@ -258,6 +318,10 @@ impl AssetHub {
         (handle, Some(LoadedAssetEvent::MeshLoaded { handle, data }))
     }
 
+    /// 内部 material 注册路径。
+    ///
+    /// material 没有单独 loaded event；render-side `MaterialBridge` 以 `iter_materials`
+    /// 为事实来源同步新增或变化的 CPU material。
     fn register_material_data_inner(&mut self, key: MaterialAssetKey, data: LoadedMaterialData) -> AssetMaterialHandle {
         if let Some(&handle) = self.key_to_material.get(&key) {
             return handle;
@@ -272,6 +336,10 @@ impl AssetHub {
         handle
     }
 
+    /// 将后台导入器返回的 raw material 转为 asset 层 material 数据。
+    ///
+    /// texture 路径在这里按 scene 源路径解析，并通过 `load_texture` 进入统一的路径去重
+    /// 和异步纹理加载流程。
     fn material_data_from_raw(&mut self, source_path: &Path, raw: RawLoadedMaterialData) -> LoadedMaterialData {
         LoadedMaterialData {
             base_color: raw.base_color,
@@ -289,6 +357,11 @@ impl AssetHub {
         }
     }
 
+    /// 吸收一次 scene 导入结果。
+    ///
+    /// 这里是 raw importer index 和稳定 asset handle 的转换点：mesh/material 会先注册
+    /// 到 hub，instance 内部引用再从 index 映射到 handle。任何越界引用都会转换为
+    /// `SceneFailed` 事件，而不是留下半初始化的 scene data。
     fn ingest_loaded_scene(
         &mut self,
         raw: RawLoadedSceneData,
@@ -364,6 +437,9 @@ impl AssetHub {
     /// 该函数是后台 loader 和外部渲染/scene 系统之间的同步点：它先排出同步注册产生的
     /// pending events，再把异步结果写回 `AssetHub` 状态表，并返回需要后续系统消费的
     /// CPU ready / failed 事件。
+    ///
+    /// 调用方通常每帧调用一次，并按事件类型分发给 texture uploader、mesh uploader
+    /// 或 scene 层。返回后的事件队列已经被消费，`AssetHub` 不会再次重放同一事件。
     pub fn update(&mut self) -> Vec<LoadedAssetEvent> {
         let _span = tracy_client::span!("AssetHub::update");
         let mut events = Vec::new();

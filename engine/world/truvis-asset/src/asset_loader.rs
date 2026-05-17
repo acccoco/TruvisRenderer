@@ -11,12 +11,20 @@ use crate::handle::{
     RawLoadedSceneData, RawLoadedSceneInstanceData,
 };
 
+/// 纹理加载请求。
+///
+/// 请求由 `AssetHub::load_texture` 构造，handle 已经在 hub 中分配并进入
+/// `Loading` 状态。后台任务只使用该 handle 回传结果，不直接访问 hub 状态表。
 pub(crate) struct AssetLoadRequest {
     pub path: PathBuf,
     pub handle: AssetTextureHandle,
     // pub params: AssetParams, // 预留扩展
 }
 
+/// scene / prefab 导入请求。
+///
+/// path 是导入源，也是后续 scene、mesh、material key 的来源。后台任务只负责读取和
+/// 复制 CPU 数据，raw index 到 asset handle 的映射由 `AssetHub::update()` 完成。
 pub(crate) struct SceneLoadRequest {
     pub path: PathBuf,
     pub handle: AssetSceneHandle,
@@ -57,6 +65,10 @@ impl Default for AssetLoader {
 }
 
 impl AssetLoader {
+    /// 创建后台 asset loader。
+    ///
+    /// loader 拥有独立 Rayon 线程池和无界结果 channel。结果 channel 只在
+    /// `AssetHub::update()` 中轮询，因此所有 asset 状态变更都收敛到调用线程。
     pub fn new() -> Self {
         let (res_tx, res_rx) = crossbeam_channel::unbounded::<LoadResult>();
 
@@ -73,6 +85,10 @@ impl AssetLoader {
         }
     }
 
+    /// 排队一个纹理加载任务。
+    ///
+    /// 任务在 Rayon worker 上执行文件读取和 image 解码。完成后只发送 `LoadResult`，
+    /// 不修改 `AssetHub`，也不创建任何 Vulkan 对象。
     pub(crate) fn request_load(&self, req: AssetLoadRequest) {
         let result_sender = self.result_sender.clone();
         let wg_task = self.wait_group.as_ref().expect("AssetLoader used after drop").clone();
@@ -83,6 +99,10 @@ impl AssetLoader {
         });
     }
 
+    /// 排队一个 scene 导入任务。
+    ///
+    /// 导入任务会在后台持有 C++ scene handle，并在返回前复制出 owned Rust 数据。
+    /// handle/key 分配和事件生成仍由 `AssetHub` 在 `update()` 中完成。
     pub(crate) fn request_load_scene(&self, req: SceneLoadRequest) {
         let result_sender = self.result_sender.clone();
         let wg_task = self.wait_group.as_ref().expect("AssetLoader used after drop").clone();
@@ -93,12 +113,19 @@ impl AssetLoader {
         });
     }
 
+    /// 非阻塞读取一个后台任务结果。
+    ///
+    /// 返回 `None` 表示当前没有完成结果；调用方应在帧循环或显式同步点继续轮询。
     pub(crate) fn try_recv_result(&self) -> Option<LoadResult> {
         self.result_receiver.try_recv().ok()
     }
 }
 
 impl Drop for AssetLoader {
+    /// 等待已经排队的后台任务结束。
+    ///
+    /// 这保证 `AssetHub` 销毁时不会留下仍在访问请求数据或 C++ importer 的 worker。
+    /// 等待只发生在 loader drop；正常帧同步仍应通过 `try_recv_result` 非阻塞收集结果。
     fn drop(&mut self) {
         log::info!("AssetLoader is being dropped, waiting for tasks to complete...");
         if let Some(wait_group) = self.wait_group.take() {
@@ -195,6 +222,13 @@ fn load_scene_task_inner(path: &PathBuf) -> Result<RawLoadedSceneData, String> {
     unsafe { copy_scene_data(scene.handle, path) }
 }
 
+/// 读取 C++ importer 保存的最近错误。
+///
+/// # Safety
+///
+/// `scene_handle` 必须是当前线程仍然有效的 `TruvixxSceneHandle`，并且其生命周期至少
+/// 覆盖本函数内的 `truvixx_scene_last_error` 调用。返回值会立即复制为 Rust `String`，
+/// 不把 C 字符串指针传出 FFI 边界。
 unsafe fn scene_import_error(scene_handle: truvixx::TruvixxSceneHandle) -> String {
     let error = unsafe { truvixx::truvixx_scene_last_error(scene_handle) };
     if error.is_null() {
@@ -210,12 +244,22 @@ struct TruvixxSceneGuard {
 }
 
 impl Drop for TruvixxSceneGuard {
+    /// 释放 C++ scene handle。
+    ///
+    /// 所有需要跨出后台任务的数据都必须在 guard drop 之前复制到 Rust owned buffer。
     fn drop(&mut self) {
         let _span = tracy_client::span!("truvixx_scene_free");
         unsafe { truvixx::truvixx_scene_free(self.handle) };
     }
 }
 
+/// 从 C++ scene handle 复制完整 scene 数据。
+///
+/// # Safety
+///
+/// `scene_handle` 必须来自成功加载的 truvixx scene，并在本函数返回前保持有效。
+/// 本函数读取的所有 mesh/material/instance 指针都只能在该 handle 生命周期内使用，
+/// 因此返回结构必须只包含 owned Rust 数据或普通索引。
 unsafe fn copy_scene_data(
     scene_handle: truvixx::TruvixxSceneHandle,
     source_path: &std::path::Path,
@@ -262,6 +306,13 @@ unsafe fn copy_scene_data(
     })
 }
 
+/// 从 C++ scene handle 复制一个 mesh 的 CPU 几何数据。
+///
+/// # Safety
+///
+/// `scene_handle` 必须有效，且 `mesh_index` 必须由 truvixx importer 报告的 mesh
+/// 范围内索引给出。函数会立刻把 C++ 指针指向的顶点和索引数据复制到 `Vec`，
+/// 不把借用切片或 raw pointer 返回给调用方。
 unsafe fn copy_mesh_data(
     scene_handle: truvixx::TruvixxSceneHandle,
     mesh_index: u32,
@@ -305,6 +356,12 @@ unsafe fn copy_mesh_data(
     })
 }
 
+/// 从 C++ scene handle 复制一个 material 的 CPU 参数。
+///
+/// # Safety
+///
+/// `scene_handle` 必须有效，且 `material_index` 必须在 importer 报告的 material
+/// 范围内。texture path 保持 importer 原始表达，稍后由 `AssetHub` 按 scene 路径解析。
 unsafe fn copy_material_data(
     scene_handle: truvixx::TruvixxSceneHandle,
     material_index: u32,
@@ -332,6 +389,12 @@ unsafe fn copy_material_data(
     })
 }
 
+/// 从 C++ instance 复制 prefab instance 记录。
+///
+/// # Safety
+///
+/// `scene_handle` 和 `instance` 必须来自同一个有效 truvixx scene。返回值仍使用
+/// scene 内部 mesh/material index，避免后台任务直接分配或读取 `AssetHub` handle。
 unsafe fn copy_instance_data(
     scene_handle: truvixx::TruvixxSceneHandle,
     instance_index: u32,
