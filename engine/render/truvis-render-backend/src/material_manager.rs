@@ -10,10 +10,11 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_interface::bindless_manager::BindlessSrvHandle;
 use truvis_render_interface::frame_counter::{FrameCounter, FrameToken};
 use truvis_render_interface::pipeline_settings::FrameLabel;
 use truvis_shader_binding::gpu;
+
+use crate::texture_resolver::{TextureBinding, TextureResolver};
 
 new_key_type! {
     /// backend 私有的 GPU material handle。
@@ -52,36 +53,6 @@ impl Default for ManagedMaterialParams {
 }
 
 const MAX_MATERIAL_COUNT: usize = 1024;
-
-#[derive(Clone, Copy)]
-pub struct TextureBinding {
-    pub srv_handle: BindlessSrvHandle,
-    pub sampler: gpu::ESamplerType,
-}
-
-impl TextureBinding {
-    /// 构造 shader 可安全读取的空 texture binding。
-    ///
-    /// 该值用于“材质没有贴图”场景；“贴图存在但未 ready”由 `TextureResolver`
-    /// 返回 fallback binding 处理。
-    pub fn null() -> Self {
-        Self {
-            srv_handle: BindlessSrvHandle::null(),
-            sampler: gpu::ESamplerType_LinearRepeat,
-        }
-    }
-}
-
-/// 纹理 ready 状态与 shader binding 查询接口。
-///
-/// 由渲染侧纹理上传/绑定缓存实现，避免 scene 直接耦合 AssetHub 或 BindlessManager。
-pub trait TextureResolver {
-    /// texture 是否已经拥有真实 GPU image/view/bindless binding。
-    fn is_texture_ready(&self, handle: AssetTextureHandle) -> bool;
-
-    /// 获取可渲染的 texture binding；未就绪时由实现返回 fallback。
-    fn resolve_texture(&self, handle: AssetTextureHandle) -> TextureBinding;
-}
 
 /// 单个 material slot 在 dirty 列表中的 FIF 写入与回收状态。
 struct SlotDirtyInfo {

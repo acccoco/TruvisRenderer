@@ -24,3 +24,4 @@ mod prepare_pipeline;
 pub mod render_backend;
 mod render_scene;
 mod scene_bridge;
+mod texture_resolver;

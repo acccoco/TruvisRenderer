@@ -19,7 +19,7 @@ use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
 use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_shader_binding::gpu;
 
-use crate::material_manager::{TextureBinding, TextureResolver};
+use crate::texture_resolver::{TextureBinding, TextureResolver};
 
 /// 已提交到 transfer queue、但尚未确认 copy 完成的 texture 上传任务。
 ///

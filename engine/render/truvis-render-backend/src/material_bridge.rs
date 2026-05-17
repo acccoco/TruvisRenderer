@@ -8,8 +8,11 @@ use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_render_interface::frame_counter::FrameToken;
 use truvis_render_interface::pipeline_settings::FrameLabel;
 
-use crate::material_manager::{GpuMaterialHandle, ManagedMaterialParams, MaterialManager, TextureResolver};
 use crate::scene_bridge::MaterialSlotResolver;
+use crate::{
+    material_manager::{GpuMaterialHandle, ManagedMaterialParams, MaterialManager},
+    texture_resolver::TextureResolver,
+};
 
 impl From<&MaterialData> for ManagedMaterialParams {
     fn from(mat: &MaterialData) -> Self {
