@@ -332,8 +332,8 @@ impl AssetTextureUploader {
                 | AssetLoadedEvent::MaterialLoaded { .. }
                 | AssetLoadedEvent::SceneLoaded { .. }
                 | AssetLoadedEvent::SceneFailed { .. } => {
-                    // AssetUploadStage 是事件分流边界；如果这里收到非 texture 事件，
-                    // 说明 backend prepare 流程的分层契约被调用侧破坏。
+                    // RenderBackend::dispatch_loaded_asset_events 是事件分流边界；
+                    // 如果这里收到非 texture 事件，说明 backend 事件契约被调用侧破坏。
                     unreachable!("Unexpected asset event in AssetTextureUploader: {:?}", event);
                 }
             }

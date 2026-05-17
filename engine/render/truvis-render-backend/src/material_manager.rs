@@ -456,7 +456,7 @@ impl MaterialManager {
     // TODO 可以细化更新 regions
     /// 将当前 staging material buffer 刷新、复制到 device buffer，并建立 shader-read barrier。
     ///
-    /// `barrier_mask` 来自 prepare pipeline，和 scene/per-frame buffer 使用同一套可见性约定。
+    /// `barrier_mask` 来自 `RenderBackend::prepare_gpu_scene`，和 scene/per-frame buffer 使用同一套可见性约定。
     fn flush_copy_and_barrier(
         ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,

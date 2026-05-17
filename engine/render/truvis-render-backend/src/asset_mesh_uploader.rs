@@ -425,7 +425,7 @@ impl AssetMeshUploader {
 
         for event in events {
             if let AssetLoadedEvent::MeshLoaded { handle, data } = event {
-                // AssetUploadStage 已经把事件按类型分流；这里仍保持宽松匹配，便于调用侧
+                // RenderBackend 已经把事件按类型分流；这里仍保持宽松匹配，便于调用侧
                 // 未来传入空列表或过滤后的列表时不需要额外包装。
                 if let Err(err) = self.uploader.submit_mesh_upload(resource_ctx, device_ctx, queue_ctx, handle, data) {
                     log::error!("Failed to submit mesh upload {:?}: {}", handle, err);

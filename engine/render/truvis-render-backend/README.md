@@ -39,7 +39,7 @@
 ## 对外接口
 
 - crate 公开入口保持在 `platform`、`present`、`subsystems` 和 `render_backend`。
-- asset uploader、material bridge、instance bridge、GPU scene 数据结构和 prepare pipeline 都是 backend 私有实现。
+- asset uploader、material bridge、instance bridge、GPU scene 数据结构和 prepare 辅助逻辑都是 backend 私有实现。
 - 生命周期 Ctx 在 `render_backend` 内部子模块定义，并由 `render_backend` 重新导出；
   调用方仍通过 `truvis_render_backend::render_backend::*Ctx` 使用这些阶段契约。
 - `RenderBackendRenderCtx` 只暴露 `RenderWorld`、`RenderSceneView`、`PresentView` 和 timeline；
@@ -52,11 +52,11 @@
 - `RenderBackend::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
   swapchain 与 `RenderPresent`，并返回 init Ctx 供 app/plugin 创建长期 GPU 资源。
 - `begin_frame` 是每帧资源回收入口：timer tick、等待当前 FIF slot、重置 frame command pool、
-  清理延迟释放队列、推进 bindless/material/instance frame token，并通过 `AssetUploadStage`
-  消费 AssetHub 事件。
+  清理延迟释放队列、推进 bindless/material/instance frame token，并在 `RenderBackend`
+  内部分发 AssetHub 事件。
 - `update_phase` 同步 frame settings、acquire 当前 swapchain image，并返回 CPU update Ctx。
 - `prepare(camera)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 app 提供的 camera，
-  调用 backend 私有 `PreparePipeline` 同步 material/instance/mesh/texture 状态、上传 GPU scene
+  在 `RenderBackend` 内部同步 material/instance/mesh/texture 状态、上传 GPU scene
   和 per-frame data，再刷新 per-frame descriptor。
 - `render_phase` 返回只读 render Ctx；pass 只能读取 `RenderWorld`、`RenderSceneView`、
   present target 和 timeline，不再修改 CPU scene 或接触 uploader owner。
@@ -68,9 +68,9 @@
 
 ## Prepare 数据流
 
-- `AssetUploadStage` 将 `AssetHub::update()` 产出的 texture 事件交给 `AssetTextureUploader`，mesh 事件交给
+- `RenderBackend::dispatch_loaded_asset_events` 将 `AssetHub::update()` 产出的 texture 事件交给 `AssetTextureUploader`，mesh 事件交给
   `AssetMeshUploader`，material 事件交给 `MaterialBridge`；scene loaded/failed 只记录日志，scene 实例化入口仍在 asset/scene 层。
-- `PreparePipeline` 是 update 与 render 之间的固定桥接阶段，按 bindless、material、instance、
+- `RenderBackend::prepare` 是 update 与 render 之间的固定桥接阶段，按 bindless、material、instance、
   GPU scene、per-frame data 的顺序准备渲染可见数据。
 - `MaterialBridge` 在 begin-frame 阶段消费 `MaterialLoaded` 事件并同步到 `MaterialManager`，
   prepare 阶段再通过 `TextureResolver` 把 texture fallback/ready 状态写入 material buffer。

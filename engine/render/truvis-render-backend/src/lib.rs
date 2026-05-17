@@ -19,7 +19,6 @@ mod asset_texture_uploader;
 mod instance_bridge;
 mod material_bridge;
 mod material_manager;
-mod prepare_pipeline;
 /// `RenderBackend` 及其阶段化上下文，是上层 runtime 直接驱动的主入口。
 pub mod render_backend;
 mod render_scene;

@@ -3,9 +3,12 @@ use std::ffi::CStr;
 use ash::vk;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use truvis_asset::asset_hub::AssetHub;
+use truvis_asset::asset_hub::{AssetHub, AssetLoadedEvent};
+use truvis_gfx::basic::bytes::BytesConvert;
+use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
+use truvis_gfx::commands::submit_info::GfxSubmitInfo;
 use truvis_gfx::gfx::{Gfx, GfxDeviceInfoCtx};
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
@@ -32,7 +35,6 @@ use crate::instance_bridge::InstanceBridge;
 use crate::material_bridge::MaterialBridge;
 use crate::platform::camera::Camera;
 use crate::platform::timer::Timer;
-use crate::prepare_pipeline::{AssetUploadStage, PreparePipeline, PreparePipelineCtx};
 use crate::present::render_present::RenderPresent;
 use crate::render_scene::gpu_scene::GpuScene;
 
@@ -383,14 +385,7 @@ impl RenderBackend {
         self.material_bridge.begin_frame(frame_token);
         self.instance_bridge.begin_frame(frame_token);
 
-        AssetUploadStage::update(
-            &mut self.world.asset_hub,
-            &mut self.asset_texture_uploader,
-            &mut self.asset_mesh_uploader,
-            &mut self.material_bridge,
-            &self.gfx,
-            &mut self.render_world,
-        );
+        self.dispatch_loaded_asset_events();
     }
 
     /// 执行内部 frame-settings 同步并获取 swapchain image，
@@ -422,21 +417,8 @@ impl RenderBackend {
     pub fn prepare(&mut self, camera: &Camera) {
         let _span = tracy_client::span!("RenderBackend::prepare");
 
-        let frame_label = self.render_world.frame_counter.frame_label();
-        let cmd = self.gpu_scene_update_cmds[*frame_label].clone();
-        PreparePipeline::prepare(PreparePipelineCtx {
-            gfx: &self.gfx,
-            world: &self.world,
-            render_world: &mut self.render_world,
-            asset_texture_uploader: &self.asset_texture_uploader,
-            asset_mesh_uploader: &self.asset_mesh_uploader,
-            material_bridge: &mut self.material_bridge,
-            instance_bridge: &mut self.instance_bridge,
-            gpu_scene: &mut self.gpu_scene,
-            timer: &self.timer,
-            cmd: &cmd,
-            camera,
-        });
+        self.update_accum_data(camera);
+        self.prepare_gpu_scene(camera);
         self.update_perframe_descriptor_set();
     }
 
@@ -562,6 +544,180 @@ impl RenderBackend {
             swapchain_image_info: self.render_present.as_ref().unwrap().swapchain_image_info(),
             render_present: self.render_present.as_ref().unwrap().view(),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 资产事件与 prepare 数据上传
+// ---------------------------------------------------------------------------
+impl RenderBackend {
+    /// 消费 `AssetHub::update` 产出的加载事件，并转发给对应 render-side owner。
+    ///
+    /// texture 与 mesh 事件会进入 GPU 上传队列；material 事件会进入稳定 slot 映射；
+    /// scene 事件只表示 CPU 数据可被 scene 层读取，具体实例化仍由 app/scene manager 控制。
+    fn dispatch_loaded_asset_events(&mut self) {
+        let _span = tracy_client::span!("RenderBackend::dispatch_loaded_asset_events");
+        let loaded_asset_events = self.world.asset_hub.update();
+        let mut texture_events = Vec::new();
+        let mut mesh_events = Vec::new();
+        let mut material_events = Vec::new();
+        for event in loaded_asset_events {
+            // 事件分流集中在 backend 的帧开始阶段，避免各 uploader 直接接触完整
+            // asset event 集合，也让它们可以用更窄的事件集合维护自身契约。
+            match event {
+                event @ (AssetLoadedEvent::TextureLoaded { .. } | AssetLoadedEvent::TextureFailed { .. }) => {
+                    texture_events.push(event);
+                }
+                event @ AssetLoadedEvent::MeshLoaded { .. } => {
+                    mesh_events.push(event);
+                }
+                event @ AssetLoadedEvent::MaterialLoaded { .. } => {
+                    material_events.push(event);
+                }
+                AssetLoadedEvent::SceneLoaded { handle } => {
+                    log::debug!("Scene asset {:?} CPU data is ready", handle);
+                }
+                AssetLoadedEvent::SceneFailed { handle, error } => {
+                    log::error!("Scene asset {:?} failed to load: {}", handle, error);
+                }
+            }
+        }
+
+        self.asset_texture_uploader.update(
+            texture_events,
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            self.gfx.queue_ctx(),
+            &mut self.render_world.gfx_resource_manager,
+            &mut self.render_world.bindless_manager,
+        );
+        self.asset_mesh_uploader.update(
+            mesh_events,
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            self.gfx.queue_ctx(),
+        );
+        self.material_bridge.apply_material_events(material_events);
+    }
+
+    /// 根据 app camera 快照更新累积帧计数。
+    ///
+    /// 累积渲染只关心相机方向和位置是否变化；后续 pass 根据这里的计数决定是否复用上一帧结果。
+    fn update_accum_data(&mut self, camera: &Camera) {
+        let current_camera_dir = glam::vec3(camera.euler_yaw_deg, camera.euler_pitch_deg, camera.euler_roll_deg);
+        self.render_world.accum_data.update_accum_frames(current_camera_dir, camera.position);
+    }
+
+    /// 合成 `GpuScene` 用于判断 TLAS 是否过期的 scene revision。
+    ///
+    /// mesh ready revision 覆盖 BLAS 新增/替换，instance revision 覆盖实例增删、ready 状态
+    /// 和 transform 变化；使用 saturating add 保证长时间运行时不会回绕成旧 revision。
+    fn combine_scene_revision(mesh_ready_revision: u64, instance_revision: u64) -> u64 {
+        mesh_ready_revision.saturating_add(instance_revision)
+    }
+
+    /// 准备 render pass 可见的 GPU scene 与 per-frame uniform。
+    ///
+    /// 该函数把所有 staging copy 录到同一个 command buffer，最后一次提交到 graphics queue；
+    /// render graph 在后续命令提交中通过常规 queue 顺序看到这些写入。
+    fn prepare_gpu_scene(&mut self, camera: &Camera) {
+        let _span = tracy_client::span!("RenderBackend::prepare_gpu_scene");
+        let frame_extent = self.render_world.frame_settings.frame_extent;
+        let frame_label = self.render_world.frame_counter.frame_label();
+        let cmd = self.gpu_scene_update_cmds[*frame_label].clone();
+
+        // GPU scene 更新使用独立命令缓冲，把 material/instance/geometry/light/scene buffer
+        // 的 staging copy 和 barrier 串在一起，作为 render graph 录制前的固定准备阶段。
+        cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "[update-draw-buffer]stage-to-ubo");
+
+        let transfer_barrier_mask = GfxBarrierMask {
+            src_stage: vk::PipelineStageFlags2::TRANSFER,
+            src_access: vk::AccessFlags2::TRANSFER_WRITE,
+            dst_stage: vk::PipelineStageFlags2::VERTEX_SHADER
+                | vk::PipelineStageFlags2::FRAGMENT_SHADER
+                | vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR
+                | vk::PipelineStageFlags2::COMPUTE_SHADER,
+            dst_access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::UNIFORM_READ,
+        };
+
+        let bindless_target = self.render_world.global_descriptor_sets.bindless_target();
+        // bindless 表先更新，因为 material upload 可能立即解析 texture SRV handle；
+        // 后续 scene root buffer 也会写入默认环境贴图的 bindless handle。
+        self.render_world.bindless_manager.prepare_render_data(
+            self.gfx.device_ctx(),
+            &self.render_world.gfx_resource_manager,
+            bindless_target,
+        );
+
+        // material loaded 事件已在 begin_frame 进入稳定 slot；这里只根据 texture ready/fallback
+        // 状态写当前 FIF 的 material buffer。
+        self.material_bridge.update_textures(&self.asset_texture_uploader);
+        self.material_bridge.upload(
+            self.gfx.resource_ctx(),
+            &cmd,
+            transfer_barrier_mask,
+            frame_label,
+            &self.asset_texture_uploader,
+        );
+
+        // instance 阶段是 CPU scene 到 render-side `RenderData` 的边界；只有 mesh 与 material
+        // 都解析成功的实例会进入 active 列表。
+        let scene_render_data = self.instance_bridge.prepare_render_data(
+            &self.world.scene_manager,
+            &self.material_bridge,
+            &self.asset_mesh_uploader,
+        );
+        let material_buffer_device_address = self.material_bridge.material_buffer_device_address(frame_label);
+        // mesh ready 与 instance 变化都会影响 TLAS；两个 revision 合成一条 scene revision，
+        // 交给 GpuScene 判断当前 FIF 的 TLAS 是否需要重建。
+        let scene_revision =
+            Self::combine_scene_revision(self.asset_mesh_uploader.ready_revision(), self.instance_bridge.revision());
+        self.gpu_scene.upload_render_data(
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            self.gfx.immediate_ctx(),
+            &cmd,
+            transfer_barrier_mask,
+            &self.render_world.frame_counter,
+            &scene_render_data,
+            material_buffer_device_address,
+            scene_revision,
+            &self.render_world.bindless_manager,
+        );
+
+        let view = camera.get_view_matrix();
+        let projection = camera.get_projection_matrix();
+        // per-frame uniform 放在 GPU scene 上传之后写入同一条命令缓冲，保证本帧 shader
+        // 看到的相机、分辨率、时间和 scene buffer 都来自同一个 prepare 快照。
+        let per_frame_data = gpu::PerFrameData {
+            projection: projection.into(),
+            view: view.into(),
+            inv_view: view.inverse().into(),
+            inv_projection: projection.inverse().into(),
+            camera_pos: camera.position.into(),
+            camera_forward: camera.camera_forward().into(),
+            time_ms: self.timer.total_time_ms(),
+            delta_time_ms: self.timer.delta_time_ms(),
+            frame_id: self.render_world.frame_counter.frame_id(),
+            resolution: gpu::Float2 {
+                x: frame_extent.width as f32,
+                y: frame_extent.height as f32,
+            },
+            accum_frames: self.render_world.accum_data.accum_frames_num() as u32,
+            _padding_0: Default::default(),
+            _padding_1: Default::default(),
+            _padding_2: Default::default(),
+        };
+        let crt_frame_data_buffer = &self.render_world.per_frame_data_buffers[*frame_label];
+        cmd.cmd_update_buffer(crt_frame_data_buffer.vk_buffer(), 0, BytesConvert::bytes_of(&per_frame_data));
+        cmd.buffer_memory_barrier(
+            vk::DependencyFlags::empty(),
+            &[GfxBufferBarrier::default()
+                .buffer(crt_frame_data_buffer.vk_buffer(), 0, vk::WHOLE_SIZE)
+                .mask(transfer_barrier_mask)],
+        );
+        cmd.end();
+        self.gfx.queue_ctx().gfx_queue().submit(vec![GfxSubmitInfo::new(std::slice::from_ref(&cmd))], None);
     }
 }
 
