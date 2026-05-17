@@ -28,15 +28,6 @@ impl From<&MaterialData> for RenderMaterialParams {
     }
 }
 
-/// asset material 到 GPU material handle 的桥接记录。
-///
-/// `params` 缓存上一次消费的 CPU 材质参数，用于防御性处理重复事件并决定是否 dirty。
-struct MaterialBinding {
-    gpu_handle: GpuMaterialHandle,
-    slot: usize,
-    params: RenderMaterialParams,
-}
-
 /// `MaterialBridge` 写入稳定 material slot 的窄接口。
 ///
 /// 生产实现由 `MaterialManager` 提供；测试可以替换成轻量 fake，避免构造 Vulkan buffer。
@@ -61,12 +52,16 @@ impl MaterialSlotWriter for MaterialManager {
 
 /// Render-side 材质桥接层。
 ///
-/// 它把 `AssetHub` 产出的 `MaterialLoaded` 事件转换为 `MaterialManager` 的稳定 GPU slot。
-/// shader 可见材质 buffer 和 texture fallback/dirty 策略由这里委托给 `MaterialManager`。
+/// 它把 `AssetHub` 产出的 `MaterialLoaded` 事件转换为 backend 私有的 GPU material handle。
+/// 稳定 slot、shader 可见材质 buffer 和 texture fallback/dirty 策略由这里委托给 `MaterialManager`。
 /// 因此 CPU scene 只需要保存 asset handle，render pass 看到的始终是稳定 slot 和 GPU buffer。
 pub struct MaterialBridge {
     material_manager: Option<MaterialManager>,
-    bindings: SecondaryMap<AssetMaterialHandle, MaterialBinding>,
+    /// asset material handle 到 backend 私有 GPU material handle 的桥接表。
+    ///
+    /// 这里不缓存材质参数或 slot；这些状态由 `MaterialManager` 作为唯一 owner 维护，
+    /// 避免 bridge 和 manager 之间出现第二份 render-side material 状态。
+    bindings: SecondaryMap<AssetMaterialHandle, GpuMaterialHandle>,
 }
 
 impl MaterialBridge {
@@ -88,7 +83,7 @@ impl MaterialBridge {
     /// 消费 `AssetHub` 产出的 material loaded 事件，分配或更新稳定 GPU material slot。
     ///
     /// 正常路径下同一 material handle 只会收到一次 loaded event；若调用侧重复传入事件，
-    /// bridge 保留原 stable slot 并按参数变化更新 dirty 状态。
+    /// bridge 复用原 GPU material handle，并把参数更新和 dirty 状态交给 `MaterialManager`。
     pub fn apply_material_events(&mut self, events: Vec<AssetLoadedEvent>) {
         for event in events {
             match event {
@@ -110,39 +105,30 @@ impl MaterialBridge {
     }
 
     fn apply_material_loaded_with_writer(
-        bindings: &mut SecondaryMap<AssetMaterialHandle, MaterialBinding>,
+        bindings: &mut SecondaryMap<AssetMaterialHandle, GpuMaterialHandle>,
         writer: &mut dyn MaterialSlotWriter,
         handle: AssetMaterialHandle,
         data: &MaterialData,
     ) {
         let params = RenderMaterialParams::from(data);
 
-        if let Some(binding) = bindings.get_mut(handle) {
-            // 重复 loaded event 属于防御路径：asset material handle 保持不变时，保留原 stable slot。
-            if binding.params != params {
-                binding.params = params.clone();
-                binding.slot = writer.update_params_keep_slot(binding.gpu_handle, params);
-                log::debug!(
-                    "MaterialBridge: update asset_handle={:?} gpu_handle={:?} stable_slot={}; dirty all FIF buffers",
-                    handle,
-                    binding.gpu_handle,
-                    binding.slot
-                );
-            }
+        if let Some(&gpu_handle) = bindings.get(handle) {
+            // 重复 loaded event 属于防御路径：asset material handle 保持不变时，复用原
+            // GPU material handle，具体参数比较、dirty 和 texture ready 状态由 manager 负责。
+            let slot = writer.update_params_keep_slot(gpu_handle, params);
+            log::debug!(
+                "MaterialBridge: update asset_handle={:?} gpu_handle={:?} stable_slot={}; dirty all FIF buffers",
+                handle,
+                gpu_handle,
+                slot
+            );
             return;
         }
 
         // 新 asset material 进入 render-side 后拿到独立 GPU handle 和稳定 GPU slot。
         // 这个 slot 会被 instance bridge 解析进 RenderData。
-        let (gpu_handle, slot) = writer.register_params(params.clone());
-        bindings.insert(
-            handle,
-            MaterialBinding {
-                gpu_handle,
-                slot,
-                params,
-            },
-        );
+        let (gpu_handle, slot) = writer.register_params(params);
+        bindings.insert(handle, gpu_handle);
         log::trace!(
             "MaterialBridge: register asset_handle={:?} gpu_handle={:?} stable_slot={}",
             handle,
@@ -206,8 +192,9 @@ impl MaterialSlotResolver for MaterialBridge {
     fn resolve_material_slot(&self, handle: AssetMaterialHandle) -> Option<u32> {
         // resolver 是 InstanceBridge 能看到的唯一 material 接口；找不到 binding 表示
         // CPU scene 仍引用了未加载或已删除的 material，实例应保持 pending。
-        let binding = self.bindings.get(handle)?;
-        u32::try_from(binding.slot).ok()
+        let gpu_handle = *self.bindings.get(handle)?;
+        let slot = self.material_manager().get_slot_index(gpu_handle)?;
+        u32::try_from(slot).ok()
     }
 }
 
@@ -222,6 +209,7 @@ mod tests {
         next_slot: usize,
         register_calls: usize,
         update_calls: usize,
+        updated_handles: Vec<GpuMaterialHandle>,
     }
 
     impl FakeMaterialSlotWriter {
@@ -231,6 +219,7 @@ mod tests {
                 next_slot: 0,
                 register_calls: 0,
                 update_calls: 0,
+                updated_handles: Vec::new(),
             }
         }
     }
@@ -246,6 +235,7 @@ mod tests {
 
         fn update_params_keep_slot(&mut self, handle: GpuMaterialHandle, _params: RenderMaterialParams) -> usize {
             self.update_calls += 1;
+            self.updated_handles.push(handle);
             *self.slots.get(handle).expect("fake material handle must exist")
         }
     }
@@ -268,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn material_loaded_creates_resolvable_stable_slot() {
+    fn material_loaded_records_gpu_material_handle() {
         let mut bindings = SecondaryMap::new();
         let mut writer = FakeMaterialSlotWriter::new();
         let handle = material_handle();
@@ -280,16 +270,13 @@ mod tests {
             &material_data("mat", 0.5),
         );
 
-        let bridge = MaterialBridge {
-            material_manager: None,
-            bindings,
-        };
+        let gpu_handle = *bindings.get(handle).expect("material binding must be recorded");
         assert_eq!(writer.register_calls, 1);
-        assert_eq!(bridge.resolve_material_slot(handle), Some(0));
+        assert_eq!(writer.slots.get(gpu_handle), Some(&0));
     }
 
     #[test]
-    fn repeated_material_loaded_updates_existing_slot_without_reallocating() {
+    fn repeated_material_loaded_reuses_gpu_material_handle_without_reallocating() {
         let mut bindings = SecondaryMap::new();
         let mut writer = FakeMaterialSlotWriter::new();
         let handle = material_handle();
@@ -300,6 +287,7 @@ mod tests {
             handle,
             &material_data("mat", 0.5),
         );
+        let gpu_handle = *bindings.get(handle).expect("material binding must be recorded");
         MaterialBridge::apply_material_loaded_with_writer(
             &mut bindings,
             &mut writer,
@@ -307,12 +295,9 @@ mod tests {
             &material_data("mat", 0.8),
         );
 
-        let bridge = MaterialBridge {
-            material_manager: None,
-            bindings,
-        };
         assert_eq!(writer.register_calls, 1);
         assert_eq!(writer.update_calls, 1);
-        assert_eq!(bridge.resolve_material_slot(handle), Some(0));
+        assert_eq!(bindings.get(handle), Some(&gpu_handle));
+        assert_eq!(writer.updated_handles, vec![gpu_handle]);
     }
 }
