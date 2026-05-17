@@ -1,8 +1,14 @@
-//! 资产 CPU 数据与加载事件系统
+//! 内容资产的 CPU 侧身份、加载状态与完成事件系统。
 //!
-//! 将纹理磁盘 IO、CPU 解码和 Assimp scene 导入放到后台执行，同时接收导入器复制出来的
-//! owned mesh/material/instance CPU 数据。
-//! GPU 上传、image/view 创建、vertex/index buffer、BLAS 和 bindless 注册由渲染后端负责。
+//! 本 crate 位于 World 层和 RenderBackend 之间：[`AssetHub`](asset_hub::AssetHub)
+//! 持有 texture / mesh / material / scene 的内容 handle、去重表和 CPU ready 数据；
+//! 渲染后端通过加载事件把这些数据交给 `AssetTextureUploader`、
+//! `AssetMeshUploader`、`MaterialBridge` 继续创建 GPU image、buffer、BLAS 与
+//! bindless / material slot。scene asset 只保存可重复 spawn 的 prefab CPU 数据，
+//! 运行时 instance 由 `truvis-scene` 的 `SceneManager` 创建和管理。
+//!
+//! 这里所有 `Ready` 状态都只表示 CPU 数据已经可读取，不表示 GPU 资源或 shader
+//! 可见绑定已经完成。
 //!
 //! # 加载 Pipeline
 //!
@@ -10,14 +16,17 @@
 //! load_texture(path) / load_scene(path) / register_mesh_data(key, data)
 //!       │
 //!       ▼
-//!   ┌────────┐   rayon / importer   ┌─────────────────────┐
-//!   │Loading │ ───────────────────▶ │ CPU asset data      │
-//!   │/ Ready │                      │ texture/mesh/scene  │
-//!   └────────┘                      └─────────────────────┘
+//!   ┌──────────────┐   rayon / importer   ┌────────────────────────┐
+//!   │ CPU Loading  │ ───────────────────▶ │ upload-ready CPU data  │
+//!   │ / Ready      │                      │ texture/mesh/scene     │
+//!   └──────────────┘                      └────────────────────────┘
+//!          │
+//!          ▼
+//!   LoadedAssetEvent -> render backend uploader / SceneManager
 //! ```
 //!
-//! - [`AssetHub`](asset_hub::AssetHub) — 统一接口、路径去重、状态管理
-//! - [`AssetLoader`](asset_loader::AssetLoader) — 后台文件读取与 CPU 解码
+//! - [`AssetHub`](asset_hub::AssetHub) — 统一入口、内容去重、CPU 状态管理和完成事件汇聚
+//! - [`AssetLoader`](asset_loader::AssetLoader) — 后台文件读取、纹理解码与 Assimp scene 导入
 //! - [`LoadStatus`](handle::LoadStatus) — CPU 侧资源状态机（Loading → Ready / Failed）
 
 pub mod asset_hub;

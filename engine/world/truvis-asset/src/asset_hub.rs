@@ -10,29 +10,48 @@ use crate::handle::{
     RawLoadedMaterialData, RawLoadedSceneData, SceneAssetKey,
 };
 
+/// `AssetHub` 内部的 texture 记录。
+///
+/// 记录只保存内容路径和 CPU 加载状态；GPU image/view/bindless 绑定由
+/// render-side `AssetTextureUploader` 持有。
 pub struct TextureAssetRecord {
     pub path: PathBuf,
     pub status: LoadStatus,
 }
 
+/// `AssetHub` 内部的 mesh 记录。
+///
+/// `data` 是上传友好的 CPU mesh 数据，后续是否已经上传到 GPU buffer 或构建 BLAS
+/// 不在该记录中表达。
 pub struct MeshAssetRecord {
     pub key: MeshAssetKey,
     pub status: LoadStatus,
     pub data: LoadedMeshData,
 }
 
+/// `AssetHub` 内部的 material 记录。
+///
+/// 这里的 material 是内容资产身份和 CPU 参数，不是渲染后端的稳定 material slot。
 pub struct MaterialAssetRecord {
     pub key: MaterialAssetKey,
     pub status: LoadStatus,
     pub data: LoadedMaterialData,
 }
 
+/// `AssetHub` 内部的 scene / prefab 记录。
+///
+/// `data` 在后台导入完成并完成内部 mesh/material handle 映射后才会填入。
+/// runtime instance 由 scene 层根据该 prefab 数据显式 spawn。
 pub struct SceneAssetRecord {
     pub key: SceneAssetKey,
     pub status: LoadStatus,
     pub data: Option<LoadedSceneData>,
 }
 
+/// asset 层向外发布的 CPU ready 事件。
+///
+/// 渲染后端消费 texture / mesh 事件继续做 GPU 上传；scene 事件表示 prefab CPU
+/// 数据已经可被 `SceneManager` 查询并 spawn。失败事件只描述 CPU 加载或导入失败。
 pub enum LoadedAssetEvent {
     TextureLoaded {
         handle: AssetTextureHandle,
@@ -57,7 +76,9 @@ pub enum LoadedAssetEvent {
 
 /// 资产中心。
 ///
-/// 只负责资产身份、路径去重和文件到 CPU bytes 的加载流程。
+/// 这是 world 层访问内容资产的统一入口，负责路径/key 去重、handle 分配、
+/// CPU 加载状态和后台任务结果汇聚。它不创建 GPU 资源，也不保存 runtime scene
+/// instance；这些职责分别属于 render backend uploader / bridge 和 `SceneManager`。
 pub struct AssetHub {
     textures: SlotMap<AssetTextureHandle, TextureAssetRecord>,
     meshes: SlotMap<AssetMeshHandle, MeshAssetRecord>,
@@ -106,7 +127,8 @@ impl AssetHub {
 impl AssetHub {
     /// 请求加载纹理。
     ///
-    /// 同一路径只分配一个稳定的 `AssetTextureHandle`。
+    /// 同一路径只分配一个稳定的 `AssetTextureHandle`。如果 handle 已存在，本函数只返回
+    /// 已有 handle，不会重复排队后台任务。
     pub fn load_texture(&mut self, path: PathBuf) -> AssetTextureHandle {
         let _span = tracy_client::span!("AssetHub::load_texture");
         if let Some(&handle) = self.path_to_texture.get(&path) {
@@ -127,7 +149,9 @@ impl AssetHub {
 
     /// 请求后台导入 scene / prefab。
     ///
-    /// 返回的 handle 只代表 CPU scene asset；runtime instance 需要在 scene ready 后显式 spawn。
+    /// 返回的 handle 只代表 CPU scene asset。导入完成后，`update()` 会把 raw
+    /// mesh/material/instance index 转换为稳定 asset handle，并发出 `SceneLoaded`；
+    /// runtime instance 需要在 scene ready 后由 `SceneManager` 显式 spawn。
     pub fn load_scene(&mut self, path: PathBuf) -> AssetSceneHandle {
         let _span = tracy_client::span!("AssetHub::load_scene");
         let key = SceneAssetKey {
@@ -196,8 +220,8 @@ impl AssetHub {
 
     /// 注册已经位于 CPU 内存中的 mesh 数据。
     ///
-    /// 这通常由同步导入器或未来的后台 scene loader 调用；同一个 key 只会产出一次
-    /// `MeshLoaded` 事件，GPU 上传由 render-side uploader 消费事件后完成。
+    /// 这通常用于导入器已经复制完 owned mesh 数据的场景。同一个 key 只会产出一次
+    /// `MeshLoaded` 事件；事件被渲染后端消费后才会进入 GPU 上传和 BLAS 构建流程。
     pub fn register_mesh_data(&mut self, key: MeshAssetKey, data: LoadedMeshData) -> AssetMeshHandle {
         let _span = tracy_client::span!("AssetHub::register_mesh_data");
         let (handle, event) = self.register_mesh_data_inner(key, data);
@@ -209,7 +233,8 @@ impl AssetHub {
 
     /// 注册已经位于 CPU 内存中的 material 数据。
     ///
-    /// GPU material slot 由 render-side `MaterialBridge` 分配，`AssetHub` 只保存内容身份和参数。
+    /// GPU material slot 由 render-side `MaterialBridge` 分配，`AssetHub` 只保存内容身份、
+    /// 参数和 texture handle 引用。
     pub fn register_material_data(&mut self, key: MaterialAssetKey, data: LoadedMaterialData) -> AssetMaterialHandle {
         let _span = tracy_client::span!("AssetHub::register_material_data");
         self.register_material_data_inner(key, data)
@@ -335,6 +360,10 @@ impl AssetHub {
     }
 
     /// 收集后台加载任务完成事件。
+    ///
+    /// 该函数是后台 loader 和外部渲染/scene 系统之间的同步点：它先排出同步注册产生的
+    /// pending events，再把异步结果写回 `AssetHub` 状态表，并返回需要后续系统消费的
+    /// CPU ready / failed 事件。
     pub fn update(&mut self) -> Vec<LoadedAssetEvent> {
         let _span = tracy_client::span!("AssetHub::update");
         let mut events = Vec::new();
