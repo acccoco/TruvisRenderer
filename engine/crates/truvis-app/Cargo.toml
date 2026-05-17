@@ -16,7 +16,6 @@ truvis-path = { workspace = true }
 truvis-render-interface = { workspace = true }
 truvis-render-graph = { workspace = true }
 truvis-asset = { workspace = true }
-truvis-scene = { workspace = true }
 truvis-world = { workspace = true }
 truvis-utils = { workspace = true }
 truvis-gui-backend = { workspace = true }
@@ -28,4 +27,3 @@ bytemuck = { workspace = true }
 itertools = { workspace = true }
 imgui = { workspace = true }
 tracy-client = { workspace = true }
-raw-window-handle = { workspace = true }

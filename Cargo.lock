@@ -3403,7 +3403,6 @@ dependencies = [
  "imgui",
  "itertools 0.10.5",
  "log",
- "raw-window-handle",
  "tracy-client",
  "truvis-asset",
  "truvis-frame-api",
@@ -3415,7 +3414,6 @@ dependencies = [
  "truvis-render-graph",
  "truvis-render-interface",
  "truvis-render-passes",
- "truvis-scene",
  "truvis-shader-binding",
  "truvis-utils",
  "truvis-world",
@@ -3596,20 +3594,13 @@ name = "truvis-render-graph"
 version = "0.1.0"
 dependencies = [
  "ash",
- "bytemuck",
  "glam",
  "itertools 0.10.5",
  "log",
  "slotmap",
  "tracy-client",
- "truvis-descriptor-layout-macro",
- "truvis-descriptor-layout-trait",
  "truvis-gfx",
- "truvis-path",
  "truvis-render-interface",
- "truvis-shader-binding",
- "truvis-utils",
- "vk-mem",
 ]
 
 [[package]]
