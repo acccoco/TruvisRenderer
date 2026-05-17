@@ -42,7 +42,8 @@ impl GpuScene {
         self.upload_instance_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
         self.upload_light_buffer(resource_ctx, cmd, barrier_mask, render_data, frame_counter);
 
-        // 需要确保 instance 先于 tlas 构建
+        // TLAS instance 描述使用稳定 instance slot 与 transform，因此必须在 instance buffer
+        // 写入逻辑之后构建，保证 GPU scene buffer、TLAS custom index 和 raster draw cache 对齐。
         self.build_tlas(resource_ctx, device_ctx, immediate_ctx, render_data, frame_counter, tlas_revision);
 
         self.upload_scene_buffer(
@@ -68,6 +69,8 @@ impl GpuScene {
         bindless_manager: &BindlessManager,
     ) {
         let crt_gpu_buffers = &self.gpu_scene_buffers[*frame_counter.frame_label()];
+        // scene root buffer 只存放“入口地址”和资源句柄，不复制大块 scene 数据。
+        // 它最后写入，确保地址/count 与本帧刚上传的 buffer 和 TLAS revision 匹配。
         let gpu_scene_data = gpu::GPUScene {
             all_instances: crt_gpu_buffers.instance_buffer.device_address(),
             all_mats: material_buffer_device_address,
@@ -122,6 +125,9 @@ impl GpuScene {
         let mut crt_geometry_indirect_idx = 0;
         let mut crt_material_indirect_idx = 0;
         for instance in scene_data.all_instances.iter() {
+            // instance buffer 使用全局稳定 slot 下标写入；indirect buffer 使用本帧紧凑下标写入。
+            // 这种布局让 shader 可以先用 TLAS/raster 提供的 instance slot 找到 instance，
+            // 再通过 instance 中的 indirect range 找到对应 submesh 列表。
             let instance_slot = instance.instance_slot.as_usize();
             if instance_buffer_slices.len() <= instance_slot {
                 panic!("instance slot can not be larger than buffer");
@@ -197,6 +203,7 @@ impl GpuScene {
         let crt_gpu_buffers = &mut self.gpu_scene_buffers[*frame_counter.frame_label()];
         let crt_light_stage_buffer = &mut crt_gpu_buffers.light_stage_buffer;
         let light_buffer_slices = crt_light_stage_buffer.mapped_slice();
+        // 当前实现使用固定容量 light buffer；超过容量说明 scene 规模已超出 backend v1 约束。
         if light_buffer_slices.len() < scene_data.all_point_lights.len() {
             panic!("light cnt can not be larger than buffer");
         }
@@ -238,6 +245,8 @@ impl GpuScene {
 
         let mut crt_geometry_idx = 0;
         for mesh in scene_data.all_meshes.iter() {
+            // RenderData 已经按 mesh 去重；这里把每个 mesh 的 submesh 展开为全局 geometry table，
+            // instance 只通过 geometry_indirect_buffer 指向其中一段连续范围。
             if geometry_buffer_slices.len() < crt_geometry_idx + mesh.geometries.len() {
                 panic!("geometry cnt can not be larger than buffer");
             }
@@ -267,6 +276,9 @@ impl GpuScene {
 /// 1. 将 stage buffer 的数据 *全部* flush 到 buffer 中
 /// 2. 从 stage buffer 中将 *所有* 数据复制到目标 buffer 中
 /// 3. 添加 barrier，确保后续访问时 Copy 已经完成且数据可用
+///
+/// 当前 scene buffer 上传采用整 buffer copy，简化 dirty tracking；调用者负责传入后续 shader
+/// 阶段需要的可见性 mask。
 fn flush_copy_and_barrier(
     resource_ctx: GfxResourceCtx<'_>,
     cmd: &GfxCommandBuffer,
@@ -291,6 +303,10 @@ fn flush_copy_and_barrier(
 }
 
 #[allow(dead_code)]
+/// `GfxStructuredBuffer<T>` 版本的统一上传 helper。
+///
+/// 当前代码大多直接使用底层 buffer 版本；保留该函数是为了后续恢复类型化 buffer 上传时，
+/// 仍复用同一套 flush/copy/barrier 语义。
 fn flush_structured_copy_and_barrier<T: Copy>(
     resource_ctx: GfxResourceCtx<'_>,
     cmd: &GfxCommandBuffer,

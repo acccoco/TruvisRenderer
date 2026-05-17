@@ -48,6 +48,7 @@ pub(crate) struct SceneAssetRecord {
 ///
 /// 渲染后端消费 texture / mesh 事件继续做 GPU 上传；scene 事件表示 prefab CPU
 /// 数据已经可被 `SceneManager` 查询并 spawn。失败事件只描述 CPU 加载或导入失败。
+#[derive(Debug)]
 pub enum LoadedAssetEvent {
     /// 纹理文件已经完成 CPU 解码。
     ///

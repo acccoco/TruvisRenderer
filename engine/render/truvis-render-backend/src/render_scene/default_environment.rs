@@ -22,6 +22,10 @@ pub(super) struct DefaultEnvironment {
 }
 
 impl DefaultEnvironment {
+    /// 加载默认环境贴图、注册 image view，并写入 bindless SRV 表。
+    ///
+    /// 这些贴图在 backend 生命周期内常驻；动态 scene 上传只读取它们的 bindless handle，
+    /// 不负责从文件系统加载默认资源。
     pub(super) fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
@@ -76,14 +80,19 @@ impl DefaultEnvironment {
         }
     }
 
+    /// 返回 scene root buffer 写入的 sky texture bindless handle。
     pub(super) fn sky_srv_handle(&self, bindless_manager: &BindlessManager) -> BindlessSrvHandle {
         bindless_manager.get_shader_srv_handle(self.sky_texture.1)
     }
 
+    /// 返回 scene root buffer 写入的 UV checker texture bindless handle。
     pub(super) fn uv_checker_srv_handle(&self, bindless_manager: &BindlessManager) -> BindlessSrvHandle {
         bindless_manager.get_shader_srv_handle(self.uv_checker_texture.1)
     }
 
+    /// 注销默认贴图的 bindless SRV，并释放资源管理器中的 image wrapper。
+    ///
+    /// 字段会置回 null handle，配合 `Drop` 的 debug_assert 检测是否漏掉显式销毁。
     pub(super) fn destroy_mut(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -116,6 +125,10 @@ impl DefaultEnvironment {
         self.uv_checker_texture = (GfxImageHandle::default(), GfxImageViewHandle::default());
     }
 
+    /// 从资源目录读取图片并立即上传成 GPU image。
+    ///
+    /// 默认环境贴图属于 backend 启动必需资源，因此这里保持 fail-fast：缺失文件会在初始化阶段
+    /// 直接暴露，而不是在 render 阶段降级为不可见错误。
     fn load_image(resource_ctx: GfxResourceCtx<'_>, immediate_ctx: GfxImmediateCtx<'_>, tex_path: &Path) -> GfxImage {
         let img = image::ImageReader::open(tex_path).unwrap().decode().unwrap().to_rgba8();
         let width = img.width();

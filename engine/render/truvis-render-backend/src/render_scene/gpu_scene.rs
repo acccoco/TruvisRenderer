@@ -28,11 +28,17 @@ pub struct GpuScene {
 
 // 访问器
 impl GpuScene {
+    /// 返回当前 frame label 的 TLAS owner。
+    ///
+    /// 没有 active instance 时返回 None，render pass 应据此跳过 ray tracing 路径或使用空场景策略。
     #[inline]
     pub fn tlas(&self, frame_label: FrameLabel) -> Option<&GfxAcceleration> {
         self.gpu_scene_buffers[*frame_label].tlas.as_ref()
     }
 
+    /// 返回当前 frame label 的 scene root buffer。
+    ///
+    /// buffer 内保存 shader 查找整套 scene 数据所需的 device address、bindless handle 和计数。
     #[inline]
     pub fn scene_buffer(&self, frame_label: FrameLabel) -> &GfxStructuredBuffer<gpu::GPUScene> {
         &self.gpu_scene_buffers[*frame_label].scene_buffer
@@ -41,6 +47,10 @@ impl GpuScene {
 
 // 创建与初始化
 impl GpuScene {
+    /// 创建默认环境贴图和每个 FIF frame label 的 GPU scene buffer 集。
+    ///
+    /// `GpuScene` 只创建 render-side 表示，不读取 CPU scene；动态实例和 mesh 数据在
+    /// prepare 阶段由 `upload_render_data` 写入。
     pub fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
@@ -70,6 +80,10 @@ impl GpuScene {
 
 // 销毁
 impl GpuScene {
+    /// 销毁 GPU scene 拥有的 buffer、TLAS 和默认环境贴图。
+    ///
+    /// 调用点位于 `RenderBackend::destroy`，此时 device 已 idle，因此每个 FIF 的 TLAS
+    /// 和 buffer 都可以按 shutdown reason 释放。
     pub fn destroy_mut(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -86,14 +100,20 @@ impl GpuScene {
 }
 
 impl RenderSceneView for GpuScene {
+    /// 暴露 scene root buffer device address，供 shader 通过全局 descriptor 间接读取场景。
     fn scene_buffer_device_address(&self, frame_label: FrameLabel) -> vk::DeviceAddress {
         self.scene_buffer(frame_label).device_address()
     }
 
+    /// 暴露当前 frame label 的 TLAS handle；空场景没有 TLAS。
     fn tlas_handle(&self, frame_label: FrameLabel) -> Option<vk::AccelerationStructureKHR> {
         self.tlas(frame_label).map(|tlas| tlas.handle())
     }
 
+    /// 遍历 prepare 阶段展开好的 raster draw cache 并录制 draw。
+    ///
+    /// `before_draw` 是 pass 注入点，用于按 instance slot/submesh index 更新 push constants
+    /// 或其它 per-draw 状态，同时不暴露 `GpuScene` 的内部缓存结构。
     fn draw_raster(&self, frame_label: FrameLabel, cmd: &GfxCommandBuffer, before_draw: &mut dyn FnMut(u32, u32)) {
         let _span = tracy_client::span!("GpuScene::draw_raster");
         draw_raster_cache(&self.raster_draws[*frame_label], cmd, before_draw);

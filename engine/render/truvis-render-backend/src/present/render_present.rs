@@ -19,10 +19,15 @@ use truvis_render_interface::pipeline_settings::{DefaultRenderBackendSettings, F
 /// 上层 render graph 只需要 image/view、格式尺寸以及 acquire/render 完成信号；
 /// 不应该接触 `RenderPresent` 内部的 swapchain owner 或同步对象集合。
 pub struct PresentTargetView<'a> {
+    /// 资源管理器中包裹当前 swapchain image 的 handle；image 本体仍由 WSI 拥有。
     pub render_target_image_handle: GfxImageHandle,
+    /// render graph 写入当前窗口图像时使用的 image view handle。
     pub render_target_view_handle: GfxImageViewHandle,
+    /// 当前 swapchain 的格式、尺寸和 image 数量快照。
     pub swapchain_image_info: GfxSwapchainImageInfo,
+    /// acquire 完成后 signal；render graph 写入 present target 前需要 wait。
     pub present_complete_semaphore: &'a GfxSemaphore,
+    /// render graph 完成写入后 signal；present queue 提交时会 wait。
     pub render_complete_semaphore: &'a GfxSemaphore,
 }
 
@@ -36,6 +41,10 @@ pub struct PresentView<'a> {
 }
 
 impl<'a> PresentView<'a> {
+    /// 返回 render graph 导入当前 present target 所需的完整快照。
+    ///
+    /// image/view 取决于最近一次 acquire 的 current image index；两个 semaphore 分别连接
+    /// acquire->render 和 render->present 两段同步。
     pub fn current_target(self, frame_label: FrameLabel) -> PresentTargetView<'a> {
         let (render_target_image_handle, render_target_view_handle) = self.current_image_and_view();
         PresentTargetView {
@@ -47,18 +56,22 @@ impl<'a> PresentView<'a> {
         }
     }
 
+    /// 返回当前 acquire 到的 swapchain image wrapper 和 view。
     pub fn current_image_and_view(self) -> (GfxImageHandle, GfxImageViewHandle) {
         self.present.current_image_and_view()
     }
 
+    /// 返回当前 swapchain 的 image 信息，供上层重建尺寸相关资源。
     pub fn swapchain_image_info(self) -> GfxSwapchainImageInfo {
         self.present.swapchain_image_info()
     }
 
+    /// 当前 image 对应的 render-complete semaphore。
     pub fn current_render_compute_semaphore(self) -> &'a GfxSemaphore {
         self.present.current_render_compute_semaphore()
     }
 
+    /// 当前 FIF frame label 对应的 acquire-complete semaphore。
     pub fn current_present_complete_semaphore(self, frame_label: FrameLabel) -> &'a GfxSemaphore {
         self.present.current_present_complete_semaphore(frame_label)
     }
@@ -138,6 +151,10 @@ impl RenderPresent {
         }
     }
 
+    /// 将 WSI swapchain image 包装进资源管理器，并为每张 image 创建 color view。
+    ///
+    /// 这些 wrapper 让 render graph 可以通过统一 handle 访问窗口图像；销毁 wrapper
+    /// 不会销毁 swapchain image 本体。
     fn create_swapchain_images_and_views(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
@@ -264,6 +281,10 @@ impl RenderPresent {
         self.need_resize
     }
 
+    /// 在安全点按 latest window size 重建 swapchain 与 image/view wrapper。
+    ///
+    /// 旧 swapchain 会作为 old_swapchain 传给 Vulkan，旧 image wrapper/view 先从资源系统释放；
+    /// 调用者随后会拿到 resize ctx 重建上层窗口尺寸相关资源。
     pub fn rebuild_after_resized(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -306,6 +327,8 @@ impl RenderPresent {
         let swapchain = self.swapchain.as_mut().unwrap();
         let timeout_ns = 10 * 1000 * 1000 * 1000;
 
+        // WSI 返回 out-of-date/suboptimal 时由 swapchain wrapper 转换为 need_resize 标记；
+        // backend 不在 acquire 点立即重建，而是在 render loop 的 resize 路径统一处理。
         self.need_resize = swapchain.acquire_next_image(
             surface_ctx,
             Some(&self.present_complete_semaphores[*frame_label]),
@@ -322,6 +345,7 @@ impl RenderPresent {
         let swapchain = self.swapchain.as_ref().unwrap();
         // present 等待当前 swapchain image 对应的 render-complete semaphore；
         // semaphore 数量跟 image 数一致，避免同一帧中不同 image 的完成信号互相覆盖。
+        // 返回值同样只更新 latest-size 标记，让实际重建保持在单一 resize 安全点。
         self.need_resize = swapchain.present_image(
             surface_ctx,
             queue_ctx.gfx_queue(),

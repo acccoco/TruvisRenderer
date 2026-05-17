@@ -15,16 +15,24 @@ const MAX_INSTANCE_COUNT: u32 = 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InstanceState {
+    /// 已分配稳定 slot，但 mesh/material 依赖尚未全部 GPU-ready。
     Pending,
+    /// 可进入 `RenderData`，对应 slot 会被写入 instance buffer 和 TLAS custom index。
     Active,
 }
 
+/// 单个 runtime instance 在 render-side 的稳定绑定。
+///
+/// `last_transform` 用于检测 active 实例 transform 变化，从而推进 TLAS/instance buffer revision。
 struct InstanceBinding {
     slot: GpuInstanceSlot,
     state: InstanceState,
     last_transform: glam::Mat4,
 }
 
+/// 已删除 instance 的 slot 延迟回收记录。
+///
+/// slot 不能立即复用，因为旧 command buffer 中可能仍通过 instance index 读取 GPU buffer。
 struct RetiredSlot {
     slot: GpuInstanceSlot,
     retired_frame_id: u64,
@@ -154,6 +162,7 @@ impl InstanceBridge {
         material_slot_resolver: &dyn MaterialSlotResolver,
         mesh_resolver: &dyn MeshRenderResolver,
     ) {
+        // 先处理 CPU scene 中已经不存在的实例，避免后续 active 列表继续输出 stale slot。
         self.retire_stale_instances(scene_manager);
 
         for (handle, instance) in scene_manager.instance_map().iter() {
@@ -161,6 +170,8 @@ impl InstanceBridge {
                 self.register_instance(handle, instance);
             }
 
+            // ready gate 由 material/mesh resolver 共同决定。bridge 不直接访问 uploader/manager
+            // 内部缓存，只依赖窄接口判断这个实例是否可以进入本帧 render data。
             let ready = Self::dependencies_ready(instance, material_slot_resolver, mesh_resolver);
             let binding = self.bindings.get_mut(handle).expect("instance binding missing after register");
 
@@ -212,6 +223,7 @@ impl InstanceBridge {
     }
 
     fn retire_stale_instances(&mut self, scene_manager: &SceneManager) {
+        // SecondaryMap 不能在迭代中直接删除，先收集 stale handle，再统一移除并记录 retired slot。
         let stale_handles = self
             .bindings
             .iter()
@@ -259,6 +271,8 @@ impl InstanceBridge {
         material_slot_resolver: &dyn MaterialSlotResolver,
         mesh_resolver: &dyn MeshRenderResolver,
     ) -> bool {
+        // mesh 必须已经拥有 vertex/index buffer 与 BLAS；material 必须已有稳定 slot。
+        // texture 未 ready 不会阻止 material ready，因为 material manager 会使用 fallback binding。
         mesh_resolver.is_mesh_ready(instance.mesh)
             && instance.materials.iter().all(|&material| material_slot_resolver.is_material_ready(material))
     }

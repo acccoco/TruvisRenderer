@@ -26,6 +26,10 @@ use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 
+/// 已提交到 graphics queue、但尚未确认完成的 mesh 上传任务。
+///
+/// 这里同时持有 staging/scratch/geometry/BLAS owner，是因为 timeline 到达前这些资源
+/// 都仍可能被 copy 或 acceleration build 命令引用，不能交给 resolver 或提前释放。
 struct PendingMeshUpload {
     semaphore_value: u64,
     handle: AssetMeshHandle,
@@ -37,6 +41,10 @@ struct PendingMeshUpload {
     name: String,
 }
 
+/// 已通过 timeline 检测确认完成的 mesh GPU 资源。
+///
+/// `AssetMeshUploader` 接管该结构后，mesh 才会进入 `meshes` map，供 instance bridge
+/// 解析为 render-side 几何数据。
 struct FinishedMeshUpload {
     handle: AssetMeshHandle,
     geometry: RtGeometry,
@@ -58,6 +66,10 @@ struct MeshUploadManager {
 }
 
 impl MeshUploadManager {
+    /// 创建只服务 mesh 上传和 BLAS build 的 graphics command pool 与 timeline。
+    ///
+    /// 这里绑定 graphics queue family，而不是 transfer queue family，是因为 BLAS build 属于
+    /// acceleration structure 命令，不能依赖独立 transfer queue 支持。
     fn new(device_ctx: GfxDeviceCtx<'_>, queue_ctx: GfxQueueCtx<'_>) -> Self {
         let command_pool = GfxCommandPool::new(
             device_ctx,
@@ -108,6 +120,8 @@ impl MeshUploadManager {
             vertex_buffer,
             index_buffer,
         };
+        // BLAS 输入直接引用刚创建的 device-local vertex/index buffer。后续 command buffer
+        // 会先完成 staging copy，再通过 barrier 保证 build 命令读取到复制后的内容。
         let blas_inputs = [geometry.get_blas_geometry_info()];
         let (blas, scratch_buffer) = GfxAcceleration::new_blas_for_build(
             resource_ctx,
@@ -215,6 +229,10 @@ impl MeshUploadManager {
         Ok(())
     }
 
+    /// 非阻塞推进上传队列，并返回已经 GPU-ready 的 mesh。
+    ///
+    /// 队列按提交顺序 signal 单调递增 timeline value，因此只要队首未完成，后续任务也一定
+    /// 还不能对 resolver 可见。
     fn update(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) -> Vec<FinishedMeshUpload> {
         let _span = tracy_client::span!("MeshUploadManager::update");
         let device = device_ctx.device();
@@ -247,6 +265,10 @@ impl MeshUploadManager {
         finished_uploads
     }
 
+    /// 关闭上传队列并释放仍未交给 `AssetMeshUploader` 的 pending 资源。
+    ///
+    /// shutdown 路径允许等待 timeline，因为此时帧循环已经停止；等待完成后才能销毁
+    /// command buffer、staging、scratch、geometry 和 BLAS。
     fn shutdown(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
         if self.destroyed {
             return;
@@ -280,6 +302,10 @@ impl MeshUploadManager {
         self.destroyed = true;
     }
 
+    /// 在分配 GPU 资源前验证 CPU mesh 数据满足当前渲染后端的固定假设。
+    ///
+    /// 当前后端按三角形索引构建 BLAS，并要求 SoA 顶点属性一一对应；这里提前失败，
+    /// 避免创建部分 GPU 资源后再在 Vulkan build 阶段暴露难定位的问题。
     fn validate_mesh_data(data: &LoadedMeshData) -> Result<()> {
         let vertex_count = data.positions.len();
         if vertex_count == 0 {
@@ -305,6 +331,8 @@ impl MeshUploadManager {
     ) -> GfxBuffer {
         let total_size = VertexLayoutSoA3D::buffer_size(vertex_count) as vk::DeviceSize;
         let stage_buffer = GfxBuffer::new_stage_buffer(resource_ctx, total_size, debug_name);
+        // `VertexLayoutSoA3D` 要求 positions/normals/tangents/uvs 以 SoA 方式连续摆放。
+        // 上面的 validate 已保证所有属性长度一致，因此这里可以按布局 offset 直接拷贝。
         unsafe {
             ptr::copy_nonoverlapping(
                 data.positions.as_ptr() as *const u8,
@@ -336,6 +364,7 @@ impl MeshUploadManager {
         indices: &[u32],
         debug_name: impl AsRef<str>,
     ) -> GfxBuffer {
+        // index buffer 不需要额外重排，直接写入 staging 后由上传命令复制到 device-local buffer。
         let stage_buffer =
             GfxBuffer::new_stage_buffer(resource_ctx, size_of_val(indices) as vk::DeviceSize, debug_name);
         stage_buffer.transfer_data_by_mmap(resource_ctx, indices);
@@ -349,6 +378,10 @@ impl Drop for MeshUploadManager {
     }
 }
 
+/// resolver 可见的 GPU-ready mesh 缓存。
+///
+/// `geometry` 服务光栅化 draw，`blas`/`blas_device_address` 服务 TLAS 构建；二者共享同一份
+/// vertex/index buffer，避免 mesh 在 backend 内出现两套 GPU 表示。
 struct UploadedMesh {
     geometry: RtGeometry,
     blas: GfxAcceleration,
@@ -392,6 +425,8 @@ impl AssetMeshUploader {
 
         for event in events {
             if let LoadedAssetEvent::MeshLoaded { handle, data } = event {
+                // AssetUploadStage 已经把事件按类型分流；这里仍保持宽松匹配，便于调用侧
+                // 未来传入空列表或过滤后的列表时不需要额外包装。
                 if let Err(err) = self.uploader.submit_mesh_upload(resource_ctx, device_ctx, queue_ctx, handle, data) {
                     log::error!("Failed to submit mesh upload {:?}: {}", handle, err);
                 }
@@ -423,6 +458,8 @@ impl AssetMeshUploader {
         device_ctx: GfxDeviceCtx<'_>,
         finished: FinishedMeshUpload,
     ) {
+        // 替换同一 asset handle 时必须先让旧资源离开 resolver map；后续 instance bridge
+        // 会通过 ready revision 触发 scene/TLAS 更新，而不会继续拿到旧 BLAS。
         if let Some(old_mesh) = self.meshes.remove(finished.handle) {
             // 同一 handle 的 mesh 重新上传时，旧 geometry/BLAS 不能继续被 resolver 返回。
             // 当前实现依赖帧开始的 FIF 等待保证立即释放不会撞上在飞命令。

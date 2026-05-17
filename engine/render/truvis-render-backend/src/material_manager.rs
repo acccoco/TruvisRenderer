@@ -74,6 +74,10 @@ pub struct TextureBinding {
 }
 
 impl TextureBinding {
+    /// 构造 shader 可安全读取的空 texture binding。
+    ///
+    /// 该值用于“材质没有贴图”场景；“贴图存在但未 ready”由 `TextureResolver`
+    /// 返回 fallback binding 处理。
     pub fn null() -> Self {
         Self {
             srv_handle: BindlessSrvHandle::null(),
@@ -110,6 +114,10 @@ struct MaterialBuffers {
 }
 
 impl MaterialBuffers {
+    /// 创建单个 FIF frame label 对应的 material device buffer 与 staging buffer。
+    ///
+    /// material buffer 是 shader 直接读取的 SSBO，stage buffer 用于 prepare 阶段写入
+    /// dirty slot 后再 copy 到 device-local buffer。
     fn new(ctx: GfxResourceCtx<'_>, frame_label: FrameLabel) -> Self {
         Self {
             material_buffer: GfxStructuredBuffer::new_ssbo(
@@ -125,6 +133,7 @@ impl MaterialBuffers {
         }
     }
 
+    /// 销毁该 FIF 的 material buffer 对。
     fn destroy_mut(&mut self, ctx: GfxResourceCtx<'_>) {
         self.material_buffer.destroy_mut(ctx, DestroyReason::Shutdown);
         self.material_stage_buffer.destroy_mut(ctx, DestroyReason::Shutdown);
@@ -154,21 +163,22 @@ impl MaterialBuffers {
 /// texture 异步加载过程中使用占位数据（null texture），就绪后自动标记 dirty 并更新到 GPU。
 /// GPU 端始终有合法数据可用。
 pub struct MaterialManager {
-    /// 核心映射：ManagedMaterialHandle -> slot index
+    /// 核心映射：ManagedMaterialHandle -> shader 可见 material buffer slot。
     handle_to_slot: SlotMap<ManagedMaterialHandle, usize>,
 
-    /// slot 数据：index = GPU buffer 中的位置
+    /// slot 数据：index = GPU buffer 中的位置；None 表示已 unregister、等待延迟回收。
     slots: Vec<Option<ManagedMaterialParams>>,
 
+    /// 可立即分配的 slot。被删除的 slot 必须跨过 FIF 窗口后才能回到这里。
     free_slots: Vec<usize>,
 
-    /// dirty 列表：slot index -> SlotDirtyInfo
+    /// dirty 列表：slot index -> SlotDirtyInfo，记录每个 FIF buffer 是否还需要补写该 slot。
     dirty_slots: HashMap<usize, SlotDirtyInfo>,
 
-    /// 等待 texture 就绪的材质 handle 列表
+    /// 等待 texture 就绪的材质 handle；ready 后会重新 dirty 所有 FIF buffer。
     pending_texture_ready: HashSet<ManagedMaterialHandle>,
 
-    /// FIF 套 GPU buffer
+    /// FIF 套 GPU buffer，避免 CPU 覆盖 GPU 仍在读取的 material buffer。
     buffers: [MaterialBuffers; FrameCounter::fif_count()],
 
     frame_token: FrameToken,
@@ -225,6 +235,8 @@ impl MaterialManager {
             },
         );
         if has_textures {
+            // 注册时可能 texture 尚未上传完成。材质 slot 先用 fallback/null 可见，
+            // texture ready 后再通过 update 触发全 FIF 重新上传。
             self.pending_texture_ready.insert(handle);
         }
 
@@ -255,6 +267,7 @@ impl MaterialManager {
 
         // texture 就绪状态需要重新检测
         if has_textures {
+            // 参数变化可能换成新的 texture handle，因此需要重新进入 ready 检测集合。
             self.pending_texture_ready.insert(handle);
         } else {
             self.pending_texture_ready.remove(&handle);
@@ -289,8 +302,9 @@ impl MaterialManager {
 
 // 帧生命周期
 impl MaterialManager {
-    /// 帧开始时调用，更新 frame_token 并回收过期 slot
+    /// 帧开始时调用，更新后续 dirty/回收判断使用的 frame token。
     pub fn begin_frame(&mut self, frame_token: FrameToken) {
+        // 实际回收发生在 upload 中，因为回收判断需要和当前 FIF dirty 状态处理保持同一处。
         self.frame_token = frame_token;
     }
 
@@ -353,6 +367,8 @@ impl MaterialManager {
         let mut slots_to_reclaim: Vec<usize> = Vec::new();
 
         {
+            // stage buffer 的可变借用范围刻意限制在这个 block 内；后续需要再次可变访问
+            // dirty_slots 和 buffer owner 来更新状态并提交 copy/barrier。
             let stage_slice = self.buffers[fif_idx].material_stage_buffer.mapped_slice();
 
             for &slot in &dirty_slot_indices {
@@ -377,7 +393,7 @@ impl MaterialManager {
             }
         }
 
-        // 更新 dirty 标记（已项 stage_slice borrow 释放）
+        // 更新 dirty 标记（此时 stage_slice borrow 已释放）。
         for &slot in &dirty_slot_indices {
             if self.slots[slot].is_none() {
                 continue;
@@ -405,6 +421,8 @@ impl MaterialManager {
         }
 
         if any_written {
+            // 当前实现按整段 material buffer copy，保证简单可靠；dirty slot 只决定是否需要
+            // 发起本 FIF 的 copy，后续可再细化为 region copy。
             let buf = &mut self.buffers[fif_idx];
             Self::flush_copy_and_barrier(
                 ctx,
@@ -434,6 +452,7 @@ impl MaterialManager {
 
 // 内部工具方法
 impl MaterialManager {
+    /// 判断材质引用的所有 texture 是否已经能解析为真实 shader binding。
     fn check_textures_ready(params: &ManagedMaterialParams, resolver: &dyn TextureResolver) -> bool {
         if let Some(h) = params.diffuse_texture {
             if !resolver.is_texture_ready(h) {
@@ -449,6 +468,10 @@ impl MaterialManager {
     }
 
     // TODO 是否可以改成 Default texture，而不是 null
+    /// 将 CPU 材质参数转换为 shader 读取的 packed GPU 数据。
+    ///
+    /// texture handle 在这里通过 resolver 转成 bindless SRV index；resolver 保证未 ready
+    /// 的 texture 也会返回 fallback，因此 GPU 数据不会包含悬空句柄。
     fn build_gpu_material(params: &ManagedMaterialParams, resolver: &dyn TextureResolver) -> gpu::PBRMaterial {
         let diffuse_binding =
             params.diffuse_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
@@ -472,6 +495,9 @@ impl MaterialManager {
     }
 
     // TODO 可以细化更新 regions
+    /// 将当前 staging material buffer 刷新、复制到 device buffer，并建立 shader-read barrier。
+    ///
+    /// `barrier_mask` 来自 prepare pipeline，和 scene/per-frame buffer 使用同一套可见性约定。
     fn flush_copy_and_barrier(
         ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,

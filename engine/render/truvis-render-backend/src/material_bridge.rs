@@ -11,6 +11,9 @@ use truvis_render_interface::pipeline_settings::FrameLabel;
 use crate::material_manager::{ManagedMaterialHandle, ManagedMaterialParams, MaterialManager, TextureResolver};
 use crate::scene_bridge::MaterialSlotResolver;
 
+/// asset material 到 manager-owned material 的桥接记录。
+///
+/// `params` 缓存上一次同步的 CPU 材质参数，用于每帧和 `AssetHub` 比较并决定是否 dirty。
 struct MaterialBinding {
     managed_handle: ManagedMaterialHandle,
     params: ManagedMaterialParams,
@@ -72,11 +75,15 @@ impl MaterialBridge {
             let mut changed_managed_handle = None;
 
             if let Some(binding) = self.bindings.get_mut(handle) {
+                // asset material handle 保持不变时，只要 CPU 参数变化，就保留原 stable slot
+                // 并把对应 managed material 标记为 dirty。
                 if binding.params != params {
                     binding.params = params.clone();
                     changed_managed_handle = Some(binding.managed_handle);
                 }
             } else {
+                // 新 asset material 进入 render-side 后拿到独立 managed handle 和稳定 GPU slot。
+                // 这个 slot 会被 instance bridge 解析进 RenderData。
                 let managed_handle = self.material_manager_mut().register(params.clone());
                 let slot = self
                     .material_manager()
@@ -161,6 +168,8 @@ impl MaterialBridge {
 
 impl MaterialSlotResolver for MaterialBridge {
     fn resolve_material_slot(&self, handle: AssetMaterialHandle) -> Option<u32> {
+        // resolver 是 InstanceBridge 能看到的唯一 material 接口；找不到 binding 表示
+        // CPU scene 仍引用了未加载或已删除的 material，实例应保持 pending。
         let binding = self.bindings.get(handle)?;
         let slot = self.material_manager().get_slot_index(binding.managed_handle)?;
         u32::try_from(slot).ok()

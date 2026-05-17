@@ -398,6 +398,8 @@ impl RenderBackend {
     pub fn destroy(mut self) {
         self.gfx.wait_idel();
 
+        // present 持有 surface/swapchain 与 WSI image wrapper，必须先释放；后续 FIF 和 scene
+        // 资源销毁不再需要访问当前窗口 target。
         if let Some(render_present) = self.render_present.take() {
             render_present.destroy(
                 self.gfx.resource_ctx(),
@@ -407,6 +409,8 @@ impl RenderBackend {
             );
         }
 
+        // FIF render targets 和 bindless/resource manager 存在交叉引用，统一从 RenderWorld
+        // 的 owner 侧释放，保证 view/bindless 句柄先退出全局表。
         self.render_world.fif_buffers.destroy_mut(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -414,6 +418,8 @@ impl RenderBackend {
             &mut self.render_world.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
+        // CPU scene/asset 与 render-side bridge 按依赖方向释放：先停止 scene runtime，
+        // 再释放 material/texture/mesh/GpuScene 等 GPU 翻译缓存。
         self.world.scene_manager.destroy();
         self.material_bridge.destroy(self.gfx.resource_ctx());
         self.asset_texture_uploader.destroy(
@@ -430,6 +436,7 @@ impl RenderBackend {
             &mut self.render_world.gfx_resource_manager,
         );
         self.asset_mesh_uploader.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
+        // per-frame UBO 与 command allocator 在所有使用它们的 scene/present 资源之后释放。
         for buffer in &mut self.render_world.per_frame_data_buffers {
             buffer.destroy_mut(self.gfx.resource_ctx(), DestroyReason::Shutdown);
         }
@@ -437,6 +444,7 @@ impl RenderBackend {
         self.cmd_allocator.destroy(self.gfx.device_ctx());
         self.render_world.gfx_resource_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
         self.fif_timeline_semaphore.destroy(self.gfx.device_ctx());
+        // descriptor/sampler 依赖 device 但不依赖业务资源，放在资源管理器之后、Gfx 之前销毁。
         self.render_world.sampler_manager.destroy(self.gfx.device_ctx());
         self.render_world.global_descriptor_sets.destroy(self.gfx.device_ctx());
         self.gfx.destroy();
@@ -460,10 +468,14 @@ impl RenderBackend {
             let fif_count = FrameCounter::fif_count();
             let wait_frame_id = current_frame_id.saturating_sub(fif_count as u64);
             const WAIT_SEMAPHORE_TIMEOUT_NS: u64 = 30 * 1000 * 1000 * 1000;
+            // 等待当前 frame label 上一次被使用的提交完成。这个等待是后续 reset command pool、
+            // immediate release 和延迟释放队列清理的安全前提。
             self.fif_timeline_semaphore.wait_timeline(self.gfx.device_ctx(), wait_frame_id, WAIT_SEMAPHORE_TIMEOUT_NS);
         }
 
         {
+            // command allocator 和 resource manager 都以 frame label/frame id 作为回收边界；
+            // 上面的 timeline wait 确保不会重置 GPU 仍在读取的命令池或资源。
             self.cmd_allocator
                 .reset_frame_commands(self.gfx.device_ctx(), self.render_world.frame_counter.frame_label());
             self.render_world.gfx_resource_manager.cleanup(
@@ -477,6 +489,8 @@ impl RenderBackend {
         self.render_world.total_time_s = self.timer.total_time_s();
 
         let frame_token = self.render_world.frame_counter.frame_token();
+        // bindless/material/instance 都使用同一个 frame token 推进延迟回收窗口，
+        // 保持 shader-visible slot 与 handle 的复用节奏一致。
         self.render_world.bindless_manager.begin_frame(frame_token);
         self.material_bridge.begin_frame(frame_token);
         self.instance_bridge.begin_frame(frame_token);
@@ -666,6 +680,10 @@ impl RenderBackend {
 // 内部辅助函数
 // ---------------------------------------------------------------------------
 impl RenderBackend {
+    /// 为当前 FIF frame label acquire swapchain image。
+    ///
+    /// 该 helper 只在 update 阶段调用；成功后 present view 的 current image 与本帧
+    /// render graph 导入的 target 保持一致。
     fn acquire_image(&mut self) {
         self.render_present
             .as_mut()
@@ -673,6 +691,10 @@ impl RenderBackend {
             .acquire_image(self.gfx.surface_ctx(), self.render_world.frame_counter.frame_label());
     }
 
+    /// 同步 swapchain extent 到 `FrameSettings`，并在尺寸变化时重建 FIF framebuffer 资源。
+    ///
+    /// present 层负责判断 swapchain 是否需要重建；这里处理的是 backend 内部与 frame extent
+    /// 绑定的渲染资源。
     fn update_frame_settings(&mut self) {
         let swapchain_extent = self.render_present.as_ref().unwrap().extent();
         if self.render_world.frame_settings.frame_extent == swapchain_extent {
@@ -680,11 +702,17 @@ impl RenderBackend {
         }
 
         if self.render_world.frame_settings.frame_extent != swapchain_extent {
+            // frame extent 变化会让历史累积结果失效，并要求所有 per-FIF render target
+            // 以新尺寸重建。
             self.render_world.frame_settings.frame_extent = swapchain_extent;
             self.resize_frame_buffer(swapchain_extent);
         }
     }
 
+    /// 重建所有依赖窗口尺寸的 backend-owned frame buffer。
+    ///
+    /// resize 路径使用 device idle 作为保守同步点，避免旧 extent 的 render target 仍被
+    /// 在飞命令引用时被释放或复用。
     fn resize_frame_buffer(&mut self, new_extent: vk::Extent2D) {
         self.render_world.accum_data.reset();
 
@@ -702,6 +730,10 @@ impl RenderBackend {
         );
     }
 
+    /// 刷新当前 FIF per-frame descriptor set。
+    ///
+    /// descriptor 指向刚写入的 per-frame UBO 和 `GpuScene` scene root buffer；render pass
+    /// 通过全局 descriptor set 读取本帧相机、时间与 scene device address。
     fn update_perframe_descriptor_set(&mut self) {
         let frame_label = self.render_world.frame_counter.frame_label();
         let per_frame_data_buffer = &self.render_world.per_frame_data_buffers[*frame_label];
