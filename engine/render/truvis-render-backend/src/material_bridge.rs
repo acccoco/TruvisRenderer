@@ -42,6 +42,7 @@ pub struct MaterialBridge {
     bindings: SecondaryMap<AssetMaterialHandle, GpuMaterialHandle>,
 }
 
+// 创建与初始化
 impl MaterialBridge {
     /// 创建材质桥接层与底层 `MaterialManager`。
     ///
@@ -52,12 +53,18 @@ impl MaterialBridge {
             bindings: SecondaryMap::new(),
         }
     }
+}
 
+// 帧生命周期
+impl MaterialBridge {
     /// 帧开始时同步 frame token，推进 MaterialManager 的延迟回收时间基准。
     pub fn begin_frame(&mut self, frame_token: FrameToken) {
         self.material_manager_mut().begin_frame(frame_token);
     }
+}
 
+// Asset material 事件同步
+impl MaterialBridge {
     /// 消费 `AssetHub` 产出的 material loaded 事件，分配或更新稳定 GPU material slot。
     ///
     /// 正常路径下同一 material handle 只会收到一次 loaded event；若调用侧重复传入事件，
@@ -108,7 +115,10 @@ impl MaterialBridge {
             slot
         );
     }
+}
 
+// Prepare / GPU 上传
+impl MaterialBridge {
     /// 根据纹理上传器的 ready 状态更新材质 dirty 标记。
     ///
     /// 当材质引用的贴图从 fallback/null 变成真实 SRV 时，MaterialManager 会把所有 FIF buffer
@@ -142,7 +152,10 @@ impl MaterialBridge {
     pub fn material_buffer_device_address(&self, frame_label: FrameLabel) -> ash::vk::DeviceAddress {
         self.material_manager().material_buffer_device_address(frame_label)
     }
+}
 
+// 销毁
+impl MaterialBridge {
     /// 销毁 material GPU buffer 并清空 asset 到 GPU material handle 的映射。
     pub fn destroy(&mut self, ctx: GfxResourceCtx<'_>) {
         if let Some(material_manager) = self.material_manager.take() {
@@ -150,7 +163,10 @@ impl MaterialBridge {
         }
         self.bindings.clear();
     }
+}
 
+// 内部访问器
+impl MaterialBridge {
     fn material_manager(&self) -> &MaterialManager {
         self.material_manager.as_ref().expect("MaterialBridge used after shutdown")
     }
