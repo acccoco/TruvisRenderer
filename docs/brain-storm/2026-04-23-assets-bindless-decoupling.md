@@ -447,7 +447,7 @@ material.diffuse_texture = Some(albedo);
 CPU material 数据应类似：
 
 ```rust
-pub struct ManagedMaterialParams {
+pub struct RenderMaterialParams {
     pub base_color: Vec4,
     pub diffuse_texture: Option<AssetTextureHandle>,
     pub normal_texture: Option<AssetTextureHandle>,
@@ -768,7 +768,7 @@ SceneBridge::build_render_data(snapshot, texture_resolver)
 
 ```text
 Material.diffuse_map: String path
-ManagedMaterialParams.diffuse_texture: Option<AssetTextureHandle>
+RenderMaterialParams.diffuse_texture: Option<AssetTextureHandle>
 MaterialRenderData.diffuse_bindless_handle: BindlessSrvHandle
 ```
 
@@ -1057,4 +1057,3 @@ shader 只负责“按 handle/index 采样”
 ```
 
 这与 Bevy、Filament、Falcor、Unreal 的共同经验一致：资产身份、GPU 资源身份、shader 绑定身份应明确分层，不要让 asset handle 直接携带 descriptor slot。
-

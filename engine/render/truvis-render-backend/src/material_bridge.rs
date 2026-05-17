@@ -10,11 +10,11 @@ use truvis_render_interface::pipeline_settings::FrameLabel;
 
 use crate::scene_bridge::MaterialSlotResolver;
 use crate::{
-    material_manager::{GpuMaterialHandle, ManagedMaterialParams, MaterialManager},
+    material_manager::{GpuMaterialHandle, MaterialManager, RenderMaterialParams},
     texture_resolver::TextureResolver,
 };
 
-impl From<&MaterialData> for ManagedMaterialParams {
+impl From<&MaterialData> for RenderMaterialParams {
     fn from(mat: &MaterialData) -> Self {
         Self {
             base_color: mat.base_color,
@@ -34,25 +34,25 @@ impl From<&MaterialData> for ManagedMaterialParams {
 struct MaterialBinding {
     gpu_handle: GpuMaterialHandle,
     slot: usize,
-    params: ManagedMaterialParams,
+    params: RenderMaterialParams,
 }
 
 /// `MaterialBridge` 写入稳定 material slot 的窄接口。
 ///
 /// 生产实现由 `MaterialManager` 提供；测试可以替换成轻量 fake，避免构造 Vulkan buffer。
 trait MaterialSlotWriter {
-    fn register_params(&mut self, params: ManagedMaterialParams) -> (GpuMaterialHandle, usize);
-    fn update_params_keep_slot(&mut self, handle: GpuMaterialHandle, params: ManagedMaterialParams) -> usize;
+    fn register_params(&mut self, params: RenderMaterialParams) -> (GpuMaterialHandle, usize);
+    fn update_params_keep_slot(&mut self, handle: GpuMaterialHandle, params: RenderMaterialParams) -> usize;
 }
 
 impl MaterialSlotWriter for MaterialManager {
-    fn register_params(&mut self, params: ManagedMaterialParams) -> (GpuMaterialHandle, usize) {
+    fn register_params(&mut self, params: RenderMaterialParams) -> (GpuMaterialHandle, usize) {
         let handle = self.register(params);
         let slot = self.get_slot_index(handle).expect("registered material must have a slot");
         (handle, slot)
     }
 
-    fn update_params_keep_slot(&mut self, handle: GpuMaterialHandle, params: ManagedMaterialParams) -> usize {
+    fn update_params_keep_slot(&mut self, handle: GpuMaterialHandle, params: RenderMaterialParams) -> usize {
         let slot = self.get_slot_index(handle).expect("updated material must keep its slot");
         MaterialManager::update_params(self, handle, params);
         slot
@@ -115,7 +115,7 @@ impl MaterialBridge {
         handle: AssetMaterialHandle,
         data: &MaterialData,
     ) {
-        let params = ManagedMaterialParams::from(data);
+        let params = RenderMaterialParams::from(data);
 
         if let Some(binding) = bindings.get_mut(handle) {
             // 重复 loaded event 属于防御路径：asset material handle 保持不变时，保留原 stable slot。
@@ -236,7 +236,7 @@ mod tests {
     }
 
     impl MaterialSlotWriter for FakeMaterialSlotWriter {
-        fn register_params(&mut self, _params: ManagedMaterialParams) -> (GpuMaterialHandle, usize) {
+        fn register_params(&mut self, _params: RenderMaterialParams) -> (GpuMaterialHandle, usize) {
             let slot = self.next_slot;
             self.next_slot += 1;
             self.register_calls += 1;
@@ -244,7 +244,7 @@ mod tests {
             (handle, slot)
         }
 
-        fn update_params_keep_slot(&mut self, handle: GpuMaterialHandle, _params: ManagedMaterialParams) -> usize {
+        fn update_params_keep_slot(&mut self, handle: GpuMaterialHandle, _params: RenderMaterialParams) -> usize {
             self.update_calls += 1;
             *self.slots.get(handle).expect("fake material handle must exist")
         }

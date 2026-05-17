@@ -622,7 +622,7 @@ App / tool
 
 完成记录（2026-05-17 Phase 6a）：
 
-- `MaterialManager`、`GpuMaterialHandle`、`ManagedMaterialParams`、
+- `MaterialManager`、`GpuMaterialHandle`、`RenderMaterialParams`、
   `TextureResolver` 和 `TextureBinding` 已迁移到 `truvis-render-backend` 私有模块；
   `truvis-scene` 不再持有 material GPU buffer owner。
 - `truvis-scene` 删除旧 `MeshHandle` / `MaterialHandle` / `ManagedMeshHandle`、

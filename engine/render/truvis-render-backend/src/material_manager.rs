@@ -23,11 +23,11 @@ new_key_type! {
     pub struct GpuMaterialHandle;
 }
 
-/// MaterialManager 使用的 CPU 侧材质参数。
+/// Render-side 使用的 CPU 侧材质参数。
 ///
 /// texture 字段使用 `AssetTextureHandle`，支持异步加载和 bindless 绑定。
 #[derive(Clone, PartialEq)]
-pub struct ManagedMaterialParams {
+pub struct RenderMaterialParams {
     pub base_color: glam::Vec4,
     pub emissive: glam::Vec4,
     pub metallic: f32,
@@ -38,7 +38,7 @@ pub struct ManagedMaterialParams {
     pub normal_texture: Option<AssetTextureHandle>,
 }
 
-impl Default for ManagedMaterialParams {
+impl Default for RenderMaterialParams {
     fn default() -> Self {
         Self {
             base_color: glam::Vec4::ONE,
@@ -124,7 +124,7 @@ pub struct MaterialManager {
     handle_to_slot: SlotMap<GpuMaterialHandle, usize>,
 
     /// slot 数据：index = GPU buffer 中的位置；None 表示已 unregister、等待延迟回收。
-    slots: Vec<Option<ManagedMaterialParams>>,
+    slots: Vec<Option<RenderMaterialParams>>,
 
     /// 可立即分配的 slot。被删除的 slot 必须跨过 FIF 窗口后才能回到这里。
     free_slots: Vec<usize>,
@@ -178,7 +178,7 @@ impl MaterialManager {
     /// 注册新材质，分配稳定的 GPU slot
     ///
     /// 返回的 handle 在材质整个生命周期内保持不变，对应的 slot 索引也是稳定的。
-    pub fn register(&mut self, params: ManagedMaterialParams) -> GpuMaterialHandle {
+    pub fn register(&mut self, params: RenderMaterialParams) -> GpuMaterialHandle {
         let slot = self.free_slots.pop().expect("MaterialManager: slots exhausted");
         let handle = self.handle_to_slot.insert(slot);
 
@@ -204,7 +204,7 @@ impl MaterialManager {
     /// 更新已注册材质的参数
     ///
     /// 会标记所有 FIF buffer 为 dirty，后续帧会逐个更新。
-    pub fn update_params(&mut self, handle: GpuMaterialHandle, params: ManagedMaterialParams) {
+    pub fn update_params(&mut self, handle: GpuMaterialHandle, params: RenderMaterialParams) {
         let &slot = self.handle_to_slot.get(handle).expect("MaterialManager: invalid handle");
 
         let has_textures = params.diffuse_texture.is_some() || params.normal_texture.is_some();
@@ -412,7 +412,7 @@ impl MaterialManager {
 // 内部工具方法
 impl MaterialManager {
     /// 判断材质引用的所有 texture 是否已经能解析为真实 shader binding。
-    fn check_textures_ready(params: &ManagedMaterialParams, resolver: &dyn TextureResolver) -> bool {
+    fn check_textures_ready(params: &RenderMaterialParams, resolver: &dyn TextureResolver) -> bool {
         if let Some(h) = params.diffuse_texture {
             if !resolver.is_texture_ready(h) {
                 return false;
@@ -431,7 +431,7 @@ impl MaterialManager {
     ///
     /// texture handle 在这里通过 resolver 转成 bindless SRV index；resolver 保证未 ready
     /// 的 texture 也会返回 fallback，因此 GPU 数据不会包含悬空句柄。
-    fn build_gpu_material(params: &ManagedMaterialParams, resolver: &dyn TextureResolver) -> gpu::PBRMaterial {
+    fn build_gpu_material(params: &RenderMaterialParams, resolver: &dyn TextureResolver) -> gpu::PBRMaterial {
         let diffuse_binding =
             params.diffuse_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
         let normal_binding =
