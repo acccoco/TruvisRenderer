@@ -48,6 +48,18 @@ impl GfxSurface {
         }
     }
 
+    /// 查询当前 surface 支持的颜色格式。
+    pub fn supported_formats(&self, ctx: GfxSurfaceCtx<'_>) -> Vec<vk::SurfaceFormatKHR> {
+        unsafe { self.pf.get_physical_device_surface_formats(ctx.physical_device().vk_handle, self.handle).unwrap() }
+    }
+
+    /// 查询当前 surface 支持的 present mode。
+    pub fn supported_present_modes(&self, ctx: GfxSurfaceCtx<'_>) -> Vec<vk::PresentModeKHR> {
+        unsafe {
+            self.pf.get_physical_device_surface_present_modes(ctx.physical_device().vk_handle, self.handle).unwrap()
+        }
+    }
+
     pub fn destroy(mut self, _ctx: GfxSurfaceCtx<'_>) {
         if self.handle.is_null() {
             return;

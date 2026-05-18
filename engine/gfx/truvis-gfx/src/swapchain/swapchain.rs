@@ -29,6 +29,11 @@ impl GfxSwapchain {
         old_swapchain: Option<GfxSwapchain>,
     ) -> Self {
         let surface_capabilities = surface.get_capabilities(ctx);
+        let supported_formats = surface.supported_formats(ctx);
+        let supported_present_modes = surface.supported_present_modes(ctx);
+
+        Self::validate_surface_format(surface_format, &supported_formats);
+        Self::validate_present_mode(present_mode, &supported_present_modes);
 
         // 确定 window 的 extent 尺寸
         // 如果 surface_capabilities.current_extent 包含特殊值 0xFFFFFFFF，则表示可以自己设置交换链的 extent
@@ -53,6 +58,7 @@ impl GfxSwapchain {
         let swapchain_handle = Self::create_swapchain(
             ctx,
             surface,
+            &surface_capabilities,
             surface_format.format,
             surface_format.color_space,
             extent,
@@ -77,6 +83,7 @@ impl GfxSwapchain {
     fn create_swapchain(
         ctx: GfxSurfaceCtx<'_>,
         surface: &GfxSurface,
+        surface_capabilities: &vk::SurfaceCapabilitiesKHR,
         format: vk::Format,
         color_space: vk::ColorSpaceKHR,
         extent: vk::Extent2D,
@@ -85,8 +92,6 @@ impl GfxSwapchain {
     ) -> vk::SwapchainKHR {
         // 确定 image count
         // max_image_count == 0，表示不限制 image 数量
-        let surface_capabilities = surface.get_capabilities(ctx);
-
         let image_count = if surface_capabilities.max_image_count == 0 {
             surface_capabilities.min_image_count + 1
         } else {
@@ -115,6 +120,29 @@ impl GfxSwapchain {
             gfx_device.set_object_debug_name(swapchain_handle, "main");
 
             swapchain_handle
+        }
+    }
+
+    fn validate_surface_format(requested_format: vk::SurfaceFormatKHR, supported_formats: &[vk::SurfaceFormatKHR]) {
+        let is_supported = supported_formats.iter().any(|supported| {
+            (supported.format == requested_format.format && supported.color_space == requested_format.color_space)
+                || (supported.format == vk::Format::UNDEFINED && supported.color_space == requested_format.color_space)
+        });
+
+        if !is_supported {
+            panic!(
+                "Requested swapchain surface format {:?} is not supported. Supported surface formats: {:#?}",
+                requested_format, supported_formats
+            );
+        }
+    }
+
+    fn validate_present_mode(requested_mode: vk::PresentModeKHR, supported_modes: &[vk::PresentModeKHR]) {
+        if !supported_modes.contains(&requested_mode) {
+            panic!(
+                "Requested swapchain present mode {:?} is not supported. Supported present modes: {:#?}",
+                requested_mode, supported_modes
+            );
         }
     }
 }
