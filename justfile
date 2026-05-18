@@ -1,5 +1,7 @@
 set shell := ["powershell.exe", "-c"]
 
+validation_layer_settings := justfile_directory() + "\\tools\\vulkan\\khronos_validation_settings.txt"
+
 build-all: shader cxx
 	cargo build --all
 
@@ -61,5 +63,11 @@ cxx-preset-clang-release:
 cornell: shader cxx
 	cargo run --bin rt-cornell
 
+cornell-validation: shader cxx
+	$env:VK_LOADER_LAYERS_ENABLE='VK_LAYER_KHRONOS_validation'; $env:VK_LAYER_SETTINGS_PATH='{{validation_layer_settings}}'; cargo run --bin rt-cornell
+
 sponza: shader cxx
 	cargo run --bin rt-sponza
+
+sponza-validation: shader cxx
+	$env:VK_LOADER_LAYERS_ENABLE='VK_LAYER_KHRONOS_validation'; $env:VK_LAYER_SETTINGS_PATH='{{validation_layer_settings}}'; cargo run --bin rt-sponza

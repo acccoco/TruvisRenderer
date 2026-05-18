@@ -51,6 +51,13 @@ cargo run --bin rt-sponza
 cargo run --bin shader-toy
 ```
 
+使用 Vulkan validation layer 运行光追示例：
+
+```powershell
+just cornell-validation
+just sponza-validation
+```
+
 ## 运行时架构（当前）
 
 - 平台入口：`truvis-winit-app` 通过 `WinitApp::run_app(...)` 启动渲染线程
