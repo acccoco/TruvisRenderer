@@ -1,13 +1,13 @@
-# truvis-app-kit
+# app-kit
 
-`truvis-app-kit` 保存主体 app 与 samples 共享的 app 层组件。
+`app-kit` 保存主体 app 与 samples 共享的 app 层组件。
 
 ## 主要职责
 
 - `GuiPlugin`：ImGui context、输入转发、字体资源、GUI mesh 上传和 RenderGraph pass 注入。
 - `CameraController` / `InputManager`：示例级相机与输入状态。
 - `DebugInfoOverlay` / `PipelineControlsOverlay`：UI-only overlay plugin。
-- `RtPipeline`：光追示例与 Sponza 共用的 compute/present graph glue。
+- `RtPipeline`：光追示例与 Truvis 主体 app 共用的 compute/present graph glue。
 
 ## 边界约束
 

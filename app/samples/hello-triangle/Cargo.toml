@@ -1,5 +1,5 @@
 [package]
-name = "truvis-sample-triangle"
+name = "hello-triangle"
 version = "0.1.0"
 edition = "2024"
 description = "Triangle rendering sample"
@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 truvis-app-frame = { workspace = true }
-truvis-app-kit = { workspace = true }
+app-kit = { workspace = true }
 truvis-winit-app = { workspace = true }
 truvis-gfx = { workspace = true }
 truvis-render-foundation = { workspace = true }

@@ -9,12 +9,12 @@
 - `gfx/`：Vulkan RHI 封装与 descriptor-layout 宏/trait。
 - `world/`：CPU 侧资产、场景与 `World` 聚合。
 - `render/`：渲染资源状态、RenderGraph、通用 pass、GUI 后端与 RenderRuntime。
-- `frame/`：`RenderApp` 契约、`RenderAppShell` 帧骨架与渲染线程主循环。
+- `app-frame/`：`RenderApp` 契约、`RenderAppShell` 帧骨架与渲染线程主循环。
 - `shader/`：Slang shader 源码、共享头文件、编译与绑定生成。
 - `cxx/`：Assimp 场景加载、CMake 工程、Rust 绑定桥接。
 
-应用层位于 workspace 顶层 `truvis-app/`，其中 `app-kit/` 保存 GUI、输入/相机、overlay
-和 RT pipeline glue，`sponza/` 与 `samples/` 保存具体可执行入口。
+应用层位于 workspace 顶层 `app/`，其中 `app-kit/` 保存 GUI、输入/相机、overlay
+和 RT pipeline glue，`truvis/` 与 `samples/` 保存具体可执行入口。
 
 ## 推荐阅读顺序
 

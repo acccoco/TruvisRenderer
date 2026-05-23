@@ -16,8 +16,8 @@
 - 本 crate 不负责 App 级 pass 顺序、GUI overlay 顺序或 demo pipeline 编排。
 - 本 crate 不持有 `RenderRuntime`，也不依赖 frame runtime 或 App hooks。
 - `RayCastPass` 不提供 RenderGraph adapter；它服务 prepare 后的同步查询路径，而不是常规帧图 pass。
-- `GuiPass` 不在本 crate 中；GUI Vulkan 后端属于 `truvis-gui-backend`，GUI RenderGraph 集成属于 `truvis-app/app-kit` 的 `GuiPlugin`。
+- `GuiPass` 不在本 crate 中；GUI Vulkan 后端属于 `truvis-gui-backend`，GUI RenderGraph 集成属于 `app/app-kit` 的 `GuiPlugin`。
 
 ## 设计意图
 
-通用 pass 只表达“如何录制这类 GPU 工作”。具体 App 在 `RenderAppHooks::render` 中创建 `RenderGraphBuilder`，再按业务顺序组合 `truvis-app/app-kit` 中的 render pipeline glue、post-process pass 和 GUI pass。这样新增 demo 或 pipeline 时优先复用 pass 实现，而不把 App 级编排逻辑下沉到通用 pass crate。
+通用 pass 只表达“如何录制这类 GPU 工作”。具体 App 在 `RenderAppHooks::render` 中创建 `RenderGraphBuilder`，再按业务顺序组合 `app/app-kit` 中的 render pipeline glue、post-process pass 和 GUI pass。这样新增 demo 或 pipeline 时优先复用 pass 实现，而不把 App 级编排逻辑下沉到通用 pass crate。

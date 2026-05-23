@@ -46,21 +46,21 @@ cornell: shader cxx (_run-rt-sample "rt-cornell")
 [group('3 运行示例')]
 cornell-validation: shader cxx (_run-rt-validation "rt-cornell")
 
-# 运行 Sponza 主体应用
+# 运行 Truvis 主体应用
 [group('3 运行示例')]
-sponza: shader cxx (_run-rt-sample "rt-sponza")
+truvis: shader cxx (_run-rt-sample "truvis-app")
 
-# 使用 Vulkan validation layer 运行 Sponza 主体应用
+# 使用 Vulkan validation layer 运行 Truvis 主体应用
 [group('3 运行示例')]
-sponza-validation: shader cxx (_run-rt-validation "rt-sponza")
+truvis-validation: shader cxx (_run-rt-validation "truvis-app")
 
-# 直接运行 Sponza 主体应用，不更新 shader / CXX 绑定
+# 直接运行 Truvis 主体应用，不更新 shader / CXX 绑定
 [group('3 运行示例')]
-sponza-direct: (_run-rt-sample "rt-sponza")
+truvis-direct: (_run-rt-sample "truvis-app")
 
-# 直接使用 Vulkan validation layer 运行 Sponza 主体应用，不更新 shader / CXX 绑定
+# 直接使用 Vulkan validation layer 运行 Truvis 主体应用，不更新 shader / CXX 绑定
 [group('3 运行示例')]
-sponza-direct-validation: (_run-rt-validation "rt-sponza")
+truvis-direct-validation: (_run-rt-validation "truvis-app")
 
 # 启动 Tracy Profiler
 [group('4 工具入口')]

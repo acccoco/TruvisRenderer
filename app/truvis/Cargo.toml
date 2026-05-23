@@ -1,16 +1,16 @@
 [package]
-name = "truvis-app"
+name = "truvis"
 version = "0.1.0"
 edition = "2024"
-description = "Main Truvis Sponza application"
+description = "Main Truvis application"
 
 [[bin]]
-name = "rt-sponza"
+name = "truvis-app"
 path = "src/main.rs"
 
 [dependencies]
 truvis-app-frame = { workspace = true }
-truvis-app-kit = { workspace = true }
+app-kit = { workspace = true }
 truvis-winit-app = { workspace = true }
 truvis-render-runtime = { workspace = true }
 truvis-render-graph = { workspace = true }

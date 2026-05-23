@@ -168,6 +168,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
+name = "app-kit"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "glam",
+ "imgui",
+ "itertools 0.10.5",
+ "log",
+ "truvis-app-frame",
+ "truvis-gfx",
+ "truvis-gui-backend",
+ "truvis-path",
+ "truvis-render-foundation",
+ "truvis-render-graph",
+ "truvis-render-passes",
+ "truvis-render-runtime",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -661,6 +680,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "cornell"
+version = "0.1.0"
+dependencies = [
+ "app-kit",
+ "ash",
+ "glam",
+ "log",
+ "truvis-app-frame",
+ "truvis-asset",
+ "truvis-path",
+ "truvis-render-graph",
+ "truvis-render-runtime",
+ "truvis-shader-binding",
+ "truvis-winit-app",
+ "truvis-world",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1146,6 +1183,25 @@ name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+
+[[package]]
+name = "hello-triangle"
+version = "0.1.0"
+dependencies = [
+ "app-kit",
+ "ash",
+ "glam",
+ "itertools 0.10.5",
+ "log",
+ "truvis-app-frame",
+ "truvis-gfx",
+ "truvis-path",
+ "truvis-render-foundation",
+ "truvis-render-graph",
+ "truvis-render-runtime",
+ "truvis-utils",
+ "truvis-winit-app",
+]
 
 [[package]]
 name = "hermit-abi"
@@ -2915,6 +2971,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "shader-toy"
+version = "0.1.0"
+dependencies = [
+ "app-kit",
+ "ash",
+ "bytemuck",
+ "glam",
+ "itertools 0.10.5",
+ "log",
+ "truvis-app-frame",
+ "truvis-gfx",
+ "truvis-path",
+ "truvis-render-foundation",
+ "truvis-render-graph",
+ "truvis-render-runtime",
+ "truvis-utils",
+ "truvis-winit-app",
+]
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3394,15 +3470,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "truvis-app"
+name = "truvis"
 version = "0.1.0"
 dependencies = [
+ "app-kit",
  "ash",
  "glam",
  "imgui",
  "log",
  "truvis-app-frame",
- "truvis-app-kit",
  "truvis-asset",
  "truvis-path",
  "truvis-render-graph",
@@ -3426,25 +3502,6 @@ dependencies = [
  "truvis-render-foundation",
  "truvis-render-runtime",
  "truvis-world",
-]
-
-[[package]]
-name = "truvis-app-kit"
-version = "0.1.0"
-dependencies = [
- "ash",
- "glam",
- "imgui",
- "itertools 0.10.5",
- "log",
- "truvis-app-frame",
- "truvis-gfx",
- "truvis-gui-backend",
- "truvis-path",
- "truvis-render-foundation",
- "truvis-render-graph",
- "truvis-render-passes",
- "truvis-render-runtime",
 ]
 
 [[package]]
@@ -3640,63 +3697,6 @@ dependencies = [
  "truvis-shader-binding",
  "truvis-world",
  "vk-mem",
-]
-
-[[package]]
-name = "truvis-sample-cornell"
-version = "0.1.0"
-dependencies = [
- "ash",
- "glam",
- "log",
- "truvis-app-frame",
- "truvis-app-kit",
- "truvis-asset",
- "truvis-path",
- "truvis-render-graph",
- "truvis-render-runtime",
- "truvis-shader-binding",
- "truvis-winit-app",
- "truvis-world",
-]
-
-[[package]]
-name = "truvis-sample-shader-toy"
-version = "0.1.0"
-dependencies = [
- "ash",
- "bytemuck",
- "glam",
- "itertools 0.10.5",
- "log",
- "truvis-app-frame",
- "truvis-app-kit",
- "truvis-gfx",
- "truvis-path",
- "truvis-render-foundation",
- "truvis-render-graph",
- "truvis-render-runtime",
- "truvis-utils",
- "truvis-winit-app",
-]
-
-[[package]]
-name = "truvis-sample-triangle"
-version = "0.1.0"
-dependencies = [
- "ash",
- "glam",
- "itertools 0.10.5",
- "log",
- "truvis-app-frame",
- "truvis-app-kit",
- "truvis-gfx",
- "truvis-path",
- "truvis-render-foundation",
- "truvis-render-graph",
- "truvis-render-runtime",
- "truvis-utils",
- "truvis-winit-app",
 ]
 
 [[package]]

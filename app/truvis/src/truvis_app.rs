@@ -5,33 +5,94 @@ use truvis_asset::handle::{AssetModelHandle, LoadStatus};
 use truvis_path::TruvisPath;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
 use truvis_render_runtime::platform::camera::Camera;
-use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
+use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
+use truvis_render_runtime::render_runtime::{RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 use truvis_shader_binding::gpu;
 use truvis_world::World;
 
-use truvis_app_kit::camera_controller::CameraController;
-use truvis_app_kit::gui_plugin::GuiPlugin;
-use truvis_app_kit::input_state::InputManager;
-use truvis_app_kit::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
-use truvis_app_kit::render_pipeline::rt_render_graph::RtPipeline;
+use app_kit::camera_controller::CameraController;
+use app_kit::gui_plugin::GuiPlugin;
+use app_kit::input_state::InputManager;
+use app_kit::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
+use app_kit::render_pipeline::rt_render_graph::RtPipeline;
 
 #[derive(Default)]
-pub struct CornellApp {
+pub struct TruvisApp {
     gui: GuiPlugin,
     rt_pipeline: RtPipeline,
     camera_controller: CameraController,
     input: InputManager,
     debug_overlay: DebugInfoOverlay,
     pipeline_overlay: PipelineControlsOverlay,
+    center_ray_cast_probe: CenterRayCastProbe,
     model_asset: Option<AssetModelHandle>,
     model_spawned: bool,
 }
 
-impl CornellApp {
+struct CenterRayCastProbe {
+    elapsed_s: f32,
+    total_time_s: f32,
+    interval_s: f32,
+    request_pending: bool,
+    last_result: Option<RayCastResult>,
+    last_error: Option<String>,
+    last_cast_time_s: Option<f32>,
+}
+
+impl Default for CenterRayCastProbe {
+    fn default() -> Self {
+        Self {
+            elapsed_s: 0.0,
+            total_time_s: 0.0,
+            interval_s: 1.0,
+            request_pending: false,
+            last_result: None,
+            last_error: None,
+            last_cast_time_s: None,
+        }
+    }
+}
+
+impl CenterRayCastProbe {
+    fn update_timer(&mut self, delta_time_s: f32) {
+        self.total_time_s += delta_time_s.max(0.0);
+        if self.request_pending {
+            return;
+        }
+
+        self.elapsed_s += delta_time_s.max(0.0);
+        if self.elapsed_s >= self.interval_s {
+            self.elapsed_s = self.interval_s;
+            self.request_pending = true;
+        }
+    }
+
+    fn finish_cast(&mut self, result: Result<RayCastResult, String>) {
+        match result {
+            Ok(result) => {
+                self.last_result = Some(result);
+                self.last_error = None;
+            }
+            Err(err) => {
+                self.last_result = None;
+                self.last_error = Some(err);
+            }
+        }
+        self.last_cast_time_s = Some(self.total_time_s);
+        self.elapsed_s = 0.0;
+        self.request_pending = false;
+    }
+
+    fn next_cast_countdown_s(&self) -> f32 {
+        (self.interval_s - self.elapsed_s).max(0.0)
+    }
+}
+
+impl TruvisApp {
     fn request_model(world: &mut World, camera: &mut Camera) -> AssetModelHandle {
-        camera.position = glam::vec3(-400.0, 1000.0, 1000.0);
-        camera.euler_yaw_deg = 330.0;
-        camera.euler_pitch_deg = -27.0;
+        camera.position = glam::vec3(270.0, 194.0, -64.0);
+        camera.euler_yaw_deg = 90.0;
+        camera.euler_pitch_deg = 0.0;
 
         world.scene_manager.register_point_light(gpu::PointLight {
             pos: glam::vec3(-20.0, 40.0, 0.0).into(),
@@ -52,8 +113,8 @@ impl CornellApp {
             _color_padding: Default::default(),
         });
 
-        log::info!("Loading model...");
-        world.asset_hub.load_model(TruvisPath::assets_path("fbx/cornell-box.fbx"))
+        log::info!("start load sponza model");
+        world.asset_hub.load_model(TruvisPath::assets_path("fbx/sponza/sponza.fbx"))
     }
 
     fn spawn_model_if_ready(&mut self, world: &mut World) {
@@ -70,19 +131,72 @@ impl CornellApp {
                 let model_data = world.asset_hub.get_model_data(model_asset).expect("ready model asset missing data");
                 let instances = world.scene_manager.spawn_model(model_data);
                 self.model_spawned = true;
-                log::info!("Cornell model spawned {} runtime instances.", instances.len());
+                log::info!("Sponza model spawned {} runtime instances.", instances.len());
             }
             LoadStatus::Failed => {
                 self.model_spawned = true;
                 let error = world.asset_hub.get_model_error(model_asset).unwrap_or("unknown error");
-                log::error!("Cornell model failed to load: {}", error);
+                log::error!("Sponza model failed to load: {}", error);
             }
             LoadStatus::Unloaded | LoadStatus::Loading => {}
         }
     }
+
+    fn build_raycast_overlay_ui(&self, ui: &imgui::Ui) {
+        ui.window("Raycast")
+            .position([10.0, 420.0], imgui::Condition::FirstUseEver)
+            .size([340.0, 230.0], imgui::Condition::FirstUseEver)
+            .build(|| {
+                ui.text(format!("Interval: {:.1}s", self.center_ray_cast_probe.interval_s));
+                if self.center_ray_cast_probe.request_pending {
+                    ui.text("Next cast: pending");
+                } else {
+                    ui.text(format!("Next cast: {:.2}s", self.center_ray_cast_probe.next_cast_countdown_s()));
+                }
+
+                if let Some(last_cast_time_s) = self.center_ray_cast_probe.last_cast_time_s {
+                    ui.text(format!("Last cast at: {:.2}s", last_cast_time_s));
+                } else {
+                    ui.text("Last cast: never");
+                }
+                ui.separator();
+
+                if let Some(error) = &self.center_ray_cast_probe.last_error {
+                    ui.text(format!("Error: {error}"));
+                    return;
+                }
+
+                match &self.center_ray_cast_probe.last_result {
+                    Some(RayCastResult::Miss) => {
+                        ui.text("Result: Miss");
+                    }
+                    Some(RayCastResult::Hit(hit)) => {
+                        ui.text("Result: Hit");
+                        ui.text(format!("Instance: {:?}", hit.instance));
+                        ui.text(format!("Mesh: {:?}", hit.mesh));
+                        ui.text(format!("Material: {:?}", hit.material));
+                        ui.text(format!("Submesh: {}", hit.submesh_index));
+                        ui.text(format!("Primitive: {}", hit.primitive_index));
+                        ui.text(format!("Hit T: {:.3}", hit.hit_t));
+                        ui.text(format!(
+                            "Position: ({:.2}, {:.2}, {:.2})",
+                            hit.position_ws.x, hit.position_ws.y, hit.position_ws.z
+                        ));
+                        ui.text(format!(
+                            "Normal: ({:.2}, {:.2}, {:.2})",
+                            hit.normal_ws.x, hit.normal_ws.y, hit.normal_ws.z
+                        ));
+                        ui.text(format!("UV: ({:.3}, {:.3})", hit.uv.x, hit.uv.y));
+                    }
+                    None => {
+                        ui.text("Result: waiting");
+                    }
+                }
+            });
+    }
 }
 
-impl RenderAppHooks for CornellApp {
+impl RenderAppHooks for TruvisApp {
     fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
         self.gui.set_hidpi_factor(ctx.scale_factor);
         self.gui.set_display_size(ctx.window_size);
@@ -115,6 +229,7 @@ impl RenderAppHooks for CornellApp {
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
         self.spawn_model_if_ready(ctx.world);
+        self.center_ray_cast_probe.update_timer(ctx.delta_time_s);
 
         let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
         self.gui.begin_frame(delta);
@@ -128,6 +243,7 @@ impl RenderAppHooks for CornellApp {
                 ctx.delta_time_s,
             );
             self.pipeline_overlay.build_overlay_ui(ui, ctx.pipeline_settings);
+            self.build_raycast_overlay_ui(ui);
         }
         self.gui.end_frame();
 
@@ -136,6 +252,25 @@ impl RenderAppHooks for CornellApp {
             glam::vec2(ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32),
             delta,
         );
+    }
+
+    fn after_prepare(&mut self, ctx: &mut RenderRuntimeRayCastCtx<'_>) {
+        if !self.center_ray_cast_probe.request_pending {
+            return;
+        }
+
+        let camera = self.camera_controller.camera();
+        let ray = RayCastRay {
+            origin_ws: camera.position,
+            direction_ws: camera.camera_forward().normalize(),
+            t_min: camera.near.max(0.001),
+            t_max: 10000.0,
+        };
+        let result = ctx
+            .cast_sync(std::slice::from_ref(&ray))
+            .map_err(|err| err.to_string())
+            .map(|mut results| results.pop().expect("single raycast result missing"));
+        self.center_ray_cast_probe.finish_cast(result);
     }
 
     fn render(&mut self, ctx: &RenderRuntimeRenderCtx) {
