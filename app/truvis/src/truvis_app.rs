@@ -290,6 +290,11 @@ impl RenderAppHooks for TruvisApp {
             self.camera_controller.finish_pivot_raycast(request, result);
         }
 
+        if let Some(request) = self.camera_controller.take_pending_drag_pan_raycast() {
+            let result = Self::cast_single_ray(ctx, request.ray);
+            self.camera_controller.finish_drag_pan_raycast(request, result);
+        }
+
         if let Some(request) = self.camera_controller.take_pending_wheel_zoom_raycast() {
             let result = Self::cast_single_ray(ctx, request.ray);
             self.camera_controller.finish_wheel_zoom_raycast(request, result);

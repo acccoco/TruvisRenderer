@@ -21,6 +21,10 @@ impl InputState {
         self.key_pressed.get(&key_code).copied().unwrap_or(false)
     }
 
+    pub fn is_shift_pressed(&self) -> bool {
+        self.is_key_pressed(KeyCode::ShiftLeft) || self.is_key_pressed(KeyCode::ShiftRight)
+    }
+
     pub fn get_mouse_delta(&self) -> [f64; 2] {
         [
             self.crt_mouse_pos[0] - self.last_mouse_pos[0],

@@ -8,6 +8,9 @@ pub struct CameraController {
     camera: Camera,
     pending_pivot_raycast: Option<PivotRayCastRequest>,
     active_pivot_orbit: Option<PivotOrbitState>,
+    pending_drag_pan_raycast: Option<DragPanRayCastRequest>,
+    active_drag_pan: Option<DragPanState>,
+    active_middle_button_mode: Option<MiddleButtonMode>,
     pending_wheel_zoom_raycast: Option<WheelZoomRayCastRequest>,
     active_wheel_zoom: Option<WheelZoomState>,
 }
@@ -17,6 +20,12 @@ pub struct CameraController {
 pub struct PivotRayCastRequest {
     pub ray: RayCastRay,
     anchor_screen_pos: glam::Vec2,
+}
+
+/// Shift + 中键按下后交给 App 在 after_prepare 阶段执行的拖拽锚点查询。
+#[derive(Clone, Copy, Debug)]
+pub struct DragPanRayCastRequest {
+    pub ray: RayCastRay,
 }
 
 /// 滚轮连续缩放开始时交给 App 在 after_prepare 阶段执行的锚点查询。
@@ -38,6 +47,17 @@ struct PivotOrbitState {
     distance: f32,
 }
 
+struct DragPanState {
+    anchor_ws: glam::Vec3,
+    distance: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MiddleButtonMode {
+    PivotOrbit,
+    DragPan,
+}
+
 struct WheelZoomState {
     anchor_ws: glam::Vec3,
     anchor_screen_pos: glam::Vec2,
@@ -51,6 +71,9 @@ impl Default for CameraController {
             camera: Camera::default(),
             pending_pivot_raycast: None,
             active_pivot_orbit: None,
+            pending_drag_pan_raycast: None,
+            active_drag_pan: None,
+            active_middle_button_mode: None,
             pending_wheel_zoom_raycast: None,
             active_wheel_zoom: None,
         }
@@ -78,6 +101,10 @@ impl CameraController {
         self.pending_pivot_raycast.take()
     }
 
+    pub fn take_pending_drag_pan_raycast(&mut self) -> Option<DragPanRayCastRequest> {
+        self.pending_drag_pan_raycast.take()
+    }
+
     pub fn take_pending_wheel_zoom_raycast(&mut self) -> Option<WheelZoomRayCastRequest> {
         self.pending_wheel_zoom_raycast.take()
     }
@@ -102,6 +129,29 @@ impl CameraController {
             Err(err) => {
                 log::warn!("pivot orbit raycast failed: {err}");
                 self.active_pivot_orbit = None;
+            }
+        }
+    }
+
+    pub fn finish_drag_pan_raycast(&mut self, request: DragPanRayCastRequest, result: Result<RayCastResult, String>) {
+        match result {
+            Ok(RayCastResult::Hit(hit)) => {
+                let distance = (hit.position_ws - request.ray.origin_ws).length();
+                if hit.position_ws.is_finite() && distance.is_finite() && distance > self.min_camera_distance() {
+                    self.active_drag_pan = Some(DragPanState {
+                        anchor_ws: hit.position_ws,
+                        distance,
+                    });
+                } else {
+                    self.active_drag_pan = None;
+                }
+            }
+            Ok(RayCastResult::Miss) => {
+                self.active_drag_pan = None;
+            }
+            Err(err) => {
+                log::warn!("drag pan raycast failed: {err}");
+                self.active_drag_pan = None;
             }
         }
     }
@@ -151,10 +201,10 @@ impl CameraController {
         self.update_impl(input_state, viewport_size, delta_time, false);
     }
 
-    /// 更新相机控制，并允许滚轮通过 after_prepare 阶段的 raycast 建立屏幕锚点。
+    /// 更新相机控制，并允许 Shift+中键拖拽和滚轮通过 after_prepare 阶段的 raycast 建立屏幕锚点。
     ///
-    /// 未接入 [`CameraController::take_pending_wheel_zoom_raycast`] 的 App 应继续调用
-    /// [`CameraController::update`]，避免产生无人消费的同步查询请求。
+    /// 未接入拖拽/滚轮 pending raycast 的 App 应继续调用 [`CameraController::update`]，
+    /// 避免产生无人消费的同步查询请求。
     pub fn update_with_wheel_zoom(
         &mut self,
         input_state: &InputState,
@@ -169,30 +219,22 @@ impl CameraController {
         input_state: &InputState,
         viewport_size: glam::Vec2,
         delta_time: std::time::Duration,
-        wheel_zoom_enabled: bool,
+        raycast_camera_controls_enabled: bool,
     ) {
         let delta_time_s = delta_time.as_secs_f32();
 
         self.camera.set_aspect_ratio(viewport_size.x / viewport_size.y);
 
         if !input_state.is_middle_button_pressed() {
-            self.pending_pivot_raycast = None;
-            self.active_pivot_orbit = None;
+            self.clear_middle_button_control();
         } else {
-            if input_state.is_middle_button_just_pressed() {
-                self.active_pivot_orbit = None;
-                self.pending_pivot_raycast = self.make_pivot_raycast(input_state.mouse_position(), viewport_size);
-            }
-
-            if self.active_pivot_orbit.is_some() {
-                self.update_pivot_orbit(input_state, viewport_size);
-            }
+            self.update_middle_button_control(input_state, viewport_size, raycast_camera_controls_enabled);
             self.clear_wheel_zoom();
             return;
         }
 
         let manual_camera_changed = self.update_manual_camera(input_state, delta_time_s);
-        if wheel_zoom_enabled {
+        if raycast_camera_controls_enabled {
             if manual_camera_changed {
                 self.clear_wheel_zoom();
             }
@@ -247,6 +289,15 @@ impl CameraController {
         Some(PivotRayCastRequest { ray, anchor_screen_pos })
     }
 
+    fn make_drag_pan_raycast(
+        &self,
+        mouse_position: [f64; 2],
+        viewport_size: glam::Vec2,
+    ) -> Option<DragPanRayCastRequest> {
+        let ray = self.make_screen_raycast(mouse_position, viewport_size)?;
+        Some(DragPanRayCastRequest { ray })
+    }
+
     fn make_wheel_zoom_raycast(
         &self,
         mouse_position: [f64; 2],
@@ -271,6 +322,48 @@ impl CameraController {
         })
     }
 
+    fn update_middle_button_control(
+        &mut self,
+        input_state: &InputState,
+        viewport_size: glam::Vec2,
+        drag_pan_enabled: bool,
+    ) {
+        let desired_mode = if drag_pan_enabled && input_state.is_shift_pressed() {
+            MiddleButtonMode::DragPan
+        } else {
+            MiddleButtonMode::PivotOrbit
+        };
+
+        if self.active_middle_button_mode != Some(desired_mode) {
+            self.clear_pivot_orbit();
+            self.clear_drag_pan();
+            self.active_middle_button_mode = Some(desired_mode);
+
+            match desired_mode {
+                MiddleButtonMode::PivotOrbit => {
+                    self.pending_pivot_raycast = self.make_pivot_raycast(input_state.mouse_position(), viewport_size);
+                }
+                MiddleButtonMode::DragPan => {
+                    self.pending_drag_pan_raycast =
+                        self.make_drag_pan_raycast(input_state.mouse_position(), viewport_size);
+                }
+            }
+        }
+
+        match desired_mode {
+            MiddleButtonMode::PivotOrbit => {
+                if self.active_pivot_orbit.is_some() {
+                    self.update_pivot_orbit(input_state, viewport_size);
+                }
+            }
+            MiddleButtonMode::DragPan => {
+                if self.active_drag_pan.is_some() {
+                    self.update_drag_pan(input_state, viewport_size);
+                }
+            }
+        }
+    }
+
     fn update_pivot_orbit(&mut self, input_state: &InputState, viewport_size: glam::Vec2) {
         let mouse_delta = input_state.get_mouse_delta();
         self.rotate_camera(mouse_delta);
@@ -286,6 +379,23 @@ impl CameraController {
 
         // pivot 是交互锚点。反解相机位置而不是平移 pivot，才能保证锚点屏幕位置不漂移。
         self.camera.position = orbit.pivot_ws - direction_ws * orbit.distance;
+    }
+
+    fn update_drag_pan(&mut self, input_state: &InputState, viewport_size: glam::Vec2) {
+        let Some(drag_pan) = self.active_drag_pan.as_ref() else {
+            return;
+        };
+        let anchor_ws = drag_pan.anchor_ws;
+        let distance = drag_pan.distance;
+        let mouse_position = input_state.mouse_position();
+        let screen_pos = glam::vec2(mouse_position[0] as f32, mouse_position[1] as f32);
+        let Some(direction_ws) = Self::screen_ray_direction(&self.camera, screen_pos, viewport_size) else {
+            self.active_drag_pan = None;
+            return;
+        };
+
+        // 锚点代表拖拽开始时真正命中的场景位置；反解相机位置，保持该点始终位于当前鼠标射线上。
+        self.camera.position = anchor_ws - direction_ws * distance;
     }
 
     fn update_wheel_zoom(&mut self, input_state: &InputState, viewport_size: glam::Vec2, delta_time_s: f32) {
@@ -356,6 +466,22 @@ impl CameraController {
             zoom.idle_time_s = 0.0;
         }
         true
+    }
+
+    fn clear_middle_button_control(&mut self) {
+        self.clear_pivot_orbit();
+        self.clear_drag_pan();
+        self.active_middle_button_mode = None;
+    }
+
+    fn clear_pivot_orbit(&mut self) {
+        self.pending_pivot_raycast = None;
+        self.active_pivot_orbit = None;
+    }
+
+    fn clear_drag_pan(&mut self) {
+        self.pending_drag_pan_raycast = None;
+        self.active_drag_pan = None;
     }
 
     fn clear_wheel_zoom(&mut self) {

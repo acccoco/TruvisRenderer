@@ -50,6 +50,10 @@ pub enum KeyCode {
     KeyE,
     /// 物理 Q 键。
     KeyQ,
+    /// 左 Shift 键。
+    ShiftLeft,
+    /// 右 Shift 键。
+    ShiftRight,
     /// 未显式建模的其他键位。
     Other,
 }

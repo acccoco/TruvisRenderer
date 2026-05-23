@@ -64,6 +64,8 @@ impl WinitEventAdapter {
             winit::keyboard::KeyCode::KeyD => KeyCode::KeyD,
             winit::keyboard::KeyCode::KeyE => KeyCode::KeyE,
             winit::keyboard::KeyCode::KeyQ => KeyCode::KeyQ,
+            winit::keyboard::KeyCode::ShiftLeft => KeyCode::ShiftLeft,
+            winit::keyboard::KeyCode::ShiftRight => KeyCode::ShiftRight,
             _ => KeyCode::Other,
         }
     }
