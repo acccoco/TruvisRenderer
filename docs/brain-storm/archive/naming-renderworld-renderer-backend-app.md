@@ -1,5 +1,10 @@
 # 名词辨析：GpuStore / Renderer / RenderRuntime / App
 
+> 归档状态（2026-05-23）：本文为历史命名讨论，当前术语已提炼到
+> [`../naming-and-glossary.md`](../naming-and-glossary.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 基于 `split-render-context-world-GpuStore` 重构完成后的架构现状，
 对引擎核心四个概念的内涵、边界、当前命名问题和改进方向做系统梳理。
 

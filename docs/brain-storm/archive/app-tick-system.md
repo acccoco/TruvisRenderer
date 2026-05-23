@@ -1,5 +1,10 @@
 # App 侧 Tick 机制
 
+> 归档状态（2026-05-23）：本文为历史设计草案，当前方向已提炼到
+> [`../plugin-feature-evolution.md`](../plugin-feature-evolution.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 > 日期：2026-04-17
 > 状态：历史设计草案（未按本文 API 实现）
 >

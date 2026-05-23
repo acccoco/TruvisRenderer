@@ -1,5 +1,10 @@
 # assets 与 bindless 解耦分析（2026-04-23）
 
+> 归档状态（2026-05-23）：本文为历史分析，当前 asset / scene pipeline 已提炼到
+> [`../asset-scene-pipeline-status.md`](../asset-scene-pipeline-status.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 > 本文基于 2026-04-23 的代码现状，讨论 `truvis-asset` 与 `BindlessManager` 的耦合问题。
 > 重点回答两个问题：
 >

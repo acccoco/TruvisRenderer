@@ -1,274 +1,125 @@
-# 线程模型演进：Update Thread 与 Asset Streaming Thread
+# 线程模型演进
 
-> 前置文档：`render-thread-isolation.md`（当前双线程模型的落地细节）
+> 状态：活跃方向，更新于 2026-05-23。当前线程事实以
+> [`ARCHITECTURE.md`](../../ARCHITECTURE.md) 为准。
 
-## 现状分析
+## 当前线程拓扑
 
-### 当前线程拓扑
-
-```
+```text
 Main Thread (winit)
-  │ crossbeam channel (InputEvent)
-  │ AtomicU64 (size)  /  AtomicBool (exit, render_finished)
-  ▼
-Render Thread
-  │ crossbeam channel (AssetLoadRequest → LoadResult)
-  ▼
-AssetDispatch Thread ──▶ Rayon Worker Pool (Asset-Loader-0..N)
+  -> crossbeam channel: InputEvent
+  -> atomics: latest size / exit / render finished
+  -> Render Thread
+       -> owns RenderAppShell + RenderRuntime + all Vulkan objects
+       -> begin_frame / update / prepare / render / present
+       -> AssetHub::update polls async CPU load results
+       -> render-side uploaders poll GPU upload completion
+       -> rayon workers perform asset IO / decode / Assimp CPU import
 ```
 
-- Main Thread 只做事件收集，不碰 Vulkan API。
-- Render Thread 串行执行所有帧 phase（input → update → prepare → render → present）。
-- AssetLoader 已经有独立 dispatch thread + rayon worker pool 做 IO/decode。
-- AssetUploadManager 的 cmd record + submit 仍然发生在 Render Thread 上。
+约束：
 
-### Render Thread 单帧串行工作
+- 主线程不调用 Vulkan、`ash` 或 `truvis-gfx` API。
+- 所有 Vulkan 对象在渲染线程创建、使用和销毁。
+- `AssetHub` 后台任务只产出 CPU 数据或失败状态，不创建 GPU 对象。
+- GPU upload command recording / submit 当前仍发生在 render thread 或 render-side uploader owner 内。
+- Mesh uploader 已使用 pending timeline 轮询，未 ready 的 mesh 不会进入 active instance。
 
-```
+## Render Thread 单帧工作
+
+```text
 begin_frame
-  ├─ wait fif timeline (GPU sync, 可能阻塞)
-  ├─ reset cmds/resources
-  ├─ bindless.begin_frame()
-  └─ asset_hub.update()           ← 检查 IO 完成、提交 GPU upload、register 资源
-phase_input
-  └─ drain events + imgui forward
-phase_update
-  ├─ update_frame_settings()
-  ├─ acquire_image()              ← vkAcquireNextImageKHR
-  ├─ build_ui() + compile_ui()
-  ├─ gui.prepare_render_data()
-  ├─ camera_controller.update()
-  └─ plugin.update(UpdateCtx)     ← CPU 场景逻辑
-phase_prepare
-  ├─ update_accum_frames()
-  └─ before_render()
-      ├─ scene.prepare_render_data()  ← 遍历全场景构建 RenderData
-      ├─ gpu_scene.upload()           ← cmd record + submit
-      └─ update_perframe_desc()
-phase_render
-  └─ plugin.render(RenderCtx)     ← RenderGraph build + compile + execute + submit
-phase_present
-  ├─ present_image()
-  └─ end_frame()
+  -> wait FIF timeline
+  -> reset per-frame command/resource cleanup
+  -> begin frame for bindless/material/instance managers
+  -> AssetHub::update
+  -> dispatch AssetLoadedEvent to texture / mesh / material owners
+
+update_phase
+  -> update frame settings
+  -> acquire swapchain image
+  -> App update
+  -> Plugin update
+
+prepare
+  -> update accum state
+  -> bindless descriptor prepare
+  -> material texture resolve and upload
+  -> instance ready gate and RenderData snapshot
+  -> GpuScene upload / TLAS rebuild if dirty
+  -> per-frame uniform and descriptor update
+
+render / present
+  -> App builds and executes RenderGraph
+  -> present
+  -> advance frame counter
 ```
 
-瓶颈：所有工作排在一条线程上。`scene.prepare_render_data()` 遍历大场景、`plugin.update()` 做物理计算时，会直接拖慢帧率。
+## Option B-1：Batched Upload
 
----
+目标：把同一帧 ready 的多个 texture upload 合并到更少的 command buffer / submit 中。
 
-## 方案 A：独立 Update Thread
+适用原因：
 
-### 核心思想
+- IO / decode 已经异步，但大量资源同帧完成时，render thread 仍可能集中录制和提交多次 upload。
+- batching 不改变 AssetHub 对外事件语义，也不改变 render pass 输入。
+- 这是当前最小、收益最确定的资产上传优化方向。
 
-将 CPU 逻辑（场景更新、物理、动画、UI 构建）和 GPU 工作（命令录制、提交、present）分离，实现流水线并行。
+约束：
 
-### 流水线时序
+- batching 必须保持每个 asset handle 的完成顺序、失败状态和资源销毁 owner 清晰。
+- pending upload 的 staging/image/command 生命周期仍以 timeline 或 frame token 明确保护。
+- bindless 注册仍在 render-side owner 完成，AssetHub 不回退到 GPU 资源管理。
 
-```
-                Frame N              Frame N+1            Frame N+2
+优先级：高。
 
-Update Thread: ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-               │ plugin.update│    │ plugin.update│    │ plugin.update│
-               │ scene.prepare│    │ scene.prepare│    │ scene.prepare│
-               │ build_ui     │    │ build_ui     │    │ build_ui     │
-               └──────┬───────┘    └──────┬───────┘    └──────┬───────┘
-                      │ produce           │ produce           │
-                      ▼                   ▼                   ▼
-                 FramePacket N       FramePacket N+1     FramePacket N+2
+## Option B-2：Staging Thread
 
-Render Thread:      ┌──────────────┐    ┌──────────────┐
-                    │ gpu upload   │    │ gpu upload   │
-                    │ record cmds  │    │ record cmds  │
-                    │ submit+prsnt │    │ submit+prsnt │
-                    └──────────────┘    └──────────────┘
-                     consume N           consume N+1
-```
+目标：将 staging buffer 准备、copy command 录制和 transfer queue submit 移出 render thread。
 
-### FramePacket 数据结构
+推荐形态：
 
-两个线程之间传递不可变的帧快照：
-
-```rust
-struct FramePacket {
-    render_data: OwnedRenderData,       // 场景快照（owned，非引用）
-    camera_transform: CameraTransform,
-    pipeline_settings: PipelineSettings,
-    accum_data: AccumData,
-    delta_time_s: f32,
-    total_time_s: f32,
-    ui_draw_data: OwnedDrawData,        // imgui draw lists 的 owned 版本
-}
+```text
+rayon IO/decode
+  -> upload request batch
+  -> staging thread records transfer work
+  -> transfer queue signals timeline
+  -> render thread polls completion
+  -> register resource / bindless / ready state
 ```
 
-### 所有权变化
+收益：
 
-```
-              当前                              Update Thread 方案
-         ═══════════                        ════════════════════════
+- 减少 render thread 上的 asset upload 尖峰。
+- 可以利用独立 transfer queue 与 graphics queue 并行。
 
-World    Render Thread 独占                  Update Thread 独占
-         plugin.update(&mut World)           plugin.update(&mut World)
+代价：
 
-RenderW  Render Thread 独占                  Render Thread 独占
-         gpu_scene.upload(...)               gpu_scene.upload(frame_packet)
+- 需要明确跨线程 owner、command pool、timeline semaphore 和 shutdown 顺序。
+- 需要保证 `GfxResourceManager` / bindless 注册仍只在合法 owner 线程内发生。
 
-交接点    无（同一线程）                       FramePacket (channel 传递)
+优先级：中。适合在 batching 之后、资源规模继续增长时推进。
 
-延迟     0 帧                                +1 帧 (渲染上一帧的 CPU 状态)
-```
+## Option A：Update Thread
 
-### 当前代码中的障碍
+目标：将 CPU update、UI 构建、scene snapshot 与 render thread 的 GPU 工作流水线并行。
 
-1. **`RenderData<'a>` 持有引用** — `prepare_render_data(&'a self, ...)` 的生命周期绑定到 SceneManager。跨线程传递需要改为 owned 数据或 Arc。
+需要前提：
 
-2. **`World` 和 `GpuStore` 都在 `Renderer` 里** — Rust 借用规则阻止把同一 struct 的两个字段 `&mut` 到不同线程。需要拆分所有权，让 Update Thread 持有 World，Render Thread 持有 GpuStore。
+- `World` 与 render-side owner 的所有权真正跨线程拆分。
+- update thread 产出 owned frame packet，不能携带借用到 `SceneManager` 或 uploader 内部缓存。
+- 输入、UI、camera、pipeline settings 和 scene snapshot 都要接受至少一帧延迟。
+- shutdown / panic propagation / resize 需要新的跨线程协议。
 
-3. **`scene.prepare_render_data()` 跨 World/GpuStore 边界** — 需要同时读 `BindlessManager`（GpuStore）和 `AssetHub`（World）。拆线程后需要重新设计这个边界，可能在 FramePacket 构建时把 bindless handle 快照一并带走。
+当前评估：
 
-### 收益与代价
+- 对 demo 级场景收益有限。
+- 工程量和调试复杂度高。
+- 在显式 extract、owned scene snapshot 和 PluginGroup 之前不建议推进。
 
-| 收益 | 代价 |
-|------|------|
-| CPU 更新和 GPU 渲染流水线并行 | +1 帧输入延迟 |
-| 复杂物理/AI 不阻塞渲染帧率 | FramePacket 的数据拷贝开销 |
-| 更好的帧时间稳定性 | World/GpuStore 所有权彻底拆分 |
-| | RenderData 需要改成 owned |
-| | UI 输入响应延迟增加 |
-| | 调试复杂度显著增加 |
+优先级：低。
 
-### 评估
+## 历史来源
 
-当前项目场景复杂度有限（demo 级别），Update Thread 的收益不明显。这种模式更适合大规模游戏引擎（Unreal、Unity 都采用类似方案）。**优先级：低。**
-
----
-
-## 方案 B：独立 Asset Streaming Thread
-
-### 当前资产上传的串行卡点
-
-IO 加载已经异步（rayon pool），但 GPU 上传仍在 Render Thread 上同步执行：
-
-```
-AssetLoader (异步)                    AssetUploadManager (同步)
-┌──────────────────────┐             ┌─────────────────────────────┐
-│ rayon pool           │  channel    │ upload_texture()            │
-│ file read + decode   ├────────────▶│   ← 在 Render Thread 上    │
-│                      │  LoadResult │   同步调用 cmd record+submit│
-└──────────────────────┘             │                             │
-                                     │ update() 检查完成状态       │
-                                     │ register_image/register_srv │
-                                     │   也在 Render Thread 上     │
-                                     └─────────────────────────────┘
-```
-
-问题：
-- `upload_texture()` 的 cmd record + submit 虽然提交到 Transfer Queue，但录制本身是同步阻塞 Render Thread 的。
-- 大量纹理同帧完成 IO 时，`AssetHub::update()` 会连续提交多个独立 upload，每个一次 submit。
-- `register_image` / `register_srv` 操作发生在 Render Thread 的帧循环关键路径上。
-
-### 改进方案
-
-#### B-1: Batched Upload（最小改动）
-
-将同帧完成的多个 IO 结果合并到一个 cmd buffer 提交：
-
-```
-当前:
-  texture_0: [record cmd_0] [submit]     ← submit ×3
-  texture_1: [record cmd_1] [submit]
-  texture_2: [record cmd_2] [submit]
-
-改进:
-  batch: [record cmd: copy_0, copy_1, copy_2] [submit]  ← submit ×1
-```
-
-代码中已有 TODO（`asset_upload_manager.rs`）：
-> `// TODO image 的 upload，可以考虑每帧合并多个 upload 任务到同一个 Command Buffer 中提交`
-
-改动范围仅限 `AssetUploadManager` 内部，公开接口不变。
-
-#### B-2: 独立 Staging Thread
-
-将 staging buffer 分配、cmd 录制、Transfer Queue 提交移到独立线程：
-
-```
-IO Pool (rayon)
-  │ RawAssetData (channel)
-  ▼
-Staging Thread (新增)
-  ├─ batch 收集本轮完成的 RawAssetData
-  ├─ allocate staging buffers
-  ├─ memcpy pixels → staging
-  ├─ record ONE cmd buffer (batched copies)
-  └─ submit to Transfer Queue + signal timeline semaphore
-        │
-        │ timeline semaphore (跨队列同步)
-        ▼
-Render Thread (每帧 poll)
-  ├─ check timeline semaphore value (非阻塞)
-  └─ for each completed batch:
-      ├─ register_image (GfxResourceManager)
-      ├─ register_srv (BindlessManager)
-      └─ update texture state → Ready
-```
-
-关键点：
-- Transfer Queue 和 Graphics Queue 是独立的硬件单元（现代 GPU 上 DMA 不占 shader 核心），可以真正并行。
-- 跨队列同步用 Timeline Semaphore（当前已有基础设施）。
-- Render Thread 只做轻量的 `register` 操作（poll semaphore + 更新 handle table），不再录制 copy cmd。
-
-### 改动评估
-
-| 改动 | 难度 | 说明 |
-|------|------|------|
-| Batched Upload (B-1) | 低 | 纯 `AssetUploadManager` 内部改动，接口不变 |
-| Staging Thread (B-2) | 中 | `upload_texture` 从同步调用改为发消息；staging buffer 生命周期用 `PendingUpload` 模式（已有）管理 |
-| register 推迟到 Render Thread | 低 | 当前已经如此（`update()` 里做） |
-| 跨队列 semaphore | 低 | 当前已有 timeline semaphore，只需在 graphics submit 增加 wait |
-
-### 评估
-
-Batched Upload 改动极小、收益确定，应该优先做。Staging Thread 在当前基础设施上补全不算大改动，适合在资产规模增长后推进。**优先级：Batched Upload 高，Staging Thread 中。**
-
----
-
-## 如果两者都实现：理想线程拓扑
-
-```
-┌──────────────┐   events    ┌──────────────┐
-│ Main Thread  │ ──────────▶ │ Update Thread│
-│ (winit)      │             │ input/scene  │
-└──────────────┘             │ physics/UI   │
-                             └──────┬───────┘
-                                    │ FramePacket (channel)
-                                    ▼
-┌──────────────┐             ┌──────────────┐
-│ IO Pool      │  channel    │ Render Thread│
-│ (rayon)      │ ──────────▶ │ gpu upload   │ ◀── Graphics Queue
-│ file decode  │             │ cmd record   │
-└──────────────┘             │ submit/prsnt │
-                             └──────────────┘
-┌──────────────┐  timeline          ▲
-│ Staging      │  semaphore         │
-│ Thread       │ ───────────────────┘
-│ transfer cmd │ ◀── Transfer Queue
-└──────────────┘
-
-线程数: 1 main + 1 update + 1 render + 1 staging + N rayon workers
-```
-
----
-
-## 建议优先级
-
-| 优先级 | 方案 | 理由 |
-|--------|------|------|
-| **高** | B-1: Batched Upload | 改动极小，收益确定，已有 TODO |
-| **中** | B-2: Staging Thread | 架构基础设施已有（Transfer Queue + Timeline Semaphore），补全不算大改动 |
-| **低** | A: Update Thread | 需要 World/GpuStore 所有权彻底拆分、RenderData 改 owned、引入 FramePacket，工程量大，当前场景复杂度下收益有限 |
-
-## 参考
-
-- 当前线程模型落地细节：`render-thread-isolation.md`
-- World/GpuStore 拆分进展：`openspec/changes/split-render-context-world-GpuStore/`
-- Vulkan Transfer Queue 并行：GPU 厂商（NVIDIA/AMD）文档中关于 async compute 和 async transfer 的说明
+- 当前双线程落地细节见 [`archive/render-thread-isolation.md`](archive/render-thread-isolation.md)。
+- 早期线程方案已被本文更新，不再保留旧 AssetDispatch Thread 描述。

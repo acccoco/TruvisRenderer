@@ -1,5 +1,9 @@
 # render-passes 对 truvis-world 的依赖解耦
 
+> 归档状态（2026-05-23）：本文为历史讨论记录，render-passes 脱离 CPU world
+> 依赖已经落地。当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 > 日期：2026-05-04
 > 状态：探索中
 > 关联：[clean-crate-dependencies.md](./clean-crate-dependencies.md)

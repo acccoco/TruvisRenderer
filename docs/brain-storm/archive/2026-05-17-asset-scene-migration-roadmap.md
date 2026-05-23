@@ -1,5 +1,10 @@
 # Mesh / Material / Instance / Scene 资产化迁移路线（2026-05-17）
 
+> 归档状态（2026-05-23）：本文为迁移路线与完成记录，当前状态已提炼到
+> [`../asset-scene-pipeline-status.md`](../asset-scene-pipeline-status.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 本文记录 Mesh、Material、Instance 与 Assimp Scene 加载的长期迁移路线。
 它承接 [`2026-05-17-asset-module-responsibility.md`](2026-05-17-asset-module-responsibility.md)
 中已经确定的边界：`AssetHub` 只负责内容资产身份与文件到 CPU 内存，

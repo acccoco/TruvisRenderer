@@ -1,5 +1,10 @@
 # 理想模块架构：组件级分析
 
+> 归档状态（2026-05-23）：本文为历史探索，仍有效的原则已提炼到
+> [`../architecture-principles-and-open-issues.md`](../architecture-principles-and-open-issues.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 > 日期：2026-04-17
 > 状态：探索 / 方案设计（部分已被后续重构覆盖）
 > 前置：[clean-crate-dependencies.md](clean-crate-dependencies.md) 中完成的 Layer 3 解耦
@@ -8,7 +13,7 @@
 > `RenderContext` 主线已退场，`World + GpuStore` 已落地，通用 pass 已拆到
 > `truvis-render-passes`。仍然有效的重点是 scene/asset/bindless 解耦、
 > `truvis-render-interface` 命名与内容收窄、app 依赖扇出收敛。
-> 阅读时请结合 [`README.md`](../README.md) 的当前状态快照。
+> 阅读时请结合 [`../../brain-storm.md`](../../brain-storm.md) 的当前状态快照。
 
 ## 一、背景
 

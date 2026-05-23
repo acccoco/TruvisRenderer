@@ -1,5 +1,10 @@
 # 理想的引擎分层架构（Bevy 风格，脱离业务语境）
 
+> 归档状态（2026-05-23）：本文为历史探索，仍有效的原则已提炼到
+> [`../architecture-principles-and-open-issues.md`](../architecture-principles-and-open-issues.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 > 本文是一次架构探索的总结，基于对 D5Engine / d5_lite 现状的分析，参考 Bevy 的设计理念。  
 > 从 Rust 的视角审视引擎当前的 subsystem / app / back-pointer 模式，并给出理想的分层结构。
 

@@ -1,5 +1,9 @@
 # Engine Crate 依赖清理
 
+> 归档状态（2026-05-23）：本文为历史讨论记录，相关结论已提炼到活跃文档。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 > 日期：2026-04-11
 > 状态：已完成
 

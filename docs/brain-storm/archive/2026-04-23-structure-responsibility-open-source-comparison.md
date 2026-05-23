@@ -1,5 +1,10 @@
 # 当前项目结构职责诊断与开源渲染器对照（2026-04-23）
 
+> 归档状态（2026-05-23）：本文为历史诊断，仍有效的原则已提炼到
+> [`../architecture-principles-and-open-issues.md`](../architecture-principles-and-open-issues.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 > 本文基于 2026-04-23 的代码现状，对当前模块职责、依赖边界和命名进行一次结构诊断。
 > 重点不是重新描述目录结构，而是回答一个问题：为什么现在看起来“类型职责有些混乱”。
 >

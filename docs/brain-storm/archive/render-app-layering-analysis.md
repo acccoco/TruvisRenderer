@@ -1,9 +1,14 @@
 # RenderApp / OuterApp / Renderer / GUI 分层分析
 
+> 归档状态（2026-05-23）：本文为历史诊断，仍有效的原则已提炼到
+> [`../architecture-principles-and-open-issues.md`](../architecture-principles-and-open-issues.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 > 维护状态（2026-04-23）：本文是历史诊断，文中的 `RenderApp` / `OuterApp` /
 > `RenderContext` 主线已经分别演进为 `FrameRuntime` / `AppPlugin` / `World + GpuStore`。
 > 保留本文是为了记录早期问题来源和 GUI、surface、extract、plugin 化等演进方向。
-> 当前代码状态请先看 [`README.md`](../README.md) 与 [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)。
+> 当前代码状态请先看 [`../../brain-storm.md`](../../brain-storm.md) 与 [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
 
 基于 [ideal_layered_architecture.md](ideal_layered_architecture.md) 中的 Bevy 风格分层理念，对当前 `truvis-winit-app` / `truvis-app` / `truvis-renderer` / `truvis-gui-backend` 的职责划分做诊断，并给出重构方向。
 
@@ -200,7 +205,7 @@ Main World 里的逻辑对象直接耦合 swapchain 大小。Bevy 做法：Main 
 
 **问题 1：双源常量**
 
-[gui_backend.rs](../../engine/crates/truvis-gui-backend/src/gui_backend.rs) 注释直接承认：
+`gui_backend.rs`（历史路径）注释直接承认：
 
 ```rust
 // TODO 这个东西和 GuiHost 的重复了

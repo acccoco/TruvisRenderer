@@ -1,5 +1,10 @@
 # Plugin / Pass / 事件总线演化建议
 
+> 归档状态（2026-05-23）：本文为历史演化建议，当前方向已提炼到
+> [`../plugin-feature-evolution.md`](../plugin-feature-evolution.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 ## 1. 背景
 
 当前工程已经完成了关键边界收敛：

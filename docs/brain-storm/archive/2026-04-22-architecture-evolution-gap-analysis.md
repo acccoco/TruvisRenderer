@@ -1,11 +1,16 @@
 # 架构演进差距分析（2026-04-22）
 
+> 归档状态（2026-05-23）：本文为历史诊断，仍有效的原则已提炼到
+> [`../architecture-principles-and-open-issues.md`](../architecture-principles-and-open-issues.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 > 维护状态（2026-04-23）：本文是 `World + GpuStore` 拆分前后的过渡期盘点。
 > 其中 “RenderContext 是 World + GpuStore 的混合体” 这一 P0 已经在当前代码中落地为
 > `truvis-world::World` + `truvis-render-interface::GpuStore`。
 > 仍然有效的部分主要是：显式 `phase_extract`、多 plugin、Camera/Input/GUI plugin 化、
-> Renderer 职责继续收窄。当前实现事实请先看 [`README.md`](../README.md) 与
-> [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)。
+> Renderer 职责继续收窄。当前实现事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
 
 > 四次架构重构完成后的现状盘点。对照理想架构（App / World / GpuStore / Plugin），
 > 找出已完成、可调整、待探索的方向。

@@ -1,5 +1,10 @@
 # 渲染线程剥离：循环结构
 
+> 归档状态（2026-05-23）：本文为历史讨论记录，当前线程边界已提炼到
+> [`../threading-model-evolution.md`](../threading-model-evolution.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 > 维护状态（2026-04-23）：渲染线程剥离仍是当前主线；
 > 但本文“兼容入口”部分提到的 `OuterApp` / `LegacyOuterAppAdapter` 在当前代码中已不再保留，
 > 当前入口是 `WinitApp::run_plugin(|| Box<dyn AppPlugin>)`。

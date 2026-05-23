@@ -1,5 +1,10 @@
 # Plugin 在渲染器中的角色，以及 ImGui / Winit / 多管线集成建议
 
+> 归档状态（2026-05-23）：本文为历史演化建议，当前方向已提炼到
+> [`../plugin-feature-evolution.md`](../plugin-feature-evolution.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 本文参考 Bevy 风格（尤其是 `App + Plugin + Render SubApp + Extract/Prepare/Queue/Render`）来回答四个问题：
 
 1. Plugin 在渲染器里是什么角色，如何与整体互动

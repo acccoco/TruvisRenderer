@@ -1,5 +1,10 @@
 # Asset 模块职责收敛记录（2026-05-17）
 
+> 归档状态（2026-05-23）：本文为已落地决策记录，当前状态已提炼到
+> [`../asset-scene-pipeline-status.md`](../asset-scene-pipeline-status.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 ## 决策
 
 `truvis-asset` 只负责内容资产身份和文件到 CPU bytes 的加载流程：

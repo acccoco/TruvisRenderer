@@ -1,5 +1,10 @@
 # `truvis-asset` / `gfx_resource_manager` 命名辨析（2026-04-23）
 
+> 归档状态（2026-05-23）：本文为历史命名讨论，当前术语已提炼到
+> [`../naming-and-glossary.md`](../naming-and-glossary.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 本文记录一次命名讨论：`truvis-asset` 和 `gfx_resource_manager` 都带有“资源 / 资产”的含义，
 但它们面向的层级不同。如果两个名字都使用 asset/resource/manager 这类宽泛词，
 后续很容易让“内容来源”和“GPU 运行时对象”混在一起。
@@ -161,7 +166,7 @@ gfx_runtime_resources
 
 - `2026-04-23-structure-responsibility-open-source-comparison.md` 里已经指出 `truvis-asset` 直接碰 bindless 是职责混合点。
 - `2026-04-23-assets-bindless-decoupling.md` 讨论了 `AssetHub` 与 `BindlessManager` 解耦。
-- `naming-GpuStore-renderer-backend-app.md` 已经把 `GpuStore` 定义为 GPU 侧状态容器，里面包含 `GfxResourceManager`。
+- `naming-renderworld-renderer-backend-app.md` 已经把 `GpuStore` 定义为 GPU 侧状态容器，里面包含 `GfxResourceManager`。
 
 因此，本命名建议不是单独追求好听，而是服务于同一个分层目标：
 

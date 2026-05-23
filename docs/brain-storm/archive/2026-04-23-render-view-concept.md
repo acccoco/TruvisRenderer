@@ -1,5 +1,10 @@
 # Render View 概念引入分析（2026-04-23）
 
+> 归档状态（2026-05-23）：本文为历史草案，当前 View 方向已提炼到
+> [`../render-view-concept.md`](../render-view-concept.md)。
+> 当前事实请先看 [`../../brain-storm.md`](../../brain-storm.md) 与
+> [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)。
+
 > 本文讨论 Truvis 是否需要抽象出 `View` 概念，以及 `View` 在当前
 > `World + GpuStore + FrameRuntime + RenderGraph` 架构中应该承担什么职责。
 >
