@@ -21,26 +21,31 @@
 
 ### 环境要求
 
-- Rust 1.75+
+- Rust 1.85+（workspace crate 使用 Rust 2024 edition）
 - Vulkan SDK 1.3+
-- CMake 3.20+
-- Visual Studio 2019+（Windows）
+- CMake 3.21+（使用 VS2026 preset 时需要 PATH 上的 CMake 4.2+）
+- Visual Studio 2022+ 并安装 MSVC C++ 工具链（Windows；`cxx-build` 会优先检测 VS2026，再回退到 VS2022）
+- [`just`](https://github.com/casey/just)（推荐入口；底层仍调用 Cargo / CMake）
 
 ### 构建步骤
 
 ```powershell
-# 1) 拉取资源与工具
-cargo run --bin fetch_res
+# 1) 拉取资源与工具（等价于 cargo run --bin fetch_res）
+just fetch-res
 
-# 2) 构建 C++ 模块
-cargo run --bin cxx-build
+# 2) 构建 C++ 模块并更新 FFI 绑定
+just cxx
 
-# 3) 编译 Shader（运行渲染程序前必须执行）
-cargo run --bin shader-build
+# 3) 编译 Shader 并更新 Rust 绑定（运行渲染程序前必须执行）
+just shader
 
 # 4) 构建 Workspace
-cargo build --all
+just build-all
 ```
+
+资源路径由根目录 `map.toml` 统一映射。`assets/fbx/` 保存 Sponza、Cornell 等模型资源，
+`assets/resources/` 保存窗口图标、字体、默认天空图和 uv checker 等运行时资源；
+`tools/` 保存 Slang、Tracy 和 Vulkan validation layer 配置等外部工具资源。
 
 ### 运行示例
 

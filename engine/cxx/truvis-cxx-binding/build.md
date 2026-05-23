@@ -1,19 +1,15 @@
 目录结构
 
-* ${OUT_DIR} = /target/debug/build/${CRATE-HASH}/out
-* 其中：build/Debug 或者 build/Release 就是存放 lib, dll, exe, pdb 的位置
+* `engine/cxx/build/output/Debug` 和 `engine/cxx/build/output/Release` 是 CMake 输出 `.lib` / `.dll` / `.pdb` 的位置
+* `target/debug` 和 `target/release` 是 `cxx-build` 复制运行时产物的位置，供 Rust 可执行文件加载
 
 ```
-// 没有 type 就表示是 dll
-// 甚至都不需要 这个 link 属性，因为 dll 的导入库 .lib 已经在 build.rs 中指定需要链接了
-// ，所以 linker 知道这个符号需要从 dll 中加载
-// #[link(name = "truvis-assimp")]
-// extern "C" {
-//     fn get_vert_cnts() -> u32;
-// }
+// truvis-cxx-binding/build.rs 生成 FFI 绑定，并声明链接 truvixx-interface。
+// 不需要在 Rust 源码中手写 #[link] extern block。
 ```
 
 基本思路：
 
-- cmake 将编译好的 lib 文件放入特定文件夹，在 build.rs 中指定该文件夹以及需要链接的 lib 名称，静态链接
-- cmake 将编译好的 dll 放入特定文件夹，将这些文件复制到 /target/debug/ 目录下，确保 exe 在运行时可以找到这些文件
+- `truvis-cxx-build` 负责调用 CMake preset，构建 C++ target，并把 `.lib` / `.dll` / `.pdb` 复制到 Cargo target 目录
+- `truvis-cxx-binding/build.rs` 负责从 `mods/truvixx-interface/include/TruvixxInterface/lib.h` 生成 `_ffi_bindings.rs`
+- `truvis-cxx-binding/build.rs` 通过 `cargo:rustc-link-search` 和 `cargo:rustc-link-lib` 链接 `truvixx-interface`

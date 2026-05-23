@@ -3,10 +3,12 @@
 推荐通过 workspace 命令自动检测 VS2026 / VS2022：
 
 ```shell
-cargo run --bin cxx-build
+just cxx
 ```
 
-`cxx-build` 只使用 PATH 上的 `cmake`。使用 VS2026 preset 时需要 CMake 4.2+。
+`just cxx` 会运行 `cargo run --bin cxx-build` 并重新构建 `truvis-cxx-binding`。
+`cxx-build` 只使用 PATH 上的 `cmake`。CMake presets 文件要求 CMake 3.21+；
+使用 VS2026 preset 时需要 PATH 上的 CMake 4.2+。
 
 ## VS2026
 
@@ -49,8 +51,8 @@ cmake `
   "-DCMAKE_C_COMPILER=C:/Program Files/LLVM/bin/clang-cl.exe" `
   "-DCMAKE_CXX_COMPILER=C:/Program Files/LLVM/bin/clang-cl.exe" `
   -G Ninja `
-  -S D:\code\Render-Rust-vk-Truvis\crates\truvis-cxx\cxx `
-  -B D:\code\Render-Rust-vk-Truvis\crates\truvis-cxx\cxx\build-clang
+  -S D:\code\Render-Rust-vk-Truvis\engine\cxx `
+  -B D:\code\Render-Rust-vk-Truvis\engine\cxx\build\clang-cl\Debug
 ```
 
 # 更新 vcpkg

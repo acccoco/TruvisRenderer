@@ -6,14 +6,16 @@
 
 - `mods/`：C++ 模块源码（接口层 + Assimp 实现层）
 - `truvis-cxx-binding/`：Rust FFI 声明 crate
-- `truvis-cxx-build/`：构建驱动 crate
+- `truvis-cxx-build/`：构建驱动 crate，负责选择 CMake preset、构建 Debug/Release，并把 `.lib` / `.dll` / `.pdb` 复制到 Cargo target 目录
 - `CMakeLists.txt` / `CMakePresets.json`：CMake 构建配置
 - `vcpkg.json`：manifest 依赖声明
 
 ## 构建方式
 
-- 推荐通过 workspace 命令执行：`cargo run --bin cxx-build`
+- 推荐通过 workspace 命令执行：`just cxx`
+- `just cxx` 会先运行 `cargo run --bin cxx-build`，再构建 `truvis-cxx-binding`
 - 底层使用 CMake + vcpkg manifest，不建议手工 `vcpkg install`
+- `truvis-cxx-binding/build.rs` 只负责 bindgen 生成 Rust FFI 绑定，并向 Cargo 声明链接 `truvixx-interface`
 
 ## 约束
 

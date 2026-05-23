@@ -24,8 +24,8 @@ impl GfxCommandPool {
         Self::new_internal(ctx.device_rc(), queue_family, flags, debug_name)
     }
 
-    /// 内部构造函数，用于 RenderContext 初始化时使用
-    /// 因为在 RenderContext 初始化过程中，单例还没有准备好
+    /// 内部构造函数，用于 `Gfx` root owner 初始化自身临时 command pool。
+    /// 这里直接接收 device owner，避免在 root owner 尚未构造完成时反向借用 `Gfx` Ctx。
     #[inline]
     pub(crate) fn new_internal(
         gfx_device: std::rc::Rc<crate::foundation::device::GfxDevice>,

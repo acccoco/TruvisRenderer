@@ -1,7 +1,8 @@
 //! Vulkan RHI (Rendering Hardware Interface) 抽象层
 //!
 //! 提供对 Vulkan API 的高层封装，包括设备管理、命令缓冲、描述符、管线等核心功能。
-//! 所有 Vulkan 资源通过 [`Gfx`] 单例统一管理，简化生命周期和借用关系。
+//! [`Gfx`](gfx::Gfx) 是显式 root owner，由上层持有并通过 typed Ctx 向资源创建、
+//! 提交和销毁路径传递最小依赖。
 
 pub mod basic;
 pub mod commands;

@@ -1,11 +1,9 @@
-//! Truvis 工具集
+//! 资源与工具下载 crate。
 //!
-//! 提供日志初始化、资源路径管理、命名数组等通用工具。
+//! 本 crate 读取根目录 `resources.toml`，按配置下载模型资产和外部工具资源，
+//! 并把 zip 或普通文件落到 workspace 内的目标目录。路径解析依赖 `truvis-path`，
+//! 日志格式由 `truvis-logs` 初始化。
 //!
-//! # TruvisPath
-//! 基于工作区根目录的统一路径管理，避免硬编码相对路径。
-//!
-//! # GitHub 资源下载
-//! 支持从 GitHub 下载 zip 文件并解压，可通过 TOML 配置管理。
+//! 可执行入口名为 `fetch_res`，根目录 `just fetch-res` 是推荐调用方式。
 
 pub mod fetch_resources;
