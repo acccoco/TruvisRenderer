@@ -13,7 +13,7 @@
 
 - `World` 不持有 Vulkan、`Gfx`、`GpuStore` 或 swapchain 资源。
 - `World` 不持有 GPU buffer、image、BLAS、material slot 或 frame state。
-- `World` 不依赖 `truvis-render-runtime`、`truvis-frame-api` 或 App/Plugin 契约。
+- `World` 不依赖 `truvis-render-runtime`、`truvis-app-frame` 或 App/Plugin 契约。
 - GPU frame state、bindless、global descriptor、manager-owned image/view 和 FIF resources 属于 `truvis-render-interface::gpu_store::GpuStore`。
 
 ## 设计意图

@@ -1,12 +1,11 @@
 use std::ffi::CStr;
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
-use truvis_frame_api::input_event::InputEvent;
-use truvis_frame_api::plugin::{PluginInitCtx, PluginResizeCtx, PluginShutdownCtx, PluginUpdateCtx};
-use truvis_frame_api::render_app::{
-    RenderApp, RenderAppHooks, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx,
-};
 use truvis_render_runtime::render_runtime::RenderRuntime;
+
+use crate::input_event::InputEvent;
+use crate::plugin_api::{PluginInitCtx, PluginResizeCtx, PluginShutdownCtx, PluginUpdateCtx};
+use crate::render_app_api::{RenderApp, RenderAppHooks, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx};
 
 /// 将具体 app hooks 转换为 render-loop [`RenderApp`] 的适配器。
 ///

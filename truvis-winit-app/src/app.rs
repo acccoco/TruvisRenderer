@@ -10,12 +10,10 @@ use winit::event_loop::ActiveEventLoop;
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Window, WindowId};
 
-use truvis_frame_api::render_app::RenderApp;
-use truvis_frame_runtime::init_env;
+use truvis_app_frame::render_app_api::RenderApp;
+use truvis_app_frame::{RenderInitMsg, SendWrapper, SharedState, init_env, pack_size, render_loop};
 use truvis_path::TruvisPath;
 
-use crate::render_loop::render_loop;
-use crate::shared::{RenderInitMsg, SendWrapper, SharedState, pack_size};
 use crate::winit_event_adapter::WinitEventAdapter;
 
 pub struct UserEvent;
@@ -171,7 +169,7 @@ impl ApplicationHandler<UserEvent> for WinitApp {
         }
 
         let input_event = WinitEventAdapter::from_winit_event(&event);
-        use truvis_frame_api::input_event::InputEvent;
+        use truvis_app_frame::input_event::InputEvent;
         match input_event {
             InputEvent::Other | InputEvent::Resized { .. } => {}
             _ => {

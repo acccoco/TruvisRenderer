@@ -4,8 +4,8 @@
 
 核心契约与帧骨架位于独立 crate：
 
-- App / Plugin 契约与 typed contexts：`truvis-frame-api`
-- 帧骨架与 App shell：`truvis-frame-runtime::RenderAppShell`
+- App / Plugin 契约、typed contexts 与帧骨架：`truvis-app-frame`
+- App shell：`truvis-app-frame::RenderAppShell`
 - 通用 render pass：`truvis-render-passes`
 
 ## 主要内容

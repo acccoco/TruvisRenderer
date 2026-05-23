@@ -7,19 +7,17 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use truvis_frame_api::input_event::InputEvent;
+use crate::input_event::InputEvent;
 
 /// 跨线程传递 `!Send` 类型（如 `RawWindowHandle`）的受控包装。
 ///
 /// # Safety
 /// 调用者必须保证：
-/// - 被包装的 handle 在接收方（渲染线程）使用期间，其所指向的底层资源（winit `Window`）
-///   保持有效；
+/// - 被包装的 handle 在接收方（渲染线程）使用期间，其所指向的平台窗口资源保持有效；
 /// - 接收方仅将 handle 用于预期用途（例如传给 `ash_window::create_surface`），
 ///   不得解引用、转成线程特定资源或重复传递到其它线程。
 ///
-/// 本项目中 `Window` 始终 own 在主线程，且二阶段关闭握手保证 `Window` 晚于
-/// `VkSurfaceKHR` 销毁，因此跨线程传递 `RawWindowHandle` 的前提成立。
+/// 平台层必须通过关闭握手保证窗口 owner 晚于渲染线程中的 `VkSurfaceKHR` 销毁。
 pub struct SendWrapper<T>(pub T);
 
 // Safety: 由使用端通过生命周期顺序保证（见本结构体文档）。

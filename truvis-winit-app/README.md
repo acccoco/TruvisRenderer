@@ -12,7 +12,7 @@
 
 - `src/bin/`：各示例应用可执行入口
 - `src/app.rs`：平台运行时封装
-- `src/render_loop.rs`：渲染线程主循环
+- `src/winit_event_adapter.rs`：winit 事件到 `InputEvent` 的转换
 
 ## 启动方式
 
@@ -30,5 +30,5 @@
 ## 模块边界
 
 - 本模块不实现具体渲染算法，只负责平台与线程编排。
-- App / Plugin 契约定义在 `engine/frame/truvis-frame-api`，帧骨架在 `engine/frame/truvis-frame-runtime`。
+- App / Plugin 契约、帧骨架与 render loop 定义在 `engine/frame/truvis-app-frame`。
 - 渲染运行时在 `engine/render/truvis-render-runtime`，通用 pass 在 `engine/render/truvis-render-passes`。

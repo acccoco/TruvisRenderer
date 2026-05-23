@@ -1,6 +1,6 @@
 # truvis-render-runtime
 
-`truvis-render-runtime` 是被 `truvis-frame-runtime::RenderAppShell` 驱动的渲染运行时集成层。
+`truvis-render-runtime` 是被 `truvis-app-frame::RenderAppShell` 驱动的渲染运行时集成层。
 它持有 `Gfx` root owner、CPU `World`、GPU `GpuStore` 和 runtime 私有的 `GpuScene`，
 并通过阶段化的 typed Ctx 向上层暴露初始化、更新、渲染、resize 与 shutdown 能力。
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use truvis_frame_api::input_event::{ElementState, InputEvent, KeyCode, MouseButton};
+use truvis_app_frame::input_event::{ElementState, InputEvent, KeyCode, MouseButton};
 
 #[derive(Default, Clone)]
 pub struct InputState {

@@ -1,5 +1,5 @@
 use ash::vk;
-use truvis_frame_api::plugin::Plugin;
+use truvis_app_frame::plugin_api::Plugin;
 use truvis_render_interface::pipeline_settings::PipelineSettings;
 use truvis_render_runtime::platform::camera::Camera;
 

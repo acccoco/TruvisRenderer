@@ -1,16 +1,18 @@
 [package]
-name = "truvis-frame-runtime"
+name = "truvis-app-frame"
 version = "0.1.0"
 edition = "2024"
-description = "Render app shell for RenderRuntime lifecycle orchestration"
+description = "App frame contracts, shell, and render thread loop"
 
 [dependencies]
-truvis-frame-api = { workspace = true }
 truvis-gfx = { workspace = true }
 truvis-render-runtime = { workspace = true }
+truvis-render-interface = { workspace = true }
+truvis-world = { workspace = true }
 truvis-logs = { workspace = true }
 
 ash-window = { workspace = true }
 raw-window-handle = { workspace = true }
+crossbeam-channel = { workspace = true }
 tracy-client = { workspace = true }
 log = { workspace = true }

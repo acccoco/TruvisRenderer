@@ -3404,9 +3404,8 @@ dependencies = [
  "itertools 0.10.5",
  "log",
  "tracy-client",
+ "truvis-app-frame",
  "truvis-asset",
- "truvis-frame-api",
- "truvis-frame-runtime",
  "truvis-gfx",
  "truvis-gui-backend",
  "truvis-path",
@@ -3416,6 +3415,22 @@ dependencies = [
  "truvis-render-runtime",
  "truvis-shader-binding",
  "truvis-utils",
+ "truvis-world",
+]
+
+[[package]]
+name = "truvis-app-frame"
+version = "0.1.0"
+dependencies = [
+ "ash-window",
+ "crossbeam-channel",
+ "log",
+ "raw-window-handle",
+ "tracy-client",
+ "truvis-gfx",
+ "truvis-logs",
+ "truvis-render-interface",
+ "truvis-render-runtime",
  "truvis-world",
 ]
 
@@ -3484,31 +3499,6 @@ dependencies = [
  "truvis-logs",
  "truvis-path",
  "zip",
-]
-
-[[package]]
-name = "truvis-frame-api"
-version = "0.1.0"
-dependencies = [
- "raw-window-handle",
- "truvis-gfx",
- "truvis-render-interface",
- "truvis-render-runtime",
- "truvis-world",
-]
-
-[[package]]
-name = "truvis-frame-runtime"
-version = "0.1.0"
-dependencies = [
- "ash-window",
- "log",
- "raw-window-handle",
- "tracy-client",
- "truvis-frame-api",
- "truvis-gfx",
- "truvis-logs",
- "truvis-render-runtime",
 ]
 
 [[package]]
@@ -3667,14 +3657,11 @@ version = "0.1.0"
 name = "truvis-winit-app"
 version = "0.1.0"
 dependencies = [
- "crossbeam-channel",
  "image",
  "log",
  "raw-window-handle",
- "tracy-client",
  "truvis-app",
- "truvis-frame-api",
- "truvis-frame-runtime",
+ "truvis-app-frame",
  "truvis-path",
  "winit",
 ]

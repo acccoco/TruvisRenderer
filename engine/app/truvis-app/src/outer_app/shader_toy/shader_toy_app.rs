@@ -1,9 +1,9 @@
 use ash::vk;
 use itertools::Itertools;
 
-use truvis_frame_api::input_event::InputEvent;
-use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
-use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx, RenderAppShutdownCtx};
+use truvis_app_frame::input_event::InputEvent;
+use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
+use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx, RenderAppShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
 use truvis_render_interface::frame_counter::FrameCounter;

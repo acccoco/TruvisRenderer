@@ -1,4 +1,4 @@
-use truvis_frame_api::input_event::KeyCode;
+use truvis_app_frame::input_event::KeyCode;
 use truvis_render_runtime::platform::camera::Camera;
 
 use crate::input_state::InputState;

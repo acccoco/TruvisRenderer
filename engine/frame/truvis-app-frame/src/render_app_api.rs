@@ -12,7 +12,7 @@ use truvis_render_runtime::render_runtime::{
 };
 
 use crate::input_event::InputEvent;
-use crate::plugin::Plugin;
+use crate::plugin_api::Plugin;
 
 /// 由 render loop 驱动的 object-safe 外部契约。
 ///

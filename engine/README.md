@@ -9,7 +9,7 @@
 - `gfx/`：Vulkan RHI 封装与 descriptor-layout 宏/trait。
 - `world/`：CPU 侧资产、场景与 `World` 聚合。
 - `render/`：渲染资源状态、RenderGraph、通用 pass、GUI 后端与 RenderRuntime。
-- `frame/`：`RenderApp` 契约与 `RenderAppShell` 帧骨架。
+- `frame/`：`RenderApp` 契约、`RenderAppShell` 帧骨架与渲染线程主循环。
 - `app/`：示例应用、plugin 编排与 render pipeline glue。
 - `shader/`：Slang shader 源码、共享头文件、编译与绑定生成。
 - `cxx/`：Assimp 场景加载、CMake 工程、Rust 绑定桥接。

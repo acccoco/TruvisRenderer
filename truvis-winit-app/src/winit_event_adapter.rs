@@ -1,7 +1,7 @@
 use winit::event::{KeyEvent, WindowEvent};
 use winit::keyboard::PhysicalKey;
 
-use truvis_frame_api::input_event::{ElementState, InputEvent, KeyCode, MouseButton};
+use truvis_app_frame::input_event::{ElementState, InputEvent, KeyCode, MouseButton};
 
 pub struct WinitEventAdapter {}
 impl WinitEventAdapter {

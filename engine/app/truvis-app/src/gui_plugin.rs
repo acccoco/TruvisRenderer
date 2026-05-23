@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use ash::vk;
 use imgui::{DrawData, TextureId, Ui};
-use truvis_frame_api::input_event::{ElementState, InputEvent, MouseButton};
-use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
+use truvis_app_frame::input_event::{ElementState, InputEvent, MouseButton};
+use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::basic::color::LabelColor;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;

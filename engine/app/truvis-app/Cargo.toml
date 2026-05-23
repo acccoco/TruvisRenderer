@@ -6,8 +6,7 @@ description = "app"
 
 
 [dependencies]
-truvis-frame-api = { workspace = true }
-truvis-frame-runtime = { workspace = true }
+truvis-app-frame = { workspace = true }
 truvis-render-passes = { workspace = true }
 truvis-gfx = { workspace = true }
 truvis-render-runtime = { workspace = true }

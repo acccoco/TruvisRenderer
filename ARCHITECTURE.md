@@ -9,7 +9,7 @@
 ```mermaid
 flowchart TB
     L6["L6 truvis-winit-app<br/>winit 事件循环、窗口生命周期、渲染线程启动"]
-    L5["L5 truvis-app<br/>demo app、GuiPlugin、overlay plugin、render pipeline plugin、RenderGraph 编排<br/><br/>L5 truvis-frame-runtime<br/>RenderAppShell 帧骨架 + render-loop 适配层<br/><br/>L5 truvis-frame-api<br/>RenderApp / RenderAppHooks / Plugin 契约与 Plugin Ctx"]
+    L5["L5 truvis-app<br/>demo app、GuiPlugin、overlay plugin、render pipeline plugin、RenderGraph 编排<br/><br/>L5 truvis-app-frame<br/>RenderApp / RenderAppHooks / Plugin 契约与 Plugin Ctx<br/>RenderAppShell 帧骨架 + render loop"]
     L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GpuStore + GpuScene + swapchain/present/cmd/sync 生命周期"]
     L3["L3 truvis-render-graph / truvis-world / truvis-asset / truvis-gui-backend<br/>按帧同步辅助、CPU 场景、资产加载、底层 ImGui Vulkan 录制"]
     L2["L2 truvis-render-interface<br/>GpuStore、BindlessManager、RenderSceneView、FrameCounter、CmdAllocator、FifBuffers"]
@@ -37,7 +37,7 @@ flowchart LR
     Core["render-interface + world<br/>GPU 资源状态、CPU scene/assets 聚合"]
     RenderDomain["render-graph / render-passes / gui-backend<br/>pass 编排、通用 pass、GUI Vulkan 后端"]
     Runtime["render-runtime<br/>运行时集成、GPU 上传、present 生命周期"]
-    Frame["frame<br/>RenderApp 契约、RenderAppShell"]
+    Frame["frame<br/>RenderApp 契约、RenderAppShell、render loop"]
     App["app<br/>demo app、plugin 编排、render pipeline glue"]
     Platform["truvis-winit-app<br/>winit 平台入口"]
 

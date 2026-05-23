@@ -21,8 +21,7 @@ members = [
     "engine/world/truvis-asset",
     "engine/world/truvis-world",
     # frame
-    "engine/frame/truvis-frame-api",
-    "engine/frame/truvis-frame-runtime",
+    "engine/frame/truvis-app-frame",
     # app
     "engine/app/truvis-app",
     # shader 绑定相关
@@ -68,8 +67,7 @@ truvis-gui-backend = { path = "engine/render/truvis-gui-backend" }
 truvis-asset = { path = "engine/world/truvis-asset" }
 truvis-world = { path = "engine/world/truvis-world" }
 # frame
-truvis-frame-api = { path = "engine/frame/truvis-frame-api" }
-truvis-frame-runtime = { path = "engine/frame/truvis-frame-runtime" }
+truvis-app-frame = { path = "engine/frame/truvis-app-frame" }
 # app
 truvis-app = { path = "engine/app/truvis-app" }
 # shader

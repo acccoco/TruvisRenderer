@@ -6,9 +6,8 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use truvis_frame_api::render_app::RenderApp;
-
-use crate::shared::{RenderInitMsg, SharedState, unpack_size};
+use crate::render_app_api::RenderApp;
+use crate::render_thread::{RenderInitMsg, SharedState, unpack_size};
 
 /// 渲染线程入口。
 pub fn render_loop(shared: Arc<SharedState>, init_msg: RenderInitMsg, mut app: Box<dyn RenderApp>) {

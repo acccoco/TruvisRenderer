@@ -19,8 +19,7 @@ path = "src/bin/triangle_app.rs"
 
 
 [dependencies]
-truvis-frame-api = { workspace = true }
-truvis-frame-runtime = { workspace = true }
+truvis-app-frame = { workspace = true }
 truvis-app = { workspace = true }
 truvis-path = {workspace = true}
 
@@ -28,5 +27,3 @@ log = { workspace = true }
 winit = { workspace = true }
 image = { workspace = true }
 raw-window-handle = { workspace = true }
-crossbeam-channel = { workspace = true }
-tracy-client = { workspace = true }
