@@ -1,0 +1,26 @@
+[package]
+name = "truvis-sample-shader-toy"
+version = "0.1.0"
+edition = "2024"
+description = "ShaderToy-style rendering sample"
+
+[[bin]]
+name = "shader-toy"
+path = "src/main.rs"
+
+[dependencies]
+truvis-app-frame = { workspace = true }
+truvis-app-kit = { workspace = true }
+truvis-winit-app = { workspace = true }
+truvis-gfx = { workspace = true }
+truvis-render-foundation = { workspace = true }
+truvis-render-graph = { workspace = true }
+truvis-render-runtime = { workspace = true }
+truvis-path = { workspace = true }
+truvis-utils = { workspace = true }
+
+ash = { workspace = true }
+bytemuck = { workspace = true }
+glam = { workspace = true }
+itertools = { workspace = true }
+log = { workspace = true }

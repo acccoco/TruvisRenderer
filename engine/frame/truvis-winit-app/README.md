@@ -10,9 +10,10 @@
 
 ## 入口位置
 
-- `src/bin/`：各示例应用可执行入口
 - `src/app.rs`：平台运行时封装
 - `src/winit_event_adapter.rs`：winit 事件到 `InputEvent` 的转换
+
+具体 app 与 sample 入口位于 `truvis-app/` 下，本 crate 不声明可执行入口。
 
 ## 启动方式
 
@@ -30,5 +31,6 @@
 ## 模块边界
 
 - 本模块不实现具体渲染算法，只负责平台与线程编排。
+- 本模块不依赖主体 app 或 samples，调用方通过 `WinitApp::run_app` 注入 `Box<dyn RenderApp>`。
 - App / Plugin 契约、帧骨架与 render loop 定义在 `engine/frame/truvis-app-frame`。
 - 渲染运行时在 `engine/render/truvis-render-runtime`，通用 pass 在 `engine/render/truvis-render-passes`。

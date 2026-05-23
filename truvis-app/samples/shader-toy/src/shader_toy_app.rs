@@ -10,44 +10,46 @@ use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgIma
 use truvis_render_runtime::platform::camera::Camera;
 use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 
-use crate::camera_controller::CameraController;
-use crate::gui_plugin::GuiPlugin;
-use crate::input_state::InputManager;
-use crate::outer_app::triangle::triangle_pass::TrianglePass;
-use crate::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
+use crate::shader_toy_pass::ShaderToyPass;
+use truvis_app_kit::camera_controller::CameraController;
+use truvis_app_kit::gui_plugin::GuiPlugin;
+use truvis_app_kit::input_state::InputManager;
+use truvis_app_kit::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
 
 #[derive(Default)]
-pub struct TrianglePlugin {
-    triangle_pass: Option<TrianglePass>,
+pub struct ShaderToyPlugin {
+    shader_toy_pass: Option<ShaderToyPass>,
 }
 
-impl Plugin for TrianglePlugin {
+impl Plugin for ShaderToyPlugin {
     fn init(&mut self, ctx: &mut PluginInitCtx) {
-        self.triangle_pass = Some(TrianglePass::new(ctx.device_ctx, ctx.swapchain_image_info.image_format));
+        self.shader_toy_pass = Some(ShaderToyPass::new(ctx.device_ctx, ctx.swapchain_image_info.image_format));
     }
 
     fn shutdown(&mut self, ctx: &mut PluginShutdownCtx<'_>) {
-        if let Some(pass) = self.triangle_pass.take() {
+        if let Some(pass) = self.shader_toy_pass.take() {
             pass.destroy(ctx.device_ctx);
         }
     }
 }
 
-impl TrianglePlugin {
+impl ShaderToyPlugin {
     pub fn contribute_passes<'a>(
         &'a self,
         graph: &mut RenderGraphBuilder<'a>,
+        ctx: &'a PluginRenderCtx<'a>,
         canvas_color: RgImageHandle,
         canvas_extent: vk::Extent2D,
     ) {
         graph.add_pass_lambda(
-            "triangle",
+            "shader-toy",
             move |builder| {
                 builder.read_write_image(canvas_color, RgImageState::COLOR_ATTACHMENT_READ_WRITE);
             },
             move |context| {
                 let canvas_view = context.get_image_view(canvas_color).unwrap();
-                self.triangle_pass.as_ref().expect("TrianglePlugin not initialized").draw(
+                self.shader_toy_pass.as_ref().expect("ShaderToyPlugin not initialized").draw(
+                    ctx.gpu_store,
                     context.cmd,
                     canvas_view,
                     canvas_extent,
@@ -58,9 +60,9 @@ impl TrianglePlugin {
 }
 
 #[derive(Default)]
-pub struct HelloTriangleApp {
+pub struct ShaderToy {
     gui: GuiPlugin,
-    triangle: TrianglePlugin,
+    shader_toy: ShaderToyPlugin,
     camera_controller: CameraController,
     input: InputManager,
     debug_overlay: DebugInfoOverlay,
@@ -68,7 +70,7 @@ pub struct HelloTriangleApp {
     cmds: Vec<GfxCommandBuffer>,
 }
 
-impl RenderAppHooks for HelloTriangleApp {
+impl RenderAppHooks for ShaderToy {
     fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
         self.gui.set_hidpi_factor(ctx.scale_factor);
         self.gui.set_display_size(ctx.window_size);
@@ -76,12 +78,12 @@ impl RenderAppHooks for HelloTriangleApp {
         let cmd_allocator = &mut *ctx.runtime.cmd_allocator;
         self.cmds = FrameCounter::frame_labes()
             .iter()
-            .map(|label| cmd_allocator.alloc_command_buffer(ctx.runtime.device_ctx, *label, "triangle-app"))
+            .map(|label| cmd_allocator.alloc_command_buffer(ctx.runtime.device_ctx, *label, "shader-toy-app"))
             .collect_vec();
     }
 
     fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
-        visit(&mut self.triangle);
+        visit(&mut self.shader_toy);
         visit(&mut self.gui);
         visit(&mut self.debug_overlay);
         visit(&mut self.pipeline_overlay);
@@ -90,7 +92,7 @@ impl RenderAppHooks for HelloTriangleApp {
     fn visit_plugins_mut_rev(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
         visit(&mut self.pipeline_overlay);
         visit(&mut self.debug_overlay);
-        visit(&mut self.triangle);
+        visit(&mut self.shader_toy);
         visit(&mut self.gui);
     }
 
@@ -108,6 +110,8 @@ impl RenderAppHooks for HelloTriangleApp {
         self.gui.begin_frame(delta);
         {
             let ui = self.gui.ui();
+            ui.text_wrapped("Hello world!");
+            ui.text_wrapped("こんにちは世界！");
             self.debug_overlay.build_overlay_ui(
                 ui,
                 self.camera_controller.camera(),
@@ -173,7 +177,7 @@ impl RenderAppHooks for HelloTriangleApp {
             )),
         );
 
-        self.triangle.contribute_passes(&mut graph, swapchain_image, swapchain_extent);
+        self.shader_toy.contribute_passes(&mut graph, &plugin_ctx, swapchain_image, swapchain_extent);
         self.gui.contribute_passes(&mut graph, &plugin_ctx, swapchain_image, swapchain_extent);
 
         let compiled_graph = graph.compile();
@@ -185,7 +189,7 @@ impl RenderAppHooks for HelloTriangleApp {
         }
 
         let cmd = &self.cmds[*frame_label];
-        cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "triangle-graph");
+        cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "shader-toy-graph");
         compiled_graph.execute(cmd, &ctx.gpu_store.gfx_resource_manager);
         cmd.end();
 

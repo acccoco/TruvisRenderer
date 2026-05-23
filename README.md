@@ -45,10 +45,10 @@ cargo build --all
 ### 运行示例
 
 ```powershell
-cargo run --bin triangle
-cargo run --bin rt-cornell
-cargo run --bin rt-sponza
-cargo run --bin shader-toy
+just triangle
+just cornell
+just sponza
+just shader-toy
 ```
 
 使用 Vulkan validation layer 运行光追示例：
@@ -60,18 +60,20 @@ just sponza-validation
 
 ## 运行时架构（当前）
 
-- 平台入口：`truvis-winit-app` 通过 `WinitApp::run_app(...)` 启动渲染线程
-- App 适配：demo state 实现 `RenderAppHooks`，由 `truvis-app-frame::RenderAppShell` 包装成 render loop 需要的 `RenderApp`
+- 平台入口：`engine/frame/truvis-winit-app` 通过 `WinitApp::run_app(...)` 启动渲染线程
+- App 公共组件：`truvis-app/app-kit` 提供 GUI、输入/相机、overlay 与 RT pipeline 等 app 层复用能力
+- 主体 App：`truvis-app/sponza` 提供 `rt-sponza`，samples 位于 `truvis-app/samples/*`
+- App 适配：app state 实现 `RenderAppHooks`，由 `truvis-app-frame::RenderAppShell` 包装成 render loop 需要的 `RenderApp`
 - 帧骨架：`truvis-app-frame::RenderAppShell` 持有 `RenderRuntime` 与输入事件队列，负责 `input -> update -> plugin update -> prepare -> render -> present` 固定顺序
-- Plugin 组合：demo state 通过 `RenderAppHooks::visit_plugins_mut` 声明标准生命周期 Plugin 顺序；GUI 与渲染管线的特有能力通过具体类型方法暴露
+- Plugin 组合：app state 通过 `RenderAppHooks::visit_plugins_mut` 声明标准生命周期 Plugin 顺序；GUI 与渲染管线的特有能力通过具体类型方法暴露
 - 渲染运行时：`truvis-render-runtime::RenderRuntime` 聚焦帧生命周期、CPU/GPU 同步与 GPU 数据上传
-- swapchain 重建：渲染线程通过 `RenderApp::recreate_swapchain_if_needed` 触发，`RenderAppShell` 在实际重建后通知 demo state 并批量调用 Plugin resize
+- swapchain 重建：渲染线程通过 `RenderApp::recreate_swapchain_if_needed` 触发，`RenderAppShell` 在实际重建后通知 app state 并批量调用 Plugin resize
 
 ## 文档导航
 
 - 架构总览：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
 - AI 协作规则：[`AGENTS.md`](./AGENTS.md)
-- 模块说明：各关键目录下 `README.md`（如 `engine/`、`engine/shader/`）
+- 模块说明：各关键目录下 `README.md`（如 `engine/`、`engine/shader/`、`truvis-app/`）
 
 ## 展示特性
 

@@ -1,0 +1,24 @@
+[package]
+name = "truvis-sample-cornell"
+version = "0.1.0"
+edition = "2024"
+description = "Cornell ray tracing sample"
+
+[[bin]]
+name = "rt-cornell"
+path = "src/main.rs"
+
+[dependencies]
+truvis-app-frame = { workspace = true }
+truvis-app-kit = { workspace = true }
+truvis-winit-app = { workspace = true }
+truvis-render-runtime = { workspace = true }
+truvis-render-graph = { workspace = true }
+truvis-asset = { workspace = true }
+truvis-world = { workspace = true }
+truvis-path = { workspace = true }
+truvis-shader-binding = { workspace = true }
+
+ash = { workspace = true }
+glam = { workspace = true }
+log = { workspace = true }

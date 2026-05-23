@@ -9,11 +9,11 @@ use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntim
 use truvis_shader_binding::gpu;
 use truvis_world::World;
 
-use crate::camera_controller::CameraController;
-use crate::gui_plugin::GuiPlugin;
-use crate::input_state::InputManager;
-use crate::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
-use crate::render_pipeline::rt_render_graph::RtPipeline;
+use truvis_app_kit::camera_controller::CameraController;
+use truvis_app_kit::gui_plugin::GuiPlugin;
+use truvis_app_kit::input_state::InputManager;
+use truvis_app_kit::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
+use truvis_app_kit::render_pipeline::rt_render_graph::RtPipeline;
 
 #[derive(Default)]
 pub struct CornellApp {

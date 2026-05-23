@@ -3398,23 +3398,16 @@ name = "truvis-app"
 version = "0.1.0"
 dependencies = [
  "ash",
- "bytemuck",
  "glam",
- "imgui",
- "itertools 0.10.5",
  "log",
- "tracy-client",
  "truvis-app-frame",
+ "truvis-app-kit",
  "truvis-asset",
- "truvis-gfx",
- "truvis-gui-backend",
  "truvis-path",
- "truvis-render-foundation",
  "truvis-render-graph",
- "truvis-render-passes",
  "truvis-render-runtime",
  "truvis-shader-binding",
- "truvis-utils",
+ "truvis-winit-app",
  "truvis-world",
 ]
 
@@ -3432,6 +3425,25 @@ dependencies = [
  "truvis-render-foundation",
  "truvis-render-runtime",
  "truvis-world",
+]
+
+[[package]]
+name = "truvis-app-kit"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "glam",
+ "imgui",
+ "itertools 0.10.5",
+ "log",
+ "truvis-app-frame",
+ "truvis-gfx",
+ "truvis-gui-backend",
+ "truvis-path",
+ "truvis-render-foundation",
+ "truvis-render-graph",
+ "truvis-render-passes",
+ "truvis-render-runtime",
 ]
 
 [[package]]
@@ -3629,6 +3641,63 @@ dependencies = [
 ]
 
 [[package]]
+name = "truvis-sample-cornell"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "glam",
+ "log",
+ "truvis-app-frame",
+ "truvis-app-kit",
+ "truvis-asset",
+ "truvis-path",
+ "truvis-render-graph",
+ "truvis-render-runtime",
+ "truvis-shader-binding",
+ "truvis-winit-app",
+ "truvis-world",
+]
+
+[[package]]
+name = "truvis-sample-shader-toy"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "bytemuck",
+ "glam",
+ "itertools 0.10.5",
+ "log",
+ "truvis-app-frame",
+ "truvis-app-kit",
+ "truvis-gfx",
+ "truvis-path",
+ "truvis-render-foundation",
+ "truvis-render-graph",
+ "truvis-render-runtime",
+ "truvis-utils",
+ "truvis-winit-app",
+]
+
+[[package]]
+name = "truvis-sample-triangle"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "glam",
+ "itertools 0.10.5",
+ "log",
+ "truvis-app-frame",
+ "truvis-app-kit",
+ "truvis-gfx",
+ "truvis-path",
+ "truvis-render-foundation",
+ "truvis-render-graph",
+ "truvis-render-runtime",
+ "truvis-utils",
+ "truvis-winit-app",
+]
+
+[[package]]
 name = "truvis-shader-binding"
 version = "0.1.0"
 dependencies = [
@@ -3660,7 +3729,6 @@ dependencies = [
  "image",
  "log",
  "raw-window-handle",
- "truvis-app",
  "truvis-app-frame",
  "truvis-path",
  "winit",

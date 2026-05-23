@@ -8,8 +8,8 @@
 
 ```mermaid
 flowchart TB
-    L6["L6 truvis-winit-app<br/>winit 事件循环、窗口生命周期、渲染线程启动"]
-    L5["L5 truvis-app<br/>demo app、GuiPlugin、overlay plugin、render pipeline plugin、RenderGraph 编排<br/><br/>L5 truvis-app-frame<br/>RenderApp / RenderAppHooks / Plugin 契约与 Plugin Ctx<br/>RenderAppShell 帧骨架 + render loop"]
+    L6["L6 truvis-app/sponza + samples<br/>主体 app 与独立示例入口<br/><br/>L6 truvis-winit-app<br/>winit 事件循环、窗口生命周期、渲染线程启动"]
+    L5["L5 truvis-app-kit<br/>GuiPlugin、overlay plugin、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp / RenderAppHooks / Plugin 契约与 Plugin Ctx<br/>RenderAppShell 帧骨架 + render loop"]
     L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GpuStore + GpuScene + swapchain/present/cmd/sync 生命周期"]
     L3["L3 truvis-render-graph / truvis-world / truvis-asset / truvis-gui-backend<br/>按帧同步辅助、CPU 场景、资产加载、底层 ImGui Vulkan 录制"]
     L2["L2 truvis-render-foundation<br/>GpuStore、BindlessManager、RenderSceneView、FrameCounter、CmdAllocator、FifBuffers"]
@@ -19,7 +19,7 @@ flowchart TB
     L6 --> L5 --> L4 --> L3 --> L2 --> L1 --> L0
 ```
 
-GUI 的 RenderGraph 适配位于 `truvis-app::gui_plugin`，底层 `truvis-gui-backend` 只保留 `GuiMesh` / `GuiPass` 等 Vulkan 后端能力，不依赖 render graph 或 frame runtime。
+GUI 的 RenderGraph 适配位于 `truvis_app_kit::gui_plugin`，底层 `truvis-gui-backend` 只保留 `GuiMesh` / `GuiPass` 等 Vulkan 后端能力，不依赖 render graph 或 frame runtime。
 
 依赖方向约束：
 
@@ -38,10 +38,14 @@ flowchart LR
     RenderDomain["render-graph / render-passes / gui-backend<br/>pass 编排、通用 pass、GUI Vulkan 后端"]
     Runtime["render-runtime<br/>运行时集成、GPU 上传、present 生命周期"]
     Frame["frame<br/>RenderApp 契约、RenderAppShell、render loop"]
-    App["app<br/>demo app、plugin 编排、render pipeline glue"]
+    AppKit["app-kit<br/>GUI、输入/相机、overlay、render pipeline glue"]
+    App["app / samples<br/>Sponza 主体应用与独立示例"]
     Platform["truvis-winit-app<br/>winit 平台入口"]
 
-    Platform --> App --> Frame --> Runtime --> RenderDomain --> Core --> Gfx --> Foundation
+    App --> Platform --> Frame --> Runtime --> RenderDomain --> Core --> Gfx --> Foundation
+    App --> AppKit --> Frame
+    AppKit --> Runtime
+    AppKit --> RenderDomain
 ```
 
 ## 2. 生命周期
@@ -116,7 +120,7 @@ RenderRuntime
 
 具体 App state 持有：
 
-- `GuiPlugin`
+- `truvis_app_kit::GuiPlugin`
 - `CameraController` / `InputManager`
 - `DebugInfoOverlay` / `PipelineControlsOverlay`
 - `TrianglePlugin`、`ShaderToyPlugin` 或 `RtPipeline` 等具体渲染能力
@@ -186,6 +190,14 @@ Plugin 的特有能力不放进统一 trait。例如：
 - `RtPipeline::contribute_compute_passes` / `contribute_present_passes`
 
 App 通过持有具体类型来组合这些能力，并通过 visitor 暴露标准生命周期 Plugin，不使用 downcast、注册表或消息总线。
+
+物理目录约定：
+
+- `engine/frame/truvis-app-frame`：平台无关的 App 契约、shell 与 render loop。
+- `engine/frame/truvis-winit-app`：winit 平台入口，只负责窗口、事件循环和渲染线程启动。
+- `truvis-app/app-kit`：app 层公共组件，不承载具体 app state。
+- `truvis-app/sponza`：主体 app，提供 `rt-sponza`。
+- `truvis-app/samples/*`：独立 sample crate，提供 triangle、shader-toy 和 Cornell 入口。
 
 ## 5. RenderGraph 与数据流
 

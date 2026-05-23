@@ -22,16 +22,19 @@ members = [
     "engine/world/truvis-world",
     # frame
     "engine/frame/truvis-app-frame",
-    # app
-    "engine/app/truvis-app",
+    "engine/frame/truvis-winit-app",
     # shader 绑定相关
     "engine/shader/truvis-shader-binding",
     "engine/shader/truvis-shader-build",
     # cxx 绑定相关
     "engine/cxx/truvis-cxx-binding",
     "engine/cxx/truvis-cxx-build",
-    # App
-    "truvis-winit-app",
+    # app
+    "truvis-app/app-kit",
+    "truvis-app/sponza",
+    "truvis-app/samples/triangle",
+    "truvis-app/samples/shader-toy",
+    "truvis-app/samples/cornell",
 ]
 
 [profile.dev]
@@ -68,8 +71,13 @@ truvis-asset = { path = "engine/world/truvis-asset" }
 truvis-world = { path = "engine/world/truvis-world" }
 # frame
 truvis-app-frame = { path = "engine/frame/truvis-app-frame" }
+truvis-winit-app = { path = "engine/frame/truvis-winit-app" }
 # app
-truvis-app = { path = "engine/app/truvis-app" }
+truvis-app-kit = { path = "truvis-app/app-kit" }
+truvis-app = { path = "truvis-app/sponza" }
+truvis-sample-triangle = { path = "truvis-app/samples/triangle" }
+truvis-sample-shader-toy = { path = "truvis-app/samples/shader-toy" }
+truvis-sample-cornell = { path = "truvis-app/samples/cornell" }
 # shader
 truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
 truvis-shader-build = { path = "engine/shader/truvis-shader-build" }

@@ -60,6 +60,12 @@ cxx-build-clang-release:
 cxx-preset-clang-release:
 	cmake --preset clang-cl-release
 
+triangle: shader
+	cargo run --bin triangle
+
+shader-toy: shader
+	cargo run --bin shader-toy
+
 cornell: shader cxx
 	cargo run --bin rt-cornell
 
