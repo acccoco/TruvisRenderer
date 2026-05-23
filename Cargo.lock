@@ -3399,6 +3399,7 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "glam",
+ "imgui",
  "log",
  "truvis-app-frame",
  "truvis-app-kit",

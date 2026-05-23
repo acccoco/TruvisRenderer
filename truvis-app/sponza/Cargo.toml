@@ -21,4 +21,5 @@ truvis-shader-binding = { workspace = true }
 
 ash = { workspace = true }
 glam = { workspace = true }
+imgui = { workspace = true }
 log = { workspace = true }
