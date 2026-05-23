@@ -259,7 +259,7 @@ impl RenderAppHooks for TruvisApp {
 
         let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
         let viewport_size = glam::vec2(ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32);
-        self.camera_controller.update(self.input.state(), viewport_size, delta);
+        self.camera_controller.update_with_wheel_zoom(self.input.state(), viewport_size, delta);
 
         if self.input.state().is_left_button_just_pressed() {
             let mouse_position = self.input.state().mouse_position();
@@ -288,6 +288,11 @@ impl RenderAppHooks for TruvisApp {
         if let Some(request) = self.camera_controller.take_pending_pivot_raycast() {
             let result = Self::cast_single_ray(ctx, request.ray);
             self.camera_controller.finish_pivot_raycast(request, result);
+        }
+
+        if let Some(request) = self.camera_controller.take_pending_wheel_zoom_raycast() {
+            let result = Self::cast_single_ray(ctx, request.ray);
+            self.camera_controller.finish_wheel_zoom_raycast(request, result);
         }
 
         if let Some((ray, screen_pos)) = self.click_ray_cast_probe.take_pending_cast() {

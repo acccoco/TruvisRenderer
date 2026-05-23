@@ -12,6 +12,7 @@ pub struct InputState {
     pub middle_button_pressed: bool,
     pub middle_button_just_pressed: bool,
     pub middle_button_just_released: bool,
+    pub mouse_wheel_delta: f64,
     pub key_pressed: HashMap<KeyCode, bool>,
 }
 
@@ -54,6 +55,10 @@ impl InputState {
     pub fn mouse_position(&self) -> [f64; 2] {
         self.crt_mouse_pos
     }
+
+    pub fn mouse_wheel_delta(&self) -> f64 {
+        self.mouse_wheel_delta
+    }
 }
 
 #[derive(Default)]
@@ -71,6 +76,7 @@ impl InputManager {
         self.state.left_button_just_pressed = false;
         self.state.middle_button_just_pressed = false;
         self.state.middle_button_just_released = false;
+        self.state.mouse_wheel_delta = 0.0;
     }
 
     pub fn process_event(&mut self, event: &InputEvent) {
@@ -107,7 +113,10 @@ impl InputManager {
             InputEvent::MouseMoved { physical_position } => {
                 self.state.crt_mouse_pos = *physical_position;
             }
-            InputEvent::MouseWheel { .. } | InputEvent::Resized { .. } | InputEvent::Other => {}
+            InputEvent::MouseWheel { delta } => {
+                self.state.mouse_wheel_delta += *delta;
+            }
+            InputEvent::Resized { .. } | InputEvent::Other => {}
         }
     }
 }
