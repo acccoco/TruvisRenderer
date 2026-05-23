@@ -5,7 +5,7 @@
 //! 纹理上传、fallback 资源所有权和 bindless 注册仍由上传器等实现方负责。
 
 use truvis_asset::handle::AssetTextureHandle;
-use truvis_render_interface::bindless_manager::BindlessSrvHandle;
+use truvis_render_foundation::bindless_manager::BindlessSrvHandle;
 use truvis_shader_binding::gpu;
 
 #[derive(Clone, Copy)]

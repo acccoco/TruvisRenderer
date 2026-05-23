@@ -12,7 +12,7 @@ flowchart TB
     L5["L5 truvis-app<br/>demo app、GuiPlugin、overlay plugin、render pipeline plugin、RenderGraph 编排<br/><br/>L5 truvis-app-frame<br/>RenderApp / RenderAppHooks / Plugin 契约与 Plugin Ctx<br/>RenderAppShell 帧骨架 + render loop"]
     L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GpuStore + GpuScene + swapchain/present/cmd/sync 生命周期"]
     L3["L3 truvis-render-graph / truvis-world / truvis-asset / truvis-gui-backend<br/>按帧同步辅助、CPU 场景、资产加载、底层 ImGui Vulkan 录制"]
-    L2["L2 truvis-render-interface<br/>GpuStore、BindlessManager、RenderSceneView、FrameCounter、CmdAllocator、FifBuffers"]
+    L2["L2 truvis-render-foundation<br/>GpuStore、BindlessManager、RenderSceneView、FrameCounter、CmdAllocator、FifBuffers"]
     L1["L1 truvis-gfx<br/>Vulkan RHI 封装"]
     L0["L0 truvis-utils / truvis-logs / truvis-path / descriptor-layout"]
 
@@ -26,7 +26,7 @@ GUI 的 RenderGraph 适配位于 `truvis-app::gui_plugin`，底层 `truvis-gui-b
 - 上层 crate 可以依赖下层 crate；下层 crate 禁止反向依赖上层业务。
 - 同层 crate 默认不互相依赖；只有本文档明确记录的方向才允许。
 - 物理目录用于导航，真实约束以 crate 职责与 Cargo 依赖方向为准。
-- `engine/render/` 是渲染域目录，内部仍包含不同层级：`truvis-render-interface` 低于 `truvis-render-graph` / `truvis-render-passes` / `truvis-gui-backend`，`truvis-render-runtime` 负责集成这些能力。
+- `engine/render/` 是渲染域目录，内部仍包含不同层级：`truvis-render-foundation` 低于 `truvis-render-graph` / `truvis-render-passes` / `truvis-gui-backend`，`truvis-render-runtime` 负责集成这些能力。
 
 当前允许的主依赖方向：
 
@@ -34,7 +34,7 @@ GUI 的 RenderGraph 适配位于 `truvis-app::gui_plugin`，底层 `truvis-gui-b
 flowchart LR
     Foundation["foundation / utils<br/>utils、logs、path"]
     Gfx["gfx + shader/cxx bindings<br/>RHI、descriptor-layout、FFI/binding"]
-    Core["render-interface + world<br/>GPU 资源状态、CPU scene/assets 聚合"]
+    Core["render-foundation + world<br/>GPU 资源状态、CPU scene/assets 聚合"]
     RenderDomain["render-graph / render-passes / gui-backend<br/>pass 编排、通用 pass、GUI Vulkan 后端"]
     Runtime["render-runtime<br/>运行时集成、GPU 上传、present 生命周期"]
     Frame["frame<br/>RenderApp 契约、RenderAppShell、render loop"]

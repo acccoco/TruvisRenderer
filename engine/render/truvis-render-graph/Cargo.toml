@@ -5,7 +5,7 @@ edition = "2024"
 description = ""
 
 [dependencies]
-truvis-render-interface = { workspace = true }
+truvis-render-foundation = { workspace = true }
 truvis-gfx = { workspace = true }
 
 

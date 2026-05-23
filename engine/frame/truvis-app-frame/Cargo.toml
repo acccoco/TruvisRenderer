@@ -7,7 +7,7 @@ description = "App frame contracts, shell, and render thread loop"
 [dependencies]
 truvis-gfx = { workspace = true }
 truvis-render-runtime = { workspace = true }
-truvis-render-interface = { workspace = true }
+truvis-render-foundation = { workspace = true }
 truvis-world = { workspace = true }
 truvis-logs = { workspace = true }
 

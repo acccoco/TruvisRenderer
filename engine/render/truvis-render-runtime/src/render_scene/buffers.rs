@@ -2,7 +2,7 @@ use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_gfx::raytracing::acceleration::GfxAcceleration;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_interface::pipeline_settings::FrameLabel;
+use truvis_render_foundation::pipeline_settings::FrameLabel;
 use truvis_shader_binding::gpu;
 
 /// 构建 GPU scene 所需的 per-FIF buffer 集。

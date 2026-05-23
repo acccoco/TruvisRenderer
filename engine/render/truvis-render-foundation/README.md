@@ -1,6 +1,6 @@
-# truvis-render-interface
+# truvis-render-foundation
 
-渲染契约层，提供帧调度、资源句柄、全局描述符与 GPU 资源管理通用原语。
+渲染基础层，提供 GPU 帧状态、资源句柄、全局描述符与 GPU 资源管理通用原语。
 
 ## 关键组件
 

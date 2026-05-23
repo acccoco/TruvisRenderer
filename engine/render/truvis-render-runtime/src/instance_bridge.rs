@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use slotmap::SecondaryMap;
 
-use truvis_render_interface::frame_counter::{FrameCounter, FrameToken};
+use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
 use truvis_shader_binding::gpu;
 use truvis_world::components::instance::Instance;
 use truvis_world::guid_new_type::InstanceHandle;

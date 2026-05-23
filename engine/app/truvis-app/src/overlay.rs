@@ -1,6 +1,6 @@
 use ash::vk;
 use truvis_app_frame::plugin_api::Plugin;
-use truvis_render_interface::pipeline_settings::PipelineSettings;
+use truvis_render_foundation::pipeline_settings::PipelineSettings;
 use truvis_render_runtime::platform::camera::Camera;
 
 #[derive(Default)]

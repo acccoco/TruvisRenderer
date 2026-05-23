@@ -2,7 +2,7 @@ use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::index_buffer::GfxIndexBuffer;
 use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
-use truvis_render_interface::pipeline_settings::FrameLabel;
+use truvis_render_foundation::pipeline_settings::FrameLabel;
 
 use crate::gui_vertex_layout::{ImGuiVertex, ImGuiVertexLayoutAoS};
 

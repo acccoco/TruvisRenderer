@@ -8,9 +8,9 @@ use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_path::TruvisPath;
-use truvis_render_interface::bindless_manager::{BindlessManager, BindlessSrvHandle};
-use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
-use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::bindless_manager::{BindlessManager, BindlessSrvHandle};
+use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
+use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 
 /// runtime 默认环境贴图资源。
 ///

@@ -13,20 +13,20 @@ use truvis_gfx::gfx::{Gfx, GfxDeviceInfoCtx};
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
-use truvis_render_interface::bindless_manager::BindlessManager;
-use truvis_render_interface::cmd_allocator::CmdAllocator;
-use truvis_render_interface::fif_buffer::FifBuffers;
-use truvis_render_interface::frame_counter::FrameCounter;
-use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
-use truvis_render_interface::global_descriptor_sets::{GlobalDescriptorSets, PerFrameDescriptorBinding};
-use truvis_render_interface::pipeline_settings::{
+use truvis_render_foundation::bindless_manager::BindlessManager;
+use truvis_render_foundation::cmd_allocator::CmdAllocator;
+use truvis_render_foundation::fif_buffer::FifBuffers;
+use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
+use truvis_render_foundation::global_descriptor_sets::{GlobalDescriptorSets, PerFrameDescriptorBinding};
+use truvis_render_foundation::pipeline_settings::{
     AccumData, DefaultRenderRuntimeSettings, FrameSettings, PipelineSettings,
 };
-use truvis_render_interface::sampler_manager::RenderSamplerManager;
+use truvis_render_foundation::sampler_manager::RenderSamplerManager;
 use truvis_shader_binding::gpu;
 use truvis_world::scene_manager::SceneManager;
 
-use truvis_render_interface::gpu_store::GpuStore;
+use truvis_render_foundation::gpu_store::GpuStore;
 use truvis_world::World;
 
 use crate::asset_mesh_uploader::AssetMeshUploader;

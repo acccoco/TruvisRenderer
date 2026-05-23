@@ -18,6 +18,7 @@
 - `truvis-render-graph` 已经不再依赖 `scene` / `asset`。
 - `truvis-gui-backend` 保持为 Vulkan ImGui 后端，RenderGraph 适配 `GuiRgPass` 仍在 `truvis-app`。
 - 通用 pass 已拆到 `truvis-render-passes`。
+- `truvis-render-interface` 已重命名为 `truvis-render-foundation`，用于承载 GPU 资源状态、manager 与渲染基础契约。
 
 仍然存在、文档中的讨论还有效的边界问题：
 
@@ -28,7 +29,7 @@
 - `AppPlugin` 仍是单插件槽位，不支持 `PluginGroup`、依赖声明或有序插件列表。
 - `truvis-frame-api` 仍暴露 `truvis-render-runtime` 中的 `Camera` / `RenderPresent` 等具体 backend 类型。
 - `RenderPresent` 仍同时持有 swapchain/present 资源和 `GuiBackend`。
-- `truvis-render-interface` 名字仍偏“接口”，但内容是 concrete render core：manager、`GpuStore`、`GpuScene`、`RenderData`。
+- `truvis-render-foundation` 仍承担 concrete render foundation：manager、`GpuStore` 与 render pass 可见的基础契约。
 - `truvis-app` 仍同时承担 demo、pipeline glue、RenderGraph 适配和过渡期依赖。
 - `truvis-render-passes` 仍依赖 `truvis-world`，说明 pass 层还可触达 CPU World。
 - `Gfx::get()` 全局单例仍存在。
@@ -37,7 +38,7 @@
 
 - `SceneBridge` / `SceneSnapshot`，把 CPU scene 语义和 GPU render data 构建拆开。
 - `AssetReadyEvent` / `AssetTextureEvent` 和 `TextureBindingCache`，把 asset ready 与 bindless 注册拆开。
-- `truvis-render-interface -> truvis-render-core` 或更彻底的 render core / render scene 拆分。
+- `truvis-render-foundation` 内容收窄，或更彻底的 render foundation / render scene 拆分。
 - `ViewDesc` / `PreparedView` / `ViewStore`，把隐式 main view 显式化。
 - 显式 `extract -> prepare -> render` phase。
 - 多 plugin / builtin plugin / plugin dependency declaration。
@@ -99,11 +100,11 @@
 - `BindlessManager` 归属：
   理想架构文档把它视作 Platform/device lifetime 资源；当前代码把它放在 `GpuStore`。短期继续尊重当前结构，中长期可随 SurfaceRegistry/Gfx 注入一起重新划分。
 - `RenderRuntime` 命名：
-  `Renderer -> RenderRuntime` 已落地；`truvis-render-interface -> truvis-render-core` 仍可后续单独评估。远期是否合并 `FrameRuntime + RenderRuntime` 对外称 `Renderer` 仍属于不同力度的命名演进。
+  `Renderer -> RenderRuntime` 已落地；`truvis-render-interface -> truvis-render-foundation` 已落地。远期是否合并 `FrameRuntime + RenderRuntime` 对外称 `Renderer` 仍属于不同力度的命名演进。
 - Plugin vs Tickable：
   `app-tick-system.md` 走轻量 `Tickable` 注册表；较新的 plugin 文档倾向固定 phase + builtin plugin。当前更适合优先考虑 builtin plugin，因为主线已经是 `AppPlugin`。
 - Asset 短期 vs 长期边界：
-  短期可以让 `AssetHub` 继续创建 GPU image/view，只移走 bindless 注册；长期目标是 `truvis-asset` 完全不依赖 `gfx` / `render-interface`。
+  短期可以让 `AssetHub` 继续创建 GPU image/view，只移走 bindless 注册；长期目标是 `truvis-asset` 完全不依赖 `gfx` / `render-foundation`。
 - View 抽象力度：
   当前推荐轻量 `MainView` / `PreparedView` 起步，不提前实现 UE 风格重型 `ViewFamily`。
 
@@ -119,7 +120,7 @@
 | P1 | 收窄 `app-api` contexts，减少 `RenderPresent` / concrete backend 泄漏 | 插件契约更稳定 |
 | P1 | 引入轻量 `ViewDesc` / `PreparedView` | 命名当前隐式 main view，为多视角和 per-view history 铺路 |
 | P2 | 多 plugin / builtin plugin | Camera/Input/GUI/Overlay 从 runtime 硬编码走向可组合 |
-| P2 | `truvis-render-interface -> truvis-render-core` 命名或内容收窄 | 名字与职责一致 |
+| P2 | `truvis-render-foundation` 内容收窄 | 名字与职责一致 |
 | P3 | SurfaceRegistry / Gfx 注入 / app crate 拆分 | 更彻底的平台与应用层解耦 |
 
 ## 5. 维护规则

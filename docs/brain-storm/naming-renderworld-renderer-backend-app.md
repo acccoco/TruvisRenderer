@@ -4,6 +4,7 @@
 对引擎核心四个概念的内涵、边界、当前命名问题和改进方向做系统梳理。
 
 > 2026-05-06 更新：方案 B 中 `truvis-renderer (struct Renderer) -> truvis-render-runtime (struct RenderRuntime)` 已采用。本文其余内容保留为命名决策的历史讨论记录。
+> 2026-05-23 更新：`truvis-render-interface` 最终采用 `truvis-render-foundation`，标准拼写为 foundation。下文保留 `truvis-render-core` 等历史候选用于说明当时的取舍。
 
 ## 1. 四个概念的本质定义
 
@@ -20,7 +21,7 @@
       PipelineSettings, FrameSettings, AccumData, per_frame_data_buffers
 
 类比：Bevy 的 GpuStore（渲染侧 ECS world）
-定义位置：truvis-render-interface/src/gpu_store.rs
+定义位置：truvis-render-foundation/src/gpu_store.rs
 ```
 
 设计特征：
@@ -247,6 +248,7 @@ FrameRuntime + Renderer  →  合并为新的 Renderer
 
 | 候选名 | 含义 | 优点 | 缺点 |
 |---|---|---|---|
+| `truvis-render-foundation` | 渲染基础层 | 与当前采用名称一致，强调 GPU 资源状态和 manager 是上层渲染能力的基础 | 比 `core` 略长 |
 | `truvis-render-core` | 渲染核心基础设施 | 简短、业界常用、准确 | "core" 一词有时被滥用 |
 | `truvis-render-infra` | 渲染基础设施 | 精确描述实际内容 | 略显非正式 |
 | `truvis-render-state` | 渲染状态管理 | 突出 GpuStore 数据容器角色 | 低估了 Manager 的执行逻辑 |
@@ -254,7 +256,7 @@ FrameRuntime + Renderer  →  合并为新的 Renderer
 | `truvis-render-substrate` | 渲染基底 | 精确、有区分度 | 不常见，学习成本 |
 | `truvis-gpu-runtime` | GPU 运行时 | 强调 GPU 侧 | 与 FrameRuntime 命名冲突 |
 
-综合推荐：**`truvis-render-core`**
-- 业界最广泛接受（Bevy 用 `bevy_render`，wgpu 生态用 `*-core`）
-- 准确传达 "渲染子系统的核心层" 含义
-- 与 `truvis-gfx`（RHI）和 `truvis-renderer`（backend）形成清晰层次
+最终采用：**`truvis-render-foundation`**
+- 强调该 crate 是 `truvis-gfx` 之上的渲染基础层，而不是抽象接口层。
+- 保留 `GpuStore`、资源 manager、全局 descriptor、frame state 与 `RenderSceneView` 等现有职责，不引入兼容 alias。
+- 与 `truvis-render-runtime` 的集成职责保持区分：foundation 提供状态与基础契约，runtime 负责生命周期推进和 GPU scene 上传。

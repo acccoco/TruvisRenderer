@@ -13,12 +13,12 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gui_backend::gui_mesh::GuiMesh;
 use truvis_gui_backend::gui_pass::GuiPass;
 use truvis_path::TruvisPath;
+use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::gpu_store::GpuStore;
+use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_graph::render_graph::{
     RenderGraphBuilder, RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext,
 };
-use truvis_render_interface::frame_counter::FrameCounter;
-use truvis_render_interface::gpu_store::GpuStore;
-use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
 
 const FONT_TEXTURE_ID: usize = 0;
 

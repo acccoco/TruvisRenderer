@@ -4,12 +4,12 @@ use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, Plugi
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
+use truvis_render_foundation::cmd_allocator::CmdAllocator;
+use truvis_render_foundation::fif_buffer::FifBuffers;
+use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
+use truvis_render_foundation::pipeline_settings::FrameLabel;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
-use truvis_render_interface::cmd_allocator::CmdAllocator;
-use truvis_render_interface::fif_buffer::FifBuffers;
-use truvis_render_interface::frame_counter::FrameCounter;
-use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_interface::pipeline_settings::FrameLabel;
 use truvis_render_passes::blit_pass::{BlitPass, BlitRgPass};
 use truvis_render_passes::denoise_accum_pass::{DenoiseAccumPass, DenoiseAccumRgPass};
 use truvis_render_passes::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};

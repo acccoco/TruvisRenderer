@@ -3409,8 +3409,8 @@ dependencies = [
  "truvis-gfx",
  "truvis-gui-backend",
  "truvis-path",
+ "truvis-render-foundation",
  "truvis-render-graph",
- "truvis-render-interface",
  "truvis-render-passes",
  "truvis-render-runtime",
  "truvis-shader-binding",
@@ -3429,7 +3429,7 @@ dependencies = [
  "tracy-client",
  "truvis-gfx",
  "truvis-logs",
- "truvis-render-interface",
+ "truvis-render-foundation",
  "truvis-render-runtime",
  "truvis-world",
 ]
@@ -3530,7 +3530,7 @@ dependencies = [
  "log",
  "truvis-gfx",
  "truvis-path",
- "truvis-render-interface",
+ "truvis-render-foundation",
  "truvis-shader-binding",
  "truvis-utils",
 ]
@@ -3555,21 +3555,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "truvis-render-graph"
-version = "0.1.0"
-dependencies = [
- "ash",
- "glam",
- "itertools 0.10.5",
- "log",
- "slotmap",
- "tracy-client",
- "truvis-gfx",
- "truvis-render-interface",
-]
-
-[[package]]
-name = "truvis-render-interface"
+name = "truvis-render-foundation"
 version = "0.1.0"
 dependencies = [
  "ash",
@@ -3586,6 +3572,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "truvis-render-graph"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "glam",
+ "itertools 0.10.5",
+ "log",
+ "slotmap",
+ "tracy-client",
+ "truvis-gfx",
+ "truvis-render-foundation",
+]
+
+[[package]]
 name = "truvis-render-passes"
 version = "0.1.0"
 dependencies = [
@@ -3598,8 +3598,8 @@ dependencies = [
  "truvis-descriptor-layout-trait",
  "truvis-gfx",
  "truvis-path",
+ "truvis-render-foundation",
  "truvis-render-graph",
- "truvis-render-interface",
  "truvis-shader-binding",
  "truvis-utils",
 ]
@@ -3621,8 +3621,8 @@ dependencies = [
  "truvis-asset",
  "truvis-gfx",
  "truvis-path",
+ "truvis-render-foundation",
  "truvis-render-graph",
- "truvis-render-interface",
  "truvis-shader-binding",
  "truvis-world",
  "vk-mem",

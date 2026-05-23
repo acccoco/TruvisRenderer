@@ -7,7 +7,7 @@ description = "imgui GUI 后端实现"
 
 [dependencies]
 truvis-gfx = { workspace = true }
-truvis-render-interface = { workspace = true }
+truvis-render-foundation = { workspace = true }
 truvis-path = { workspace = true }
 truvis-shader-binding = { workspace = true }
 truvis-utils = { workspace = true }

@@ -3,7 +3,7 @@ use slotmap::SecondaryMap;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageView;
-use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 
 use crate::render_graph::{RgImageHandle, RgImageState};
 
@@ -15,7 +15,7 @@ pub struct RgPassContext<'a> {
     pub cmd: &'a GfxCommandBuffer,
 
     /// 资源管理器引用（用于获取物理资源）
-    pub resource_manager: &'a truvis_render_interface::gfx_resource_manager::GfxResourceManager,
+    pub resource_manager: &'a truvis_render_foundation::gfx_resource_manager::GfxResourceManager,
 
     /// 物理资源查询表（编译后填充）
     pub(crate) image_handles: &'a SecondaryMap<RgImageHandle, (GfxImageHandle, GfxImageViewHandle)>,

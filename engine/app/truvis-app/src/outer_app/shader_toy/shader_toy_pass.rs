@@ -15,7 +15,7 @@ use truvis_gfx::{
     },
 };
 use truvis_path::TruvisPath;
-use truvis_render_interface::gpu_store::GpuStore;
+use truvis_render_foundation::gpu_store::GpuStore;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
 

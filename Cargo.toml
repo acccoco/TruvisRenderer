@@ -12,7 +12,7 @@ members = [
     "engine/gfx/truvis-descriptor-layout-macro",
     "engine/gfx/truvis-descriptor-layout-trait",
     # render
-    "engine/render/truvis-render-interface",
+    "engine/render/truvis-render-foundation",
     "engine/render/truvis-render-graph",
     "engine/render/truvis-render-runtime",
     "engine/render/truvis-render-passes",
@@ -58,7 +58,7 @@ truvis-gfx = { path = "engine/gfx/truvis-gfx" }
 truvis-descriptor-layout-macro = { path = "engine/gfx/truvis-descriptor-layout-macro" }
 truvis-descriptor-layout-trait = { path = "engine/gfx/truvis-descriptor-layout-trait" }
 # render
-truvis-render-interface = { path = "engine/render/truvis-render-interface" }
+truvis-render-foundation = { path = "engine/render/truvis-render-foundation" }
 truvis-render-graph = { path = "engine/render/truvis-render-graph" }
 truvis-render-passes = { path = "engine/render/truvis-render-passes" }
 truvis-render-runtime = { path = "engine/render/truvis-render-runtime" }

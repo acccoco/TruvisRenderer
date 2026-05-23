@@ -1,5 +1,5 @@
 [package]
-name = "truvis-render-interface"
+name = "truvis-render-foundation"
 version = "0.1.0"
 edition = "2024"
 description = "GPU 的边界"

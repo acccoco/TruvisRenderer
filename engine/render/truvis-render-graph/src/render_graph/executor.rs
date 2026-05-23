@@ -11,8 +11,8 @@ use slotmap::SecondaryMap;
 
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::submit_info::GfxSubmitInfo;
-use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
-use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
+use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 
 use crate::render_graph::barrier::{PassBarriers, RgImageBarrierDesc};
 use crate::render_graph::export_info::RgExportInfo;

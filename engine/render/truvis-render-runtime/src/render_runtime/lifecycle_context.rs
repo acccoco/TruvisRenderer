@@ -2,10 +2,10 @@ use ash::vk;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
-use truvis_render_interface::cmd_allocator::CmdAllocator;
-use truvis_render_interface::gpu_store::GpuStore;
-use truvis_render_interface::pipeline_settings::{AccumData, FrameSettings, PipelineSettings};
-use truvis_render_interface::render_scene_view::RenderSceneView;
+use truvis_render_foundation::cmd_allocator::CmdAllocator;
+use truvis_render_foundation::gpu_store::GpuStore;
+use truvis_render_foundation::pipeline_settings::{AccumData, FrameSettings, PipelineSettings};
+use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_world::World;
 
 use crate::present::render_present::PresentView;

@@ -5,8 +5,8 @@ use truvis_app_frame::input_event::InputEvent;
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
 use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx, RenderAppShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
+use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
-use truvis_render_interface::frame_counter::FrameCounter;
 use truvis_render_runtime::platform::camera::Camera;
 use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 

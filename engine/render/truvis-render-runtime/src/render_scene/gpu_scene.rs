@@ -4,11 +4,11 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::raytracing::acceleration::GfxAcceleration;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_interface::bindless_manager::BindlessManager;
-use truvis_render_interface::frame_counter::FrameCounter;
-use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
-use truvis_render_interface::pipeline_settings::FrameLabel;
-use truvis_render_interface::render_scene_view::RenderSceneView;
+use truvis_render_foundation::bindless_manager::BindlessManager;
+use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
+use truvis_render_foundation::pipeline_settings::FrameLabel;
+use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_shader_binding::gpu;
 
 use super::buffers::GpuSceneBuffers;

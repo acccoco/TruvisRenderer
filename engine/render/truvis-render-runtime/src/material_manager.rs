@@ -13,8 +13,8 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_interface::frame_counter::{FrameCounter, FrameToken};
-use truvis_render_interface::pipeline_settings::FrameLabel;
+use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
+use truvis_render_foundation::pipeline_settings::FrameLabel;
 use truvis_shader_binding::gpu;
 
 use crate::texture_resolver::{TextureBinding, TextureResolver};

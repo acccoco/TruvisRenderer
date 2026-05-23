@@ -14,9 +14,9 @@ use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_interface::bindless_manager::{BindlessManager, BindlessSrvHandle};
-use truvis_render_interface::gfx_resource_manager::GfxResourceManager;
-use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::bindless_manager::{BindlessManager, BindlessSrvHandle};
+use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
+use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_shader_binding::gpu;
 
 use crate::texture_resolver::{TextureBinding, TextureResolver};
