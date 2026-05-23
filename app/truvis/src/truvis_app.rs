@@ -194,6 +194,12 @@ impl TruvisApp {
                 }
             });
     }
+
+    fn cast_single_ray(ctx: &mut RenderRuntimeRayCastCtx<'_>, ray: RayCastRay) -> Result<RayCastResult, String> {
+        ctx.cast_sync(std::slice::from_ref(&ray))
+            .map_err(|err| err.to_string())
+            .map(|mut results| results.pop().expect("single raycast result missing"))
+    }
 }
 
 impl RenderAppHooks for TruvisApp {
@@ -255,22 +261,22 @@ impl RenderAppHooks for TruvisApp {
     }
 
     fn after_prepare(&mut self, ctx: &mut RenderRuntimeRayCastCtx<'_>) {
-        if !self.center_ray_cast_probe.request_pending {
-            return;
+        if let Some(request) = self.camera_controller.take_pending_pivot_raycast() {
+            let result = Self::cast_single_ray(ctx, request.ray);
+            self.camera_controller.finish_pivot_raycast(request, result);
         }
 
-        let camera = self.camera_controller.camera();
-        let ray = RayCastRay {
-            origin_ws: camera.position,
-            direction_ws: camera.camera_forward().normalize(),
-            t_min: camera.near.max(0.001),
-            t_max: 10000.0,
-        };
-        let result = ctx
-            .cast_sync(std::slice::from_ref(&ray))
-            .map_err(|err| err.to_string())
-            .map(|mut results| results.pop().expect("single raycast result missing"));
-        self.center_ray_cast_probe.finish_cast(result);
+        if self.center_ray_cast_probe.request_pending {
+            let camera = self.camera_controller.camera();
+            let ray = RayCastRay {
+                origin_ws: camera.position,
+                direction_ws: camera.camera_forward().normalize(),
+                t_min: camera.near.max(0.001),
+                t_max: 10000.0,
+            };
+            let result = Self::cast_single_ray(ctx, ray);
+            self.center_ray_cast_probe.finish_cast(result);
+        }
     }
 
     fn render(&mut self, ctx: &RenderRuntimeRenderCtx) {
