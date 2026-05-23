@@ -46,7 +46,7 @@ fn config() -> &'static MapConfig {
 /// # 使用示例
 /// ```ignore
 /// let model   = TruvisPath::assets("sponza.fbx");
-/// let texture = TruvisPath::resources("uv_checker.png");
+/// let texture = TruvisPath::resources("uv_checker.png"); // assets/resources/uv_checker.png
 /// let spv     = TruvisPath::shader_build_spv("rt/raygen.slang");
 /// ```
 pub struct TruvisPath;
@@ -115,23 +115,23 @@ impl TruvisPath {
         Self::assets_str(filename)
     }
 
-    /// `resources/<filename>` 路径
+    /// `assets/resources/<filename>` 路径
     pub fn resources(filename: &str) -> PathBuf {
         Self::workspace().join(&config().dirs.resources).join(filename)
     }
 
-    /// `resources/<filename>` 路径（兼容旧名称）
+    /// `assets/resources/<filename>` 路径（兼容旧名称）
     #[inline]
     pub fn resources_path(filename: &str) -> PathBuf {
         Self::resources(filename)
     }
 
-    /// `resources/<filename>` 路径（字符串形式）
+    /// `assets/resources/<filename>` 路径（字符串形式）
     pub fn resources_str(filename: &str) -> String {
         Self::resources(filename).to_str().unwrap().to_string()
     }
 
-    /// `resources/<filename>` 路径（字符串形式，兼容旧名称）
+    /// `assets/resources/<filename>` 路径（字符串形式，兼容旧名称）
     #[inline]
     pub fn resources_path_str(filename: &str) -> String {
         Self::resources_str(filename)
