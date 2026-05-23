@@ -1,6 +1,7 @@
 set shell := ["powershell.exe", "-c"]
 
 validation_layer_settings := justfile_directory() + "\\tools\\vulkan\\khronos_validation_settings.txt"
+tracy_profiler := justfile_directory() + "\\tools\\tracy\\tracy-profiler.exe"
 
 # 显示可用命令
 [group('1 常用工作流')]
@@ -53,44 +54,57 @@ sponza: shader cxx (_run-rt-sample "rt-sponza")
 [group('3 运行示例')]
 sponza-validation: shader cxx (_run-rt-validation "rt-sponza")
 
+# 直接运行 Sponza 主体应用，不更新 shader / CXX 绑定
+[group('3 运行示例')]
+sponza-direct: (_run-rt-sample "rt-sponza")
+
+# 直接使用 Vulkan validation layer 运行 Sponza 主体应用，不更新 shader / CXX 绑定
+[group('3 运行示例')]
+sponza-direct-validation: (_run-rt-validation "rt-sponza")
+
+# 启动 Tracy Profiler
+[group('4 工具入口')]
+tracy:
+    Start-Process -FilePath '{{ tracy_profiler }}'
+
 # 配置 clang-cl Debug preset
-[group('4 CXX CMake 手工入口')]
+[group('5 CXX CMake 手工入口')]
 cxx-preset-clang: (_cxx-preset "clang-cl-debug")
 
 # 配置 clang-cl Release preset
-[group('4 CXX CMake 手工入口')]
+[group('5 CXX CMake 手工入口')]
 cxx-preset-clang-release: (_cxx-preset "clang-cl-release")
 
 # 配置 Visual Studio 2022 preset
-[group('4 CXX CMake 手工入口')]
+[group('5 CXX CMake 手工入口')]
 cxx-preset-vs2022: (_cxx-preset "vs2022")
 
 # 配置 Visual Studio 2022 preset 的兼容别名
-[group('4 CXX CMake 手工入口')]
+[group('5 CXX CMake 手工入口')]
 cxx-preset-vs: (_cxx-preset "vs2022")
 
 # 配置 Visual Studio 2026 preset
-[group('4 CXX CMake 手工入口')]
+[group('5 CXX CMake 手工入口')]
 cxx-preset-vs2026: (_cxx-preset "vs2026")
 
 # 构建 Visual Studio 2022 Debug preset
-[group('4 CXX CMake 手工入口')]
+[group('5 CXX CMake 手工入口')]
 cxx-build-vs2022: (_cxx-build "vs2022-build-debug")
 
 # 构建 Visual Studio 2022 Debug preset 的兼容别名
-[group('4 CXX CMake 手工入口')]
+[group('5 CXX CMake 手工入口')]
 cxx-build-vs: (_cxx-build "vs2022-build-debug")
 
 # 构建 Visual Studio 2026 Debug preset
-[group('4 CXX CMake 手工入口')]
+[group('5 CXX CMake 手工入口')]
 cxx-build-vs2026: (_cxx-build "vs2026-build-debug")
 
 # 构建 clang-cl Debug preset
-[group('4 CXX CMake 手工入口')]
+[group('5 CXX CMake 手工入口')]
 cxx-build-clang: (_cxx-build "clang-cl-build-debug")
 
 # 构建 clang-cl Release preset
-[group('4 CXX CMake 手工入口')]
+[group('5 CXX CMake 手工入口')]
 cxx-build-clang-release: (_cxx-build "clang-cl-build-release")
 
 _run-sample bin:

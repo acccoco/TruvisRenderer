@@ -47,12 +47,19 @@ just build-all
 `assets/resources/` 保存窗口图标、字体、默认天空图和 uv checker 等运行时资源；
 `tools/` 保存 Slang、Tracy 和 Vulkan validation layer 配置等外部工具资源。
 
+启动 Tracy Profiler：
+
+```powershell
+just tracy
+```
+
 ### 运行示例
 
 ```powershell
 just triangle
 just cornell
 just sponza
+just sponza-direct
 just shader-toy
 ```
 
@@ -61,6 +68,7 @@ just shader-toy
 ```powershell
 just cornell-validation
 just sponza-validation
+just sponza-direct-validation
 ```
 
 ## 运行时架构（当前）
