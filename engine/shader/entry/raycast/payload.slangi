@@ -1,0 +1,18 @@
+#pragma once
+
+#include "share/pass/raycast.slangi"
+
+[[vk::push_constant]]
+raycast::PushConstants push_const;
+
+struct RayCastPayload
+{
+    bool hit;
+    uint instance_slot;
+    uint submesh_index;
+    uint primitive_index;
+    float3 position_ws;
+    float3 normal_ws;
+    float2 uv;
+    float hit_t;
+};

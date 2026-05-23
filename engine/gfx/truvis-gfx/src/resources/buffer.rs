@@ -115,6 +115,11 @@ impl GfxBuffer {
     pub fn new_stage_buffer(ctx: GfxResourceCtx<'_>, size: vk::DeviceSize, debug_name: impl AsRef<str>) -> Self {
         Self::new(ctx, size, vk::BufferUsageFlags::TRANSFER_SRC, None, true, debug_name)
     }
+
+    #[inline]
+    pub fn new_readback_buffer(ctx: GfxResourceCtx<'_>, size: vk::DeviceSize, debug_name: impl AsRef<str>) -> Self {
+        Self::new(ctx, size, vk::BufferUsageFlags::TRANSFER_DST, None, true, debug_name)
+    }
 }
 // 销毁
 impl GfxBuffer {
@@ -182,6 +187,13 @@ impl GfxBuffer {
         let allocator = ctx.allocator();
         let allocation = self.allocation.as_ref().expect("GfxBuffer allocation missing");
         allocator.flush_allocation(allocation, offset, size).unwrap();
+    }
+
+    #[inline]
+    pub fn invalidate(&self, ctx: GfxResourceCtx<'_>, offset: vk::DeviceSize, size: vk::DeviceSize) {
+        let allocator = ctx.allocator();
+        let allocation = self.allocation.as_ref().expect("GfxBuffer allocation missing");
+        allocator.invalidate_allocation(allocation, offset, size).unwrap();
     }
 
     /// 通过 mem map 的方式将 data 传入到 buffer 中

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use slotmap::SecondaryMap;
 
+use truvis_asset::handle::{AssetMaterialHandle, AssetMeshHandle};
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
 use truvis_shader_binding::gpu;
 use truvis_world::components::instance::Instance;
@@ -38,6 +39,17 @@ struct RetiredSlot {
     retired_frame_id: u64,
 }
 
+/// 同步 raycast 使用的 CPU 反查记录。
+///
+/// GPU hit 只返回稳定 instance slot 与 submesh index；该快照在 prepare 阶段生成，
+/// 保证 after_prepare 中的同步查询能把 GPU world 结果还原成 CPU scene/asset handle。
+#[derive(Clone)]
+pub(crate) struct RayCastInstanceRecord {
+    pub(crate) instance: InstanceHandle,
+    pub(crate) mesh: AssetMeshHandle,
+    pub(crate) materials: Vec<AssetMaterialHandle>,
+}
+
 /// Render-side runtime instance bridge.
 ///
 /// 它为 `InstanceHandle` 分配生命周期内稳定的 GPU instance slot，并在 mesh/material
@@ -50,6 +62,7 @@ pub struct InstanceBridge {
     retired_slots: Vec<RetiredSlot>,
     frame_token: FrameToken,
     revision: u64,
+    ray_cast_records: Vec<Option<RayCastInstanceRecord>>,
 }
 
 impl InstanceBridge {
@@ -65,6 +78,7 @@ impl InstanceBridge {
             retired_slots: Vec::new(),
             frame_token,
             revision: 0,
+            ray_cast_records: vec![None; MAX_INSTANCE_COUNT as usize],
         }
     }
 
@@ -80,6 +94,11 @@ impl InstanceBridge {
     /// 实例增删、ready 状态变化和 active transform 变化都会推进该值。
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// 读取当前 prepare 快照中的 raycast 反查记录。
+    pub(crate) fn ray_cast_record(&self, instance_slot: u32) -> Option<&RayCastInstanceRecord> {
+        self.ray_cast_records.get(instance_slot as usize)?.as_ref()
     }
 
     /// 从 CPU `SceneManager` 构建本帧可渲染的 `RenderData` 快照。
@@ -102,6 +121,7 @@ impl InstanceBridge {
         let mut mesh_geometry_start_indices: Vec<usize> = Vec::new();
         let mut total_geometry_count = 0;
         let mut all_instances: Vec<InstanceRenderData> = Vec::new();
+        self.ray_cast_records.fill(None);
 
         let mut active_instances = self
             .bindings
@@ -114,7 +134,7 @@ impl InstanceBridge {
             .collect::<Vec<_>>();
         active_instances.sort_by_key(|(_, binding, _)| binding.slot);
 
-        'active: for (_handle, binding, instance) in active_instances {
+        'active: for (handle, binding, instance) in active_instances {
             let mesh_index = if let Some(&index) = mesh_handle_to_index.get(&instance.mesh) {
                 index
             } else {
@@ -142,6 +162,11 @@ impl InstanceBridge {
                 mesh_index,
                 material_slots,
                 transform: instance.transform,
+            });
+            self.ray_cast_records[binding.slot.as_usize()] = Some(RayCastInstanceRecord {
+                instance: handle,
+                mesh: instance.mesh,
+                materials: instance.materials.clone(),
             });
         }
 

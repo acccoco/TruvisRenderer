@@ -8,7 +8,9 @@ use truvis_render_foundation::pipeline_settings::{AccumData, FrameSettings, Pipe
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_world::World;
 
+use crate::instance_bridge::InstanceBridge;
 use crate::present::render_present::PresentView;
+use crate::ray_cast::{RayCastRay, RayCastResult, RayCastService};
 
 /// Update 阶段上下文，借用 CPU 端更新需要的 RenderRuntime 字段。
 ///
@@ -50,6 +52,38 @@ pub struct RenderRuntimeRenderCtx<'a> {
     pub render_present: PresentView<'a>,
     /// runtime 全局 FIF timeline，用于 render graph signal 当前 frame id。
     pub timeline: &'a GfxSemaphore,
+}
+
+/// prepare 后、render 前的同步查询上下文。
+///
+/// 到达该阶段时 GPU scene 已完成 CPU->GPU 翻译并提交到 graphics queue。App 可以在这里
+/// 发起同步 raycast，runtime 会阻塞等待 GPU trace 与 readback 完成，再返回 CPU handle 语义。
+pub struct RenderRuntimeRayCastCtx<'a> {
+    pub(crate) device_ctx: GfxDeviceCtx<'a>,
+    pub(crate) resource_ctx: GfxResourceCtx<'a>,
+    pub(crate) queue_ctx: GfxQueueCtx<'a>,
+    pub(crate) gpu_store: &'a GpuStore,
+    pub(crate) render_scene: &'a dyn RenderSceneView,
+    pub(crate) instance_bridge: &'a InstanceBridge,
+    pub(crate) ray_cast_service: &'a mut RayCastService,
+}
+
+impl RenderRuntimeRayCastCtx<'_> {
+    /// 同步执行一批 world-space raycast。
+    ///
+    /// 返回结果与输入 ray 顺序一致。该调用会提交 GPU ray tracing 命令并等待 fence，
+    /// 因此应只用于 App 明确需要即时命中结果的交互路径。
+    pub fn cast_sync(&mut self, rays: &[RayCastRay]) -> anyhow::Result<Vec<RayCastResult>> {
+        self.ray_cast_service.cast_sync(
+            self.resource_ctx,
+            self.device_ctx,
+            self.queue_ctx,
+            self.gpu_store,
+            self.render_scene,
+            self.instance_bridge,
+            rays,
+        )
+    }
 }
 
 /// Init 阶段上下文，用于 window/surface 创建后的一次性设置。

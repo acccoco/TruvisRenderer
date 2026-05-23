@@ -124,6 +124,11 @@ where
         }
 
         render_runtime.prepare(app.camera());
+        {
+            let _span = tracy_client::span!("RenderAppShell::after_prepare");
+            let mut ray_cast_ctx = render_runtime.ray_cast_phase();
+            app.after_prepare(&mut ray_cast_ctx);
+        }
 
         {
             let _span = tracy_client::span!("RenderAppShell::render");

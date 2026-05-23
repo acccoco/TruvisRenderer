@@ -19,6 +19,8 @@ mod asset_texture_uploader;
 mod instance_bridge;
 mod material_bridge;
 mod material_manager;
+/// prepare 后供 App 同步查询可见表面命中的 raycast API。
+pub mod ray_cast;
 /// `RenderRuntime` 及其阶段化上下文，是上层 runtime 直接驱动的主入口。
 pub mod render_runtime;
 mod render_scene;

@@ -10,9 +10,11 @@
 - 提供 `begin_frame`、`update_phase`、`prepare`、`render_phase`、`present`、`end_frame`、
   `handle_resize`、`shutdown_phase` 和 `destroy` 等生命周期入口。
 - 产出 `RenderRuntimeInitCtx`、`RenderRuntimeUpdateCtx`、`RenderRuntimeRenderCtx`、
-  `RenderRuntimeResizeCtx` 和 `RenderRuntimeShutdownCtx`，让上层只能在对应阶段访问窄化能力。
+  `RenderRuntimeRayCastCtx`、`RenderRuntimeResizeCtx` 和 `RenderRuntimeShutdownCtx`，让上层只能在对应阶段访问窄化能力。
 - 负责 CPU scene/assets 到 render-side GPU 表示的桥接，包括 texture upload、mesh upload、
   material slot、instance slot、GPU scene buffer、BLAS/TLAS 和 raster draw cache。
+- 在 `prepare` 完成后提供 runtime-owned 同步 raycast 服务，把 GPU hit 的 instance slot
+  与 submesh index 转回 CPU `InstanceHandle` / asset handle。
 - 负责 surface/swapchain/present image wrapper、acquire/present semaphore 与窗口 resize 重建。
 - 不负责窗口事件循环、具体 app/plugin 编排、GUI RenderGraph 适配、Assimp 文件导入或具体 pass 逻辑。
 
@@ -32,7 +34,9 @@
 - `MaterialBridge` 消费 `MaterialLoaded` 事件并维护 `AssetMaterialHandle -> GpuMaterialHandle` 桥接，
   底层 `MaterialManager` 负责 stable material slot、FIF material buffer、dirty region 上传、texture ready 检查和延迟 slot 回收。
 - `InstanceBridge` 同步 `InstanceHandle -> GpuInstanceSlot`，在 mesh/material 都 GPU ready 前保持
-  pending，并按稳定 slot 输出 active render list。
+  pending，并按稳定 slot 输出 active render list，同时为同步 raycast 生成当前 prepare 快照的 slot 反查表。
+- `RayCastService` 持有专用 ray tracing pipeline/SBT、可增长 ray/result/readback buffer、
+  command pool 和 fence；它由 runtime 拥有，不进入 RenderGraph。
 - `RenderPresent` 拥有 surface、swapchain wrapper、swapchain image/view handle 和 present 同步对象；
   app/plugin 只通过 `PresentView` / `PresentTargetView` 读取当前窗口 target 和 semaphore，不直接访问 owner 字段。
 
@@ -44,6 +48,8 @@
   调用方仍通过 `truvis_render_runtime::render_runtime::*Ctx` 使用这些阶段契约。
 - `RenderRuntimeRenderCtx` 只暴露 `GpuStore`、`RenderSceneView`、`PresentView` 和 timeline；
   不暴露 texture/mesh uploader owner，pass 不能绕过 runtime 私有 bridge 读取上传缓存。
+- `RenderRuntimeRayCastCtx` 只暴露同步批量 raycast 调用；App 应在 `after_prepare`
+  阶段使用它，update/input 阶段不提供该接口。
 
 ## 生命周期
 
@@ -58,6 +64,9 @@
 - `prepare(camera)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 app 提供的 camera，
   在 `RenderRuntime` 内部同步 material/instance/mesh/texture 状态、上传 GPU scene
   和 per-frame data，再刷新 per-frame descriptor。
+- `ray_cast_phase` 发生在 `prepare` 之后、`render_phase` 之前。同步 raycast 提交到
+  graphics queue，并用 fence 阻塞等待 readback；队列顺序保证它能看到本帧 prepare
+  提交的 GPU scene/TLAS。
 - `render_phase` 返回只读 render Ctx；pass 只能读取 `GpuStore`、`RenderSceneView`、
   present target 和 timeline，不再修改 CPU scene 或接触 uploader owner。
 - `present` 只提交当前 swapchain image 到 present queue；渲染命令提交由上层 render graph 完成。
@@ -76,6 +85,8 @@
   prepare 阶段再通过 `TextureResolver` 把 texture fallback/ready 状态按 dirty slot 局部写入 material buffer。
 - `InstanceBridge` 读取 `SceneManager`，并通过 `MaterialSlotResolver` 与 `MeshRenderResolver`
   做 ready gate，只有完整可渲染的实例才进入 `RenderData`。
+- `InstanceBridge` 在同一次 prepare 输出中同步生成 `GpuInstanceSlot -> CPU record`
+  反查快照。raycast readback 只信任这个快照，避免查询阶段重新遍历 CPU scene。
 - `GpuScene` 消费 `RenderData`，按当前 FIF 上传 geometry、instance、light、indirect 和 scene
   root buffer，必要时重建 TLAS，并刷新 raster draw cache。
 
@@ -88,6 +99,8 @@
   并包含 device address 输入对应的 `SHADER_READ` 访问。
 - material slot 与 instance slot 都延迟到跨过 FIF 窗口后才回收，避免在飞命令中的旧索引指向新对象。
 - mesh ready revision 与 instance revision 合成 scene revision，`GpuScene` 只在当前 FIF 的 TLAS 过期时重建。
+- 同步 raycast 是阻塞接口，适合拾取、编辑器选择等即时交互，不适合作为每帧大规模查询队列。
+  结果语义是视觉拾取：closest hit shader 返回可见表面，any-hit 会按材质 opacity / diffuse alpha 忽略透明命中。
 - swapchain resize 采用 latest-size 标记；窗口事件只记录最新尺寸，实际重建延迟到 render loop 的安全点。
 
 ## Tracy 初始化埋点

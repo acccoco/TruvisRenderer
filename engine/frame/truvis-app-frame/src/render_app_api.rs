@@ -7,8 +7,8 @@
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use truvis_render_runtime::platform::camera::Camera;
 use truvis_render_runtime::render_runtime::{
-    RenderRuntimeInitCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx,
-    RenderRuntimeUpdateCtx,
+    RenderRuntimeInitCtx, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx,
+    RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx,
 };
 
 use crate::input_event::InputEvent;
@@ -37,7 +37,7 @@ pub trait RenderApp {
     /// 执行一帧完整渲染流程。
     ///
     /// `RenderAppShell` 的实现顺序是 begin frame、派发输入、App update、
-    /// Plugin update、runtime prepare、App render、present、end frame。
+    /// Plugin update、runtime prepare、App after_prepare、App render、present、end frame。
     /// 其他实现也应保持同样的阶段边界，避免 App/Plugin 在错误阶段访问 GPU
     /// 或帧状态。
     fn run_frame(&mut self);
@@ -132,6 +132,13 @@ pub trait RenderAppHooks {
     /// 该 hook 发生在 runtime update phase 中，早于标准 Plugin update 和 runtime
     /// prepare。适合更新相机、overlay、UI frame state 或全局 pipeline settings。
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx);
+
+    /// 在 runtime prepare 完成后、render graph 组图前执行 App 同步查询。
+    ///
+    /// 该阶段 GPU scene/TLAS 已按当前 CPU world 与 camera 快照完成同步，适合调用
+    /// `RenderRuntimeRayCastCtx::cast_sync` 做即时拾取。默认实现为空，避免未使用 raycast
+    /// 的 App 需要额外接入。
+    fn after_prepare(&mut self, _ctx: &mut RenderRuntimeRayCastCtx<'_>) {}
 
     /// 构建并录制本帧 App 语义下的渲染工作。
     ///

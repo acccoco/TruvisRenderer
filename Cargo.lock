@@ -3635,6 +3635,7 @@ dependencies = [
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
+ "truvis-render-passes",
  "truvis-shader-binding",
  "truvis-world",
  "vk-mem",

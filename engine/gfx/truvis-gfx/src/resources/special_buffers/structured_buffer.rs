@@ -48,6 +48,11 @@ impl<T> GfxStructuredBuffer<T> {
     }
 
     #[inline]
+    pub fn new_readback_buffer(ctx: GfxResourceCtx<'_>, len: usize, debug_name: impl AsRef<str>) -> Self {
+        Self::new(ctx, debug_name, len, vk::BufferUsageFlags::TRANSFER_DST, true)
+    }
+
+    #[inline]
     pub fn new(
         ctx: GfxResourceCtx<'_>,
         debug_name: impl AsRef<str>,
@@ -68,6 +73,11 @@ impl<T> GfxStructuredBuffer<T> {
     pub fn mapped_slice(&mut self) -> &mut [T] {
         let mapped_ptr = self.inner.mapped_ptr();
         unsafe { std::slice::from_raw_parts_mut(mapped_ptr as *mut T, self.ele_num) }
+    }
+
+    pub fn mapped_slice_ref(&self) -> &[T] {
+        let mapped_ptr = self.inner.mapped_ptr();
+        unsafe { std::slice::from_raw_parts(mapped_ptr as *const T, self.ele_num) }
     }
 }
 impl<T: bytemuck::Pod> DebugType for GfxStructuredBuffer<T> {

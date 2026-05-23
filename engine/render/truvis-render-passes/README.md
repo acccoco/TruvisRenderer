@@ -8,11 +8,14 @@
 - 提供可接入 `truvis-render-graph` 的 pass adapter。
 - 使用 `GpuStore` 读取 GPU frame state、global descriptors、bindless 和资源 manager。
 - 在需要场景数据的 pass 中通过 `RenderSceneView` 读取 scene buffer / TLAS / raster draw 能力，不在 render phase 访问 `World` 或重新 prepare scene。
+- `RayCastPass` 只负责 GPU ray tracing pipeline/SBT 与 trace 命令录制；同步 readback、
+  buffer 扩容、fence 等阶段化服务由 `truvis-render-runtime::RayCastService` 持有。
 
 ## 边界约束
 
 - 本 crate 不负责 App 级 pass 顺序、GUI overlay 顺序或 demo pipeline 编排。
 - 本 crate 不持有 `RenderRuntime`，也不依赖 frame runtime 或 App hooks。
+- `RayCastPass` 不提供 RenderGraph adapter；它服务 prepare 后的同步查询路径，而不是常规帧图 pass。
 - `GuiPass` 不在本 crate 中；GUI Vulkan 后端属于 `truvis-gui-backend`，GUI RenderGraph 集成属于 `truvis-app/app-kit` 的 `GuiPlugin`。
 
 ## 设计意图

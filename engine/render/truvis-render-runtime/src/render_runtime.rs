@@ -36,13 +36,14 @@ use crate::material_bridge::MaterialBridge;
 use crate::platform::camera::Camera;
 use crate::platform::timer::Timer;
 use crate::present::render_present::RenderPresent;
+use crate::ray_cast::RayCastService;
 use crate::render_scene::gpu_scene::GpuScene;
 
 mod lifecycle_context;
 
 pub use lifecycle_context::{
-    RenderRuntimeInitCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx,
-    RenderRuntimeUpdateCtx,
+    RenderRuntimeInitCtx, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx,
+    RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx,
 };
 
 /// 渲染运行时核心。
@@ -79,6 +80,7 @@ pub struct RenderRuntime {
     asset_mesh_uploader: AssetMeshUploader,
     material_bridge: MaterialBridge,
     instance_bridge: InstanceBridge,
+    ray_cast_service: RayCastService,
 
     cmd_allocator: CmdAllocator,
 
@@ -197,6 +199,16 @@ impl RenderRuntime {
             let _span = tracy_client::span!("RenderRuntime::new/samplers");
             RenderSamplerManager::new(gfx.device_ctx(), render_descriptor_sets.static_sampler_target())
         };
+        let ray_cast_service = {
+            let _span = tracy_client::span!("RenderRuntime::new/ray_cast_service");
+            RayCastService::new(
+                gfx.resource_ctx(),
+                gfx.device_ctx(),
+                gfx.device_info_ctx(),
+                gfx.queue_ctx(),
+                &render_descriptor_sets,
+            )
+        };
 
         let per_frame_data_buffers = {
             let _span = tracy_client::span!("RenderRuntime::new/per_frame_data_buffers");
@@ -237,6 +249,7 @@ impl RenderRuntime {
                 asset_mesh_uploader,
                 material_bridge,
                 instance_bridge,
+                ray_cast_service,
                 gpu_scene,
                 gpu_store: GpuStore {
                     bindless_manager,
@@ -299,6 +312,7 @@ impl RenderRuntime {
             );
         }
 
+        self.ray_cast_service.destroy_mut(self.gfx.resource_ctx(), self.gfx.device_ctx());
         // FIF render targets 和 bindless/resource manager 存在交叉引用，统一从 GpuStore
         // 的 owner 侧释放，保证 view/bindless 句柄先退出全局表。
         self.gpu_store.fif_buffers.destroy_mut(
@@ -419,6 +433,22 @@ impl RenderRuntime {
         self.update_accum_data(camera);
         self.prepare_gpu_scene(camera);
         self.update_perframe_descriptor_set();
+    }
+
+    /// prepare 后、render graph 组图前的 App 同步查询阶段。
+    ///
+    /// 此阶段只暴露同步 raycast 能力。GPU scene/TLAS 已提交到 graphics queue，后续
+    /// raycast 提交会通过同队列顺序看到 prepare 结果，并用自身 fence 阻塞读回。
+    pub fn ray_cast_phase(&mut self) -> RenderRuntimeRayCastCtx<'_> {
+        RenderRuntimeRayCastCtx {
+            device_ctx: self.gfx.device_ctx(),
+            resource_ctx: self.gfx.resource_ctx(),
+            queue_ctx: self.gfx.queue_ctx(),
+            gpu_store: &self.gpu_store,
+            render_scene: &self.gpu_scene,
+            instance_bridge: &self.instance_bridge,
+            ray_cast_service: &mut self.ray_cast_service,
+        }
     }
 
     /// 共享借用：render 阶段中 RenderRuntime 状态只读。
