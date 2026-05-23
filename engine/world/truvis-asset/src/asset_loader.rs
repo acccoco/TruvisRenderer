@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crossbeam_channel::{Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
 
-use crate::handle::{AssetSceneHandle, AssetTextureHandle, RawSceneData, TextureBytes};
+use crate::handle::{AssetModelHandle, AssetTextureHandle, RawSceneData, TextureBytes};
 use crate::texture_loader::load_texture_task;
 use crate::truvixx_scene_loader::load_scene_task;
 
@@ -16,13 +16,13 @@ pub(crate) struct TextureLoadRequest {
     pub handle: AssetTextureHandle,
 }
 
-/// scene / prefab 导入请求。
+/// model / prefab 导入请求。
 ///
-/// path 是导入源，也是后续 scene、mesh、material key 的来源。后台任务只负责读取和
+/// path 是导入源，也是后续 model、mesh、material key 的来源。后台任务只负责读取和
 /// 复制 CPU 数据，raw index 到 asset handle 的映射由 `AssetHub::update()` 完成。
-pub(crate) struct SceneLoadRequest {
+pub(crate) struct ModelLoadRequest {
     pub path: PathBuf,
-    pub handle: AssetSceneHandle,
+    pub handle: AssetModelHandle,
 }
 
 /// 后台任务回传给 `AssetHub::update()` 的 CPU 加载结果。
@@ -35,14 +35,14 @@ pub(crate) enum LoadResult {
         data: TextureBytes,
     },
     TextureFailure(AssetTextureHandle, String),
-    SceneSuccess {
-        handle: AssetSceneHandle,
+    ModelSuccess {
+        handle: AssetModelHandle,
         data: RawSceneData,
     },
-    SceneFailure(AssetSceneHandle, String),
+    ModelFailure(AssetModelHandle, String),
 }
 
-/// 负责管理 asset 后台 IO、纹理解码和 scene 导入任务。
+/// 负责管理 asset 后台 IO、纹理解码和 model 导入任务。
 ///
 /// `AssetLoader` 隐藏 Rayon 线程池和结果 channel。外部只通过 `AssetHub`
 /// 轮询结果，因此后台线程不会直接修改 asset 状态表，也不会接触渲染后端 GPU 对象。
@@ -94,11 +94,11 @@ impl AssetLoader {
         });
     }
 
-    /// 排队一个 scene 导入任务。
+    /// 排队一个 model 导入任务。
     ///
     /// 导入任务会在后台持有 C++ scene handle，并在返回前复制出 owned Rust 数据。
     /// handle/key 分配和事件生成仍由 `AssetHub` 在 `update()` 中完成。
-    pub(crate) fn request_load_scene(&self, req: SceneLoadRequest) {
+    pub(crate) fn request_load_model(&self, req: ModelLoadRequest) {
         let result_sender = self.result_sender.clone();
         let wg_task = self.wait_group.as_ref().expect("AssetLoader used after drop").clone();
         self.pool.spawn(move || {

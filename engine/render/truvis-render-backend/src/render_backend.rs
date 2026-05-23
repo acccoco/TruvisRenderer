@@ -553,8 +553,8 @@ impl RenderBackend {
 impl RenderBackend {
     /// 消费 `AssetHub::update` 产出的加载事件，并转发给对应 render-side owner。
     ///
-    /// texture 与 mesh 事件会进入 GPU 上传队列；material 事件会进入稳定 slot 映射；
-    /// scene 事件只表示 CPU 数据可被 scene 层读取，具体实例化仍由 app/scene manager 控制。
+    /// texture 与 mesh 事件会进入 GPU 上传队列；material 事件会进入稳定 slot 映射。
+    /// model ready/failed 状态由 app 通过 `AssetHub` 查询，不通过 backend 事件分发。
     fn dispatch_loaded_asset_events(&mut self) {
         let _span = tracy_client::span!("RenderBackend::dispatch_loaded_asset_events");
         let loaded_asset_events = self.world.asset_hub.update();
@@ -573,12 +573,6 @@ impl RenderBackend {
                 }
                 event @ AssetLoadedEvent::MaterialLoaded { .. } => {
                     material_events.push(event);
-                }
-                AssetLoadedEvent::SceneLoaded { handle } => {
-                    log::debug!("Scene asset {:?} CPU data is ready", handle);
-                }
-                AssetLoadedEvent::SceneFailed { handle, error } => {
-                    log::error!("Scene asset {:?} failed to load: {}", handle, error);
                 }
             }
         }

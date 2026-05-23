@@ -69,7 +69,7 @@
 ## Prepare 数据流
 
 - `RenderBackend::dispatch_loaded_asset_events` 将 `AssetHub::update()` 产出的 texture 事件交给 `AssetTextureUploader`，mesh 事件交给
-  `AssetMeshUploader`，material 事件交给 `MaterialBridge`；scene loaded/failed 只记录日志，scene 实例化入口仍在 asset/scene 层。
+  `AssetMeshUploader`，material 事件交给 `MaterialBridge`；model ready/failed 状态由 App 通过 `AssetHub` 查询，实例化入口在 `SceneManager`。
 - `RenderBackend::prepare` 是 update 与 render 之间的固定桥接阶段，按 bindless、material、instance、
   GPU scene、per-frame data 的顺序准备渲染可见数据。
 - `MaterialBridge` 在 begin-frame 阶段消费 `MaterialLoaded` 事件并同步到 `MaterialManager`，

@@ -1,6 +1,6 @@
 use slotmap::SlotMap;
 
-use truvis_asset::handle::SceneData;
+use truvis_asset::handle::ModelData;
 use truvis_shader_binding::gpu;
 
 use crate::components::instance::Instance;
@@ -68,13 +68,13 @@ impl SceneManager {
         self.all_instances.insert(instance)
     }
 
-    /// 将 scene asset / prefab spawn 为 runtime instances。
+    /// 将 model asset / prefab spawn 为 runtime instances。
     ///
-    /// `SceneData` 是 asset 层导入后的 prefab CPU 数据，不持有 live instance
-    /// 生命周期。每次调用都会创建一组新的 `InstanceHandle`，因此同一个 scene asset 可以被
+    /// `ModelData` 是 asset 层导入后的 prefab CPU 数据，不持有 live instance
+    /// 生命周期。每次调用都会创建一组新的 `InstanceHandle`，因此同一个 model asset 可以被
     /// 多次实例化；后续 GPU slot 绑定由 `InstanceBridge` 根据这些 handle 延迟建立。
-    pub fn spawn_scene_asset(&mut self, scene_data: &SceneData) -> Vec<InstanceHandle> {
-        scene_data
+    pub fn spawn_model(&mut self, model_data: &ModelData) -> Vec<InstanceHandle> {
+        model_data
             .instances
             .iter()
             .map(|instance| {

@@ -1,4 +1,4 @@
-use truvis_asset::handle::{AssetSceneHandle, LoadStatus};
+use truvis_asset::handle::{AssetModelHandle, LoadStatus};
 use truvis_frame_api::input_event::InputEvent;
 use truvis_frame_api::plugin::{Plugin, PluginRenderCtx};
 use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx};
@@ -23,12 +23,12 @@ pub struct SponzaApp {
     input: InputManager,
     debug_overlay: DebugInfoOverlay,
     pipeline_overlay: PipelineControlsOverlay,
-    scene_asset: Option<AssetSceneHandle>,
-    scene_spawned: bool,
+    model_asset: Option<AssetModelHandle>,
+    model_spawned: bool,
 }
 
 impl SponzaApp {
-    fn request_scene(world: &mut World, camera: &mut Camera) -> AssetSceneHandle {
+    fn request_model(world: &mut World, camera: &mut Camera) -> AssetModelHandle {
         camera.position = glam::vec3(270.0, 194.0, -64.0);
         camera.euler_yaw_deg = 90.0;
         camera.euler_pitch_deg = 0.0;
@@ -52,29 +52,30 @@ impl SponzaApp {
             _color_padding: Default::default(),
         });
 
-        log::info!("start load sponza scene");
-        world.asset_hub.load_scene(TruvisPath::assets_path("fbx/sponza/sponza.fbx"))
+        log::info!("start load sponza model");
+        world.asset_hub.load_model(TruvisPath::assets_path("fbx/sponza/sponza.fbx"))
     }
 
-    fn spawn_scene_if_ready(&mut self, world: &mut World) {
-        if self.scene_spawned {
+    fn spawn_model_if_ready(&mut self, world: &mut World) {
+        if self.model_spawned {
             return;
         }
 
-        let Some(scene_asset) = self.scene_asset else {
+        let Some(model_asset) = self.model_asset else {
             return;
         };
 
-        match world.asset_hub.get_scene_status(scene_asset) {
+        match world.asset_hub.get_model_status(model_asset) {
             LoadStatus::Ready => {
-                let scene_data = world.asset_hub.get_scene_data(scene_asset).expect("ready scene asset missing data");
-                let instances = world.scene_manager.spawn_scene_asset(scene_data);
-                self.scene_spawned = true;
-                log::info!("Sponza scene spawned {} runtime instances.", instances.len());
+                let model_data = world.asset_hub.get_model_data(model_asset).expect("ready model asset missing data");
+                let instances = world.scene_manager.spawn_model(model_data);
+                self.model_spawned = true;
+                log::info!("Sponza model spawned {} runtime instances.", instances.len());
             }
             LoadStatus::Failed => {
-                self.scene_spawned = true;
-                log::error!("Sponza scene failed to load.");
+                self.model_spawned = true;
+                let error = world.asset_hub.get_model_error(model_asset).unwrap_or("unknown error");
+                log::error!("Sponza model failed to load: {}", error);
             }
             LoadStatus::Unloaded | LoadStatus::Loading => {}
         }
@@ -86,7 +87,7 @@ impl RenderAppHooks for SponzaApp {
         self.gui.set_hidpi_factor(ctx.scale_factor);
         self.gui.set_display_size(ctx.window_size);
 
-        self.scene_asset = Some(Self::request_scene(&mut *ctx.backend.world, self.camera_controller.camera_mut()));
+        self.model_asset = Some(Self::request_model(&mut *ctx.backend.world, self.camera_controller.camera_mut()));
     }
 
     fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
@@ -113,7 +114,7 @@ impl RenderAppHooks for SponzaApp {
     }
 
     fn update(&mut self, ctx: &mut RenderBackendUpdateCtx) {
-        self.spawn_scene_if_ready(ctx.world);
+        self.spawn_model_if_ready(ctx.world);
 
         let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
         self.gui.begin_frame(delta);

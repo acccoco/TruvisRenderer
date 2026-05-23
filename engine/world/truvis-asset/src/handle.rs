@@ -31,16 +31,16 @@ new_key_type! {
 }
 
 new_key_type! {
-    /// scene / prefab 内容资产身份。
+    /// model / prefab 内容资产身份。
     ///
-    /// 该 handle 指向后台导入得到的可重复 spawn 的 prefab CPU 数据，不是
+    /// 该 handle 指向后台导入得到的可重复 spawn 的模型 CPU 数据，不是
     /// `SceneManager` 中的 live runtime instance handle。
-    pub struct AssetSceneHandle;
+    pub struct AssetModelHandle;
 }
 
 /// 一个导入源内的 mesh 内容身份。
 ///
-/// `AssetHub` 使用 `source_path + mesh_index` 做去重，保证同一 scene / prefab
+/// `AssetHub` 使用 `source_path + mesh_index` 做去重，保证同一 model / prefab
 /// 导入结果内的 mesh 只对应一个稳定 asset handle。它不代表运行时 instance，
 /// 也不代表渲染后端已经创建的 vertex/index buffer 或 BLAS。
 ///
@@ -66,15 +66,15 @@ pub struct AssetMaterialKey {
     pub material_index: u32,
 }
 
-/// 一个导入源对应的 scene / prefab 内容身份。
+/// 一个导入源对应的 model / prefab 内容身份。
 ///
-/// `AssetSceneHandle` 只代表后台导入得到的 prefab CPU 数据。它可以被
+/// `AssetModelHandle` 只代表后台导入得到的模型 CPU 数据。它可以被
 /// `SceneManager` 多次 spawn 成运行时 instance，但自身不持有 live scene 状态。
 ///
-/// `source_path` 是 scene 去重 key 的完整内容，`AssetHub::load_scene` 不会在这里
+/// `source_path` 是 model 去重 key 的完整内容，`AssetHub::load_model` 不会在这里
 /// 解析 symlink 或访问文件系统做 canonicalize。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct AssetSceneKey {
+pub struct AssetModelKey {
     pub source_path: PathBuf,
 }
 
@@ -84,7 +84,7 @@ pub struct AssetSceneKey {
 /// CPU buffer，并带有 Vulkan 上传所需的 extent / format 元数据，但还没有创建
 /// image、image view 或 bindless descriptor。
 ///
-/// 与 mesh / material / scene 不同，当前纹理 bytes 只通过
+/// 与 mesh / material / model 不同，当前纹理 bytes 只通过
 /// `AssetLoadedEvent::TextureLoaded` 交给 uploader，`AssetHub` 本身只保存路径和
 /// CPU 加载状态。
 #[derive(Debug)]
@@ -133,31 +133,31 @@ pub struct MaterialData {
     pub name: String,
 }
 
-/// Scene asset 内部的一个可 spawn runtime instance 记录。
+/// Model asset 内部的一个可 spawn runtime instance 记录。
 ///
 /// mesh/material 引用已经转换为 `Asset*Handle`，用于把 prefab 内部引用关系传给
-/// `SceneManager::spawn_scene_asset`。这里不拥有 live `InstanceHandle`，也不表达
+/// `SceneManager::spawn_model`。这里不拥有 live `InstanceHandle`，也不表达
 /// GPU instance slot。
 #[derive(Debug, Clone, PartialEq)]
-pub struct SceneInstanceData {
+pub struct ModelInstanceData {
     pub mesh: AssetMeshHandle,
     pub materials: Vec<AssetMaterialHandle>,
     pub transform: glam::Mat4,
     pub name: String,
 }
 
-/// 导入后的 scene / prefab CPU 数据。
+/// 导入后的 model / prefab CPU 数据。
 ///
-/// 它保存导入结果的 mesh、material 和 instance 引用关系，是 asset 层交给
-/// scene 层的 prefab 数据。多个 runtime scene instance 可以共享同一个
-/// `SceneData` 中的 asset handle。
+/// 它保存导入结果的 mesh、material 和 instance 引用关系，是 asset 层交给 scene
+/// 层的 prefab 数据。多个 runtime scene instance 可以共享同一个 `ModelData` 中的
+/// asset handle。
 #[derive(Debug, Clone, PartialEq)]
-pub struct SceneData {
+pub struct ModelData {
     pub source_path: PathBuf,
     pub name: String,
     pub meshes: Vec<AssetMeshHandle>,
     pub materials: Vec<AssetMaterialHandle>,
-    pub instances: Vec<SceneInstanceData>,
+    pub instances: Vec<ModelInstanceData>,
 }
 
 /// 后台 Assimp task 产出的 owned material CPU 数据。
@@ -211,7 +211,7 @@ pub(crate) struct RawSceneData {
 pub enum LoadStatus {
     /// 初始状态，资源尚未请求加载。
     Unloaded,
-    /// IO / CPU 阶段：后台线程正在读取文件、解码纹理或导入 scene。
+    /// IO / CPU 阶段：后台线程正在读取文件、解码纹理或导入 model。
     Loading,
     /// CPU 完成状态：数据已经进入 `AssetHub` 可读缓存或已发出完成事件。
     Ready,

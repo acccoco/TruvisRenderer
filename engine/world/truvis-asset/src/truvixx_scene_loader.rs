@@ -2,14 +2,14 @@ use std::path::PathBuf;
 
 use truvis_cxx_binding::truvixx;
 
-use crate::asset_loader::{LoadResult, SceneLoadRequest};
+use crate::asset_loader::{LoadResult, ModelLoadRequest};
 use crate::handle::{MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData};
 
 /// 实际的 scene 导入任务。
 ///
 /// 只复制 owned CPU 数据，不把 `TruvixxSceneHandle` 或 raw pointer 传回 Rust runtime。
 /// panic 会被转换为失败结果，避免后台导入异常越过 `AssetHub` 的状态机边界。
-pub(crate) fn load_scene_task(req: SceneLoadRequest) -> LoadResult {
+pub(crate) fn load_scene_task(req: ModelLoadRequest) -> LoadResult {
     let _span = tracy_client::span!("load_scene_task");
     log::info!("Loading scene: {:?}", req.path);
 
@@ -18,13 +18,13 @@ pub(crate) fn load_scene_task(req: SceneLoadRequest) -> LoadResult {
         .and_then(|result| result);
 
     match result {
-        Ok(data) => LoadResult::SceneSuccess {
+        Ok(data) => LoadResult::ModelSuccess {
             handle: req.handle,
             data,
         },
         Err(error) => {
             log::error!("Failed to load scene {:?}: {}", req.path, error);
-            LoadResult::SceneFailure(req.handle, error)
+            LoadResult::ModelFailure(req.handle, error)
         }
     }
 }

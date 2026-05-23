@@ -754,3 +754,11 @@ App / tool
 4. 更新 `ARCHITECTURE.md` 和模块 README。
 
 完成后再进入 Mesh uploader 和异步 BLAS。这样每一阶段都有明确收益，也避免一次性重写 scene loading。
+
+## 后续命名收敛（2026-05-23）
+
+历史记录中的 `AssetSceneHandle`、`AssetSceneKey`、`SceneData` 和
+`SceneManager::spawn_scene_asset` 是迁移阶段命名。当前 asset 层对外命名已收敛为
+`AssetModelHandle`、`AssetModelKey`、`ModelData` 和 `SceneManager::spawn_model`。
+`AssetHub` 只通过 texture / mesh / material 事件驱动 render-side 上传，model ready
+或 failed 状态由 App 轮询查询，AssetHub 不再产生 scene/model/instance ready 事件。
