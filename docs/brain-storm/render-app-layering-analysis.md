@@ -1,7 +1,7 @@
 # RenderApp / OuterApp / Renderer / GUI 分层分析
 
 > 维护状态（2026-04-23）：本文是历史诊断，文中的 `RenderApp` / `OuterApp` /
-> `RenderContext` 主线已经分别演进为 `FrameRuntime` / `AppPlugin` / `World + RenderWorld`。
+> `RenderContext` 主线已经分别演进为 `FrameRuntime` / `AppPlugin` / `World + GpuStore`。
 > 保留本文是为了记录早期问题来源和 GUI、surface、extract、plugin 化等演进方向。
 > 当前代码状态请先看 [`README.md`](../README.md) 与 [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)。
 
@@ -145,11 +145,11 @@ Main World 里的逻辑对象直接耦合 swapchain 大小。Bevy 做法：Main 
 │   ImguiTextureRegistry  (TextureId → GfxImageViewHandle)          │
 ├──────────────────────────────────────────────────────────────────┤
 │ AppShell (RenderApp 瘦身)                                          │
-│   持: Platform + MainWorld + RenderWorld                          │
+│   持: Platform + MainWorld + GpuStore                          │
 │   做: tick 驱动(main→extract→render)、事件分发、窗口生命周期         │
 │   不持: 任何业务状态，不构建 overlay UI                             │
 ├──────────────────────────────────────────────────────────────────┤
-│ MainWorld                      │ RenderWorld                      │
+│ MainWorld                      │ GpuStore                      │
 │  Resources:                    │  Resources:                      │
 │    Time                        │    GpuScene                      │
 │    InputState                  │    FifBuffers                    │
@@ -175,9 +175,9 @@ Main World 里的逻辑对象直接耦合 swapchain 大小。Bevy 做法：Main 
 
 | 当前 | 目标 |
 | --- | --- |
-| `Renderer` | 拆：`Platform` 对象 + `MainWorld` + `RenderWorld` |
+| `Renderer` | 拆：`Platform` 对象 + `MainWorld` + `GpuStore` |
 | `RenderContext` | 拆：按字段迁移到上面三层 |
-| `RenderContext2<'a>` | 删除（被 `&RenderWorld` 自然替代） |
+| `RenderContext2<'a>` | 删除（被 `&GpuStore` 自然替代） |
 | `Gfx::get()` | `Gfx` 对象通过构造注入 |
 | `RenderApp::big_update` | 三段式 schedule：`main.tick(); extract(main, render); render.tick()` |
 | `OuterApp` (单 trait) | 拆成 `MainPlugin` (update/build_ui) + `RenderPlugin` (draw) + `ExtractSystem` |
@@ -217,7 +217,7 @@ self.renderer.render_present.as_mut().unwrap().gui_backend.register_font(...)
 self.renderer.render_present.as_mut().unwrap().gui_backend.prepare_render_data(...)
 ```
 
-GUI backend 跟 swapchain 没有必然关系（GUI 也可能画到 offscreen target），放进 `RenderPresent` 只是"凑位置"。应独立成 `RenderWorld` 的 Resource。
+GUI backend 跟 swapchain 没有必然关系（GUI 也可能画到 offscreen target），放进 `RenderPresent` 只是"凑位置"。应独立成 `GpuStore` 的 Resource。
 
 **问题 3：GuiHost 在 `RenderApp` 而 GuiBackend 在 `Renderer`**
 
@@ -318,4 +318,4 @@ truvis-gui-core   (纯 imgui 封装、Context、InputAdapter)      ← Main 侧
 
 > `Renderer` 是 Platform / Main / Render 三层资源的合订本，`RenderApp` 是事件循环 / MainSchedule / Extract / RenderSchedule 四阶段的合订本，`OuterApp` 是 Main System / Render System / Plugin 三角色的合订本。GUI 则被撕裂在 `RenderApp`（Host）、`RenderPresent`（Backend）、`truvis-app`（RgPass）三处，且用双份常量维持两端对齐。
 > 
-> 重构方向：把这些"合订本"按 Platform / MainWorld / RenderWorld 三个寿命域拆开，用**构造注入**替代 `::get()`，用**显式 Extract 阶段**替代直接跨域访问。
+> 重构方向：把这些"合订本"按 Platform / MainWorld / GpuStore 三个寿命域拆开，用**构造注入**替代 `::get()`，用**显式 Extract 阶段**替代直接跨域访问。

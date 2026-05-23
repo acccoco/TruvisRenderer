@@ -7,7 +7,7 @@ use truvis_render_graph::compute_pass::ComputePass;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::bindless_manager::BindlessUavHandle;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_interface::render_world::RenderWorld;
+use truvis_render_interface::gpu_store::GpuStore;
 use truvis_shader_binding::gpu;
 
 pub struct BlitPassData {
@@ -37,12 +37,12 @@ impl BlitPass {
         self.blit_pass.destroy(ctx);
     }
 
-    pub fn exec(&self, cmd: &GfxCommandBuffer, data: BlitPassData, render_world: &RenderWorld) {
-        let frame_label = render_world.frame_counter.frame_label();
+    pub fn exec(&self, cmd: &GfxCommandBuffer, data: BlitPassData, gpu_store: &GpuStore) {
+        let frame_label = gpu_store.frame_counter.frame_label();
         self.blit_pass.exec(
             cmd,
             frame_label,
-            &render_world.global_descriptor_sets,
+            &gpu_store.global_descriptor_sets,
             &gpu::blit::PushConstant {
                 src_image: data.src_bindless_uav_handle.0,
                 dst_image: data.dst_bindless_uav_handle.0,
@@ -62,7 +62,7 @@ pub struct BlitRgPass<'a> {
     pub blit_pass: &'a BlitPass,
 
     // TODO 暂时使用这个肮脏的实现
-    pub render_world: &'a RenderWorld,
+    pub gpu_store: &'a GpuStore,
 
     pub src_image: RgImageHandle,
     pub dst_image: RgImageHandle,
@@ -79,8 +79,8 @@ impl<'a> RgPass for BlitRgPass<'a> {
     fn execute(&self, ctx: &RgPassContext) {
         let src_image_handle = ctx.get_image_view_handle(self.src_image).unwrap();
         let dst_image_handle = ctx.get_image_view_handle(self.dst_image).unwrap();
-        let src_bindless_uav_handle = self.render_world.bindless_manager.get_shader_uav_handle(src_image_handle);
-        let dst_bindless_uav_handle = self.render_world.bindless_manager.get_shader_uav_handle(dst_image_handle);
+        let src_bindless_uav_handle = self.gpu_store.bindless_manager.get_shader_uav_handle(src_image_handle);
+        let dst_bindless_uav_handle = self.gpu_store.bindless_manager.get_shader_uav_handle(dst_image_handle);
 
         self.blit_pass.exec(
             ctx.cmd,
@@ -90,7 +90,7 @@ impl<'a> RgPass for BlitRgPass<'a> {
                 src_image_size: self.src_image_extent,
                 dst_image_size: self.dst_image_extent,
             },
-            self.render_world,
+            self.gpu_store,
         );
     }
 }

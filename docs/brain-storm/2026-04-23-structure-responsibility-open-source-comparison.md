@@ -21,15 +21,15 @@
 - `truvis-winit-app` 已经从渲染状态中剥离，主要负责 winit 事件循环和渲染线程入口。
 - `truvis-frame-runtime` 明确成为帧编排器，外部通过 `push_input_event` / `time_to_render` / `run_frame` / `destroy` 驱动。
 - `truvis-app-api` 把 `AppPlugin` 和 typed contexts 从 demo 应用中拆了出来。
-- `truvis-renderer::Renderer` 当前已经持有 `World + RenderWorld`，不再是旧文档里描述的单一 `RenderContext` 大袋子。
+- `truvis-renderer::Renderer` 当前已经持有 `World + GpuStore`，不再是旧文档里描述的单一 `RenderContext` 大袋子。
 - `truvis-render-graph` 已经不再依赖 scene/asset，图编排层的方向是干净的。
 - `truvis-gui-backend` 基本保持为 Vulkan ImGui 后端，`GuiRgPass` 放在上层适配。
 
 真正造成职责混乱感的，是以下几个边界对象仍然知道太多：
 
-- `truvis-scene` 知道 asset、bindless、shader binding。
+- `truvis-world` 知道 asset、bindless、shader binding。
 - `truvis-asset` 知道 bindless SRV 注册。
-- `truvis-render-interface` 名为 interface，但实际包含大量具体 manager、`RenderWorld`、`GpuScene`、`RenderData`。
+- `truvis-render-interface` 名为 interface，但实际包含大量具体 manager、`GpuStore`、`GpuScene`、`RenderData`。
 - `truvis-app-api` 作为契约层，却直接暴露 `truvis-renderer` 中的具体 `Camera` / `RenderPresent` 类型。
 - `truvis-app` 同时承载 demo、RenderGraph glue、pipeline 组装和过渡期依赖。
 - `RenderPresent` 同时持有 swapchain present 资源和 `GuiBackend`。
@@ -46,7 +46,7 @@
 truvis-winit-app
   -> truvis-frame-runtime::FrameRuntime
     -> truvis-renderer::Renderer
-      -> World + RenderWorld
+      -> World + GpuStore
         -> scene / asset / render-interface / render-graph / gfx
 ```
 
@@ -57,7 +57,7 @@ truvis-winit-app
 | `truvis-gfx` | Vulkan RHI | 基本清晰 |
 | `truvis-render-interface` | 渲染核心资源与状态 | 名字像接口，内容是 concrete core；还混有 `GpuScene` / `RenderData` |
 | `truvis-render-graph` | RenderGraph 编排 | 当前相对健康 |
-| `truvis-scene` | CPU 场景 | 依赖 asset / bindless / shader，越过 CPU 场景边界 |
+| `truvis-world` | CPU 场景 | 依赖 asset / bindless / shader，越过 CPU 场景边界 |
 | `truvis-asset` | 异步资产加载 | 直接注册 bindless SRV，耦合 GPU 可见性策略 |
 | `truvis-world` | CPU World 聚合 | 目前很薄，仅聚合 `SceneManager + AssetHub` |
 | `truvis-renderer` | GPU backend + state owner | 仍承担 extract/prepare/asset 更新等调度性行为 |
@@ -71,7 +71,7 @@ truvis-winit-app
 
 ## 3. 关键职责混乱点
 
-### 3.1 `truvis-scene` 不够 CPU-only
+### 3.1 `truvis-world` 不够 CPU-only
 
 当前 `SceneManager` 直接依赖：
 
@@ -144,7 +144,7 @@ impl AssetHub {
 impl Renderer {
     fn register_ready_assets(&mut self, events: Vec<AssetReadyEvent>) {
         for event in events {
-            self.render_world.bindless_manager.register_srv(event.view_handle);
+            self.gpu_store.bindless_manager.register_srv(event.view_handle);
         }
     }
 }
@@ -165,7 +165,7 @@ gpu_scene
 handles
 pipeline_settings
 render_data
-render_world
+gpu_store
 sampler_manager
 fif_buffer
 stage_buffer_manager
@@ -178,14 +178,14 @@ stage_buffer_manager
 | 名称 | 含义 | 评价 |
 |---|---|---|
 | `truvis-render-core` | 渲染核心基础设施 | 最推荐，短且准确 |
-| `truvis-render-state` | 渲染状态管理 | 突出 `RenderWorld`，但低估 manager 行为 |
+| `truvis-render-state` | 渲染状态管理 | 突出 `GpuStore`，但低估 manager 行为 |
 | `truvis-render-infra` | 渲染基础设施 | 准确但稍显工程化 |
 
 进一步清理方向：
 
 - `Handles / FrameCounter / GfxResourceManager / CmdAllocator / BindlessManager / GlobalDescriptorSets` 留在 `render-core`。
 - `GpuScene / RenderData` 可考虑上移到 `truvis-renderer`，或拆到 `truvis-render-scene`。
-- `RenderWorld` 可以保留，但它应只表达 GPU state，不应成为跨层万能袋子。
+- `GpuStore` 可以保留，但它应只表达 GPU state，不应成为跨层万能袋子。
 
 ### 3.4 `truvis-app-api` 泄漏具体 renderer 类型
 
@@ -204,7 +204,7 @@ truvis_renderer::present::render_present::RenderPresent
 CameraView / CameraMut
 SurfaceInfo / SwapchainInfo
 RenderTargetInfo
-RenderWorldView
+GpuStoreView
 CommandContext
 ```
 
@@ -284,7 +284,7 @@ Render World
 | Bevy 概念 | Truvis 当前对应 | 差距 |
 |---|---|---|
 | Main World | `truvis-world::World` | 目前太薄，且 scene/asset 内部仍碰 GPU 策略 |
-| Render World | `RenderWorld` | 已有，但还和 backend owner 紧密绑定 |
+| Render World | `GpuStore` | 已有，但还和 backend owner 紧密绑定 |
 | Extract | `SceneManager::prepare_render_data()` + `GpuScene::upload_render_data()` 前半段 | 没有显式 phase，藏在 `Renderer::before_render()` |
 | Prepare | `Renderer::before_render()` / descriptor update / asset update | prepare 与 extract 混在一起 |
 | Render | `AppPlugin::render()` 构建并执行 RenderGraph | 基本方向正确 |
@@ -382,14 +382,14 @@ L2 Render Core
   frame settings / pipeline settings
 
 L3 Domain Modules
-  truvis-scene        CPU 场景语义
+  truvis-world        CPU 场景语义
   truvis-asset        资产加载与状态
   truvis-render-graph pass DAG 与资源依赖
   truvis-gui-backend  ImGui Vulkan 后端
 
 L4 Renderer Backend
-  RenderBackend / Renderer
-  World + RenderWorld owner
+  RenderRuntime / Renderer
+  World + GpuStore owner
   SceneBridge / AssetBridge / GpuScene prepare
   surface/swapchain/present
   submit/sync
@@ -423,7 +423,7 @@ SceneManager.prepare_render_data(bindless, asset_hub)
 
 影响：
 
-- `truvis-scene`
+- `truvis-world`
 - `truvis-renderer`
 - `truvis-render-interface` 或未来 `truvis-render-core`
 
@@ -479,7 +479,7 @@ truvis-render-interface -> truvis-render-core
 
 ```text
 GpuScene / RenderData -> renderer 或 render-scene
-RenderWorld 保留在 render-core
+GpuStore 保留在 render-core
 ```
 
 ### P2：收窄 app-api contexts
@@ -532,7 +532,7 @@ pub trait Plugin {
 2. asset 层是否直接注册 shader-visible descriptor？
 3. render-graph 是否知道 scene / asset / app？
 4. app-api 是否暴露 renderer 的 concrete private object？
-5. pass 是否能访问整个 World，而不是只访问必要的 RenderWorld view？
+5. pass 是否能访问整个 World，而不是只访问必要的 GpuStore view？
 6. GUI backend 是否被 swapchain/present 强绑定？
 7. app crate 是否同时承担 demo、pipeline、framework、adapter 多个角色？
 8. Renderer 的方法是在“执行 backend 操作”，还是在“决定调度顺序”？
@@ -544,7 +544,7 @@ pub trait Plugin {
 
 ## 8. 结论
 
-当前 Truvis 的方向是对的：它已经从单体应用循环走向了 `FrameRuntime + AppPlugin + World + RenderWorld + RenderGraph` 的结构。
+当前 Truvis 的方向是对的：它已经从单体应用循环走向了 `FrameRuntime + AppPlugin + World + GpuStore + RenderGraph` 的结构。
 
 下一步不要先大改目录，而要先收紧依赖方向：
 

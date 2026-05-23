@@ -80,7 +80,7 @@ impl Plugin for RtPipeline {
             ctx.device_ctx,
             ctx.device_info_ctx,
             ctx.immediate_ctx,
-            &ctx.render_world.global_descriptor_sets,
+            &ctx.gpu_store.global_descriptor_sets,
             ctx.render_present.swapchain_image_info(),
             ctx.cmd_allocator,
         ));
@@ -108,9 +108,9 @@ impl RtPipeline {
         ctx: &'a PluginRenderCtx<'a>,
     ) {
         let inner = self.inner();
-        let render_world = ctx.render_world;
-        let frame_label = render_world.frame_counter.frame_label();
-        let fif_buffers = &render_world.fif_buffers;
+        let gpu_store = ctx.gpu_store;
+        let frame_label = gpu_store.frame_counter.frame_label();
+        let fif_buffers = &gpu_store.fif_buffers;
 
         let (single_frame_image_handle, single_frame_view_handle) = fif_buffers.single_frame_rt_handle(frame_label);
         let single_frame_image = rg_builder.import_image(
@@ -178,10 +178,10 @@ impl RtPipeline {
                 "ray-tracing",
                 RealtimeRtRgPass {
                     rt_pass: &inner.realtime_rt_pass,
-                    render_world,
+                    gpu_store,
                     render_scene: ctx.render_scene,
                     single_frame_image,
-                    single_frame_extent: render_world.frame_settings.frame_extent,
+                    single_frame_extent: gpu_store.frame_settings.frame_extent,
                     gbuffer_a,
                     gbuffer_b,
                     gbuffer_c,
@@ -191,35 +191,35 @@ impl RtPipeline {
                 "denoise-accum",
                 DenoiseAccumRgPass {
                     denoise_accum_pass: &inner.denoise_accum_pass,
-                    render_world,
+                    gpu_store,
                     single_frame_image,
                     accum_image,
                     gbuffer_a,
                     gbuffer_b,
                     gbuffer_c,
-                    image_extent: render_world.frame_settings.frame_extent,
+                    image_extent: gpu_store.frame_settings.frame_extent,
                 },
             )
             .add_pass(
                 "blit",
                 BlitRgPass {
                     blit_pass: &inner.blit_pass,
-                    render_world,
+                    gpu_store,
                     src_image: accum_image,
                     dst_image: render_target,
-                    src_image_extent: render_world.frame_settings.frame_extent,
-                    dst_image_extent: render_world.frame_settings.frame_extent,
+                    src_image_extent: gpu_store.frame_settings.frame_extent,
+                    dst_image_extent: gpu_store.frame_settings.frame_extent,
                 },
             )
             .add_pass(
                 "hdr-to-sdr",
                 SdrRgPass {
                     sdr_pass: &inner.sdr_pass,
-                    render_world,
+                    gpu_store,
                     src_image: accum_image,
                     dst_image: render_target,
-                    src_image_extent: render_world.frame_settings.frame_extent,
-                    dst_image_extent: render_world.frame_settings.frame_extent,
+                    src_image_extent: gpu_store.frame_settings.frame_extent,
+                    dst_image_extent: gpu_store.frame_settings.frame_extent,
                 },
             );
     }
@@ -230,10 +230,10 @@ impl RtPipeline {
         ctx: &'a PluginRenderCtx<'a>,
     ) -> RgImageHandle {
         let inner = self.inner();
-        let render_world = ctx.render_world;
+        let gpu_store = ctx.gpu_store;
         let render_present = ctx.render_present;
-        let frame_label = render_world.frame_counter.frame_label();
-        let fif_buffers = &render_world.fif_buffers;
+        let frame_label = gpu_store.frame_counter.frame_label();
+        let fif_buffers = &gpu_store.fif_buffers;
 
         let (render_target_image_handle, render_target_view_handle) = fif_buffers.render_target_handle(frame_label);
         let render_target = rg_builder.import_image(
@@ -271,7 +271,7 @@ impl RtPipeline {
             "resolve",
             ResolveRgPass {
                 resolve_pass: &inner.resolve_pass,
-                render_world,
+                gpu_store,
                 render_target,
                 swapchain_image: present_image,
                 swapchain_extent: present_target.swapchain_image_info.image_extent,

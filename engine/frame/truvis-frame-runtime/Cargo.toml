@@ -2,12 +2,12 @@
 name = "truvis-frame-runtime"
 version = "0.1.0"
 edition = "2024"
-description = "Render app shell for RenderBackend lifecycle orchestration"
+description = "Render app shell for RenderRuntime lifecycle orchestration"
 
 [dependencies]
 truvis-frame-api = { workspace = true }
 truvis-gfx = { workspace = true }
-truvis-render-backend = { workspace = true }
+truvis-render-runtime = { workspace = true }
 truvis-logs = { workspace = true }
 
 ash-window = { workspace = true }

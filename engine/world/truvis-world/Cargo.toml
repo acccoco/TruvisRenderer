@@ -5,5 +5,9 @@ edition = "2024"
 description = "CPU-side world state: scene and asset management"
 
 [dependencies]
-truvis-scene = { workspace = true }
 truvis-asset = { workspace = true }
+truvis-shader-binding = { workspace = true }
+
+glam = { workspace = true }
+log = { workspace = true }
+slotmap = { workspace = true }

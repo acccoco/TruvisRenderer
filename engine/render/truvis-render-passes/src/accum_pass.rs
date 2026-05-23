@@ -7,7 +7,7 @@ use truvis_render_graph::compute_pass::ComputePass;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::bindless_manager::BindlessUavHandle;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_interface::render_world::RenderWorld;
+use truvis_render_interface::gpu_store::GpuStore;
 use truvis_shader_binding::gpu;
 
 /// 累积 Pass 的数据
@@ -39,12 +39,12 @@ impl AccumPass {
         self.accum_pass.destroy(ctx);
     }
 
-    pub fn exec(&self, cmd: &GfxCommandBuffer, data: AccumPassData, render_world: &RenderWorld) {
-        let frame_label = render_world.frame_counter.frame_label();
+    pub fn exec(&self, cmd: &GfxCommandBuffer, data: AccumPassData, gpu_store: &GpuStore) {
+        let frame_label = gpu_store.frame_counter.frame_label();
         self.accum_pass.exec(
             cmd,
             frame_label,
-            &render_world.global_descriptor_sets,
+            &gpu_store.global_descriptor_sets,
             &gpu::accum::PushConstant {
                 single_frame_input: data.single_frame_bindless_uav_handle.0,
                 accum_output: data.accum_bindless_uav_handle.0,
@@ -66,7 +66,7 @@ pub struct AccumRgPass<'a> {
     pub accum_pass: &'a AccumPass,
 
     // TODO 暂时使用这个肮脏的实现
-    pub render_world: &'a RenderWorld,
+    pub gpu_store: &'a GpuStore,
 
     /// 单帧 RT 输出（只读）
     pub single_frame_image: RgImageHandle,
@@ -89,8 +89,8 @@ impl<'a> RgPass for AccumRgPass<'a> {
         let accum_view_handle = ctx.get_image_view_handle(self.accum_image).unwrap();
 
         let single_frame_bindless_uav_handle =
-            self.render_world.bindless_manager.get_shader_uav_handle(single_frame_view_handle);
-        let accum_bindless_uav_handle = self.render_world.bindless_manager.get_shader_uav_handle(accum_view_handle);
+            self.gpu_store.bindless_manager.get_shader_uav_handle(single_frame_view_handle);
+        let accum_bindless_uav_handle = self.gpu_store.bindless_manager.get_shader_uav_handle(accum_view_handle);
 
         self.accum_pass.exec(
             ctx.cmd,
@@ -98,9 +98,9 @@ impl<'a> RgPass for AccumRgPass<'a> {
                 single_frame_bindless_uav_handle,
                 accum_bindless_uav_handle,
                 image_size: self.image_extent,
-                accum_frames: self.render_world.accum_data.accum_frames_num() as u32,
+                accum_frames: self.gpu_store.accum_data.accum_frames_num() as u32,
             },
-            self.render_world,
+            self.gpu_store,
         );
     }
 }

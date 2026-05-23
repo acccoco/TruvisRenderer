@@ -3410,10 +3410,10 @@ dependencies = [
  "truvis-gfx",
  "truvis-gui-backend",
  "truvis-path",
- "truvis-render-backend",
  "truvis-render-graph",
  "truvis-render-interface",
  "truvis-render-passes",
+ "truvis-render-runtime",
  "truvis-shader-binding",
  "truvis-utils",
  "truvis-world",
@@ -3492,8 +3492,8 @@ version = "0.1.0"
 dependencies = [
  "raw-window-handle",
  "truvis-gfx",
- "truvis-render-backend",
  "truvis-render-interface",
+ "truvis-render-runtime",
  "truvis-world",
 ]
 
@@ -3508,7 +3508,7 @@ dependencies = [
  "truvis-frame-api",
  "truvis-gfx",
  "truvis-logs",
- "truvis-render-backend",
+ "truvis-render-runtime",
 ]
 
 [[package]]
@@ -3565,31 +3565,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "truvis-render-backend"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ash",
- "bytemuck",
- "glam",
- "image",
- "itertools 0.10.5",
- "log",
- "raw-window-handle",
- "slotmap",
- "tracy-client",
- "truvis-asset",
- "truvis-gfx",
- "truvis-path",
- "truvis-render-graph",
- "truvis-render-interface",
- "truvis-scene",
- "truvis-shader-binding",
- "truvis-world",
- "vk-mem",
-]
-
-[[package]]
 name = "truvis-render-graph"
 version = "0.1.0"
 dependencies = [
@@ -3640,17 +3615,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "truvis-scene"
+name = "truvis-render-runtime"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ash",
+ "bytemuck",
  "glam",
- "indexmap",
+ "image",
  "itertools 0.10.5",
  "log",
+ "raw-window-handle",
  "slotmap",
+ "tracy-client",
  "truvis-asset",
+ "truvis-gfx",
+ "truvis-path",
+ "truvis-render-graph",
+ "truvis-render-interface",
  "truvis-shader-binding",
+ "truvis-world",
+ "vk-mem",
 ]
 
 [[package]]
@@ -3698,8 +3683,11 @@ dependencies = [
 name = "truvis-world"
 version = "0.1.0"
 dependencies = [
+ "glam",
+ "log",
+ "slotmap",
  "truvis-asset",
- "truvis-scene",
+ "truvis-shader-binding",
 ]
 
 [[package]]

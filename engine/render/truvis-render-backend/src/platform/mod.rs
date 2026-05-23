@@ -1,7 +1,0 @@
-//! backend 自带的轻量平台辅助类型。
-//!
-//! 这里不封装窗口事件或输入系统；窗口生命周期由 `truvis-winit-app`/frame runtime 提供，
-//! backend 只保留 prepare 阶段需要读取的默认相机数据和帧计时信息。
-
-pub mod camera;
-pub mod timer;

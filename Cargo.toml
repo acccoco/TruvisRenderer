@@ -14,12 +14,11 @@ members = [
     # render
     "engine/render/truvis-render-interface",
     "engine/render/truvis-render-graph",
-    "engine/render/truvis-render-backend",
+    "engine/render/truvis-render-runtime",
     "engine/render/truvis-render-passes",
     "engine/render/truvis-gui-backend",
     # world
     "engine/world/truvis-asset",
-    "engine/world/truvis-scene",
     "engine/world/truvis-world",
     # frame
     "engine/frame/truvis-frame-api",
@@ -63,11 +62,10 @@ truvis-descriptor-layout-trait = { path = "engine/gfx/truvis-descriptor-layout-t
 truvis-render-interface = { path = "engine/render/truvis-render-interface" }
 truvis-render-graph = { path = "engine/render/truvis-render-graph" }
 truvis-render-passes = { path = "engine/render/truvis-render-passes" }
-truvis-render-backend = { path = "engine/render/truvis-render-backend" }
+truvis-render-runtime = { path = "engine/render/truvis-render-runtime" }
 truvis-gui-backend = { path = "engine/render/truvis-gui-backend" }
 # world
 truvis-asset = { path = "engine/world/truvis-asset" }
-truvis-scene = { path = "engine/world/truvis-scene" }
 truvis-world = { path = "engine/world/truvis-world" }
 # frame
 truvis-frame-api = { path = "engine/frame/truvis-frame-api" }

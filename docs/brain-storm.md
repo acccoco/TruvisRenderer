@@ -14,21 +14,21 @@
 - `truvis-winit-app` 已经只做 winit 事件循环、窗口生命周期和渲染线程入口。
 - `FrameRuntime` 已经成为帧编排入口，外部通过 `push_input_event` / `time_to_render` / `run_frame` / `destroy` 驱动。
 - `AppPlugin` typed contexts 已经拆到 `truvis-app-api`。
-- `World` 与 `RenderWorld` 已经物理拆分，`RenderBackend` 现在持有 `World + RenderWorld`，旧的 `RenderContext` 已从主线退场。
+- `World` 与 `GpuStore` 已经物理拆分，`RenderRuntime` 现在持有 `World + GpuStore`，旧的 `RenderContext` 已从主线退场。
 - `truvis-render-graph` 已经不再依赖 `scene` / `asset`。
 - `truvis-gui-backend` 保持为 Vulkan ImGui 后端，RenderGraph 适配 `GuiRgPass` 仍在 `truvis-app`。
 - 通用 pass 已拆到 `truvis-render-passes`。
 
 仍然存在、文档中的讨论还有效的边界问题：
 
-- `truvis-scene` 仍会通过 `SceneManager::prepare_render_data()` 接触 `AssetHub`、`BindlessManager` 和 `RenderData`。
+- `truvis-world` 仍会通过 `SceneManager::prepare_render_data()` 接触 `AssetHub`、`BindlessManager` 和 `RenderData`。
 - `truvis-asset` 仍在 `AssetHub::new/update/destroy` 中接收 `BindlessManager` 并注册 / 注销 SRV。
-- `RenderBackend::prepare()` 仍把 scene extract、GPU upload、per-frame uniform 和 descriptor 更新揉在一起，`phase_extract` 还没有显式化。
+- `RenderRuntime::prepare()` 仍把 scene extract、GPU upload、per-frame uniform 和 descriptor 更新揉在一起，`phase_extract` 还没有显式化。
 - `FrameRuntime` 仍硬编码 `CameraController`、`InputManager`、`GuiHost` 和 overlays；多 plugin / builtin plugin 体系还未落地。
 - `AppPlugin` 仍是单插件槽位，不支持 `PluginGroup`、依赖声明或有序插件列表。
-- `truvis-frame-api` 仍暴露 `truvis-render-backend` 中的 `Camera` / `RenderPresent` 等具体 backend 类型。
+- `truvis-frame-api` 仍暴露 `truvis-render-runtime` 中的 `Camera` / `RenderPresent` 等具体 backend 类型。
 - `RenderPresent` 仍同时持有 swapchain/present 资源和 `GuiBackend`。
-- `truvis-render-interface` 名字仍偏“接口”，但内容是 concrete render core：manager、`RenderWorld`、`GpuScene`、`RenderData`。
+- `truvis-render-interface` 名字仍偏“接口”，但内容是 concrete render core：manager、`GpuStore`、`GpuScene`、`RenderData`。
 - `truvis-app` 仍同时承担 demo、pipeline glue、RenderGraph 适配和过渡期依赖。
 - `truvis-render-passes` 仍依赖 `truvis-world`，说明 pass 层还可触达 CPU World。
 - `Gfx::get()` 全局单例仍存在。
@@ -42,7 +42,7 @@
 - 显式 `extract -> prepare -> render` phase。
 - 多 plugin / builtin plugin / plugin dependency declaration。
 - `PipelineFeature` / `PipelineManager`，让 raster / RT / Shadertoy 以策略层选择。
-- `SurfaceRegistry`，把 swapchain / present 从 `RenderBackend` / `RenderPresent` 中进一步分离。
+- `SurfaceRegistry`，把 swapchain / present 从 `RenderRuntime` / `RenderPresent` 中进一步分离。
 - `Gfx` 构造注入，减少全局单例访问。
 
 ## 2. 文档分组
@@ -59,8 +59,8 @@
   `truvis-asset` 与 `GfxResourceManager` 的命名语义。
 - [`2026-04-23-render-view-concept.md`](brain-storm/2026-04-23-render-view-concept.md)：
   `ViewDesc` / `PreparedView` 的轻量引入路径。
-- [`naming-renderworld-renderer-backend-app.md`](brain-storm/naming-renderworld-renderer-backend-app.md)：
-  `RenderWorld` / `RenderBackend` / `FrameRuntime` / `AppPlugin` 的概念边界和重命名路线。
+- [`naming-GpuStore-renderer-backend-app.md`](brain-storm/naming-GpuStore-renderer-backend-app.md)：
+  `GpuStore` / `RenderRuntime` / `FrameRuntime` / `AppPlugin` 的概念边界和重命名路线。
 - [`plugin-pass-eventbus-evolution.md`](brain-storm/plugin-pass-eventbus-evolution.md)：
   多 plugin、pass 特性化和事件总线的中长期路线。
 
@@ -73,9 +73,9 @@
 - [`render-thread-isolation.md`](brain-storm/render-thread-isolation.md)：
   渲染线程剥离已落地；其中旧兼容入口描述与当前代码不完全一致。
 - [`2026-04-22-architecture-evolution-gap-analysis.md`](brain-storm/2026-04-22-architecture-evolution-gap-analysis.md)：
-  其中 `RenderContext -> World + RenderWorld` 已落地；显式 extract、多 plugin、builtin systems plugin 化仍未落地。
+  其中 `RenderContext -> World + GpuStore` 已落地；显式 extract、多 plugin、builtin systems plugin 化仍未落地。
 - [`render-app-layering-analysis.md`](brain-storm/render-app-layering-analysis.md)：
-  `RenderApp` / `OuterApp` / `RenderContext` 的历史诊断。主问题已由 `FrameRuntime` / `AppPlugin` / `World + RenderWorld` 缓解，但 GUI、surface、extract、plugin 化方向仍有效。
+  `RenderApp` / `OuterApp` / `RenderContext` 的历史诊断。主问题已由 `FrameRuntime` / `AppPlugin` / `World + GpuStore` 缓解，但 GUI、surface、extract、plugin 化方向仍有效。
 
 ### 理想模型与远期路线
 
@@ -84,7 +84,7 @@
 - [`ideal_layered_architecture.md`](brain-storm/ideal_layered_architecture.md)：
   Platform / AppShell / Main World / Render World 的理想模型。
 - [`ideal-module-architecture.md`](brain-storm/ideal-module-architecture.md)：
-  组件级归属分析，部分内容已被后续 `World + RenderWorld` 重构覆盖。
+  组件级归属分析，部分内容已被后续 `World + GpuStore` 重构覆盖。
 - [`plugin-imgui-winit-multi-pipeline-integration.md`](brain-storm/plugin-imgui-winit-multi-pipeline-integration.md)：
   ImGui、Winit、多管线以 plugin/feature 方式接入的设计方向。
 - [`app-tick-system.md`](brain-storm/app-tick-system.md)：
@@ -97,9 +97,9 @@
 - `GuiRgPass` 归属：
   `clean-crate-dependencies.md` 选择放在 `truvis-app`；`ideal-module-architecture.md` 倾向放到 backend；`render-app-layering-analysis.md` 又提出迁到 `gui-backend`。当前代码采用 `truvis-app`，后续可在 render-backend 或 render-feature 层重新评估。
 - `BindlessManager` 归属：
-  理想架构文档把它视作 Platform/device lifetime 资源；当前代码把它放在 `RenderWorld`。短期继续尊重当前结构，中长期可随 SurfaceRegistry/Gfx 注入一起重新划分。
-- `RenderBackend` 命名：
-  `Renderer -> RenderBackend` 已落地；`truvis-render-interface -> truvis-render-core` 仍可后续单独评估。远期是否合并 `FrameRuntime + RenderBackend` 对外称 `Renderer` 仍属于不同力度的命名演进。
+  理想架构文档把它视作 Platform/device lifetime 资源；当前代码把它放在 `GpuStore`。短期继续尊重当前结构，中长期可随 SurfaceRegistry/Gfx 注入一起重新划分。
+- `RenderRuntime` 命名：
+  `Renderer -> RenderRuntime` 已落地；`truvis-render-interface -> truvis-render-core` 仍可后续单独评估。远期是否合并 `FrameRuntime + RenderRuntime` 对外称 `Renderer` 仍属于不同力度的命名演进。
 - Plugin vs Tickable：
   `app-tick-system.md` 走轻量 `Tickable` 注册表；较新的 plugin 文档倾向固定 phase + builtin plugin。当前更适合优先考虑 builtin plugin，因为主线已经是 `AppPlugin`。
 - Asset 短期 vs 长期边界：

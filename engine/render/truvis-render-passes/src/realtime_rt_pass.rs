@@ -17,9 +17,9 @@ use truvis_gfx::{
 use truvis_path::TruvisPath;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
+use truvis_render_interface::gpu_store::GpuStore;
 use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_interface::render_scene_view::RenderSceneView;
-use truvis_render_interface::render_world::RenderWorld;
 use truvis_shader_binding::gpu;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
@@ -471,29 +471,26 @@ impl RealtimeRtPass {
     }
     pub fn ray_trace(
         &self,
-        render_world: &RenderWorld,
+        gpu_store: &GpuStore,
         render_scene: &dyn RenderSceneView,
         cmd: &GfxCommandBuffer,
         pass_data: RealtimeRtPassData,
     ) {
-        let frame_label = render_world.frame_counter.frame_label();
+        let frame_label = gpu_store.frame_counter.frame_label();
         let Some(tlas) = render_scene.tlas_handle(frame_label) else {
             log::trace!("RealtimeRtPass: skip ray tracing because TLAS is not ready for {}", frame_label);
             return;
         };
 
-        let _rt_handle = render_world.bindless_manager.get_shader_uav_handle(pass_data.single_frame_output_view);
-        let rt_image = render_world.gfx_resource_manager.get_image(pass_data.single_frame_output).unwrap().handle();
+        let _rt_handle = gpu_store.bindless_manager.get_shader_uav_handle(pass_data.single_frame_output_view);
+        let rt_image = gpu_store.gfx_resource_manager.get_image(pass_data.single_frame_output).unwrap().handle();
         let rt_image_view =
-            render_world.gfx_resource_manager.get_image_view(pass_data.single_frame_output_view).unwrap().handle();
+            gpu_store.gfx_resource_manager.get_image_view(pass_data.single_frame_output_view).unwrap().handle();
 
         // 获取 GBuffer image views
-        let gbuffer_a_view =
-            render_world.gfx_resource_manager.get_image_view(pass_data.gbuffer_a_view).unwrap().handle();
-        let gbuffer_b_view =
-            render_world.gfx_resource_manager.get_image_view(pass_data.gbuffer_b_view).unwrap().handle();
-        let gbuffer_c_view =
-            render_world.gfx_resource_manager.get_image_view(pass_data.gbuffer_c_view).unwrap().handle();
+        let gbuffer_a_view = gpu_store.gfx_resource_manager.get_image_view(pass_data.gbuffer_a_view).unwrap().handle();
+        let gbuffer_b_view = gpu_store.gfx_resource_manager.get_image_view(pass_data.gbuffer_b_view).unwrap().handle();
+        let gbuffer_c_view = gpu_store.gfx_resource_manager.get_image_view(pass_data.gbuffer_c_view).unwrap().handle();
 
         cmd.begin_label("Ray trace", glam::vec4(0.0, 1.0, 0.0, 1.0));
 
@@ -549,7 +546,7 @@ impl RealtimeRtPass {
             vk::PipelineBindPoint::RAY_TRACING_KHR,
             self.pipeline.pipeline_layout,
             0,
-            &render_world.global_descriptor_sets.global_sets(frame_label),
+            &gpu_store.global_descriptor_sets.global_sets(frame_label),
             None,
         );
         // FIXME 这个变量废除了，现在只有 spp 1
@@ -557,10 +554,10 @@ impl RealtimeRtPass {
         let mut push_constant = gpu::rt::PushConstants {
             spp,
             spp_idx: 0,
-            channel: render_world.pipeline_settings.channel,
+            channel: gpu_store.pipeline_settings.channel,
             ic_table: self.hash_table.device_address(),
             ic_entry_pool: self.entry_pool.device_address(),
-            ic_enabled: render_world.pipeline_settings.ic_enabled as u32,
+            ic_enabled: gpu_store.pipeline_settings.ic_enabled as u32,
         };
         for spp_idx in 0..spp {
             push_constant.spp_idx = spp_idx;
@@ -650,7 +647,7 @@ pub struct RealtimeRtRgPass<'a> {
     pub rt_pass: &'a RealtimeRtPass,
 
     // TODO 暂时使用这个肮脏的实现
-    pub render_world: &'a RenderWorld,
+    pub gpu_store: &'a GpuStore,
     pub render_scene: &'a dyn RenderSceneView,
 
     /// 单帧 RT 输出图像（只写）
@@ -684,7 +681,7 @@ impl RgPass for RealtimeRtRgPass<'_> {
             ctx.get_image_and_view_handle(self.gbuffer_c).expect("RealtimeRtRgPass: gbuffer_c not found");
 
         self.rt_pass.ray_trace(
-            self.render_world,
+            self.gpu_store,
             self.render_scene,
             ctx.cmd,
             RealtimeRtPassData {

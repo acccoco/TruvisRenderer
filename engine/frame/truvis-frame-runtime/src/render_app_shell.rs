@@ -6,14 +6,14 @@ use truvis_frame_api::plugin::{PluginInitCtx, PluginResizeCtx, PluginShutdownCtx
 use truvis_frame_api::render_app::{
     RenderApp, RenderAppHooks, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx,
 };
-use truvis_render_backend::render_backend::RenderBackend;
+use truvis_render_runtime::render_runtime::RenderRuntime;
 
 /// 将具体 app hooks 转换为 render-loop [`RenderApp`] 的适配器。
 ///
-/// `RenderAppShell` 持有 RenderBackend 和待处理输入事件队列，具体 app hooks
+/// `RenderAppShell` 持有 RenderRuntime 和待处理输入事件队列，具体 app hooks
 /// 持有 GUI、camera/input state、overlay 和 render plugin。
 pub struct RenderAppShell<A> {
-    render_backend: Option<RenderBackend>,
+    render_runtime: Option<RenderRuntime>,
     input_events: Vec<InputEvent>,
     app: A,
 }
@@ -21,7 +21,7 @@ pub struct RenderAppShell<A> {
 impl<A> RenderAppShell<A> {
     pub fn new(app: A) -> Self {
         Self {
-            render_backend: None,
+            render_runtime: None,
             input_events: Vec::new(),
             app,
         }
@@ -35,18 +35,18 @@ impl<A> RenderAppShell<A> {
         &mut self.app
     }
 
-    fn new_render_backend(raw_display_handle: RawDisplayHandle) -> RenderBackend {
+    fn new_render_runtime(raw_display_handle: RawDisplayHandle) -> RenderRuntime {
         let extra_instance_ext = ash_window::enumerate_required_extensions(raw_display_handle)
             .unwrap()
             .iter()
             .map(|ext| unsafe { CStr::from_ptr(*ext) })
             .collect();
 
-        RenderBackend::new(extra_instance_ext)
+        RenderRuntime::new(extra_instance_ext)
     }
 
-    fn destroy_render_backend(render_backend: RenderBackend) {
-        render_backend.destroy();
+    fn destroy_render_runtime(render_runtime: RenderRuntime) {
+        render_runtime.destroy();
     }
 }
 
@@ -61,46 +61,46 @@ where
         scale_factor: f64,
         window_size: [u32; 2],
     ) {
-        let mut render_backend = Self::new_render_backend(raw_display);
+        let mut render_runtime = Self::new_render_runtime(raw_display);
         {
-            let backend = render_backend.init_after_window(raw_display, raw_window, window_size);
+            let runtime = render_runtime.init_after_window(raw_display, raw_window, window_size);
             let mut app_ctx = RenderAppInitCtx {
-                backend,
+                runtime,
                 scale_factor,
                 window_size,
             };
             self.app.init(&mut app_ctx);
 
-            let RenderAppInitCtx { backend, .. } = app_ctx;
+            let RenderAppInitCtx { runtime, .. } = app_ctx;
             let mut plugin_ctx = PluginInitCtx {
-                device_ctx: backend.device_ctx,
-                resource_ctx: backend.resource_ctx,
-                queue_ctx: backend.queue_ctx,
-                device_info_ctx: backend.device_info_ctx,
-                immediate_ctx: backend.immediate_ctx,
-                surface_ctx: backend.surface_ctx,
-                world: backend.world,
-                render_world: backend.render_world,
-                cmd_allocator: backend.cmd_allocator,
-                swapchain_image_info: backend.swapchain_image_info,
-                render_present: backend.render_present,
+                device_ctx: runtime.device_ctx,
+                resource_ctx: runtime.resource_ctx,
+                queue_ctx: runtime.queue_ctx,
+                device_info_ctx: runtime.device_info_ctx,
+                immediate_ctx: runtime.immediate_ctx,
+                surface_ctx: runtime.surface_ctx,
+                world: runtime.world,
+                gpu_store: runtime.gpu_store,
+                cmd_allocator: runtime.cmd_allocator,
+                swapchain_image_info: runtime.swapchain_image_info,
+                render_present: runtime.render_present,
             };
             self.app.visit_plugins_mut(&mut |plugin| {
                 plugin.init(&mut plugin_ctx);
             });
         }
-        self.render_backend = Some(render_backend);
+        self.render_runtime = Some(render_runtime);
     }
 
     fn run_frame(&mut self) {
         let Self {
-            render_backend,
+            render_runtime,
             input_events,
             app,
         } = self;
-        let render_backend = render_backend.as_mut().expect("RenderBackend missing in RenderAppShell::run_frame");
+        let render_runtime = render_runtime.as_mut().expect("RenderRuntime missing in RenderAppShell::run_frame");
 
-        render_backend.begin_frame();
+        render_runtime.begin_frame();
 
         {
             let _span = tracy_client::span!("RenderAppShell::input");
@@ -110,7 +110,7 @@ where
 
         {
             let _span = tracy_client::span!("RenderAppShell::update");
-            let mut update_ctx = render_backend.update_phase();
+            let mut update_ctx = render_runtime.update_phase();
             app.update(&mut update_ctx);
 
             let mut plugin_ctx = PluginUpdateCtx {
@@ -124,16 +124,16 @@ where
             });
         }
 
-        render_backend.prepare(app.camera());
+        render_runtime.prepare(app.camera());
 
         {
             let _span = tracy_client::span!("RenderAppShell::render");
-            let render_ctx = render_backend.render_phase();
+            let render_ctx = render_runtime.render_phase();
             app.render(&render_ctx);
         }
 
-        render_backend.present();
-        render_backend.end_frame();
+        render_runtime.present();
+        render_runtime.end_frame();
         tracy_client::frame_mark();
     }
 
@@ -143,30 +143,30 @@ where
 
     fn recreate_swapchain_if_needed(&mut self, new_size: [u32; 2]) {
         let Self {
-            render_backend, app, ..
+            render_runtime, app, ..
         } = self;
-        let Some(backend) = render_backend
+        let Some(runtime) = render_runtime
             .as_mut()
-            .expect("RenderBackend missing in RenderAppShell::recreate_swapchain_if_needed")
+            .expect("RenderRuntime missing in RenderAppShell::recreate_swapchain_if_needed")
             .handle_resize(new_size)
         else {
             return;
         };
 
         let mut app_ctx = RenderAppResizeCtx {
-            backend,
+            runtime,
             window_size: new_size,
         };
         app.on_resize(&mut app_ctx);
 
-        let RenderAppResizeCtx { backend, .. } = app_ctx;
+        let RenderAppResizeCtx { runtime, .. } = app_ctx;
         let mut plugin_ctx = PluginResizeCtx {
-            device_ctx: backend.device_ctx,
-            resource_ctx: backend.resource_ctx,
-            immediate_ctx: backend.immediate_ctx,
-            surface_ctx: backend.surface_ctx,
-            render_world: backend.render_world,
-            render_present: backend.render_present,
+            device_ctx: runtime.device_ctx,
+            resource_ctx: runtime.resource_ctx,
+            immediate_ctx: runtime.immediate_ctx,
+            surface_ctx: runtime.surface_ctx,
+            gpu_store: runtime.gpu_store,
+            render_present: runtime.render_present,
         };
         app.visit_plugins_mut(&mut |plugin| {
             plugin.on_resize(&mut plugin_ctx);
@@ -174,36 +174,36 @@ where
     }
 
     fn time_to_render(&self) -> bool {
-        self.render_backend.as_ref().expect("RenderBackend missing in RenderAppShell::time_to_render").time_to_render()
+        self.render_runtime.as_ref().expect("RenderRuntime missing in RenderAppShell::time_to_render").time_to_render()
     }
 
     fn shutdown(&mut self) {
-        if let Some(render_backend) = self.render_backend.as_mut() {
-            render_backend.wait_idle();
+        if let Some(render_runtime) = self.render_runtime.as_mut() {
+            render_runtime.wait_idle();
 
             {
-                let backend = render_backend.shutdown_phase();
-                let mut app_ctx = RenderAppShutdownCtx { backend };
+                let runtime = render_runtime.shutdown_phase();
+                let mut app_ctx = RenderAppShutdownCtx { runtime };
                 self.app.shutdown(&mut app_ctx);
             }
             {
-                let backend = render_backend.shutdown_phase();
+                let runtime = render_runtime.shutdown_phase();
                 let mut plugin_ctx = PluginShutdownCtx {
-                    device_ctx: backend.device_ctx,
-                    resource_ctx: backend.resource_ctx,
-                    queue_ctx: backend.queue_ctx,
-                    immediate_ctx: backend.immediate_ctx,
-                    surface_ctx: backend.surface_ctx,
-                    render_world: backend.render_world,
-                    cmd_allocator: backend.cmd_allocator,
+                    device_ctx: runtime.device_ctx,
+                    resource_ctx: runtime.resource_ctx,
+                    queue_ctx: runtime.queue_ctx,
+                    immediate_ctx: runtime.immediate_ctx,
+                    surface_ctx: runtime.surface_ctx,
+                    gpu_store: runtime.gpu_store,
+                    cmd_allocator: runtime.cmd_allocator,
                 };
                 self.app.visit_plugins_mut_rev(&mut |plugin| {
                     plugin.shutdown(&mut plugin_ctx);
                 });
             }
         }
-        if let Some(render_backend) = self.render_backend.take() {
-            Self::destroy_render_backend(render_backend);
+        if let Some(render_runtime) = self.render_runtime.take() {
+            Self::destroy_render_runtime(render_runtime);
         }
     }
 }

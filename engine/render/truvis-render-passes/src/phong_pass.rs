@@ -16,9 +16,9 @@ use truvis_gfx::{
 };
 use truvis_path::TruvisPath;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
+use truvis_render_interface::gpu_store::GpuStore;
 use truvis_render_interface::pipeline_settings::FrameLabel;
 use truvis_render_interface::render_scene_view::RenderSceneView;
-use truvis_render_interface::render_world::RenderWorld;
 use truvis_shader_binding::gpu;
 
 pub struct PhongPass {
@@ -70,7 +70,7 @@ impl PhongPass {
     fn bind(
         &self,
         cmd: &GfxCommandBuffer,
-        render_world: &RenderWorld,
+        gpu_store: &GpuStore,
         viewport: &vk::Rect2D,
         push_constant: &gpu::raster::PushConstants,
         frame_label: FrameLabel,
@@ -95,7 +95,7 @@ impl PhongPass {
             BytesConvert::bytes_of(push_constant),
         );
 
-        let render_descriptor_sets = &render_world.global_descriptor_sets;
+        let render_descriptor_sets = &gpu_store.global_descriptor_sets;
         cmd.bind_descriptor_sets(
             vk::PipelineBindPoint::GRAPHICS,
             self.pipeline.layout(),
@@ -105,22 +105,20 @@ impl PhongPass {
         );
     }
 
-    pub fn draw(&self, cmd: &GfxCommandBuffer, render_world: &RenderWorld, render_scene: &dyn RenderSceneView) {
-        let frame_label = render_world.frame_counter.frame_label();
+    pub fn draw(&self, cmd: &GfxCommandBuffer, gpu_store: &GpuStore, render_scene: &dyn RenderSceneView) {
+        let frame_label = gpu_store.frame_counter.frame_label();
 
-        let (_, render_target_view_handle) = render_world.fif_buffers.render_target_handle(frame_label);
-        let render_target_view = render_world.gfx_resource_manager.get_image_view(render_target_view_handle).unwrap();
-        let depth_image_view = render_world
-            .gfx_resource_manager
-            .get_image_view(render_world.fif_buffers.depth_image_view_handle())
-            .unwrap();
+        let (_, render_target_view_handle) = gpu_store.fif_buffers.render_target_handle(frame_label);
+        let render_target_view = gpu_store.gfx_resource_manager.get_image_view(render_target_view_handle).unwrap();
+        let depth_image_view =
+            gpu_store.gfx_resource_manager.get_image_view(gpu_store.fif_buffers.depth_image_view_handle()).unwrap();
 
         let rendering_info = GfxRenderingInfo::new(
             vec![render_target_view.handle()],
             Some(depth_image_view.handle()),
             vk::Rect2D {
                 offset: vk::Offset2D::default(),
-                extent: render_world.frame_settings.frame_extent,
+                extent: gpu_store.frame_settings.frame_extent,
             },
         );
 
@@ -129,10 +127,10 @@ impl PhongPass {
 
         self.bind(
             cmd,
-            render_world,
-            &render_world.frame_settings.frame_extent.into(),
+            gpu_store,
+            &gpu_store.frame_settings.frame_extent.into(),
             &gpu::raster::PushConstants {
-                frame_data: render_world.per_frame_data_buffers[*frame_label].device_address(),
+                frame_data: gpu_store.per_frame_data_buffers[*frame_label].device_address(),
                 scene: render_scene.scene_buffer_device_address(frame_label),
 
                 submesh_idx: 0,

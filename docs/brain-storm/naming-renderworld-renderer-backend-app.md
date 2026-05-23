@@ -1,13 +1,13 @@
-# 名词辨析：RenderWorld / Renderer / RenderBackend / App
+# 名词辨析：GpuStore / Renderer / RenderRuntime / App
 
-基于 `split-render-context-world-renderworld` 重构完成后的架构现状，
+基于 `split-render-context-world-GpuStore` 重构完成后的架构现状，
 对引擎核心四个概念的内涵、边界、当前命名问题和改进方向做系统梳理。
 
-> 2026-05-06 更新：方案 B 中 `truvis-renderer (struct Renderer) -> truvis-render-backend (struct RenderBackend)` 已采用。本文其余内容保留为命名决策的历史讨论记录。
+> 2026-05-06 更新：方案 B 中 `truvis-renderer (struct Renderer) -> truvis-render-runtime (struct RenderRuntime)` 已采用。本文其余内容保留为命名决策的历史讨论记录。
 
 ## 1. 四个概念的本质定义
 
-### RenderWorld — "GPU 侧有什么"
+### GpuStore — "GPU 侧有什么"
 
 ```
 本质：数据容器 (plain struct, 无方法)
@@ -19,8 +19,8 @@
       GlobalDescriptorSets, GfxResourceManager, SamplerManager,
       PipelineSettings, FrameSettings, AccumData, per_frame_data_buffers
 
-类比：Bevy 的 RenderWorld（渲染侧 ECS world）
-定义位置：truvis-render-interface/src/render_world.rs
+类比：Bevy 的 GpuStore（渲染侧 ECS world）
+定义位置：truvis-render-interface/src/gpu_store.rs
 ```
 
 设计特征：
@@ -37,14 +37,14 @@
 边界：知道 "如何" 完成一个 GPU 操作
       不知道 "何时" 或 "以什么顺序" 调用自己的方法
 
-持有：World + RenderWorld + CmdAllocator + Timer + Semaphore + RenderPresent
+持有：World + GpuStore + CmdAllocator + Timer + Semaphore + RenderPresent
 
 定义位置：truvis-renderer/src/renderer.rs
 ```
 
 关键特征：
 - 被 FrameRuntime 驱动，自身不做调度决策
-- 同时持有 CPU 状态 (World) 和 GPU 状态 (RenderWorld) 的所有权
+- 同时持有 CPU 状态 (World) 和 GPU 状态 (GpuStore) 的所有权
 - doc comment 自称 "渲染 Backend 核心"
 
 ### FrameRuntime — "什么时候做什么"
@@ -86,7 +86,7 @@ begin_frame → input → acquire → build_ui → update → asset_upload
 ```
               数据所有权    执行能力    调度决策    用户逻辑
               ─────────    ────────    ────────    ────────
-RenderWorld      ✓           ✗           ✗           ✗
+GpuStore      ✓           ✗           ✗           ✗
 Renderer         ✓(间接)     ✓           ✗           ✗
 FrameRuntime     ✓(间接)     ✓(间接)     ✓           ✗
 App              ✗           ✓(受限)     ✗           ✓
@@ -95,7 +95,7 @@ App              ✗           ✓(受限)     ✗           ✓
 ```
               知道GPU细节?   知道帧顺序?   知道场景语义?
               ───────────   ──────────   ───────────
-RenderWorld      ✓              ✗             ✗
+GpuStore      ✓              ✗             ✗
 Renderer         ✓              ✗             ✗  (只做上传)
 FrameRuntime     ✗  (委托)      ✓             ✗
 App              ✗  (通过ctx)   ✗  (被调用)    ✓
@@ -123,12 +123,12 @@ App              ✗  (通过ctx)   ✗  (被调用)    ✓
 │   ┌──────────────────┐                                      │
 │   │    Renderer      │  "How GPU work gets executed"        │
 │   │ (actual role:    │  begin/end frame, submit, present,   │
-│   │  RenderBackend)  │  swapchain, cmd alloc, sync          │
+│   │  RenderRuntime)  │  swapchain, cmd alloc, sync          │
 │   └──┬──────────┬────┘                                      │
 │      │ owns     │ owns                                      │
 │      ▼          ▼                                           │
 │  ┌────────┐ ┌──────────────┐                                │
-│  │ World  │ │ RenderWorld  │  "What state exists"           │
+│  │ World  │ │ GpuStore  │  "What state exists"           │
 │  │ (CPU)  │ │ (GPU)        │  Pure data containers,         │
 │  └────────┘ └──────────────┘  no execution logic            │
 │                                                             │
@@ -152,7 +152,7 @@ App              ✗  (通过ctx)   ✗  (被调用)    ✓
 ### 问题 2：truvis-render-interface 名不副实
 
 `render-interface` 暗示 trait / 契约 / 抽象边界（类似 Java 的 interface），
-但实际包含的是大量具体 Manager 实现和 `RenderWorld` 聚合容器。
+但实际包含的是大量具体 Manager 实现和 `GpuStore` 聚合容器。
 
 ```
 名字暗示：traits, type definitions, thin contracts
@@ -178,7 +178,7 @@ FrameRuntime 总是 1:1 持有 Renderer，外部代码（truvis-winit-app）
 
 | 讨论场景 | 应使用的概念 | 原因 |
 |---|---|---|
-| GPU 侧有哪些 buffer / descriptor / 帧设置 | **RenderWorld** | 纯数据，无行为 |
+| GPU 侧有哪些 buffer / descriptor / 帧设置 | **GpuStore** | 纯数据，无行为 |
 | 怎么提交命令、管理 swapchain、做 GPU 上传 | **Renderer** (实为 Backend) | 执行能力，不做调度 |
 | 帧循环顺序、输入分发、plugin 生命周期 | **FrameRuntime** | 调度决策 |
 | 用户场景搭建、渲染管线选择、UI 交互 | **App** (AppPlugin) | 用户逻辑 |
@@ -191,7 +191,7 @@ FrameRuntime 总是 1:1 持有 Renderer，外部代码（truvis-winit-app）
 ```
 truvis-render-interface  →  truvis-render-core
 
-理由：crate 内容是渲染核心基础设施（managers + RenderWorld），
+理由：crate 内容是渲染核心基础设施（managers + GpuStore），
       "core" 比 "interface" 准确得多。
 影响：~35 个 .rs 文件 import 路径 + ~12 个 Cargo.toml
 ```
@@ -200,7 +200,7 @@ truvis-render-interface  →  truvis-render-core
 
 ```
 truvis-render-interface  →  truvis-render-core
-truvis-renderer (struct Renderer)  →  truvis-render-backend (struct RenderBackend)
+truvis-renderer (struct Renderer)  →  truvis-render-runtime (struct RenderRuntime)
 
 理由：消除 "Renderer" 一词的歧义。
       doc comment 已经自称 "Backend 核心"，让名字跟上。
@@ -220,7 +220,7 @@ FrameRuntime + Renderer  →  合并为新的 Renderer
 结构变为：
   Renderer（= 当前 FrameRuntime 的外壳 + 当前 Renderer 的内脏）
     ├─ World
-    ├─ RenderWorld
+    ├─ GpuStore
     ├─ CmdAllocator, Timer, Sync ...
     ├─ CameraController, InputManager, GuiHost
     └─ Plugin
@@ -235,7 +235,7 @@ FrameRuntime + Renderer  →  合并为新的 Renderer
 短期：方案 A（改 truvis-render-interface → truvis-render-core）
       性价比最高，消除最显眼的命名误导
 
-中期：方案 B（Renderer → RenderBackend）
+中期：方案 B（Renderer → RenderRuntime）
       配合 crate 重命名一起做，让命名体系自洽
 
 远期：评估方案 C
@@ -249,7 +249,7 @@ FrameRuntime + Renderer  →  合并为新的 Renderer
 |---|---|---|---|
 | `truvis-render-core` | 渲染核心基础设施 | 简短、业界常用、准确 | "core" 一词有时被滥用 |
 | `truvis-render-infra` | 渲染基础设施 | 精确描述实际内容 | 略显非正式 |
-| `truvis-render-state` | 渲染状态管理 | 突出 RenderWorld 数据容器角色 | 低估了 Manager 的执行逻辑 |
+| `truvis-render-state` | 渲染状态管理 | 突出 GpuStore 数据容器角色 | 低估了 Manager 的执行逻辑 |
 | `truvis-render-base` | 渲染基座 | 简单直白 | 语义模糊 |
 | `truvis-render-substrate` | 渲染基底 | 精确、有区分度 | 不常见，学习成本 |
 | `truvis-gpu-runtime` | GPU 运行时 | 强调 GPU 侧 | 与 FrameRuntime 命名冲突 |

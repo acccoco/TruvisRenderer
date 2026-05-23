@@ -2,9 +2,9 @@ use std::{fmt::Display, ops::Deref};
 
 use ash::vk;
 
-/// 渲染后端默认配置
-pub struct DefaultRenderBackendSettings;
-impl DefaultRenderBackendSettings {
+/// 渲染运行时默认配置
+pub struct DefaultRenderRuntimeSettings;
+impl DefaultRenderRuntimeSettings {
     pub const DEFAULT_SURFACE_FORMAT: vk::SurfaceFormatKHR = vk::SurfaceFormatKHR {
         // shader 输出会被自动改变： liner -> sRGB
         format: vk::Format::R8G8B8A8_SRGB,

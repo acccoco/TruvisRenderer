@@ -7,7 +7,7 @@
 
 对 `engine/crates/` 的 crate 依赖图进行审查后，发现三处层次违反和一处无用依赖：
 
-### 1.1 `truvis-render-graph` 向上依赖了 `truvis-scene` 和 `truvis-asset`
+### 1.1 `truvis-render-graph` 向上依赖了 `truvis-world` 和 `truvis-asset`
 
 `RenderContext`（聚合了渲染期间所有状态的 "God struct"）被定义在 `truvis-render-graph` 中，它包含 `SceneManager`（来自 scene）和 `AssetHub`（来自 asset）两个字段。这导致本应是纯粹 pass 编排层的 render-graph 被迫知道领域模型的具体类型。
 
@@ -71,7 +71,7 @@
    fn exec(&self, cmd, frame_label: FrameLabel, global_descriptor_sets: &GlobalDescriptorSets, params, group_cnt)
    ```
 3. 删除 `truvis-render-graph/src/render_context.rs`
-4. 从 render-graph 的 `Cargo.toml` 移除 `truvis-scene` 和 `truvis-asset`
+4. 从 render-graph 的 `Cargo.toml` 移除 `truvis-world` 和 `truvis-asset`
 5. 更新所有引用路径（renderer、app 中约 13 个文件）
 
 ### 3.3 GuiRgPass 分离 + GuiPass::draw 重构
@@ -143,7 +143,7 @@
 
 | Crate | 移除的依赖 | 原因 |
 |-------|-----------|------|
-| `truvis-render-graph` | `truvis-scene`, `truvis-asset` | RenderContext 搬到 renderer |
+| `truvis-render-graph` | `truvis-world`, `truvis-asset` | RenderContext 搬到 renderer |
 | `truvis-gui-backend` | `truvis-render-graph` | GuiRgPass 搬到 app |
 | `truvis-logs` | `reqwest`, `serde`, `zip`, `toml`, `anyhow` | 幽灵依赖 |
 

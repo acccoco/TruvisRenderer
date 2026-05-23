@@ -6,7 +6,7 @@ description = "Render app and plugin contracts for the frame runtime"
 
 [dependencies]
 truvis-gfx = { workspace = true }
-truvis-render-backend = { workspace = true }
+truvis-render-runtime = { workspace = true }
 truvis-render-interface = { workspace = true }
 truvis-world = { workspace = true }
 

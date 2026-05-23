@@ -512,12 +512,12 @@
               </tr>
               <tr>
                 <td>反向使用</td>
-                <td><code>truvis-render-backend</code></td>
+                <td><code>truvis-render-runtime</code></td>
                 <td>创建、每帧更新、销毁 <code>AssetHub</code>。</td>
               </tr>
               <tr>
                 <td>反向使用</td>
-                <td><code>truvis-scene</code></td>
+                <td><code>truvis-world</code></td>
                 <td>prepare 阶段从 <code>AssetHub</code> 查材质贴图。</td>
               </tr>
             </tbody>
@@ -527,8 +527,8 @@
         <section id="lifecycle">
           <h2>生命周期与状态</h2>
           <p>
-            <code>RenderBackend::new</code> 创建 <code>AssetHub</code>。<code>RenderBackend::begin_frame</code>
-            调用 <code>asset_hub.update</code>，把资产更新内聚到帧开始。关闭时 <code>RenderBackend::destroy</code>
+            <code>RenderRuntime::new</code> 创建 <code>AssetHub</code>。<code>RenderRuntime::begin_frame</code>
+            调用 <code>asset_hub.update</code>，把资产更新内聚到帧开始。关闭时 <code>RenderRuntime::destroy</code>
             在 GPU idle 后调用 <code>asset_hub.destroy</code>，保证 upload manager、ready textures 和 fallback 都在
             <code>Gfx</code> 销毁前释放。
           </p>
@@ -607,8 +607,8 @@
             <a href="../../engine/crates/truvis-asset/src/asset_loader.rs">engine/crates/truvis-asset/src/asset_loader.rs</a>
             <a href="../../engine/crates/truvis-asset/src/asset_upload_manager.rs">engine/crates/truvis-asset/src/asset_upload_manager.rs</a>
             <a href="../../engine/crates/truvis-asset/src/handle.rs">engine/crates/truvis-asset/src/handle.rs</a>
-            <a href="../../engine/crates/truvis-render-backend/src/render_backend.rs">engine/crates/truvis-render-backend/src/render_backend.rs</a>
-            <a href="../../engine/crates/truvis-scene/src/scene_manager.rs">engine/crates/truvis-scene/src/scene_manager.rs</a>
+            <a href="../../engine/crates/truvis-render-runtime/src/render_runtime.rs">engine/crates/truvis-render-runtime/src/render_runtime.rs</a>
+            <a href="../../engine/crates/truvis-world/src/scene_manager.rs">engine/crates/truvis-world/src/scene_manager.rs</a>
             <a href="./2026-04-23-assets-bindless-decoupling.md">docs/brain-storm/2026-04-23-assets-bindless-decoupling.md</a>
             <a href="./threading-model-evolution.md">docs/brain-storm/threading-model-evolution.md</a>
           </div>

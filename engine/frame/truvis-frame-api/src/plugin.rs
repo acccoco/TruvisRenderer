@@ -7,20 +7,20 @@
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
-use truvis_render_backend::present::render_present::PresentView;
 use truvis_render_interface::cmd_allocator::CmdAllocator;
+use truvis_render_interface::gpu_store::GpuStore;
 use truvis_render_interface::pipeline_settings::{FrameSettings, PipelineSettings};
 use truvis_render_interface::render_scene_view::RenderSceneView;
-use truvis_render_interface::render_world::RenderWorld;
+use truvis_render_runtime::present::render_present::PresentView;
 use truvis_world::World;
 
 use crate::input_event::InputEvent;
 
 /// 由 app 持有的 plugin 的一次性初始化上下文。
 ///
-/// 该上下文来自 backend 的初始化阶段，包含创建长期 GPU 资源、上传初始数据、
-/// 注册 render-world 资源所需的能力。字段借用只在 `Plugin::init` 调用期间有效，
-/// Plugin 不应长期保存 typed `Gfx` ctx 或 backend 内部引用。
+/// 该上下文来自 runtime 的初始化阶段，包含创建长期 GPU 资源、上传初始数据、
+/// 注册 gpu-store 资源所需的能力。字段借用只在 `Plugin::init` 调用期间有效，
+/// Plugin 不应长期保存 typed `Gfx` ctx 或 runtime 内部引用。
 pub struct PluginInitCtx<'a> {
     /// 设备级 Vulkan 操作能力，用于创建依赖 logical device 的对象。
     pub device_ctx: GfxDeviceCtx<'a>,
@@ -36,8 +36,8 @@ pub struct PluginInitCtx<'a> {
     pub surface_ctx: GfxSurfaceCtx<'a>,
     /// CPU 语义世界，可在初始化时注册或读取 App/scene 侧状态。
     pub world: &'a mut World,
-    /// 渲染世界，可注册 Plugin 持有或依赖的 GPU 资源和全局渲染状态。
-    pub render_world: &'a mut RenderWorld,
+    /// GPU-facing 状态仓库，可注册 Plugin 持有或依赖的 GPU 资源和全局渲染状态。
+    pub gpu_store: &'a mut GpuStore,
     /// 命令分配器，供初始化阶段创建一次性或持久命令资源。
     pub cmd_allocator: &'a mut CmdAllocator,
     /// 当前 swapchain image 信息，供创建尺寸或格式相关资源。
@@ -63,7 +63,7 @@ pub struct PluginUpdateCtx<'a> {
 
 /// 由 app 持有的 plugin 的渲染上下文。
 ///
-/// 该上下文面向渲染录制和 render graph pass 贡献。它提供只读 render world、
+/// 该上下文面向渲染录制和 render graph pass 贡献。它提供只读 `GpuStore`、
 /// scene view、present 和队列同步相关能力，但不包含 App 级 GUI draw data；
 /// GUI draw data 刻意保留在具体 GUI plugin 内部。
 pub struct PluginRenderCtx<'a> {
@@ -75,9 +75,9 @@ pub struct PluginRenderCtx<'a> {
     pub queue_ctx: GfxQueueCtx<'a>,
     /// 设备能力只读信息，供 pass 根据 feature 选择渲染路径。
     pub device_info_ctx: GfxDeviceInfoCtx<'a>,
-    /// 只读渲染世界，暴露全局 GPU 资源、manager 和帧状态。
-    pub render_world: &'a RenderWorld,
-    /// backend 准备好的场景只读视图，供 pass 访问 scene buffer、TLAS 和 draw 数据。
+    /// 只读 GPU-facing 状态仓库，暴露全局 GPU 资源、manager 和帧状态。
+    pub gpu_store: &'a GpuStore,
+    /// runtime 准备好的场景只读视图，供 pass 访问 scene buffer、TLAS 和 draw 数据。
     pub render_scene: &'a dyn RenderSceneView,
     /// present 资源只读视图，供 pass 导入 swapchain 或 present target。
     pub render_present: PresentView<'a>,
@@ -87,9 +87,9 @@ pub struct PluginRenderCtx<'a> {
 
 /// 持有 swapchain 尺寸资源的 plugin 使用的 resize 上下文。
 ///
-/// 该上下文只在 backend 确认 swapchain 或窗口尺寸相关资源发生重建后出现。
+/// 该上下文只在 runtime 确认 swapchain 或窗口尺寸相关资源发生重建后出现。
 /// Plugin 应在这里释放或重建自己持有的窗口尺寸相关资源；manager-owned image/view
-/// 必须继续通过 `RenderWorld` 中的 manager 释放。
+/// 必须继续通过 `GpuStore` 中的 manager 释放。
 pub struct PluginResizeCtx<'a> {
     /// 设备级 Vulkan 操作能力，用于重建依赖 logical device 的对象。
     pub device_ctx: GfxDeviceCtx<'a>,
@@ -99,15 +99,15 @@ pub struct PluginResizeCtx<'a> {
     pub immediate_ctx: GfxImmediateCtx<'a>,
     /// surface 相关能力，用于依赖窗口 surface 的重建流程。
     pub surface_ctx: GfxSurfaceCtx<'a>,
-    /// 可变渲染世界，供 Plugin 更新或释放其注册的 GPU 资源。
-    pub render_world: &'a mut RenderWorld,
+    /// 可变 GPU-facing 状态仓库，供 Plugin 更新或释放其注册的 GPU 资源。
+    pub gpu_store: &'a mut GpuStore,
     /// 新的 present 资源只读视图，供 Plugin 查询重建后的 swapchain 状态。
     pub render_present: PresentView<'a>,
 }
 
 /// 由 app 持有的 plugin 的 GPU shutdown 上下文。
 ///
-/// shutdown 阶段发生在 backend root owner 销毁之前。Plugin 必须在这里显式释放
+/// shutdown 阶段发生在 runtime root owner 销毁之前。Plugin 必须在这里显式释放
 /// 自己持有的 Vulkan/VMA/WSI 资源；之后字段 `Drop` 不应再调用底层销毁 API。
 pub struct PluginShutdownCtx<'a> {
     /// 设备级 Vulkan 操作能力，用于销毁依赖 logical device 的对象。
@@ -120,8 +120,8 @@ pub struct PluginShutdownCtx<'a> {
     pub immediate_ctx: GfxImmediateCtx<'a>,
     /// surface 相关能力，用于释放依赖窗口 surface 的资源。
     pub surface_ctx: GfxSurfaceCtx<'a>,
-    /// 可变渲染世界，供 Plugin 通过 manager 释放已注册的 GPU 资源。
-    pub render_world: &'a mut RenderWorld,
+    /// 可变 GPU-facing 状态仓库，供 Plugin 通过 manager 释放已注册的 GPU 资源。
+    pub gpu_store: &'a mut GpuStore,
     /// 命令分配器，供 Plugin 释放自己持有或登记的命令资源。
     pub cmd_allocator: &'a mut CmdAllocator,
 }
@@ -159,6 +159,6 @@ pub trait Plugin {
     /// 显式释放 Plugin-owned GPU 资源。
     ///
     /// 该方法由 shell 在 App shutdown hook 之后按 `visit_plugins_mut_rev` 顺序调用，
-    /// 并且必须早于 backend root owner 销毁。
+    /// 并且必须早于 runtime root owner 销毁。
     fn shutdown(&mut self, _ctx: &mut PluginShutdownCtx<'_>) {}
 }

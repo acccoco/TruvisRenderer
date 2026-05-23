@@ -7,7 +7,7 @@ use truvis_render_graph::compute_pass::ComputePass;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_interface::bindless_manager::BindlessUavHandle;
 use truvis_render_interface::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_interface::render_world::RenderWorld;
+use truvis_render_interface::gpu_store::GpuStore;
 use truvis_shader_binding::gpu;
 
 /// 降噪累积 Pass 的数据
@@ -59,12 +59,12 @@ impl DenoiseAccumPass {
         self.denoise_accum_pass.destroy(ctx);
     }
 
-    pub fn exec(&self, cmd: &GfxCommandBuffer, data: DenoiseAccumPassData, render_world: &RenderWorld) {
-        let frame_label = render_world.frame_counter.frame_label();
+    pub fn exec(&self, cmd: &GfxCommandBuffer, data: DenoiseAccumPassData, gpu_store: &GpuStore) {
+        let frame_label = gpu_store.frame_counter.frame_label();
         self.denoise_accum_pass.exec(
             cmd,
             frame_label,
-            &render_world.global_descriptor_sets,
+            &gpu_store.global_descriptor_sets,
             &gpu::denoise_accum::PushConstant {
                 single_frame_input: data.single_frame_bindless_uav_handle.0,
                 accum_output: data.accum_bindless_uav_handle.0,
@@ -102,7 +102,7 @@ impl DenoiseAccumPass {
 pub struct DenoiseAccumRgPass<'a> {
     pub denoise_accum_pass: &'a DenoiseAccumPass,
 
-    pub render_world: &'a RenderWorld,
+    pub gpu_store: &'a GpuStore,
 
     /// 单帧 RT 输出（只读）
     pub single_frame_image: RgImageHandle,
@@ -138,17 +138,17 @@ impl<'a> RgPass for DenoiseAccumRgPass<'a> {
         let gbuffer_c_view_handle = ctx.get_image_view_handle(self.gbuffer_c).unwrap();
 
         let single_frame_bindless_uav_handle =
-            self.render_world.bindless_manager.get_shader_uav_handle(single_frame_view_handle);
-        let accum_bindless_uav_handle = self.render_world.bindless_manager.get_shader_uav_handle(accum_view_handle);
+            self.gpu_store.bindless_manager.get_shader_uav_handle(single_frame_view_handle);
+        let accum_bindless_uav_handle = self.gpu_store.bindless_manager.get_shader_uav_handle(accum_view_handle);
         let gbuffer_a_bindless_uav_handle =
-            self.render_world.bindless_manager.get_shader_uav_handle(gbuffer_a_view_handle);
+            self.gpu_store.bindless_manager.get_shader_uav_handle(gbuffer_a_view_handle);
         let gbuffer_b_bindless_uav_handle =
-            self.render_world.bindless_manager.get_shader_uav_handle(gbuffer_b_view_handle);
+            self.gpu_store.bindless_manager.get_shader_uav_handle(gbuffer_b_view_handle);
         let gbuffer_c_bindless_uav_handle =
-            self.render_world.bindless_manager.get_shader_uav_handle(gbuffer_c_view_handle);
+            self.gpu_store.bindless_manager.get_shader_uav_handle(gbuffer_c_view_handle);
 
         // 从 pipeline_settings 获取降噪参数
-        let denoise_settings = &self.render_world.pipeline_settings.denoise;
+        let denoise_settings = &self.gpu_store.pipeline_settings.denoise;
 
         self.denoise_accum_pass.exec(
             ctx.cmd,
@@ -159,13 +159,13 @@ impl<'a> RgPass for DenoiseAccumRgPass<'a> {
                 gbuffer_b_bindless_uav_handle,
                 gbuffer_c_bindless_uav_handle,
                 image_size: self.image_extent,
-                accum_frames: self.render_world.accum_data.accum_frames_num() as u32,
+                accum_frames: self.gpu_store.accum_data.accum_frames_num() as u32,
                 denoise_enabled: denoise_settings.enabled,
                 sigma_color: denoise_settings.sigma_color,
                 sigma_depth: denoise_settings.sigma_depth,
                 sigma_normal: denoise_settings.sigma_normal,
                 kernel_radius: denoise_settings.kernel_radius,
-                channel: self.render_world.pipeline_settings.channel,
+                channel: self.gpu_store.pipeline_settings.channel,
                 // 增强联合双边滤波参数
                 sigma_albedo: denoise_settings.sigma_albedo,
                 sigma_position: denoise_settings.sigma_position,
@@ -175,7 +175,7 @@ impl<'a> RgPass for DenoiseAccumRgPass<'a> {
                 roughness_radius_scale: denoise_settings.roughness_radius_scale,
                 roughness_sigma_scale: denoise_settings.roughness_sigma_scale,
             },
-            self.render_world,
+            self.gpu_store,
         );
     }
 }

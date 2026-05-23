@@ -2,17 +2,17 @@
 
 资产加载模块，提供纹理、mesh、material、model 等内容资产的 CPU 侧身份、去重、加载状态与完成事件。
 
-本模块位于 World 层和 RenderBackend 之间，只负责到 upload-ready CPU data：
+本模块位于 World 层和 RenderRuntime 之间，只负责到 upload-ready CPU data：
 不创建 GPU image / image view，不创建 vertex/index buffer、BLAS，也不注册
 bindless descriptor 或 material slot。GPU 上传和 shader 可见绑定由
-`truvis-render-backend` 的 `AssetTextureUploader`、`AssetMeshUploader`、
+`truvis-render-runtime` 的 `AssetTextureUploader`、`AssetMeshUploader`、
 `MaterialBridge` 负责；model asset / prefab 被 `SceneManager` 显式 spawn 后才会变成
 runtime instance。
 
 ## 主要组件
 
 - `AssetHub`：对外统一入口，负责路径/key 去重、handle 分配、状态表和上传事件汇聚
-- `AssetLoadedEvent`：CPU 数据完成事件，只交给渲染后端继续上传或分配 material slot
+- `AssetLoadedEvent`：CPU 数据完成事件，只交给渲染运行时继续上传或分配 material slot
 - `TextureBytes`：从图片文件解码出的 owned CPU 纹理 bytes，只通过事件交给 uploader
 - `MeshData`：从导入器复制出来的 owned CPU mesh 数据，只通过事件交给 mesh uploader
 - `MaterialData`：导入后的 CPU material 参数和 texture handle 引用，通过 `MaterialLoaded` 事件进入 render-side bridge

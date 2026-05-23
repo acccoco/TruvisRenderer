@@ -42,7 +42,7 @@ new_key_type! {
 ///
 /// `AssetHub` 使用 `source_path + mesh_index` 做去重，保证同一 model / prefab
 /// 导入结果内的 mesh 只对应一个稳定 asset handle。它不代表运行时 instance，
-/// 也不代表渲染后端已经创建的 vertex/index buffer 或 BLAS。
+/// 也不代表渲染运行时已经创建的 vertex/index buffer 或 BLAS。
 ///
 /// `source_path` 使用调用方传入或导入结果保留的路径表达；这里不做文件系统
 /// canonicalize，因此调用方需要在入口处维持一致的路径策略。
@@ -80,7 +80,7 @@ pub struct AssetModelKey {
 
 /// 解码后的纹理 CPU 数据。
 ///
-/// 这是 asset 层传给渲染后端 uploader 的边界格式：像素已经位于 owned
+/// 这是 asset 层传给渲染运行时 uploader 的边界格式：像素已经位于 owned
 /// CPU buffer，并带有 Vulkan 上传所需的 extent / format 元数据，但还没有创建
 /// image、image view 或 bindless descriptor。
 ///
@@ -206,7 +206,7 @@ pub(crate) struct RawSceneData {
 ///
 /// 对 `AssetHub` 而言，`Ready` 只表示 CPU 侧数据已经可用。纹理是否已经注册
 /// bindless、mesh 是否已有 GPU buffer / BLAS、material 是否已有 GPU slot，
-/// 都由渲染后端自己的 manager 再维护一层 ready 状态。
+/// 都由渲染运行时自己的 manager 再维护一层 ready 状态。
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum LoadStatus {
     /// 初始状态，资源尚未请求加载。

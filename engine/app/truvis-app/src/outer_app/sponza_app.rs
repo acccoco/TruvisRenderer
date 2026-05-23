@@ -3,9 +3,9 @@ use truvis_frame_api::input_event::InputEvent;
 use truvis_frame_api::plugin::{Plugin, PluginRenderCtx};
 use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx};
 use truvis_path::TruvisPath;
-use truvis_render_backend::platform::camera::Camera;
-use truvis_render_backend::render_backend::{RenderBackendRenderCtx, RenderBackendUpdateCtx};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
+use truvis_render_runtime::platform::camera::Camera;
+use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 use truvis_shader_binding::gpu;
 use truvis_world::World;
 
@@ -87,7 +87,7 @@ impl RenderAppHooks for SponzaApp {
         self.gui.set_hidpi_factor(ctx.scale_factor);
         self.gui.set_display_size(ctx.window_size);
 
-        self.model_asset = Some(Self::request_model(&mut *ctx.backend.world, self.camera_controller.camera_mut()));
+        self.model_asset = Some(Self::request_model(&mut *ctx.runtime.world, self.camera_controller.camera_mut()));
     }
 
     fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
@@ -113,7 +113,7 @@ impl RenderAppHooks for SponzaApp {
         }
     }
 
-    fn update(&mut self, ctx: &mut RenderBackendUpdateCtx) {
+    fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
         self.spawn_model_if_ready(ctx.world);
 
         let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
@@ -138,21 +138,21 @@ impl RenderAppHooks for SponzaApp {
         );
     }
 
-    fn render(&mut self, ctx: &RenderBackendRenderCtx) {
+    fn render(&mut self, ctx: &RenderRuntimeRenderCtx) {
         let plugin_ctx = PluginRenderCtx {
             device_ctx: ctx.device_ctx,
             resource_ctx: ctx.resource_ctx,
             queue_ctx: ctx.queue_ctx,
             device_info_ctx: ctx.device_info_ctx,
-            render_world: ctx.render_world,
+            gpu_store: ctx.gpu_store,
             render_scene: ctx.render_scene,
             render_present: ctx.render_present,
             timeline: ctx.timeline,
         };
         self.gui.prepare_render_data(&plugin_ctx);
 
-        let frame_label = ctx.render_world.frame_counter.frame_label();
-        let frame_id = ctx.render_world.frame_counter.frame_id();
+        let frame_label = ctx.gpu_store.frame_counter.frame_label();
+        let frame_id = ctx.gpu_store.frame_counter.frame_id();
 
         let compute_submit = {
             let mut graph = RenderGraphBuilder::new();
@@ -167,7 +167,7 @@ impl RenderAppHooks for SponzaApp {
 
             let cmd = self.rt_pipeline.compute_cmd(frame_label);
             cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-compute-graph");
-            compiled_graph.execute(cmd, &ctx.render_world.gfx_resource_manager);
+            compiled_graph.execute(cmd, &ctx.gpu_store.gfx_resource_manager);
             cmd.end();
             compiled_graph.build_submit_info(std::slice::from_ref(cmd))
         };
@@ -197,7 +197,7 @@ impl RenderAppHooks for SponzaApp {
 
             let cmd = self.rt_pipeline.present_cmd(frame_label);
             cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-present-graph");
-            compiled_graph.execute(cmd, &ctx.render_world.gfx_resource_manager);
+            compiled_graph.execute(cmd, &ctx.gpu_store.gfx_resource_manager);
             cmd.end();
             compiled_graph.build_submit_info(std::slice::from_ref(cmd))
         };

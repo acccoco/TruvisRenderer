@@ -11,7 +11,7 @@ AssetHub
 ```
 
 GPU 上传、image/view 创建、bindless 注册和 fallback 策略迁移到
-`truvis-render-backend::asset_texture_uploader::AssetTextureUploader`：
+`truvis-render-runtime::asset_texture_uploader::AssetTextureUploader`：
 
 ```text
 AssetTextureUploader

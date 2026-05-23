@@ -5,10 +5,10 @@ use truvis_frame_api::input_event::InputEvent;
 use truvis_frame_api::plugin::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
 use truvis_frame_api::render_app::{RenderAppHooks, RenderAppInitCtx, RenderAppShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
-use truvis_render_backend::platform::camera::Camera;
-use truvis_render_backend::render_backend::{RenderBackendRenderCtx, RenderBackendUpdateCtx};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
 use truvis_render_interface::frame_counter::FrameCounter;
+use truvis_render_runtime::platform::camera::Camera;
+use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 
 use crate::camera_controller::CameraController;
 use crate::gui_plugin::GuiPlugin;
@@ -49,7 +49,7 @@ impl ShaderToyPlugin {
             move |context| {
                 let canvas_view = context.get_image_view(canvas_color).unwrap();
                 self.shader_toy_pass.as_ref().expect("ShaderToyPlugin not initialized").draw(
-                    ctx.render_world,
+                    ctx.gpu_store,
                     context.cmd,
                     canvas_view,
                     canvas_extent,
@@ -75,10 +75,10 @@ impl RenderAppHooks for ShaderToy {
         self.gui.set_hidpi_factor(ctx.scale_factor);
         self.gui.set_display_size(ctx.window_size);
 
-        let cmd_allocator = &mut *ctx.backend.cmd_allocator;
+        let cmd_allocator = &mut *ctx.runtime.cmd_allocator;
         self.cmds = FrameCounter::frame_labes()
             .iter()
-            .map(|label| cmd_allocator.alloc_command_buffer(ctx.backend.device_ctx, *label, "shader-toy-app"))
+            .map(|label| cmd_allocator.alloc_command_buffer(ctx.runtime.device_ctx, *label, "shader-toy-app"))
             .collect_vec();
     }
 
@@ -105,7 +105,7 @@ impl RenderAppHooks for ShaderToy {
         }
     }
 
-    fn update(&mut self, ctx: &mut RenderBackendUpdateCtx) {
+    fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
         let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
         self.gui.begin_frame(delta);
         {
@@ -130,21 +130,21 @@ impl RenderAppHooks for ShaderToy {
         );
     }
 
-    fn render(&mut self, ctx: &RenderBackendRenderCtx) {
+    fn render(&mut self, ctx: &RenderRuntimeRenderCtx) {
         let plugin_ctx = PluginRenderCtx {
             device_ctx: ctx.device_ctx,
             resource_ctx: ctx.resource_ctx,
             queue_ctx: ctx.queue_ctx,
             device_info_ctx: ctx.device_info_ctx,
-            render_world: ctx.render_world,
+            gpu_store: ctx.gpu_store,
             render_scene: ctx.render_scene,
             render_present: ctx.render_present,
             timeline: ctx.timeline,
         };
         self.gui.prepare_render_data(&plugin_ctx);
 
-        let frame_label = ctx.render_world.frame_counter.frame_label();
-        let frame_id = ctx.render_world.frame_counter.frame_id();
+        let frame_label = ctx.gpu_store.frame_counter.frame_label();
+        let frame_id = ctx.gpu_store.frame_counter.frame_id();
         let render_present = ctx.render_present;
         let present_target = render_present.current_target(frame_label);
         let swapchain_extent = present_target.swapchain_image_info.image_extent;
@@ -190,7 +190,7 @@ impl RenderAppHooks for ShaderToy {
 
         let cmd = &self.cmds[*frame_label];
         cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "shader-toy-graph");
-        compiled_graph.execute(cmd, &ctx.render_world.gfx_resource_manager);
+        compiled_graph.execute(cmd, &ctx.gpu_store.gfx_resource_manager);
         cmd.end();
 
         let submit_info = compiled_graph.build_submit_info(std::slice::from_ref(cmd));

@@ -8,7 +8,7 @@
 - `utils/`：引擎内部工具 crate，如路径管理与资源拉取。
 - `gfx/`：Vulkan RHI 封装与 descriptor-layout 宏/trait。
 - `world/`：CPU 侧资产、场景与 `World` 聚合。
-- `render/`：渲染资源状态、RenderGraph、通用 pass、GUI 后端与 RenderBackend。
+- `render/`：渲染资源状态、RenderGraph、通用 pass、GUI 后端与 RenderRuntime。
 - `frame/`：`RenderApp` 契约与 `RenderAppShell` 帧骨架。
 - `app/`：示例应用、plugin 编排与 render pipeline glue。
 - `shader/`：Slang shader 源码、共享头文件、编译与绑定生成。

@@ -5,7 +5,7 @@
 > 前置：[clean-crate-dependencies.md](clean-crate-dependencies.md) 中完成的 Layer 3 解耦
 >
 > 维护状态（2026-04-23）：本文中的部分“现状”已经变化：
-> `RenderContext` 主线已退场，`World + RenderWorld` 已落地，通用 pass 已拆到
+> `RenderContext` 主线已退场，`World + GpuStore` 已落地，通用 pass 已拆到
 > `truvis-render-passes`。仍然有效的重点是 scene/asset/bindless 解耦、
 > `truvis-render-interface` 命名与内容收窄、app 依赖扇出收敛。
 > 阅读时请结合 [`README.md`](../README.md) 的当前状态快照。
@@ -69,7 +69,7 @@
 | `AssetUploadManager` | staging → GPU 上传 | ✓ |
 | `AssetTextureHandle` / `LoadStatus` | 纹理资产句柄与状态 | ✓ |
 
-### truvis-scene（Layer 3b，依赖 asset）
+### truvis-world（Layer 3b，依赖 asset）
 
 | 组件 | 职责 | 问题 |
 |------|------|------|

@@ -12,7 +12,7 @@ use crate::handle::{
 
 /// `AssetHub` 内部的 material 记录。
 ///
-/// 这里的 material 是内容资产身份和 CPU 参数，不是渲染后端的稳定 material slot。
+/// 这里的 material 是内容资产身份和 CPU 参数，不是渲染运行时的稳定 material slot。
 pub(crate) struct AssetMaterialRecord {
     pub(crate) status: LoadStatus,
     pub(crate) data: MaterialData,
@@ -30,7 +30,7 @@ pub(crate) struct AssetModelRecord {
 
 /// asset 层向外发布的 CPU ready 事件。
 ///
-/// 渲染后端消费 texture / mesh / material 事件继续做 GPU 上传或 slot 分配。
+/// 渲染运行时消费 texture / mesh / material 事件继续做 GPU 上传或 slot 分配。
 /// model/prefab CPU 数据不通过事件发布，调用方需要通过 model 状态查询显式决定
 /// 是否交给 `SceneManager` spawn。
 #[derive(Debug)]
@@ -174,7 +174,7 @@ impl AssetHub {
     /// 注册已经位于 CPU 内存中的 mesh 数据。
     ///
     /// 这通常用于导入器已经复制完 owned mesh 数据的场景。同一个 key 只会产出一次
-    /// `MeshLoaded` 事件；事件被渲染后端消费后才会进入 GPU 上传和 BLAS 构建流程。
+    /// `MeshLoaded` 事件；事件被渲染运行时消费后才会进入 GPU 上传和 BLAS 构建流程。
     pub fn register_mesh_data(&mut self, key: AssetMeshKey, data: MeshData) -> AssetMeshHandle {
         let _span = tracy_client::span!("AssetHub::register_mesh_data");
         let (handle, event) = self.register_mesh_data_inner(key, data);

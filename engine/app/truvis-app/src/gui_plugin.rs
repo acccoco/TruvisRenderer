@@ -17,8 +17,8 @@ use truvis_render_graph::render_graph::{
     RenderGraphBuilder, RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext,
 };
 use truvis_render_interface::frame_counter::FrameCounter;
+use truvis_render_interface::gpu_store::GpuStore;
 use truvis_render_interface::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_render_interface::render_world::RenderWorld;
 
 const FONT_TEXTURE_ID: usize = 0;
 
@@ -97,7 +97,7 @@ impl GuiPlugin {
     pub fn prepare_render_data(&mut self, ctx: &PluginRenderCtx) {
         let draw_data =
             self.draw_data.map(|ptr| unsafe { &*ptr }).expect("GuiPlugin::prepare_render_data called before end_frame");
-        let frame_label = ctx.render_world.frame_counter.frame_label();
+        let frame_label = ctx.gpu_store.frame_counter.frame_label();
         let meshes = self.gui_meshes.as_mut().expect("GuiPlugin not initialized");
 
         ctx.queue_ctx.gfx_queue().begin_label("[ui-pass]create-mesh", LabelColor::COLOR_STAGE);
@@ -122,12 +122,12 @@ impl GuiPlugin {
         canvas_color: RgImageHandle,
         canvas_extent: vk::Extent2D,
     ) {
-        let frame_label = ctx.render_world.frame_counter.frame_label();
+        let frame_label = ctx.gpu_store.frame_counter.frame_label();
         graph.add_pass(
             "gui",
             GuiRenderGraphPass {
                 gui_pass: self.gui_pass.as_ref().expect("GuiPlugin not initialized"),
-                render_world: ctx.render_world,
+                gpu_store: ctx.gpu_store,
                 ui_draw_data: self.draw_data(),
                 gui_mesh: &self.gui_meshes.as_ref().expect("GuiPlugin not initialized")[*frame_label],
                 tex_map: &self.tex_map,
@@ -178,14 +178,14 @@ impl GuiPlugin {
             atlas_texture.data,
             "imgui-fonts",
         );
-        let fonts_image_handle = ctx.render_world.gfx_resource_manager.register_image(fonts_image);
-        let fonts_image_view_handle = ctx.render_world.gfx_resource_manager.get_or_create_image_view(
+        let fonts_image_handle = ctx.gpu_store.gfx_resource_manager.register_image(fonts_image);
+        let fonts_image_view_handle = ctx.gpu_store.gfx_resource_manager.get_or_create_image_view(
             ctx.device_ctx,
             fonts_image_handle,
             GfxImageViewDesc::new_2d(vk::Format::R8G8B8A8_UNORM, vk::ImageAspectFlags::COLOR),
             "imgui-fonts",
         );
-        ctx.render_world.bindless_manager.register_srv(fonts_image_view_handle);
+        ctx.gpu_store.bindless_manager.register_srv(fonts_image_view_handle);
 
         self.fonts_image_handle = Some(fonts_image_handle);
         self.fonts_image_view_handle = Some(fonts_image_view_handle);
@@ -196,7 +196,7 @@ impl Plugin for GuiPlugin {
     fn init(&mut self, ctx: &mut PluginInitCtx) {
         self.gui_pass = Some(GuiPass::new(
             ctx.device_ctx,
-            &ctx.render_world.global_descriptor_sets,
+            &ctx.gpu_store.global_descriptor_sets,
             ctx.swapchain_image_info.image_format,
         ));
         self.gui_meshes =
@@ -249,10 +249,10 @@ impl Plugin for GuiPlugin {
         self.tex_map.clear();
 
         if let Some(view_handle) = self.fonts_image_view_handle.take() {
-            ctx.render_world.bindless_manager.unregister_srv(view_handle);
+            ctx.gpu_store.bindless_manager.unregister_srv(view_handle);
         }
         if let Some(image_handle) = self.fonts_image_handle.take() {
-            ctx.render_world.gfx_resource_manager.release_image_immediate(
+            ctx.gpu_store.gfx_resource_manager.release_image_immediate(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 image_handle,
@@ -273,7 +273,7 @@ impl Plugin for GuiPlugin {
 
 struct GuiRenderGraphPass<'a> {
     gui_pass: &'a GuiPass,
-    render_world: &'a RenderWorld,
+    gpu_store: &'a GpuStore,
     ui_draw_data: &'a DrawData,
     gui_mesh: &'a GuiMesh,
     tex_map: &'a HashMap<TextureId, GfxImageViewHandle>,
@@ -295,11 +295,11 @@ impl RgPass for GuiRenderGraphPass<'_> {
             ctx.get_image_view_handle(self.canvas_color).expect("GuiPass: canvas_color not found");
         let canvas_color_view = ctx.resource_manager.get_image_view(canvas_color_view_handle).unwrap();
 
-        let frame_label = self.render_world.frame_counter.frame_label();
+        let frame_label = self.gpu_store.frame_counter.frame_label();
         self.gui_pass.draw(
             frame_label,
-            &self.render_world.global_descriptor_sets,
-            &self.render_world.bindless_manager,
+            &self.gpu_store.global_descriptor_sets,
+            &self.gpu_store.bindless_manager,
             canvas_color_view.handle(),
             self.canvas_extent,
             ctx.cmd,

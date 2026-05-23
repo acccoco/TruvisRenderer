@@ -1,7 +1,7 @@
 use ash::vk;
 use truvis_frame_api::plugin::Plugin;
-use truvis_render_backend::platform::camera::Camera;
 use truvis_render_interface::pipeline_settings::PipelineSettings;
+use truvis_render_runtime::platform::camera::Camera;
 
 #[derive(Default)]
 pub struct DebugInfoOverlay;

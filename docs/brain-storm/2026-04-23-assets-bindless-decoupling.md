@@ -105,7 +105,7 @@ material.diffuse_map path
   -> MaterialRenderData.diffuse_bindless_handle
 ```
 
-这让 `truvis-scene` 同时知道：
+这让 `truvis-world` 同时知道：
 
 ```text
 1. asset path / AssetHub
@@ -131,7 +131,7 @@ shader 应该用哪个 bindless descriptor index 采样这张贴图？
 
 ### 2.3 `MaterialManager::TextureResolver` 是正确方向，但层级仍偏低
 
-`truvis-scene::material_manager` 中已经有：
+`truvis-world::material_manager` 中已经有：
 
 ```rust
 pub trait TextureResolver {
@@ -144,10 +144,10 @@ pub trait TextureResolver {
 
 但它仍然有两个问题：
 
-1. trait 定义在 `truvis-scene` 中，使 scene crate 认识 `BindlessSrvHandle`。
+1. trait 定义在 `truvis-world` 中，使 scene crate 认识 `BindlessSrvHandle`。
 2. resolver 返回的是 bindless 句柄，而不是更完整的 texture binding 结果。
 
-更干净的做法是把 `TextureResolver` 放到 render prepare / material upload 层，让 `truvis-scene` 只保留 CPU material params。
+更干净的做法是把 `TextureResolver` 放到 render prepare / material upload 层，让 `truvis-world` 只保留 CPU material params。
 
 ---
 
@@ -178,7 +178,7 @@ BindlessSrvHandle                     <- backend descriptor exposure
 可借鉴点：
 
 - `AssetHub` 不应该同时承担 CPU asset 与 render asset 的职责。
-- GPU representation 应该属于 `RenderWorld` 或 render-side asset cache。
+- GPU representation 应该属于 `GpuStore` 或 render-side asset cache。
 - 纹理上传预算、异步 ready、卸载 cleanup 都应在 prepare/update 边界显式处理。
 
 不必照搬点：
@@ -758,7 +758,7 @@ SceneBridge::build_render_data(snapshot, texture_resolver)
 
 收益：
 
-- `truvis-scene` 回到 CPU scene 语义。
+- `truvis-world` 回到 CPU scene 语义。
 - render data 构建归入 extract/prepare 边界。
 - 后续 material incremental update 更容易做。
 

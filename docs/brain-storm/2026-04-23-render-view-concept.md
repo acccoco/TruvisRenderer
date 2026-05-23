@@ -1,7 +1,7 @@
 # Render View 概念引入分析（2026-04-23）
 
 > 本文讨论 Truvis 是否需要抽象出 `View` 概念，以及 `View` 在当前
-> `World + RenderWorld + FrameRuntime + RenderGraph` 架构中应该承担什么职责。
+> `World + GpuStore + FrameRuntime + RenderGraph` 架构中应该承担什么职责。
 >
 > 对照对象：
 >
@@ -35,7 +35,7 @@ View = 一次渲染视角 / 输出意图的描述
 当前代码里实际已经存在一个隐式的 `main view`，只是它没有被命名。
 `FrameRuntime` 持有一个 `CameraController`，每帧把 camera 交给
 `Renderer::update_accum_frames()` 和 `Renderer::before_render()`，
-再由 demo pipeline 从 `RenderWorld.frame_settings` 和 `RenderWorld.fif_buffers`
+再由 demo pipeline 从 `GpuStore.frame_settings` 和 `GpuStore.fif_buffers`
 中推导渲染目标。
 
 因此建议：
@@ -186,7 +186,7 @@ pub struct CameraSnapshot {
 | 对象 | 所属边界 |
 |---|---|
 | `World` / `SceneManager` / `AssetHub` | CPU domain state |
-| `RenderWorld` / managers / FIF resources | GPU render state |
+| `GpuStore` / managers / FIF resources | GPU render state |
 | swapchain / semaphore / present image | present/surface |
 | command buffer / submit | backend execution |
 | RenderGraph | pass 编排 |
@@ -263,8 +263,8 @@ begin_frame
   -> camera_controller.update
   -> renderer.update_accum_frames(camera)
   -> renderer.before_render(camera)
-  -> plugin.render(RenderCtx { render_world, render_present, ... })
-  -> pipeline 从 RenderWorld.frame_settings / fif_buffers 构建 graph
+  -> plugin.render(RenderCtx { gpu_store, render_present, ... })
+  -> pipeline 从 GpuStore.frame_settings / fif_buffers 构建 graph
   -> present
 end_frame
 ```
@@ -293,7 +293,7 @@ begin_frame
 
   -> render
        plugin.render(RenderCtx {
-         render_world,
+         gpu_store,
          views,
          render_present,
          gui_draw_data,
@@ -318,11 +318,11 @@ renderer.prepare_frame(&world);
 let main_view = renderer.prepare_view(main_view_desc);
 ```
 
-`RenderCtx` 也可以从只暴露 `render_world`，变成显式暴露 main view 或 view list：
+`RenderCtx` 也可以从只暴露 `gpu_store`，变成显式暴露 main view 或 view list：
 
 ```rust
 pub struct RenderCtx<'a> {
-    pub render_world: &'a RenderWorld,
+    pub gpu_store: &'a GpuStore,
     pub main_view: &'a PreparedView,
     pub render_present: &'a RenderPresent,
     pub gui_draw_data: &'a imgui::DrawData,
@@ -334,7 +334,7 @@ pub struct RenderCtx<'a> {
 
 ```rust
 pub struct RenderCtx<'a> {
-    pub render_world: &'a RenderWorld,
+    pub gpu_store: &'a GpuStore,
     pub views: &'a ViewStore,
     pub surfaces: &'a SurfaceStore,
     pub gui_draw_data: &'a imgui::DrawData,
@@ -399,16 +399,16 @@ ViewData
 
 ### 7.3 AccumData
 
-当前 `AccumData` 在 `RenderWorld` 中是全局状态，这等价于只支持一个 main view。
+当前 `AccumData` 在 `GpuStore` 中是全局状态，这等价于只支持一个 main view。
 
 引入 `View` 后，`AccumData` 应该逐步变成 per-view state：
 
 ```text
-RenderWorld
+GpuStore
   view_states[ViewId].accum_data
 ```
 
-对于主视角，第一阶段可以仍然复用现有 `RenderWorld.accum_data`，但 API 命名上应该
+对于主视角，第一阶段可以仍然复用现有 `GpuStore.accum_data`，但 API 命名上应该
 朝 `update_view_accum(view_id, camera_snapshot)` 靠拢。
 
 ### 7.4 FifBuffers
@@ -469,7 +469,7 @@ history 互相污染。
 
 ### 8.4 Pass 输入更清晰
 
-当前 pass 经常通过 `RenderWorld.frame_settings.frame_extent` 推断当前渲染尺寸。
+当前 pass 经常通过 `GpuStore.frame_settings.frame_extent` 推断当前渲染尺寸。
 
 有 View 后，pass 可以明确接收：
 
@@ -591,10 +591,10 @@ renderer.before_render(&main_view);
 当前 `RtPipeline::render()` 主要依赖：
 
 ```text
-render_world.frame_settings.frame_extent
-render_world.fif_buffers
-render_world.per_frame_data_buffers
-render_world.accum_data
+gpu_store.frame_settings.frame_extent
+gpu_store.fif_buffers
+gpu_store.per_frame_data_buffers
+gpu_store.accum_data
 ```
 
 建议逐步改成：
@@ -602,7 +602,7 @@ render_world.accum_data
 ```rust
 RtPipeline::render(
     &self,
-    render_world: &RenderWorld,
+    gpu_store: &GpuStore,
     main_view: &PreparedView,
     render_present: &RenderPresent,
     gui_draw_data: &imgui::DrawData,
@@ -737,16 +737,16 @@ FrameRuntime
   -> build main ViewDesc
   -> renderer.prepare_frame()
   -> renderer.prepare_view(main_view_desc)
-  -> plugin.render(RenderCtx { main_view, render_world, ... })
+  -> plugin.render(RenderCtx { main_view, gpu_store, ... })
 
 Renderer
-  -> owns World + RenderWorld
+  -> owns World + GpuStore
   -> extracts scene
   -> uploads GPU scene
   -> prepares views
   -> updates descriptors
 
-RenderWorld
+GpuStore
   -> owns GPU resources/managers
   -> owns view states / per-view buffers
   -> owns FIF buffers for main view
@@ -762,7 +762,7 @@ RtPipeline
 Camera       可交互的相机状态
 ViewDesc     渲染意图
 PreparedView 渲染侧已准备好的视图数据
-RenderWorld  GPU 状态和资源所有权
+GpuStore  GPU 状态和资源所有权
 RenderGraph  pass/resource dependency DAG
 Pipeline     如何为某个 View 组织 passes
 ```

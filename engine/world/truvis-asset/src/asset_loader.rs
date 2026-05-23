@@ -45,7 +45,7 @@ pub(crate) enum LoadResult {
 /// 负责管理 asset 后台 IO、纹理解码和 model 导入任务。
 ///
 /// `AssetLoader` 隐藏 Rayon 线程池和结果 channel。外部只通过 `AssetHub`
-/// 轮询结果，因此后台线程不会直接修改 asset 状态表，也不会接触渲染后端 GPU 对象。
+/// 轮询结果，因此后台线程不会直接修改 asset 状态表，也不会接触渲染运行时 GPU 对象。
 pub(crate) struct AssetLoader {
     pool: rayon::ThreadPool,
     result_sender: Sender<LoadResult>,
