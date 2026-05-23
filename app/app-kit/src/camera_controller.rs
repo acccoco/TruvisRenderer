@@ -36,7 +36,7 @@ impl Default for CameraController {
 impl CameraController {
     const ROTATE_SENSITIVITY_DIVISOR: f32 = 7.0;
     const MOVE_SPEED: f32 = 320.0;
-    const PIVOT_RAY_T_MAX: f32 = 10000.0;
+    const SCREEN_RAY_T_MAX: f32 = 10000.0;
 
     pub fn camera(&self) -> &Camera {
         &self.camera
@@ -72,6 +72,18 @@ impl CameraController {
                 self.active_pivot_orbit = None;
             }
         }
+    }
+
+    /// 根据窗口物理像素坐标生成世界空间射线，供 app 层在 after_prepare 阶段执行同步查询。
+    pub fn make_screen_raycast(&self, mouse_position: [f64; 2], viewport_size: glam::Vec2) -> Option<RayCastRay> {
+        let screen_pos = glam::vec2(mouse_position[0] as f32, mouse_position[1] as f32);
+        let direction_ws = Self::screen_ray_direction(&self.camera, screen_pos, viewport_size)?;
+        Some(RayCastRay {
+            origin_ws: self.camera.position,
+            direction_ws,
+            t_min: self.camera.near.max(0.001),
+            t_max: Self::SCREEN_RAY_T_MAX,
+        })
     }
 
     pub fn update(&mut self, input_state: &InputState, viewport_size: glam::Vec2, delta_time: std::time::Duration) {
@@ -121,16 +133,8 @@ impl CameraController {
 
     fn make_pivot_raycast(&self, mouse_position: [f64; 2], viewport_size: glam::Vec2) -> Option<PivotRayCastRequest> {
         let anchor_screen_pos = glam::vec2(mouse_position[0] as f32, mouse_position[1] as f32);
-        let direction_ws = Self::screen_ray_direction(&self.camera, anchor_screen_pos, viewport_size)?;
-        Some(PivotRayCastRequest {
-            ray: RayCastRay {
-                origin_ws: self.camera.position,
-                direction_ws,
-                t_min: self.camera.near.max(0.001),
-                t_max: Self::PIVOT_RAY_T_MAX,
-            },
-            anchor_screen_pos,
-        })
+        let ray = self.make_screen_raycast(mouse_position, viewport_size)?;
+        Some(PivotRayCastRequest { ray, anchor_screen_pos })
     }
 
     fn update_pivot_orbit(&mut self, input_state: &InputState, viewport_size: glam::Vec2) {

@@ -6,6 +6,8 @@ use truvis_app_frame::input_event::{ElementState, InputEvent, KeyCode, MouseButt
 pub struct InputState {
     pub crt_mouse_pos: [f64; 2],
     pub last_mouse_pos: [f64; 2],
+    pub left_button_pressed: bool,
+    pub left_button_just_pressed: bool,
     pub right_button_pressed: bool,
     pub middle_button_pressed: bool,
     pub middle_button_just_pressed: bool,
@@ -27,6 +29,14 @@ impl InputState {
 
     pub fn is_right_button_pressed(&self) -> bool {
         self.right_button_pressed
+    }
+
+    pub fn is_left_button_pressed(&self) -> bool {
+        self.left_button_pressed
+    }
+
+    pub fn is_left_button_just_pressed(&self) -> bool {
+        self.left_button_just_pressed
     }
 
     pub fn is_middle_button_pressed(&self) -> bool {
@@ -58,6 +68,7 @@ impl InputManager {
 
     pub fn begin_frame(&mut self) {
         self.state.last_mouse_pos = self.state.crt_mouse_pos;
+        self.state.left_button_just_pressed = false;
         self.state.middle_button_just_pressed = false;
         self.state.middle_button_just_released = false;
     }
@@ -70,6 +81,14 @@ impl InputManager {
             InputEvent::MouseButtonInput { button, state } => {
                 let pressed = *state == ElementState::Pressed;
                 match button {
+                    MouseButton::Left => {
+                        if pressed {
+                            self.state.left_button_just_pressed = !self.state.left_button_pressed;
+                            self.state.left_button_pressed = true;
+                        } else {
+                            self.state.left_button_pressed = false;
+                        }
+                    }
                     MouseButton::Right => {
                         self.state.right_button_pressed = pressed;
                     }

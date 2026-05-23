@@ -24,28 +24,28 @@ pub struct TruvisApp {
     input: InputManager,
     debug_overlay: DebugInfoOverlay,
     pipeline_overlay: PipelineControlsOverlay,
-    center_ray_cast_probe: CenterRayCastProbe,
+    click_ray_cast_probe: ClickRayCastProbe,
     model_asset: Option<AssetModelHandle>,
     model_spawned: bool,
 }
 
-struct CenterRayCastProbe {
-    elapsed_s: f32,
+struct ClickRayCastProbe {
     total_time_s: f32,
-    interval_s: f32,
-    request_pending: bool,
+    pending_ray: Option<RayCastRay>,
+    pending_screen_pos: Option<glam::Vec2>,
+    last_screen_pos: Option<glam::Vec2>,
     last_result: Option<RayCastResult>,
     last_error: Option<String>,
     last_cast_time_s: Option<f32>,
 }
 
-impl Default for CenterRayCastProbe {
+impl Default for ClickRayCastProbe {
     fn default() -> Self {
         Self {
-            elapsed_s: 0.0,
             total_time_s: 0.0,
-            interval_s: 1.0,
-            request_pending: false,
+            pending_ray: None,
+            pending_screen_pos: None,
+            last_screen_pos: None,
             last_result: None,
             last_error: None,
             last_cast_time_s: None,
@@ -53,21 +53,36 @@ impl Default for CenterRayCastProbe {
     }
 }
 
-impl CenterRayCastProbe {
-    fn update_timer(&mut self, delta_time_s: f32) {
+impl ClickRayCastProbe {
+    fn update_time(&mut self, delta_time_s: f32) {
         self.total_time_s += delta_time_s.max(0.0);
-        if self.request_pending {
-            return;
-        }
+    }
 
-        self.elapsed_s += delta_time_s.max(0.0);
-        if self.elapsed_s >= self.interval_s {
-            self.elapsed_s = self.interval_s;
-            self.request_pending = true;
+    fn request_cast(&mut self, screen_pos: glam::Vec2, ray: Option<RayCastRay>) {
+        self.last_screen_pos = Some(screen_pos);
+        match ray {
+            Some(ray) => {
+                self.pending_ray = Some(ray);
+                self.pending_screen_pos = Some(screen_pos);
+                self.last_error = None;
+            }
+            None => {
+                self.pending_ray = None;
+                self.pending_screen_pos = None;
+                self.last_result = None;
+                self.last_error = Some("click position is outside the viewport".to_owned());
+                self.last_cast_time_s = None;
+            }
         }
     }
 
-    fn finish_cast(&mut self, result: Result<RayCastResult, String>) {
+    fn take_pending_cast(&mut self) -> Option<(RayCastRay, glam::Vec2)> {
+        let ray = self.pending_ray.take()?;
+        let screen_pos = self.pending_screen_pos.take().expect("pending raycast missing screen position");
+        Some((ray, screen_pos))
+    }
+
+    fn finish_cast(&mut self, screen_pos: glam::Vec2, result: Result<RayCastResult, String>) {
         match result {
             Ok(result) => {
                 self.last_result = Some(result);
@@ -78,13 +93,12 @@ impl CenterRayCastProbe {
                 self.last_error = Some(err);
             }
         }
+        self.last_screen_pos = Some(screen_pos);
         self.last_cast_time_s = Some(self.total_time_s);
-        self.elapsed_s = 0.0;
-        self.request_pending = false;
     }
 
-    fn next_cast_countdown_s(&self) -> f32 {
-        (self.interval_s - self.elapsed_s).max(0.0)
+    fn has_pending_cast(&self) -> bool {
+        self.pending_ray.is_some()
     }
 }
 
@@ -145,28 +159,34 @@ impl TruvisApp {
     fn build_raycast_overlay_ui(&self, ui: &imgui::Ui) {
         ui.window("Raycast")
             .position([10.0, 420.0], imgui::Condition::FirstUseEver)
-            .size([340.0, 230.0], imgui::Condition::FirstUseEver)
+            .size([340.0, 250.0], imgui::Condition::FirstUseEver)
             .build(|| {
-                ui.text(format!("Interval: {:.1}s", self.center_ray_cast_probe.interval_s));
-                if self.center_ray_cast_probe.request_pending {
-                    ui.text("Next cast: pending");
+                ui.text("Trigger: left mouse click");
+                if self.click_ray_cast_probe.has_pending_cast() {
+                    ui.text("Status: pending");
                 } else {
-                    ui.text(format!("Next cast: {:.2}s", self.center_ray_cast_probe.next_cast_countdown_s()));
+                    ui.text("Status: idle");
                 }
 
-                if let Some(last_cast_time_s) = self.center_ray_cast_probe.last_cast_time_s {
+                if let Some(screen_pos) = self.click_ray_cast_probe.last_screen_pos {
+                    ui.text(format!("Last click: ({:.0}, {:.0})", screen_pos.x, screen_pos.y));
+                } else {
+                    ui.text("Last click: never");
+                }
+
+                if let Some(last_cast_time_s) = self.click_ray_cast_probe.last_cast_time_s {
                     ui.text(format!("Last cast at: {:.2}s", last_cast_time_s));
                 } else {
                     ui.text("Last cast: never");
                 }
                 ui.separator();
 
-                if let Some(error) = &self.center_ray_cast_probe.last_error {
+                if let Some(error) = &self.click_ray_cast_probe.last_error {
                     ui.text(format!("Error: {error}"));
                     return;
                 }
 
-                match &self.center_ray_cast_probe.last_result {
+                match &self.click_ray_cast_probe.last_result {
                     Some(RayCastResult::Miss) => {
                         ui.text("Result: Miss");
                     }
@@ -235,9 +255,19 @@ impl RenderAppHooks for TruvisApp {
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
         self.spawn_model_if_ready(ctx.world);
-        self.center_ray_cast_probe.update_timer(ctx.delta_time_s);
+        self.click_ray_cast_probe.update_time(ctx.delta_time_s);
 
         let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
+        let viewport_size = glam::vec2(ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32);
+        self.camera_controller.update(self.input.state(), viewport_size, delta);
+
+        if self.input.state().is_left_button_just_pressed() {
+            let mouse_position = self.input.state().mouse_position();
+            let screen_pos = glam::vec2(mouse_position[0] as f32, mouse_position[1] as f32);
+            let ray = self.camera_controller.make_screen_raycast(mouse_position, viewport_size);
+            self.click_ray_cast_probe.request_cast(screen_pos, ray);
+        }
+
         self.gui.begin_frame(delta);
         {
             let ui = self.gui.ui();
@@ -252,12 +282,6 @@ impl RenderAppHooks for TruvisApp {
             self.build_raycast_overlay_ui(ui);
         }
         self.gui.end_frame();
-
-        self.camera_controller.update(
-            self.input.state(),
-            glam::vec2(ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32),
-            delta,
-        );
     }
 
     fn after_prepare(&mut self, ctx: &mut RenderRuntimeRayCastCtx<'_>) {
@@ -266,16 +290,9 @@ impl RenderAppHooks for TruvisApp {
             self.camera_controller.finish_pivot_raycast(request, result);
         }
 
-        if self.center_ray_cast_probe.request_pending {
-            let camera = self.camera_controller.camera();
-            let ray = RayCastRay {
-                origin_ws: camera.position,
-                direction_ws: camera.camera_forward().normalize(),
-                t_min: camera.near.max(0.001),
-                t_max: 10000.0,
-            };
+        if let Some((ray, screen_pos)) = self.click_ray_cast_probe.take_pending_cast() {
             let result = Self::cast_single_ray(ctx, ray);
-            self.center_ray_cast_probe.finish_cast(result);
+            self.click_ray_cast_probe.finish_cast(screen_pos, result);
         }
     }
 
