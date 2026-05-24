@@ -9,13 +9,12 @@
 pub mod platform;
 /// 窗口 surface、swapchain image/view 与 present 同步对象的所有权边界。
 pub mod present;
-/// 旧式渲染子系统扩展点；当前主流程优先通过 runtime 生命周期和上层 plugin 驱动。
-pub mod subsystems;
 
 /// AssetHub mesh 事件到 vertex/index buffer 与 BLAS 的渲染侧上传器。
 mod asset_mesh_uploader;
 /// AssetHub 纹理事件到 GPU image/view/bindless 绑定的渲染侧上传器。
 mod asset_texture_uploader;
+
 mod instance_bridge;
 mod material_bridge;
 mod material_manager;
@@ -23,6 +22,7 @@ mod material_manager;
 pub mod ray_cast;
 /// `RenderRuntime` 及其阶段化上下文，是上层 runtime 直接驱动的主入口。
 pub mod render_runtime;
+pub mod render_runtime_ctx;
 mod render_scene;
 mod scene_bridge;
 mod texture_resolver;

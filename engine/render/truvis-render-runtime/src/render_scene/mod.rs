@@ -10,5 +10,3 @@ pub(crate) mod geometry;
 pub(crate) mod gpu_scene;
 pub(crate) mod raster_draw_cache;
 pub(crate) mod render_data;
-pub(crate) mod tlas;
-pub(crate) mod upload;

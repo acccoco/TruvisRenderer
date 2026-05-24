@@ -42,9 +42,9 @@
 
 ## 对外接口
 
-- crate 公开入口保持在 `platform`、`present`、`subsystems` 和 `render_runtime`。
+- crate 公开入口保持在 `platform`、`present`、`render_runtime_ctx` 和 `render_runtime`。
 - asset uploader、material bridge、instance bridge、GPU scene 数据结构和 prepare 辅助逻辑都是 runtime 私有实现。
-- 生命周期 Ctx 在 `render_runtime` 内部子模块定义，并由 `render_runtime` 重新导出；
+- 生命周期 Ctx 在 `render_runtime_ctx` 模块定义，并由 `render_runtime` 重新导出；
   调用方仍通过 `truvis_render_runtime::render_runtime::*Ctx` 使用这些阶段契约。
 - `RenderRuntimeRenderCtx` 只暴露 `GpuStore`、`RenderSceneView`、`PresentView` 和 timeline；
   不暴露 texture/mesh uploader owner，pass 不能绕过 runtime 私有 bridge 读取上传缓存。

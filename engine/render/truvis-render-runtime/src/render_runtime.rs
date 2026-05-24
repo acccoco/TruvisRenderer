@@ -39,9 +39,7 @@ use crate::present::render_present::RenderPresent;
 use crate::ray_cast::RayCastService;
 use crate::render_scene::gpu_scene::GpuScene;
 
-mod lifecycle_context;
-
-pub use lifecycle_context::{
+pub use crate::render_runtime_ctx::{
     RenderRuntimeInitCtx, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx,
     RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx,
 };
