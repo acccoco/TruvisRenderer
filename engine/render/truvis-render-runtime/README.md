@@ -25,10 +25,11 @@
   FIF buffers、frame settings 和 pipeline settings。
 - `GpuScene` 是 runtime 私有的 scene GPU 翻译层，持有 scene/instance/geometry/light/indirect
   buffer、TLAS 和当前 FIF 的 raster draw cache；render pass 只通过 `RenderSceneView` 读取它。
-- `DefaultEnvironment` 持有 sky / uv checker 等默认环境贴图，向 `GpuScene` 提供 scene root
-  buffer 需要写入的 bindless handle；动态 scene 上传不再负责从路径加载默认贴图。
+- `SkyBridge` 请求默认 sky 通过 `AssetHub` 异步加载，并持有常驻纯色 fallback sky；
+  `DefaultEnvironment` 只持有 UV checker 等启动期辅助贴图。`GpuScene` 只消费环境绑定快照。
 - `AssetTextureManager` 消费 `AssetHub` 的 texture CPU bytes，异步上传 GPU image，并注册
   image view 与 bindless SRV；未 ready 或失败时通过 fallback texture 保证材质仍可安全读取。
+  默认 sky 的真实 texture 也复用该上传路径，但 sky fallback 由 `SkyBridge` 独立维护。
 - `AssetMeshManager` 消费 `AssetHub` 的 mesh CPU 数据，在 graphics queue 上完成 vertex/index
   buffer copy 和 BLAS build；mesh 完成前不会被 `InstanceBridge` 激活。
 - `MaterialBridge` 消费 `MaterialLoaded` 事件并维护 `AssetMaterialHandle -> GpuMaterialHandle` 桥接，
@@ -55,7 +56,7 @@
 ## 生命周期
 
 - `RenderRuntime::new` 创建与窗口无关的 runtime root state：`Gfx`、`World`、`GpuStore`、
-  asset manager、bridge、`GpuScene`、FIF 资源、global descriptors、sampler 和 per-frame buffer。
+  asset manager、`SkyBridge`、bridge、`GpuScene`、FIF 资源、global descriptors、sampler 和 per-frame buffer。
 - `RenderRuntime::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
   swapchain 与 `SwapchainPresenter`，并返回 init Ctx 供 app/plugin 创建长期 GPU 资源。
 - `begin_frame` 是每帧资源回收入口：推进 runtime 私有帧计时器、等待当前 FIF slot、重置 frame command pool、
@@ -73,7 +74,7 @@
 - `present` 只提交当前 swapchain image 到 present queue；渲染命令提交由上层 render graph 完成。
 - `end_frame` 推进 frame counter，切换下一帧的 FIF label。
 - `wait_idle` 在 app/plugin shutdown 前调用，确保上层资源释放时不再被 GPU command 引用。
-- `destroy` 等待 GPU idle，依次释放 present、FIF、scene/assets、GPU scene、mesh manager、
+- `destroy` 等待 GPU idle，依次释放 present、FIF、scene/assets、SkyBridge、GPU scene、mesh manager、
   command allocator、resource manager、sync、sampler、descriptor 等资源，最后销毁 `Gfx`。
 
 ## Prepare 数据流
@@ -84,6 +85,8 @@
   GPU scene、per-frame data 的顺序准备渲染可见数据。
 - `MaterialBridge` 在 begin-frame 阶段消费 `MaterialLoaded` 事件并同步到 `MaterialManager`，
   prepare 阶段再通过 `TextureResolver` 把 texture fallback/ready 状态按 dirty slot 局部写入 material buffer。
+- `SkyBridge` 在 prepare 阶段通过 `TextureResolver` 查询默认 sky 是否 GPU ready；
+  未 ready 或失败时写入纯色 fallback SRV，切换到真实 sky 时重置累积帧。
 - `InstanceBridge` 读取 `SceneManager`，并通过 `MaterialSlotResolver` 与 `MeshRenderResolver`
   做 ready gate，只有完整可渲染的实例才进入 `RenderData`。
 - `InstanceBridge` 在同一次 prepare 输出中同步生成 `GpuInstanceSlot -> CPU record`
@@ -107,9 +110,9 @@
 ## Tracy 初始化埋点
 
 - `RenderRuntime::new` 使用一级 span 标记主要初始化阶段，例如 `Gfx`、manager、asset manager、
-  material bridge、GPU scene、FIF buffers、global descriptors、sampler、per-frame buffer 和 command buffer。
+  SkyBridge、material bridge、GPU scene、FIF buffers、global descriptors、sampler、per-frame buffer 和 command buffer。
 - 启动耗时较明显的下层构造函数继续使用二级 span 细分，例如 `AssetTextureManager::new`、
-  `GpuScene::new`、`FifBuffers::new`、`GlobalDescriptorSets::new`、`CmdAllocator::new`
+  `SkyBridge::new`、`GpuScene::new`、`FifBuffers::new`、`GlobalDescriptorSets::new`、`CmdAllocator::new`
   和 `RenderSamplerManager::new`。
 - `SceneManager::new` 不在 `truvis-world` 内部添加 Tracy 依赖；它只通过
   `RenderRuntime::new/scene_manager` 这个一级 span 表示。

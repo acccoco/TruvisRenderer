@@ -13,6 +13,7 @@ mod asset_mesh_manager;
 /// AssetHub 纹理事件到 GPU image/view/bindless 绑定的渲染侧管理器。
 mod asset_texture_manager;
 
+mod environment_binding;
 mod frame_timer;
 mod instance_bridge;
 mod material_bridge;
@@ -24,4 +25,5 @@ pub mod render_runtime;
 pub mod render_runtime_ctx;
 mod render_scene;
 mod scene_bridge;
+mod sky_bridge;
 mod texture_resolver;

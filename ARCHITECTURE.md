@@ -216,16 +216,18 @@ vertex/index buffer 并构建 BLAS。Assimp model 读取由 `AssetHub::load_mode
 model data 显式调用 `SceneManager::spawn_model`，由 `SceneManager` 保存运行时语义，`InstanceBridge` 负责稳定
 GPU instance slot、ready gate 和 active render list。mesh/material ready 查询通过
 `truvis-render-runtime` 私有 scene bridge trait 连接到 `AssetMeshManager` 与
-`MaterialBridge`，这些 resolver 不属于 `truvis-world`。`GpuScene` 与 `RenderData`
-是 runtime 私有 scene 翻译层；render pass 只通过 `RenderSceneView` 访问 scene
-buffer、TLAS handle 和光栅化 draw。`RenderRuntime::prepare` 负责把这些 bridge
-按固定顺序串成 update 与 render 之间的 prepare 阶段。`after_prepare` 阶段只用于
-App 对刚同步完成的 GPU scene 发起同步查询，例如批量 raycast；普通渲染工作仍在
+`MaterialBridge`，这些 resolver 不属于 `truvis-world`。默认 sky 通过 `SkyBridge`
+请求 `AssetHub::load_texture` 异步加载，并在真实贴图 GPU ready 前使用常驻纯色 fallback。
+`GpuScene` 与 `RenderData` 是 runtime 私有 scene 翻译层；render pass 只通过
+`RenderSceneView` 访问 scene buffer、TLAS handle 和光栅化 draw。`RenderRuntime::prepare`
+负责把这些 bridge 按固定顺序串成 update 与 render 之间的 prepare 阶段。`after_prepare`
+阶段只用于 App 对刚同步完成的 GPU scene 发起同步查询，例如批量 raycast；普通渲染工作仍在
 `render` hook 中进入 RenderGraph。
 
 ```mermaid
 flowchart LR
     AssetHub["AssetHub<br/>path/key -> CPU asset data"] --> TextureManager["AssetTextureManager<br/>texture GPU upload + bindless"]
+    AssetHub --> SkyBridge["SkyBridge<br/>default sky handle + fallback"]
     AssetHub --> MeshManager["AssetMeshManager<br/>mesh buffer upload + BLAS"]
     AssetHub --> MaterialBridge["MaterialBridge / MaterialManager<br/>stable material slot + material buffer"]
     AssetHub --> ModelData["ModelData<br/>prefab asset"]
@@ -233,9 +235,11 @@ flowchart LR
     SceneSpawner --> Scene["SceneManager<br/>runtime instance / light"]
     Scene --> InstanceBridge["InstanceBridge<br/>stable instance slot + ready gate"]
     TextureManager --> MaterialBridge
+    TextureManager --> SkyBridge
     MeshManager --> InstanceBridge
     Scene --> Prepare["RenderRuntime::prepare(render_view)"]
     MaterialBridge --> InstanceBridge
+    SkyBridge --> Prepare
     InstanceBridge --> Prepare
     Prepare --> GpuResources["GpuScene(RenderRuntime) / BindlessManager / GlobalDescriptorSets"]
     GpuResources --> RayCast["App after_prepare<br/>sync raycast query"]
@@ -310,7 +314,7 @@ GPU 资源按用途分类：
 - Frame：command buffer、per-frame buffer、FIF resources
 - Swapchain：swapchain image/view、present semaphore、window-sized targets
 - Asset：`AssetHub` 持有 texture / mesh / material / model 内容资产 handle 与 CPU 加载状态，并负责 Assimp model 到 owned CPU 数据的导入；`AssetTextureManager` 持有 texture 的 GPU image/view/bindless 绑定；`AssetMeshManager` 持有 mesh vertex/index buffer、BLAS 和 GPU ready 状态；runtime 私有 `MaterialManager` 由 `MaterialBridge` 驱动，持有 material GPU buffer 与稳定 slot；App 将 ready `ModelData` 通过 `SceneManager::spawn_model` 变为 runtime instances；`InstanceBridge` 持有 runtime instance 到稳定 GPU instance slot 的映射
-- Scene GPU：runtime 私有 `GpuScene` 持有 instance / geometry / light / indirect buffer、TLAS 和当前 FIF 的 raster draw cache，并通过 `RenderSceneView` 向 render pass 暴露只读能力；默认 sky / uv checker 环境贴图由 runtime 私有 `DefaultEnvironment` 持有
+- Scene GPU：runtime 私有 `GpuScene` 持有 instance / geometry / light / indirect buffer、TLAS 和当前 FIF 的 raster draw cache，并通过 `RenderSceneView` 向 render pass 暴露只读能力；默认 sky 由 runtime 私有 `SkyBridge` 通过 `AssetHub` / `AssetTextureManager` 异步加载并提供 fallback，UV checker 等辅助贴图由 `DefaultEnvironment` 持有
 - GUI：imgui font texture、per-frame GUI mesh buffer、texture map
 - RenderGraph：按帧导入的 image 状态引用与同步计划；图内 transient image/buffer 是未来能力，不作为当前资源生命周期类别
 

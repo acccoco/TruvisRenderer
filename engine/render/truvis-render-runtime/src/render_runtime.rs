@@ -38,6 +38,7 @@ use crate::material_bridge::MaterialBridge;
 use crate::present::swapchain_presenter::SwapchainPresenter;
 use crate::ray_cast::RayCastService;
 use crate::render_scene::gpu_scene::GpuScene;
+use crate::sky_bridge::SkyBridge;
 
 pub use crate::render_runtime_ctx::{
     RenderRuntimeInitCtx, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx,
@@ -75,6 +76,7 @@ pub struct RenderRuntime {
     gpu_store: GpuStore,
     gpu_scene: GpuScene,
     asset_texture_manager: AssetTextureManager,
+    sky_bridge: SkyBridge,
     asset_mesh_manager: AssetMeshManager,
     material_bridge: MaterialBridge,
     instance_bridge: InstanceBridge,
@@ -94,8 +96,8 @@ pub struct RenderRuntime {
 impl RenderRuntime {
     /// 创建不依赖窗口系统的 runtime root state。
     ///
-    /// 这里会初始化 `Gfx`、CPU `World`、GPU `GpuStore`、资产管理器、material/instance bridge、
-    /// 私有 `GpuScene`、FIF 资源和全局描述符，但不会创建 surface/swapchain。窗口相关资源必须等
+    /// 这里会初始化 `Gfx`、CPU `World`、GPU `GpuStore`、资产管理器、SkyBridge、
+    /// material/instance bridge、私有 `GpuScene`、FIF 资源和全局描述符，但不会创建 surface/swapchain。窗口相关资源必须等
     /// `init_after_window` 收到平台层 raw handle 后再创建。
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
         let _span = tracy_client::span!("RenderRuntime::new");
@@ -166,9 +168,20 @@ impl RenderRuntime {
             let _span = tracy_client::span!("RenderRuntime::new/scene_manager");
             SceneManager::new()
         };
-        let asset_hub = {
+        let mut asset_hub = {
             let _span = tracy_client::span!("RenderRuntime::new/asset_hub");
             AssetHub::new()
+        };
+        let sky_bridge = {
+            let _span = tracy_client::span!("RenderRuntime::new/sky_bridge");
+            SkyBridge::new(
+                gfx.resource_ctx(),
+                gfx.device_ctx(),
+                gfx.immediate_ctx(),
+                &mut asset_hub,
+                &mut gfx_resource_manager,
+                &mut bindless_manager,
+            )
         };
         let gpu_scene = {
             let _span = tracy_client::span!("RenderRuntime::new/gpu_scene");
@@ -248,6 +261,7 @@ impl RenderRuntime {
                     asset_hub,
                 },
                 asset_texture_manager,
+                sky_bridge,
                 asset_mesh_manager,
                 material_bridge,
                 instance_bridge,
@@ -328,6 +342,12 @@ impl RenderRuntime {
         // 再释放 material/texture/mesh/GpuScene 等 GPU 翻译缓存。
         self.world.scene_manager.destroy();
         self.material_bridge.destroy(self.gfx.resource_ctx());
+        self.sky_bridge.destroy_mut(
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            &mut self.gpu_store.bindless_manager,
+            &mut self.gpu_store.gfx_resource_manager,
+        );
         self.asset_texture_manager.destroy(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -665,13 +685,20 @@ impl RenderRuntime {
         };
 
         let bindless_target = self.gpu_store.global_descriptor_sets.bindless_target();
-        // bindless 表先更新，因为 material upload 可能立即解析 texture SRV handle；
-        // 后续 scene root buffer 也会写入默认环境贴图的 bindless handle。
+        // bindless 表先更新，因为 material upload 和环境绑定都可能立即解析 texture SRV handle；
+        // 后续 scene root buffer 会写入这些 shader-visible handle。
         self.gpu_store.bindless_manager.prepare_render_data(
             self.gfx.device_ctx(),
             &self.gpu_store.gfx_resource_manager,
             bindless_target,
         );
+        let sky_update = self.sky_bridge.update_sky_binding(&self.asset_texture_manager);
+        if sky_update.changed {
+            // sky 从 fallback 切换到真实贴图时，历史累积帧已经不再对应当前环境光。
+            self.gpu_store.accum_data.reset();
+        }
+        let environment_binding =
+            self.gpu_scene.environment_binding(sky_update.binding, &self.gpu_store.bindless_manager);
 
         // material loaded 事件已在 begin_frame 进入稳定 slot；这里只根据 texture ready/fallback
         // 状态写当前 FIF 的 material buffer。
@@ -706,7 +733,7 @@ impl RenderRuntime {
             &scene_render_data,
             material_buffer_device_address,
             scene_revision,
-            &self.gpu_store.bindless_manager,
+            environment_binding,
         );
 
         // per-frame uniform 放在 GPU scene 上传之后写入同一条命令缓冲，保证本帧 shader
