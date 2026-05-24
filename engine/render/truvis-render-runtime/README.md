@@ -26,7 +26,7 @@
 - `GpuScene` 是 runtime 私有的 scene GPU 翻译层，持有 scene/instance/geometry/light/indirect
   buffer、TLAS 和当前 FIF 的 raster draw cache；render pass 只通过 `RenderSceneView` 读取它。
 - `SkyBridge` 请求默认 sky 通过 `AssetHub` 异步加载，并持有常驻纯色 fallback sky；
-  `DefaultEnvironment` 只持有 UV checker 等启动期辅助贴图。`GpuScene` 只消费环境绑定快照。
+  `GpuScene` 只消费 sky 环境绑定快照。
 - `AssetTextureManager` 消费 `AssetHub` 的 texture CPU bytes，异步上传 GPU image，并注册
   image view 与 bindless SRV；未 ready 或失败时通过 fallback texture 保证材质仍可安全读取。
   默认 sky 的真实 texture 也复用该上传路径，但 sky fallback 由 `SkyBridge` 独立维护。

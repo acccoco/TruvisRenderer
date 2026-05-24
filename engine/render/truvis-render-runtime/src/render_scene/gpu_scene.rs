@@ -1,7 +1,6 @@
 use super::buffers::GpuSceneBuffers;
-use super::default_environment::DefaultEnvironment;
 use super::raster_draw_cache::{RasterDrawItem, draw_raster_cache, update_raster_draw_cache};
-use crate::environment_binding::{EnvironmentBinding, EnvironmentSkyBinding};
+use crate::environment_binding::EnvironmentBinding;
 use crate::render_scene::render_data::{InstanceRenderData, RenderData};
 use ash::vk;
 use itertools::Itertools;
@@ -13,9 +12,7 @@ use truvis_gfx::raytracing::acceleration::GfxAcceleration;
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_foundation::bindless_manager::BindlessManager;
 use truvis_render_foundation::frame_counter::FrameCounter;
-use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::pipeline_settings::FrameLabel;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_shader_binding::gpu;
@@ -30,29 +27,16 @@ pub struct GpuScene {
     pub(super) gpu_scene_buffers: [GpuSceneBuffers; FrameCounter::fif_count()],
     /// prepare 阶段从 `RenderData` 展开的光栅化 draw cache，render pass 只通过 view 契约录制 draw。
     pub(super) raster_draws: [Vec<RasterDrawItem>; FrameCounter::fif_count()],
-    /// scene root buffer 引用的默认辅助贴图 owner；sky 由 `SkyBridge` 异步提供。
-    pub(super) environment: DefaultEnvironment,
 }
 
 // 生命周期：创建和销毁 `GpuScene` 拥有的长期 GPU 资源。
 impl GpuScene {
-    /// 创建默认辅助环境贴图和每个 FIF frame label 的 GPU scene buffer 集。
+    /// 创建每个 FIF frame label 的 GPU scene buffer 集。
     ///
     /// `GpuScene` 只创建 render-side 表示，不读取 CPU scene；动态实例和 mesh 数据在
     /// prepare 阶段由 `upload_render_data` 写入。
-    pub fn new(
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
-        bindless_manager: &mut BindlessManager,
-    ) -> Self {
+    pub fn new(resource_ctx: GfxResourceCtx<'_>) -> Self {
         let _span = tracy_client::span!("GpuScene::new");
-
-        let environment = {
-            let _span = tracy_client::span!("GpuScene::new/default_environment");
-            DefaultEnvironment::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, bindless_manager)
-        };
 
         let gpu_scene_buffers = {
             let _span = tracy_client::span!("GpuScene::new/per_frame_buffers");
@@ -62,26 +46,17 @@ impl GpuScene {
         Self {
             gpu_scene_buffers,
             raster_draws: FrameCounter::frame_labes().map(|_| Vec::new()),
-            environment,
         }
     }
 
-    /// 销毁 GPU scene 拥有的 buffer、TLAS 和默认环境贴图。
+    /// 销毁 GPU scene 拥有的 buffer 和 TLAS。
     ///
     /// 调用点位于 `RenderRuntime::destroy`，此时 device 已 idle，因此每个 FIF 的 TLAS
     /// 和 buffer 都可以按 shutdown reason 释放。
-    pub fn destroy_mut(
-        &mut self,
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        bindless_manager: &mut BindlessManager,
-        gfx_resource_manager: &mut GfxResourceManager,
-    ) {
+    pub fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
         for buffers in &mut self.gpu_scene_buffers {
             buffers.destroy_mut(resource_ctx, device_ctx);
         }
-
-        self.environment.destroy_mut(resource_ctx, device_ctx, bindless_manager, gfx_resource_manager);
     }
 }
 
@@ -101,20 +76,6 @@ impl GpuScene {
     #[inline]
     pub fn scene_buffer(&self, frame_label: FrameLabel) -> &GfxStructuredBuffer<gpu::GPUScene> {
         &self.gpu_scene_buffers[*frame_label].scene_buffer
-    }
-
-    /// 合成本帧 scene root buffer 使用的环境资源绑定。
-    ///
-    /// sky binding 来自 `SkyBridge`，UV checker binding 来自 `GpuScene` 持有的常驻辅助贴图。
-    pub(crate) fn environment_binding(
-        &self,
-        sky: EnvironmentSkyBinding,
-        bindless_manager: &BindlessManager,
-    ) -> EnvironmentBinding {
-        EnvironmentBinding {
-            sky,
-            uv_checker: self.environment.uv_checker_binding(bindless_manager),
-        }
     }
 }
 
@@ -211,8 +172,6 @@ impl GpuScene {
 
             sky: environment_binding.sky.srv_handle.0,
             sky_sampler_type: environment_binding.sky.sampler,
-            uv_checker: environment_binding.uv_checker.srv_handle.0,
-            uv_checker_sampler_type: environment_binding.uv_checker.sampler,
         };
 
         cmd.cmd_update_buffer(crt_gpu_buffers.scene_buffer.vk_buffer(), 0, BytesConvert::bytes_of(&gpu_scene_data));

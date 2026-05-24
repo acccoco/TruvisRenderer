@@ -44,7 +44,7 @@ just build-all
 ```
 
 资源路径由根目录 `map.toml` 统一映射。`assets/fbx/` 保存 Sponza、Cornell 等模型资源，
-`assets/resources/` 保存窗口图标、字体、默认天空图和 uv checker 等运行时资源；
+`assets/resources/` 保存窗口图标、字体和默认天空图等运行时资源；
 `tools/` 保存 Slang、Tracy 和 Vulkan validation layer 配置等外部工具资源。
 
 启动 Tracy Profiler：

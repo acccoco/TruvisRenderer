@@ -10,15 +10,6 @@ pub(crate) struct EnvironmentSkyBinding {
     pub(crate) sampler: gpu::ESamplerType,
 }
 
-/// scene root buffer 写入的普通环境贴图绑定。
-///
-/// 当前用于 UV checker 这类 runtime 常驻辅助贴图；资源生命周期由具体 owner 管理。
-#[derive(Clone, Copy)]
-pub(crate) struct EnvironmentTextureBinding {
-    pub(crate) srv_handle: BindlessSrvHandle,
-    pub(crate) sampler: gpu::ESamplerType,
-}
-
 /// 本帧 GPU scene 使用的环境资源快照。
 ///
 /// `GpuScene` 只消费该快照并写入 scene root buffer，不关心 sky 是否来自真实贴图、
@@ -26,5 +17,4 @@ pub(crate) struct EnvironmentTextureBinding {
 #[derive(Clone, Copy)]
 pub(crate) struct EnvironmentBinding {
     pub(crate) sky: EnvironmentSkyBinding,
-    pub(crate) uv_checker: EnvironmentTextureBinding,
 }

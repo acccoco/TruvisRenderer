@@ -32,6 +32,7 @@ use truvis_world::World;
 
 use crate::asset_mesh_manager::AssetMeshManager;
 use crate::asset_texture_manager::AssetTextureManager;
+use crate::environment_binding::EnvironmentBinding;
 use crate::frame_timer::FrameTimer;
 use crate::instance_bridge::InstanceBridge;
 use crate::material_bridge::MaterialBridge;
@@ -185,13 +186,7 @@ impl RenderRuntime {
         };
         let gpu_scene = {
             let _span = tracy_client::span!("RenderRuntime::new/gpu_scene");
-            GpuScene::new(
-                gfx.resource_ctx(),
-                gfx.device_ctx(),
-                gfx.immediate_ctx(),
-                &mut gfx_resource_manager,
-                &mut bindless_manager,
-            )
+            GpuScene::new(gfx.resource_ctx())
         };
         let fif_buffers = {
             let _span = tracy_client::span!("RenderRuntime::new/fif_buffers");
@@ -355,12 +350,7 @@ impl RenderRuntime {
             &mut self.gpu_store.bindless_manager,
         );
         self.world.asset_hub.destroy();
-        self.gpu_scene.destroy_mut(
-            self.gfx.resource_ctx(),
-            self.gfx.device_ctx(),
-            &mut self.gpu_store.bindless_manager,
-            &mut self.gpu_store.gfx_resource_manager,
-        );
+        self.gpu_scene.destroy_mut(self.gfx.resource_ctx(), self.gfx.device_ctx());
         self.asset_mesh_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
         // per-frame UBO 与 command allocator 在所有使用它们的 scene/present 资源之后释放。
         for buffer in &mut self.gpu_store.per_frame_data_buffers {
@@ -697,8 +687,9 @@ impl RenderRuntime {
             // sky 从 fallback 切换到真实贴图时，历史累积帧已经不再对应当前环境光。
             self.gpu_store.accum_data.reset();
         }
-        let environment_binding =
-            self.gpu_scene.environment_binding(sky_update.binding, &self.gpu_store.bindless_manager);
+        let environment_binding = EnvironmentBinding {
+            sky: sky_update.binding,
+        };
 
         // material loaded 事件已在 begin_frame 进入稳定 slot；这里只根据 texture ready/fallback
         // 状态写当前 FIF 的 material buffer。

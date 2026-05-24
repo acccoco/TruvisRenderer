@@ -32,9 +32,7 @@ struct GPUScene
     uint spot_light_count;
 
     SrvHandle sky;
-    SrvHandle uv_checker;
     ESamplerType sky_sampler_type;
-    ESamplerType uv_checker_sampler_type;
 
 #ifdef __SLANG__
 
@@ -66,4 +64,3 @@ struct GPUScene
 
 #endif
 };
-

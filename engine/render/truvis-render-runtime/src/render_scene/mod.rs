@@ -5,7 +5,6 @@
 //! shader 可读 buffer、TLAS 与光栅化 draw cache，最后只通过 `RenderSceneView` 对外读取。
 
 pub(crate) mod buffers;
-pub(crate) mod default_environment;
 pub(crate) mod geometry;
 pub(crate) mod gpu_scene;
 pub(crate) mod raster_draw_cache;

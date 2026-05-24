@@ -46,7 +46,7 @@ fn config() -> &'static MapConfig {
 /// # 使用示例
 /// ```ignore
 /// let model   = TruvisPath::assets("sponza.fbx");
-/// let texture = TruvisPath::resources("uv_checker.png"); // assets/resources/uv_checker.png
+/// let texture = TruvisPath::resources("sky.jpg"); // assets/resources/sky.jpg
 /// let spv     = TruvisPath::shader_build_spv("rt/raygen.slang");
 /// ```
 pub struct TruvisPath;
