@@ -9,9 +9,11 @@ truvis-shader-binding = { workspace = true }
 truvis-asset = { workspace = true }
 truvis-render-graph = { workspace = true }
 truvis-render-foundation = { workspace = true }
-truvis-render-passes = { workspace = true }
 truvis-world = { workspace = true }
 truvis-path = { workspace = true }
+truvis-utils = { workspace = true }
+truvis-descriptor-layout-macro = { workspace = true }
+truvis-descriptor-layout-trait = { workspace = true }
 
 
 ash = { workspace = true }

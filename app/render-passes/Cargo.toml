@@ -1,8 +1,8 @@
 [package]
-name = "truvis-render-passes"
+name = "truvis-app-render-passes"
 version = "0.1.0"
 edition = "2024"
-description = "Shared render pass implementations (RT, post-process, etc.)"
+description = "App-layer shared render pass implementations (RT, post-process, etc.)"
 
 [dependencies]
 truvis-gfx = { workspace = true }

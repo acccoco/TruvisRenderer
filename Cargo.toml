@@ -15,7 +15,6 @@ members = [
     "engine/render/truvis-render-foundation",
     "engine/render/truvis-render-graph",
     "engine/render/truvis-render-runtime",
-    "engine/render/truvis-render-passes",
     "engine/render/truvis-gui-backend",
     # world
     "engine/world/truvis-asset",
@@ -31,6 +30,7 @@ members = [
     "engine/cxx/truvis-cxx-build",
     # app
     "app/app-kit",
+    "app/render-passes",
     "app/truvis",
     "app/samples/hello-triangle",
     "app/samples/shader-toy",
@@ -63,7 +63,6 @@ truvis-descriptor-layout-trait = { path = "engine/gfx/truvis-descriptor-layout-t
 # render
 truvis-render-foundation = { path = "engine/render/truvis-render-foundation" }
 truvis-render-graph = { path = "engine/render/truvis-render-graph" }
-truvis-render-passes = { path = "engine/render/truvis-render-passes" }
 truvis-render-runtime = { path = "engine/render/truvis-render-runtime" }
 truvis-gui-backend = { path = "engine/render/truvis-gui-backend" }
 # world
@@ -74,6 +73,7 @@ truvis-app-frame = { path = "engine/app-frame/truvis-app-frame" }
 truvis-winit-app = { path = "engine/app-frame/truvis-winit-app" }
 # app
 app-kit = { path = "app/app-kit" }
+truvis-app-render-passes = { path = "app/render-passes" }
 # shader
 truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
 truvis-shader-build = { path = "engine/shader/truvis-shader-build" }

@@ -1,4 +1,9 @@
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
+use truvis_app_render_passes::blit_pass::{BlitPass, BlitRgPass};
+use truvis_app_render_passes::denoise_accum_pass::{DenoiseAccumPass, DenoiseAccumRgPass};
+use truvis_app_render_passes::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};
+use truvis_app_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
+use truvis_app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
@@ -8,11 +13,6 @@ use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_foundation::pipeline_settings::FrameLabel;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
-use truvis_render_passes::blit_pass::{BlitPass, BlitRgPass};
-use truvis_render_passes::denoise_accum_pass::{DenoiseAccumPass, DenoiseAccumRgPass};
-use truvis_render_passes::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};
-use truvis_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
-use truvis_render_passes::sdr_pass::{SdrPass, SdrRgPass};
 
 #[derive(Default)]
 pub struct RtPipeline {

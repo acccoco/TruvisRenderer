@@ -13,8 +13,8 @@
 - `truvis-world` 是 CPU 语义层，聚合 runtime scene 和 asset hub，不拥有 Vulkan、swapchain、GPU buffer/image 或 frame state。
 - `truvis-render-foundation` 是渲染基础层，提供 `GpuStore`、manager、frame state、global descriptors、FIF 资源和 `RenderSceneView` 等底层契约。
 - `truvis-render-graph` 只做图编排和线性同步推导，不承载 scene / asset 领域对象。
-- `truvis-render-passes` 只依赖 render-side 只读视图和 GPU 状态，不回到 CPU world 取数据。
-- `app-kit` 和具体 app 负责组合 GUI、camera/input、overlay、RT / Shadertoy / triangle 等业务能力。
+- `truvis-app-render-passes` 位于 app 层，只依赖 render-side 只读视图和 GPU 状态，不回到 CPU world 取数据。
+- `app-kit` 和具体 app 负责组合 GUI、camera/input、overlay、RT / 后处理 / Shadertoy / triangle 等业务能力。
 
 ## 设计原则
 

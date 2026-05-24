@@ -9,7 +9,7 @@ truvis-app-frame = { workspace = true }
 truvis-gfx = { workspace = true }
 truvis-render-foundation = { workspace = true }
 truvis-render-graph = { workspace = true }
-truvis-render-passes = { workspace = true }
+truvis-app-render-passes = { workspace = true }
 truvis-render-runtime = { workspace = true }
 truvis-gui-backend = { workspace = true }
 truvis-path = { workspace = true }

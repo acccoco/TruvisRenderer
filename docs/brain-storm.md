@@ -16,7 +16,7 @@
 - `AssetHub` 已收敛为内容资产身份、CPU 加载状态和加载事件来源，不再创建 GPU image/view 或注册 bindless。
 - texture / mesh / material / instance 的 GPU 可见状态由 render-side manager / bridge 管理。
 - `GpuScene` 与 `RenderData` 已成为 `truvis-render-runtime` 私有 scene 翻译层，pass 只通过 `RenderSceneView` 读取。
-- `truvis-render-graph` 与 `truvis-render-passes` 不再依赖 `truvis-world` / `truvis-asset`。
+- `truvis-render-graph` 与 app 层 `truvis-app-render-passes` 不再依赖 `truvis-world` / `truvis-asset`。
 - `truvis-render-foundation` 是当前渲染基础层名称，不再使用旧 `render-interface` 命名。
 
 仍然存在、brain-storm 文档中的讨论还有效的边界问题：

@@ -10,7 +10,8 @@
   WASD/QE 移动、左键点击边沿输入、中键拾取 pivot 后的环视控制状态、Shift+中键拖拽场景，
   以及主应用启用的滚轮锚点移动。
 - `DebugInfoOverlay` / `PipelineControlsOverlay`：UI-only overlay plugin。
-- `RtPipeline`：光追示例与 Truvis 主体 app 共用的 compute/present graph glue。
+- `RtPipeline`：光追示例与 Truvis 主体 app 共用的 compute/present graph glue，依赖
+  `truvis-app-render-passes` 提供具体 RT 与后处理 pass。
 
 ## 边界约束
 

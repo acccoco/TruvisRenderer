@@ -13,11 +13,14 @@ use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuff
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_foundation::gpu_store::GpuStore;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
-use truvis_render_passes::ray_cast_pass::RayCastPass;
 use truvis_shader_binding::gpu;
 use truvis_world::guid_new_type::InstanceHandle;
 
 use crate::instance_bridge::InstanceBridge;
+
+mod pass;
+
+use self::pass::RayCastPass;
 
 /// App 在 after_prepare 阶段提交的 world-space ray。
 #[derive(Clone, Copy, Debug)]
