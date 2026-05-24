@@ -24,7 +24,7 @@ GPU 上传、bindless 注册、BLAS 构建和 shader 可见绑定由 render-side
 ```text
 状态机与 handle 边界
   -> Material 稳定 GPU slot
-  -> Mesh AssetHub 管理 + AssetMeshUploader 异步上传 / BLAS
+  -> Mesh AssetHub 管理 + AssetMeshManager 异步上传 / BLAS
   -> Instance 稳定 slot + ready gate
   -> TLAS dirty / rebuild
   -> Assimp SceneHandle 集成
@@ -105,8 +105,8 @@ Instance:
 `AssetHub::get_status()` 只能回答 CPU 侧状态。GPU 可用状态由对应 uploader/manager 回答：
 
 ```text
-AssetTextureUploader::is_texture_ready(handle)
-AssetMeshUploader::is_mesh_ready(handle)
+AssetTextureManager::is_texture_ready(handle)
+AssetMeshManager::is_mesh_ready(handle)
 AssetMaterialUploader::is_material_ready(handle)
 GpuScene::is_instance_active(handle)
 ```
@@ -220,7 +220,7 @@ Material ready 的定义需要显式选择一种策略：
 | Fallback | texture 未 ready 时写入 fallback/null binding，texture ready 后 material dirty 重传 | 第一阶段默认 |
 | Strict | 所有 texture ready 后 material 才算 GpuReady | 可作为导入参数或 debug 模式 |
 
-第一阶段建议使用 Fallback 策略，因为当前 `AssetTextureUploader` 已经持有 fallback
+第一阶段建议使用 Fallback 策略，因为当前 `AssetTextureManager` 已经持有 fallback
 和 `TextureResolver`，能避免大模型因纹理慢加载而整批 instance 不显示。
 
 ## Mesh 设计
@@ -228,7 +228,7 @@ Material ready 的定义需要显式选择一种策略：
 ### 目标
 
 Mesh 由 `AssetHub` 管理内容身份和 CPU 数据，GPU buffer 上传与 BLAS 构建由
-`AssetMeshUploader` 管理。
+`AssetMeshManager` 管理。
 
 ### 推荐结构
 
@@ -238,7 +238,7 @@ AssetHub
     status: CpuLoading / CpuReady / Failed
     cpu_data: LoadedMeshData
 
-AssetMeshUploader
+AssetMeshManager
   AssetMeshHandle -> UploadedMesh
     status: BufferUploadSubmitted / BufferReady / BlasBuildSubmitted / GpuReady
     geometries: Vec<RtGeometry>
@@ -255,7 +255,7 @@ AssetMeshUploader
 第一版建议：
 
 - 使用 graphics queue 提交 BLAS build，避免 transfer queue 不支持 acceleration structure build。
-- 复用 `AssetTextureUploader` 的 pending queue 模式：
+- 复用 `AssetTextureManager` 的 pending queue 模式：
   - command pool
   - timeline semaphore
   - pending upload/build records
@@ -268,8 +268,8 @@ AssetMeshUploader
 当前 `GpuScene` 拥有全局 `geometry_buffer`，并每帧从 `RenderData.all_meshes`
 重写。Mesh 资产化后有两种迁移方式：
 
-1. 过渡方案：`GpuScene` 继续拥有 `geometry_buffer`，但写入数据来自 `AssetMeshUploader` 的 ready mesh。
-2. 目标方案：`AssetMeshUploader` 拥有 global geometry table，`GpuScene` 只引用其 device address。
+1. 过渡方案：`GpuScene` 继续拥有 `geometry_buffer`，但写入数据来自 `AssetMeshManager` 的 ready mesh。
+2. 目标方案：`AssetMeshManager` 拥有 global geometry table，`GpuScene` 只引用其 device address。
 
 推荐先做过渡方案，稳定后再迁移到目标方案。
 
@@ -417,7 +417,7 @@ App / tool
 验收：
 
 - 编译不破坏现有示例。
-- 文档与 `ARCHITECTURE.md` 中 AssetHub / AssetTextureUploader 边界一致。
+- 文档与 `ARCHITECTURE.md` 中 AssetHub / AssetTextureManager 边界一致。
 
 ### Phase 1：Material 稳定 slot 接入主路径
 
@@ -452,14 +452,14 @@ App / tool
 - `MaterialManager` 已从 `truvis-world` 移到 `truvis-render-runtime` 私有模块，
   `GpuMaterialHandle` / `TextureResolver` / `TextureBinding` 同步迁移到 render-side。
 
-### Phase 2：Mesh AssetHub 管理 + AssetMeshUploader
+### Phase 2：Mesh AssetHub 管理 + AssetMeshManager
 
 目标：
 
 - `AssetHub` 支持 mesh CPU 数据记录和加载事件。
-- 新增 `AssetMeshUploader`，负责 vertex/index buffer 上传与 BLAS 构建。
+- 新增 `AssetMeshManager`，负责 vertex/index buffer 上传与 BLAS 构建。
 - 移除新路径里的 `Mesh::build_blas_sync` 直接调用。
-- `AssetMeshUploader::is_mesh_ready()` 成为 instance gate 的依据。
+- `AssetMeshManager::is_mesh_ready()` 成为 instance gate 的依据。
 
 验收：
 
@@ -474,15 +474,15 @@ App / tool
 - `LoadedMeshData` 保存 positions / normals / tangents / uvs / indices / name，
   Assimp 导入阶段只把 C++ 临时 scene 数据复制到 Rust owned CPU buffer。
 - `LoadedAssetEvent` 新增 `MeshLoaded`，`RenderRuntime::begin_frame()` 将 asset 事件拆分给
-  `AssetTextureUploader` 和 `AssetMeshUploader`。
-- `AssetMeshUploader` 在 graphics queue 上提交 vertex/index buffer copy 与 BLAS build，
+  `AssetTextureManager` 和 `AssetMeshManager`。
+- `AssetMeshManager` 在 graphics queue 上提交 vertex/index buffer copy 与 BLAS build，
   使用 timeline semaphore 轮询完成；mesh ready 后提供 `MeshRenderResolver` 给
   后续 render-side scene bridge。
 - 旧 `AssimpSceneLoader::load_scene()` 不再接收 GPU ctx，也不再同步创建 vertex/index buffer
   或调用 `Mesh::build_blas()`。
 - `SceneManager` 中的 `Mesh` 变为轻量 proxy，只保存 `AssetMeshHandle` 和名称；mesh 未 GPU ready
   时，对应 instance 会被跳过，不写入本帧 `RenderData`。
-- `GpuScene` 引入过渡期 TLAS revision；当 mesh uploader 有新 mesh ready 时，当前 FIF 的 TLAS
+- `GpuScene` 引入过渡期 TLAS revision；当 mesh manager 有新 mesh ready 时，当前 FIF 的 TLAS
   会按 revision 重建。`RealtimeRtPass` 在当前帧 TLAS 尚未 ready 时跳过 ray tracing pass，
   避免启动早期帧 panic。
 
@@ -520,7 +520,7 @@ App / tool
   material ready 采用 fallback texture 策略，texture 未 ready 不阻塞 instance active。
 - `RenderData` 的 active instance 携带 `GpuInstanceSlot`；`GpuScene` 按 slot 写入 instance buffer，
   raster push constant、TLAS `instance_custom_index` 和 RT shader instance 查询都使用稳定 slot。
-- `InstanceBridge` revision 与 `AssetMeshUploader::ready_revision()` 合并为过渡期 scene revision，
+- `InstanceBridge` revision 与 `AssetMeshManager::ready_revision()` 合并为过渡期 scene revision，
   mesh ready、instance active/despawn/transform 会触发当前 FIF TLAS 重建检查。
 
 剩余限制：
@@ -548,7 +548,7 @@ App / tool
 完成记录（2026-05-17）：
 
 - `GpuScene` 为每个 FIF buffer 记录 `tlas_revision`；当前 FIF 的 TLAS 不存在或 revision 落后时重建。
-- `AssetMeshUploader::ready_revision()` 与 `InstanceBridge::revision()` 合并为 render-side scene revision，
+- `AssetMeshManager::ready_revision()` 与 `InstanceBridge::revision()` 合并为 render-side scene revision，
   覆盖 mesh ready、instance active/deactivate/despawn 和 transform dirty。
 - TLAS `instance_custom_index` 使用稳定 `GpuInstanceSlot`，并保留 Vulkan 24-bit 上限检查。
 - 当前帧 TLAS 为空时 `RealtimeRtPass` 跳过 ray tracing pass，避免 scene asset 或 mesh 尚未 ready 时 panic。
@@ -643,7 +643,7 @@ App / tool
 
 - `MaterialSlotResolver` / `MeshRenderResolver` 已从 `truvis-world::scene_manager`
   移到 `truvis-render-runtime` 私有 `scene_bridge` 模块。
-- `MaterialBridge` 和 `AssetMeshUploader` 实现 backend 内部 resolver trait，
+- `MaterialBridge` 和 `AssetMeshManager` 实现 backend 内部 resolver trait，
   `InstanceBridge` 通过这些 render-side 契约构建 active `RenderData`。
 - `truvis-world` 已移除对 `truvis-render-interface` 的依赖，只保留 runtime
   instance / light 存储、asset handle 引用和 scene asset spawn 语义。
@@ -734,7 +734,7 @@ App / tool
    已处理：`ManagedMeshHandle` 已删除；`GpuMaterialHandle` 仅作为 backend 私有
    `MaterialManager` 内部身份保留，不再暴露在 `truvis-world`。
 3. Mesh 的 global geometry table 最终归属。
-   推荐先由 `GpuScene` 过渡，最终迁移到 `AssetMeshUploader`。
+   推荐先由 `GpuScene` 过渡，最终迁移到 `AssetMeshManager`。
 4. Material texture readiness 默认策略。
    已确认 Phase 3 继续使用 Fallback，之后可支持 Strict。
 5. C++ Assimp FFI 需要专项检查。
@@ -758,7 +758,7 @@ App / tool
 3. 给 material slot 分配、dirty 上传、延迟回收增加 focused tests 或调试日志。
 4. 更新 `ARCHITECTURE.md` 和模块 README。
 
-完成后再进入 Mesh uploader 和异步 BLAS。这样每一阶段都有明确收益，也避免一次性重写 scene loading。
+完成后再进入 `AssetMeshManager` 和异步 BLAS。这样每一阶段都有明确收益，也避免一次性重写 scene loading。
 
 ## 后续命名收敛（2026-05-23）
 

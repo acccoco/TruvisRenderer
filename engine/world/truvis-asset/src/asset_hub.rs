@@ -38,7 +38,7 @@ pub enum AssetLoadedEvent {
     /// 纹理文件已经完成 CPU 解码。
     ///
     /// 事件携带一次性的 upload-ready bytes，预期由 render backend 的
-    /// `AssetTextureUploader` 消费并创建 GPU image / view / bindless binding。
+    /// `AssetTextureManager` 消费并创建 GPU image / view / bindless binding。
     /// `AssetHub` 不保留这份像素数据。
     TextureLoaded {
         handle: AssetTextureHandle,
@@ -67,7 +67,7 @@ pub enum AssetLoadedEvent {
 ///
 /// 这是 world 层访问内容资产的统一入口，负责路径/key 去重、handle 分配、
 /// CPU 加载状态和后台任务结果汇聚。它不创建 GPU 资源，也不保存 runtime scene
-/// instance；这些职责分别属于 render backend uploader / bridge 和 `SceneManager`。
+/// instance；这些职责分别属于 render backend manager / bridge 和 `SceneManager`。
 pub struct AssetHub {
     textures: SlotMap<AssetTextureHandle, LoadStatus>,
     meshes: SlotMap<AssetMeshHandle, LoadStatus>,
@@ -203,7 +203,7 @@ impl AssetHub {
     /// pending events，再把异步结果写回 `AssetHub` 状态表，并返回需要后续系统消费的
     /// CPU ready / failed 事件。
     ///
-    /// 调用方通常每帧调用一次，并按事件类型分发给 texture uploader、mesh uploader、
+    /// 调用方通常每帧调用一次，并按事件类型分发给 texture manager、mesh manager、
     /// material bridge。model ready/failed 通过查询接口观察，不通过事件发布。
     /// 返回后的事件队列已经被消费，`AssetHub` 不会再次重放同一事件。
     pub fn update(&mut self) -> Vec<AssetLoadedEvent> {

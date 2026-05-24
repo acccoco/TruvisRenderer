@@ -22,8 +22,8 @@ App update
   -> AssetHub 后台读取和 CPU 数据归一化
   -> AssetLoadedEvent
   -> RenderRuntime::dispatch_loaded_asset_events
-      -> AssetTextureUploader: texture GPU upload + bindless SRV + fallback resolve
-      -> AssetMeshUploader: vertex/index upload + BLAS build + mesh ready revision
+      -> AssetTextureManager: texture GPU upload + bindless SRV + fallback resolve
+      -> AssetMeshManager: vertex/index upload + BLAS build + mesh ready revision
       -> MaterialBridge: stable material slot + material buffer dirty
   -> App 在 model ready 后调用 SceneManager::spawn_model
   -> InstanceBridge 根据 mesh/material resolver 做 ready gate 和 stable instance slot
@@ -37,7 +37,7 @@ App update
 - texture path 在 AssetHub ingest scene 阶段按 scene 文件目录归一化。
 - Assimp scene 读取已进入 AssetHub 后台加载路径，失败状态可传播到 model status。
 - Material GPU slot 由 render-side bridge 管理，材质贴图通过 `TextureResolver` 解析 fallback 或真实 SRV。
-- Mesh CPU 数据通过加载事件交给 `AssetMeshUploader`，mesh GPU ready 后再允许相关 instance 激活。
+- Mesh CPU 数据通过加载事件交给 `AssetMeshManager`，mesh GPU ready 后再允许相关 instance 激活。
 - Instance slot 在 runtime 生命周期内稳定，despawn 后通过 FIF frame token 延迟回收。
 - TLAS 当前使用 dirty/revision 后整棵 rebuild，不做第一阶段 refit。
 - render pass 不再直接依赖 CPU world，也不在 draw 阶段构建 scene render data。

@@ -11,12 +11,12 @@
 | `RenderAppShell` | 将具体 App hooks 适配成 `RenderApp` 的平台无关帧骨架。 |
 | `RenderAppHooks` | 具体 App 实现的 init / input / update / render / resize / shutdown 回调。 |
 | `Plugin` | 由具体 App 持有的可复用能力单元，覆盖标准生命周期，不负责特有 render graph API。 |
-| `RenderRuntime` | GPU 运行时集成层，持有 `World`、`GpuStore`、runtime 私有 `GpuScene`、present、cmd、sync 和 uploader / bridge。 |
+| `RenderRuntime` | GPU 运行时集成层，持有 `World`、`GpuStore`、runtime 私有 `GpuScene`、present、cmd、sync 和 manager / bridge。 |
 | `World` | CPU 语义聚合层，当前持有 `SceneManager + AssetHub`。 |
 | `GpuStore` | GPU-facing 状态容器，保存 manager、FIF resources、frame state、pipeline settings 等。 |
 | `AssetHub` | 内容资产身份、去重、CPU 加载状态和加载事件来源。 |
-| `AssetTextureUploader` | render-side texture GPU upload、image/view、bindless SRV 与 fallback resolver owner。 |
-| `AssetMeshUploader` | render-side mesh buffer upload、BLAS build 和 mesh ready cache owner。 |
+| `AssetTextureManager` | render-side texture GPU upload、image/view、bindless SRV 与 fallback resolver owner。 |
+| `AssetMeshManager` | render-side mesh buffer upload、BLAS build 和 mesh ready cache owner。 |
 | `MaterialBridge` | asset material event 到 runtime material slot / material buffer 的桥。 |
 | `InstanceBridge` | CPU runtime instance 到 stable GPU instance slot / active render data 的桥。 |
 | `GpuScene` | runtime 私有 GPU scene owner，保存 scene buffers、TLAS 和 raster draw cache。 |

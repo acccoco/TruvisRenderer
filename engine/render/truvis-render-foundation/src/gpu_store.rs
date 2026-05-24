@@ -12,7 +12,7 @@ use crate::sampler_manager::RenderSamplerManager;
 /// GPU-facing 共享资源与帧状态的聚合容器。
 ///
 /// 持有 render pass 和 plugin 需要共享访问的 manager、descriptor、FIF 资源和 frame state，
-/// 与 CPU 场景状态（`World`）物理分离。`GpuScene`、present、uploader 和 bridge 仍由
+/// 与 CPU 场景状态（`World`）物理分离。`GpuScene`、present、asset manager 和 bridge 仍由
 /// `RenderRuntime` 私有持有。保持 plain struct（公开字段），利用 Rust 的 disjoint field
 /// borrowing 避免 `&mut self` 方法导致的借用冲突。
 pub struct GpuStore {

@@ -43,7 +43,7 @@ struct PendingMeshUpload {
 
 /// 已通过 timeline 检测确认完成的 mesh GPU 资源。
 ///
-/// `AssetMeshUploader` 接管该结构后，mesh 才会进入 `meshes` map，供 instance bridge
+/// `AssetMeshManager` 接管该结构后，mesh 才会进入 `meshes` map，供 instance bridge
 /// 解析为 render-side 几何数据。
 struct FinishedMeshUpload {
     handle: AssetMeshHandle,
@@ -57,7 +57,7 @@ struct FinishedMeshUpload {
 /// 只在渲染线程使用。它在 graphics queue 上提交 vertex/index buffer copy 和 BLAS build，
 /// 因为 acceleration structure build 不应假设 transfer queue 支持。
 /// 完成检测同样通过 timeline semaphore 异步推进，避免帧循环在资产加载期间被 GPU 上传阻塞。
-struct MeshUploadManager {
+struct MeshUploadQueue {
     command_pool: Option<GfxCommandPool>,
     timeline_semaphore: Option<GfxSemaphore>,
     next_timeline_value: u64,
@@ -65,7 +65,7 @@ struct MeshUploadManager {
     destroyed: bool,
 }
 
-impl MeshUploadManager {
+impl MeshUploadQueue {
     /// 创建只服务 mesh 上传和 BLAS build 的 graphics command pool 与 timeline。
     ///
     /// 这里绑定 graphics queue family，而不是 transfer queue family，是因为 BLAS build 属于
@@ -96,7 +96,7 @@ impl MeshUploadManager {
         handle: AssetMeshHandle,
         data: MeshData,
     ) -> Result<()> {
-        let _span = tracy_client::span!("MeshUploadManager::submit_mesh_upload");
+        let _span = tracy_client::span!("MeshUploadQueue::submit_mesh_upload");
         Self::validate_mesh_data(&data)?;
 
         // CPU mesh 数据在这里被转换为 render-side SoA 顶点布局与 index buffer。
@@ -131,8 +131,8 @@ impl MeshUploadManager {
             &name,
         );
 
-        let command_pool = self.command_pool.as_ref().expect("MeshUploadManager used after shutdown");
-        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("MeshUploadManager used after shutdown");
+        let command_pool = self.command_pool.as_ref().expect("MeshUploadQueue used after shutdown");
+        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("MeshUploadQueue used after shutdown");
         let command_buffer = GfxCommandBuffer::new(device_ctx, command_pool, "AssetMeshUploadCmd");
 
         command_buffer.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "AssetMeshUpload");
@@ -214,7 +214,7 @@ impl MeshUploadManager {
         );
         queue_ctx.gfx_queue().submit(vec![submit_info], None);
 
-        log::trace!("AssetMeshUploader: submitted mesh {:?} '{}' timeline={}", handle, name, target_value);
+        log::trace!("AssetMeshManager: submitted mesh {:?} '{}' timeline={}", handle, name, target_value);
         self.pending_uploads.push_back(PendingMeshUpload {
             semaphore_value: target_value,
             handle,
@@ -234,10 +234,10 @@ impl MeshUploadManager {
     /// 队列按提交顺序 signal 单调递增 timeline value，因此只要队首未完成，后续任务也一定
     /// 还不能对 resolver 可见。
     fn update(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) -> Vec<FinishedMeshUpload> {
-        let _span = tracy_client::span!("MeshUploadManager::update");
+        let _span = tracy_client::span!("MeshUploadQueue::update");
         let device = device_ctx.device();
-        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("MeshUploadManager used after shutdown");
-        let command_pool = self.command_pool.as_ref().expect("MeshUploadManager used after shutdown");
+        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("MeshUploadQueue used after shutdown");
+        let command_pool = self.command_pool.as_ref().expect("MeshUploadQueue used after shutdown");
         let current_value = unsafe { device.get_semaphore_counter_value(timeline_semaphore.handle()).unwrap_or(0) };
 
         let mut finished_uploads = Vec::new();
@@ -247,7 +247,7 @@ impl MeshUploadManager {
             }
 
             // staging 和 scratch 只服务本次上传/build，timeline 到达后即可释放；
-            // geometry 与 BLAS 则转交给 AssetMeshUploader，成为 render pass 可解析的数据。
+            // geometry 与 BLAS 则转交给 AssetMeshManager，成为 render pass 可解析的数据。
             let upload = self.pending_uploads.pop_front().unwrap();
             command_pool.free_command_buffers(device_ctx, vec![upload.command_buffer]);
             for staging_buffer in upload.staging_buffers {
@@ -265,7 +265,7 @@ impl MeshUploadManager {
         finished_uploads
     }
 
-    /// 关闭上传队列并释放仍未交给 `AssetMeshUploader` 的 pending 资源。
+    /// 关闭上传队列并释放仍未交给 `AssetMeshManager` 的 pending 资源。
     ///
     /// shutdown 路径允许等待 timeline，因为此时帧循环已经停止；等待完成后才能销毁
     /// command buffer、staging、scratch、geometry 和 BLAS。
@@ -278,7 +278,7 @@ impl MeshUploadManager {
             self.destroyed = true;
             return;
         };
-        let mut command_pool = self.command_pool.take().expect("MeshUploadManager command pool missing");
+        let mut command_pool = self.command_pool.take().expect("MeshUploadQueue command pool missing");
 
         if let Some(last_upload) = self.pending_uploads.back() {
             const WAIT_SEMAPHORE_TIMEOUT_NS: u64 = 30 * 1000 * 1000 * 1000;
@@ -286,7 +286,7 @@ impl MeshUploadManager {
         }
 
         // shutdown 时 pending 队列中的 geometry/BLAS 尚未进入 uploaded cache，
-        // 因此必须在等待 timeline 后由 upload manager 自己销毁。
+        // 因此必须在等待 timeline 后由 upload queue 自己销毁。
         while let Some(upload) = self.pending_uploads.pop_front() {
             command_pool.free_command_buffers(device_ctx, vec![upload.command_buffer]);
             for staging_buffer in upload.staging_buffers {
@@ -372,9 +372,9 @@ impl MeshUploadManager {
     }
 }
 
-impl Drop for MeshUploadManager {
+impl Drop for MeshUploadQueue {
     fn drop(&mut self) {
-        debug_assert!(self.destroyed, "MeshUploadManager dropped without explicit shutdown");
+        debug_assert!(self.destroyed, "MeshUploadQueue dropped without explicit shutdown");
     }
 }
 
@@ -392,20 +392,20 @@ struct UploadedMesh {
 ///
 /// 它把 `AssetMeshHandle` 解析为光栅化和 ray tracing 共用的 GPU 几何数据。
 /// `ready_revision` 在 mesh 首次 ready 或替换时递增，供 `GpuScene` 判断 TLAS 是否需要重建。
-pub struct AssetMeshUploader {
+pub struct AssetMeshManager {
     meshes: SecondaryMap<AssetMeshHandle, UploadedMesh>,
-    uploader: MeshUploadManager,
+    upload_queue: MeshUploadQueue,
     ready_revision: u64,
 }
 
-impl AssetMeshUploader {
-    /// 创建 mesh 上传器。
+impl AssetMeshManager {
+    /// 创建 mesh 管理器。
     ///
     /// 内部 command pool 绑定 graphics queue family，因为 BLAS build 不能假设 transfer queue 支持。
     pub fn new(device_ctx: GfxDeviceCtx<'_>, queue_ctx: GfxQueueCtx<'_>) -> Self {
         Self {
             meshes: SecondaryMap::new(),
-            uploader: MeshUploadManager::new(device_ctx, queue_ctx),
+            upload_queue: MeshUploadQueue::new(device_ctx, queue_ctx),
             ready_revision: 0,
         }
     }
@@ -421,19 +421,21 @@ impl AssetMeshUploader {
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
     ) {
-        let _span = tracy_client::span!("AssetMeshUploader::update");
+        let _span = tracy_client::span!("AssetMeshManager::update");
 
         for event in events {
             if let AssetLoadedEvent::MeshLoaded { handle, data } = event {
                 // RenderRuntime 已经把事件按类型分流；这里仍保持宽松匹配，便于调用侧
                 // 未来传入空列表或过滤后的列表时不需要额外包装。
-                if let Err(err) = self.uploader.submit_mesh_upload(resource_ctx, device_ctx, queue_ctx, handle, data) {
+                if let Err(err) =
+                    self.upload_queue.submit_mesh_upload(resource_ctx, device_ctx, queue_ctx, handle, data)
+                {
                     log::error!("Failed to submit mesh upload {:?}: {}", handle, err);
                 }
             }
         }
 
-        for finished in self.uploader.update(resource_ctx, device_ctx) {
+        for finished in self.upload_queue.update(resource_ctx, device_ctx) {
             self.replace_uploaded_mesh(resource_ctx, device_ctx, finished);
             self.ready_revision = self.ready_revision.saturating_add(1);
         }
@@ -470,7 +472,7 @@ impl AssetMeshUploader {
         let blas_device_address = finished.blas.device_address(device_ctx);
         // 缓存 BLAS device address，后续构建 TLAS 时无需重新查询 Vulkan handle。
         log::trace!(
-            "AssetMeshUploader: mesh {:?} '{}' is GPU ready, blas_address={:#x}",
+            "AssetMeshManager: mesh {:?} '{}' is GPU ready, blas_address={:#x}",
             finished.handle,
             finished.name,
             blas_device_address
@@ -489,7 +491,7 @@ impl AssetMeshUploader {
     ///
     /// pending 队列会先等待对应 timeline value，确保 staging/scratch/geometry/BLAS 不再被 graphics queue 引用。
     pub fn destroy(mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
-        self.uploader.shutdown(resource_ctx, device_ctx);
+        self.upload_queue.shutdown(resource_ctx, device_ctx);
 
         for (_, mesh) in self.meshes.drain() {
             mesh.geometry.destroy(resource_ctx, DestroyReason::Shutdown);
@@ -498,7 +500,7 @@ impl AssetMeshUploader {
     }
 }
 
-impl MeshRenderResolver for AssetMeshUploader {
+impl MeshRenderResolver for AssetMeshManager {
     fn is_mesh_ready(&self, handle: AssetMeshHandle) -> bool {
         self.is_mesh_ready(handle)
     }

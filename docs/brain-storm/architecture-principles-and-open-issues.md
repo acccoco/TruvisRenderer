@@ -9,7 +9,7 @@
 
 - `truvis-winit-app` 只负责 winit 事件循环、窗口生命周期、输入转发、resize/exit 信号和渲染线程启动。
 - `truvis-app-frame` 提供 `RenderApp` 契约、`RenderAppShell` 帧骨架、`RenderAppHooks` 和标准 `Plugin` 生命周期。
-- `truvis-render-runtime` 是 GPU 运行时集成层，拥有 `World`、`GpuStore`、runtime 私有 `GpuScene`、present、cmd、sync、asset uploader 与 scene bridge。
+- `truvis-render-runtime` 是 GPU 运行时集成层，拥有 `World`、`GpuStore`、runtime 私有 `GpuScene`、present、cmd、sync、asset manager 与 scene bridge。
 - `truvis-world` 是 CPU 语义层，聚合 runtime scene 和 asset hub，不拥有 Vulkan、swapchain、GPU buffer/image 或 frame state。
 - `truvis-render-foundation` 是渲染基础层，提供 `GpuStore`、manager、frame state、global descriptors、FIF 资源和 `RenderSceneView` 等底层契约。
 - `truvis-render-graph` 只做图编排和线性同步推导，不承载 scene / asset 领域对象。

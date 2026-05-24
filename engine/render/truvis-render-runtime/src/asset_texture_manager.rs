@@ -83,7 +83,7 @@ impl TextureUploadQueue {
     ) -> anyhow::Result<()> {
         let _span = tracy_client::span!("TextureUploadQueue::upload_texture");
 
-        // image 先保持在 uploader 私有状态中，只有 timeline 表明确认 copy 完成后，
+        // image 先保持在 manager 私有状态中，只有 timeline 表明确认 copy 完成后，
         // 才注册为 shader 可见资源，避免 bindless 句柄指向仍在上传中的 texture。
         let image_info = GfxImageCreateInfo::new_image_2d_info(
             vk::Extent2D {
@@ -156,7 +156,7 @@ impl TextureUploadQueue {
             }
 
             // GPU 已经完成 copy，staging buffer 与一次性 command buffer 可以立即释放；
-            // device-local image 的所有权转交给 AssetTextureUploader 注册 view/bindless。
+            // device-local image 的所有权转交给 AssetTextureManager 注册 view/bindless。
             let upload = self.pending_uploads.pop_front().unwrap();
             command_pool.free_command_buffers(device_ctx, vec![upload.command_buffer]);
             upload.staging_buffer.destroy(resource_ctx, DestroyReason::DeferredCleanup);
@@ -225,14 +225,14 @@ pub struct UploadedAssetTexture {
 ///
 /// 它是 `AssetTextureHandle -> shader texture binding` 的唯一转换点。加载失败或尚未完成上传时，
 /// `TextureResolver` 会返回 fallback 纹理，使材质 GPU 数据始终可被 shader 安全读取。
-pub struct AssetTextureUploader {
+pub struct AssetTextureManager {
     textures: SecondaryMap<AssetTextureHandle, UploadedAssetTexture>,
     upload_queue: TextureUploadQueue,
     fallback: UploadedAssetTexture,
 }
 
-impl AssetTextureUploader {
-    /// 创建纹理上传器，并注册常驻 fallback texture。
+impl AssetTextureManager {
+    /// 创建纹理资产管理器，并注册常驻 fallback texture。
     ///
     /// fallback texture 在真实贴图未加载、加载失败或上传未完成时被 `TextureResolver` 返回，
     /// 因此材质 buffer 永远不会写入无效 SRV。
@@ -244,10 +244,10 @@ impl AssetTextureUploader {
         gfx_resource_manager: &mut GfxResourceManager,
         bindless_manager: &mut BindlessManager,
     ) -> Self {
-        let _span = tracy_client::span!("AssetTextureUploader::new");
+        let _span = tracy_client::span!("AssetTextureManager::new");
 
         let fallback = {
-            let _span = tracy_client::span!("AssetTextureUploader::new/fallback_texture");
+            let _span = tracy_client::span!("AssetTextureManager::new/fallback_texture");
             Self::create_fallback_texture(
                 resource_ctx,
                 device_ctx,
@@ -258,7 +258,7 @@ impl AssetTextureUploader {
         };
 
         let upload_queue = {
-            let _span = tracy_client::span!("AssetTextureUploader::new/upload_manager");
+            let _span = tracy_client::span!("AssetTextureManager::new/upload_queue");
             // 上传队列和 fallback 分离：fallback 立即可用于 shader，真实 texture 则异步进入 bindless。
             TextureUploadQueue::new(device_ctx, queue_ctx)
         };
@@ -278,7 +278,7 @@ impl AssetTextureUploader {
         bindless_manager: &mut BindlessManager,
     ) -> UploadedAssetTexture {
         // fallback 使用醒目的 1x1 洋红色纹理，目的是让缺失/未就绪纹理在画面中容易定位；
-        // 它在 uploader 生命周期内常驻 bindless，避免材质上传阶段产生空 SRV。
+        // 它在 manager 生命周期内常驻 bindless，避免材质上传阶段产生空 SRV。
         let pixels: [u8; 4] = [255, 0, 255, 255];
         let image = GfxImage::from_rgba8(resource_ctx, immediate_ctx, 1, 1, &pixels, "FallbackTexture");
         let image_format = image.format();
@@ -314,7 +314,7 @@ impl AssetTextureUploader {
         gfx_resource_manager: &mut GfxResourceManager,
         bindless_manager: &mut BindlessManager,
     ) {
-        let _span = tracy_client::span!("AssetTextureUploader::update");
+        let _span = tracy_client::span!("AssetTextureManager::update");
 
         for event in events {
             match event {
@@ -331,7 +331,7 @@ impl AssetTextureUploader {
                 AssetLoadedEvent::MeshLoaded { .. } | AssetLoadedEvent::MaterialLoaded { .. } => {
                     // RenderRuntime::dispatch_loaded_asset_events 是事件分流边界；
                     // 如果这里收到非 texture 事件，说明 runtime 事件契约被调用侧破坏。
-                    unreachable!("Unexpected asset event in AssetTextureUploader: {:?}", event);
+                    unreachable!("Unexpected asset event in AssetTextureManager: {:?}", event);
                 }
             }
         }
@@ -396,7 +396,7 @@ impl AssetTextureUploader {
     /// 关闭上传队列并释放所有已注册纹理。
     ///
     /// shutdown 会等待 pending transfer 完成，因为 staging/image/command buffer 可能仍被 queue 引用。
-    /// 调用后 uploader 不应再被 `TextureResolver` 使用。
+    /// 调用后 manager 不应再被 `TextureResolver` 使用。
     pub fn destroy(
         mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -426,7 +426,7 @@ impl AssetTextureUploader {
     }
 }
 
-impl TextureResolver for AssetTextureUploader {
+impl TextureResolver for AssetTextureManager {
     fn is_texture_ready(&self, handle: AssetTextureHandle) -> bool {
         self.textures.contains_key(handle)
     }

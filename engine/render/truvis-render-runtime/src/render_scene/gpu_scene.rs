@@ -213,7 +213,7 @@ impl GpuScene {
 
     /// 将 mesh 数据以 geometry 表的形式上传到 GPU。
     ///
-    /// geometry 表只保存 device address；实际 vertex/index buffer 生命周期由 mesh uploader 持有。
+    /// geometry 表只保存 device address；实际 vertex/index buffer 生命周期由 mesh manager 持有。
     fn upload_mesh_buffer(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,

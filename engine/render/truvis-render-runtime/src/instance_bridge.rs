@@ -195,7 +195,7 @@ impl InstanceBridge {
                 self.register_instance(handle, instance);
             }
 
-            // ready gate 由 material/mesh resolver 共同决定。bridge 不直接访问 uploader/manager
+            // ready gate 由 material/mesh resolver 共同决定。bridge 不直接访问 manager
             // 内部缓存，只依赖窄接口判断这个实例是否可以进入本帧 render data。
             let ready = Self::dependencies_ready(instance, material_slot_resolver, mesh_resolver);
             let binding = self.bindings.get_mut(handle).expect("instance binding missing after register");

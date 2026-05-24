@@ -17,7 +17,7 @@ pub(crate) fn load_texture_task(req: TextureLoadRequest) -> LoadResult {
     match img_result {
         Ok(img) => {
             let (width, height) = img.dimensions();
-            // asset 层统一输出 RGBA8，减少 render-side uploader 的格式分支。
+            // asset 层统一输出 RGBA8，减少 render-side texture manager 的格式分支。
             let img = img.into_rgba8();
             let pixels = img.into_raw();
 

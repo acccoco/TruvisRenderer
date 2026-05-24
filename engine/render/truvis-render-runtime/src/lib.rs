@@ -10,10 +10,10 @@ pub mod platform;
 /// 窗口 surface、swapchain image/view 与 present 同步对象的所有权边界。
 pub mod present;
 
-/// AssetHub mesh 事件到 vertex/index buffer 与 BLAS 的渲染侧上传器。
-mod asset_mesh_uploader;
-/// AssetHub 纹理事件到 GPU image/view/bindless 绑定的渲染侧上传器。
-mod asset_texture_uploader;
+/// AssetHub mesh 事件到 vertex/index buffer 与 BLAS 的渲染侧管理器。
+mod asset_mesh_manager;
+/// AssetHub 纹理事件到 GPU image/view/bindless 绑定的渲染侧管理器。
+mod asset_texture_manager;
 
 mod frame_timer;
 mod instance_bridge;

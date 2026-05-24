@@ -48,7 +48,7 @@ pub(crate) struct InstanceRenderData {
 
 /// 用于渲染的 mesh GPU 数据引用。
 ///
-/// `RtGeometry` 与 BLAS 生命周期由 `AssetMeshUploader` 持有，这里只借用已完成上传的
+/// `RtGeometry` 与 BLAS 生命周期由 `AssetMeshManager` 持有，这里只借用已完成上传的
 /// render-side 数据，保证 `RenderData` 构建期间不会复制 GPU 资源 owner。
 pub(crate) struct MeshRenderData<'a> {
     /// 该 mesh 包含的所有 submesh 几何体。
@@ -70,7 +70,7 @@ pub(crate) struct MeshRenderData<'a> {
 ///
 /// # 生命周期
 /// 由于 `all_meshes` 持有对 Mesh geometries 的引用，
-/// `RenderData` 的生命周期受限于 render-side mesh uploader 中的 Mesh 数据。
+/// `RenderData` 的生命周期受限于 render-side mesh manager 中的 Mesh 数据。
 pub(crate) struct RenderData<'a> {
     /// 所有 active 实例，按稳定 instance slot 排序。
     pub(crate) all_instances: Vec<InstanceRenderData>,

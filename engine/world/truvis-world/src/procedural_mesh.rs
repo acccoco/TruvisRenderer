@@ -5,7 +5,7 @@ use truvis_asset::handle::{AssetMeshKey, MeshData};
 /// 内置程序化 mesh 类型。
 ///
 /// 这些数据只描述 CPU 侧顶点属性和索引，不创建 GPU buffer 或 BLAS。调用方应通过
-/// `AssetHub::register_mesh_data` 注册后进入标准 `AssetMeshUploader` 路径。
+/// `AssetHub::register_mesh_data` 注册后进入标准 `AssetMeshManager` 路径。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProceduralMeshKind {
     Triangle,

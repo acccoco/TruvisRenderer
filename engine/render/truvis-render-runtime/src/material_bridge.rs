@@ -119,12 +119,12 @@ impl MaterialBridge {
 
 // Prepare / GPU 上传
 impl MaterialBridge {
-    /// 根据纹理上传器的 ready 状态更新材质 dirty 标记。
+    /// 根据纹理管理器的 ready 状态更新材质 dirty 标记。
     ///
     /// 当材质引用的贴图从 fallback/null 变成真实 SRV 时，MaterialManager 会把所有 FIF buffer
     /// 标记为 dirty，让每个在flight-frame对应的 material buffer 都逐步更新。
     pub fn update_textures(&mut self, texture_resolver: &dyn TextureResolver) {
-        // texture ready 状态属于纹理上传器，material bridge 只把 resolver 注入给 manager，
+        // texture ready 状态属于纹理管理器，material bridge 只把 resolver 注入给 manager，
         // 由 manager 决定哪些材质需要从 fallback/null binding 切换到真实 SRV。
         self.material_manager_mut().update(texture_resolver);
     }

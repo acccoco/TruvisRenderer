@@ -2,8 +2,8 @@
 //!
 //! 本 crate 位于 World 层和 RenderRuntime 之间：[`AssetHub`](asset_hub::AssetHub)
 //! 持有 texture / mesh / material / model 的内容 handle、去重表和 CPU 加载状态；
-//! texture bytes 与 mesh 数据通过加载事件一次性交给 `AssetTextureUploader`、
-//! `AssetMeshUploader`、`MaterialBridge` 继续创建 GPU image、buffer、BLAS 与
+//! texture bytes 与 mesh 数据通过加载事件一次性交给 `AssetTextureManager`、
+//! `AssetMeshManager`、`MaterialBridge` 继续创建 GPU image、buffer、BLAS 与
 //! bindless / material slot。material 和 model asset 的 CPU 数据仍保存在 asset 层，
 //! model asset 只保存可重复 spawn 的 prefab 数据，运行时 instance 由
 //! `truvis-world` 的 `SceneManager` 创建和管理。
@@ -23,7 +23,7 @@
 //!   └──────────────┘                      └────────────────────────┘
 //!          │
 //!          ▼
-//!   AssetLoadedEvent -> render backend uploader
+//!   AssetLoadedEvent -> render backend manager
 //! ```
 //!
 //! - [`AssetHub`](asset_hub::AssetHub) — 统一入口、内容去重、CPU 状态管理和上传事件汇聚

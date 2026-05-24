@@ -29,8 +29,8 @@ use truvis_world::scene_manager::SceneManager;
 use truvis_render_foundation::gpu_store::GpuStore;
 use truvis_world::World;
 
-use crate::asset_mesh_uploader::AssetMeshUploader;
-use crate::asset_texture_uploader::AssetTextureUploader;
+use crate::asset_mesh_manager::AssetMeshManager;
+use crate::asset_texture_manager::AssetTextureManager;
 use crate::frame_timer::FrameTimer;
 use crate::instance_bridge::InstanceBridge;
 use crate::material_bridge::MaterialBridge;
@@ -74,8 +74,8 @@ pub struct RenderRuntime {
     world: World,
     gpu_store: GpuStore,
     gpu_scene: GpuScene,
-    asset_texture_uploader: AssetTextureUploader,
-    asset_mesh_uploader: AssetMeshUploader,
+    asset_texture_manager: AssetTextureManager,
+    asset_mesh_manager: AssetMeshManager,
     material_bridge: MaterialBridge,
     instance_bridge: InstanceBridge,
     ray_cast_service: RayCastService,
@@ -94,7 +94,7 @@ pub struct RenderRuntime {
 impl RenderRuntime {
     /// 创建不依赖窗口系统的 runtime root state。
     ///
-    /// 这里会初始化 `Gfx`、CPU `World`、GPU `GpuStore`、资产上传器、material/instance bridge、
+    /// 这里会初始化 `Gfx`、CPU `World`、GPU `GpuStore`、资产管理器、material/instance bridge、
     /// 私有 `GpuScene`、FIF 资源和全局描述符，但不会创建 surface/swapchain。窗口相关资源必须等
     /// `init_after_window` 收到平台层 raw handle 后再创建。
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
@@ -139,9 +139,9 @@ impl RenderRuntime {
             (gfx_resource_manager, cmd_allocator, frame_counter, bindless_manager)
         };
 
-        let asset_texture_uploader = {
-            let _span = tracy_client::span!("RenderRuntime::new/asset_texture_uploader");
-            AssetTextureUploader::new(
+        let asset_texture_manager = {
+            let _span = tracy_client::span!("RenderRuntime::new/asset_texture_manager");
+            AssetTextureManager::new(
                 gfx.resource_ctx(),
                 gfx.device_ctx(),
                 gfx.immediate_ctx(),
@@ -150,9 +150,9 @@ impl RenderRuntime {
                 &mut bindless_manager,
             )
         };
-        let asset_mesh_uploader = {
-            let _span = tracy_client::span!("RenderRuntime::new/asset_mesh_uploader");
-            AssetMeshUploader::new(gfx.device_ctx(), gfx.queue_ctx())
+        let asset_mesh_manager = {
+            let _span = tracy_client::span!("RenderRuntime::new/asset_mesh_manager");
+            AssetMeshManager::new(gfx.device_ctx(), gfx.queue_ctx())
         };
         let material_bridge = {
             let _span = tracy_client::span!("RenderRuntime::new/material_bridge");
@@ -247,8 +247,8 @@ impl RenderRuntime {
                     scene_manager,
                     asset_hub,
                 },
-                asset_texture_uploader,
-                asset_mesh_uploader,
+                asset_texture_manager,
+                asset_mesh_manager,
                 material_bridge,
                 instance_bridge,
                 ray_cast_service,
@@ -328,7 +328,7 @@ impl RenderRuntime {
         // 再释放 material/texture/mesh/GpuScene 等 GPU 翻译缓存。
         self.world.scene_manager.destroy();
         self.material_bridge.destroy(self.gfx.resource_ctx());
-        self.asset_texture_uploader.destroy(
+        self.asset_texture_manager.destroy(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             &mut self.gpu_store.gfx_resource_manager,
@@ -341,7 +341,7 @@ impl RenderRuntime {
             &mut self.gpu_store.bindless_manager,
             &mut self.gpu_store.gfx_resource_manager,
         );
-        self.asset_mesh_uploader.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
+        self.asset_mesh_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
         // per-frame UBO 与 command allocator 在所有使用它们的 scene/present 资源之后释放。
         for buffer in &mut self.gpu_store.per_frame_data_buffers {
             buffer.destroy_mut(self.gfx.resource_ctx(), DestroyReason::Shutdown);
@@ -593,7 +593,7 @@ impl RenderRuntime {
         let mut mesh_events = Vec::new();
         let mut material_events = Vec::new();
         for event in loaded_asset_events {
-            // 事件分流集中在 runtime 的帧开始阶段，避免各 uploader 直接接触完整
+            // 事件分流集中在 runtime 的帧开始阶段，避免各 asset manager 直接接触完整
             // asset event 集合，也让它们可以用更窄的事件集合维护自身契约。
             match event {
                 event @ (AssetLoadedEvent::TextureLoaded { .. } | AssetLoadedEvent::TextureFailed { .. }) => {
@@ -608,7 +608,7 @@ impl RenderRuntime {
             }
         }
 
-        self.asset_texture_uploader.update(
+        self.asset_texture_manager.update(
             texture_events,
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -616,7 +616,7 @@ impl RenderRuntime {
             &mut self.gpu_store.gfx_resource_manager,
             &mut self.gpu_store.bindless_manager,
         );
-        self.asset_mesh_uploader.update(
+        self.asset_mesh_manager.update(
             mesh_events,
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -676,13 +676,13 @@ impl RenderRuntime {
 
         // material loaded 事件已在 begin_frame 进入稳定 slot；这里只根据 texture ready/fallback
         // 状态写当前 FIF 的 material buffer。
-        self.material_bridge.update_textures(&self.asset_texture_uploader);
+        self.material_bridge.update_textures(&self.asset_texture_manager);
         self.material_bridge.upload(
             self.gfx.resource_ctx(),
             &cmd,
             transfer_barrier_mask,
             frame_label,
-            &self.asset_texture_uploader,
+            &self.asset_texture_manager,
         );
 
         // instance 阶段是 CPU scene 到 render-side `RenderData` 的边界；只有 mesh 与 material
@@ -690,13 +690,13 @@ impl RenderRuntime {
         let scene_render_data = self.instance_bridge.prepare_render_data(
             &self.world.scene_manager,
             &self.material_bridge,
-            &self.asset_mesh_uploader,
+            &self.asset_mesh_manager,
         );
         let material_buffer_device_address = self.material_bridge.material_buffer_device_address(frame_label);
         // mesh ready 与 instance 变化都会影响 TLAS；两个 revision 合成一条 scene revision，
         // 交给 GpuScene 判断当前 FIF 的 TLAS 是否需要重建。
         let scene_revision =
-            Self::combine_scene_revision(self.asset_mesh_uploader.ready_revision(), self.instance_bridge.revision());
+            Self::combine_scene_revision(self.asset_mesh_manager.ready_revision(), self.instance_bridge.revision());
         self.gpu_scene.upload_render_data(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),

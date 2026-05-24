@@ -11,7 +11,7 @@ use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 /// render-side mesh 的 GPU 几何资源。
 ///
 /// 当前统一使用 `VertexLayoutSoA3D`，同一份 vertex/index buffer 同时服务光栅化 draw、
-/// BLAS build 和 shader device address 读取。资源所有权由 `AssetMeshUploader` 持有，
+/// BLAS build 和 shader device address 读取。资源所有权由 `AssetMeshManager` 持有，
 /// `GpuScene` 只借用它生成 geometry table、TLAS instance 和 raster draw cache。
 pub struct RtGeometry {
     /// SoA 顶点 buffer，按 position/normal/tangent/uv 四段提供 device address。
@@ -22,7 +22,7 @@ pub struct RtGeometry {
 
 // 访问器
 impl RtGeometry {
-    /// 当前 geometry 统一使用 32-bit index，必须与 mesh uploader 创建的 index buffer 保持一致。
+    /// 当前 geometry 统一使用 32-bit index，必须与 mesh manager 创建的 index buffer 保持一致。
     #[inline]
     pub fn index_type() -> vk::IndexType {
         vk::IndexType::UINT32

@@ -16,10 +16,10 @@ AssetHub
 ```
 
 GPU 上传、image/view 创建、bindless 注册和 fallback 策略迁移到
-`truvis-render-runtime::asset_texture_uploader::AssetTextureUploader`：
+`truvis-render-runtime::asset_texture_manager::AssetTextureManager`：
 
 ```text
-AssetTextureUploader
+AssetTextureManager
   LoadedTextureBytes -> GfxImage/ImageView
   ImageView -> BindlessSrvHandle
   AssetTextureHandle -> TextureBinding
@@ -37,4 +37,4 @@ AssetTextureUploader
 - `AssetHub` 不依赖 `truvis-gfx`、`truvis-render-interface` 或 `BindlessManager`。
 - `AssetLoader` 直接向 rayon 线程池提交文件读取/解码任务，不再使用额外 dispatch thread。
 - `SceneManager::prepare_render_data()` 只依赖 `TextureResolver`，不再通过路径访问 `AssetHub`。
-- fallback texture 是渲染侧策略，由 `AssetTextureUploader` 持有和解析。
+- fallback texture 是渲染侧策略，由 `AssetTextureManager` 持有和解析。

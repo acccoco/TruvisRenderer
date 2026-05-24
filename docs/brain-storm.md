@@ -14,7 +14,7 @@
 - `RenderRuntime` 持有 `World + GpuStore + GpuScene + present/cmd/sync`，并通过 typed lifecycle Ctx 暴露窄能力。
 - `World` 是 CPU 侧聚合层，只持有 `SceneManager + AssetHub`。
 - `AssetHub` 已收敛为内容资产身份、CPU 加载状态和加载事件来源，不再创建 GPU image/view 或注册 bindless。
-- texture / mesh / material / instance 的 GPU 可见状态由 render-side uploader / bridge 管理。
+- texture / mesh / material / instance 的 GPU 可见状态由 render-side manager / bridge 管理。
 - `GpuScene` 与 `RenderData` 已成为 `truvis-render-runtime` 私有 scene 翻译层，pass 只通过 `RenderSceneView` 读取。
 - `truvis-render-graph` 与 `truvis-render-passes` 不再依赖 `truvis-world` / `truvis-asset`。
 - `truvis-render-foundation` 是当前渲染基础层名称，不再使用旧 `render-interface` 命名。
@@ -35,7 +35,7 @@
 - [`architecture-principles-and-open-issues.md`](brain-storm/architecture-principles-and-open-issues.md)：
   当前仍应遵守的架构原则、职责边界和开放问题。
 - [`asset-scene-pipeline-status.md`](brain-storm/asset-scene-pipeline-status.md)：
-  AssetHub、render-side uploader/bridge、GpuScene 与 RenderSceneView 的当前状态。
+  AssetHub、render-side manager/bridge、GpuScene 与 RenderSceneView 的当前状态。
 - [`render-view-concept.md`](brain-storm/render-view-concept.md)：
   轻量 main view / prepared view 的引入方向。
 - [`plugin-feature-evolution.md`](brain-storm/plugin-feature-evolution.md)：

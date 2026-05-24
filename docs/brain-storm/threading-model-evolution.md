@@ -13,7 +13,7 @@ Main Thread (winit)
        -> owns RenderAppShell + RenderRuntime + all Vulkan objects
        -> begin_frame / update / prepare / render / present
        -> AssetHub::update polls async CPU load results
-       -> render-side uploaders poll GPU upload completion
+       -> render-side asset managers poll GPU upload completion
        -> rayon workers perform asset IO / decode / Assimp CPU import
 ```
 
@@ -22,8 +22,8 @@ Main Thread (winit)
 - 主线程不调用 Vulkan、`ash` 或 `truvis-gfx` API。
 - 所有 Vulkan 对象在渲染线程创建、使用和销毁。
 - `AssetHub` 后台任务只产出 CPU 数据或失败状态，不创建 GPU 对象。
-- GPU upload command recording / submit 当前仍发生在 render thread 或 render-side uploader owner 内。
-- Mesh uploader 已使用 pending timeline 轮询，未 ready 的 mesh 不会进入 active instance。
+- GPU upload command recording / submit 当前仍发生在 render thread 或 render-side asset manager owner 内。
+- `AssetMeshManager` 已使用 pending timeline 轮询，未 ready 的 mesh 不会进入 active instance。
 
 ## Render Thread 单帧工作
 
@@ -107,7 +107,7 @@ rayon IO/decode
 需要前提：
 
 - `World` 与 render-side owner 的所有权真正跨线程拆分。
-- update thread 产出 owned frame packet，不能携带借用到 `SceneManager` 或 uploader 内部缓存。
+- update thread 产出 owned frame packet，不能携带借用到 `SceneManager` 或 asset manager 内部缓存。
 - 输入、UI、camera、pipeline settings 和 scene snapshot 都要接受至少一帧延迟。
 - shutdown / panic propagation / resize 需要新的跨线程协议。
 

@@ -22,7 +22,7 @@ pub(crate) trait MaterialSlotResolver {
 
 /// asset mesh handle 到 GPU-ready mesh 数据的解析接口。
 ///
-/// 由 render-side mesh uploader 实现，CPU scene 只保存 asset handle，
+/// 由 render-side mesh manager 实现，CPU scene 只保存 asset handle，
 /// 不接触 vertex/index buffer 上传或 BLAS 构建细节。
 pub(crate) trait MeshRenderResolver {
     /// 判断 mesh 是否已经完成 vertex/index 上传和 BLAS build。
@@ -32,6 +32,6 @@ pub(crate) trait MeshRenderResolver {
 
     /// 解析 GPU-ready mesh 数据引用。
     ///
-    /// 返回的数据由 mesh uploader 持有生命周期，`RenderData` 只在 prepare 阶段借用它。
+    /// 返回的数据由 mesh manager 持有生命周期，`RenderData` 只在 prepare 阶段借用它。
     fn resolve_mesh(&self, handle: AssetMeshHandle) -> Option<MeshRenderData<'_>>;
 }
