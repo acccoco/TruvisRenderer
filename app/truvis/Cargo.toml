@@ -13,6 +13,7 @@ truvis-app-frame = { workspace = true }
 app-kit = { workspace = true }
 truvis-winit-app = { workspace = true }
 truvis-render-runtime = { workspace = true }
+truvis-render-foundation = { workspace = true }
 truvis-render-graph = { workspace = true }
 truvis-asset = { workspace = true }
 truvis-world = { workspace = true }

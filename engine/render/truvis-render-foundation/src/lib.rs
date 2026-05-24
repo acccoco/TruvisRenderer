@@ -9,5 +9,6 @@ pub mod gpu_store;
 pub mod handles;
 pub mod pipeline_settings;
 pub mod render_scene_view;
+pub mod render_view;
 pub mod sampler_manager;
 pub mod stage_buffer_manager;

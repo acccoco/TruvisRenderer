@@ -232,7 +232,7 @@ flowchart LR
     Scene --> InstanceBridge["InstanceBridge<br/>stable instance slot + ready gate"]
     TextureManager --> MaterialBridge
     MeshManager --> InstanceBridge
-    Scene --> Prepare["RenderRuntime::prepare(camera)"]
+    Scene --> Prepare["RenderRuntime::prepare(render_view)"]
     MaterialBridge --> InstanceBridge
     InstanceBridge --> Prepare
     Prepare --> GpuResources["GpuScene(RenderRuntime) / BindlessManager / GlobalDescriptorSets"]

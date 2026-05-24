@@ -6,8 +6,8 @@ use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, Plugi
 use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx, RenderAppShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
-use truvis_render_runtime::platform::camera::Camera;
 use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 
 use crate::triangle_pass::TrianglePass;
@@ -193,8 +193,8 @@ impl RenderAppHooks for HelloTriangleApp {
         ctx.queue_ctx.gfx_queue().submit(vec![submit_info], None);
     }
 
-    fn camera(&self) -> &Camera {
-        self.camera_controller.camera()
+    fn render_view(&self) -> RenderView {
+        self.camera_controller.camera().render_view()
     }
 
     fn shutdown(&mut self, _ctx: &mut RenderAppShutdownCtx<'_>) {

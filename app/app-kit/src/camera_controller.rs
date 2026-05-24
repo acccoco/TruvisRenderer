@@ -1,7 +1,7 @@
 use truvis_app_frame::input_event::KeyCode;
-use truvis_render_runtime::platform::camera::Camera;
 use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
 
+use crate::camera::Camera;
 use crate::input_state::InputState;
 
 pub struct CameraController {

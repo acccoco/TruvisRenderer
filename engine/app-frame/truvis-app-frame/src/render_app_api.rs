@@ -5,7 +5,7 @@
 //! frame runtime 则负责把 `RenderRuntime` 的生命周期阶段裁剪成 hook ctx。
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
-use truvis_render_runtime::platform::camera::Camera;
+use truvis_render_foundation::render_view::RenderView;
 use truvis_render_runtime::render_runtime::{
     RenderRuntimeInitCtx, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx,
     RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx,
@@ -147,10 +147,10 @@ pub trait RenderAppHooks {
     /// 类型上的 render 方法。
     fn render(&mut self, ctx: &RenderRuntimeRenderCtx);
 
-    /// 提供 runtime prepare 阶段使用的当前相机。
+    /// 提供 runtime prepare 阶段使用的当前渲染视图。
     ///
-    /// 相机所有权留在具体 App 中，runtime 只在本帧 prepare 调用期间读取它。
-    fn camera(&self) -> &Camera;
+    /// 相机所有权留在具体 App 中，runtime 只在本帧 prepare 调用期间读取视图快照。
+    fn render_view(&self) -> RenderView;
 
     /// 响应 swapchain 或窗口尺寸相关资源重建。
     ///

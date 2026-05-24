@@ -1,9 +1,10 @@
 # Render View 概念
 
-> 状态：活跃方向，更新于 2026-05-23。当前代码尚未实现独立 View 系统。
+> 状态：活跃方向，更新于 2026-05-24。当前代码已引入 `RenderView` 作为 prepare 边界。
 
-当前渲染路径已经存在一个隐式 main view：App 持有 camera，`RenderRuntime::prepare(camera)`
-把 camera、frame extent、accum state、per-frame uniform 和 FIF resources 组合成本帧渲染输入。
+当前渲染路径已经存在一个显式 main view：App 持有 camera，并把它转换为
+`RenderRuntime::prepare(render_view)` 需要的 `RenderView` 快照。runtime 再把 view、
+frame extent、accum state、per-frame uniform 和 FIF resources 组合成本帧渲染输入。
 本文只记录后续轻量显式化方向，不要求一次性引入重型 view family。
 
 ## 目标
@@ -60,7 +61,7 @@ pub struct PreparedView {
 ## 演进步骤
 
 1. 在 runtime prepare 内部构建 main `ViewDesc` / `PreparedView`，行为保持不变。
-2. 将 `RenderRuntime::prepare(camera)` 收窄为接收 view 描述或 camera snapshot。
+2. 已完成：将 prepare 的 app 相机参数收窄为 `RenderRuntime::prepare(render_view)`。
 3. 把 per-frame uniform 写入 helper 改名为 prepared-view upload，保留当前 GPU layout。
 4. 让 App render hook 从 render ctx 读取当前 prepared main view，而不是自己推导 extent / camera 语义。
 5. 多 view 需求出现后再引入 `ViewStore`、per-view temporal state 和 view target 抽象。

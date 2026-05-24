@@ -3,13 +3,14 @@ use truvis_app_frame::plugin_api::{Plugin, PluginRenderCtx};
 use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx};
 use truvis_asset::handle::{AssetModelHandle, LoadStatus};
 use truvis_path::TruvisPath;
+use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
-use truvis_render_runtime::platform::camera::Camera;
 use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
 use truvis_render_runtime::render_runtime::{RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 use truvis_shader_binding::gpu;
 use truvis_world::World;
 
+use app_kit::camera::Camera;
 use app_kit::camera_controller::CameraController;
 use app_kit::gui_plugin::GuiPlugin;
 use app_kit::input_state::InputManager;
@@ -373,7 +374,7 @@ impl RenderAppHooks for TruvisApp {
         ctx.queue_ctx.gfx_queue().submit(vec![compute_submit, present_submit], None);
     }
 
-    fn camera(&self) -> &Camera {
-        self.camera_controller.camera()
+    fn render_view(&self) -> RenderView {
+        self.camera_controller.camera().render_view()
     }
 }

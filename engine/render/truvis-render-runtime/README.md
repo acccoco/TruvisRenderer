@@ -42,8 +42,8 @@
 
 ## 对外接口
 
-- crate 公开入口保持在 `platform`、`present`、`render_runtime_ctx` 和 `render_runtime`；
-  `platform` 只保留默认相机等上层需要显式传入 runtime 的轻量类型。
+- crate 公开入口保持在 `present`、`render_runtime_ctx` 和 `render_runtime`；
+  app 层相机不属于 runtime 公共 API，prepare 阶段只接收 `RenderView` 快照。
 - asset manager、material bridge、instance bridge、GPU scene 数据结构和 prepare 辅助逻辑都是 runtime 私有实现。
 - 生命周期 Ctx 在 `render_runtime_ctx` 模块定义，并由 `render_runtime` 重新导出；
   调用方仍通过 `truvis_render_runtime::render_runtime::*Ctx` 使用这些阶段契约。
@@ -62,7 +62,7 @@
   清理延迟释放队列、推进 bindless/material/instance frame token，并在 `RenderRuntime`
   内部分发 AssetHub 事件。
 - `update_phase` 同步 frame settings、acquire 当前 swapchain image，并返回 CPU update Ctx。
-- `prepare(camera)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 app 提供的 camera，
+- `prepare(render_view)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 app 提供的 `RenderView`，
   在 `RenderRuntime` 内部同步 material/instance/mesh/texture 状态、上传 GPU scene
   和 per-frame data，再刷新 per-frame descriptor。
 - `ray_cast_phase` 发生在 `prepare` 之后、`render_phase` 之前。同步 raycast 提交到

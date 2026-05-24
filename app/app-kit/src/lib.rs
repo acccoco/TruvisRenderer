@@ -4,6 +4,7 @@
 //! 输入/相机控制、overlay 与 RT pipeline。具体 app state 与 sample 专用 pass
 //! 不放在这里，避免公共层反向承担业务入口职责。
 
+pub mod camera;
 pub mod camera_controller;
 pub mod gui_plugin;
 pub mod input_state;

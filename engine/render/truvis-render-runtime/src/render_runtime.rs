@@ -22,6 +22,7 @@ use truvis_render_foundation::global_descriptor_sets::{GlobalDescriptorSets, Per
 use truvis_render_foundation::pipeline_settings::{
     AccumData, DefaultRenderRuntimeSettings, FrameSettings, PipelineSettings,
 };
+use truvis_render_foundation::render_view::RenderView;
 use truvis_render_foundation::sampler_manager::RenderSamplerManager;
 use truvis_shader_binding::gpu;
 use truvis_world::scene_manager::SceneManager;
@@ -34,7 +35,6 @@ use crate::asset_texture_manager::AssetTextureManager;
 use crate::frame_timer::FrameTimer;
 use crate::instance_bridge::InstanceBridge;
 use crate::material_bridge::MaterialBridge;
-use crate::platform::camera::Camera;
 use crate::present::render_present::RenderPresent;
 use crate::ray_cast::RayCastService;
 use crate::render_scene::gpu_scene::GpuScene;
@@ -61,7 +61,7 @@ pub use crate::render_runtime_ctx::{
 /// let update_ctx = render_runtime.update_phase();
 /// // ... 使用 update_ctx 执行 app/plugin CPU 更新 ...
 /// drop(update_ctx);
-/// render_runtime.prepare(camera);
+/// render_runtime.prepare(render_view);
 /// let render_ctx = render_runtime.render_phase();
 /// // ... 执行 app/plugin render graph 工作 ...
 /// drop(render_ctx);
@@ -427,13 +427,13 @@ impl RenderRuntime {
     /// 更新累积帧跟踪，并上传 GPU scene/descriptor 数据。
     ///
     /// 这是 update 与 render 之间的语义翻译边界：App 仍拥有 camera/input state，
-    /// runtime 只读取 camera 快照，并把 `World`、asset/material/instance bridge 的状态整理成
+    /// runtime 只读取 render view 快照，并把 `World`、asset/material/instance bridge 的状态整理成
     /// render pass 可读取的 `RenderSceneView`。
-    pub fn prepare(&mut self, camera: &Camera) {
+    pub fn prepare(&mut self, render_view: &RenderView) {
         let _span = tracy_client::span!("RenderRuntime::prepare");
 
-        self.update_accum_data(camera);
-        self.prepare_gpu_scene(camera);
+        self.update_accum_data(render_view);
+        self.prepare_gpu_scene(render_view);
         self.update_perframe_descriptor_set();
     }
 
@@ -625,12 +625,11 @@ impl RenderRuntime {
         self.material_bridge.apply_material_events(material_events);
     }
 
-    /// 根据 app camera 快照更新累积帧计数。
+    /// 根据 app render view 快照更新累积帧计数。
     ///
-    /// 累积渲染只关心相机方向和位置是否变化；后续 pass 根据这里的计数决定是否复用上一帧结果。
-    fn update_accum_data(&mut self, camera: &Camera) {
-        let current_camera_dir = glam::vec3(camera.euler_yaw_deg, camera.euler_pitch_deg, camera.euler_roll_deg);
-        self.gpu_store.accum_data.update_accum_frames(current_camera_dir, camera.position);
+    /// 累积渲染关心最终视图/投影是否变化；后续 pass 根据这里的计数决定是否复用上一帧结果。
+    fn update_accum_data(&mut self, render_view: &RenderView) {
+        self.gpu_store.accum_data.update_accum_frames(render_view.accum_signature());
     }
 
     /// 合成 `GpuScene` 用于判断 TLAS 是否过期的 scene revision。
@@ -645,7 +644,7 @@ impl RenderRuntime {
     ///
     /// 该函数把所有 staging copy 录到同一个 command buffer，最后一次提交到 graphics queue；
     /// render graph 在后续命令提交中通过常规 queue 顺序看到这些写入。
-    fn prepare_gpu_scene(&mut self, camera: &Camera) {
+    fn prepare_gpu_scene(&mut self, render_view: &RenderView) {
         let _span = tracy_client::span!("RenderRuntime::prepare_gpu_scene");
         let frame_extent = self.gpu_store.frame_settings.frame_extent;
         let frame_label = self.gpu_store.frame_counter.frame_label();
@@ -710,17 +709,15 @@ impl RenderRuntime {
             &self.gpu_store.bindless_manager,
         );
 
-        let view = camera.get_view_matrix();
-        let projection = camera.get_projection_matrix();
         // per-frame uniform 放在 GPU scene 上传之后写入同一条命令缓冲，保证本帧 shader
         // 看到的相机、分辨率、时间和 scene buffer 都来自同一个 prepare 快照。
         let per_frame_data = gpu::PerFrameData {
-            projection: projection.into(),
-            view: view.into(),
-            inv_view: view.inverse().into(),
-            inv_projection: projection.inverse().into(),
-            camera_pos: camera.position.into(),
-            camera_forward: camera.camera_forward().into(),
+            projection: render_view.projection.into(),
+            view: render_view.view.into(),
+            inv_view: render_view.inv_view.into(),
+            inv_projection: render_view.inv_projection.into(),
+            camera_pos: render_view.position_ws.into(),
+            camera_forward: render_view.forward_ws.into(),
             time_ms: self.timer.total_time_ms(),
             delta_time_ms: self.timer.delta_time_ms(),
             frame_id: self.gpu_store.frame_counter.frame_id(),

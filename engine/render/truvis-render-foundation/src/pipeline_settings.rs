@@ -2,6 +2,8 @@ use std::{fmt::Display, ops::Deref};
 
 use ash::vk;
 
+use crate::render_view::RenderViewAccumSignature;
+
 /// 渲染运行时默认配置
 pub struct DefaultRenderRuntimeSettings;
 impl DefaultRenderRuntimeSettings {
@@ -160,27 +162,24 @@ impl FrameLabel {
 /// 用于逐帧累积的数据
 #[derive(Copy, Clone, Default)]
 pub struct AccumData {
-    last_camera_pos: glam::Vec3,
-    last_camera_dir: glam::Vec3,
+    last_render_view: Option<RenderViewAccumSignature>,
 
     accum_frames_num: usize,
 }
 impl AccumData {
     /// 调用阶段：BeforeRender-CollectData
-    pub fn update_accum_frames(&mut self, camera_pos: glam::Vec3, camera_dir: glam::Vec3) {
-        if self.last_camera_dir != camera_dir || self.last_camera_pos != camera_pos {
+    pub fn update_accum_frames(&mut self, render_view: RenderViewAccumSignature) {
+        if self.last_render_view != Some(render_view) {
             self.accum_frames_num = 0;
         } else {
             self.accum_frames_num += 1;
         }
 
-        self.last_camera_pos = camera_pos;
-        self.last_camera_dir = camera_dir;
+        self.last_render_view = Some(render_view);
     }
 
     pub fn reset(&mut self) {
-        self.last_camera_pos = glam::Vec3::ZERO;
-        self.last_camera_dir = glam::Vec3::ZERO;
+        self.last_render_view = None;
         self.accum_frames_num = 0;
     }
 

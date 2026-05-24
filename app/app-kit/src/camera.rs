@@ -1,6 +1,8 @@
-/// runtime 默认相机数据结构。
+use truvis_render_foundation::render_view::RenderView;
+
+/// app 层默认相机数据结构。
 ///
-/// 相机仍由 app 层持有和更新，runtime 只在 `prepare` 阶段读取它生成 per-frame GPU 数据。
+/// 相机由 app 层持有和更新；runtime 只通过 [`Camera::render_view`] 读取本帧渲染视图快照。
 /// 坐标约定为右手系、Y 轴向上，未旋转时朝向 -Z；投影矩阵的 NDC 细节保持在 `glam` 投影函数约定内。
 pub struct Camera {
     pub position: glam::Vec3,
@@ -58,9 +60,13 @@ impl Camera {
 
     /// 生成右手系、Y-Up 的无限远透视投影矩阵。
     ///
-    /// 调用侧应把这里当作 runtime 的统一投影入口，避免在 shader/pass 中重复引入坐标修正。
+    /// 调用侧应把这里当作 app 默认相机的统一投影入口，避免在 shader/pass 中重复引入坐标修正。
     pub fn get_projection_matrix(&self) -> glam::Mat4 {
         glam::Mat4::perspective_infinite_rh(self.fov_deg_vertical.to_radians(), self.asp, self.near)
+    }
+
+    pub fn render_view(&self) -> RenderView {
+        RenderView::new(self.get_view_matrix(), self.get_projection_matrix(), self.position, self.camera_forward())
     }
 
     pub fn camera_forward(&self) -> glam::Vec3 {
