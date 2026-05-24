@@ -25,8 +25,8 @@ use truvis_shader_binding::gpu::SrvHandle;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
 
-use crate::gui_mesh::GuiMesh;
-use crate::gui_vertex_layout::ImGuiVertexLayoutAoS;
+use super::gui_mesh::GuiMesh;
+use super::gui_vertex_layout::ImGuiVertexLayoutAoS;
 
 enumed_map!(ShaderStage<GfxShaderStageInfo>: {
     Vertex: GfxShaderStageInfo {

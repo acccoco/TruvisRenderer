@@ -9,9 +9,9 @@
 ```mermaid
 flowchart TB
     L6["L6 app/truvis + samples<br/>主体 app 与独立示例入口<br/><br/>L6 truvis-winit-app<br/>winit 事件循环、窗口生命周期、渲染线程启动"]
-    L5["L5 app-kit<br/>GuiPlugin、overlay plugin、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp / RenderAppHooks / Plugin 契约与 Plugin Ctx<br/>RenderAppShell 帧骨架 + render loop"]
+    L5["L5 app-kit<br/>GuiPlugin、私有 GUI backend、overlay plugin、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp / RenderAppHooks / Plugin 契约与 Plugin Ctx<br/>RenderAppShell 帧骨架 + render loop"]
     L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GpuStore + GpuScene + swapchain/present/cmd/sync 生命周期"]
-    L3["L3 truvis-render-graph / truvis-world / truvis-asset / truvis-gui-backend<br/>按帧同步辅助、CPU 场景、资产加载、底层 ImGui Vulkan 录制"]
+    L3["L3 truvis-render-graph / truvis-world / truvis-asset<br/>按帧同步辅助、CPU 场景、资产加载"]
     L2["L2 truvis-render-foundation<br/>GpuStore、BindlessManager、RenderSceneView、FrameCounter、CmdAllocator、FifBuffers"]
     L1["L1 truvis-gfx<br/>Vulkan RHI 封装"]
     L0["L0 truvis-utils / truvis-logs / truvis-path / descriptor-layout"]
@@ -19,14 +19,14 @@ flowchart TB
     L6 --> L5 --> L4 --> L3 --> L2 --> L1 --> L0
 ```
 
-GUI 的 RenderGraph 适配位于 `app_kit::gui_plugin`，底层 `truvis-gui-backend` 只保留 `GuiMesh` / `GuiPass` 等 Vulkan 后端能力，不依赖 render graph 或 frame runtime。
+GUI 属于 app 层集成能力：`app_kit::gui_plugin` 持有 imgui context、RenderGraph 适配和私有 `gui_backend`，其中 `GuiMesh` / `GuiPass` 等底层 Vulkan 后端实现不作为 engine crate 暴露。
 
 依赖方向约束：
 
 - 上层 crate 可以依赖下层 crate；下层 crate 禁止反向依赖上层业务。
 - 同层 crate 默认不互相依赖；只有本文档明确记录的方向才允许。
 - 物理目录用于导航，真实约束以 crate 职责与 Cargo 依赖方向为准。
-- `engine/render/` 是渲染域目录，只承载通用渲染基础设施：`truvis-render-foundation` 低于 `truvis-render-graph` / `truvis-gui-backend`，`truvis-render-runtime` 负责集成 runtime-owned 能力。具体 app 复用的 RT / 后处理 pass 位于 `app/render-passes`。
+- `engine/render/` 是渲染域目录，只承载通用渲染基础设施：`truvis-render-foundation` 低于 `truvis-render-graph`，`truvis-render-runtime` 负责集成 runtime-owned 能力。具体 app 复用的 RT / 后处理 pass 位于 `app/render-passes`，GUI backend 位于 `app/app-kit` 私有模块。
 
 当前允许的主依赖方向：
 
@@ -35,10 +35,10 @@ flowchart LR
     Foundation["foundation / utils<br/>utils、logs、path"]
     Gfx["gfx + shader/cxx bindings<br/>RHI、descriptor-layout、FFI/binding"]
     Core["render-foundation + world<br/>GPU 资源状态、CPU scene/assets 聚合"]
-    RenderDomain["render-graph / gui-backend<br/>pass 编排基础、GUI Vulkan 后端"]
+    RenderDomain["render-graph<br/>pass 编排基础"]
     Runtime["render-runtime<br/>运行时集成、GPU 上传、present 生命周期"]
     Frame["frame<br/>RenderApp 契约、RenderAppShell、render loop"]
-    AppKit["app-kit + app-render-passes<br/>GUI、输入/相机、overlay、RT/后处理 pass 与 pipeline glue"]
+    AppKit["app-kit + app-render-passes<br/>GUI 集成与私有 backend、输入/相机、overlay、RT/后处理 pass 与 pipeline glue"]
     App["app / samples<br/>Truvis 主体应用与独立示例"]
     Platform["truvis-winit-app<br/>winit 平台入口"]
 

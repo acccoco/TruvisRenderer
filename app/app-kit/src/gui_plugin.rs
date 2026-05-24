@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use crate::gui_backend::gui_mesh::GuiMesh;
+use crate::gui_backend::gui_pass::GuiPass;
 use ash::vk;
 use imgui::{DrawData, TextureId, Ui};
 use truvis_app_frame::input_event::{ElementState, InputEvent, MouseButton};
@@ -10,8 +12,6 @@ use truvis_gfx::basic::color::LabelColor;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_gui_backend::gui_mesh::GuiMesh;
-use truvis_gui_backend::gui_pass::GuiPass;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::gpu_store::GpuStore;

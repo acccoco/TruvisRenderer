@@ -179,11 +179,12 @@ dependencies = [
  "truvis-app-frame",
  "truvis-app-render-passes",
  "truvis-gfx",
- "truvis-gui-backend",
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-runtime",
+ "truvis-shader-binding",
+ "truvis-utils",
 ]
 
 [[package]]
@@ -3607,23 +3608,6 @@ dependencies = [
  "tracy-client",
  "truvis-descriptor-layout-trait",
  "vk-mem",
-]
-
-[[package]]
-name = "truvis-gui-backend"
-version = "0.1.0"
-dependencies = [
- "ash",
- "bytemuck",
- "glam",
- "imgui",
- "itertools 0.10.5",
- "log",
- "truvis-gfx",
- "truvis-path",
- "truvis-render-foundation",
- "truvis-shader-binding",
- "truvis-utils",
 ]
 
 [[package]]

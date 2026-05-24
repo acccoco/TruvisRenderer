@@ -15,7 +15,7 @@
 - 本 crate 不负责 App 级 pass 顺序、GUI overlay 顺序或 demo pipeline 编排。
 - 本 crate 不持有 `RenderRuntime`，也不依赖 frame runtime 或 App hooks。
 - runtime-owned 同步 raycast pipeline 不在本 crate 中；它是 `truvis-render-runtime` 的私有实现细节。
-- `GuiPass` 不在本 crate 中；GUI Vulkan 后端属于 `truvis-gui-backend`，GUI RenderGraph 集成属于 `app/app-kit` 的 `GuiPlugin`。
+- `GuiPass` 不在本 crate 中；GUI Vulkan 后端是 `app/app-kit` 的私有实现细节，GUI RenderGraph 集成属于 `GuiPlugin`。
 
 ## 设计意图
 

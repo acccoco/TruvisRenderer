@@ -15,7 +15,6 @@ members = [
     "engine/render/truvis-render-foundation",
     "engine/render/truvis-render-graph",
     "engine/render/truvis-render-runtime",
-    "engine/render/truvis-gui-backend",
     # world
     "engine/world/truvis-asset",
     "engine/world/truvis-world",
@@ -64,7 +63,6 @@ truvis-descriptor-layout-trait = { path = "engine/gfx/truvis-descriptor-layout-t
 truvis-render-foundation = { path = "engine/render/truvis-render-foundation" }
 truvis-render-graph = { path = "engine/render/truvis-render-graph" }
 truvis-render-runtime = { path = "engine/render/truvis-render-runtime" }
-truvis-gui-backend = { path = "engine/render/truvis-gui-backend" }
 # world
 truvis-asset = { path = "engine/world/truvis-asset" }
 truvis-world = { path = "engine/world/truvis-world" }

@@ -10,7 +10,7 @@
 - `RenderAppShell` 负责固定帧顺序，具体 App 通过 `RenderAppHooks` 接入 init / input / update / render / resize / shutdown。
 - 标准 `Plugin` trait 覆盖 init / on_input / update / on_resize / shutdown。
 - 具体能力仍由 App 以字段显式组合，例如 GUI、camera controller、overlay、RT pipeline、Shadertoy pipeline。
-- GUI 的 Vulkan 后端能力在 `truvis-gui-backend`，RenderGraph 适配与 UI 组合在 app-kit / app 侧。
+- GUI 的 Vulkan 后端能力是 `app-kit` 的私有实现细节，RenderGraph 适配与 UI 组合也在 app-kit / app 侧。
 - RenderGraph pass 由 App 明确按顺序添加，当前不做自动 pipeline 策略选择。
 
 ## 演进目标
