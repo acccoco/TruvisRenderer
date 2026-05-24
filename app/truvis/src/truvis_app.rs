@@ -315,7 +315,7 @@ impl RenderAppHooks for TruvisApp {
             device_info_ctx: ctx.device_info_ctx,
             gpu_store: ctx.gpu_store,
             render_scene: ctx.render_scene,
-            render_present: ctx.render_present,
+            present: ctx.present,
             timeline: ctx.timeline,
         };
         self.gui.prepare_render_data(&plugin_ctx);
@@ -353,7 +353,7 @@ impl RenderAppHooks for TruvisApp {
                 &mut graph,
                 &plugin_ctx,
                 present_image,
-                ctx.render_present.swapchain_image_info().image_extent,
+                ctx.present.swapchain_image_info().image_extent,
             );
 
             let compiled_graph = graph.compile();

@@ -134,16 +134,13 @@ impl RenderAppHooks for HelloTriangleApp {
             device_info_ctx: ctx.device_info_ctx,
             gpu_store: ctx.gpu_store,
             render_scene: ctx.render_scene,
-            render_present: ctx.render_present,
+            present: ctx.present,
             timeline: ctx.timeline,
         };
         self.gui.prepare_render_data(&plugin_ctx);
 
         let frame_label = ctx.gpu_store.frame_counter.frame_label();
         let frame_id = ctx.gpu_store.frame_counter.frame_id();
-        let render_present = ctx.render_present;
-        let present_target = render_present.current_target(frame_label);
-        let swapchain_extent = present_target.swapchain_image_info.image_extent;
 
         let mut graph = RenderGraphBuilder::new();
         graph.signal_semaphore(RgSemaphoreInfo::timeline(
@@ -151,27 +148,9 @@ impl RenderAppHooks for HelloTriangleApp {
             vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
             frame_id,
         ));
-
-        let swapchain_image = graph.import_image(
-            "swapchain-image",
-            present_target.render_target_image_handle,
-            Some(present_target.render_target_view_handle),
-            present_target.swapchain_image_info.image_format,
-            RgImageState::UNDEFINED_BOTTOM,
-            Some(RgSemaphoreInfo::binary(
-                present_target.present_complete_semaphore.handle(),
-                vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-            )),
-        );
-
-        graph.export_image(
-            swapchain_image,
-            RgImageState::PRESENT_BOTTOM,
-            Some(RgSemaphoreInfo::binary(
-                present_target.render_complete_semaphore.handle(),
-                vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
-            )),
-        );
+        let present_target = ctx.present.import_current_target(&mut graph, frame_label);
+        let swapchain_image = present_target.image;
+        let swapchain_extent = present_target.image_info.image_extent;
 
         self.triangle.contribute_passes(&mut graph, swapchain_image, swapchain_extent);
         self.gui.contribute_passes(&mut graph, &plugin_ctx, swapchain_image, swapchain_extent);

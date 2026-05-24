@@ -82,7 +82,7 @@ where
                 gpu_store: runtime.gpu_store,
                 cmd_allocator: runtime.cmd_allocator,
                 swapchain_image_info: runtime.swapchain_image_info,
-                render_present: runtime.render_present,
+                present: runtime.present,
             };
             self.app.visit_plugins_mut(&mut |plugin| {
                 plugin.init(&mut plugin_ctx);
@@ -170,7 +170,7 @@ where
             immediate_ctx: runtime.immediate_ctx,
             surface_ctx: runtime.surface_ctx,
             gpu_store: runtime.gpu_store,
-            render_present: runtime.render_present,
+            present: runtime.present,
         };
         app.visit_plugins_mut(&mut |plugin| {
             plugin.on_resize(&mut plugin_ctx);

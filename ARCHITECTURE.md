@@ -109,7 +109,7 @@ RenderRuntime
   -> GpuStore GPU resources + frame state
   -> GpuScene    runtime 私有 GPU scene buffer / TLAS / raster draw cache
   -> RayCastService prepare 后同步 raycast 的 runtime-owned pipeline / buffer / fence
-  -> RenderPresent swapchain/present resources
+  -> SwapchainPresenter swapchain/present resources
 ```
 
 `RenderAppShell` 只持有：
@@ -146,7 +146,8 @@ RenderRuntime 通过 lifecycle Ctx 借出内部字段：
 
 这些 Ctx 携带 phase-appropriate 的 typed `Gfx` Ctx（如 device、resource、queue、surface、immediate、device-info），调用点只获得当前阶段需要的能力，不持有完整 `&Gfx`。
 present owner 不直接暴露给 app/plugin；render/init/resize Ctx 只提供 `PresentView`，上层通过
-`PresentTargetView` 读取当前 swapchain image/view、image info 和 acquire/render-complete semaphore。
+`ImportedPresentTarget` 获取 RenderGraph 内的当前 present image 与 image info。acquire/render-complete
+semaphore 由 `PresentView::import_current_target` 固定接入 RenderGraph。
 
 GUI draw data 不进入通用 Ctx。`GuiPlugin` 自行持有 imgui context、draw data、GUI mesh buffer、font texture map，并通过 `prepare_render_data` 和 `contribute_passes` 接入 render hook。
 
@@ -315,7 +316,7 @@ GPU 资源按用途分类：
 创建路径：
 
 - `RenderRuntime::new` 初始化 `Gfx`，创建 `World` / `GpuStore`。
-- `RenderRuntime::init_after_window` 创建 surface、swapchain 和 `RenderPresent`。
+- `RenderRuntime::init_after_window` 创建 surface、swapchain 和 `SwapchainPresenter`。
 - `RenderAppShell` 创建 `RenderRuntime` 并把 `RenderRuntimeInitCtx` 包装为 `RenderAppInitCtx` 交给 App hooks。
 - App state 从 `RenderAppInitCtx` 中的 RenderRuntime Ctx 构造 `PluginInitCtx`，依次初始化自己持有的 Plugin。
 

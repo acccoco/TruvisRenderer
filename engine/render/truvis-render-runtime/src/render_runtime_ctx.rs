@@ -9,7 +9,7 @@ use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_world::World;
 
 use crate::instance_bridge::InstanceBridge;
-use crate::present::render_present::PresentView;
+use crate::present::swapchain_presenter::PresentView;
 use crate::ray_cast::{RayCastRay, RayCastResult, RayCastService};
 
 /// Update 阶段上下文，借用 CPU 端更新需要的 RenderRuntime 字段。
@@ -48,8 +48,8 @@ pub struct RenderRuntimeRenderCtx<'a> {
     pub gpu_store: &'a GpuStore,
     /// runtime 私有 `GpuScene` 的只读视图；pass 不能访问 concrete scene owner。
     pub render_scene: &'a dyn RenderSceneView,
-    /// 当前窗口 present target 与同步对象。
-    pub render_present: PresentView<'a>,
+    /// 当前窗口 present 边界，只暴露 swapchain 信息和 RenderGraph 导入 helper。
+    pub present: PresentView<'a>,
     /// runtime 全局 FIF timeline，用于 render graph signal 当前 frame id。
     pub timeline: &'a GfxSemaphore,
 }
@@ -112,8 +112,8 @@ pub struct RenderRuntimeInitCtx<'a> {
     pub cmd_allocator: &'a mut CmdAllocator,
     /// 初始 swapchain image 信息，供上层创建窗口尺寸相关资源。
     pub swapchain_image_info: GfxSwapchainImageInfo,
-    /// 初始化后可用的 present owner 只读引用。
-    pub render_present: PresentView<'a>,
+    /// 初始化后可用的 present 边界只读引用。
+    pub present: PresentView<'a>,
 }
 
 /// Swapchain resize 上下文，仅在 swapchain 实际重建时产生。
@@ -130,8 +130,8 @@ pub struct RenderRuntimeResizeCtx<'a> {
     pub surface_ctx: GfxSurfaceCtx<'a>,
     /// resize 后的 GPU frame state，可用于重建窗口尺寸相关资源。
     pub gpu_store: &'a mut GpuStore,
-    /// 已重建完成的 present owner。
-    pub render_present: PresentView<'a>,
+    /// 已重建完成的 present 边界只读引用。
+    pub present: PresentView<'a>,
 }
 
 /// Shutdown 阶段上下文，保证 app/plugin 可在 runtime 与 Gfx 存活时释放 GPU 资源。

@@ -37,8 +37,8 @@
   pending，并按稳定 slot 输出 active render list，同时为同步 raycast 生成当前 prepare 快照的 slot 反查表。
 - `RayCastService` 持有专用 ray tracing pipeline/SBT、可增长 ray/result/readback buffer、
   command pool 和 fence；它由 runtime 拥有，不进入 RenderGraph。
-- `RenderPresent` 拥有 surface、swapchain wrapper、swapchain image/view handle 和 present 同步对象；
-  app/plugin 只通过 `PresentView` / `PresentTargetView` 读取当前窗口 target 和 semaphore，不直接访问 owner 字段。
+- `SwapchainPresenter` 拥有 surface、swapchain wrapper、swapchain image/view handle 和 present 同步对象；
+  app/plugin 只通过 `PresentView` 查询 swapchain 信息，并通过 `ImportedPresentTarget` 接入 RenderGraph，不直接访问 owner 字段或 semaphore。
 
 ## 对外接口
 
@@ -57,7 +57,7 @@
 - `RenderRuntime::new` 创建与窗口无关的 runtime root state：`Gfx`、`World`、`GpuStore`、
   asset manager、bridge、`GpuScene`、FIF 资源、global descriptors、sampler 和 per-frame buffer。
 - `RenderRuntime::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
-  swapchain 与 `RenderPresent`，并返回 init Ctx 供 app/plugin 创建长期 GPU 资源。
+  swapchain 与 `SwapchainPresenter`，并返回 init Ctx 供 app/plugin 创建长期 GPU 资源。
 - `begin_frame` 是每帧资源回收入口：推进 runtime 私有帧计时器、等待当前 FIF slot、重置 frame command pool、
   清理延迟释放队列、推进 bindless/material/instance frame token，并在 `RenderRuntime`
   内部分发 AssetHub 事件。

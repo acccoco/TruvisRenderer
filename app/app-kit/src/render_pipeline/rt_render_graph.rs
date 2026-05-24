@@ -1,5 +1,3 @@
-use ash::vk;
-
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxResourceCtx};
@@ -9,7 +7,7 @@ use truvis_render_foundation::fif_buffer::FifBuffers;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_foundation::pipeline_settings::FrameLabel;
-use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
+use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 use truvis_render_passes::blit_pass::{BlitPass, BlitRgPass};
 use truvis_render_passes::denoise_accum_pass::{DenoiseAccumPass, DenoiseAccumRgPass};
 use truvis_render_passes::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};
@@ -81,7 +79,7 @@ impl Plugin for RtPipeline {
             ctx.device_info_ctx,
             ctx.immediate_ctx,
             &ctx.gpu_store.global_descriptor_sets,
-            ctx.render_present.swapchain_image_info(),
+            ctx.present.swapchain_image_info(),
             ctx.cmd_allocator,
         ));
     }
@@ -231,7 +229,6 @@ impl RtPipeline {
     ) -> RgImageHandle {
         let inner = self.inner();
         let gpu_store = ctx.gpu_store;
-        let render_present = ctx.render_present;
         let frame_label = gpu_store.frame_counter.frame_label();
         let fif_buffers = &gpu_store.fif_buffers;
 
@@ -245,27 +242,8 @@ impl RtPipeline {
             None,
         );
 
-        let present_target = render_present.current_target(frame_label);
-        let present_image = rg_builder.import_image(
-            "present-image",
-            present_target.render_target_image_handle,
-            Some(present_target.render_target_view_handle),
-            present_target.swapchain_image_info.image_format,
-            RgImageState::UNDEFINED_BOTTOM,
-            Some(RgSemaphoreInfo::binary(
-                present_target.present_complete_semaphore.handle(),
-                vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-            )),
-        );
-
-        rg_builder.export_image(
-            present_image,
-            RgImageState::PRESENT_BOTTOM,
-            Some(RgSemaphoreInfo::binary(
-                present_target.render_complete_semaphore.handle(),
-                vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
-            )),
-        );
+        let present_target = ctx.present.import_current_target(rg_builder, frame_label);
+        let present_image = present_target.image;
 
         rg_builder.add_pass(
             "resolve",
@@ -274,7 +252,7 @@ impl RtPipeline {
                 gpu_store,
                 render_target,
                 swapchain_image: present_image,
-                swapchain_extent: present_target.swapchain_image_info.image_extent,
+                swapchain_extent: present_target.image_info.image_extent,
             },
         );
 

@@ -239,7 +239,7 @@ impl Plugin for GuiPlugin {
     }
 
     fn on_resize(&mut self, ctx: &mut PluginResizeCtx) {
-        let extent = ctx.render_present.swapchain_image_info().image_extent;
+        let extent = ctx.present.swapchain_image_info().image_extent;
         self.set_display_size([extent.width, extent.height]);
     }
 

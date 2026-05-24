@@ -35,7 +35,7 @@ use crate::asset_texture_manager::AssetTextureManager;
 use crate::frame_timer::FrameTimer;
 use crate::instance_bridge::InstanceBridge;
 use crate::material_bridge::MaterialBridge;
-use crate::present::render_present::RenderPresent;
+use crate::present::swapchain_presenter::SwapchainPresenter;
 use crate::ray_cast::RayCastService;
 use crate::render_scene::gpu_scene::GpuScene;
 
@@ -87,7 +87,7 @@ pub struct RenderRuntime {
 
     gpu_scene_update_cmds: Vec<GfxCommandBuffer>,
 
-    render_present: Option<RenderPresent>,
+    swapchain_presenter: Option<SwapchainPresenter>,
 }
 
 // 创建与初始化
@@ -241,7 +241,7 @@ impl RenderRuntime {
                 timer,
                 fif_timeline_semaphore,
                 gpu_scene_update_cmds: cmds,
-                render_present: None,
+                swapchain_presenter: None,
 
                 world: World {
                     scene_manager,
@@ -305,8 +305,8 @@ impl RenderRuntime {
 
         // present 持有 surface/swapchain 与 WSI image wrapper，必须先释放；后续 FIF 和 scene
         // 资源销毁不再需要访问当前窗口 target。
-        if let Some(render_present) = self.render_present.take() {
-            render_present.destroy(
+        if let Some(swapchain_presenter) = self.swapchain_presenter.take() {
+            swapchain_presenter.destroy(
                 self.gfx.resource_ctx(),
                 self.gfx.device_ctx(),
                 self.gfx.surface_ctx(),
@@ -465,7 +465,7 @@ impl RenderRuntime {
             device_info_ctx: self.gfx.device_info_ctx(),
             gpu_store: &self.gpu_store,
             render_scene: &self.gpu_scene,
-            render_present: self.render_present.as_ref().unwrap().view(),
+            present: self.swapchain_presenter.as_ref().unwrap().view(),
             timeline: &self.fif_timeline_semaphore,
         }
     }
@@ -475,7 +475,7 @@ impl RenderRuntime {
     /// 渲染命令提交由上层 render graph 完成；这里仅把当前 swapchain image 交给 present queue，
     /// 并让 present 层记录是否需要在后续帧重建 swapchain。
     pub fn present(&mut self) {
-        self.render_present.as_mut().unwrap().present_image(self.gfx.surface_ctx(), self.gfx.queue_ctx());
+        self.swapchain_presenter.as_mut().unwrap().present_image(self.gfx.surface_ctx(), self.gfx.queue_ctx());
     }
 
     /// 推进帧计数器。
@@ -497,16 +497,16 @@ impl RenderRuntime {
     /// 处理窗口 resize。只有 present 层实际重建 swapchain 时才返回 `Some(ctx)`。
     ///
     /// 上层应只在返回上下文时重建与窗口尺寸绑定的 pipeline/render target 资源。
-    /// 连续窗口事件会先在 `RenderPresent` 中合并为 latest-size 标记，避免每个事件都触发重建。
+    /// 连续窗口事件会先在 `SwapchainPresenter` 中合并为 latest-size 标记，避免每个事件都触发重建。
     pub fn handle_resize(&mut self, new_size: [u32; 2]) -> Option<RenderRuntimeResizeCtx<'_>> {
-        let render_present = self.render_present.as_mut().unwrap();
-        render_present.update_window_size(new_size);
+        let swapchain_presenter = self.swapchain_presenter.as_mut().unwrap();
+        swapchain_presenter.update_window_size(new_size);
 
-        if !render_present.need_resize(self.gfx.surface_ctx()) {
+        if !swapchain_presenter.need_resize(self.gfx.surface_ctx()) {
             return None;
         }
 
-        render_present.rebuild_after_resized(
+        swapchain_presenter.rebuild_after_resized(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.surface_ctx(),
@@ -519,7 +519,7 @@ impl RenderRuntime {
             immediate_ctx: self.gfx.immediate_ctx(),
             surface_ctx: self.gfx.surface_ctx(),
             gpu_store: &mut self.gpu_store,
-            render_present: self.render_present.as_ref().unwrap().view(),
+            present: self.swapchain_presenter.as_ref().unwrap().view(),
         })
     }
 
@@ -549,7 +549,7 @@ impl RenderRuntime {
         raw_window_handle: RawWindowHandle,
         window_physical_size: [u32; 2],
     ) -> RenderRuntimeInitCtx<'_> {
-        self.render_present = Some(RenderPresent::new(
+        self.swapchain_presenter = Some(SwapchainPresenter::new(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.surface_ctx(),
@@ -572,8 +572,8 @@ impl RenderRuntime {
             world: &mut self.world,
             gpu_store: &mut self.gpu_store,
             cmd_allocator: &mut self.cmd_allocator,
-            swapchain_image_info: self.render_present.as_ref().unwrap().swapchain_image_info(),
-            render_present: self.render_present.as_ref().unwrap().view(),
+            swapchain_image_info: self.swapchain_presenter.as_ref().unwrap().swapchain_image_info(),
+            present: self.swapchain_presenter.as_ref().unwrap().view(),
         }
     }
 }
@@ -752,7 +752,7 @@ impl RenderRuntime {
     /// 该 helper 只在 update 阶段调用；成功后 present view 的 current image 与本帧
     /// render graph 导入的 target 保持一致。
     fn acquire_image(&mut self) {
-        self.render_present
+        self.swapchain_presenter
             .as_mut()
             .unwrap()
             .acquire_image(self.gfx.surface_ctx(), self.gpu_store.frame_counter.frame_label());
@@ -763,7 +763,7 @@ impl RenderRuntime {
     /// present 层负责判断 swapchain 是否需要重建；这里处理的是 runtime 内部与 frame extent
     /// 绑定的渲染资源。
     fn update_frame_settings(&mut self) {
-        let swapchain_extent = self.render_present.as_ref().unwrap().extent();
+        let swapchain_extent = self.swapchain_presenter.as_ref().unwrap().extent();
         if self.gpu_store.frame_settings.frame_extent == swapchain_extent {
             return;
         }
