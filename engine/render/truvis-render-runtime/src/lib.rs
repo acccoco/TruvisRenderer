@@ -5,7 +5,7 @@
 //! 它只负责资源所有权、资产到 GPU 的桥接、swapchain/present、command/sync 与 prepare
 //! 阶段的数据上传；具体 app、plugin、GUI 适配和 render graph 编排由上层 crate 决定。
 
-/// 与窗口无关的 runtime 平台辅助类型，例如默认相机与帧计时器。
+/// 与窗口无关的 runtime 平台辅助类型，例如默认相机。
 pub mod platform;
 /// 窗口 surface、swapchain image/view 与 present 同步对象的所有权边界。
 pub mod present;
@@ -15,6 +15,7 @@ mod asset_mesh_uploader;
 /// AssetHub 纹理事件到 GPU image/view/bindless 绑定的渲染侧上传器。
 mod asset_texture_uploader;
 
+mod frame_timer;
 mod instance_bridge;
 mod material_bridge;
 mod material_manager;

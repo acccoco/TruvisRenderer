@@ -31,10 +31,10 @@ use truvis_world::World;
 
 use crate::asset_mesh_uploader::AssetMeshUploader;
 use crate::asset_texture_uploader::AssetTextureUploader;
+use crate::frame_timer::FrameTimer;
 use crate::instance_bridge::InstanceBridge;
 use crate::material_bridge::MaterialBridge;
 use crate::platform::camera::Camera;
-use crate::platform::timer::Timer;
 use crate::present::render_present::RenderPresent;
 use crate::ray_cast::RayCastService;
 use crate::render_scene::gpu_scene::GpuScene;
@@ -82,7 +82,7 @@ pub struct RenderRuntime {
 
     cmd_allocator: CmdAllocator,
 
-    timer: Timer,
+    timer: FrameTimer,
     fif_timeline_semaphore: GfxSemaphore,
 
     gpu_scene_update_cmds: Vec<GfxCommandBuffer>,
@@ -119,7 +119,11 @@ impl RenderRuntime {
 
         let (timer, accum_data, fif_timeline_semaphore) = {
             let _span = tracy_client::span!("RenderRuntime::new/sync");
-            (Timer::default(), AccumData::default(), GfxSemaphore::new_timeline(gfx.device_ctx(), 0, "render-timeline"))
+            (
+                FrameTimer::default(),
+                AccumData::default(),
+                GfxSemaphore::new_timeline(gfx.device_ctx(), 0, "render-timeline"),
+            )
         };
 
         let (mut gfx_resource_manager, mut cmd_allocator, frame_counter, mut bindless_manager) = {
@@ -356,7 +360,7 @@ impl RenderRuntime {
 // 生命周期方法（public API）
 // ---------------------------------------------------------------------------
 impl RenderRuntime {
-    /// 自包含的帧开始流程：timer tick、FIF 等待、资源清理、bindless 推进和资产更新。
+    /// 自包含的帧开始流程：帧计时器推进、FIF 等待、资源清理、bindless 推进和资产更新。
     ///
     /// 这里是 runtime 每帧唯一的资源回收入口。先等待当前 FIF 槽位不再被 GPU 使用，
     /// 再重置命令池和延迟释放队列，最后消费 `AssetHub` 的异步事件并推进上传队列。

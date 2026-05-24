@@ -42,7 +42,8 @@
 
 ## 对外接口
 
-- crate 公开入口保持在 `platform`、`present`、`render_runtime_ctx` 和 `render_runtime`。
+- crate 公开入口保持在 `platform`、`present`、`render_runtime_ctx` 和 `render_runtime`；
+  `platform` 只保留默认相机等上层需要显式传入 runtime 的轻量类型。
 - asset uploader、material bridge、instance bridge、GPU scene 数据结构和 prepare 辅助逻辑都是 runtime 私有实现。
 - 生命周期 Ctx 在 `render_runtime_ctx` 模块定义，并由 `render_runtime` 重新导出；
   调用方仍通过 `truvis_render_runtime::render_runtime::*Ctx` 使用这些阶段契约。
@@ -57,7 +58,7 @@
   asset uploader、bridge、`GpuScene`、FIF 资源、global descriptors、sampler 和 per-frame buffer。
 - `RenderRuntime::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
   swapchain 与 `RenderPresent`，并返回 init Ctx 供 app/plugin 创建长期 GPU 资源。
-- `begin_frame` 是每帧资源回收入口：timer tick、等待当前 FIF slot、重置 frame command pool、
+- `begin_frame` 是每帧资源回收入口：推进 runtime 私有帧计时器、等待当前 FIF slot、重置 frame command pool、
   清理延迟释放队列、推进 bindless/material/instance frame token，并在 `RenderRuntime`
   内部分发 AssetHub 事件。
 - `update_phase` 同步 frame settings、acquire 当前 swapchain image，并返回 CPU update Ctx。
