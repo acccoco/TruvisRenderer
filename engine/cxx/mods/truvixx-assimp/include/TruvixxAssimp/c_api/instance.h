@@ -1,7 +1,7 @@
 #pragma once
 
-#include "TruvixxInterface/assimp/base.h"
-#include "TruvixxInterface/truvixx_interface.export.h"
+#include "TruvixxAssimp/c_api/base.h"
+#include "TruvixxAssimp/c_api/truvixx_assimp.export.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,7 +12,7 @@ extern "C" {
 /// @param index instance 索引
 /// @param out [out] 输出 instance 信息
 /// @return 成功返回 1, 失败返回 0
-ResType TRUVIXX_INTERFACE_API truvixx_instance_get(TruvixxSceneHandle scene, uint32_t index, TruvixxInstance* out);
+ResType TRUVIXX_ASSIMP_API truvixx_instance_get(TruvixxSceneHandle scene, uint32_t index, TruvixxInstance* out);
 
 /// 获取 instance 引用的 mesh 和材质索引
 /// @param scene 场景句柄
@@ -20,7 +20,7 @@ ResType TRUVIXX_INTERFACE_API truvixx_instance_get(TruvixxSceneHandle scene, uin
 /// @param out_mesh_indices [out] mesh 索引数组 (大小 >= mesh_count), 可为 NULL
 /// @param out_material_indices [out] 材质索引数组 (大小 >= mesh_count), 可为 NULL
 /// @return 成功返回 1, 失败返回 0
-ResType TRUVIXX_INTERFACE_API truvixx_instance_get_refs(
+ResType TRUVIXX_ASSIMP_API truvixx_instance_get_refs(
     TruvixxSceneHandle scene,
     uint32_t instance_index,
     uint32_t* out_mesh_indices,

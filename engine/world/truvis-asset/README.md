@@ -25,7 +25,7 @@ runtime instance。
 
 - `asset_loader`：crate 内部后台调度层，只持有 Rayon 线程池、结果 channel 和任务等待逻辑。
 - `texture_loader`：crate 内部纹理任务实现，只负责 image 文件读取、CPU 解码和 RGBA8 bytes 输出。
-- `truvixx_scene_loader`：crate 内部 scene 导入任务实现，只负责 C++ importer 生命周期和 owned CPU scene 数据复制。
+- `truvixx_scene_loader`：crate 内部 scene 导入任务实现，通过 `truvis-assimp-binding` 调用 Assimp C API，只负责 C++ importer 生命周期和 owned CPU scene 数据复制。
 - 外部调用方不直接使用 loader 模块；加载请求、状态查询和完成事件都通过 `AssetHub` 进入或离开 asset 层。
 
 ## 设计目标

@@ -587,7 +587,7 @@ App / tool
   可多次 spawn 并产生独立 `InstanceHandle`。
 - Cornell / Sponza demo 改为 init 阶段请求 scene asset、update 阶段 ready 后 spawn，不再直接调用旧同步 loader。
 - `AssimpSceneLoader` 先降级为兼容 facade，不再持有 C++ FFI 导入逻辑；render-backend 去掉对
-  `truvis-cxx-binding` 的直接依赖。Phase 6a 已删除该兼容 facade。
+  旧统一 C++ binding 的直接依赖。Phase 6a 已删除该兼容 facade。
 - C++ FFI 中 `truvixx_mesh_fill_tangents` 已修正为读取 tangent 数据。
 
 后续调整（2026-05-17 Phase 7a）：

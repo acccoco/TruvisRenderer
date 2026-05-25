@@ -3539,11 +3539,11 @@ dependencies = [
  "rayon",
  "slotmap",
  "tracy-client",
- "truvis-cxx-binding",
+ "truvis-assimp-binding",
 ]
 
 [[package]]
-name = "truvis-cxx-binding"
+name = "truvis-assimp-binding"
 version = "0.1.0"
 dependencies = [
  "bindgen",

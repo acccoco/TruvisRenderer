@@ -28,7 +28,7 @@ shader:
 [group('2 资源生成与构建')]
 cxx:
     cargo run --bin cxx-build
-    cargo build -p truvis-cxx-binding
+    cargo build -p truvis-assimp-binding
 
 # 运行 Triangle 示例
 [group('3 运行示例')]

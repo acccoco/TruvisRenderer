@@ -1,8 +1,8 @@
 [package]
-name = "truvis-cxx-binding"
+name = "truvis-assimp-binding"
 version = "0.1.0"
 edition = "2024"
-description = "为 Truvis 提供 Cxx 绑定"
+description = "为 Truvis 提供 Assimp C API 绑定"
 
 
 [dependencies]

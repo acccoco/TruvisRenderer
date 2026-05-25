@@ -1,4 +1,4 @@
-#include "TruvixxInterface/assimp/module.h"
+#include "TruvixxAssimp/c_api/module.h"
 #include "TruvixxAssimp/scene_importer.hpp"
 
 #include <algorithm>

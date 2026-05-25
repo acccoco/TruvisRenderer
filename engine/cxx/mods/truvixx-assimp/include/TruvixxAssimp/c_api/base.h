@@ -2,12 +2,11 @@
 
 #include "TruvixxAssimp/base_type.h"
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-typedef unsigned int uint32_t;
-typedef int int32_t;
 
 typedef enum : uint32_t
 {
@@ -38,7 +37,7 @@ typedef struct
 {
     char name[256];
     TruvixxFloat4x4 world_transform; ///< 世界变换矩阵
-    unsigned int mesh_count;
+    uint32_t mesh_count;
 } TruvixxInstance;
 
 /// Mesh 元信息 (用于预分配 buffer)

@@ -6,7 +6,7 @@
 just cxx
 ```
 
-`just cxx` 会运行 `cargo run --bin cxx-build` 并重新构建 `truvis-cxx-binding`。
+`just cxx` 会运行 `cargo run --bin cxx-build` 并重新构建 `truvis-assimp-binding`。
 `cxx-build` 只使用 PATH 上的 `cmake`。CMake presets 文件要求 CMake 3.21+；
 使用 VS2026 preset 时需要 PATH 上的 CMake 4.2+。
 

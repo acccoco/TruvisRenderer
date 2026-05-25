@@ -14,7 +14,6 @@ if (MSVC)
 endif()
 
 add_subdirectory(mods/truvixx-assimp)
-add_subdirectory(mods/truvixx-interface)
 add_subdirectory(mods/truvixx-gfx)
 
 

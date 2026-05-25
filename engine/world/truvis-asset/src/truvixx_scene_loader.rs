@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use truvis_cxx_binding::truvixx;
+use truvis_assimp_binding::truvixx;
 
 use crate::asset_loader::{LoadResult, ModelLoadRequest};
 use crate::handle::{MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData};
