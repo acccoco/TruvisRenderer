@@ -9,6 +9,7 @@ target
 assets
 tools/slang
 tools/tracy
+tools/streamline-sdk
 
 # operating system
 .DS_Store

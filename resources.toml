@@ -48,3 +48,9 @@ resource_type = "zip"
 target_dir = "tools"
 rename_to = "tracy"
 
+[[resources]]
+name = "streamline"
+url = "https://github.com/acccoco/assets/releases/download/sdk/streamline-sdk-v2.11.1.zip"
+resource_type = "zip"
+target_dir = "tools"
+rename_to = "streamline-sdk"

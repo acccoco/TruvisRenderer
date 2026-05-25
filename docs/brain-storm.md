@@ -27,6 +27,8 @@
 - `ViewDesc` / `PreparedView` / `ViewStore` 尚未落地，当前仍是隐式 main view。
 - `RenderPresent` 仍由 `RenderRuntime` 持有；更彻底的 `SurfaceRegistry` / 多窗口 / headless 边界仍是远期方向。
 - `Gfx` 构造注入和进一步去全局访问仍未完成。
+- DLSS / Streamline 接入需要先明确 Vulkan loader、C++ wrapper、RenderGraph opaque pass
+  和 temporal resources 边界。
 - 资产上传仍可继续探索 batched upload / staging thread，避免大量资源同帧 ready 时挤占 render thread。
 - `app-kit` 仍承载 GUI、camera/input、overlay 与 pipeline glue，后续可继续拆分可复用能力。
 
@@ -38,6 +40,8 @@
   AssetHub、render-side manager/bridge、GpuScene 与 RenderSceneView 的当前状态。
 - [`render-view-concept.md`](brain-storm/render-view-concept.md)：
   轻量 main view / prepared view 的引入方向。
+- [`dlss-streamline-integration.md`](brain-storm/dlss-streamline-integration.md)：
+  DLSS Super Resolution、Streamline Vulkan interposer、C++ wrapper 与 RenderGraph 接入边界。
 - [`plugin-feature-evolution.md`](brain-storm/plugin-feature-evolution.md)：
   PluginGroup、pipeline feature、GUI / platform / event 分层的演进方向。
 - [`threading-model-evolution.md`](brain-storm/threading-model-evolution.md)：
