@@ -1,0 +1,4 @@
+interface:
+  display_name: "代码审查标准"
+  short_description: "审查代码结构、通用库复用、中文注释与架构边界风险问题"
+  default_prompt: "Use $code-review-standards 用中文审查这次代码改动，重点关注结构内聚、通用库复用和关键注释。"
