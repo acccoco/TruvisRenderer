@@ -1,11 +1,13 @@
 # CXX
 
-`engine/cxx/` 提供 C++ 子系统与 Rust FFI 桥接，当前 Rust 侧只暴露 Assimp 绑定。
+`engine/cxx/` 提供 C++ 子系统与 Rust FFI 桥接，当前 Rust 侧暴露 Assimp 与 Streamline 绑定。
 
 ## 目录说明
 
 - `mods/`：C++ 模块源码；模块之间使用 C++ API，导出到 Rust 时由具体模块提供 C API
+- `mods/truvixx-utils/`：C++ 公共工具 static library，通过 `PathUtils` / `StringUtils` 聚合 Windows 路径、字符串编码和文件系统 helper
 - `truvis-assimp-binding/`：Assimp Rust FFI 声明 crate
+- `truvis-streamline-binding/`：Streamline / DLSS Rust FFI 声明与最小 RAII wrapper
 - `truvis-cxx-build/`：构建驱动 crate，负责选择 CMake preset、构建 Debug/Release，并把 `.lib` / `.dll` / `.pdb` 复制到 Cargo target 目录
 - `CMakeLists.txt` / `CMakePresets.json`：CMake 构建配置
 - `vcpkg.json`：manifest 依赖声明
@@ -13,14 +15,21 @@
 ## 构建方式
 
 - 推荐通过 workspace 命令执行：`just cxx`
-- `just cxx` 会先运行 `cargo run --bin cxx-build`，再构建 `truvis-assimp-binding`
+- `just cxx` 会先运行 `cargo run --bin cxx-build`，再构建 `truvis-assimp-binding` 与 `truvis-streamline-binding`
 - 底层使用 CMake + vcpkg manifest，不建议手工 `vcpkg install`
 - `truvis-assimp-binding/build.rs` 只负责 bindgen 生成 Assimp Rust FFI 绑定，并向 Cargo 声明链接 `truvixx-assimp-capi`
+- `truvis-streamline-binding/build.rs` 只负责 bindgen 生成 Streamline C API 绑定，并向 Cargo 声明链接 `truvixx-streamline-capi`
+- `truvis-cxx-build` 会按 profile 复制 Streamline runtime：Debug 使用 `tools/streamline-sdk/bin/x64/development`，Release 使用 `tools/streamline-sdk/bin/x64`
+- Streamline 接入当前只面向 Windows x64，Rust binding 直接使用 Windows 路径编码和 DLL 加载约定，不保留跨平台 cfg 分支
+- Streamline 日志由 C++ wrapper 接住 `logMessageCallback` 后转发给 Rust；详细链路见 `truvis-streamline-binding/README.md`
 
 ## 约束
 
 - 对外接口保持 C ABI 与 POD 数据结构稳定。
 - 不再维护统一 C++ interface target；需要导出到 Rust 的 C API 放在对应 C++ 模块内。
 - 变更 FFI 结构时需同步检查 Rust 侧绑定与内存布局兼容性。
+- C++ 模块内重复的路径、UTF-16 / UTF-8 转换和目录创建逻辑优先放入 `truvixx-utils` 的静态工具 struct，业务模块只保留自身生命周期和 API 语义。
+- Streamline C API 当前只覆盖 `slInit/slShutdown` 生命周期，不负责 RenderGraph pass 或 DLSS evaluate。
+- Streamline callback 可能来自 init/shutdown 或 Vulkan interposer 调用栈；Rust callback 内只做消息复制和入队，最终日志输出在 `streamline-log-drain` 线程完成。
 - Assimp scene 加载失败时，`truvixx_scene_load` 可能返回可查询错误的非空句柄；调用方必须通过
   `truvixx_scene_is_loaded` 判断成功状态，并通过 `truvixx_scene_last_error` 读取详细失败原因。

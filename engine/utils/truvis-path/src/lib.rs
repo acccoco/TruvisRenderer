@@ -6,6 +6,9 @@ use std::{
 
 use serde::Deserialize;
 
+mod path_utils;
+pub use path_utils::PathUtils;
+
 /// map.toml 中 [dirs] 表的映射
 #[derive(Debug, Deserialize)]
 struct Dirs {

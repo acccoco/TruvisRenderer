@@ -1,4 +1,5 @@
 use std::ffi::CStr;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use ash::vk;
@@ -10,14 +11,45 @@ use crate::{
     },
 };
 
+/// Vulkan loader 来源。
+///
+/// 默认使用系统 loader；DLSS / Streamline 路径应显式传入当前 executable 目录下的
+/// `sl.interposer.dll`，确保 ash 和 C++ wrapper 使用同一份 Streamline interposer。
+///
+/// 这个类型只决定 `ash::Entry` 从哪里加载 `vkGetInstanceProcAddr`。后续 `Instance`、
+/// `Device`、extension loader 都必须从同一个 `Entry -> Instance -> Device` 链路派生，
+/// 这样 Streamline interposer 才能看到 Vulkan 创建与调用路径。
+#[derive(Clone, Debug)]
+pub enum VulkanEntrySource {
+    /// 使用系统默认 Vulkan loader，保持现有渲染路径完全不变。
+    System,
+
+    /// 使用指定 DLL 作为 Vulkan loader。DLSS 路径应传入 exe 目录下的 `sl.interposer.dll`。
+    DllPath(PathBuf),
+}
+
+impl VulkanEntrySource {
+    fn load_entry(&self) -> ash::Entry {
+        match self {
+            VulkanEntrySource::System => unsafe { ash::Entry::load() }
+                .unwrap_or_else(|err| panic!("Failed to load system Vulkan entry: {err:?}")),
+            VulkanEntrySource::DllPath(path) => unsafe { ash::Entry::load_from(path.as_os_str()) }
+                .unwrap_or_else(|err| panic!("Failed to load Vulkan entry from {}: {err:?}", path.display())),
+        }
+    }
+}
+
 /// Vulkan 核心组件集合
 ///
 /// 包含 Entry、Instance、PhysicalDevice、Device、Queue 等 Vulkan 基础对象。
 /// 不包含内存分配器等高层抽象，仅提供 Vulkan 原生功能。
 pub struct GfxCore {
-    /// Vulkan 库入口（加载 vulkan-1.dll）
+    /// Vulkan 库入口。
     ///
-    /// 在 drop 之后会卸载 DLL，需要确保该字段最后 drop
+    /// 普通路径加载系统 Vulkan loader；DLSS 路径加载 Streamline interposer。
+    /// 该字段必须比 Instance / Device 更晚 drop，因为 ash 的函数指针由 Entry 持有的 DLL 提供。
+    ///
+    /// Rust 结构体按声明顺序 drop，所以该字段放在最前面，实际销毁时最后 drop。
     pub(crate) vk_entry: ash::Entry,
 
     pub(crate) instance: GfxInstance,
@@ -40,9 +72,18 @@ pub struct GfxCore {
 // 创建与销毁
 impl GfxCore {
     pub fn new(app_name: String, engine_name: String, instance_extra_exts: Vec<&'static CStr>) -> Self {
+        Self::new_with_entry_source(app_name, engine_name, instance_extra_exts, VulkanEntrySource::System)
+    }
+
+    pub fn new_with_entry_source(
+        app_name: String,
+        engine_name: String,
+        instance_extra_exts: Vec<&'static CStr>,
+        entry_source: VulkanEntrySource,
+    ) -> Self {
         let _span = tracy_client::span!("GfxCore::new");
 
-        let vk_pf = unsafe { ash::Entry::load() }.expect("Failed to load vulkan entry");
+        let vk_pf = entry_source.load_entry();
         let instance = GfxInstance::new(&vk_pf, app_name, engine_name, instance_extra_exts);
         let physical_device = GfxPhysicalDevice::new_descrete_physical_device(instance.ash_instance());
 

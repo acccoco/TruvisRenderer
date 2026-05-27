@@ -26,6 +26,7 @@ members = [
     "engine/shader/truvis-shader-build",
     # cxx 绑定相关
     "engine/cxx/truvis-assimp-binding",
+    "engine/cxx/truvis-streamline-binding",
     "engine/cxx/truvis-cxx-build",
     # app
     "app/app-kit",
@@ -77,6 +78,7 @@ truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
 truvis-shader-build = { path = "engine/shader/truvis-shader-build" }
 # cxx
 truvis-assimp-binding = { path = "engine/cxx/truvis-assimp-binding" }
+truvis-streamline-binding = { path = "engine/cxx/truvis-streamline-binding" }
 truvis-cxx-build = { path = "engine/cxx/truvis-cxx-build" }
 
 

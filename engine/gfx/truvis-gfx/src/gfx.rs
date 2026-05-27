@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use ash::vk;
 
-use crate::gfx_core::GfxCore;
+use crate::gfx_core::{GfxCore, VulkanEntrySource};
 use crate::{
     commands::{
         command_buffer::GfxCommandBuffer,
@@ -212,9 +212,18 @@ impl Gfx {
     const ENGINE_NAME: &'static str = "DruvisIII";
 
     pub fn new(app_name: String, instance_extra_exts: Vec<&'static CStr>) -> Self {
+        Self::new_with_entry_source(app_name, instance_extra_exts, VulkanEntrySource::System)
+    }
+
+    pub fn new_with_entry_source(
+        app_name: String,
+        instance_extra_exts: Vec<&'static CStr>,
+        entry_source: VulkanEntrySource,
+    ) -> Self {
         let _span = tracy_client::span!("Gfx::new");
 
-        let gfx_core = GfxCore::new(app_name, Self::ENGINE_NAME.to_string(), instance_extra_exts);
+        let gfx_core =
+            GfxCore::new_with_entry_source(app_name, Self::ENGINE_NAME.to_string(), instance_extra_exts, entry_source);
 
         let gfx_command_pool = GfxCommandPool::new_internal(
             gfx_core.gfx_device.clone(),

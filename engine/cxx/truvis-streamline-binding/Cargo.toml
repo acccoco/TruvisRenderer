@@ -1,0 +1,12 @@
+[package]
+name = "truvis-streamline-binding"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+log = { workspace = true }
+truvis-path = { workspace = true }
+
+[build-dependencies]
+bindgen = { workspace = true }
+truvis-path = { workspace = true }

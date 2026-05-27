@@ -3709,6 +3709,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "truvis-streamline-binding"
+version = "0.1.0"
+dependencies = [
+ "bindgen",
+ "log",
+ "truvis-path",
+]
+
+[[package]]
 name = "truvis-utils"
 version = "0.1.0"
 

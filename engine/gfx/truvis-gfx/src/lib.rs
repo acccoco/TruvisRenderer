@@ -17,3 +17,5 @@ pub mod resources;
 pub mod sampler;
 pub mod swapchain;
 pub mod utilities;
+
+pub use gfx_core::VulkanEntrySource;

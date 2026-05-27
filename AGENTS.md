@@ -44,4 +44,4 @@
 - `README.md`：面向 GitHub 用户，介绍亮点与上手方式。
 - `ARCHITECTURE.md`：记录总体架构、设计思路、模块约束。
 - 模块内 `README.md`：说明模块职责、依赖与常见入口。
-- `docs/brain-strom/`：记录设计讨论与方案评估。
+- `docs/brain-strom/`：记录设计讨论与方案评估。其中 `brain-storm/archive` 属于归档，无需维护。
