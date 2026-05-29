@@ -1,6 +1,6 @@
 //! Truvis 日志初始化入口。
 //!
-//! 日志格式由本 crate 统一维护。每条日志会输出当前线程名称和 Rust `ThreadId` 的数字部分，
+//! 日志格式由本 crate 统一维护。每条日志会输出当前线程名称和 Windows 系统线程 ID（`GetCurrentThreadId`），
 //! 线程上下文通过 thread-local 缓存，保证同一线程只在首次写日志时捕获名称和 tid。
 
 use std::{io::Write, thread};
@@ -31,13 +31,10 @@ impl ThreadLogContext {
     }
 
     fn capture_thread_id() -> String {
-        let debug_id = format!("{:?}", thread::current().id());
-        Self::normalize_thread_id(&debug_id).to_owned()
-    }
-
-    fn normalize_thread_id(debug_id: &str) -> &str {
-        // `ThreadId::as_u64` 仍未稳定；先集中裁剪 Debug 展示，避免业务日志调用点感知格式细节。
-        debug_id.strip_prefix("ThreadId(").and_then(|id| id.strip_suffix(')')).unwrap_or(debug_id)
+        unsafe extern "system" {
+            fn GetCurrentThreadId() -> u32;
+        }
+        unsafe { GetCurrentThreadId() }.to_string()
     }
 }
 
