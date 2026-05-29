@@ -66,12 +66,15 @@ impl TruvisPath {
         Self::workspace().to_path_buf()
     }
 
-    /// `target/` 目录
+    /// Cargo 输出目录。
+    ///
+    /// 函数名保留 `target` 是为了兼容旧调用点；实际目录来自 `map.toml`，
+    /// 当前配置为 workspace 下的 `build/`。
     pub fn target() -> PathBuf {
         Self::workspace().join(&config().dirs.target)
     }
 
-    /// `target/` 目录（兼容旧名称）
+    /// Cargo 输出目录（兼容旧名称）。
     #[inline]
     pub fn target_path() -> PathBuf {
         Self::target()

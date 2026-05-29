@@ -12,7 +12,8 @@ pub struct PathUtils;
 impl PathUtils {
     /// 当前进程 executable 的完整路径。
     ///
-    /// 该值由操作系统返回，通常位于 `target/{profile}` 或 `target/{profile}/examples`。
+    /// 该值由操作系统返回，通常位于 Cargo 输出目录，如当前配置下的
+    /// `build/{profile}` 或 `build/{profile}/examples`。
     pub fn current_exe_path() -> std::io::Result<PathBuf> {
         std::env::current_exe()
     }
@@ -20,7 +21,8 @@ impl PathUtils {
     /// 当前进程 executable 所在目录。
     ///
     /// Native runtime DLL 通常需要与 executable 位于同一目录；Streamline 的
-    /// `sl.interposer.dll`、`sl.dlss.dll`、`nvngx_dlss.dll` 就依赖这个约定。
+    /// `sl.interposer.dll`、`sl.dlss.dll`、`nvngx_dlss.dll`、`NvLowLatencyVk.dll`
+    /// 就依赖这个约定。
     pub fn current_exe_dir() -> std::io::Result<PathBuf> {
         let exe = Self::current_exe_path()?;
         Ok(exe.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from(".")))
