@@ -35,10 +35,10 @@ impl BuildType {
     }
 }
 
-// 第一阶段只接 DLSS Super Resolution，所以只复制 SL core + DLSS SR 所需 DLL。
+// 第一阶段只接 DLSS Super Resolution，所以 Release 只复制 SL core + DLSS SR 所需 DLL。
 // NvLowLatencyVk.dll 是 SL Vulkan backend 启动时加载的低延迟 helper，不表示启用 Reflex feature。
 // Frame Generation、Ray Reconstruction、Reflex、NIS、DirectSR 等 feature 的 DLL 不在这里出现；
-// 后续启用新 feature 时，应先扩展 C++ wrapper 的 featuresToLoad，再同步扩展这个清单。
+// 后续启用新 feature 时，应先扩展 Rust 侧 feature flags，再同步扩展这个清单。
 const STREAMLINE_REQUIRED_DLLS: &[&str] = &[
     "sl.interposer.dll",
     "sl.common.dll",
@@ -48,9 +48,13 @@ const STREAMLINE_REQUIRED_DLLS: &[&str] = &[
     "NvLowLatencyVk.dll",
 ];
 
-// Debug runtime 可能依赖 PIX runtime。该 DLL 在 development 目录中存在时复制，不存在时跳过。
-// `sl.imgui.dll` 虽然也在 development 目录中，但当前没有接 Streamline debug UI，因此不复制。
-const STREAMLINE_DEBUG_OPTIONAL_DLLS: &[&str] = &["WinPixEventRuntime.dll"];
+// Debug 使用 development runtime，并默认启用 Streamline ImGui 调试 UI。
+// sl.imgui 只进入 Debug 运行目录，Release 继续保持 DLSS SR 最小 runtime。
+const STREAMLINE_DEBUG_OPTIONAL_DLLS: &[&str] = &["sl.imgui.dll"];
+
+// 旧版本曾把 WinPixEventRuntime.dll 当作 Debug optional runtime 复制。
+// 当前 Vulkan 路径不依赖 PIX runtime，保留清理项是为了删除已有构建目录中的旧残留。
+const STREAMLINE_REMOVED_MANAGED_DLLS: &[&str] = &["WinPixEventRuntime.dll"];
 
 struct CxxBuildLayout {
     workspace_dir: PathBuf,
@@ -194,9 +198,11 @@ fn clean_managed_streamline_runtime(cargo_output_path: &std::path::Path) -> Resu
             let is_required_dll = STREAMLINE_REQUIRED_DLLS.iter().any(|name| name.eq_ignore_ascii_case(&file_name));
             let is_debug_optional_dll =
                 STREAMLINE_DEBUG_OPTIONAL_DLLS.iter().any(|name| name.eq_ignore_ascii_case(&file_name));
+            let is_removed_managed_dll =
+                STREAMLINE_REMOVED_MANAGED_DLLS.iter().any(|name| name.eq_ignore_ascii_case(&file_name));
             let is_streamline_json = is_streamline_json_file_name(&file_name);
 
-            if !is_required_dll && !is_debug_optional_dll && !is_streamline_json {
+            if !is_required_dll && !is_debug_optional_dll && !is_removed_managed_dll && !is_streamline_json {
                 continue;
             }
 

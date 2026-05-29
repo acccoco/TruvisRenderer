@@ -1,8 +1,8 @@
 {
-  // sl.imgui.dll 的字体尺寸调试项。当前项目不复制 sl.imgui.dll，也不启用 SL ImGui，
-  // 因此保留下划线字段作为模板说明，避免运行时产生实际覆盖。
+  // sl.imgui.dll 的字体尺寸调试项。Debug 默认复制并请求加载 SL ImGui，
+  // Release 不复制该 DLL。保留下划线字段作为模板说明，避免运行时产生实际覆盖。
   "_smallFontSize": 20,
 
-  // 中号字体尺寸。若未来启用 SL ImGui 调试 UI，可去掉下划线让 development runtime 读取。
+  // 中号字体尺寸。若需要调试 SL ImGui 字体，可去掉下划线让 development runtime 读取。
   "_mediumFontSize": 32
 }

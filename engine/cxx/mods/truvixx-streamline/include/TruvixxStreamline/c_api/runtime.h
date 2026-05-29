@@ -16,6 +16,14 @@ typedef enum : uint32_t
     TruvixxSlLogTypeError = 2,
 } TruvixxSlLogType;
 
+/// Streamline feature 请求位。Rust 侧负责按运行配置组合这些 bit，
+/// C++ 侧只把稳定 C ABI flag 翻译成 Streamline SDK 的 feature id。
+typedef enum : uint32_t
+{
+    TruvixxSlFeatureFlagDlss = 1u << 0,
+    TruvixxSlFeatureFlagImgui = 1u << 1,
+} TruvixxSlFeatureFlag;
+
 /// Rust 侧全局日志回调的签名。
 ///
 /// C++ 只在 slInit 前保存该指针，后续 SL 日志事件通过它直接转发到 Rust。
@@ -42,12 +50,15 @@ typedef struct
     uint32_t show_console;
     uint32_t verbose_log;
 
+    /// 请求加载的 Streamline feature bitset，取值来自 `TruvixxSlFeatureFlag`。
+    uint32_t feature_flags;
+
     /// Rust 全局日志回调函数地址。该指针在 truvixx_sl_init 中保存到 file-scope static，
     /// 后续 SL callback 中直接调用。不可为 NULL。
     TruvixxSlLogCallback log_callback;
 } TruvixxSlInitDesc;
 
-/// 初始化 Streamline runtime 并加载 DLSS SR feature。
+/// 按 `TruvixxSlInitDesc::feature_flags` 初始化 Streamline runtime 并加载请求的 feature。
 ///
 /// 返回 sl::Result 的原始 int32_t 值，0 表示成功。
 /// C++ 侧在 init/shutdown 之间持有 DLL handle 与函数表；调用方（Rust）负责防重入。

@@ -63,7 +63,7 @@ impl StreamlineRuntime {
         Self::init(StreamlineInitInfo::default())
     }
 
-    /// 初始化 Streamline，并只加载 DLSS Super Resolution feature。
+    /// 按 Rust 侧配置初始化 Streamline feature。
     pub fn init(info: StreamlineInitInfo) -> Result<Self, StreamlineError> {
         // 这个路径承担两个角色：
         // 1. 传给 C++ wrapper，由 LoadLibraryW 显式解析 slInit/slShutdown；
@@ -72,12 +72,13 @@ impl StreamlineRuntime {
         // 误加载到不同目录下的 interposer。
         let interposer_dll_path = info.plugin_dir.join("sl.interposer.dll");
         log::info!(
-            "Initializing Streamline runtime: plugin_dir={}, interposer_dll={}, log_dir={}, show_console={}, verbose_log={}",
+            "Initializing Streamline runtime: plugin_dir={}, interposer_dll={}, log_dir={}, show_console={}, verbose_log={}, features={}",
             info.plugin_dir.display(),
             interposer_dll_path.display(),
             info.log_dir.display(),
             info.show_console,
-            info.verbose_log
+            info.verbose_log,
+            info.feature_flags.display_names()
         );
 
         // Rust 侧负责目录创建，C++ 不做路径校验。
@@ -104,6 +105,7 @@ impl StreamlineRuntime {
             log_dir_utf16: log_dir_utf16.as_ptr(),
             show_console: u32::from(info.show_console),
             verbose_log: u32::from(info.verbose_log),
+            feature_flags: info.feature_flags.bits(),
             log_callback: StreamlineLogBridge::callback(),
         };
 

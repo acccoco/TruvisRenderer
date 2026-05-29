@@ -7,6 +7,60 @@ use std::path::PathBuf;
 
 use truvis_path::{PathUtils, TruvisPath};
 
+use crate::truvixx;
+
+/// Streamline feature 请求位。
+///
+/// Rust 侧决定要加载哪些 feature，C++ wrapper 只负责把这些稳定 bit 翻译成
+/// Streamline SDK 的 feature id。默认 Debug 会额外打开 SL ImGui，Release 只加载 DLSS SR。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StreamlineFeatureFlags(u32);
+
+impl StreamlineFeatureFlags {
+    pub const DLSS: Self = Self(truvixx::TruvixxSlFeatureFlag_TruvixxSlFeatureFlagDlss);
+    pub const IMGUI: Self = Self(truvixx::TruvixxSlFeatureFlag_TruvixxSlFeatureFlagImgui);
+
+    #[inline]
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+
+    #[inline]
+    pub const fn contains(self, feature: Self) -> bool {
+        (self.0 & feature.0) == feature.0
+    }
+
+    #[inline]
+    pub fn insert(&mut self, feature: Self) {
+        self.0 |= feature.0;
+    }
+
+    pub fn display_names(self) -> String {
+        let mut names = Vec::new();
+        if self.contains(Self::DLSS) {
+            names.push("DLSS");
+        }
+        if self.contains(Self::IMGUI) {
+            names.push("ImGui");
+        }
+
+        match names.as_slice() {
+            [] => "<none>".to_string(),
+            _ => names.join("|"),
+        }
+    }
+}
+
+impl Default for StreamlineFeatureFlags {
+    fn default() -> Self {
+        let mut flags = Self::DLSS;
+        if cfg!(debug_assertions) {
+            flags.insert(Self::IMGUI);
+        }
+        flags
+    }
+}
+
 /// Streamline 初始化参数。
 ///
 /// `plugin_dir` 是 Streamline plugin/runtime 搜索目录，必须包含 `sl.interposer.dll`、
@@ -29,6 +83,10 @@ pub struct StreamlineInitInfo {
 
     /// 是否使用 verbose 级别日志。
     pub verbose_log: bool,
+
+    /// 请求加载的 Streamline feature。Debug 默认包含 DLSS SR 和 SL ImGui；
+    /// Release 默认只包含 DLSS SR。
+    pub feature_flags: StreamlineFeatureFlags,
 }
 
 impl Default for StreamlineInitInfo {
@@ -38,6 +96,7 @@ impl Default for StreamlineInitInfo {
             log_dir: TruvisPath::temp_dir().join("streamline"),
             show_console: false,
             verbose_log: true,
+            feature_flags: StreamlineFeatureFlags::default(),
         }
     }
 }

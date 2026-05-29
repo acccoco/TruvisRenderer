@@ -163,6 +163,7 @@ int32_t truvixx_sl_init(const TruvixxSlInitDesc* desc)
     const wchar_t* log_dir = reinterpret_cast<const wchar_t*>(desc->log_dir_utf16);
     const bool show_console = desc->show_console != 0;
     const bool verbose_log = desc->verbose_log != 0;
+    const uint32_t feature_flags = desc->feature_flags;
 
     // 先加载函数表，再组装 Preferences。这样即使 DLL 不存在或导出不匹配，
     // 也能在进入 Streamline runtime 前返回明确错误，并通过 Rust callback 输出诊断。
@@ -174,7 +175,23 @@ int32_t truvixx_sl_init(const TruvixxSlInitDesc* desc)
     }
 
     const wchar_t* plugin_paths[] = { plugin_dir };
-    const std::array<sl::Feature, 1> features_to_load = { sl::kFeatureDLSS };
+    std::array<sl::Feature, 2> features_to_load{};
+    uint32_t feature_count = 0;
+    if ((feature_flags & TruvixxSlFeatureFlagDlss) != 0)
+    {
+        features_to_load[feature_count++] = sl::kFeatureDLSS;
+    }
+    if ((feature_flags & TruvixxSlFeatureFlagImgui) != 0)
+    {
+        features_to_load[feature_count++] = sl::kFeatureImGUI;
+    }
+    if (feature_count == 0)
+    {
+        emit_wrapper_log(TruvixxSlLogTypeError, "Streamline feature flags did not request any known feature.");
+        g_sl_api.reset();
+        g_rust_log_callback = nullptr;
+        return static_cast<int32_t>(sl::Result::eErrorInvalidParameter);
+    }
 
     sl::Preferences preferences{};
     preferences.showConsole = show_console;
@@ -185,7 +202,7 @@ int32_t truvixx_sl_init(const TruvixxSlInitDesc* desc)
     preferences.logMessageCallback = sl_log_callback;
     preferences.flags = sl::PreferenceFlags::eDisableCLStateTracking | sl::PreferenceFlags::eUseFrameBasedResourceTagging;
     preferences.featuresToLoad = features_to_load.data();
-    preferences.numFeaturesToLoad = static_cast<uint32_t>(features_to_load.size());
+    preferences.numFeaturesToLoad = feature_count;
     preferences.engine = sl::EngineType::eCustom;
     preferences.engineVersion = kTruvisEngineVersion;
     preferences.projectId = kTruvisNgxProjectId;

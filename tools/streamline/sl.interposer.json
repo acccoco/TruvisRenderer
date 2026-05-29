@@ -8,13 +8,14 @@
   "useDXGIProxy": false,
 
   // development runtime 调试开关。true 会加载运行目录中所有可用 SL feature plugin。
-  // 项目默认只通过 sl::Preferences::featuresToLoad 请求 DLSS，避免误加载 FG/RR/NIS 等插件。
+  // 项目默认只通过 Rust 侧 StreamlineInitInfo 请求 feature，避免误加载 FG/RR/NIS 等插件。
   "loadAllFeatures": false,
 
   // 若需要临时从 JSON 指定 feature 列表，把字段名前的下划线去掉。
-  // 0 = DLSS SR，1 = Reflex。JSON 指定的列表在 development runtime 下会优先于
-  // sl::Preferences::featuresToLoad；项目默认不让 JSON 接管 feature 选择。
-  "_loadSpecificFeatures": [0],
+  // 0 = DLSS SR，1 = Reflex，9999 = SL ImGui。JSON 指定的列表在 development runtime
+  // 下会优先于 Rust 侧传给 sl::Preferences::featuresToLoad 的列表；项目默认不让 JSON
+  // 接管 feature 选择。
+  "_loadSpecificFeatures": [0, 9999],
 
   // 是否打开 SL 自带 console。Truvis 默认把 SL 日志通过 logMessageCallback 接入 Rust log，
   // 因此这里关闭 console，避免同一条日志在 SL console 和 Rust log 中重复显示。
