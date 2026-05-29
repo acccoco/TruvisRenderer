@@ -1,5 +1,7 @@
 mod visual_studio;
 
+use std::path::{Path, PathBuf};
+
 use truvis_logs::init_log;
 use truvis_path::TruvisPath;
 
@@ -50,7 +52,47 @@ const STREAMLINE_REQUIRED_DLLS: &[&str] = &[
 // `sl.imgui.dll` 虽然也在 development 目录中，但当前没有接 Streamline debug UI，因此不复制。
 const STREAMLINE_DEBUG_OPTIONAL_DLLS: &[&str] = &["WinPixEventRuntime.dll"];
 
-fn run_cmake(cmake_project: &std::path::Path, args: &[&str], action: &str) -> Result<(), String> {
+struct CxxBuildLayout {
+    workspace_dir: PathBuf,
+    cxx_build_dir: PathBuf,
+    cargo_target_dir: PathBuf,
+}
+
+impl CxxBuildLayout {
+    fn new(workspace_dir: PathBuf, cargo_target_dir: PathBuf) -> Self {
+        Self {
+            workspace_dir,
+            cxx_build_dir: cargo_target_dir.join("cxx"),
+            cargo_target_dir,
+        }
+    }
+
+    fn cxx_build_dir(&self) -> &Path {
+        &self.cxx_build_dir
+    }
+
+    fn cmake_output_dir(&self, build_type: BuildType) -> PathBuf {
+        self.cxx_build_dir.join("output").join(build_type.cmake_output_dir())
+    }
+
+    fn cargo_output_dir(&self, build_type: BuildType) -> PathBuf {
+        self.cargo_target_dir.join(build_type.cargo_output_dir())
+    }
+
+    fn compile_commands_source(&self) -> PathBuf {
+        self.cxx_build_dir.join("clang-cl").join("Debug").join("compile_commands.json")
+    }
+
+    fn compile_commands_cxx_copy(&self) -> PathBuf {
+        self.cxx_build_dir.join("compile_commands.json")
+    }
+
+    fn compile_commands_vscode_copy(&self) -> PathBuf {
+        self.workspace_dir.join(".vscode").join("compile_commands.json")
+    }
+}
+
+fn run_cmake(cmake_project: &Path, args: &[&str], action: &str) -> Result<(), String> {
     log::info!("Run cmake {}: cmake {}", action, args.join(" "));
 
     let status = std::process::Command::new("cmake")
@@ -70,8 +112,8 @@ fn run_cmake(cmake_project: &std::path::Path, args: &[&str], action: &str) -> Re
 }
 
 /// 清理 CMake 输出目录，避免已经移除的 C++ target 残留产物继续被复制到 Cargo 输出目录。
-fn clean_cmake_output(cmake_project: &std::path::Path, build_type: BuildType) -> Result<(), String> {
-    let cmake_output_path = cmake_project.join("build").join("output").join(build_type.cmake_output_dir());
+fn clean_cmake_output(layout: &CxxBuildLayout, build_type: BuildType) -> Result<(), String> {
+    let cmake_output_path = layout.cmake_output_dir(build_type);
     if !cmake_output_path.exists() {
         return Ok(());
     }
@@ -79,6 +121,33 @@ fn clean_cmake_output(cmake_project: &std::path::Path, build_type: BuildType) ->
     log::info!("Clean CMake output dir: {}", cmake_output_path.display());
     std::fs::remove_dir_all(&cmake_output_path)
         .map_err(|err| format!("无法清理 CMake 输出目录 {}: {err}", cmake_output_path.display()))
+}
+
+fn copy_file_to_path(source_path: &Path, destination_path: &Path) -> Result<(), String> {
+    let parent =
+        destination_path.parent().ok_or_else(|| format!("无法获取目标目录: {}", destination_path.display()))?;
+    std::fs::create_dir_all(parent).map_err(|err| format!("无法创建目录 {}: {err}", parent.display()))?;
+    std::fs::copy(source_path, destination_path)
+        .map_err(|err| format!("无法复制 {} 到 {}: {err}", source_path.display(), destination_path.display()))?;
+
+    Ok(())
+}
+
+fn sync_compile_commands(cmake_project: &Path, layout: &CxxBuildLayout) -> Result<(), String> {
+    run_cmake(cmake_project, &["--preset", "clang-cl-debug"], "configure compile_commands")?;
+
+    let source_path = layout.compile_commands_source();
+    if !source_path.is_file() {
+        return Err(format!("clang-cl-debug preset 没有生成 compile_commands.json: {}", source_path.display()));
+    }
+
+    let cxx_copy_path = layout.compile_commands_cxx_copy();
+    let vscode_copy_path = layout.compile_commands_vscode_copy();
+    copy_file_to_path(&source_path, &cxx_copy_path)?;
+    copy_file_to_path(&source_path, &vscode_copy_path)?;
+
+    log::info!("Synced compile_commands.json to {} and {}", cxx_copy_path.display(), vscode_copy_path.display());
+    Ok(())
 }
 
 /// 清理 Cargo 输出目录里的旧 Truvis C++ 产物，确保移除的 C++ target 不会以陈旧 DLL/lib 形式残留。
@@ -143,10 +212,7 @@ fn is_streamline_json_file_name(file_name: &str) -> bool {
     file_name.starts_with("sl.") && file_name.ends_with(".json")
 }
 
-fn copy_file_to_cargo_outputs(
-    source_path: &std::path::Path,
-    cargo_output_path: &std::path::Path,
-) -> Result<(), String> {
+fn copy_file_to_cargo_outputs(source_path: &Path, cargo_output_path: &Path) -> Result<(), String> {
     let file_name = source_path.file_name().ok_or_else(|| format!("无法获取文件名: {}", source_path.display()))?;
 
     std::fs::copy(source_path, cargo_output_path.join(file_name))
@@ -158,7 +224,7 @@ fn copy_file_to_cargo_outputs(
     Ok(())
 }
 
-fn copy_streamline_json_configs(cargo_output_path: &std::path::Path) -> Result<Vec<String>, String> {
+fn copy_streamline_json_configs(cargo_output_path: &Path) -> Result<Vec<String>, String> {
     let configs_dir = TruvisPath::tools_path().join("streamline");
     if !configs_dir.exists() {
         return Err(format!(
@@ -201,7 +267,7 @@ fn copy_streamline_json_configs(cargo_output_path: &std::path::Path) -> Result<V
     Ok(copied_files)
 }
 
-fn copy_streamline_runtime(cargo_output_path: &std::path::Path, build_type: BuildType) -> Result<Vec<String>, String> {
+fn copy_streamline_runtime(cargo_output_path: &Path, build_type: BuildType) -> Result<Vec<String>, String> {
     let streamline_sdk_root = TruvisPath::tools_path().join("streamline-sdk");
     if !streamline_sdk_root.exists() {
         return Err(format!("Streamline SDK 不存在: {}。请先运行 `just fetch-res`。", streamline_sdk_root.display()));
@@ -246,13 +312,9 @@ fn copy_streamline_runtime(cargo_output_path: &std::path::Path, build_type: Buil
 }
 
 /// 将 cxx 编译结果复制到 Rust 侧
-fn copy_to_rust(
-    cmake_project: &std::path::Path,
-    cargo_target_dir: &std::path::Path,
-    build_type: BuildType,
-) -> Result<(), String> {
-    let cmake_output_path = cmake_project.join("build").join("output").join(build_type.cmake_output_dir());
-    let cargo_output_path = cargo_target_dir.join(build_type.cargo_output_dir());
+fn copy_to_rust(layout: &CxxBuildLayout, build_type: BuildType) -> Result<(), String> {
+    let cmake_output_path = layout.cmake_output_dir(build_type);
+    let cargo_output_path = layout.cargo_output_dir(build_type);
 
     // 确保 Cargo 输出目录及其 examples 子目录存在；当前配置下是 build/{profile}。
     std::fs::create_dir_all(&cargo_output_path)
@@ -297,6 +359,9 @@ fn main() -> Result<(), String> {
     let target_dir = TruvisPath::target_path();
     log::info!("target_dir: {:?}", target_dir);
 
+    let layout = CxxBuildLayout::new(workspace_dir, target_dir);
+    log::info!("cxx_build_dir: {:?}", layout.cxx_build_dir());
+
     let cxx_project_dir = TruvisPath::cxx_root_path();
     log::info!("cxx_project_dir: {:?}", cxx_project_dir);
 
@@ -310,13 +375,17 @@ fn main() -> Result<(), String> {
     );
 
     run_cmake(&cxx_project_dir, &["--preset", cmake_preset.configure], "configure")?;
-    clean_cmake_output(&cxx_project_dir, BuildType::Debug)?;
-    clean_cmake_output(&cxx_project_dir, BuildType::Release)?;
+    if let Err(err) = sync_compile_commands(&cxx_project_dir, &layout) {
+        log::warn!("Skip compile_commands.json sync: {err}");
+    }
+
+    clean_cmake_output(&layout, BuildType::Debug)?;
+    clean_cmake_output(&layout, BuildType::Release)?;
     run_cmake(&cxx_project_dir, &["--build", "--preset", cmake_preset.build_debug], "build debug")?;
     run_cmake(&cxx_project_dir, &["--build", "--preset", cmake_preset.build_release], "build release")?;
 
-    copy_to_rust(&cxx_project_dir, &target_dir, BuildType::Debug)?;
-    copy_to_rust(&cxx_project_dir, &target_dir, BuildType::Release)?;
+    copy_to_rust(&layout, BuildType::Debug)?;
+    copy_to_rust(&layout, BuildType::Release)?;
 
     Ok(())
 }

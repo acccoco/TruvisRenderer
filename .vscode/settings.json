@@ -4,5 +4,9 @@
         "${workspaceFolder}\\engine\\shader"
     ],
     "slang.searchInAllWorkspaceDirectories": false,
-    "cmake.ignoreCMakeListsMissing": true
+    "cmake.ignoreCMakeListsMissing": true,
+    "C_Cpp.default.compileCommands": "${workspaceFolder}\\build\\cxx\\compile_commands.json",
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}\\build\\cxx"
+    ]
 }

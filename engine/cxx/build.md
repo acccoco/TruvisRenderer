@@ -9,6 +9,9 @@ just cxx
 `just cxx` 会运行 `cargo run --bin cxx-build` 并重新构建 `truvis-assimp-binding`。
 `cxx-build` 只使用 PATH 上的 `cmake`。CMake presets 文件要求 CMake 3.21+；
 使用 VS2026 preset 时需要 PATH 上的 CMake 4.2+。
+CMake binary dir 位于 workspace 根目录的 `build/cxx/`，native 输出目录为
+`build/cxx/output/{Debug,Release}`。Cargo 可执行文件和运行时复制目标仍是
+`build/{debug,release}`。
 
 ## VS2026
 
@@ -52,8 +55,13 @@ cmake `
   "-DCMAKE_CXX_COMPILER=C:/Program Files/LLVM/bin/clang-cl.exe" `
   -G Ninja `
   -S D:\code\Render-Rust-vk-Truvis\engine\cxx `
-  -B D:\code\Render-Rust-vk-Truvis\engine\cxx\build\clang-cl\Debug
+  -B D:\code\Render-Rust-vk-Truvis\build\cxx\clang-cl\Debug
 ```
+
+`compile_commands.json` 的复制由 `truvis-cxx-build` 负责：工具会尝试配置
+`clang-cl-debug` preset，并把生成文件同步到 `build/cxx/compile_commands.json`
+和 `.vscode/compile_commands.json`。该文件只服务 IDE/clangd，clang-cl 或 Ninja
+不可用时不会阻断 Visual Studio preset 构建。
 
 # 更新 vcpkg
 

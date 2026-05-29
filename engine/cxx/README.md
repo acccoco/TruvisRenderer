@@ -8,7 +8,7 @@
 - `mods/truvixx-utils/`：C++ 公共工具 static library，通过 `PathUtils` / `StringUtils` 聚合 Windows 路径、字符串编码和文件系统 helper
 - `truvis-assimp-binding/`：Assimp Rust FFI 声明 crate
 - `truvis-streamline-binding/`：Streamline / DLSS Rust FFI 声明与最小 RAII wrapper
-- `truvis-cxx-build/`：构建驱动 crate，负责选择 CMake preset、构建 Debug/Release，并把 `.lib` / `.dll` / `.pdb` 复制到 Cargo 输出目录（当前为 `build/{profile}`）
+- `truvis-cxx-build/`：构建驱动 crate，负责选择 CMake preset、构建 Debug/Release，把 `.lib` / `.dll` / `.pdb` 复制到 Cargo 输出目录（当前为 `build/{profile}`），并同步 `compile_commands.json`
 - `CMakeLists.txt` / `CMakePresets.json`：CMake 构建配置
 - `vcpkg.json`：manifest 依赖声明
 
@@ -20,7 +20,9 @@
 - `truvis-assimp-binding/build.rs` 只负责 bindgen 生成 Assimp Rust FFI 绑定，并向 Cargo 声明链接 `truvixx-assimp-capi`
 - `truvis-streamline-binding/build.rs` 只负责 bindgen 生成 Streamline C API 绑定，并向 Cargo 声明链接 `truvixx-streamline-capi`
 - `truvis-cxx-build` 会按 profile 复制 Streamline runtime DLL：Debug 使用 `tools/streamline-sdk/bin/x64/development`，Release 使用 `tools/streamline-sdk/bin/x64`；运行时 JSON 从项目维护的 `tools/streamline/` 复制。
+- CMake binary dir 和 native 输出目录位于 workspace 根目录的 `build/cxx/`：preset 中间产物位于 `build/cxx/{vs2022,vs2026,clang-cl}`，`.lib` / `.dll` / `.pdb` 输出位于 `build/cxx/output/{Debug,Release}`。
 - 当前 Cargo 输出目录由 `.cargo/config.toml` 指向 `build/`；native runtime DLL 和 Streamline JSON 会被复制到 `build/{profile}` 和 `build/{profile}/examples`，与最终 executable 同目录。
+- `compile_commands.json` 由 `truvis-cxx-build` 通过 `clang-cl-debug` preset 生成，并同步到 `build/cxx/compile_commands.json` 和 `.vscode/compile_commands.json`；如果 clang-cl 或 Ninja 不可用，只跳过同步，不阻断 Visual Studio 构建。
 - Streamline 接入当前只面向 Windows x64，Rust binding 直接使用 Windows 路径编码和 DLL 加载约定，不保留跨平台 cfg 分支
 - Streamline C++ wrapper 不链接 `sl.interposer.lib`；Rust 侧把 `sl.interposer.dll` 绝对路径传入 C API，C++ 再通过 `LoadLibraryW` / `GetProcAddress` 显式解析 `slInit` / `slShutdown`。
 - Streamline 日志由 C++ wrapper 接住 `logMessageCallback` 后转发给 Rust；详细链路见 `truvis-streamline-binding/README.md`

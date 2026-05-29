@@ -50,7 +50,7 @@ fn config() -> &'static MapConfig {
 /// ```ignore
 /// let model   = TruvisPath::assets("sponza.fbx");
 /// let texture = TruvisPath::resources("sky.jpg"); // assets/resources/sky.jpg
-/// let spv     = TruvisPath::shader_build_spv("rt/raygen.slang");
+/// let spv     = TruvisPath::shader_build_spv("rt/rt_raygen.slang"); // build/shader/rt/rt_raygen.slang.spv
 /// ```
 pub struct TruvisPath;
 
@@ -168,9 +168,14 @@ impl TruvisPath {
         Self::shader_root()
     }
 
-    /// 编译后的 SPIR-V 路径：`engine/shader/.build/<filename>.spv`
+    /// 编译后的 shader 产物目录（`build/shader/`）。
+    pub fn shader_build_dir() -> PathBuf {
+        Self::target().join("shader")
+    }
+
+    /// 编译后的 SPIR-V 路径：`build/shader/<filename>.spv`
     pub fn shader_build_spv(filename: &str) -> String {
-        let path = Self::shader_root().join(".build").join(filename);
+        let path = Self::shader_build_dir().join(filename);
         let mut s = path.to_str().unwrap().to_string();
         s.push_str(".spv");
         s

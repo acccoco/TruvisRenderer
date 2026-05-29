@@ -57,7 +57,7 @@ impl EnvPath {
     /// 编译 shader 的输出路径
     pub fn shader_build_path() -> &'static std::path::Path {
         static PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| TruvisPath::shader_root_path().join(".build"))
+        PATH.get_or_init(TruvisPath::shader_build_dir)
     }
 
     pub fn shader_share_path() -> &'static std::path::Path {

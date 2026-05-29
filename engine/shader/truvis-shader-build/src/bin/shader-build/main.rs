@@ -1,6 +1,6 @@
 //! Shader 编译工具
 //!
-//! 将指定目录下的所有 shader 文件编译为 SPIR-V 文件，输出到 `.build` 目录
+//! 将指定目录下的所有 shader 文件编译为 SPIR-V 文件，输出到 `build/shader` 目录
 
 mod common;
 mod glsl;

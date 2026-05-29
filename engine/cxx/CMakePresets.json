@@ -17,14 +17,14 @@
         "value": "host=x64",
         "strategy": "set"
       },
-      "binaryDir": "${sourceDir}/build/vs2022",
+      "binaryDir": "${sourceDir}/../../build/cxx/vs2022",
       "cacheVariables": {
-        "CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG": "${sourceDir}/build/output/Debug",
-        "CMAKE_LIBRARY_OUTPUT_DIRECTORY_DEBUG": "${sourceDir}/build/output/Debug",
-        "CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG": "${sourceDir}/build/output/Debug",
-        "CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE": "${sourceDir}/build/output/Release",
-        "CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE": "${sourceDir}/build/output/Release",
-        "CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE": "${sourceDir}/build/output/Release"
+        "CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG": "${sourceDir}/../../build/cxx/output/Debug",
+        "CMAKE_LIBRARY_OUTPUT_DIRECTORY_DEBUG": "${sourceDir}/../../build/cxx/output/Debug",
+        "CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG": "${sourceDir}/../../build/cxx/output/Debug",
+        "CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE": "${sourceDir}/../../build/cxx/output/Release",
+        "CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE": "${sourceDir}/../../build/cxx/output/Release",
+        "CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE": "${sourceDir}/../../build/cxx/output/Release"
       }
     },
     {
@@ -39,14 +39,14 @@
         "value": "host=x64",
         "strategy": "set"
       },
-      "binaryDir": "${sourceDir}/build/vs2026",
+      "binaryDir": "${sourceDir}/../../build/cxx/vs2026",
       "cacheVariables": {
-        "CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG": "${sourceDir}/build/output/Debug",
-        "CMAKE_LIBRARY_OUTPUT_DIRECTORY_DEBUG": "${sourceDir}/build/output/Debug",
-        "CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG": "${sourceDir}/build/output/Debug",
-        "CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE": "${sourceDir}/build/output/Release",
-        "CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE": "${sourceDir}/build/output/Release",
-        "CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE": "${sourceDir}/build/output/Release"
+        "CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG": "${sourceDir}/../../build/cxx/output/Debug",
+        "CMAKE_LIBRARY_OUTPUT_DIRECTORY_DEBUG": "${sourceDir}/../../build/cxx/output/Debug",
+        "CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG": "${sourceDir}/../../build/cxx/output/Debug",
+        "CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE": "${sourceDir}/../../build/cxx/output/Release",
+        "CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE": "${sourceDir}/../../build/cxx/output/Release",
+        "CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE": "${sourceDir}/../../build/cxx/output/Release"
       }
     },
     {
@@ -62,24 +62,24 @@
       "name": "clang-cl-debug",
       "displayName": "Clang-CL Debug (x64)",
       "inherits": "clang-cl-base",
-      "binaryDir": "${sourceDir}/build/clang-cl/Debug",
+      "binaryDir": "${sourceDir}/../../build/cxx/clang-cl/Debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/build/output/Debug",
-        "CMAKE_LIBRARY_OUTPUT_DIRECTORY": "${sourceDir}/build/output/Debug",
-        "CMAKE_ARCHIVE_OUTPUT_DIRECTORY": "${sourceDir}/build/output/Debug"
+        "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/../../build/cxx/output/Debug",
+        "CMAKE_LIBRARY_OUTPUT_DIRECTORY": "${sourceDir}/../../build/cxx/output/Debug",
+        "CMAKE_ARCHIVE_OUTPUT_DIRECTORY": "${sourceDir}/../../build/cxx/output/Debug"
       }
     },
     {
       "name": "clang-cl-release",
       "displayName": "Clang-CL Release (x64)",
       "inherits": "clang-cl-base",
-      "binaryDir": "${sourceDir}/build/clang-cl/Release",
+      "binaryDir": "${sourceDir}/../../build/cxx/clang-cl/Release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/build/output/Release",
-        "CMAKE_LIBRARY_OUTPUT_DIRECTORY": "${sourceDir}/build/output/Release",
-        "CMAKE_ARCHIVE_OUTPUT_DIRECTORY": "${sourceDir}/build/output/Release"
+        "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/../../build/cxx/output/Release",
+        "CMAKE_LIBRARY_OUTPUT_DIRECTORY": "${sourceDir}/../../build/cxx/output/Release",
+        "CMAKE_ARCHIVE_OUTPUT_DIRECTORY": "${sourceDir}/../../build/cxx/output/Release"
       }
     }
   ],
