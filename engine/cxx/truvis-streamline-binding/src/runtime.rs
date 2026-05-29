@@ -65,9 +65,16 @@ impl StreamlineRuntime {
 
     /// 初始化 Streamline，并只加载 DLSS Super Resolution feature。
     pub fn init(info: StreamlineInitInfo) -> Result<Self, StreamlineError> {
+        // 这个路径承担两个角色：
+        // 1. 传给 C++ wrapper，由 LoadLibraryW 显式解析 slInit/slShutdown；
+        // 2. 保存在 StreamlineRuntime 中，随后由 Gfx::new 传给 ash::Entry::load_from。
+        // 两边都使用 `plugin_dir/sl.interposer.dll`，可以避免 C++ SL API 和 Rust Vulkan Entry
+        // 误加载到不同目录下的 interposer。
+        let interposer_dll_path = info.plugin_dir.join("sl.interposer.dll");
         log::info!(
-            "Initializing Streamline runtime: plugin_dir={}, log_dir={}, show_console={}, verbose_log={}",
+            "Initializing Streamline runtime: plugin_dir={}, interposer_dll={}, log_dir={}, show_console={}, verbose_log={}",
             info.plugin_dir.display(),
+            interposer_dll_path.display(),
             info.log_dir.display(),
             info.show_console,
             info.verbose_log
@@ -86,10 +93,14 @@ impl StreamlineRuntime {
         })?;
 
         let plugin_dir_utf16 = PathUtils::path_to_utf16_null_terminated(&info.plugin_dir);
+        let interposer_dll_path_utf16 = PathUtils::path_to_utf16_null_terminated(&interposer_dll_path);
         let log_dir_utf16 = PathUtils::path_to_utf16_null_terminated(&info.log_dir);
 
+        // TruvixxSlInitDesc 只在 truvixx_sl_init 调用期间借用这些 UTF-16 buffer。
+        // C++ wrapper 会把路径立即交给 LoadLibraryW / sl::Preferences；当前阶段不在 C++ 中保存路径指针。
         let desc = truvixx::TruvixxSlInitDesc {
             plugin_dir_utf16: plugin_dir_utf16.as_ptr(),
+            interposer_dll_path_utf16: interposer_dll_path_utf16.as_ptr(),
             log_dir_utf16: log_dir_utf16.as_ptr(),
             show_console: u32::from(info.show_console),
             verbose_log: u32::from(info.verbose_log),
@@ -100,6 +111,8 @@ impl StreamlineRuntime {
         if result != 0 {
             let err = StreamlineError::new(result, "slInit");
             log::error!("Streamline runtime initialization failed: {}", err);
+            // 生产路径由 truvis-gfx 在上一层把 Err 转成 panic。这里仍返回 Result，
+            // 方便绑定层保持可诊断边界，并让初始化失败前已经进入队列的 wrapper 日志被正常 flush。
             return Err(err);
         }
 

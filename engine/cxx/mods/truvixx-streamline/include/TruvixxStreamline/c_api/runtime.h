@@ -19,7 +19,7 @@ typedef enum : uint32_t
 /// Rust 侧全局日志回调的签名。
 ///
 /// C++ 只在 slInit 前保存该指针，后续 SL 日志事件通过它直接转发到 Rust。
-/// 不携带 user_data：Rust 侧使用全局 OnceLock<SyncSender> 管理状态。
+/// Rust 侧使用全局 OnceLock<LogSenderState> 管理状态，不向 C++ 暴露对象指针。
 typedef void (*TruvixxSlLogCallback)(TruvixxSlLogType type, const char* message_utf8, uint32_t message_len);
 
 /// Streamline 初始化描述。
@@ -28,7 +28,16 @@ typedef void (*TruvixxSlLogCallback)(TruvixxSlLogType type, const char* message_
 /// C++ 侧不做额外检查，直接转交给 sl::Preferences。
 typedef struct
 {
+    /// Streamline plugin/runtime 搜索目录，传给 `sl::Preferences::pathsToPlugins`。
+    /// 该目录通常也是 executable 所在目录，但语义上仍是 plugin 搜索根。
     const uint16_t* plugin_dir_utf16;
+
+    /// Rust 侧解析出的 `sl.interposer.dll` 绝对路径。
+    /// C++ 只使用该路径显式加载 SL DLL；Rust 后续也用同一路径创建 Vulkan Entry，
+    /// 从而保证 SL API 调用与 Vulkan dispatch 链路落在同一个 interposer 模块上。
+    const uint16_t* interposer_dll_path_utf16;
+
+    /// Streamline 日志与诊断数据目录，传给 `sl::Preferences::pathToLogsAndData`。
     const uint16_t* log_dir_utf16;
     uint32_t show_console;
     uint32_t verbose_log;
@@ -41,7 +50,7 @@ typedef struct
 /// 初始化 Streamline runtime 并加载 DLSS SR feature。
 ///
 /// 返回 sl::Result 的原始 int32_t 值，0 表示成功。
-/// C++ 不维护初始化状态；调用方（Rust）负责防重入。
+/// C++ 侧在 init/shutdown 之间持有 DLL handle 与函数表；调用方（Rust）负责防重入。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_init(const TruvixxSlInitDesc* desc);
 
 /// 关闭 Streamline runtime。

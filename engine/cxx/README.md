@@ -22,6 +22,7 @@
 - `truvis-cxx-build` 会按 profile 复制 Streamline runtime DLL：Debug 使用 `tools/streamline-sdk/bin/x64/development`，Release 使用 `tools/streamline-sdk/bin/x64`；运行时 JSON 从项目维护的 `tools/streamline/` 复制。
 - 当前 Cargo 输出目录由 `.cargo/config.toml` 指向 `build/`；native runtime DLL 和 Streamline JSON 会被复制到 `build/{profile}` 和 `build/{profile}/examples`，与最终 executable 同目录。
 - Streamline 接入当前只面向 Windows x64，Rust binding 直接使用 Windows 路径编码和 DLL 加载约定，不保留跨平台 cfg 分支
+- Streamline C++ wrapper 不链接 `sl.interposer.lib`；Rust 侧把 `sl.interposer.dll` 绝对路径传入 C API，C++ 再通过 `LoadLibraryW` / `GetProcAddress` 显式解析 `slInit` / `slShutdown`。
 - Streamline 日志由 C++ wrapper 接住 `logMessageCallback` 后转发给 Rust；详细链路见 `truvis-streamline-binding/README.md`
 
 ## 约束
@@ -31,6 +32,6 @@
 - 变更 FFI 结构时需同步检查 Rust 侧绑定与内存布局兼容性。
 - C++ 模块内重复的路径、UTF-16 / UTF-8 转换和目录创建逻辑优先放入 `truvixx-utils` 的静态工具 struct，业务模块只保留自身生命周期和 API 语义。
 - Streamline C API 当前只覆盖 `slInit/slShutdown` 生命周期，不负责 RenderGraph pass 或 DLSS evaluate。
-- Streamline callback 可能来自 init/shutdown 或 Vulkan interposer 调用栈；Rust callback 内只做消息复制和入队，最终日志输出在 `streamline-log-drain` 线程完成。
+- Streamline callback 可能来自 init/shutdown 或 Vulkan interposer 调用栈；Rust callback 内只做消息复制和入队，最终日志输出在 `streamline-logger` 线程完成。
 - Assimp scene 加载失败时，`truvixx_scene_load` 可能返回可查询错误的非空句柄；调用方必须通过
   `truvixx_scene_is_loaded` 判断成功状态，并通过 `truvixx_scene_last_error` 读取详细失败原因。

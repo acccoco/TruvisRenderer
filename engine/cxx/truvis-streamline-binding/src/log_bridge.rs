@@ -4,8 +4,8 @@
 //! 该函数只做消息复制和 try_send 入队；真正的日志输出由专用 drain 线程完成，
 //! 避免日志 IO 阻塞 SL/Vulkan 调用栈。
 //!
-//! 线程安全由 `OnceLock<SyncSender>` 保证：sender 初始化一次后只读，
-//! `SyncSender::try_send` 本身是线程安全的。
+//! 线程安全由 `OnceLock<LogSenderState>` 保证：项目生产路径中 Streamline 初始化失败会直接 panic，
+//! 进程内不支持卸载后再次初始化；`SyncSender::try_send` 本身是线程安全的。
 
 use std::{
     ffi::c_char,
@@ -26,6 +26,10 @@ const STREAMLINE_LOG_TARGET: &str = "streamline";
 const STREAMLINE_LOG_QUEUE_CAPACITY: usize = 1024;
 
 /// 全局 sender。由 `StreamlineLogBridge::new()` 写入一次，进程生命周期内不变。
+///
+/// `Gfx::new` 把 Streamline 初始化失败视为启动失败，因此这里不提供同进程重置能力。
+/// 如果未来要支持运行时禁用/重启 Streamline，需要重新审视 C++ runtime、Vulkan interposer
+/// 和所有已创建 GPU root 对象的生命周期，而不只是清空这个 sender。
 static LOG_SENDER: OnceLock<LogSenderState> = OnceLock::new();
 
 struct LogSenderState {
@@ -71,6 +75,8 @@ impl StreamlineLogBridge {
             dropped_count: AtomicUsize::new(0),
         };
 
+        // 先安装全局 sender，再进入 slInit。slInit 内部可能同步触发 log callback，
+        // 动态加载失败时 C++ wrapper 也会通过同一个 callback 输出路径和 Win32 错误。
         LOG_SENDER
             .set(state)
             .map_err(|_| io::Error::new(io::ErrorKind::AlreadyExists, "Streamline log bridge already initialized"))?;
@@ -105,7 +111,8 @@ impl Drop for StreamlineLogBridge {
     fn drop(&mut self) {
         if let Some(state) = LOG_SENDER.get() {
             // 使用 send（阻塞）而不是 try_send，确保 Shutdown 一定送达。
-            // 此时不再有渲染线程产生新日志（slShutdown 已返回），队列应有空位。
+            // 此时 slShutdown 已返回，C++ 不再持有 Rust callback，队列应有空位。
+            // OnceLock 不会被清空；Shutdown 只负责结束本次生命周期的 drain 线程。
             let _ = state.sender.send(LogEntry::Shutdown);
         }
 
@@ -153,6 +160,8 @@ unsafe fn enqueue_log_message(ty: truvixx::TruvixxSlLogType, message_utf8: *cons
         return;
     };
 
+    // C++ 只保证 message 指针在 callback 调用期间有效，所以这里必须立即复制。
+    // 复制之后再入队，drain 线程不接触任何 C++/SL 内存。
     let message = unsafe { copy_streamline_message(message_utf8, message_len) };
     if message.is_empty() {
         return;

@@ -3,14 +3,12 @@
 set(TRUVIS_WORKSPACE_ROOT "${CMAKE_SOURCE_DIR}/../..")
 set(STREAMLINE_SDK_ROOT "${TRUVIS_WORKSPACE_ROOT}/tools/streamline-sdk")
 set(STREAMLINE_INCLUDE_DIR "${STREAMLINE_SDK_ROOT}/include")
-set(STREAMLINE_INTERPOSER_LIB "${STREAMLINE_SDK_ROOT}/lib/x64/sl.interposer.lib")
 
+# 这里只依赖 Streamline 头文件，不链接 sl.interposer.lib。
+# C++ wrapper 会在运行时使用 Rust 传入的绝对路径 LoadLibraryW("sl.interposer.dll")，
+# 避免链接期依赖让 Windows loader 在 truvixx-streamline-capi.dll 加载时提前拉起 SL runtime。
 if (NOT EXISTS "${STREAMLINE_INCLUDE_DIR}/sl.h")
     message(FATAL_ERROR "Streamline SDK not found at ${STREAMLINE_SDK_ROOT}. Run `just fetch-res` first.")
-endif()
-
-if (NOT EXISTS "${STREAMLINE_INTERPOSER_LIB}")
-    message(FATAL_ERROR "Streamline import library not found: ${STREAMLINE_INTERPOSER_LIB}")
 endif()
 
 file(GLOB_RECURSE C_API_SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/c_api/*.cpp)
@@ -35,7 +33,7 @@ target_include_directories(truvixx-streamline-capi PUBLIC
 )
 
 target_link_libraries(truvixx-streamline-capi PRIVATE
-        ${STREAMLINE_INTERPOSER_LIB}
+        truvixx-utils
 )
 
 target_compile_features(truvixx-streamline-capi PUBLIC cxx_std_20)

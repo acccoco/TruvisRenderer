@@ -33,6 +33,33 @@ std::string StringUtils::to_utf8(const std::wstring_view value)
     return result;
 }
 
+std::string StringUtils::win32_error_message(const uint32_t error_code)
+{
+    LPWSTR buffer = nullptr;
+    const DWORD chars = FormatMessageW(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr,
+        static_cast<DWORD>(error_code),
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        reinterpret_cast<LPWSTR>(&buffer),
+        0,
+        nullptr
+    );
+
+    if (chars == 0 || !buffer)
+    {
+        return "Win32 error " + std::to_string(error_code);
+    }
+
+    std::string message = to_utf8(std::wstring_view(buffer, chars));
+    LocalFree(buffer);
+    while (!message.empty() && (message.back() == '\r' || message.back() == '\n' || message.back() == ' '))
+    {
+        message.pop_back();
+    }
+    return message.empty() ? "Win32 error " + std::to_string(error_code) : message;
+}
+
 const wchar_t* StringUtils::utf16_ptr_or_default(const uint16_t* ptr, const std::wstring& fallback)
 {
     static_assert(sizeof(wchar_t) == sizeof(uint16_t), "Windows wchar_t must be UTF-16.");

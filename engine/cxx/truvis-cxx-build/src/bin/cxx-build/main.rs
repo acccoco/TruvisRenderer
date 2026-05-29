@@ -214,8 +214,8 @@ fn copy_streamline_runtime(cargo_output_path: &std::path::Path, build_type: Buil
 
     clean_managed_streamline_runtime(cargo_output_path)?;
 
-    // DLL 必须和最终 executable 位于同一目录。这样 Rust 侧通过 ash 加载 sl.interposer.dll、
-    // C++ wrapper 通过 import library 解析 sl.interposer.dll 时，会命中同一份 runtime。
+    // DLL 必须和最终 executable 位于同一目录。这样 Rust 侧通过 ash 加载 sl.interposer.dll，
+    // C++ wrapper 通过运行时绝对路径加载同一份 sl.interposer.dll。
     let mut copied_files = Vec::new();
     for dll_name in STREAMLINE_REQUIRED_DLLS {
         let source_path = runtime_dir.join(dll_name);

@@ -19,6 +19,12 @@ struct StringUtils
     /// 读取并写入普通日志。该函数只做编码转换，不处理路径规范化。
     static std::string to_utf8(std::wstring_view value);
 
+    /// 将 Win32 错误码转换成可打印的 UTF-8 文本。
+    ///
+    /// Windows loader、路径和文件系统错误通常只返回 `GetLastError()` 错误码；C API wrapper
+    /// 在返回稳定错误码前，可以用该函数补充系统诊断文本。
+    static std::string win32_error_message(uint32_t error_code);
+
     /// 将 Rust FFI 传入的 UTF-16 指针转换成 Windows `wchar_t*`。
     ///
     /// `ptr` 为空时返回 `fallback.c_str()`；不为空时只做指针重解释，不复制数据、不接管所有权。
