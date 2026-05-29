@@ -11,7 +11,7 @@
   以及主应用启用的滚轮锚点移动。
 - `DebugInfoOverlay` / `PipelineControlsOverlay`：UI-only overlay plugin。
 - `RtPipeline`：光追示例与 Truvis 主体 app 共用的 compute/present graph glue，依赖
-  `truvis-app-render-passes` 提供具体 RT 与后处理 pass。
+  `app-render-passes` 提供具体 RT 与后处理 pass。
 
 ## 边界约束
 

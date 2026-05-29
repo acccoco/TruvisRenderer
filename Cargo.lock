@@ -171,18 +171,37 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 name = "app-kit"
 version = "0.1.0"
 dependencies = [
+ "app-render-passes",
  "ash",
  "glam",
  "imgui",
  "itertools 0.10.5",
  "log",
  "truvis-app-frame",
- "truvis-app-render-passes",
  "truvis-gfx",
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-runtime",
+ "truvis-shader-binding",
+ "truvis-utils",
+]
+
+[[package]]
+name = "app-render-passes"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "bytemuck",
+ "glam",
+ "itertools 0.10.5",
+ "log",
+ "truvis-descriptor-layout-macro",
+ "truvis-descriptor-layout-trait",
+ "truvis-gfx",
+ "truvis-path",
+ "truvis-render-foundation",
+ "truvis-render-graph",
  "truvis-shader-binding",
  "truvis-utils",
 ]
@@ -3508,25 +3527,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "truvis-app-render-passes"
-version = "0.1.0"
-dependencies = [
- "ash",
- "bytemuck",
- "glam",
- "itertools 0.10.5",
- "log",
- "truvis-descriptor-layout-macro",
- "truvis-descriptor-layout-trait",
- "truvis-gfx",
- "truvis-path",
- "truvis-render-foundation",
- "truvis-render-graph",
- "truvis-shader-binding",
- "truvis-utils",
-]
-
-[[package]]
 name = "truvis-asset"
 version = "0.1.0"
 dependencies = [
@@ -3607,6 +3607,7 @@ dependencies = [
  "serde_json",
  "tracy-client",
  "truvis-descriptor-layout-trait",
+ "truvis-streamline-binding",
  "vk-mem",
 ]
 

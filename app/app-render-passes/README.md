@@ -1,6 +1,6 @@
-# truvis-app-render-passes
+# app-render-passes
 
-`truvis-app-render-passes` 存放 Truvis 主体 app 与 samples 共享的具体 render pass 实现，
+`app-render-passes` 存放 Truvis 主体 app 与 samples 共享的具体 render pass 实现，
 例如 real-time ray tracing、accumulation、denoise、SDR、blit、resolve 和 Phong shading。
 
 ## 主要职责

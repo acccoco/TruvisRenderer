@@ -30,7 +30,7 @@ members = [
     "engine/cxx/truvis-cxx-build",
     # app
     "app/app-kit",
-    "app/render-passes",
+    "app/app-render-passes",
     "app/truvis",
     "app/samples/hello-triangle",
     "app/samples/shader-toy",
@@ -72,7 +72,7 @@ truvis-app-frame = { path = "engine/app-frame/truvis-app-frame" }
 truvis-winit-app = { path = "engine/app-frame/truvis-winit-app" }
 # app
 app-kit = { path = "app/app-kit" }
-truvis-app-render-passes = { path = "app/render-passes" }
+app-render-passes = { path = "app/app-render-passes" }
 # shader
 truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
 truvis-shader-build = { path = "engine/shader/truvis-shader-build" }

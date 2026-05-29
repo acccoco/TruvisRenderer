@@ -1,5 +1,5 @@
 [package]
-name = "truvis-app-render-passes"
+name = "app-render-passes"
 version = "0.1.0"
 edition = "2024"
 description = "App-layer shared render pass implementations (RT, post-process, etc.)"

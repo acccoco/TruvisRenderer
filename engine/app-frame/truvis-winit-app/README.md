@@ -33,4 +33,4 @@
 - 本模块不实现具体渲染算法，只负责平台与线程编排。
 - 本模块不依赖主体 app 或 samples，调用方通过 `WinitApp::run_app` 注入 `Box<dyn RenderApp>`。
 - App / Plugin 契约、帧骨架与 render loop 定义在 `engine/app-frame/truvis-app-frame`。
-- 渲染运行时在 `engine/render/truvis-render-runtime`，具体 app 复用的 RT / 后处理 pass 在 `app/render-passes`。
+- 渲染运行时在 `engine/render/truvis-render-runtime`，具体 app 复用的 RT / 后处理 pass 在 `app/app-render-passes`。
