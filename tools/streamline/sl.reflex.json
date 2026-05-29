@@ -1,0 +1,5 @@
+{
+  // Reflex frame limiter，单位微秒。当前项目只接 DLSS SR，不复制 sl.reflex.dll，
+  // 因此保留下划线字段作为模板说明。未来启用 Reflex 时再去掉下划线并设置实际值。
+  "_frameLimitUs": 0
+}

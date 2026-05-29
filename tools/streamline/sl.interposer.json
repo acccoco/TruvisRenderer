@@ -1,0 +1,54 @@
+{
+  // 是否启用 Streamline interposer。设为 false 可以完全绕开 SL hook/proxy，
+  // 用来对比集成前后的 CPU 开销或定位 interposer 相关问题。
+  "enableInterposer": true,
+
+  // D3D/DXGI 专用开关：true 表示避免 DXGI factory vtable 注入。
+  // 当前 Truvis 走 Vulkan，不依赖 DXGI proxy；保持 false 与 SDK 示例一致。
+  "useDXGIProxy": false,
+
+  // development runtime 调试开关。true 会加载运行目录中所有可用 SL feature plugin。
+  // 项目默认只通过 sl::Preferences::featuresToLoad 请求 DLSS，避免误加载 FG/RR/NIS 等插件。
+  "loadAllFeatures": false,
+
+  // 若需要临时从 JSON 指定 feature 列表，把字段名前的下划线去掉。
+  // 0 = DLSS SR，1 = Reflex。JSON 指定的列表在 development runtime 下会优先于
+  // sl::Preferences::featuresToLoad；项目默认不让 JSON 接管 feature 选择。
+  "_loadSpecificFeatures": [0],
+
+  // 是否打开 SL 自带 console。Truvis 默认把 SL 日志通过 logMessageCallback 接入 Rust log，
+  // 因此这里关闭 console，避免同一条日志在 SL console 和 Rust log 中重复显示。
+  "showConsole": false,
+
+  // SL 日志级别：0 = off，1 = on，2 = verbose。
+  // Debug 阶段保留 verbose，便于观察 interposer、plugin 和 Vulkan 诊断信息。
+  "logLevel": 2,
+
+  // development runtime 的日志延迟输出时间，单位毫秒。保持 SDK 默认值。
+  "logMessageDelayMs": 5000,
+
+  // true 时 slInit 会等待 debugger attach；只在需要调试 SL 初始化早期问题时开启。
+  "waitForDebugger": false,
+
+  // 启用 SL 内部 Vulkan validation。通常优先使用项目自己的 Vulkan validation 配置；
+  // 只有定位 SL proxy / plugin 内部 Vulkan 行为时再开启。
+  "vkValidation": false,
+
+  // 强制 slGetNativeInterface 总是返回 proxy，主要用于调试 API 拦截路径。
+  // 常规 Vulkan interposer 集成不需要开启。
+  "forceProxies": false,
+
+  // 强制模拟非 NVIDIA 环境，用于验证 unsupported / fallback 逻辑。
+  "forceNonNVDA": false,
+
+  // 跟踪宿主 D3D12 allocation 的调试项；当前 Vulkan 路径不使用。
+  "trackEngineAllocations": false,
+
+  // 若去掉下划线，JSON 会覆盖 sl::Preferences::pathToLogsAndData。
+  // 项目默认由 Rust 侧传入 .temp/streamline，避免 SDK 示例路径 C:/NGXLogs 生效。
+  "_logPath": ".temp/streamline",
+
+  // 若去掉下划线，JSON 会覆盖 sl::Preferences::pathsToPlugins。
+  // 仅在想把 plugin DLL 放到非 executable 目录时使用，且必须填写绝对路径。
+  "_pathToPlugins": "D:/path/to/streamline/plugins"
+}

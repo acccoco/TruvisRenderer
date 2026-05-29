@@ -35,7 +35,6 @@ target_include_directories(truvixx-streamline-capi PUBLIC
 )
 
 target_link_libraries(truvixx-streamline-capi PRIVATE
-        truvixx-utils
         ${STREAMLINE_INTERPOSER_LIB}
 )
 

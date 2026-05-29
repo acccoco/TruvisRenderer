@@ -27,8 +27,8 @@
 - `ViewDesc` / `PreparedView` / `ViewStore` 尚未落地，当前仍是隐式 main view。
 - `RenderPresent` 仍由 `RenderRuntime` 持有；更彻底的 `SurfaceRegistry` / 多窗口 / headless 边界仍是远期方向。
 - `Gfx` 构造注入和进一步去全局访问仍未完成。
-- DLSS / Streamline 接入需要先明确 Vulkan loader、C++ wrapper、RenderGraph opaque pass
-  和 temporal resources 边界。
+- Streamline runtime、C++ wrapper 与 Vulkan interposer 默认 loader 已进入第一阶段实现；
+  DLSS evaluate、RenderGraph opaque pass 和 temporal resources 边界仍待落地。
 - 资产上传仍可继续探索 batched upload / staging thread，避免大量资源同帧 ready 时挤占 render thread。
 - `app-kit` 仍承载 GUI、camera/input、overlay 与 pipeline glue，后续可继续拆分可复用能力。
 

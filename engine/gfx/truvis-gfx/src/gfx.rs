@@ -2,6 +2,7 @@ use std::ffi::CStr;
 use std::rc::Rc;
 
 use ash::vk;
+use truvis_streamline_binding::StreamlineRuntime;
 
 use crate::gfx_core::{GfxCore, VulkanEntrySource};
 use crate::{
@@ -204,6 +205,9 @@ pub struct Gfx {
 
     /// 临时的 graphics command pool，主要用于临时的命令缓冲区
     pub(crate) temp_graphics_command_pool: GfxCommandPool,
+
+    /// Streamline 是进程级 runtime。Gfx 负责让它先于 Vulkan root 初始化，并在 Vulkan root 销毁前关闭。
+    streamline_runtime: Option<StreamlineRuntime>,
 }
 
 // 创建与销毁
@@ -211,16 +215,63 @@ impl Gfx {
     // region init 相关
     const ENGINE_NAME: &'static str = "DruvisIII";
 
+    /// 创建生产路径使用的 Vulkan root owner。
+    ///
+    /// 默认路径先初始化进程级 Streamline runtime，再通过 `sl.interposer.dll` 创建 Vulkan entry。
+    /// 这样后续 Vulkan instance/device 和调用链都处在 Streamline interposer 可见范围内。
     pub fn new(app_name: String, instance_extra_exts: Vec<&'static CStr>) -> Self {
-        Self::new_with_entry_source(app_name, instance_extra_exts, VulkanEntrySource::System)
+        let streamline_runtime = Self::init_streamline_runtime();
+        let vulkan_loader_path = streamline_runtime.vulkan_loader_path();
+        log::info!(
+            "Gfx Streamline enabled: plugin_dir={}, vulkan_loader={}, log_dir={}",
+            streamline_runtime.plugin_dir().display(),
+            vulkan_loader_path.display(),
+            streamline_runtime.log_dir().display()
+        );
+
+        Self::new_internal(
+            app_name,
+            instance_extra_exts,
+            VulkanEntrySource::DllPath(vulkan_loader_path),
+            Some(streamline_runtime),
+        )
     }
 
+    /// 使用显式 Vulkan loader 创建 root owner。
+    ///
+    /// 该入口只负责按传入的 `VulkanEntrySource` 构造 Vulkan root，不自动初始化或持有
+    /// Streamline runtime。测试、工具或未来特殊启动路径如果需要 Streamline，必须在外层
+    /// 自己保证 `slInit -> Vulkan root -> child resources -> slShutdown` 的顺序。
     pub fn new_with_entry_source(
         app_name: String,
         instance_extra_exts: Vec<&'static CStr>,
         entry_source: VulkanEntrySource,
     ) -> Self {
+        Self::new_internal(app_name, instance_extra_exts, entry_source, None)
+    }
+
+    fn init_streamline_runtime() -> StreamlineRuntime {
+        StreamlineRuntime::init_default().unwrap_or_else(|err| {
+            log::error!("Gfx failed to initialize Streamline before Vulkan startup: {}", err);
+            panic!("Gfx failed to initialize Streamline before Vulkan startup: {err}");
+        })
+    }
+
+    fn new_internal(
+        app_name: String,
+        instance_extra_exts: Vec<&'static CStr>,
+        entry_source: VulkanEntrySource,
+        streamline_runtime: Option<StreamlineRuntime>,
+    ) -> Self {
         let _span = tracy_client::span!("Gfx::new");
+        match &entry_source {
+            VulkanEntrySource::System => {
+                log::info!("Gfx loading Vulkan entry from system loader.");
+            }
+            VulkanEntrySource::DllPath(path) => {
+                log::info!("Gfx loading Vulkan entry from DLL: {}", path.display());
+            }
+        }
 
         let gfx_core =
             GfxCore::new_with_entry_source(app_name, Self::ENGINE_NAME.to_string(), instance_extra_exts, entry_source);
@@ -242,6 +293,7 @@ impl Gfx {
             gfx_core,
             vm_allocator: allocator,
             temp_graphics_command_pool: gfx_command_pool,
+            streamline_runtime,
         }
     }
 
@@ -251,10 +303,17 @@ impl Gfx {
             gfx_core,
             vm_allocator,
             temp_graphics_command_pool,
+            streamline_runtime,
         } = self;
 
+        // Gfx 自己的 command pool / allocator 仍是 Vulkan device child，先释放它们；
+        // Streamline SDK 要求 slShutdown 发生在 VkDevice / VkInstance 等 root 销毁前。
         temp_graphics_command_pool.destroy_internal(&gfx_core.gfx_device);
         vm_allocator.destroy();
+        if streamline_runtime.is_some() {
+            log::info!("Gfx shutting down Streamline before Vulkan root destruction.");
+        }
+        drop(streamline_runtime);
         gfx_core.destroy();
     }
 }

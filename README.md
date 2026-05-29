@@ -23,6 +23,9 @@
 
 - Rust 1.85+（workspace crate 使用 Rust 2024 edition）
 - Vulkan SDK 1.3+
+- NVIDIA DLSS-capable GPU 与匹配驱动。当前主应用默认在 `Gfx` 启动时初始化
+  Streamline / DLSS runtime，并通过 `sl.interposer.dll` 创建 Vulkan entry；非 NVIDIA
+  或非 DLSS-capable 机器不作为当前阶段支持目标。
 - CMake 3.21+（使用 VS2026 preset 时需要 PATH 上的 CMake 4.2+）
 - Visual Studio 2022+ 并安装 MSVC C++ 工具链（Windows；`cxx-build` 会优先检测 VS2026，再回退到 VS2022）
 - [`just`](https://github.com/casey/just)（推荐入口；底层仍调用 Cargo / CMake）

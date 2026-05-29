@@ -9,6 +9,13 @@
 本 crate 只面向 Windows x64，不提供跨平台抽象。Streamline SDK 的路径参数使用
 null-terminated UTF-16，Vulkan loader 也按 Windows DLL 路径处理。
 
+## 源码边界
+
+- `src/lib.rs`：crate 入口，只声明模块并维持对外 re-export，不放具体生命周期实现。
+- `src/config.rs`：Streamline 初始化参数、默认路径和 Vulkan loader 路径 helper。
+- `src/runtime.rs`：`StreamlineRuntime`、`StreamlineError` 和 `slInit/slShutdown` RAII 生命周期。
+- `src/log_bridge.rs`：Streamline log callback 到 Rust `log` facade 的异步桥接。
+
 ## 日志链路
 
 Streamline 日志不是由 C++ wrapper 直接输出，而是被转成 Rust 日志事件：

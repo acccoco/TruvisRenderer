@@ -1,9 +1,9 @@
-use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
 use app_render_passes::blit_pass::{BlitPass, BlitRgPass};
 use app_render_passes::denoise_accum_pass::{DenoiseAccumPass, DenoiseAccumRgPass};
 use app_render_passes::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};
 use app_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
 use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
+use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;

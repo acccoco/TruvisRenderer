@@ -34,6 +34,7 @@ impl BuildType {
 }
 
 // 第一阶段只接 DLSS Super Resolution，所以只复制 SL core + DLSS SR 所需 DLL。
+// NvLowLatencyVk.dll 是 SL Vulkan backend 启动时加载的低延迟 helper，不表示启用 Reflex feature。
 // Frame Generation、Ray Reconstruction、Reflex、NIS、DirectSR 等 feature 的 DLL 不在这里出现；
 // 后续启用新 feature 时，应先扩展 C++ wrapper 的 featuresToLoad，再同步扩展这个清单。
 const STREAMLINE_REQUIRED_DLLS: &[&str] = &[
@@ -42,6 +43,7 @@ const STREAMLINE_REQUIRED_DLLS: &[&str] = &[
     "sl.pcl.dll",
     "sl.dlss.dll",
     "nvngx_dlss.dll",
+    "NvLowLatencyVk.dll",
 ];
 
 // Debug runtime 可能依赖 PIX runtime。该 DLL 在 development 目录中存在时复制，不存在时跳过。
@@ -67,7 +69,7 @@ fn run_cmake(cmake_project: &std::path::Path, args: &[&str], action: &str) -> Re
     ))
 }
 
-/// 清理 CMake 输出目录，避免已经移除的 C++ target 残留产物继续被复制到 Cargo target。
+/// 清理 CMake 输出目录，避免已经移除的 C++ target 残留产物继续被复制到 Cargo 输出目录。
 fn clean_cmake_output(cmake_project: &std::path::Path, build_type: BuildType) -> Result<(), String> {
     let cmake_output_path = cmake_project.join("build").join("output").join(build_type.cmake_output_dir());
     if !cmake_output_path.exists() {
@@ -79,7 +81,7 @@ fn clean_cmake_output(cmake_project: &std::path::Path, build_type: BuildType) ->
         .map_err(|err| format!("无法清理 CMake 输出目录 {}: {err}", cmake_output_path.display()))
 }
 
-/// 清理 Rust target 里的旧 Truvis C++ 产物，确保移除的 target 不会以陈旧 DLL/lib 形式残留。
+/// 清理 Cargo 输出目录里的旧 Truvis C++ 产物，确保移除的 C++ target 不会以陈旧 DLL/lib 形式残留。
 fn clean_cargo_cxx_artifacts(cargo_output_path: &std::path::Path) {
     let dirs = [cargo_output_path.to_path_buf(), cargo_output_path.join("examples")];
     for dir in dirs {
@@ -106,7 +108,7 @@ fn clean_cargo_cxx_artifacts(cargo_output_path: &std::path::Path) {
 
 fn clean_managed_streamline_runtime(cargo_output_path: &std::path::Path) -> Result<(), String> {
     // 只清理本函数族管理的 Streamline runtime 文件，避免误删其他工具或用户临时放在
-    // target 目录里的 DLL。这里包括固定 DLL 清单和 SDK scripts 里的 sl.*.json。
+    // Cargo 输出目录里的 DLL。这里包括固定 DLL 清单和 tools/streamline 里的 sl.*.json。
     let dirs = [cargo_output_path.to_path_buf(), cargo_output_path.join("examples")];
     for dir in dirs {
         if !dir.exists() {
@@ -123,7 +125,7 @@ fn clean_managed_streamline_runtime(cargo_output_path: &std::path::Path) -> Resu
             let is_required_dll = STREAMLINE_REQUIRED_DLLS.iter().any(|name| name.eq_ignore_ascii_case(&file_name));
             let is_debug_optional_dll =
                 STREAMLINE_DEBUG_OPTIONAL_DLLS.iter().any(|name| name.eq_ignore_ascii_case(&file_name));
-            let is_streamline_json = file_name.starts_with("sl.") && file_name.ends_with(".json");
+            let is_streamline_json = is_streamline_json_file_name(&file_name);
 
             if !is_required_dll && !is_debug_optional_dll && !is_streamline_json {
                 continue;
@@ -135,6 +137,10 @@ fn clean_managed_streamline_runtime(cargo_output_path: &std::path::Path) -> Resu
     }
 
     Ok(())
+}
+
+fn is_streamline_json_file_name(file_name: &str) -> bool {
+    file_name.starts_with("sl.") && file_name.ends_with(".json")
 }
 
 fn copy_file_to_cargo_outputs(
@@ -150,6 +156,49 @@ fn copy_file_to_cargo_outputs(
     })?;
 
     Ok(())
+}
+
+fn copy_streamline_json_configs(cargo_output_path: &std::path::Path) -> Result<Vec<String>, String> {
+    let configs_dir = TruvisPath::tools_path().join("streamline");
+    if !configs_dir.exists() {
+        return Err(format!(
+            "Streamline 配置目录不存在: {}。请提交 tools/streamline 下的 sl.*.json 模板。",
+            configs_dir.display()
+        ));
+    }
+
+    let mut config_paths = Vec::new();
+    for entry in std::fs::read_dir(&configs_dir)
+        .map_err(|err| format!("无法读取 Streamline 配置目录 {}: {err}", configs_dir.display()))?
+    {
+        let entry = entry.map_err(|err| format!("无法读取 Streamline 配置目录项: {err}"))?;
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if !is_streamline_json_file_name(&file_name) {
+            continue;
+        }
+
+        config_paths.push(entry.path());
+    }
+    config_paths.sort();
+
+    if config_paths.is_empty() {
+        return Err(format!("Streamline 配置目录 {} 中没有 sl.*.json 文件", configs_dir.display()));
+    }
+
+    let mut copied_files = Vec::new();
+    for source_path in config_paths {
+        copy_file_to_cargo_outputs(&source_path, cargo_output_path)?;
+        copied_files.push(
+            source_path
+                .file_name()
+                .expect("Streamline config path should have file name")
+                .to_string_lossy()
+                .to_string(),
+        );
+    }
+
+    Ok(copied_files)
 }
 
 fn copy_streamline_runtime(cargo_output_path: &std::path::Path, build_type: BuildType) -> Result<Vec<String>, String> {
@@ -191,25 +240,7 @@ fn copy_streamline_runtime(cargo_output_path: &std::path::Path, build_type: Buil
         }
     }
 
-    let scripts_dir = streamline_sdk_root.join("scripts");
-    if !scripts_dir.exists() {
-        return Err(format!("Streamline scripts 目录不存在: {}", scripts_dir.display()));
-    }
-
-    for entry in std::fs::read_dir(&scripts_dir)
-        .map_err(|err| format!("无法读取 Streamline scripts 目录 {}: {err}", scripts_dir.display()))?
-    {
-        let entry = entry.map_err(|err| format!("无法读取 Streamline scripts 目录项: {err}"))?;
-        let source_path = entry.path();
-        if source_path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-
-        // SDK 的 CMake 规则也是复制 scripts 下所有 JSON。这里保持一致，避免遗漏
-        // interposer/common/reflex 等 SL runtime 启动时会读取的配置文件。
-        copy_file_to_cargo_outputs(&source_path, cargo_output_path)?;
-        copied_files.push(entry.file_name().to_string_lossy().to_string());
-    }
+    copied_files.extend(copy_streamline_json_configs(cargo_output_path)?);
 
     Ok(copied_files)
 }
@@ -223,7 +254,7 @@ fn copy_to_rust(
     let cmake_output_path = cmake_project.join("build").join("output").join(build_type.cmake_output_dir());
     let cargo_output_path = cargo_target_dir.join(build_type.cargo_output_dir());
 
-    // 确保 target/{profile} 和 target/{profile}/examples 目录存在。
+    // 确保 Cargo 输出目录及其 examples 子目录存在；当前配置下是 build/{profile}。
     std::fs::create_dir_all(&cargo_output_path)
         .map_err(|err| format!("无法创建 Cargo 输出目录 {}: {err}", cargo_output_path.display()))?;
     std::fs::create_dir_all(cargo_output_path.join("examples"))

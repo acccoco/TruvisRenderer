@@ -6,6 +6,7 @@ description = "Truvis 的 GFX 层，提供 Vulkan 的封装和抽象"
 
 [dependencies]
 truvis-descriptor-layout-trait = { workspace = true }
+truvis-streamline-binding = { workspace = true }
 
 
 ash = { workspace = true }

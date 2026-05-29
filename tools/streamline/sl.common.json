@@ -1,0 +1,40 @@
+{
+  // NGX 测试服务地址，仅 NVIDIA 内部或本地 spoof 服务调试时使用。
+  // 保持下划线字段，避免 development runtime 误读一个不存在的测试服务路径。
+  "_testServer": "D:/path/to/nvgs-server-spoof",
+
+  // 是否允许 OTA 更新。当前项目固定使用 tools/streamline-sdk 中的 SDK 版本，
+  // 关闭 OTA 可以避免运行时下载的插件影响复现。
+  "enableOTA": false,
+
+  // NGX 日志级别：0 = off，1 = on，2 = verbose。
+  // NGX 日志会被重定向进 Streamline 日志；默认关闭以减少噪声。
+  "logLevelNGX": 0,
+
+  // 允许 sl.common 管理 NGX/SL 的 VRAM budget。保持 SDK 默认行为。
+  "manageVRAMBudget": true,
+
+  // 低显存场景模拟开关，只用于压力测试 fallback / 资源管理逻辑。
+  "emulateLowVRAMScenario": false,
+
+  // SL development runtime 的调试热键。key 使用 Windows virtual-key code：
+  // 36 = Home，45 = Insert。默认保留 SDK 示例热键，便于临时打开 stats/debug 面板。
+  "keys": [
+    {
+      // Ctrl + Shift + Home：切换 stats。
+      "alt": false,
+      "ctrl": true,
+      "shift": true,
+      "key": 36,
+      "id": "stats"
+    },
+    {
+      // Ctrl + Shift + Insert：切换 debug。
+      "alt": false,
+      "ctrl": true,
+      "shift": true,
+      "key": 45,
+      "id": "debug"
+    }
+  ]
+}
