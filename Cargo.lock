@@ -196,6 +196,7 @@ dependencies = [
  "glam",
  "itertools 0.10.5",
  "log",
+ "slotmap",
  "truvis-descriptor-layout-macro",
  "truvis-descriptor-layout-trait",
  "truvis-gfx",
@@ -204,6 +205,7 @@ dependencies = [
  "truvis-render-graph",
  "truvis-shader-binding",
  "truvis-utils",
+ "vk-mem",
 ]
 
 [[package]]

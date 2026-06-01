@@ -31,7 +31,7 @@
 - `GfxResourceManager` 是 manager-owned image/view 的唯一释放入口，负责 view 先于 image 销毁。
 - 延迟销毁通过 frame id 入队，`cleanup()` 到达安全帧后释放，并记录 `DestroyReason::DeferredCleanup`。
 - resize / shutdown / immediate release 必须使用带 `DestroyReason` 的 release API，便于把日志关联到项目资源名、raw Vulkan handle 与 manager handle。
-- `FifBuffers` 只保存 manager handle；resize 和 shutdown 时先注销 bindless，再通过 `GfxResourceManager` 释放 image，view 随 image 释放。
+- `FifBuffers` 只保存帧基础设施资源（single_frame_rt、accum、depth、render_target）的 manager handle；管线特有资源（如 GBuffer）由 app 层的具体管线自行管理。resize 和 shutdown 时先注销 bindless，再通过 `GfxResourceManager` 释放 image，view 随 image 释放。
 - `BindlessManager`、`RenderSamplerManager` 等 manager 只依赖自身 descriptor binding 契约和窄 target，不以 `GlobalDescriptorSets` 作为更新入口。
 - `CmdAllocator`、`GlobalDescriptorSets`、`RenderSamplerManager` 等 owner 在 shutdown 时接收 phase Ctx 并显式销毁自身持有的 GPU 资源。
 - `Drop` 只保留诊断职责，不作为 Vulkan/VMA 释放路径。

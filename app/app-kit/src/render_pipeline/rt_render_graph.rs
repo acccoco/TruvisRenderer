@@ -1,16 +1,14 @@
 use app_render_passes::blit_pass::{BlitPass, BlitRgPass};
 use app_render_passes::denoise_accum_pass::{DenoiseAccumPass, DenoiseAccumRgPass};
+use app_render_passes::gbuffer::GBuffer;
 use app_render_passes::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};
 use app_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
 use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
-use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
+use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
-use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxResourceCtx};
-use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
-use truvis_render_foundation::cmd_allocator::CmdAllocator;
-use truvis_render_foundation::fif_buffer::FifBuffers;
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_render_foundation::frame_counter::FrameCounter;
-use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
+use truvis_render_foundation::gpu_store::GpuStore;
 use truvis_render_foundation::pipeline_settings::FrameLabel;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 
@@ -25,31 +23,43 @@ struct RtPipelineInner {
     blit_pass: BlitPass,
     sdr_pass: SdrPass,
     resolve_pass: ResolvePass,
+    gbuffer: GBuffer,
     compute_cmds: [GfxCommandBuffer; FrameCounter::fif_count()],
     present_cmds: [GfxCommandBuffer; FrameCounter::fif_count()],
 }
 
 impl RtPipelineInner {
-    fn new(
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        device_info_ctx: GfxDeviceInfoCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
-        global_descriptor_sets: &GlobalDescriptorSets,
-        swapchain_image_info: GfxSwapchainImageInfo,
-        cmd_allocator: &mut CmdAllocator,
-    ) -> Self {
-        let realtime_rt_pass =
-            RealtimeRtPass::new(resource_ctx, device_ctx, device_info_ctx, immediate_ctx, global_descriptor_sets);
-        let denoise_accum_pass = DenoiseAccumPass::new(device_ctx, global_descriptor_sets);
-        let blit_pass = BlitPass::new(device_ctx, global_descriptor_sets);
-        let sdr_pass = SdrPass::new(device_ctx, global_descriptor_sets);
-        let resolve_pass = ResolvePass::new(device_ctx, global_descriptor_sets, swapchain_image_info.image_format);
+    fn new(ctx: &mut PluginInitCtx) -> Self {
+        let realtime_rt_pass = RealtimeRtPass::new(
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            ctx.device_info_ctx,
+            ctx.immediate_ctx,
+            &ctx.gpu_store.global_descriptor_sets,
+        );
+        let denoise_accum_pass = DenoiseAccumPass::new(ctx.device_ctx, &ctx.gpu_store.global_descriptor_sets);
+        let blit_pass = BlitPass::new(ctx.device_ctx, &ctx.gpu_store.global_descriptor_sets);
+        let sdr_pass = SdrPass::new(ctx.device_ctx, &ctx.gpu_store.global_descriptor_sets);
+        let resolve_pass = ResolvePass::new(
+            ctx.device_ctx,
+            &ctx.gpu_store.global_descriptor_sets,
+            ctx.present.swapchain_image_info().image_format,
+        );
+
+        let gbuffer = GBuffer::new(
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            ctx.immediate_ctx,
+            &mut ctx.gpu_store.gfx_resource_manager,
+            &mut ctx.gpu_store.bindless_manager,
+            ctx.swapchain_image_info.image_extent,
+            &ctx.gpu_store.frame_counter,
+        );
 
         let compute_cmds = FrameCounter::frame_labes()
-            .map(|frame_label| cmd_allocator.alloc_command_buffer(device_ctx, frame_label, "rt-compute-subgraph"));
+            .map(|frame_label| ctx.cmd_allocator.alloc_command_buffer(ctx.device_ctx, frame_label, "rt-compute-subgraph"));
         let present_cmds = FrameCounter::frame_labes()
-            .map(|frame_label| cmd_allocator.alloc_command_buffer(device_ctx, frame_label, "rt-present-subgraph"));
+            .map(|frame_label| ctx.cmd_allocator.alloc_command_buffer(ctx.device_ctx, frame_label, "rt-present-subgraph"));
 
         Self {
             realtime_rt_pass,
@@ -57,36 +67,50 @@ impl RtPipelineInner {
             blit_pass,
             sdr_pass,
             resolve_pass,
+            gbuffer,
             compute_cmds,
             present_cmds,
         }
     }
 
-    fn destroy(self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
+    fn destroy(mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>, gpu_store: &mut GpuStore) {
         self.realtime_rt_pass.destroy(resource_ctx, device_ctx);
         self.denoise_accum_pass.destroy(device_ctx);
         self.blit_pass.destroy(device_ctx);
         self.sdr_pass.destroy(device_ctx);
         self.resolve_pass.destroy(device_ctx);
+        self.gbuffer.destroy(
+            resource_ctx,
+            device_ctx,
+            &mut gpu_store.bindless_manager,
+            &mut gpu_store.gfx_resource_manager,
+            truvis_gfx::resources::lifecycle::DestroyReason::Shutdown,
+        );
     }
 }
 
 impl Plugin for RtPipeline {
     fn init(&mut self, ctx: &mut PluginInitCtx) {
-        self.inner = Some(RtPipelineInner::new(
-            ctx.resource_ctx,
-            ctx.device_ctx,
-            ctx.device_info_ctx,
-            ctx.immediate_ctx,
-            &ctx.gpu_store.global_descriptor_sets,
-            ctx.present.swapchain_image_info(),
-            ctx.cmd_allocator,
-        ));
+        self.inner = Some(RtPipelineInner::new(ctx));
+    }
+
+    fn on_resize(&mut self, ctx: &mut PluginResizeCtx) {
+        if let Some(inner) = self.inner.as_mut() {
+            inner.gbuffer.rebuild(
+                ctx.resource_ctx,
+                ctx.device_ctx,
+                ctx.immediate_ctx,
+                &mut ctx.gpu_store.bindless_manager,
+                &mut ctx.gpu_store.gfx_resource_manager,
+                ctx.gpu_store.frame_settings.frame_extent,
+                &ctx.gpu_store.frame_counter,
+            );
+        }
     }
 
     fn shutdown(&mut self, ctx: &mut PluginShutdownCtx<'_>) {
         if let Some(inner) = self.inner.take() {
-            inner.destroy(ctx.resource_ctx, ctx.device_ctx);
+            inner.destroy(ctx.resource_ctx, ctx.device_ctx, ctx.gpu_store);
         }
     }
 }
@@ -120,32 +144,33 @@ impl RtPipeline {
             None,
         );
 
-        let (gbuffer_a_image_handle, gbuffer_a_view_handle) = fif_buffers.gbuffer_a_handle(frame_label);
+        let gbuffer = &inner.gbuffer;
+        let (gbuffer_a_image_handle, gbuffer_a_view_handle) = gbuffer.a_handle(frame_label);
         let gbuffer_a = rg_builder.import_image(
             "gbuffer-a",
             gbuffer_a_image_handle,
             Some(gbuffer_a_view_handle),
-            FifBuffers::gbuffer_a_format(),
+            GBuffer::A_FORMAT,
             RgImageState::UNDEFINED_TOP,
             None,
         );
 
-        let (gbuffer_b_image_handle, gbuffer_b_view_handle) = fif_buffers.gbuffer_b_handle(frame_label);
+        let (gbuffer_b_image_handle, gbuffer_b_view_handle) = gbuffer.b_handle(frame_label);
         let gbuffer_b = rg_builder.import_image(
             "gbuffer-b",
             gbuffer_b_image_handle,
             Some(gbuffer_b_view_handle),
-            FifBuffers::gbuffer_b_format(),
+            GBuffer::B_FORMAT,
             RgImageState::UNDEFINED_TOP,
             None,
         );
 
-        let (gbuffer_c_image_handle, gbuffer_c_view_handle) = fif_buffers.gbuffer_c_handle(frame_label);
+        let (gbuffer_c_image_handle, gbuffer_c_view_handle) = gbuffer.c_handle(frame_label);
         let gbuffer_c = rg_builder.import_image(
             "gbuffer-c",
             gbuffer_c_image_handle,
             Some(gbuffer_c_view_handle),
-            FifBuffers::gbuffer_c_format(),
+            GBuffer::C_FORMAT,
             RgImageState::UNDEFINED_TOP,
             None,
         );

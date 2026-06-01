@@ -19,3 +19,5 @@ glam = { workspace = true }
 log = { workspace = true }
 itertools = { workspace = true }
 bytemuck = { workspace = true }
+vk-mem = { workspace = true }
+slotmap = { workspace = true }
