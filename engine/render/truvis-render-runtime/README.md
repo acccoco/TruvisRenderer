@@ -22,7 +22,7 @@
 
 - `World` 承载 CPU 侧 `SceneManager` 与 `AssetHub`，供 update/prepare 阶段读取或修改。
 - `GpuStore` 承载 GPU 侧 frame state、global descriptors、bindless、manager-owned resources、
-  FIF buffers、frame settings 和 pipeline settings。
+  frame settings 和 pipeline settings。
 - `GpuScene` 是 runtime 私有的 scene GPU 翻译层，持有 scene/instance/geometry/light/indirect
   buffer、TLAS 和当前 FIF 的 raster draw cache；render pass 只通过 `RenderSceneView` 读取它。
 - `SkyBridge` 请求默认 sky 通过 `AssetHub` 异步加载，并持有常驻纯色 fallback sky；
@@ -56,13 +56,13 @@
 ## 生命周期
 
 - `RenderRuntime::new` 创建与窗口无关的 runtime root state：`Gfx`、`World`、`GpuStore`、
-  asset manager、`SkyBridge`、bridge、`GpuScene`、FIF 资源、global descriptors、sampler 和 per-frame buffer。
+  asset manager、`SkyBridge`、bridge、`GpuScene`、global descriptors、sampler 和 per-frame buffer。
 - `RenderRuntime::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
   swapchain 与 `SwapchainPresenter`，并返回 init Ctx 供 app/plugin 创建长期 GPU 资源。
 - `begin_frame` 是每帧资源回收入口：推进 runtime 私有帧计时器、等待当前 FIF slot、重置 frame command pool、
   清理延迟释放队列、推进 bindless/material/instance frame token，并在 `RenderRuntime`
   内部分发 AssetHub 事件。
-- `update_phase` 同步 frame settings、acquire 当前 swapchain image，并返回 CPU update Ctx。
+- `update_phase` 同步 frame settings、acquire 当前 swapchain image，并返回 CPU update Ctx。具体窗口尺寸 render target 由 app/plugin 在 init/resize/shutdown 阶段管理。
 - `prepare(render_view)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 app 提供的 `RenderView`，
   在 `RenderRuntime` 内部同步 material/instance/mesh/texture 状态、上传 GPU scene
   和 per-frame data，再刷新 per-frame descriptor。
@@ -74,7 +74,7 @@
 - `present` 只提交当前 swapchain image 到 present queue；渲染命令提交由上层 render graph 完成。
 - `end_frame` 推进 frame counter，切换下一帧的 FIF label。
 - `wait_idle` 在 app/plugin shutdown 前调用，确保上层资源释放时不再被 GPU command 引用。
-- `destroy` 等待 GPU idle，依次释放 present、FIF、scene/assets、SkyBridge、GPU scene、mesh manager、
+- `destroy` 等待 GPU idle，依次释放 present、scene/assets、SkyBridge、GPU scene、mesh manager、
   command allocator、resource manager、sync、sampler、descriptor 等资源，最后销毁 `Gfx`。
 
 ## Prepare 数据流
@@ -110,9 +110,9 @@
 ## Tracy 初始化埋点
 
 - `RenderRuntime::new` 使用一级 span 标记主要初始化阶段，例如 `Gfx`、manager、asset manager、
-  SkyBridge、material bridge、GPU scene、FIF buffers、global descriptors、sampler、per-frame buffer 和 command buffer。
+  SkyBridge、material bridge、GPU scene、global descriptors、sampler、per-frame buffer 和 command buffer。
 - 启动耗时较明显的下层构造函数继续使用二级 span 细分，例如 `AssetTextureManager::new`、
-  `SkyBridge::new`、`GpuScene::new`、`FifBuffers::new`、`GlobalDescriptorSets::new`、`CmdAllocator::new`
+  `SkyBridge::new`、`GpuScene::new`、`GlobalDescriptorSets::new`、`CmdAllocator::new`
   和 `RenderSamplerManager::new`。
 - `SceneManager::new` 不在 `truvis-world` 内部添加 Tracy 依赖；它只通过
   `RenderRuntime::new/scene_manager` 这个一级 span 表示。

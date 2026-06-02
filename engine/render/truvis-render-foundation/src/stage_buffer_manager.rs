@@ -57,7 +57,12 @@ impl StageBufferManager {
         self.buffers[frame_idx].push(stage_buffer);
     }
 
-    pub fn clear_fif_buffers(&mut self, ctx: GfxResourceCtx<'_>, frame_counter: &FrameCounter) {
+    /// 清理当前 frame label 持有的 staging buffers。
+    ///
+    /// 这里的 “current frame” 指 `FrameCounter` 当前槽位已经通过 timeline 等待确认安全复用；
+    /// 它不是 render target 意义上的 app-owned FIF resources，因此命名避免继续使用
+    /// `fif_buffers`，防止和窗口尺寸图像 owner 混淆。
+    pub fn clear_current_frame_buffers(&mut self, ctx: GfxResourceCtx<'_>, frame_counter: &FrameCounter) {
         let frame_idx = *frame_counter.frame_label();
 
         for buffer in self.buffers[frame_idx].drain(..) {

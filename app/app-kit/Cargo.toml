@@ -20,3 +20,5 @@ glam = { workspace = true }
 imgui = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
+slotmap = { workspace = true }
+vk-mem = { workspace = true }

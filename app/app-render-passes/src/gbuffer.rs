@@ -57,7 +57,6 @@ impl GBuffer {
         extent: vk::Extent2D,
         frame_counter: &FrameCounter,
     ) -> Self {
-
         let (a_images, a_views) = Self::create_channel_images(
             resource_ctx,
             device_ctx,
@@ -221,10 +220,7 @@ impl GBuffer {
         extent: vk::Extent2D,
         frame_counter: &FrameCounter,
         name_prefix: &str,
-    ) -> (
-        [GfxImageHandle; FrameCounter::fif_count()],
-        [GfxImageViewHandle; FrameCounter::fif_count()],
-    ) {
+    ) -> ([GfxImageHandle; FrameCounter::fif_count()], [GfxImageViewHandle; FrameCounter::fif_count()]) {
         let create_one_image = |frame_label: FrameLabel| {
             let name = format!("{}-{}-{}", name_prefix, frame_label, frame_counter.frame_id());
             let image_create_info = GfxImageCreateInfo::new_image_2d_info(

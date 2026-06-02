@@ -15,7 +15,6 @@ use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuff
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_render_foundation::bindless_manager::BindlessManager;
 use truvis_render_foundation::cmd_allocator::CmdAllocator;
-use truvis_render_foundation::fif_buffer::FifBuffers;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::global_descriptor_sets::{GlobalDescriptorSets, PerFrameDescriptorBinding};
@@ -98,7 +97,7 @@ impl RenderRuntime {
     /// 创建不依赖窗口系统的 runtime root state。
     ///
     /// 这里会初始化 `Gfx`、CPU `World`、GPU `GpuStore`、资产管理器、SkyBridge、
-    /// material/instance bridge、私有 `GpuScene`、FIF 资源和全局描述符，但不会创建 surface/swapchain。窗口相关资源必须等
+    /// material/instance bridge、私有 `GpuScene` 和全局描述符，但不会创建 surface/swapchain。窗口相关资源必须等
     /// `init_after_window` 收到平台层 raw handle 后再创建。
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
         let _span = tracy_client::span!("RenderRuntime::new");
@@ -110,6 +109,9 @@ impl RenderRuntime {
 
         let frame_settings = {
             let _span = tracy_client::span!("RenderRuntime::new/frame_settings");
+            // runtime 创建时还没有 surface/swapchain，只能先保存格式和一个占位 extent。
+            // 真实窗口尺寸会在 `init_after_window` 创建 present 后同步，并交给 app/plugin
+            // 初始化自己的 window-sized render targets。
             FrameSettings {
                 color_format: vk::Format::R32G32B32A32_SFLOAT,
                 depth_format: Self::get_depth_format(gfx.device_info_ctx()),
@@ -188,18 +190,6 @@ impl RenderRuntime {
             let _span = tracy_client::span!("RenderRuntime::new/gpu_scene");
             GpuScene::new(gfx.resource_ctx())
         };
-        let fif_buffers = {
-            let _span = tracy_client::span!("RenderRuntime::new/fif_buffers");
-            FifBuffers::new(
-                gfx.resource_ctx(),
-                gfx.device_ctx(),
-                gfx.immediate_ctx(),
-                &frame_settings,
-                &mut bindless_manager,
-                &mut gfx_resource_manager,
-                &frame_counter,
-            )
-        };
 
         let render_descriptor_sets = {
             let _span = tracy_client::span!("RenderRuntime::new/global_descriptors");
@@ -266,7 +256,6 @@ impl RenderRuntime {
                     bindless_manager,
                     global_descriptor_sets: render_descriptor_sets,
                     gfx_resource_manager,
-                    fif_buffers,
                     sampler_manager,
                     per_frame_data_buffers,
 
@@ -307,12 +296,12 @@ impl RenderRuntime {
     /// 销毁 runtime 拥有的所有 GPU/CPU 子资源，并最后销毁 `Gfx` root owner。
     ///
     /// 调用前应已经完成 app/plugin shutdown。销毁顺序刻意从依赖 `Gfx` 的子资源开始，
-    /// 先释放 present/FIF/asset/GpuScene/command/descriptor 等对象，最后销毁 `Gfx`，
+    /// 先释放 present/asset/GpuScene/command/descriptor 等对象，最后销毁 `Gfx`，
     /// 这样所有 Vulkan wrapper 都能通过有效的 typed Ctx 显式释放。
     pub fn destroy(mut self) {
         self.gfx.wait_idel();
 
-        // present 持有 surface/swapchain 与 WSI image wrapper，必须先释放；后续 FIF 和 scene
+        // present 持有 surface/swapchain 与 WSI image wrapper，必须先释放；后续 scene
         // 资源销毁不再需要访问当前窗口 target。
         if let Some(swapchain_presenter) = self.swapchain_presenter.take() {
             swapchain_presenter.destroy(
@@ -324,15 +313,6 @@ impl RenderRuntime {
         }
 
         self.ray_cast_service.destroy_mut(self.gfx.resource_ctx(), self.gfx.device_ctx());
-        // FIF render targets 和 bindless/resource manager 存在交叉引用，统一从 GpuStore
-        // 的 owner 侧释放，保证 view/bindless 句柄先退出全局表。
-        self.gpu_store.fif_buffers.destroy_mut(
-            self.gfx.resource_ctx(),
-            self.gfx.device_ctx(),
-            &mut self.gpu_store.bindless_manager,
-            &mut self.gpu_store.gfx_resource_manager,
-            DestroyReason::Shutdown,
-        );
         // CPU scene/asset 与 render-side bridge 按依赖方向释放：先停止 scene runtime，
         // 再释放 material/texture/mesh/GpuScene 等 GPU 翻译缓存。
         self.world.scene_manager.destroy();
@@ -490,7 +470,7 @@ impl RenderRuntime {
 
     /// 推进帧计数器。
     ///
-    /// 所有依赖 `FrameCounter` 的 FIF 资源都在此之后切到下一帧标签；因此必须放在
+    /// 所有按 `FrameCounter` 轮转的资源都在此之后切到下一帧标签；因此必须放在
     /// present 之后，作为本帧生命周期的最后一步。
     pub fn end_frame(&mut self) {
         let _span = tracy_client::span!("RenderRuntime::end_frame");
@@ -522,6 +502,9 @@ impl RenderRuntime {
             self.gfx.surface_ctx(),
             &mut self.gpu_store.gfx_resource_manager,
         );
+        // runtime 只同步 frame state；具体 RT / main-view / GBuffer target 的重建由随后
+        // 返回的 resize ctx 交给 app/plugin 完成，避免 engine 反向持有管线策略资源。
+        self.sync_frame_extent_after_present_resize();
 
         Some(RenderRuntimeResizeCtx {
             device_ctx: self.gfx.device_ctx(),
@@ -571,6 +554,9 @@ impl RenderRuntime {
                 height: window_physical_size[1],
             },
         ));
+        // surface 创建后才能知道平台裁剪后的实际 swapchain extent。这里先同步到
+        // `GpuStore.frame_settings`，让后续 PluginInitCtx 创建 app-owned target 时拿到真实尺寸。
+        self.sync_frame_extent_after_present_resize();
 
         RenderRuntimeInitCtx {
             device_ctx: self.gfx.device_ctx(),
@@ -776,43 +762,26 @@ impl RenderRuntime {
             .acquire_image(self.gfx.surface_ctx(), self.gpu_store.frame_counter.frame_label());
     }
 
-    /// 同步 swapchain extent 到 `FrameSettings`，并在尺寸变化时重建 FIF framebuffer 资源。
+    /// 同步 swapchain extent 到 `FrameSettings`。
     ///
-    /// present 层负责判断 swapchain 是否需要重建；这里处理的是 runtime 内部与 frame extent
-    /// 绑定的渲染资源。
+    /// present 层负责判断 swapchain 是否需要重建；具体窗口尺寸 render target
+    /// 属于 app/plugin owner，这里只维护 runtime 的 frame state。
     fn update_frame_settings(&mut self) {
+        self.sync_frame_extent_after_present_resize();
+    }
+
+    /// 同步 present extent 到 runtime frame state，并在尺寸变化时清空历史累积。
+    fn sync_frame_extent_after_present_resize(&mut self) {
         let swapchain_extent = self.swapchain_presenter.as_ref().unwrap().extent();
         if self.gpu_store.frame_settings.frame_extent == swapchain_extent {
             return;
         }
 
-        if self.gpu_store.frame_settings.frame_extent != swapchain_extent {
-            // frame extent 变化会让历史累积结果失效，并要求所有 per-FIF render target
-            // 以新尺寸重建。
-            self.gpu_store.frame_settings.frame_extent = swapchain_extent;
-            self.resize_frame_buffer(swapchain_extent);
-        }
-    }
-
-    /// 重建所有依赖窗口尺寸的 runtime-owned frame buffer。
-    ///
-    /// resize 路径使用 device idle 作为保守同步点，避免旧 extent 的 render target 仍被
-    /// 在飞命令引用时被释放或复用。
-    fn resize_frame_buffer(&mut self, new_extent: vk::Extent2D) {
+        // 尺寸变化会让历史累积图像的内容语义失效，但图像本身属于 app-owned target。
+        // runtime 只更新 shader/per-frame data 会读取的 extent，并清零累积帧计数；
+        // 具体 image 重建在 Plugin::on_resize 中发生。
+        self.gpu_store.frame_settings.frame_extent = swapchain_extent;
         self.gpu_store.accum_data.reset();
-
-        self.gfx.device_ctx().device().wait_idle();
-        self.gpu_store.frame_settings.frame_extent = new_extent;
-
-        self.gpu_store.fif_buffers.rebuild(
-            self.gfx.resource_ctx(),
-            self.gfx.device_ctx(),
-            self.gfx.immediate_ctx(),
-            &mut self.gpu_store.bindless_manager,
-            &mut self.gpu_store.gfx_resource_manager,
-            &self.gpu_store.frame_settings,
-            &self.gpu_store.frame_counter,
-        );
     }
 
     /// 刷新当前 FIF per-frame descriptor set。

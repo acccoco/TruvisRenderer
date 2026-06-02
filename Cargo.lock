@@ -177,6 +177,7 @@ dependencies = [
  "imgui",
  "itertools 0.10.5",
  "log",
+ "slotmap",
  "truvis-app-frame",
  "truvis-gfx",
  "truvis-path",
@@ -185,6 +186,7 @@ dependencies = [
  "truvis-render-runtime",
  "truvis-shader-binding",
  "truvis-utils",
+ "vk-mem",
 ]
 
 [[package]]

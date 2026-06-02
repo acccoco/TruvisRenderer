@@ -24,6 +24,21 @@ use truvis_shader_binding::gpu;
 pub struct PhongPass {
     pipeline: GfxGraphicsPipeline,
 }
+
+/// Phong pass 本帧绘制目标，由调用方显式提供。
+///
+/// 目标资源属于 app 层具体管线；pass 只消费已经解析好的 Vulkan image view，
+/// 不从 `GpuStore` 中假定某个全局 render target owner。
+#[derive(Clone, Copy)]
+pub struct PhongPassTarget {
+    /// 本帧 color attachment 的 raw Vulkan view；owner 负责保证 view 在 draw 期间有效。
+    pub color_view: vk::ImageView,
+    /// 本帧 depth attachment 的 raw Vulkan view；PhongPass 不假定 depth 由哪个 pipeline owner 持有。
+    pub depth_view: vk::ImageView,
+    /// attachment 对应的绘制范围，用于 dynamic rendering extent、viewport 和 scissor。
+    pub extent: vk::Extent2D,
+}
+
 impl PhongPass {
     pub fn new(
         ctx: GfxDeviceCtx<'_>,
@@ -105,20 +120,23 @@ impl PhongPass {
         );
     }
 
-    pub fn draw(&self, cmd: &GfxCommandBuffer, gpu_store: &GpuStore, render_scene: &dyn RenderSceneView) {
+    pub fn draw(
+        &self,
+        cmd: &GfxCommandBuffer,
+        gpu_store: &GpuStore,
+        render_scene: &dyn RenderSceneView,
+        target: PhongPassTarget,
+    ) {
         let frame_label = gpu_store.frame_counter.frame_label();
 
-        let (_, render_target_view_handle) = gpu_store.fif_buffers.render_target_handle(frame_label);
-        let render_target_view = gpu_store.gfx_resource_manager.get_image_view(render_target_view_handle).unwrap();
-        let depth_image_view =
-            gpu_store.gfx_resource_manager.get_image_view(gpu_store.fif_buffers.depth_image_view_handle()).unwrap();
-
+        // target 由调用方显式传入，使 raster pass 与具体 main-view target owner 解耦。
+        // 这样同一个 pass 后续可以绘制到不同 app-owned target，而不需要读全局 `GpuStore` 字段。
         let rendering_info = GfxRenderingInfo::new(
-            vec![render_target_view.handle()],
-            Some(depth_image_view.handle()),
+            vec![target.color_view],
+            Some(target.depth_view),
             vk::Rect2D {
                 offset: vk::Offset2D::default(),
-                extent: gpu_store.frame_settings.frame_extent,
+                extent: target.extent,
             },
         );
 
@@ -128,7 +146,7 @@ impl PhongPass {
         self.bind(
             cmd,
             gpu_store,
-            &gpu_store.frame_settings.frame_extent.into(),
+            &target.extent.into(),
             &gpu::raster::PushConstants {
                 frame_data: gpu_store.per_frame_data_buffers[*frame_label].device_address(),
                 scene: render_scene.scene_buffer_device_address(frame_label),
