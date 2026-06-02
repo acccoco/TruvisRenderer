@@ -81,6 +81,11 @@ present graph:
 - `gbuffer_c`：`albedo.rgb + metallic`，`R8G8B8A8_UNORM`。
 - `main_view_color`：present 前离屏 color，当前与 swapchain 同尺寸。
 
+`app-kit` 的 ImGui debug image viewer 已可按当前 frame label 注册并显示这些中间图像，
+用于 DLSS 接入前检查 GBuffer、depth、motion vectors 和 DLSS output。需要注意：
+viewer 只负责 sampled 预览和 RenderGraph 读状态声明，normal/depth/motion vector 的
+false-color 或范围映射仍应由后续专用 debug visualize pass 处理。
+
 这个结构已经适合承载一个外部 DLSS pass，但资源语义还不满足 DLSS/RR 契约。
 特别是 `GBufferB.w` 当前是 primary ray 的 hit distance，不应直接假定为 DLSS 可用的
 linear depth；它必须和 motion vector 的生成方式、矩阵约定、depth range 一致。

@@ -214,7 +214,10 @@ impl GuiPass {
                         // 加载 texture，如果和上一个 command 使用的 texture
                         // 不是同一个，则需要重新加载
                         if Some(texture_id) != last_texture_id {
-                            let texture_image_view_handle = tex_map.get(&texture_id).unwrap();
+                            let Some(texture_image_view_handle) = tex_map.get(&texture_id) else {
+                                log::warn!("GuiPass: missing texture id {:?}", texture_id);
+                                continue;
+                            };
                             let srv_bindless_handle =
                                 bindless_manager.get_shader_srv_handle(*texture_image_view_handle);
 

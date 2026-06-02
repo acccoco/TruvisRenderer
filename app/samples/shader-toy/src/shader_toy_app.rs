@@ -157,7 +157,7 @@ impl RenderAppHooks for ShaderToy {
         let swapchain_extent = present_target.image_info.image_extent;
 
         self.shader_toy.contribute_passes(&mut graph, &plugin_ctx, swapchain_image, swapchain_extent);
-        self.gui.contribute_passes(&mut graph, &plugin_ctx, swapchain_image, swapchain_extent);
+        self.gui.contribute_passes(&mut graph, &plugin_ctx, swapchain_image, swapchain_extent, &[]);
 
         let compiled_graph = graph.compile();
         if log::log_enabled!(log::Level::Debug) {

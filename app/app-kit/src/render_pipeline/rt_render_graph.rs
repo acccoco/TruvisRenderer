@@ -1,4 +1,5 @@
-use crate::render_pipeline::targets::{MainViewTargets, RtWorkingTargets};
+use crate::gui_plugin::{DebugImageEntry, DebugImageGraphEntry};
+use crate::render_pipeline::targets::{ImageTarget, MainViewTargets, RtWorkingTargets};
 use app_render_passes::blit_pass::{BlitPass, BlitRgPass};
 use app_render_passes::denoise_accum_pass::{DenoiseAccumPass, DenoiseAccumRgPass};
 use app_render_passes::gbuffer::GBuffer;
@@ -32,6 +33,25 @@ struct RtPipelineInner {
     main_view_targets: MainViewTargets,
     compute_cmds: [GfxCommandBuffer; FrameCounter::fif_count()],
     present_cmds: [GfxCommandBuffer; FrameCounter::fif_count()],
+}
+
+/// RT present graph 中已经导入的关键图像。
+///
+/// 调用方把 `present_image` 交给 GUI 叠加；`main_view_color` 可作为 debug image 复用，
+/// 避免同一物理图像在 present graph 内重复 import。
+pub struct RtPresentGraphTargets {
+    pub present_image: RgImageHandle,
+    pub main_view_color: RgImageHandle,
+}
+
+impl RtPresentGraphTargets {
+    pub fn debug_graph_entries(&self) -> [DebugImageGraphEntry; 1] {
+        [DebugImageGraphEntry::new(
+            "main-view-color",
+            self.main_view_color,
+            RgImageState::GENERAL,
+        )]
+    }
 }
 
 impl RtPipelineInner {
@@ -327,11 +347,55 @@ impl RtPipeline {
             );
     }
 
+    pub fn collect_debug_images(&self, frame_label: FrameLabel) -> Vec<DebugImageEntry> {
+        let inner = self.inner();
+        let rt_targets = &inner.rt_targets;
+        let main_view_targets = &inner.main_view_targets;
+        let gbuffer = &inner.gbuffer;
+
+        let single_frame = rt_targets.single_frame_rt(frame_label);
+        let accum = rt_targets.accum();
+        let main_view_color = main_view_targets.color(frame_label);
+        let (gbuffer_a_image, gbuffer_a_view) = gbuffer.a_handle(frame_label);
+        let (gbuffer_b_image, gbuffer_b_view) = gbuffer.b_handle(frame_label);
+        let (gbuffer_c_image, gbuffer_c_view) = gbuffer.c_handle(frame_label);
+
+        vec![
+            debug_entry("single-frame-rt", "Single Frame RT", single_frame),
+            debug_entry("accum", "Accum", accum),
+            debug_entry("main-view-color", "Main View Color", main_view_color),
+            DebugImageEntry::raw(
+                "gbuffer-a",
+                "GBuffer-A",
+                gbuffer_a_image,
+                gbuffer_a_view,
+                GBuffer::A_FORMAT,
+                gbuffer.extent(),
+            ),
+            DebugImageEntry::raw(
+                "gbuffer-b",
+                "GBuffer-B",
+                gbuffer_b_image,
+                gbuffer_b_view,
+                GBuffer::B_FORMAT,
+                gbuffer.extent(),
+            ),
+            DebugImageEntry::raw(
+                "gbuffer-c",
+                "GBuffer-C",
+                gbuffer_c_image,
+                gbuffer_c_view,
+                GBuffer::C_FORMAT,
+                gbuffer.extent(),
+            ),
+        ]
+    }
+
     pub fn contribute_present_passes<'a>(
         &'a self,
         rg_builder: &mut RenderGraphBuilder<'a>,
         ctx: &'a PluginRenderCtx<'a>,
-    ) -> RgImageHandle {
+    ) -> RtPresentGraphTargets {
         let inner = self.inner();
         let gpu_store = ctx.gpu_store;
         let frame_label = gpu_store.frame_counter.frame_label();
@@ -363,12 +427,19 @@ impl RtPipeline {
             },
         );
 
-        present_image
+        RtPresentGraphTargets {
+            present_image,
+            main_view_color: render_target,
+        }
     }
 
     fn inner(&self) -> &RtPipelineInner {
         self.inner.as_ref().expect("RtPipeline not initialized")
     }
+}
+
+fn debug_entry(id: &'static str, label: &'static str, target: ImageTarget) -> DebugImageEntry {
+    DebugImageEntry::raw(id, label, target.image, target.view, target.format, target.extent)
 }
 
 impl Drop for RtPipeline {

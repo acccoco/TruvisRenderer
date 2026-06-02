@@ -260,11 +260,15 @@ impl RtWorkingTargets {
 
     fn register_bindless(&self, bindless_manager: &mut BindlessManager) {
         self.single_frame_rt.register_uav(bindless_manager);
+        self.single_frame_rt.register_srv(bindless_manager);
         bindless_manager.register_uav(self.accum.view);
+        bindless_manager.register_srv(self.accum.view);
     }
 
     fn unregister_bindless(&self, bindless_manager: &mut BindlessManager) {
+        self.single_frame_rt.unregister_srv(bindless_manager);
         self.single_frame_rt.unregister_uav(bindless_manager);
+        bindless_manager.unregister_srv(self.accum.view);
         bindless_manager.unregister_uav(self.accum.view);
     }
 }

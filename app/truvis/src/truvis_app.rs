@@ -281,6 +281,7 @@ impl RenderAppHooks for TruvisApp {
             );
             self.pipeline_overlay.build_overlay_ui(ui, ctx.pipeline_settings);
             self.build_raycast_overlay_ui(ui);
+            self.gui.build_debug_image_viewer_ui(ui);
         }
         self.gui.end_frame();
     }
@@ -318,10 +319,14 @@ impl RenderAppHooks for TruvisApp {
             present: ctx.present,
             timeline: ctx.timeline,
         };
-        self.gui.prepare_render_data(&plugin_ctx);
-
         let frame_label = ctx.gpu_store.frame_counter.frame_label();
         let frame_id = ctx.gpu_store.frame_counter.frame_id();
+
+        self.gui.begin_debug_image_frame();
+        for debug_image in self.rt_pipeline.collect_debug_images(frame_label) {
+            self.gui.register_debug_image(debug_image);
+        }
+        self.gui.prepare_render_data(&plugin_ctx);
 
         let compute_submit = {
             let mut graph = RenderGraphBuilder::new();
@@ -348,12 +353,14 @@ impl RenderAppHooks for TruvisApp {
                 ash::vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
                 frame_id,
             ));
-            let present_image = self.rt_pipeline.contribute_present_passes(&mut graph, &plugin_ctx);
+            let present_targets = self.rt_pipeline.contribute_present_passes(&mut graph, &plugin_ctx);
+            let debug_graph_entries = present_targets.debug_graph_entries();
             self.gui.contribute_passes(
                 &mut graph,
                 &plugin_ctx,
-                present_image,
+                present_targets.present_image,
                 ctx.present.swapchain_image_info().image_extent,
+                &debug_graph_entries,
             );
 
             let compiled_graph = graph.compile();

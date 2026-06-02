@@ -31,7 +31,7 @@ use truvis_render_foundation::pipeline_settings::FrameLabel;
 ///
 /// 持有三个通道（A/B/C）的 per-FIF storage image 和对应 image view，
 /// 以及它们在 `BindlessManager` 中的 UAV 注册。RT raygen pass 写入，
-/// denoise/accum compute pass 通过 bindless UAV 读取。
+/// denoise/accum compute pass 通过 bindless UAV 读取；调试 UI 通过 SRV 采样当前帧内容。
 ///
 /// 格式和通道语义是管线策略决策，由 app 层决定，不属于 engine 基础设施。
 pub struct GBuffer {
@@ -156,23 +156,29 @@ impl GBuffer {
     fn register_bindless(&self, bindless_manager: &mut BindlessManager) {
         for view in &self.a_views {
             bindless_manager.register_uav(*view);
+            bindless_manager.register_srv(*view);
         }
         for view in &self.b_views {
             bindless_manager.register_uav(*view);
+            bindless_manager.register_srv(*view);
         }
         for view in &self.c_views {
             bindless_manager.register_uav(*view);
+            bindless_manager.register_srv(*view);
         }
     }
 
     fn unregister_bindless(&self, bindless_manager: &mut BindlessManager) {
         for view in &self.a_views {
+            bindless_manager.unregister_srv(*view);
             bindless_manager.unregister_uav(*view);
         }
         for view in &self.b_views {
+            bindless_manager.unregister_srv(*view);
             bindless_manager.unregister_uav(*view);
         }
         for view in &self.c_views {
+            bindless_manager.unregister_srv(*view);
             bindless_manager.unregister_uav(*view);
         }
     }
