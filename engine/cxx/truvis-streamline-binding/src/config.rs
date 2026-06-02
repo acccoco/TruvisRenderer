@@ -3,16 +3,18 @@
 //! 本模块只负责 Rust 侧可配置输入和默认路径推导，不直接调用 SL API。
 //! 进程级 init/shutdown 生命周期由 `runtime` 模块维护。
 
-use std::path::PathBuf;
+use std::{env, path::PathBuf};
 
 use truvis_path::{PathUtils, TruvisPath};
 
 use crate::truvixx;
 
+const STREAMLINE_IMGUI_ENV: &str = "TRUVIS_STREAMLINE_IMGUI";
+
 /// Streamline feature 请求位。
 ///
 /// Rust 侧决定要加载哪些 feature，C++ wrapper 只负责把这些稳定 bit 翻译成
-/// Streamline SDK 的 feature id。默认 Debug 会额外打开 SL ImGui，Release 只加载 DLSS SR。
+/// Streamline SDK 的 feature id。默认只加载 DLSS SR；Debug 可通过环境变量显式打开 SL ImGui。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StreamlineFeatureFlags(u32);
 
@@ -54,10 +56,50 @@ impl StreamlineFeatureFlags {
 impl Default for StreamlineFeatureFlags {
     fn default() -> Self {
         let mut flags = Self::DLSS;
-        if cfg!(debug_assertions) {
+        if should_enable_streamline_imgui() {
             flags.insert(Self::IMGUI);
         }
         flags
+    }
+}
+
+fn should_enable_streamline_imgui() -> bool {
+    let env_value = match env::var(STREAMLINE_IMGUI_ENV) {
+        Ok(value) => value,
+        Err(env::VarError::NotPresent) => return false,
+        Err(env::VarError::NotUnicode(value)) => {
+            log::warn!("{} contains non-unicode value {:?}; SL ImGui disabled.", STREAMLINE_IMGUI_ENV, value);
+            return false;
+        }
+    };
+
+    match parse_bool_env(&env_value) {
+        Some(false) => false,
+        Some(true) if cfg!(debug_assertions) => true,
+        Some(true) => {
+            log::warn!(
+                "{}={} requested SL ImGui, but release runtime does not copy sl.imgui.dll; SL ImGui disabled.",
+                STREAMLINE_IMGUI_ENV,
+                env_value
+            );
+            false
+        }
+        None => {
+            log::warn!(
+                "Invalid {} value `{}`; expected one of 1/true/on/yes/enable/enabled or 0/false/off/no/disable/disabled. SL ImGui disabled.",
+                STREAMLINE_IMGUI_ENV,
+                env_value
+            );
+            false
+        }
+    }
+}
+
+fn parse_bool_env(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "on" | "yes" | "enable" | "enabled" => Some(true),
+        "0" | "false" | "off" | "no" | "disable" | "disabled" => Some(false),
+        _ => None,
     }
 }
 
@@ -84,8 +126,8 @@ pub struct StreamlineInitInfo {
     /// 是否使用 verbose 级别日志。
     pub verbose_log: bool,
 
-    /// 请求加载的 Streamline feature。Debug 默认包含 DLSS SR 和 SL ImGui；
-    /// Release 默认只包含 DLSS SR。
+    /// 请求加载的 Streamline feature。默认只包含 DLSS SR；Debug 可通过
+    /// `TRUVIS_STREAMLINE_IMGUI` 显式请求 SL ImGui。
     pub feature_flags: StreamlineFeatureFlags,
 }
 

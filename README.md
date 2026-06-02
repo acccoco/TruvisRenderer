@@ -28,11 +28,11 @@
   或非 DLSS-capable 机器不作为当前阶段支持目标。
 - CMake 3.21+（使用 VS2026 preset 时需要 PATH 上的 CMake 4.2+）
 - Visual Studio 2022+ 并安装 MSVC C++ 工具链（Windows；`cxx-build` 会优先检测 VS2026，再回退到 VS2022）
-- [`just`](https://github.com/casey/just)（推荐入口；底层仍调用 Cargo / CMake）
+- [`just`](https://github.com/casey/just) 与 [`Nushell`](https://www.nushell.sh/)（推荐入口；底层仍调用 Cargo / CMake）
 
 ### 构建步骤
 
-```powershell
+```nushell
 # 1) 拉取资源与工具（等价于 cargo run --bin fetch_res）
 just fetch-res
 
@@ -46,19 +46,26 @@ just shader
 just build-all
 ```
 
+如需手工选择 CXX CMake preset / build：
+
+```nushell
+just cxx-preset clang release
+just cxx-build vs2026 debug
+```
+
 资源路径由根目录 `map.toml` 统一映射。`assets/fbx/` 保存 Sponza、Cornell 等模型资源，
 `assets/resources/` 保存窗口图标、字体和默认天空图等运行时资源；
 `tools/` 保存 Slang、Tracy 和 Vulkan validation layer 配置等外部工具资源。
 
 启动 Tracy Profiler：
 
-```powershell
+```nushell
 just tracy
 ```
 
 ### 运行示例
 
-```powershell
+```nushell
 just triangle
 just cornell
 just truvis
@@ -66,13 +73,23 @@ just truvis-direct
 just shader-toy
 ```
 
-使用 Vulkan validation layer 运行光追示例：
+运行示例默认开启 Vulkan validation layer，可追加 `no-validation` 关闭：
 
-```powershell
-just cornell-validation
-just truvis-validation
-just truvis-direct-validation
+```nushell
+just triangle no-validation
+just cornell no-validation
+just truvis no-validation
 ```
+
+`truvis` / `truvis-direct` 额外支持追加 `imgui`，用于启用 Streamline ImGui 调试 UI：
+
+```nushell
+just truvis imgui
+just truvis imgui no-validation
+just truvis-direct imgui
+```
+
+未追加 `imgui` 时，Truvis 入口会关闭 Streamline ImGui 调试 UI。
 
 ## 运行时架构（当前）
 

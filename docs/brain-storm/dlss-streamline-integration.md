@@ -3,7 +3,7 @@
 > 状态：分阶段接入，更新于 2026-05-29。阶段 0-2 的 runtime 布置、
 > Streamline init/shutdown wrapper、`Gfx::new(...)` 默认 Vulkan interposer loader 与
 > `Gfx::new_with_entry_source(...)` 显式 loader 入口已进入第一阶段实现；
-> Debug Streamline ImGui 调试 UI 已由 Rust 侧 feature flags 默认请求加载；
+> Debug Streamline ImGui 调试 UI 已改为由 `TRUVIS_STREAMLINE_IMGUI` 显式请求加载；
 > DLSS evaluate、resource tagging 与 RenderGraph pass 尚未接入。
 
 本文聚焦 DLSS Super Resolution（SR）接入，不包含 Frame Generation。当前 SDK 已放在
@@ -41,7 +41,8 @@ Release 或 DLSS SR 最小运行目录至少需要：
 第一阶段按构建 profile 选择 runtime：
 
 - Debug：使用 `tools/streamline-sdk/bin/x64/development/`，额外复制 `sl.imgui.dll`，
-  并由 Rust 侧 `StreamlineInitInfo` 默认请求 `DLSS SR + SL ImGui`。
+  但 Rust 侧 `StreamlineInitInfo` 默认只请求 DLSS SR；仅在 `TRUVIS_STREAMLINE_IMGUI`
+  显式开启时请求 SL ImGui。
 - Release：使用 `tools/streamline-sdk/bin/x64/`。
 
 实现点：
@@ -52,8 +53,9 @@ Release 或 DLSS SR 最小运行目录至少需要：
 - Release 必需 DLL 只包含 `sl.interposer.dll`、`sl.common.dll`、`sl.pcl.dll`、
   `sl.dlss.dll`、`nvngx_dlss.dll` 和 `NvLowLatencyVk.dll`；不复制 Frame Generation /
   Ray Reconstruction / Reflex / NIS / ImGui DLL。
-- Debug 额外复制 `sl.imgui.dll` 作为 Streamline development runtime 的调试 UI。当前 Vulkan
-  路径不依赖 `WinPixEventRuntime.dll`，不再复制该 D3D12/PIX runtime。
+- Debug 额外复制 `sl.imgui.dll` 作为可选 Streamline development runtime 调试 UI；默认不请求加载，
+  仅在 `TRUVIS_STREAMLINE_IMGUI` 显式开启时使用。当前 Vulkan 路径不依赖
+  `WinPixEventRuntime.dll`，不再复制该 D3D12/PIX runtime。
 - `NvLowLatencyVk.dll` 是 SL Vulkan backend 启动时加载的低延迟 helper，不表示当前阶段启用
   Reflex feature；`sl.reflex.dll` 仍不进入 DLSS SR 最小 runtime。
 - 保留绝对路径配置能力，运行时 `slInit` 的 `Preferences::pathsToPlugins` 指向实际 DLL 目录。
@@ -130,9 +132,10 @@ truvixx_sl_dlss_free_resources(viewport)
   `PathUtils` / `StringUtils`。
 - Rust 日志 callback 不调用 SL API，不做最终 IO，不跨 FFI 传播 panic；`StreamlineRuntime`
   在 `slShutdown` 返回后才释放日志桥，保证 Rust 全局日志入口生命周期覆盖 SL runtime。
-- Rust 侧通过 C ABI feature flags 决定 `featuresToLoad`：Release 默认只请求
-  `sl::kFeatureDLSS`，Debug 默认请求 `sl::kFeatureDLSS` 和 `sl::kFeatureImGUI`；
-  C++ wrapper 只负责翻译这些 flag，并设置 `renderAPI = sl::RenderAPI::eVulkan`。
+- Rust 侧通过 C ABI feature flags 决定 `featuresToLoad`：默认只请求
+  `sl::kFeatureDLSS`，Debug 可通过 `TRUVIS_STREAMLINE_IMGUI` 额外请求
+  `sl::kFeatureImGUI`；Release 中该环境变量会被 warning 后忽略。C++ wrapper
+  只负责翻译这些 flag，并设置 `renderAPI = sl::RenderAPI::eVulkan`。
 - NGX custom engine 身份使用 wrapper 内部固定的 GUID-like `Preferences::projectId`；该值必须稳定，
   不能运行时随机生成，否则 NGX / OTA 无法把同一项目识别为同一集成。正式发布若拿到 NVIDIA 分配的
   `applicationId`，再单独切换身份策略。
@@ -460,8 +463,9 @@ access。
 
 - 第一阶段启用 Streamline verbose log。
 - 保留 DLSS required tags、render/output extent、jitter、mvec scale 的逐帧或按变化日志。
-- Debug 默认复制并请求加载 `sl.imgui.dll`，用于观察 SL common/interposer/DLSS 插件状态；
-  DLSS SR 关键诊断仍以 required tags、render/output extent、jitter、mvec scale 日志为主。
+- Debug 默认复制 `sl.imgui.dll`，但仅在 `TRUVIS_STREAMLINE_IMGUI` 显式开启时请求加载，
+  用于观察 SL common/interposer/DLSS 插件状态；DLSS SR 关键诊断仍以 required tags、
+  render/output extent、jitter、mvec scale 日志为主。
 
 ## 推荐最小落地切片
 

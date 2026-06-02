@@ -48,7 +48,7 @@ const STREAMLINE_REQUIRED_DLLS: &[&str] = &[
     "NvLowLatencyVk.dll",
 ];
 
-// Debug 使用 development runtime，并默认启用 Streamline ImGui 调试 UI。
+// Debug 使用 development runtime，并保留可由 TRUVIS_STREAMLINE_IMGUI 启用的 Streamline ImGui 调试 UI。
 // sl.imgui 只进入 Debug 运行目录，Release 继续保持 DLSS SR 最小 runtime。
 const STREAMLINE_DEBUG_OPTIONAL_DLLS: &[&str] = &["sl.imgui.dll"];
 
