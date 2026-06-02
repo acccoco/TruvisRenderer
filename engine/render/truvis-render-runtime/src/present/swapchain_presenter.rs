@@ -8,7 +8,7 @@ use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::swapchain::surface::GfxSurface;
-use truvis_gfx::swapchain::swapchain::{GfxSwapchain, GfxSwapchainImageInfo};
+use truvis_gfx::swapchain::swapchain::{GfxSwapchain, GfxSwapchainAcquireResult, GfxSwapchainImageInfo};
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
@@ -97,9 +97,17 @@ pub(crate) struct SwapchainPresenter {
     /// 数量和 swapchain image 数相同；render graph 提交完成后 signal，present 当前 image 时 wait。
     render_complete_semaphores: Vec<GfxSemaphore>,
 
+    /// 当前帧是否成功 acquire 到 swapchain image。
+    ///
+    /// acquire 失败时 WSI 不会 signal acquire semaphore；该标记阻止后续 graph 等待
+    /// 一个不可能 signal 的 semaphore，也阻止 present 上一帧留下的 image index。
+    current_image_acquired: bool,
+
     window_physical_extent: vk::Extent2D,
     /// latest-size 模式的 resize 标记。窗口事件只写入最新尺寸，真正重建延迟到 render loop 检查。
     need_resize: bool,
+    /// WSI 自身报告 out-of-date/suboptimal 时，即使窗口 extent 没变也必须尝试重建。
+    force_resize: bool,
 }
 
 // 创建与初始化
@@ -148,8 +156,10 @@ impl SwapchainPresenter {
             present_complete_semaphores,
             render_complete_semaphores,
 
+            current_image_acquired: false,
             window_physical_extent,
             need_resize: false,
+            force_resize: false,
         }
     }
 
@@ -210,6 +220,7 @@ impl SwapchainPresenter {
     ///
     /// 只有 `acquire_image` 成功后才有明确的 current image index；调用者通常在 render 阶段读取它。
     fn current_image_and_view(&self) -> (GfxImageHandle, GfxImageViewHandle) {
+        assert!(self.current_image_acquired, "Present target requested before a successful swapchain acquire");
         let swapchain = self.swapchain.as_ref().unwrap();
         let image_idx = swapchain.current_image_index();
 
@@ -229,6 +240,10 @@ impl SwapchainPresenter {
     /// render graph 提交完成后 signal 它，`present_image` 会在 present queue 上等待同一个 semaphore。
     #[inline]
     fn current_render_compute_semaphore(&self) -> &GfxSemaphore {
+        assert!(
+            self.current_image_acquired,
+            "Render-complete semaphore requested before a successful swapchain acquire"
+        );
         let swapchain = self.swapchain.as_ref().unwrap();
         &self.render_complete_semaphores[swapchain.current_image_index()]
     }
@@ -239,6 +254,18 @@ impl SwapchainPresenter {
     #[inline]
     fn current_present_complete_semaphore(&self, frame_label: FrameLabel) -> &GfxSemaphore {
         &self.present_complete_semaphores[*frame_label]
+    }
+
+    /// 当前帧是否拥有可导入 RenderGraph 的 swapchain image。
+    #[inline]
+    pub fn current_image_acquired(&self) -> bool {
+        self.current_image_acquired
+    }
+
+    /// 是否有尚未处理的 swapchain 重建请求。
+    #[inline]
+    pub fn has_pending_resize(&self) -> bool {
+        self.need_resize
     }
 }
 
@@ -268,6 +295,10 @@ impl SwapchainPresenter {
     pub fn need_resize(&mut self, surface_ctx: GfxSurfaceCtx<'_>) -> bool {
         if !self.need_resize {
             return false;
+        }
+
+        if self.force_resize {
+            return true;
         }
 
         let surface_capibilities = self.surface.get_capabilities(surface_ctx);
@@ -317,26 +348,39 @@ impl SwapchainPresenter {
             gfx_resource_manager,
         );
 
+        self.current_image_acquired = false;
         self.need_resize = false;
+        self.force_resize = false;
     }
 
     /// acquire 当前 frame label 的 swapchain image。
     ///
     /// acquire semaphore 按 FIF 分配，和 command pool/reset 的复用节奏一致；返回的 current image index
     /// 决定本帧 `current_image_and_view` 与 render-complete semaphore。
-    pub fn acquire_image(&mut self, surface_ctx: GfxSurfaceCtx<'_>, frame_label: FrameLabel) {
+    pub fn acquire_image(&mut self, surface_ctx: GfxSurfaceCtx<'_>, frame_label: FrameLabel) -> bool {
         // acquire 使用按 FIF 分配的 semaphore，因为同一个 frame label 在 GPU 完成前不会复用。
         let swapchain = self.swapchain.as_mut().unwrap();
         let timeout_ns = 10 * 1000 * 1000 * 1000;
 
         // WSI 返回 out-of-date/suboptimal 时由 swapchain wrapper 转换为 need_resize 标记；
         // runtime 不在 acquire 点立即重建，而是在 render loop 的 resize 路径统一处理。
-        self.need_resize = swapchain.acquire_next_image(
+        let acquire_result = swapchain.acquire_next_image(
             surface_ctx,
             Some(&self.present_complete_semaphores[*frame_label]),
             None,
             timeout_ns,
         );
+        self.current_image_acquired = matches!(acquire_result, GfxSwapchainAcquireResult::Acquired { .. });
+        if acquire_result.need_resize() {
+            self.need_resize = true;
+            self.force_resize = true;
+        }
+
+        if !self.current_image_acquired {
+            log::warn!("skip current render frame because swapchain acquire did not return an image");
+        }
+
+        self.current_image_acquired
     }
 
     /// 将当前 swapchain image 提交给 present queue。
@@ -344,15 +388,25 @@ impl SwapchainPresenter {
     /// 这里不提交渲染命令，只等待 render graph signal 的当前 image render-complete semaphore。
     /// 如果 WSI 返回 out-of-date/suboptimal，resize 标记会留给后续帧处理。
     pub fn present_image(&mut self, surface_ctx: GfxSurfaceCtx<'_>, queue_ctx: GfxQueueCtx<'_>) {
+        if !self.current_image_acquired {
+            log::warn!("skip swapchain present because current frame has no acquired image");
+            return;
+        }
+
         let swapchain = self.swapchain.as_ref().unwrap();
         // present 等待当前 swapchain image 对应的 render-complete semaphore；
         // semaphore 数量跟 image 数一致，避免同一帧中不同 image 的完成信号互相覆盖。
         // 返回值同样只更新 latest-size 标记，让实际重建保持在单一 resize 安全点。
-        self.need_resize = swapchain.present_image(
+        if swapchain.present_image(
             surface_ctx,
             queue_ctx.gfx_queue(),
             std::slice::from_ref(&self.render_complete_semaphores[swapchain.current_image_index()]),
-        );
+        ) {
+            self.need_resize = true;
+            self.force_resize = true;
+        }
+        // present 后 image ownership 回到 WSI；下一帧必须重新 acquire 后才能再次导入。
+        self.current_image_acquired = false;
     }
 }
 

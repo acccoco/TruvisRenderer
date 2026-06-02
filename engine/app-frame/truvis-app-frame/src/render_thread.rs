@@ -48,6 +48,10 @@ pub struct SharedState {
     /// 最新窗口物理尺寸的打包值（见 [`pack_size`]）。主线程写、渲染线程读。
     pub size: AtomicU64,
 
+    /// resize 事件序号。主线程每收到一次非零或零尺寸 resize 事件都会递增，
+    /// 渲染线程用它做 debounce，而不是只依赖尺寸值是否变化。
+    pub resize_generation: AtomicU64,
+
     /// 渲染线程 panic 时存放 `catch_unwind` 捕获的 payload，供主线程 `resume_unwind`。
     pub panic_payload: Mutex<Option<Box<dyn Any + Send>>>,
 
@@ -63,6 +67,7 @@ impl SharedState {
             exit: AtomicBool::new(false),
             render_finished: AtomicBool::new(false),
             size: AtomicU64::new(pack_size(initial_size[0], initial_size[1])),
+            resize_generation: AtomicU64::new(0),
             panic_payload: Mutex::new(None),
             event_sender,
             event_receiver,

@@ -448,6 +448,10 @@ impl RenderRuntime {
     /// 这个 Ctx 面向 RenderGraph/pass 录制。它故意不暴露 `World` 的可变借用，避免 render
     /// 阶段继续改变 CPU scene，破坏 `prepare` 已经生成的 GPU scene 快照。
     pub fn render_phase(&self) -> RenderRuntimeRenderCtx<'_> {
+        assert!(
+            self.current_frame_has_present_target(),
+            "Render phase requested without a successfully acquired present target"
+        );
         RenderRuntimeRenderCtx {
             device_ctx: self.gfx.device_ctx(),
             resource_ctx: self.gfx.resource_ctx(),
@@ -466,6 +470,36 @@ impl RenderRuntime {
     /// 并让 present 层记录是否需要在后续帧重建 swapchain。
     pub fn present(&mut self) {
         self.swapchain_presenter.as_mut().unwrap().present_image(self.gfx.surface_ctx(), self.gfx.queue_ctx());
+    }
+
+    /// 当前帧是否成功 acquire 到 present target。
+    ///
+    /// 返回 false 时，WSI 没有把 swapchain image ownership 交给应用侧，也没有 signal
+    /// acquire semaphore；上层必须跳过 prepare/render/present。
+    #[inline]
+    pub fn current_frame_has_present_target(&self) -> bool {
+        self.swapchain_presenter.as_ref().unwrap().current_image_acquired()
+    }
+
+    /// 是否存在等待处理的 swapchain 重建请求。
+    #[inline]
+    pub fn has_pending_swapchain_recreate(&self) -> bool {
+        self.swapchain_presenter.as_ref().unwrap().has_pending_resize()
+    }
+
+    /// 为没有 GPU render graph 的帧补齐 FIF timeline signal。
+    ///
+    /// resize/out-of-date 期间可能 acquire 不到 swapchain image。此时本帧不会录制
+    /// render graph，但 frame counter 仍需要前进；提交一个空 signal 可以保持后续
+    /// `begin_frame` 对 timeline 的等待不会落到永远无人 signal 的 frame id 上。
+    pub fn signal_current_frame_complete(&self) {
+        let frame_id = self.gpu_store.frame_counter.frame_id();
+        let submit_info = GfxSubmitInfo::new(&[]).signal(
+            &self.fif_timeline_semaphore,
+            vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
+            Some(frame_id),
+        );
+        self.gfx.queue_ctx().gfx_queue().submit(vec![submit_info], None);
     }
 
     /// 推进帧计数器。
@@ -755,11 +789,11 @@ impl RenderRuntime {
     ///
     /// 该 helper 只在 update 阶段调用；成功后 present view 的 current image 与本帧
     /// render graph 导入的 target 保持一致。
-    fn acquire_image(&mut self) {
+    fn acquire_image(&mut self) -> bool {
         self.swapchain_presenter
             .as_mut()
             .unwrap()
-            .acquire_image(self.gfx.surface_ctx(), self.gpu_store.frame_counter.frame_label());
+            .acquire_image(self.gfx.surface_ctx(), self.gpu_store.frame_counter.frame_label())
     }
 
     /// 同步 swapchain extent 到 `FrameSettings`。

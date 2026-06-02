@@ -123,6 +123,14 @@ where
             });
         }
 
+        if !render_runtime.current_frame_has_present_target() {
+            log::debug!("RenderAppShell skips render/present because current frame has no acquired swapchain image.");
+            render_runtime.signal_current_frame_complete();
+            render_runtime.end_frame();
+            tracy_client::frame_mark();
+            return;
+        }
+
         render_runtime.prepare(&app.render_view());
         {
             let _span = tracy_client::span!("RenderAppShell::after_prepare");
@@ -179,6 +187,13 @@ where
 
     fn time_to_render(&self) -> bool {
         self.render_runtime.as_ref().expect("RenderRuntime missing in RenderAppShell::time_to_render").time_to_render()
+    }
+
+    fn has_pending_swapchain_recreate(&self) -> bool {
+        self.render_runtime
+            .as_ref()
+            .expect("RenderRuntime missing in RenderAppShell::has_pending_swapchain_recreate")
+            .has_pending_swapchain_recreate()
     }
 
     fn shutdown(&mut self) {

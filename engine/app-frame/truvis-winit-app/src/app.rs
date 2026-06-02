@@ -163,6 +163,7 @@ impl ApplicationHandler<UserEvent> for WinitApp {
             }
             WindowEvent::Resized(size) => {
                 shared.size.store(pack_size(size.width, size.height), Ordering::Relaxed);
+                shared.resize_generation.fetch_add(1, Ordering::Release);
             }
             WindowEvent::ScaleFactorChanged { .. } => {}
             _ => {}

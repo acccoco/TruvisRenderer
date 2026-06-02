@@ -153,6 +153,25 @@ pub struct GfxSwapchainImageInfo {
     pub image_format: vk::Format,
 }
 
+/// swapchain acquire 的显式结果。
+///
+/// `OutOfDate` 表示本次没有取得 image，也不会 signal 传入的 acquire semaphore。
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum GfxSwapchainAcquireResult {
+    Acquired { image_index: usize, suboptimal: bool },
+    OutOfDate,
+}
+
+impl GfxSwapchainAcquireResult {
+    #[inline]
+    pub fn need_resize(self) -> bool {
+        match self {
+            Self::Acquired { suboptimal, .. } => suboptimal,
+            Self::OutOfDate => true,
+        }
+    }
+}
+
 // 访问器
 impl GfxSwapchain {
     #[inline]
@@ -207,7 +226,7 @@ impl GfxSwapchain {
 // 更新
 impl GfxSwapchain {
     /// timeout：纳秒
-    /// 返回：需要重建
+    /// 返回：acquire 结果。只有成功取得 image 时才会更新 current image index。
     #[inline]
     pub fn acquire_next_image(
         &mut self,
@@ -215,7 +234,7 @@ impl GfxSwapchain {
         semaphore: Option<&GfxSemaphore>,
         fence: Option<&GfxFence>,
         timeout: u64,
-    ) -> bool {
+    ) -> GfxSwapchainAcquireResult {
         let result = unsafe {
             ctx.device().swapchain.acquire_next_image(
                 self.swapchain_handle,
@@ -231,11 +250,14 @@ impl GfxSwapchain {
                     log::warn!("swapchain acquire image index {} is not optimal", image_index);
                 }
                 self.swapchain_image_index = image_index as usize;
-                is_suboptimal
+                GfxSwapchainAcquireResult::Acquired {
+                    image_index: image_index as usize,
+                    suboptimal: is_suboptimal,
+                }
             }
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 log::warn!("swapchain is out of date when acquire next image");
-                true
+                GfxSwapchainAcquireResult::OutOfDate
             }
             Err(e) => {
                 panic!("failed to acquire next swapchain image: {:?}", e);

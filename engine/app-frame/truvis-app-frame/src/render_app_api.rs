@@ -60,6 +60,14 @@ pub trait RenderApp {
     /// 渲染线程，而不改变 App 或 GPU 资源生命周期。
     fn time_to_render(&self) -> bool;
 
+    /// 查询 runtime 是否已经记录了 swapchain 重建请求。
+    ///
+    /// 标准实现会在 acquire/present 返回 out-of-date 或 suboptimal 后置位，让 render loop
+    /// 即使窗口尺寸没有再次变化，也能在安全点重建 swapchain。
+    fn has_pending_swapchain_recreate(&self) -> bool {
+        false
+    }
+
     /// 退出渲染线程前释放 App/Plugin 持有的 GPU 资源。
     ///
     /// 标准实现会先等待 GPU idle，再调用 App shutdown hook 和 Plugin shutdown，
