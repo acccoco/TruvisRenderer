@@ -18,6 +18,7 @@ pub mod _ffi_bindings;
 pub use crate::_ffi_bindings::root as truvixx;
 
 mod config;
+pub mod dlss;
 mod log_bridge;
 mod runtime;
 

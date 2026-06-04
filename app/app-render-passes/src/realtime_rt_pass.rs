@@ -4,7 +4,6 @@ use itertools::Itertools;
 
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
-use truvis_gfx::commands::barrier::GfxBufferBarrier;
 use truvis_gfx::descriptors::descriptor::GfxDescriptorSetLayout;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
@@ -288,6 +287,13 @@ pub struct RealtimeRtPassData {
     /// GBufferC：反照率 albedo.rgb + 金属度 metallic
     pub gbuffer_c: GfxImageHandle,
     pub gbuffer_c_view: GfxImageViewHandle,
+
+    /// DLSS SR depth 输出。这里写的是 projection 后的 device depth，不是 GBufferB.w 的 hit distance。
+    pub depth: GfxImageHandle,
+    pub depth_view: GfxImageViewHandle,
+    /// DLSS SR motion vectors 输出。第一版 object motion 为 0，camera motion 由 Streamline constants 表达。
+    pub motion_vectors: GfxImageHandle,
+    pub motion_vectors_view: GfxImageViewHandle,
 }
 
 #[derive(DescriptorBinding)]
@@ -326,6 +332,20 @@ struct RealtimeRtDescriptorBinding {
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
     _gbuffer_c: (),
+
+    /// DLSS SR depth。raygen 写 storage image，后续由 Streamline 作为 kBufferTypeDepth 读取。
+    #[binding = 5]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _dlss_depth: (),
+
+    /// DLSS SR motion vectors。保持 R32G32_SFLOAT，避免 Streamline 内部 mvec view 格式不匹配。
+    #[binding = 6]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _dlss_motion_vectors: (),
 }
 
 pub struct RealtimeRtPass {
@@ -487,10 +507,13 @@ impl RealtimeRtPass {
         let rt_image_view =
             gpu_store.gfx_resource_manager.get_image_view(pass_data.single_frame_output_view).unwrap().handle();
 
-        // 获取 GBuffer image views
+        // 获取 GBuffer 与 DLSS input image views。它们都由 raygen 以 storage image 写入当前 render extent。
         let gbuffer_a_view = gpu_store.gfx_resource_manager.get_image_view(pass_data.gbuffer_a_view).unwrap().handle();
         let gbuffer_b_view = gpu_store.gfx_resource_manager.get_image_view(pass_data.gbuffer_b_view).unwrap().handle();
         let gbuffer_c_view = gpu_store.gfx_resource_manager.get_image_view(pass_data.gbuffer_c_view).unwrap().handle();
+        let depth_view = gpu_store.gfx_resource_manager.get_image_view(pass_data.depth_view).unwrap().handle();
+        let motion_vectors_view =
+            gpu_store.gfx_resource_manager.get_image_view(pass_data.motion_vectors_view).unwrap().handle();
 
         cmd.begin_label("Ray trace", glam::vec4(0.0, 1.0, 0.0, 1.0));
 
@@ -539,6 +562,24 @@ impl RealtimeRtPass {
                             .image_view(gbuffer_c_view),
                     ],
                 ),
+                RealtimeRtDescriptorBinding::dlss_depth().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    vec![
+                        vk::DescriptorImageInfo::default()
+                            .image_layout(vk::ImageLayout::GENERAL)
+                            .image_view(depth_view),
+                    ],
+                ),
+                RealtimeRtDescriptorBinding::dlss_motion_vectors().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    vec![
+                        vk::DescriptorImageInfo::default()
+                            .image_layout(vk::ImageLayout::GENERAL)
+                            .image_view(motion_vectors_view),
+                    ],
+                ),
             ],
         );
 
@@ -557,7 +598,9 @@ impl RealtimeRtPass {
             channel: gpu_store.pipeline_settings.channel,
             ic_table: self.hash_table.device_address(),
             ic_entry_pool: self.entry_pool.device_address(),
-            ic_enabled: gpu_store.pipeline_settings.ic_enabled as u32,
+            // Radiance/Irradiance Cache 代码保留，但主流程在 SR 接入后不再依赖该缓存路径。
+            // 固定为 0 可以避免 cache buffer barrier 参与每帧 ray tracing 语义。
+            ic_enabled: 0,
         };
         for spp_idx in 0..spp {
             push_constant.spp_idx = spp_idx;
@@ -579,33 +622,6 @@ impl RealtimeRtPass {
                         )],
                 );
             }
-
-            // 在每次 spp 之前，都需要确保 hash table 的读写可以被下一次的 spp 读取到
-            cmd.buffer_memory_barrier(
-                vk::DependencyFlags::empty(),
-                &[
-                    GfxBufferBarrier::new()
-                        .buffer(self.hash_table.vk_buffer(), 0, vk::WHOLE_SIZE)
-                        .src_mask(
-                            vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR,
-                            vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-                        )
-                        .dst_mask(
-                            vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR,
-                            vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-                        ),
-                    GfxBufferBarrier::new()
-                        .buffer(self.entry_pool.vk_buffer(), 0, vk::WHOLE_SIZE)
-                        .src_mask(
-                            vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR,
-                            vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-                        )
-                        .dst_mask(
-                            vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR,
-                            vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-                        ),
-                ],
-            );
 
             cmd.cmd_push_constants(
                 self.pipeline.pipeline_layout,
@@ -658,14 +674,19 @@ pub struct RealtimeRtRgPass<'a> {
     pub gbuffer_a: RgImageHandle,
     pub gbuffer_b: RgImageHandle,
     pub gbuffer_c: RgImageHandle,
+    pub depth: RgImageHandle,
+    pub motion_vectors: RgImageHandle,
 }
 impl RgPass for RealtimeRtRgPass<'_> {
     fn setup(&mut self, builder: &mut RgPassBuilder) {
-        // RT pass 写入单帧输出和 GBuffer
+        // RT pass 写入单帧输出、GBuffer 和 DLSS SR per-pixel inputs；
+        // 后续 SR/native 分支只读取这些 image，不再接传统 denoise/accum pass。
         builder.write_image(self.single_frame_image, RgImageState::STORAGE_WRITE_RAY_TRACING);
         builder.write_image(self.gbuffer_a, RgImageState::STORAGE_WRITE_RAY_TRACING);
         builder.write_image(self.gbuffer_b, RgImageState::STORAGE_WRITE_RAY_TRACING);
         builder.write_image(self.gbuffer_c, RgImageState::STORAGE_WRITE_RAY_TRACING);
+        builder.write_image(self.depth, RgImageState::STORAGE_WRITE_RAY_TRACING);
+        builder.write_image(self.motion_vectors, RgImageState::STORAGE_WRITE_RAY_TRACING);
     }
 
     fn execute(&self, ctx: &RgPassContext<'_>) {
@@ -679,6 +700,9 @@ impl RgPass for RealtimeRtRgPass<'_> {
             ctx.get_image_and_view_handle(self.gbuffer_b).expect("RealtimeRtRgPass: gbuffer_b not found");
         let (gbuffer_c, gbuffer_c_view) =
             ctx.get_image_and_view_handle(self.gbuffer_c).expect("RealtimeRtRgPass: gbuffer_c not found");
+        let (depth, depth_view) = ctx.get_image_and_view_handle(self.depth).expect("RealtimeRtRgPass: depth not found");
+        let (motion_vectors, motion_vectors_view) =
+            ctx.get_image_and_view_handle(self.motion_vectors).expect("RealtimeRtRgPass: motion_vectors not found");
 
         self.rt_pass.ray_trace(
             self.gpu_store,
@@ -694,6 +718,10 @@ impl RgPass for RealtimeRtRgPass<'_> {
                 gbuffer_b_view,
                 gbuffer_c,
                 gbuffer_c_view,
+                depth,
+                depth_view,
+                motion_vectors,
+                motion_vectors_view,
             },
         );
     }

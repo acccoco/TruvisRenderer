@@ -83,6 +83,18 @@ void write_gbuffer_hit(uint2 thread_id, GBufferData data)
     rt::gbuffer_c.Store(thread_id, float4(data.albedo, data.metallic));
 }
 
+/// 写入 DLSS SR 的 per-pixel 输入（命中情况）
+/// @param thread_id 当前像素坐标
+/// @param depth projection 后的 device depth
+/// @note 当前 RT 管线没有上一帧 object transform；第一版 motion vector 写 0，
+///       camera motion 由 Streamline constants 和 cameraMotionIncluded=false 处理。
+void write_dlss_sr_hit(uint2 thread_id, float depth)
+{
+    rt::dlss_depth.Store(thread_id, depth);
+    // 当前没有 object previous transform，先写 0；camera motion 由 Streamline common constants 计算。
+    rt::dlss_motion_vectors.Store(thread_id, float2(0.0f, 0.0f));
+}
+
 /// 写入 GBuffer（miss 情况）
 /// @param thread_id 当前像素坐标
 /// @note miss 时写入默认值：depth = DEFAULT_LINEAR_DEPTH, 其他为 0
@@ -96,6 +108,15 @@ void write_gbuffer_miss(uint2 thread_id)
 
     // GBufferC：反照率 albedo = (0,0,0)，金属度 metallic = 0
     rt::gbuffer_c.Store(thread_id, float4(0.0f, 0.0f, 0.0f, 0.0f));
+}
+
+/// 写入 DLSS SR 的 per-pixel 输入（miss 情况）
+/// @param thread_id 当前像素坐标
+void write_dlss_sr_miss(uint2 thread_id)
+{
+    // miss 写远平面 device depth，避免天空像素在 SR 中继承上一帧命中深度。
+    rt::dlss_depth.Store(thread_id, 1.0f);
+    rt::dlss_motion_vectors.Store(thread_id, float2(0.0f, 0.0f));
 }
 
 } // namespace gbuffer

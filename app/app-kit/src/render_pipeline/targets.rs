@@ -151,15 +151,12 @@ impl Drop for PerFrameImageSet {
     }
 }
 
-/// RT 管线工作图像：单帧 ray tracing 输出和跨帧累积图像。
+/// RT 管线工作图像：单帧 ray tracing 输出。
 ///
-/// `single_frame_rt` 是 per-frame target，因为 raygen 每帧写入当前 FIF 槽位；
-/// `accum` 是单张历史图像，因为 progressive accumulation 需要跨帧保留结果。
-/// 当 resize 或环境/视图变化导致累积失效时，runtime 只重置 `AccumData`，
-/// 图像本身由本 owner 在 resize 生命周期中重建。
+/// `single_frame_rt` 是 per-frame target，因为 raygen 每帧写入当前 FIF 槽位。
+/// SR 接入后这里保持低分辨率 render extent；历史累积和 denoise 不再是主流程的一部分。
 pub struct RtWorkingTargets {
     single_frame_rt: PerFrameImageSet,
-    accum: ImageTarget,
 }
 
 impl RtWorkingTargets {
@@ -184,26 +181,13 @@ impl RtWorkingTargets {
             TargetImageDesc {
                 name_prefix: "single-frame-rt",
                 format: frame_settings.color_format,
-                extent: frame_settings.frame_extent,
-                usage: storage_usage,
-            },
-            frame_counter,
-        );
-        let accum = create_single_color_target(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            TargetImageDesc {
-                name_prefix: "accum-image",
-                format: frame_settings.color_format,
-                extent: frame_settings.frame_extent,
+                extent: frame_settings.render_extent,
                 usage: storage_usage,
             },
             frame_counter,
         );
 
-        let targets = Self { single_frame_rt, accum };
+        let targets = Self { single_frame_rt };
         targets.register_bindless(bindless_manager);
         targets
     }
@@ -244,8 +228,6 @@ impl RtWorkingTargets {
         // 再释放 manager image，避免后续 descriptor 更新读到已释放的 view handle。
         self.unregister_bindless(bindless_manager);
         self.single_frame_rt.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, self.accum.image, reason);
-        self.accum = ImageTarget::default();
     }
 
     #[inline]
@@ -253,30 +235,243 @@ impl RtWorkingTargets {
         self.single_frame_rt.target(frame_label)
     }
 
-    #[inline]
-    pub fn accum(&self) -> ImageTarget {
-        self.accum
-    }
-
     fn register_bindless(&self, bindless_manager: &mut BindlessManager) {
         self.single_frame_rt.register_uav(bindless_manager);
         self.single_frame_rt.register_srv(bindless_manager);
-        bindless_manager.register_uav(self.accum.view);
-        bindless_manager.register_srv(self.accum.view);
     }
 
     fn unregister_bindless(&self, bindless_manager: &mut BindlessManager) {
         self.single_frame_rt.unregister_srv(bindless_manager);
         self.single_frame_rt.unregister_uav(bindless_manager);
-        bindless_manager.unregister_srv(self.accum.view);
-        bindless_manager.unregister_uav(self.accum.view);
     }
 }
 
 impl Drop for RtWorkingTargets {
     fn drop(&mut self) {
-        debug_assert!(self.accum.image.is_null());
-        debug_assert!(self.accum.view.is_null());
+        debug_assert!(self.single_frame_rt.images.iter().all(|img| img.is_null()));
+    }
+}
+
+/// DLSS SR 所需的低分辨率输入辅助图像。
+///
+/// depth 与 motion vector 都由 raygen 在 render extent 下写入；ImGui 可通过 SRV
+/// 查看当前 frame label 对应图像，Streamline evaluate 则使用原始 Vulkan image/view 进行 tag。
+pub struct DlssSrInputTargets {
+    depth: PerFrameImageSet,
+    motion_vectors: PerFrameImageSet,
+}
+
+impl DlssSrInputTargets {
+    pub const DEPTH_FORMAT: vk::Format = vk::Format::R32_SFLOAT;
+    pub const MOTION_VECTOR_FORMAT: vk::Format = vk::Format::R32G32_SFLOAT;
+
+    pub fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+        bindless_manager: &mut BindlessManager,
+        frame_settings: &FrameSettings,
+        frame_counter: &FrameCounter,
+    ) -> Self {
+        // raygen 通过 UAV 写入，Debug Viewer 通过 SRV 采样；Streamline evaluate 则直接使用
+        // 原始 image/view handle 做 resource tag，不经过 bindless descriptor。
+        let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
+        let depth = PerFrameImageSet::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            TargetImageDesc {
+                name_prefix: "dlss-depth",
+                format: Self::DEPTH_FORMAT,
+                extent: frame_settings.render_extent,
+                usage,
+            },
+            frame_counter,
+        );
+        let motion_vectors = PerFrameImageSet::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            TargetImageDesc {
+                name_prefix: "dlss-motion-vectors",
+                format: Self::MOTION_VECTOR_FORMAT,
+                extent: frame_settings.render_extent,
+                usage,
+            },
+            frame_counter,
+        );
+
+        let targets = Self { depth, motion_vectors };
+        targets.register_bindless(bindless_manager);
+        targets
+    }
+
+    pub fn rebuild(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        bindless_manager: &mut BindlessManager,
+        gfx_resource_manager: &mut GfxResourceManager,
+        frame_settings: &FrameSettings,
+        frame_counter: &FrameCounter,
+    ) {
+        self.destroy(resource_ctx, device_ctx, bindless_manager, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            bindless_manager,
+            frame_settings,
+            frame_counter,
+        );
+    }
+
+    pub fn destroy(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        bindless_manager: &mut BindlessManager,
+        gfx_resource_manager: &mut GfxResourceManager,
+        reason: DestroyReason,
+    ) {
+        // SR input 同时注册 UAV/SRV；销毁前必须对两个 bindless 表都撤销注册。
+        self.unregister_bindless(bindless_manager);
+        self.depth.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.motion_vectors.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+    }
+
+    #[inline]
+    pub fn depth(&self, frame_label: FrameLabel) -> ImageTarget {
+        self.depth.target(frame_label)
+    }
+
+    #[inline]
+    pub fn motion_vectors(&self, frame_label: FrameLabel) -> ImageTarget {
+        self.motion_vectors.target(frame_label)
+    }
+
+    fn register_bindless(&self, bindless_manager: &mut BindlessManager) {
+        self.depth.register_uav(bindless_manager);
+        self.depth.register_srv(bindless_manager);
+        self.motion_vectors.register_uav(bindless_manager);
+        self.motion_vectors.register_srv(bindless_manager);
+    }
+
+    fn unregister_bindless(&self, bindless_manager: &mut BindlessManager) {
+        self.depth.unregister_srv(bindless_manager);
+        self.depth.unregister_uav(bindless_manager);
+        self.motion_vectors.unregister_srv(bindless_manager);
+        self.motion_vectors.unregister_uav(bindless_manager);
+    }
+}
+
+impl Drop for DlssSrInputTargets {
+    fn drop(&mut self) {
+        debug_assert!(self.depth.images.iter().all(|img| img.is_null()));
+        debug_assert!(self.motion_vectors.images.iter().all(|img| img.is_null()));
+    }
+}
+
+/// DLSS SR 的高分辨率 HDR 输出图像。
+///
+/// SR evaluate 写入 output extent 下的 linear HDR color；后续 tone mapping pass 再把它写入
+/// main view color，保证 GUI 和 present 仍只消费最终 SDR target。
+pub struct DlssSrOutputTargets {
+    color: PerFrameImageSet,
+}
+
+impl DlssSrOutputTargets {
+    pub fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+        bindless_manager: &mut BindlessManager,
+        frame_settings: &FrameSettings,
+        frame_counter: &FrameCounter,
+    ) -> Self {
+        // DLSS output 后续作为 storage image 被 SDR pass 读取，也会在 debug viewer 中被采样。
+        // TRANSFER_DST 用于 validation/debug 清理路径，TRANSFER_SRC 保留给截图或后续 copy 诊断。
+        let color = PerFrameImageSet::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            TargetImageDesc {
+                name_prefix: "dlss-sr-output",
+                format: frame_settings.color_format,
+                extent: frame_settings.output_extent,
+                usage: vk::ImageUsageFlags::STORAGE
+                    | vk::ImageUsageFlags::TRANSFER_SRC
+                    | vk::ImageUsageFlags::TRANSFER_DST
+                    | vk::ImageUsageFlags::SAMPLED,
+            },
+            frame_counter,
+        );
+
+        let targets = Self { color };
+        targets.register_bindless(bindless_manager);
+        targets
+    }
+
+    pub fn rebuild(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        bindless_manager: &mut BindlessManager,
+        gfx_resource_manager: &mut GfxResourceManager,
+        frame_settings: &FrameSettings,
+        frame_counter: &FrameCounter,
+    ) {
+        self.destroy(resource_ctx, device_ctx, bindless_manager, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            bindless_manager,
+            frame_settings,
+            frame_counter,
+        );
+    }
+
+    pub fn destroy(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        bindless_manager: &mut BindlessManager,
+        gfx_resource_manager: &mut GfxResourceManager,
+        reason: DestroyReason,
+    ) {
+        self.unregister_bindless(bindless_manager);
+        self.color.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+    }
+
+    #[inline]
+    pub fn color(&self, frame_label: FrameLabel) -> ImageTarget {
+        self.color.target(frame_label)
+    }
+
+    fn register_bindless(&self, bindless_manager: &mut BindlessManager) {
+        self.color.register_uav(bindless_manager);
+        self.color.register_srv(bindless_manager);
+    }
+
+    fn unregister_bindless(&self, bindless_manager: &mut BindlessManager) {
+        self.color.unregister_srv(bindless_manager);
+        self.color.unregister_uav(bindless_manager);
+    }
+}
+
+impl Drop for DlssSrOutputTargets {
+    fn drop(&mut self) {
+        debug_assert!(self.color.images.iter().all(|img| img.is_null()));
     }
 }
 
@@ -308,7 +503,7 @@ impl MainViewTargets {
             TargetImageDesc {
                 name_prefix: "main-view-color",
                 format: frame_settings.color_format,
-                extent: frame_settings.frame_extent,
+                extent: frame_settings.output_extent,
                 usage: vk::ImageUsageFlags::STORAGE
                     | vk::ImageUsageFlags::TRANSFER_SRC
                     | vk::ImageUsageFlags::SAMPLED
@@ -411,43 +606,6 @@ struct TargetImageDesc<'a> {
     usage: vk::ImageUsageFlags,
 }
 
-fn create_single_color_target(
-    resource_ctx: GfxResourceCtx<'_>,
-    device_ctx: GfxDeviceCtx<'_>,
-    immediate_ctx: GfxImmediateCtx<'_>,
-    gfx_resource_manager: &mut GfxResourceManager,
-    desc: TargetImageDesc<'_>,
-    frame_counter: &FrameCounter,
-) -> ImageTarget {
-    let image = create_image(
-        resource_ctx,
-        desc.extent,
-        desc.format,
-        desc.usage,
-        format!("{}-{}", desc.name_prefix, frame_counter.frame_id()),
-    );
-    transition_images_to_general(
-        immediate_ctx,
-        std::slice::from_ref(&image),
-        &format!("transfer-{}-layout", desc.name_prefix),
-    );
-
-    let image_handle = gfx_resource_manager.register_image(image);
-    let view_handle = gfx_resource_manager.get_or_create_image_view(
-        device_ctx,
-        image_handle,
-        GfxImageViewDesc::new_2d(desc.format, vk::ImageAspectFlags::COLOR),
-        format!("{}-{}", desc.name_prefix, frame_counter.frame_id()),
-    );
-
-    ImageTarget {
-        image: image_handle,
-        view: view_handle,
-        format: desc.format,
-        extent: desc.extent,
-    }
-}
-
 fn create_depth_target(
     resource_ctx: GfxResourceCtx<'_>,
     device_ctx: GfxDeviceCtx<'_>,
@@ -457,7 +615,7 @@ fn create_depth_target(
 ) -> ImageTarget {
     let image = create_image(
         resource_ctx,
-        frame_settings.frame_extent,
+        frame_settings.output_extent,
         frame_settings.depth_format,
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
         format!("main-view-depth-{}", frame_counter.frame_id()),
@@ -474,7 +632,7 @@ fn create_depth_target(
         image: image_handle,
         view: view_handle,
         format: frame_settings.depth_format,
-        extent: frame_settings.frame_extent,
+        extent: frame_settings.output_extent,
     }
 }
 

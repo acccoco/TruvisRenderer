@@ -14,6 +14,7 @@ truvis-path = { workspace = true }
 truvis-utils = { workspace = true }
 truvis-descriptor-layout-macro = { workspace = true }
 truvis-descriptor-layout-trait = { workspace = true }
+truvis-streamline-binding = { workspace = true }
 
 
 ash = { workspace = true }

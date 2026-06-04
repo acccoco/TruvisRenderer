@@ -206,6 +206,7 @@ dependencies = [
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-shader-binding",
+ "truvis-streamline-binding",
  "truvis-utils",
  "vk-mem",
 ]
@@ -3687,6 +3688,7 @@ dependencies = [
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-shader-binding",
+ "truvis-streamline-binding",
  "truvis-utils",
  "truvis-world",
  "vk-mem",

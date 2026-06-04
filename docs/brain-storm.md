@@ -40,6 +40,8 @@
   AssetHub、render-side manager/bridge、GpuScene 与 RenderSceneView 的当前状态。
 - [`render-view-concept.md`](brain-storm/render-view-concept.md)：
   轻量 main view / prepared view 的引入方向。
+- [`render-graph-improvement-direction.md`](brain-storm/render-graph-improvement-direction.md)：
+  RenderGraph 到 FrameGraph + subgraph/scope 的演进方向、handle 规则和 adapter 层改进。
 - [`dlss-streamline-integration.md`](brain-storm/dlss-streamline-integration.md)：
   DLSS Super Resolution、Streamline Vulkan interposer、C++ wrapper 与 RenderGraph 接入边界。
 - [`plugin-feature-evolution.md`](brain-storm/plugin-feature-evolution.md)：

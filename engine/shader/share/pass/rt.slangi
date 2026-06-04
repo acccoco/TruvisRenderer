@@ -30,6 +30,14 @@ RWTexture2D<float4> gbuffer_b;
 [[vk::binding(4, RT_SET_NUM)]]
 RWTexture2D<float4> gbuffer_c;
 
+/// DLSS SR depth 输入。使用 projection 后的 device depth；miss 写入远平面值。
+[[vk::binding(5, RT_SET_NUM)]]
+RWTexture2D<float> dlss_depth;
+
+/// DLSS SR motion vectors 输入。第一版只提供物体运动，camera motion 由 Streamline constants 计算。
+[[vk::binding(6, RT_SET_NUM)]]
+RWTexture2D<float2> dlss_motion_vectors;
+
 #endif
 
 struct PushConstants

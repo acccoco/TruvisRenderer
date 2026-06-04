@@ -2,6 +2,7 @@ use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuff
 use truvis_shader_binding::gpu;
 
 use crate::bindless_manager::BindlessManager;
+use crate::dlss_sr::DlssSrState;
 use crate::frame_counter::FrameCounter;
 use crate::gfx_resource_manager::GfxResourceManager;
 use crate::global_descriptor_sets::GlobalDescriptorSets;
@@ -24,6 +25,7 @@ pub struct GpuStore {
     pub frame_counter: FrameCounter,
     pub frame_settings: FrameSettings,
     pub pipeline_settings: PipelineSettings,
+    pub dlss_sr_state: DlssSrState,
 
     pub delta_time_s: f32,
     pub total_time_s: f32,

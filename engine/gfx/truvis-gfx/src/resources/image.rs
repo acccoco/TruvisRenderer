@@ -60,6 +60,8 @@ pub struct GfxImage {
 
     extent: vk::Extent3D,
     format: vk::Format,
+    usage: vk::ImageUsageFlags,
+    flags: vk::ImageCreateFlags,
 
     name: String,
 }
@@ -87,6 +89,35 @@ impl GfxImage {
     }
 
     #[inline]
+    /// 创建时声明的 usage，供 Streamline resource tag 复原 native Vulkan resource 描述。
+    pub fn usage(&self) -> vk::ImageUsageFlags {
+        self.usage
+    }
+
+    #[inline]
+    /// 创建时声明的 image flags，供外部 opaque pass 做资源描述快照。
+    pub fn flags(&self) -> vk::ImageCreateFlags {
+        self.flags
+    }
+
+    #[inline]
+    pub fn extent(&self) -> vk::Extent3D {
+        self.extent
+    }
+
+    #[inline]
+    /// 返回 VMA 分配背后的 device memory。
+    ///
+    /// swapchain 等外部 image 没有本模块拥有的 allocation；这类资源返回 null，只能用于
+    /// 不要求 memory handle 的路径。DLSS SR 当前 tag 的 app-owned 中间图像均为 allocated image。
+    pub fn device_memory(&self, ctx: GfxResourceCtx<'_>) -> vk::DeviceMemory {
+        match &self.source {
+            ImageSource::Allocated(allocation) => ctx.allocator().get_allocation_info(allocation).device_memory,
+            ImageSource::External => vk::DeviceMemory::null(),
+        }
+    }
+
+    #[inline]
     pub fn debug_name(&self) -> &str {
         &self.name
     }
@@ -110,6 +141,8 @@ impl GfxImage {
             source: ImageSource::Allocated(alloc),
             extent: image_info.inner.extent,
             format: image_info.inner.format,
+            usage: image_info.inner.usage,
+            flags: image_info.inner.flags,
 
             name: debug_name.to_string(),
         };
@@ -130,6 +163,8 @@ impl GfxImage {
             source: ImageSource::External,
             extent,
             format,
+            usage: vk::ImageUsageFlags::empty(),
+            flags: vk::ImageCreateFlags::empty(),
 
             name: name.as_ref().to_string(),
         };

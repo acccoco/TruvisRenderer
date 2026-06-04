@@ -123,6 +123,31 @@ where
             });
         }
 
+        // PipelineSettings 可能在 update/UI 阶段改变 DLSS SR mode。必须在 prepare/render graph 之前
+        // 同步 render/output extent，并让 app-owned RT/GBuffer/DLSS targets 跟着重建。
+        if let Some(runtime) = render_runtime.sync_pipeline_frame_settings() {
+            let image_extent = runtime.present.swapchain_image_info().image_extent;
+            let new_size = [image_extent.width, image_extent.height];
+            let mut app_ctx = RenderAppResizeCtx {
+                runtime,
+                window_size: new_size,
+            };
+            app.on_resize(&mut app_ctx);
+
+            let RenderAppResizeCtx { runtime, .. } = app_ctx;
+            let mut plugin_ctx = PluginResizeCtx {
+                device_ctx: runtime.device_ctx,
+                resource_ctx: runtime.resource_ctx,
+                immediate_ctx: runtime.immediate_ctx,
+                surface_ctx: runtime.surface_ctx,
+                gpu_store: runtime.gpu_store,
+                present: runtime.present,
+            };
+            app.visit_plugins_mut(&mut |plugin| {
+                plugin.on_resize(&mut plugin_ctx);
+            });
+        }
+
         if !render_runtime.current_frame_has_present_target() {
             log::debug!("RenderAppShell skips render/present because current frame has no acquired swapchain image.");
             render_runtime.signal_current_frame_complete();

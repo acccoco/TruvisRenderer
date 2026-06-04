@@ -1,6 +1,6 @@
 use ash::vk;
 use truvis_app_frame::plugin_api::Plugin;
-use truvis_render_foundation::pipeline_settings::PipelineSettings;
+use truvis_render_foundation::pipeline_settings::{DlssSrMode, PipelineSettings};
 
 use crate::camera::Camera;
 
@@ -73,6 +73,14 @@ impl PipelineControlsOverlay {
             .position([10.0, 200.0], imgui::Condition::FirstUseEver)
             .size([250.0, 200.0], imgui::Condition::FirstUseEver)
             .build(|| {
+                // 当前只暴露 DLSS SR/DLAA mode；RR 后续作为独立开关接入，不放进这个质量挡位下拉框。
+                if let Some(_combo) = ui.begin_combo("DLSS SR", pipeline_settings.dlss_sr_mode.label()) {
+                    for mode in DlssSrMode::ALL {
+                        if ui.selectable_config(mode.label()).selected(pipeline_settings.dlss_sr_mode == mode).build() {
+                            pipeline_settings.dlss_sr_mode = mode;
+                        }
+                    }
+                }
                 ui.slider("channel", 0, 9, &mut pipeline_settings.channel);
                 ui.text(match pipeline_settings.channel {
                     0 => "final",
@@ -87,22 +95,6 @@ impl PipelineControlsOverlay {
                     9 => "Irradiance Cache",
                     _ => "Unknown",
                 });
-
-                ui.separator();
-                ui.text("Irradiance Cache");
-                ui.checkbox("Enable IC", &mut pipeline_settings.ic_enabled);
-
-                ui.separator();
-                ui.text("Denoise Settings");
-
-                let denoise = &mut pipeline_settings.denoise;
-                ui.checkbox("Enable Denoise", &mut denoise.enabled);
-
-                let _disabled = ui.begin_disabled(!denoise.enabled);
-                ui.slider("Sigma Color", 0.01, 1.0, &mut denoise.sigma_color);
-                ui.slider("Sigma Depth", 0.01, 2.0, &mut denoise.sigma_depth);
-                ui.slider("Sigma Normal", 0.01, 2.0, &mut denoise.sigma_normal);
-                ui.slider("Kernel Radius", 1, 5, &mut denoise.kernel_radius);
             });
     }
 }

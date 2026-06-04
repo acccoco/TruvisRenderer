@@ -25,7 +25,7 @@ pub struct StreamlineError {
 }
 
 impl StreamlineError {
-    fn new(sl_result: i32, context: &'static str) -> Self {
+    pub(crate) fn new(sl_result: i32, context: &'static str) -> Self {
         Self { sl_result, context }
     }
 

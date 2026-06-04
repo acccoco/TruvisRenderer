@@ -46,6 +46,15 @@ RayDesc generate_camera_ray(uint2 thread_id, float2 subpixel_jitter)
     return ray;
 }
 
+float compute_device_depth(float3 world_position)
+{
+    // DLSS SR 当前 tag 的是 kBufferTypeDepth，需要 projection 后的 device depth。
+    // GBufferB.w 仍保存 ray hit_t，两者语义不要混用。
+    const float4 view_position = mul(per_frame_data.view, float4(world_position, 1.0f));
+    const float4 clip_position = mul(per_frame_data.projection, view_position);
+    return saturate(clip_position.z / clip_position.w);
+}
+
 /// 初始化光线载荷
 /// @param random_seed 随机种子
 /// @return 初始化的载荷
@@ -617,6 +626,8 @@ void main_ray_gen()
             if (!gbuffer_written)
             {
                 gbuffer::write_gbuffer_miss(thread_id);
+                // miss 像素也必须写入 DLSS 输入，避免 SR 读取上一帧残留的 depth/mvec。
+                gbuffer::write_dlss_sr_miss(thread_id);
                 gbuffer_written = true;
             }
 
@@ -676,6 +687,8 @@ void main_ray_gen()
                 payload.info.roughness
             );
             gbuffer::write_gbuffer_hit(thread_id, gbuffer_data);
+            // DLSS depth 与 GBuffer linear_depth 分开写，保证 SR 输入和 debug GBuffer 各自语义稳定。
+            gbuffer::write_dlss_sr_hit(thread_id, compute_device_depth(payload.info.position));
             gbuffer_written = true;
         }
 

@@ -1,7 +1,8 @@
 use crate::gui_plugin::{DebugImageEntry, DebugImageGraphEntry};
-use crate::render_pipeline::targets::{ImageTarget, MainViewTargets, RtWorkingTargets};
-use app_render_passes::blit_pass::{BlitPass, BlitRgPass};
-use app_render_passes::denoise_accum_pass::{DenoiseAccumPass, DenoiseAccumRgPass};
+use crate::render_pipeline::targets::{
+    DlssSrInputTargets, DlssSrOutputTargets, ImageTarget, MainViewTargets, RtWorkingTargets,
+};
+use app_render_passes::dlss_sr_pass::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
 use app_render_passes::gbuffer::GBuffer;
 use app_render_passes::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};
 use app_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
@@ -12,7 +13,7 @@ use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::gpu_store::GpuStore;
-use truvis_render_foundation::pipeline_settings::FrameLabel;
+use truvis_render_foundation::pipeline_settings::{DlssSrMode, FrameLabel};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 
 #[derive(Default)]
@@ -22,13 +23,19 @@ pub struct RtPipeline {
 
 struct RtPipelineInner {
     realtime_rt_pass: RealtimeRtPass,
-    denoise_accum_pass: DenoiseAccumPass,
-    blit_pass: BlitPass,
+    /// DLSS SR 是外部 opaque pass，不拥有 shader pipeline；只在 SR/DLAA 分支被加入 compute graph。
+    dlss_sr_pass: DlssSrPass,
     sdr_pass: SdrPass,
     resolve_pass: ResolvePass,
     gbuffer: GBuffer,
     /// RT 私有工作图像。它们的格式/用途由 RT pipeline 决定，因此不再放在 engine `GpuStore`。
     rt_targets: RtWorkingTargets,
+    /// DLSS SR 需要的低分辨率 depth/motion-vector 输入。
+    ///
+    /// 即使 SR 关闭也会由 raygen 写入，便于 ImGui debug viewer 验证深度和 motion vector。
+    dlss_sr_inputs: DlssSrInputTargets,
+    /// DLSS SR 输出的高分辨率 HDR color。
+    dlss_sr_outputs: DlssSrOutputTargets,
     /// 主视图离屏目标。compute graph 写入 color，present graph 再 resolve 到 swapchain。
     main_view_targets: MainViewTargets,
     compute_cmds: [GfxCommandBuffer; FrameCounter::fif_count()],
@@ -49,7 +56,7 @@ impl RtPresentGraphTargets {
         [DebugImageGraphEntry::new(
             "main-view-color",
             self.main_view_color,
-            RgImageState::GENERAL,
+            RgImageState::SHADER_READ_FRAGMENT,
         )]
     }
 }
@@ -63,8 +70,7 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &ctx.gpu_store.global_descriptor_sets,
         );
-        let denoise_accum_pass = DenoiseAccumPass::new(ctx.device_ctx, &ctx.gpu_store.global_descriptor_sets);
-        let blit_pass = BlitPass::new(ctx.device_ctx, &ctx.gpu_store.global_descriptor_sets);
+        let dlss_sr_pass = DlssSrPass::new();
         let sdr_pass = SdrPass::new(ctx.device_ctx, &ctx.gpu_store.global_descriptor_sets);
         let resolve_pass = ResolvePass::new(
             ctx.device_ctx,
@@ -75,7 +81,7 @@ impl RtPipelineInner {
         // app-owned target 必须使用 init 阶段已经创建好的 swapchain extent，避免首帧按 400x400
         // 创建中间图像。runtime 会在 `init_after_window` 同步该值，这里仍显式覆盖，保证契约局部可见。
         let mut target_frame_settings = ctx.gpu_store.frame_settings;
-        target_frame_settings.frame_extent = ctx.swapchain_image_info.image_extent;
+        target_frame_settings.set_native_extent(ctx.swapchain_image_info.image_extent);
 
         let rt_targets = RtWorkingTargets::new(
             ctx.resource_ctx,
@@ -95,6 +101,24 @@ impl RtPipelineInner {
             &target_frame_settings,
             &ctx.gpu_store.frame_counter,
         );
+        let dlss_sr_inputs = DlssSrInputTargets::new(
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            ctx.immediate_ctx,
+            &mut ctx.gpu_store.gfx_resource_manager,
+            &mut ctx.gpu_store.bindless_manager,
+            &target_frame_settings,
+            &ctx.gpu_store.frame_counter,
+        );
+        let dlss_sr_outputs = DlssSrOutputTargets::new(
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            ctx.immediate_ctx,
+            &mut ctx.gpu_store.gfx_resource_manager,
+            &mut ctx.gpu_store.bindless_manager,
+            &target_frame_settings,
+            &ctx.gpu_store.frame_counter,
+        );
 
         let gbuffer = GBuffer::new(
             ctx.resource_ctx,
@@ -102,7 +126,7 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &mut ctx.gpu_store.gfx_resource_manager,
             &mut ctx.gpu_store.bindless_manager,
-            target_frame_settings.frame_extent,
+            target_frame_settings.render_extent,
             &ctx.gpu_store.frame_counter,
         );
 
@@ -115,12 +139,13 @@ impl RtPipelineInner {
 
         Self {
             realtime_rt_pass,
-            denoise_accum_pass,
-            blit_pass,
+            dlss_sr_pass,
             sdr_pass,
             resolve_pass,
             gbuffer,
             rt_targets,
+            dlss_sr_inputs,
+            dlss_sr_outputs,
             main_view_targets,
             compute_cmds,
             present_cmds,
@@ -132,8 +157,7 @@ impl RtPipelineInner {
         // shutdown 阶段 runtime 已经 wait idle，先销毁 pipeline 再释放 target 不会影响 GPU 引用安全，
         // 但 target 仍必须在 runtime `GfxResourceManager` 销毁前显式释放。
         self.realtime_rt_pass.destroy(resource_ctx, device_ctx);
-        self.denoise_accum_pass.destroy(device_ctx);
-        self.blit_pass.destroy(device_ctx);
+        self.dlss_sr_pass.destroy();
         self.sdr_pass.destroy(device_ctx);
         self.resolve_pass.destroy(device_ctx);
         self.gbuffer.destroy(
@@ -144,6 +168,20 @@ impl RtPipelineInner {
             DestroyReason::Shutdown,
         );
         self.rt_targets.destroy(
+            resource_ctx,
+            device_ctx,
+            &mut gpu_store.bindless_manager,
+            &mut gpu_store.gfx_resource_manager,
+            DestroyReason::Shutdown,
+        );
+        self.dlss_sr_inputs.destroy(
+            resource_ctx,
+            device_ctx,
+            &mut gpu_store.bindless_manager,
+            &mut gpu_store.gfx_resource_manager,
+            DestroyReason::Shutdown,
+        );
+        self.dlss_sr_outputs.destroy(
             resource_ctx,
             device_ctx,
             &mut gpu_store.bindless_manager,
@@ -170,9 +208,26 @@ impl Plugin for RtPipeline {
             // resize ctx 来自 present 层实际重建后的安全点；旧 target 不会再被在飞命令引用。
             // 这里用 `PresentView` 再读一次 swapchain extent，避免 app-owned target 和
             // swapchain 在平台裁剪尺寸时出现细微不一致。
-            let mut target_frame_settings = ctx.gpu_store.frame_settings;
-            target_frame_settings.frame_extent = ctx.present.swapchain_image_info().image_extent;
+            let target_frame_settings = ctx.gpu_store.frame_settings;
             inner.rt_targets.rebuild(
+                ctx.resource_ctx,
+                ctx.device_ctx,
+                ctx.immediate_ctx,
+                &mut ctx.gpu_store.bindless_manager,
+                &mut ctx.gpu_store.gfx_resource_manager,
+                &target_frame_settings,
+                &ctx.gpu_store.frame_counter,
+            );
+            inner.dlss_sr_inputs.rebuild(
+                ctx.resource_ctx,
+                ctx.device_ctx,
+                ctx.immediate_ctx,
+                &mut ctx.gpu_store.bindless_manager,
+                &mut ctx.gpu_store.gfx_resource_manager,
+                &target_frame_settings,
+                &ctx.gpu_store.frame_counter,
+            );
+            inner.dlss_sr_outputs.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
@@ -196,7 +251,7 @@ impl Plugin for RtPipeline {
                 ctx.immediate_ctx,
                 &mut ctx.gpu_store.bindless_manager,
                 &mut ctx.gpu_store.gfx_resource_manager,
-                target_frame_settings.frame_extent,
+                target_frame_settings.render_extent,
                 &ctx.gpu_store.frame_counter,
             );
         }
@@ -227,6 +282,8 @@ impl RtPipeline {
         let gpu_store = ctx.gpu_store;
         let frame_label = gpu_store.frame_counter.frame_label();
         let rt_targets = &inner.rt_targets;
+        let dlss_sr_inputs = &inner.dlss_sr_inputs;
+        let dlss_sr_outputs = &inner.dlss_sr_outputs;
         let main_view_targets = &inner.main_view_targets;
 
         // compute graph 导入的是 app-owned 外部图像；RenderGraph 只接管本图内的状态转换，
@@ -272,13 +329,35 @@ impl RtPipeline {
             None,
         );
 
-        let accum_target = rt_targets.accum();
-        let accum_image = rg_builder.import_image(
-            "accum-image",
-            accum_target.image,
-            Some(accum_target.view),
-            accum_target.format,
-            RgImageState::STORAGE_READ_WRITE_COMPUTE,
+        let depth_target = dlss_sr_inputs.depth(frame_label);
+        // depth/mvec 是 ray-tracing pass 写出的 per-frame SR 输入。初始状态从 UNDEFINED_TOP
+        // 进入 graph，由 ray-tracing write 和后续 SR/debug read 决定精确 layout。
+        let depth = rg_builder.import_image(
+            "dlss-depth",
+            depth_target.image,
+            Some(depth_target.view),
+            depth_target.format,
+            RgImageState::UNDEFINED_TOP,
+            None,
+        );
+
+        let motion_vectors_target = dlss_sr_inputs.motion_vectors(frame_label);
+        let motion_vectors = rg_builder.import_image(
+            "dlss-motion-vectors",
+            motion_vectors_target.image,
+            Some(motion_vectors_target.view),
+            motion_vectors_target.format,
+            RgImageState::UNDEFINED_TOP,
+            None,
+        );
+
+        let dlss_output_target = dlss_sr_outputs.color(frame_label);
+        let dlss_output = rg_builder.import_image(
+            "dlss-sr-output",
+            dlss_output_target.image,
+            Some(dlss_output_target.view),
+            dlss_output_target.format,
+            RgImageState::UNDEFINED_TOP,
             None,
         );
 
@@ -296,74 +375,92 @@ impl RtPipeline {
 
         rg_builder.export_image(render_target, RgImageState::SHADER_READ_FRAGMENT, None);
 
-        rg_builder
-            .add_pass(
-                "ray-tracing",
-                RealtimeRtRgPass {
-                    rt_pass: &inner.realtime_rt_pass,
-                    gpu_store,
-                    render_scene: ctx.render_scene,
-                    single_frame_image,
-                    single_frame_extent: gpu_store.frame_settings.frame_extent,
-                    gbuffer_a,
-                    gbuffer_b,
-                    gbuffer_c,
-                },
-            )
-            .add_pass(
-                "denoise-accum",
-                DenoiseAccumRgPass {
-                    denoise_accum_pass: &inner.denoise_accum_pass,
-                    gpu_store,
-                    single_frame_image,
-                    accum_image,
-                    gbuffer_a,
-                    gbuffer_b,
-                    gbuffer_c,
-                    image_extent: gpu_store.frame_settings.frame_extent,
-                },
-            )
-            .add_pass(
-                "blit",
-                BlitRgPass {
-                    blit_pass: &inner.blit_pass,
-                    gpu_store,
-                    src_image: accum_image,
-                    dst_image: render_target,
-                    src_image_extent: gpu_store.frame_settings.frame_extent,
-                    dst_image_extent: gpu_store.frame_settings.frame_extent,
-                },
-            )
-            .add_pass(
+        rg_builder.add_pass(
+            "ray-tracing",
+            RealtimeRtRgPass {
+                rt_pass: &inner.realtime_rt_pass,
+                gpu_store,
+                render_scene: ctx.render_scene,
+                single_frame_image,
+                single_frame_extent: gpu_store.frame_settings.render_extent,
+                gbuffer_a,
+                gbuffer_b,
+                gbuffer_c,
+                depth,
+                motion_vectors,
+            },
+        );
+
+        if dlss_sr_enabled(gpu_store.pipeline_settings.dlss_sr_mode) {
+            // SR/DLAA 分支用 Streamline output 进入 SDR；不再运行传统 denoise/accum，
+            // 也不在 SR 后追加第二个 upscale pass。
+            rg_builder
+                .add_pass(
+                    "dlss-sr",
+                    DlssSrRgPass {
+                        dlss_sr_pass: &inner.dlss_sr_pass,
+                        gpu_store,
+                        resource_ctx: ctx.resource_ctx,
+                        input_color: single_frame_image,
+                        output_color: dlss_output,
+                        depth,
+                        motion_vectors,
+                    },
+                )
+                .add_pass(
+                    "hdr-to-sdr",
+                    SdrRgPass {
+                        sdr_pass: &inner.sdr_pass,
+                        gpu_store,
+                        src_image: dlss_output,
+                        dst_image: render_target,
+                        src_image_extent: gpu_store.frame_settings.output_extent,
+                        dst_image_extent: gpu_store.frame_settings.output_extent,
+                    },
+                );
+        } else {
+            // Native fallback 直接把低分辨率/原生 RT color 送入 SDR。此时 render/output extent
+            // 通常相等；若未来支持非 DLSS upscale，这里需要重新明确尺寸契约。
+            rg_builder.add_pass(
                 "hdr-to-sdr",
                 SdrRgPass {
                     sdr_pass: &inner.sdr_pass,
                     gpu_store,
-                    src_image: accum_image,
+                    src_image: single_frame_image,
                     dst_image: render_target,
-                    src_image_extent: gpu_store.frame_settings.frame_extent,
-                    dst_image_extent: gpu_store.frame_settings.frame_extent,
+                    src_image_extent: gpu_store.frame_settings.render_extent,
+                    dst_image_extent: gpu_store.frame_settings.output_extent,
                 },
             );
+        }
     }
 
-    pub fn collect_debug_images(&self, frame_label: FrameLabel) -> Vec<DebugImageEntry> {
+    pub fn collect_debug_images(&self, frame_label: FrameLabel, dlss_sr_mode: DlssSrMode) -> Vec<DebugImageEntry> {
         let inner = self.inner();
         let rt_targets = &inner.rt_targets;
         let main_view_targets = &inner.main_view_targets;
+        let dlss_sr_inputs = &inner.dlss_sr_inputs;
+        let dlss_sr_outputs = &inner.dlss_sr_outputs;
         let gbuffer = &inner.gbuffer;
 
         let single_frame = rt_targets.single_frame_rt(frame_label);
-        let accum = rt_targets.accum();
         let main_view_color = main_view_targets.color(frame_label);
+        let depth = dlss_sr_inputs.depth(frame_label);
+        let motion_vectors = dlss_sr_inputs.motion_vectors(frame_label);
+        let dlss_output = dlss_sr_outputs.color(frame_label);
         let (gbuffer_a_image, gbuffer_a_view) = gbuffer.a_handle(frame_label);
         let (gbuffer_b_image, gbuffer_b_view) = gbuffer.b_handle(frame_label);
         let (gbuffer_c_image, gbuffer_c_view) = gbuffer.c_handle(frame_label);
+        // SR 开启后这些输入已经在 compute graph 末尾停留在 DLSS read layout；
+        // present graph 的 debug preview 必须用同一状态 import，不能再假设所有 storage image 都是 GENERAL。
+        let sr_input_state = if dlss_sr_enabled(dlss_sr_mode) { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
 
         vec![
-            debug_entry("single-frame-rt", "Single Frame RT", single_frame),
-            debug_entry("accum", "Accum", accum),
+            debug_entry_with_state("single-frame-rt", "Single Frame RT", single_frame, sr_input_state),
             debug_entry("main-view-color", "Main View Color", main_view_color),
+            debug_entry("dlss-sr-output", "DLSS SR Output", dlss_output),
+            debug_entry_with_state("dlss-depth", "DLSS Depth", depth, sr_input_state),
+            debug_entry_with_state("dlss-motion-vectors", "DLSS Motion Vectors", motion_vectors, sr_input_state),
             DebugImageEntry::raw(
                 "gbuffer-a",
                 "GBuffer-A",
@@ -440,6 +537,27 @@ impl RtPipeline {
 
 fn debug_entry(id: &'static str, label: &'static str, target: ImageTarget) -> DebugImageEntry {
     DebugImageEntry::raw(id, label, target.image, target.view, target.format, target.extent)
+}
+
+fn debug_entry_with_state(
+    id: &'static str,
+    label: &'static str,
+    target: ImageTarget,
+    graph_state: RgImageState,
+) -> DebugImageEntry {
+    DebugImageEntry::raw_with_graph_state(
+        id,
+        label,
+        target.image,
+        target.view,
+        target.format,
+        target.extent,
+        graph_state,
+    )
+}
+
+fn dlss_sr_enabled(mode: DlssSrMode) -> bool {
+    mode != DlssSrMode::Off
 }
 
 impl Drop for RtPipeline {

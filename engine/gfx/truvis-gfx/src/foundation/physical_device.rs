@@ -155,6 +155,14 @@ impl GfxPhysicalDevice {
     }
 
     #[inline]
+    /// 暴露给 Streamline capability 查询的原始 physical device handle。
+    ///
+    /// 只读查询不转移所有权，Vulkan root 仍由 `Gfx` 生命周期管理。
+    pub fn vk_handle(&self) -> vk::PhysicalDevice {
+        self.vk_handle
+    }
+
+    #[inline]
     /// 当前 gpu 是否是独立显卡
     pub fn is_descrete_gpu(&self) -> bool {
         self.basic_props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU

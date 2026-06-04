@@ -9,8 +9,10 @@ sdr::PushConstant g_params;
 [numthreads(sdr::SHADER_X, sdr::SHADER_Y, 1)]
 void main(uint3 dispatchThreadID: SV_DispatchThreadID)
 {
-    if (dispatchThreadID.x > g_params.image_size.x ||
-        dispatchThreadID.y > g_params.image_size.y)
+    // SR 开启时 src/dst extent 可能来自不同阶段；这里按传入的目标 image_size 做严格 OOB
+    // 保护，避免 resize 后多余 dispatch thread 写到目标图像边界外。
+    if (dispatchThreadID.x >= g_params.image_size.x ||
+        dispatchThreadID.y >= g_params.image_size.y)
     {
         return; // Out of bounds
     }

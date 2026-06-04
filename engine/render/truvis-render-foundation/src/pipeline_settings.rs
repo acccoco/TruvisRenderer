@@ -24,11 +24,97 @@ impl DefaultRenderRuntimeSettings {
 }
 
 /// 帧级渲染配置
-#[derive(Copy, Clone, Default)]
+///
+/// DLSS 接入后，一帧需要同时描述“实际渲染尺寸”和“最终输出尺寸”：
+/// RT/GBuffer/DLSS input 按 `render_extent` 创建，present/GUI/main-view 按
+/// `output_extent` 创建。Native/DLAA/fallback 路径会让两者相等。
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct FrameSettings {
     pub color_format: vk::Format,
     pub depth_format: vk::Format,
-    pub frame_extent: vk::Extent2D,
+    /// RT、GBuffer、motion vector 等低分辨率渲染资源的尺寸。
+    pub render_extent: vk::Extent2D,
+    /// present、GUI 和最终离屏 color 的输出尺寸，通常等于 swapchain extent。
+    pub output_extent: vk::Extent2D,
+}
+
+impl FrameSettings {
+    /// 当前是否处于原生分辨率路径。
+    #[inline]
+    pub fn is_native_extent(self) -> bool {
+        self.render_extent == self.output_extent
+    }
+
+    /// Native / fallback 路径使用同一尺寸，避免 SR 关闭时保留旧的低分辨率状态。
+    #[inline]
+    pub fn set_native_extent(&mut self, extent: vk::Extent2D) {
+        self.render_extent = extent;
+        self.output_extent = extent;
+    }
+}
+
+/// DLSS Super Resolution / DLAA 模式。
+///
+/// 这里只表示 `kFeatureDLSS` 的模式选择；Ray Reconstruction 后续作为独立开关，
+/// 在执行层替换 SR evaluate，而不是作为这里的另一个互斥质量模式。
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DlssSrMode {
+    Off,
+    Dlaa,
+    Quality,
+    Balanced,
+    Performance,
+    UltraPerformance,
+}
+
+impl Default for DlssSrMode {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
+impl DlssSrMode {
+    pub const ALL: [Self; 6] = [
+        Self::Off,
+        Self::Dlaa,
+        Self::Quality,
+        Self::Balanced,
+        Self::Performance,
+        Self::UltraPerformance,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Dlaa => "DLAA",
+            Self::Quality => "Quality",
+            Self::Balanced => "Balanced",
+            Self::Performance => "Performance",
+            Self::UltraPerformance => "Ultra Performance",
+        }
+    }
+
+    /// 解析调试启动配置中的 DLSS SR 模式名称。
+    ///
+    /// 允许空格、连字符和下划线差异，是为了让环境变量输入对大小写和写法宽容。
+    pub fn from_config_value(value: &str) -> Option<Self> {
+        let normalized = value
+            .trim()
+            .chars()
+            .filter(|ch| !matches!(ch, ' ' | '-' | '_'))
+            .flat_map(char::to_lowercase)
+            .collect::<String>();
+
+        match normalized.as_str() {
+            "off" => Some(Self::Off),
+            "dlaa" => Some(Self::Dlaa),
+            "quality" => Some(Self::Quality),
+            "balanced" => Some(Self::Balanced),
+            "performance" => Some(Self::Performance),
+            "ultraperformance" => Some(Self::UltraPerformance),
+            _ => None,
+        }
+    }
 }
 
 /// 降噪设置
@@ -89,6 +175,8 @@ impl Default for DenoiseSettings {
 pub struct PipelineSettings {
     /// 0 表示 RT，1 表示 normal
     pub channel: u32,
+    /// DLSS SR / DLAA 模式。RR 后续作为独立开关接入，不和这里的质量模式平级。
+    pub dlss_sr_mode: DlssSrMode,
     /// 降噪设置
     pub denoise: DenoiseSettings,
     /// 是否启用 Irradiance Cache
@@ -99,8 +187,10 @@ impl Default for PipelineSettings {
     fn default() -> Self {
         Self {
             channel: 0,
+            dlss_sr_mode: DlssSrMode::Off,
             denoise: DenoiseSettings::default(),
-            ic_enabled: true, // 默认启用 IC
+            // 主流程当前不再依赖 Irradiance Cache；代码保留用于后续实验或 debug 通道。
+            ic_enabled: false,
         }
     }
 }

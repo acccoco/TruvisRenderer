@@ -34,6 +34,8 @@ pub enum DebugImageVisualizeMode {
 ///
 /// 该结构只保存 `GfxResourceManager` 中已有 image/view 的 handle 快照，不拥有资源生命周期。
 /// 调用方必须保证图像 owner 至少活到当前 RenderGraph 录制和提交完成，并为 `view` 注册 SRV。
+/// `graph_state` 描述图像跨 graph 传入 GUI preview 时的稳定状态；SR 输入被 DLSS pass 读取后
+/// 可能不再是 `GENERAL`，因此不能在 GUI 侧统一假设 storage layout。
 #[derive(Clone, Copy, Debug)]
 pub struct DebugImageEntry {
     pub id: &'static str,
@@ -42,6 +44,8 @@ pub struct DebugImageEntry {
     pub view: GfxImageViewHandle,
     pub format: vk::Format,
     pub extent: vk::Extent2D,
+    /// 该 debug image 导入当前 present graph 时的初始状态，也是预览后导出的最终状态。
+    pub graph_state: RgImageState,
     pub visualize_mode: DebugImageVisualizeMode,
 }
 
@@ -54,6 +58,19 @@ impl DebugImageEntry {
         format: vk::Format,
         extent: vk::Extent2D,
     ) -> Self {
+        // 旧 debug image 默认都是 storage/bindless target，跨 graph 稳定状态为 GENERAL。
+        Self::raw_with_graph_state(id, label, image, view, format, extent, RgImageState::GENERAL)
+    }
+
+    pub const fn raw_with_graph_state(
+        id: &'static str,
+        label: &'static str,
+        image: GfxImageHandle,
+        view: GfxImageViewHandle,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        graph_state: RgImageState,
+    ) -> Self {
         Self {
             id,
             label,
@@ -61,6 +78,7 @@ impl DebugImageEntry {
             view,
             format,
             extent,
+            graph_state,
             visualize_mode: DebugImageVisualizeMode::Raw,
         }
     }
@@ -322,9 +340,11 @@ impl GuiPlugin {
         }
 
         let entry = self.debug_images.iter().find(|entry| entry.id == selected_id)?;
+        // 未被 present graph 其它 pass 导入的 debug image，在 GUI 侧按 owner 声明的稳定状态导入。
+        // 这保证 SR 输入的 SHADER_READ_ONLY layout 不会被错误当作 GENERAL 重新声明。
         let image =
-            graph.import_image(entry.label, entry.image, Some(entry.view), entry.format, RgImageState::GENERAL, None);
-        Some(DebugImageGraphEntry::new(entry.id, image, RgImageState::GENERAL))
+            graph.import_image(entry.label, entry.image, Some(entry.view), entry.format, entry.graph_state, None);
+        Some(DebugImageGraphEntry::new(entry.id, image, entry.graph_state))
     }
 
     fn debug_image_preview_size(extent: vk::Extent2D, available_width: f32) -> [f32; 2] {

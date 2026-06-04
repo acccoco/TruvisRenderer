@@ -1,6 +1,6 @@
-use std::ffi::CStr;
+use std::{env, ffi::CStr};
 
-use ash::vk;
+use ash::vk::{self, Handle};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use truvis_asset::asset_hub::{AssetHub, AssetLoadedEvent};
@@ -15,11 +15,12 @@ use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuff
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_render_foundation::bindless_manager::BindlessManager;
 use truvis_render_foundation::cmd_allocator::CmdAllocator;
+use truvis_render_foundation::dlss_sr::DlssSrState;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::global_descriptor_sets::{GlobalDescriptorSets, PerFrameDescriptorBinding};
 use truvis_render_foundation::pipeline_settings::{
-    AccumData, DefaultRenderRuntimeSettings, FrameSettings, PipelineSettings,
+    AccumData, DefaultRenderRuntimeSettings, DlssSrMode, FrameSettings, PipelineSettings,
 };
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_foundation::sampler_manager::RenderSamplerManager;
@@ -27,6 +28,7 @@ use truvis_shader_binding::gpu;
 use truvis_world::scene_manager::SceneManager;
 
 use truvis_render_foundation::gpu_store::GpuStore;
+use truvis_streamline_binding::dlss;
 use truvis_world::World;
 
 use crate::asset_mesh_manager::AssetMeshManager;
@@ -90,6 +92,7 @@ pub struct RenderRuntime {
     gpu_scene_update_cmds: Vec<GfxCommandBuffer>,
 
     swapchain_presenter: Option<SwapchainPresenter>,
+    last_applied_dlss_sr_mode: DlssSrMode,
 }
 
 // 创建与初始化
@@ -106,6 +109,7 @@ impl RenderRuntime {
             let _span = tracy_client::span!("RenderRuntime::new/Gfx");
             Gfx::new("Truvis".to_string(), extra_instance_ext)
         };
+        Self::query_streamline_dlss_support(&gfx);
 
         let frame_settings = {
             let _span = tracy_client::span!("RenderRuntime::new/frame_settings");
@@ -115,7 +119,11 @@ impl RenderRuntime {
             FrameSettings {
                 color_format: vk::Format::R32G32B32A32_SFLOAT,
                 depth_format: Self::get_depth_format(gfx.device_info_ctx()),
-                frame_extent: vk::Extent2D {
+                render_extent: vk::Extent2D {
+                    width: 400,
+                    height: 400,
+                },
+                output_extent: vk::Extent2D {
                     width: 400,
                     height: 400,
                 },
@@ -240,6 +248,7 @@ impl RenderRuntime {
                 fif_timeline_semaphore,
                 gpu_scene_update_cmds: cmds,
                 swapchain_presenter: None,
+                last_applied_dlss_sr_mode: DlssSrMode::Off,
 
                 world: World {
                     scene_manager,
@@ -261,7 +270,8 @@ impl RenderRuntime {
 
                     frame_counter,
                     frame_settings,
-                    pipeline_settings: PipelineSettings::default(),
+                    pipeline_settings: Self::initial_pipeline_settings(),
+                    dlss_sr_state: DlssSrState::default(),
 
                     delta_time_s: 0.0,
                     total_time_s: 0.0,
@@ -281,6 +291,57 @@ impl RenderRuntime {
         .first()
         .copied()
         .unwrap_or(vk::Format::UNDEFINED)
+    }
+
+    fn query_streamline_dlss_support(gfx: &Gfx) {
+        // 当前 Gfx 从 sl.interposer.dll 加载 Vulkan entry，Streamline 会通过
+        // vkCreateInstance/vkCreateDevice proxy 绑定 Vulkan root；手动调用
+        // slSetVulkanInfo 只适用于不走 proxy 的集成方式。
+        match dlss::query_support(gfx.physical_device().vk_handle().as_raw()) {
+            Ok(support) => {
+                log::info!(
+                    "DLSS SR support: supported={}, flags={}, max_viewports={}, max_cpu_threads={}",
+                    support.supported,
+                    support.flags,
+                    support.max_num_viewports,
+                    support.max_num_cpu_threads
+                );
+            }
+            Err(err) => {
+                log::warn!("DLSS SR support query failed: {}", err);
+            }
+        }
+    }
+
+    fn initial_pipeline_settings() -> PipelineSettings {
+        let mut settings = PipelineSettings::default();
+
+        // 环境变量只作为启动时调试入口，便于自动化 validation/resize 测试直接进入指定 SR mode。
+        // 运行中 mode 仍由 ImGui 修改 `PipelineSettings`，再由 sync_pipeline_frame_settings 统一生效。
+        if let Ok(value) = env::var("TRUVIS_DLSS_SR_MODE") {
+            match DlssSrMode::from_config_value(&value) {
+                Some(mode) => {
+                    settings.dlss_sr_mode = mode;
+                    log::info!("Initial DLSS SR mode from TRUVIS_DLSS_SR_MODE={value}: {mode:?}");
+                }
+                None => {
+                    log::warn!("Ignoring unsupported TRUVIS_DLSS_SR_MODE value: {value}");
+                }
+            }
+        }
+
+        settings
+    }
+}
+
+fn to_streamline_dlss_mode(mode: DlssSrMode) -> dlss::DlssMode {
+    match mode {
+        DlssSrMode::Off => dlss::DlssMode::Off,
+        DlssSrMode::Dlaa => dlss::DlssMode::Dlaa,
+        DlssSrMode::Quality => dlss::DlssMode::Quality,
+        DlssSrMode::Balanced => dlss::DlssMode::Balanced,
+        DlssSrMode::Performance => dlss::DlssMode::Performance,
+        DlssSrMode::UltraPerformance => dlss::DlssMode::UltraPerformance,
     }
 }
 // 销毁
@@ -409,7 +470,7 @@ impl RenderRuntime {
             pipeline_settings: &mut self.gpu_store.pipeline_settings,
             frame_settings: &self.gpu_store.frame_settings,
             accum_data: &self.gpu_store.accum_data,
-            swapchain_extent: self.gpu_store.frame_settings.frame_extent,
+            swapchain_extent: self.gpu_store.frame_settings.output_extent,
             delta_time_s: self.gpu_store.delta_time_s,
         }
     }
@@ -423,6 +484,8 @@ impl RenderRuntime {
         let _span = tracy_client::span!("RenderRuntime::prepare");
 
         self.update_accum_data(render_view);
+        // DLSS constants 与本帧相机快照绑定，必须在 render graph 录制 evaluate 前更新。
+        self.gpu_store.dlss_sr_state.update(render_view, &self.gpu_store.frame_settings);
         self.prepare_gpu_scene(render_view);
         self.update_perframe_descriptor_set();
     }
@@ -479,6 +542,75 @@ impl RenderRuntime {
     #[inline]
     pub fn current_frame_has_present_target(&self) -> bool {
         self.swapchain_presenter.as_ref().unwrap().current_image_acquired()
+    }
+
+    /// 根据当前 pipeline settings 同步 render/output extent。
+    ///
+    /// DLSS mode 变化可能只影响 pass 分支，也可能改变低分辨率 render extent。前者只需要
+    /// 重置 DLSS history，后者必须让 app/plugin 重建 RT/GBuffer/DLSS input targets。
+    pub fn sync_pipeline_frame_settings(&mut self) -> Option<RenderRuntimeResizeCtx<'_>> {
+        let old_settings = self.gpu_store.frame_settings;
+        let old_mode = self.last_applied_dlss_sr_mode;
+        let requested_mode = self.gpu_store.pipeline_settings.dlss_sr_mode;
+        let output_extent = self.swapchain_presenter.as_ref().unwrap().extent();
+        if old_mode == requested_mode && old_settings.output_extent == output_extent {
+            return None;
+        }
+
+        let new_settings = self.resolve_frame_settings_for_output(output_extent);
+        let new_mode = self.gpu_store.pipeline_settings.dlss_sr_mode;
+        let mode_changed = old_mode != new_mode;
+
+        if !mode_changed && old_settings == new_settings {
+            return None;
+        }
+
+        if mode_changed {
+            log::info!("DLSS SR mode changed: {:?} -> {:?}", old_mode, new_mode);
+            self.gpu_store.dlss_sr_state.request_reset();
+            if new_mode == DlssSrMode::Off {
+                // 退出 SR 时释放 viewport 0 的 DLSS 内部资源；其它 app-owned image
+                // 由后续 resize ctx 或 plugin shutdown 负责销毁。
+                if let Err(err) = dlss::free_resources(0) {
+                    log::warn!("Failed to free DLSS SR resources for viewport 0: {}", err);
+                }
+            }
+        }
+
+        self.last_applied_dlss_sr_mode = new_mode;
+
+        if old_settings == new_settings {
+            return None;
+        }
+
+        log::info!(
+            "Frame settings changed: render={}x{}, output={}x{} -> render={}x{}, output={}x{}",
+            old_settings.render_extent.width,
+            old_settings.render_extent.height,
+            old_settings.output_extent.width,
+            old_settings.output_extent.height,
+            new_settings.render_extent.width,
+            new_settings.render_extent.height,
+            new_settings.output_extent.width,
+            new_settings.output_extent.height
+        );
+
+        // 这是非 WSI resize 的运行时 target 尺寸变化，旧 per-frame image 可能仍被前几帧引用；
+        // 重建前等待 device idle，保持 target owner 的显式 destroy/rebuild 路径简单可靠。
+        self.gfx.wait_idel();
+        self.gpu_store.frame_settings = new_settings;
+        self.gpu_store.accum_data.reset();
+        // render extent 变化会让 DLSS history 的 sample grid 失效，即使相机没有变化也必须 reset。
+        self.gpu_store.dlss_sr_state.request_reset();
+
+        Some(RenderRuntimeResizeCtx {
+            device_ctx: self.gfx.device_ctx(),
+            resource_ctx: self.gfx.resource_ctx(),
+            immediate_ctx: self.gfx.immediate_ctx(),
+            surface_ctx: self.gfx.surface_ctx(),
+            gpu_store: &mut self.gpu_store,
+            present: self.swapchain_presenter.as_ref().unwrap().view(),
+        })
     }
 
     /// 是否存在等待处理的 swapchain 重建请求。
@@ -676,7 +808,7 @@ impl RenderRuntime {
     /// render graph 在后续命令提交中通过常规 queue 顺序看到这些写入。
     fn prepare_gpu_scene(&mut self, render_view: &RenderView) {
         let _span = tracy_client::span!("RenderRuntime::prepare_gpu_scene");
-        let frame_extent = self.gpu_store.frame_settings.frame_extent;
+        let frame_extent = self.gpu_store.frame_settings.render_extent;
         let frame_label = self.gpu_store.frame_counter.frame_label();
         let cmd = self.gpu_scene_update_cmds[*frame_label].clone();
 
@@ -763,7 +895,8 @@ impl RenderRuntime {
                 x: frame_extent.width as f32,
                 y: frame_extent.height as f32,
             },
-            accum_frames: self.gpu_store.accum_data.accum_frames_num() as u32,
+            // 主流程已不再做 progressive accumulation；保持为 0 可以让 raygen 每帧稳定写入当前图像。
+            accum_frames: 0,
             _padding_0: Default::default(),
             _padding_1: Default::default(),
             _padding_2: Default::default(),
@@ -807,15 +940,87 @@ impl RenderRuntime {
     /// 同步 present extent 到 runtime frame state，并在尺寸变化时清空历史累积。
     fn sync_frame_extent_after_present_resize(&mut self) {
         let swapchain_extent = self.swapchain_presenter.as_ref().unwrap().extent();
-        if self.gpu_store.frame_settings.frame_extent == swapchain_extent {
+        if self.gpu_store.frame_settings.output_extent == swapchain_extent {
             return;
         }
 
         // 尺寸变化会让历史累积图像的内容语义失效，但图像本身属于 app-owned target。
         // runtime 只更新 shader/per-frame data 会读取的 extent，并清零累积帧计数；
         // 具体 image 重建在 Plugin::on_resize 中发生。
-        self.gpu_store.frame_settings.frame_extent = swapchain_extent;
+        let old_mode = self.last_applied_dlss_sr_mode;
+        self.gpu_store.frame_settings = self.resolve_frame_settings_for_output(swapchain_extent);
+        let new_mode = self.gpu_store.pipeline_settings.dlss_sr_mode;
+        if old_mode != new_mode && new_mode == DlssSrMode::Off {
+            // resize 期间查询 optimal settings 失败可能把 SR mode 降级为 Off；此时同样需要释放
+            // 原 viewport resource，避免后续 native 路径还保留旧 DLSS state。
+            if let Err(err) = dlss::free_resources(0) {
+                log::warn!("Failed to free DLSS SR resources for viewport 0 after resize fallback: {}", err);
+            }
+        }
+        self.last_applied_dlss_sr_mode = new_mode;
         self.gpu_store.accum_data.reset();
+        self.gpu_store.dlss_sr_state.request_reset();
+    }
+
+    fn resolve_frame_settings_for_output(&mut self, output_extent: vk::Extent2D) -> FrameSettings {
+        let mut frame_settings = self.gpu_store.frame_settings;
+        frame_settings.output_extent = output_extent;
+
+        let mode = self.gpu_store.pipeline_settings.dlss_sr_mode;
+        if mode == DlssSrMode::Off || mode == DlssSrMode::Dlaa {
+            // Off 是 native fallback；DLAA 仍走 kFeatureDLSS，但不做低分辨率渲染。
+            frame_settings.render_extent = output_extent;
+            return frame_settings;
+        }
+
+        // SR upscale mode 由 Streamline 决定低分辨率 render extent；app-owned RT/GBuffer/DLSS
+        // input targets 会用这个尺寸重建，output 仍保持 swapchain extent。
+        let options = dlss::DlssOptions {
+            mode: to_streamline_dlss_mode(mode),
+            output_width: output_extent.width,
+            output_height: output_extent.height,
+            color_buffers_hdr: true,
+        };
+        match dlss::get_optimal_settings(options) {
+            Ok(settings) if settings.optimal_render_width > 0 && settings.optimal_render_height > 0 => {
+                frame_settings.render_extent = vk::Extent2D {
+                    width: settings.optimal_render_width,
+                    height: settings.optimal_render_height,
+                };
+                log::info!(
+                    "DLSS SR optimal settings: mode={:?}, output={}x{}, render={}x{}, sharpness={:.3}, min={}x{}, max={}x{}",
+                    mode,
+                    output_extent.width,
+                    output_extent.height,
+                    settings.optimal_render_width,
+                    settings.optimal_render_height,
+                    settings.optimal_sharpness,
+                    settings.render_width_min,
+                    settings.render_height_min,
+                    settings.render_width_max,
+                    settings.render_height_max
+                );
+            }
+            Ok(settings) => {
+                log::warn!(
+                    "DLSS SR returned invalid optimal render extent {}x{} for mode {:?}; falling back to Off/native.",
+                    settings.optimal_render_width,
+                    settings.optimal_render_height,
+                    mode
+                );
+                // 不接受 0 尺寸 optimal settings。直接降级 Off，保证后续 graph 仍有 native target。
+                self.gpu_store.pipeline_settings.dlss_sr_mode = DlssSrMode::Off;
+                frame_settings.render_extent = output_extent;
+            }
+            Err(err) => {
+                log::warn!("DLSS SR optimal settings failed for mode {:?}: {}; falling back to Off/native.", mode, err);
+                // capability/driver/runtime 异常都按 native fallback 处理，避免因为 SR 不可用阻塞 app 启动。
+                self.gpu_store.pipeline_settings.dlss_sr_mode = DlssSrMode::Off;
+                frame_settings.render_extent = output_extent;
+            }
+        }
+
+        frame_settings
     }
 
     /// 刷新当前 FIF per-frame descriptor set。

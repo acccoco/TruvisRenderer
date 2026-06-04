@@ -11,6 +11,8 @@ if (NOT EXISTS "${STREAMLINE_INCLUDE_DIR}/sl.h")
     message(FATAL_ERROR "Streamline SDK not found at ${STREAMLINE_SDK_ROOT}. Run `just fetch-res` first.")
 endif()
 
+find_package(VulkanHeaders CONFIG REQUIRED)
+
 file(GLOB_RECURSE C_API_SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/c_api/*.cpp)
 file(GLOB_RECURSE C_API_HEADER_FILES_H ${CMAKE_CURRENT_SOURCE_DIR}/include/TruvixxStreamline/c_api/*.h)
 
@@ -34,6 +36,7 @@ target_include_directories(truvixx-streamline-capi PUBLIC
 
 target_link_libraries(truvixx-streamline-capi PRIVATE
         truvixx-utils
+        Vulkan::Headers
 )
 
 target_compile_features(truvixx-streamline-capi PUBLIC cxx_std_20)
