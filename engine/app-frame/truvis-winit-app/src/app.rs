@@ -11,7 +11,8 @@ use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Window, WindowId};
 
 use truvis_app_frame::render_app_api::RenderApp;
-use truvis_app_frame::{RenderInitMsg, SendWrapper, SharedState, init_env, pack_size, render_loop};
+use truvis_app_frame::{RenderInitMsg, SendWrapper, SharedState, init_env_with_log_file, pack_size, render_loop};
+use truvis_logs::current_exe_log_file_path;
 use truvis_path::TruvisPath;
 
 use crate::winit_event_adapter::WinitEventAdapter;
@@ -38,7 +39,7 @@ impl WinitApp {
     }
 
     fn run_inner(app_factory: RenderAppFactory) {
-        init_env();
+        init_env_with_log_file(current_exe_log_file_path(TruvisPath::temp_dir()));
 
         let event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event().build().unwrap();
 

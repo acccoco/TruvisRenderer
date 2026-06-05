@@ -2,7 +2,7 @@ mod visual_studio;
 
 use std::path::{Path, PathBuf};
 
-use truvis_logs::init_log;
+use truvis_logs::{current_exe_log_file_path, init_log_with_file};
 use truvis_path::TruvisPath;
 
 #[derive(Clone, Copy)]
@@ -357,7 +357,7 @@ fn copy_to_rust(layout: &CxxBuildLayout, build_type: BuildType) -> Result<(), St
 }
 
 fn main() -> Result<(), String> {
-    init_log();
+    init_log_with_file(current_exe_log_file_path(TruvisPath::temp_dir()));
 
     let workspace_dir = TruvisPath::workspace_path();
     log::info!("workspace_dir: {:?}", workspace_dir);

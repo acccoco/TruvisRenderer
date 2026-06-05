@@ -12,7 +12,8 @@ use glsl::GlslCompiler;
 use hlsl::HlslCompiler;
 use rayon::prelude::*;
 use slang::SlangCompiler;
-use truvis_logs::init_log;
+use truvis_logs::{current_exe_log_file_path, init_log_with_file};
+use truvis_path::TruvisPath;
 
 /// 根据编译器类型获取对应的编译器实例
 fn get_compiler(compiler_type: ShaderCompilerType) -> Box<dyn ShaderCompiler> {
@@ -24,7 +25,7 @@ fn get_compiler(compiler_type: ShaderCompilerType) -> Box<dyn ShaderCompiler> {
 }
 
 fn main() {
-    init_log();
+    init_log_with_file(current_exe_log_file_path(TruvisPath::temp_dir()));
 
     log::info!("Shader include path: {:?}", EnvPath::shader_share_path());
     log::info!("Shader entry path: {:?}", EnvPath::shader_entry_path());

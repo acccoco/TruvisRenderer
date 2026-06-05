@@ -118,3 +118,5 @@ Overlay 修改 RenderOptions.dlss_sr_mode
 ```
 
 如果 Streamline 查询失败或返回非法尺寸，runtime 会把 `RenderOptions.dlss_sr_mode` 降级为 `Off`，并回到 native extent，保证 app 仍能继续渲染。
+
+从 DLSS SR / DLAA 切回 `Off` 时，runtime 会先等待 GPU idle，再调用 `slFreeResources` 释放 Streamline viewport 0 的内部资源；这是因为这些内部 image / buffer 可能仍被上一帧 DLSS evaluate 录制的 command buffer 引用。

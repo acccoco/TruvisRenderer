@@ -3,7 +3,13 @@
 //! 日志格式由本 crate 统一维护。每条日志会输出当前线程名称和 Windows 系统线程 ID（`GetCurrentThreadId`），
 //! 线程上下文通过 thread-local 缓存，保证同一线程只在首次写日志时捕获名称和 tid。
 
-use std::{io::Write, thread};
+use std::{
+    env, fs,
+    fs::{File, OpenOptions},
+    io::{self, Write},
+    path::{Path, PathBuf},
+    process, thread,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ThreadLogContext {
@@ -42,8 +48,86 @@ thread_local! {
     static THREAD_LOG_CONTEXT: ThreadLogContext = ThreadLogContext::capture();
 }
 
+struct TeeWriter {
+    console: io::Stderr,
+    file: File,
+}
+
+impl TeeWriter {
+    fn new(file: File) -> Self {
+        Self {
+            console: io::stderr(),
+            file,
+        }
+    }
+}
+
+impl Write for TeeWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.console.write_all(buf)?;
+        self.file.write_all(buf)?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.console.flush()?;
+        self.file.flush()
+    }
+}
+
+/// 根据当前 exe 名称生成默认日志文件路径。
+///
+/// `temp_dir` 由调用方传入，通常来自 `TruvisPath::temp_dir()`。本 crate 不直接依赖
+/// `truvis-path`，避免基础层同层 crate 之间出现不必要的路径依赖。
+pub fn current_exe_log_file_path(temp_dir: impl AsRef<Path>) -> PathBuf {
+    let exe_name = env::current_exe()
+        .ok()
+        .and_then(|path| path.file_stem().map(|stem| stem.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "truvis".to_owned());
+    default_log_file_path(temp_dir, &exe_name)
+}
+
+/// 生成 `.temp/logs/{exe_name}-{time}-{pid}.log` 风格的日志文件路径。
+pub fn default_log_file_path(temp_dir: impl AsRef<Path>, exe_name: &str) -> PathBuf {
+    let exe_name = sanitize_file_stem(exe_name);
+    let time = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    temp_dir.as_ref().join("logs").join(format!("{exe_name}-{time}-{}.log", process::id()))
+}
+
+fn sanitize_file_stem(stem: &str) -> String {
+    let safe_stem = stem
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') { ch } else { '_' })
+        .collect::<String>();
+
+    if safe_stem.is_empty() { "truvis".to_owned() } else { safe_stem }
+}
+
 pub fn init_log() {
-    env_logger::Builder::new()
+    init_log_with_target(None);
+}
+
+pub fn init_log_with_file(log_file_path: impl AsRef<Path>) {
+    let log_file_path = log_file_path.as_ref();
+    match open_log_file(log_file_path) {
+        Ok(file) => init_log_with_target(Some(env_logger::Target::Pipe(Box::new(TeeWriter::new(file))))),
+        Err(err) => {
+            eprintln!("Failed to initialize file log {}: {}; fallback to console only.", log_file_path.display(), err);
+            init_log();
+        }
+    }
+}
+
+fn open_log_file(log_file_path: &Path) -> io::Result<File> {
+    if let Some(parent) = log_file_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    OpenOptions::new().create(true).append(true).open(log_file_path)
+}
+
+fn init_log_with_target(target: Option<env_logger::Target>) {
+    let mut builder = env_logger::Builder::new();
+    builder
         .format(|buf, record| {
             let info_style = buf
                 .default_level_style(log::Level::Info)
@@ -82,6 +166,11 @@ pub fn init_log() {
                 )
             })
         })
-        .filter(None, if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info })
-        .init();
+        .filter(None, if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info });
+
+    if let Some(target) = target {
+        builder.target(target).write_style(env_logger::WriteStyle::Never);
+    }
+
+    builder.init();
 }

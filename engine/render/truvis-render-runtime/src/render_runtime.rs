@@ -566,12 +566,16 @@ impl RenderRuntime {
             return None;
         }
 
+        let mut gpu_idle_waited = false;
+
         if mode_changed {
             log::info!("DLSS SR mode changed: {:?} -> {:?}", old_mode, new_mode);
             self.gpu_store.dlss_sr_state.request_reset();
-            if new_mode == DlssSrMode::Off {
-                // 退出 SR 时释放 viewport 0 的 DLSS 内部资源；其它 app-owned image
-                // 由后续 resize ctx 或 plugin shutdown 负责销毁。
+            if old_mode != DlssSrMode::Off && new_mode == DlssSrMode::Off {
+                // slFreeResources 会销毁 Streamline 内部 Vulkan image/buffer；必须先等待
+                // 上一帧 DLSS evaluate 相关 GPU work 完成，再释放 viewport 0 的内部资源。
+                self.gfx.wait_idel();
+                gpu_idle_waited = true;
                 if let Err(err) = dlss::free_resources(0) {
                     log::warn!("Failed to free DLSS SR resources for viewport 0: {}", err);
                 }
@@ -598,7 +602,9 @@ impl RenderRuntime {
 
         // 这是非 WSI resize 的运行时 target 尺寸变化，旧 per-frame image 可能仍被前几帧引用；
         // 重建前等待 device idle，保持 target owner 的显式 destroy/rebuild 路径简单可靠。
-        self.gfx.wait_idel();
+        if !gpu_idle_waited {
+            self.gfx.wait_idel();
+        }
         self.gpu_store.frame_state = new_state;
         self.gpu_store.view_accum.reset();
         // render extent 变化会让 DLSS history 的 sample grid 失效，即使相机没有变化也必须 reset。
@@ -951,9 +957,10 @@ impl RenderRuntime {
         let old_mode = self.last_applied_dlss_sr_mode;
         self.gpu_store.frame_state = self.resolve_frame_state_for_output(swapchain_extent);
         let new_mode = self.gpu_store.render_options.dlss_sr_mode;
-        if old_mode != new_mode && new_mode == DlssSrMode::Off {
-            // resize 期间查询 optimal settings 失败可能把 SR mode 降级为 Off；此时同样需要释放
-            // 原 viewport resource，避免后续 native 路径还保留旧 DLSS state。
+        if old_mode != DlssSrMode::Off && new_mode == DlssSrMode::Off {
+            // resize 期间查询 optimal settings 失败可能把 SR mode 降级为 Off；此时同样需要先等待
+            // 上一帧 DLSS evaluate 完成，再释放原 viewport resource。
+            self.gfx.wait_idel();
             if let Err(err) = dlss::free_resources(0) {
                 log::warn!("Failed to free DLSS SR resources for viewport 0 after resize fallback: {}", err);
             }

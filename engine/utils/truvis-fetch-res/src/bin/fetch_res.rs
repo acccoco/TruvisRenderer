@@ -2,12 +2,12 @@
 
 use anyhow::Result;
 use truvis_fetch_res::fetch_resources::resource_fetcher::GitHubResourceFetcher;
-use truvis_logs::init_log;
+use truvis_logs::{current_exe_log_file_path, init_log_with_file};
 use truvis_path::TruvisPath;
 
 fn main() -> Result<()> {
     // 初始化日志
-    init_log();
+    init_log_with_file(current_exe_log_file_path(TruvisPath::temp_dir()));
 
     let fetcher = GitHubResourceFetcher::with_temp_dir(TruvisPath::temp_dir())?;
 

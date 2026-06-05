@@ -3736,6 +3736,7 @@ dependencies = [
  "log",
  "raw-window-handle",
  "truvis-app-frame",
+ "truvis-logs",
  "truvis-path",
  "winit",
 ]
