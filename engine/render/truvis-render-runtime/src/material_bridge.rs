@@ -5,8 +5,8 @@ use truvis_asset::handle::{AssetMaterialHandle, MaterialData};
 use truvis_gfx::commands::barrier::GfxBarrierMask;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
+use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::frame_counter::FrameToken;
-use truvis_render_foundation::pipeline_settings::FrameLabel;
 
 use crate::scene_bridge::MaterialSlotResolver;
 use crate::{

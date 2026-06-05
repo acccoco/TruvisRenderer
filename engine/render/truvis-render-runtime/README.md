@@ -21,8 +21,10 @@
 ## 状态所有权
 
 - `World` 承载 CPU 侧 `SceneManager` 与 `AssetHub`，供 update/prepare 阶段读取或修改。
-- `GpuStore` 承载 GPU 侧 frame state、global descriptors、bindless、manager-owned resources、
-  frame settings 和 pipeline settings。
+- `GpuStore` 承载 GPU 侧 `FrameRenderState`、`RenderOptions`、`ViewAccumState`、
+  global descriptors、bindless、manager-owned resources 和 per-frame data。
+- runtime 内部拥有默认 surface format、present mode 与 depth format 候选顺序；这些默认策略不放入
+  foundation 公共配置契约。
 - `GpuScene` 是 runtime 私有的 scene GPU 翻译层，持有 scene/instance/geometry/light/indirect
   buffer、TLAS 和当前 FIF 的 raster draw cache；render pass 只通过 `RenderSceneView` 读取它。
 - `SkyBridge` 请求默认 sky 通过 `AssetHub` 异步加载，并持有常驻纯色 fallback sky；
@@ -62,7 +64,10 @@
 - `begin_frame` 是每帧资源回收入口：推进 runtime 私有帧计时器、等待当前 FIF slot、重置 frame command pool、
   清理延迟释放队列、推进 bindless/material/instance frame token，并在 `RenderRuntime`
   内部分发 AssetHub 事件。
-- `update_phase` 同步 frame settings、acquire 当前 swapchain image，并返回 CPU update Ctx。具体窗口尺寸 render target 由 app/plugin 在 init/resize/shutdown 阶段管理。
+- `update_phase` 同步 present extent 到 `FrameRenderState`、acquire 当前 swapchain image，并返回 CPU update Ctx。具体窗口尺寸 render target 由 app/plugin 在 init/resize/shutdown 阶段管理。
+- App / Plugin update 结束后，`RenderAppShell` 调用 `sync_render_options_frame_state`，把 `RenderOptions`
+  中的 DLSS SR mode 变化解析为新的 render/output extent；如果 target 尺寸变化，则返回 resize Ctx
+  交给 app/plugin 重建自己持有的 RT target、GBuffer 和 main-view target。
 - `prepare(render_view)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 app 提供的 `RenderView`，
   在 `RenderRuntime` 内部同步 material/instance/mesh/texture 状态、上传 GPU scene
   和 per-frame data，再刷新 per-frame descriptor。

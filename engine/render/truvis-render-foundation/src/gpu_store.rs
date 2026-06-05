@@ -4,10 +4,12 @@ use truvis_shader_binding::gpu;
 use crate::bindless_manager::BindlessManager;
 use crate::dlss_sr::DlssSrState;
 use crate::frame_counter::FrameCounter;
+use crate::frame_state::FrameRenderState;
 use crate::gfx_resource_manager::GfxResourceManager;
 use crate::global_descriptor_sets::GlobalDescriptorSets;
-use crate::pipeline_settings::{AccumData, FrameSettings, PipelineSettings};
+use crate::render_options::RenderOptions;
 use crate::sampler_manager::RenderSamplerManager;
+use crate::view_accum::ViewAccumState;
 
 /// GPU-facing 共享资源与帧状态的聚合容器。
 ///
@@ -23,11 +25,11 @@ pub struct GpuStore {
     pub per_frame_data_buffers: [GfxStructuredBuffer<gpu::PerFrameData>; FrameCounter::fif_count()],
 
     pub frame_counter: FrameCounter,
-    pub frame_settings: FrameSettings,
-    pub pipeline_settings: PipelineSettings,
+    pub frame_state: FrameRenderState,
+    pub render_options: RenderOptions,
     pub dlss_sr_state: DlssSrState,
 
     pub delta_time_s: f32,
     pub total_time_s: f32,
-    pub accum_data: AccumData,
+    pub view_accum: ViewAccumState,
 }

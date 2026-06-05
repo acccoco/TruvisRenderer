@@ -112,10 +112,10 @@ impl RenderAppHooks for HelloTriangleApp {
                 ui,
                 self.camera_controller.camera(),
                 ctx.swapchain_extent,
-                ctx.accum_data.accum_frames_num(),
+                ctx.view_accum.accum_frames_num(),
                 ctx.delta_time_s,
             );
-            self.pipeline_overlay.build_overlay_ui(ui, ctx.pipeline_settings);
+            self.pipeline_overlay.build_overlay_ui(ui, ctx.render_options, None);
         }
         self.gui.end_frame();
 

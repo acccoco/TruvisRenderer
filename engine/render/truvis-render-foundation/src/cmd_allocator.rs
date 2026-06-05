@@ -6,7 +6,7 @@ use truvis_gfx::{
 };
 
 use crate::frame_counter::FrameCounter;
-use crate::pipeline_settings::FrameLabel;
+use crate::frame_counter::FrameLabel;
 
 /// 命令缓冲分配器
 ///

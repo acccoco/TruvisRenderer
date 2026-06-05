@@ -5,8 +5,8 @@ use ash::vk::Handle;
 
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::{commands::command_buffer::GfxCommandBuffer, gfx::GfxDeviceCtx, pipelines::shader::GfxShaderModule};
+use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_foundation::pipeline_settings::FrameLabel;
 
 /// 泛型参数 P 表示 compute shader 的参数，以 push constant 的形式传入 shader
 pub struct ComputePass<P: Sized> {

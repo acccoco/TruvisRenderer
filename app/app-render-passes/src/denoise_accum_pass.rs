@@ -24,7 +24,10 @@ pub struct DenoiseAccumPassData {
     pub sigma_depth: f32,
     pub sigma_normal: f32,
     pub kernel_radius: i32,
-    /// 调试通道（0 = 正常渲染，3 = 禁用累积）
+    /// 传统 denoise/accum pass-local 调试通道。
+    ///
+    /// 该字段只服务显式重新接入此 pass 的实验路径；主 RT debug UI 不再暴露
+    /// legacy “禁用累积”通道。
     pub channel: u32,
 
     // 增强联合双边滤波参数
@@ -36,6 +39,43 @@ pub struct DenoiseAccumPassData {
     pub roughness_adaptive_enabled: bool,
     pub roughness_radius_scale: f32,
     pub roughness_sigma_scale: f32,
+}
+
+/// 保留的传统降噪累积 pass 默认参数。
+///
+/// 当前 RT 主流程已经旁路该 pass；这里的默认值只服务显式重新接入此 pass 的实验路径，
+/// 不再通过 engine 全局 `GpuStore` 暴露为项目级配置。
+#[derive(Copy, Clone)]
+pub struct DenoiseAccumSettings {
+    pub enabled: bool,
+    pub sigma_color: f32,
+    pub sigma_depth: f32,
+    pub sigma_normal: f32,
+    pub kernel_radius: i32,
+    pub sigma_albedo: f32,
+    pub sigma_position: f32,
+    pub scene_scale: f32,
+    pub roughness_adaptive_enabled: bool,
+    pub roughness_radius_scale: f32,
+    pub roughness_sigma_scale: f32,
+}
+
+impl Default for DenoiseAccumSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            sigma_color: 0.1,
+            sigma_depth: 1.0,
+            sigma_normal: 0.5,
+            kernel_radius: 3,
+            sigma_albedo: 0.1,
+            sigma_position: 0.1,
+            scene_scale: 400.0,
+            roughness_adaptive_enabled: true,
+            roughness_radius_scale: 2.0,
+            roughness_sigma_scale: 1.5,
+        }
+    }
 }
 
 /// 降噪累积 Pass - 对单帧 RT 结果进行双边滤波降噪，然后累积到 accum_image 中
@@ -116,6 +156,9 @@ pub struct DenoiseAccumRgPass<'a> {
     pub gbuffer_c: RgImageHandle,
 
     pub image_extent: vk::Extent2D,
+    /// 显式传入的 pass-local 参数；不再从 `GpuStore` 读取全局配置。
+    pub settings: DenoiseAccumSettings,
+    pub debug_channel: u32,
 }
 
 impl<'a> RgPass for DenoiseAccumRgPass<'a> {
@@ -147,9 +190,6 @@ impl<'a> RgPass for DenoiseAccumRgPass<'a> {
         let gbuffer_c_bindless_uav_handle =
             self.gpu_store.bindless_manager.get_shader_uav_handle(gbuffer_c_view_handle);
 
-        // 从 pipeline_settings 获取降噪参数
-        let denoise_settings = &self.gpu_store.pipeline_settings.denoise;
-
         self.denoise_accum_pass.exec(
             ctx.cmd,
             DenoiseAccumPassData {
@@ -159,21 +199,19 @@ impl<'a> RgPass for DenoiseAccumRgPass<'a> {
                 gbuffer_b_bindless_uav_handle,
                 gbuffer_c_bindless_uav_handle,
                 image_size: self.image_extent,
-                accum_frames: self.gpu_store.accum_data.accum_frames_num() as u32,
-                denoise_enabled: denoise_settings.enabled,
-                sigma_color: denoise_settings.sigma_color,
-                sigma_depth: denoise_settings.sigma_depth,
-                sigma_normal: denoise_settings.sigma_normal,
-                kernel_radius: denoise_settings.kernel_radius,
-                channel: self.gpu_store.pipeline_settings.channel,
-                // 增强联合双边滤波参数
-                sigma_albedo: denoise_settings.sigma_albedo,
-                sigma_position: denoise_settings.sigma_position,
-                scene_scale: denoise_settings.scene_scale,
-                // 粗糙度自适应参数
-                roughness_adaptive_enabled: denoise_settings.roughness_adaptive_enabled,
-                roughness_radius_scale: denoise_settings.roughness_radius_scale,
-                roughness_sigma_scale: denoise_settings.roughness_sigma_scale,
+                accum_frames: self.gpu_store.view_accum.accum_frames_num() as u32,
+                denoise_enabled: self.settings.enabled,
+                sigma_color: self.settings.sigma_color,
+                sigma_depth: self.settings.sigma_depth,
+                sigma_normal: self.settings.sigma_normal,
+                kernel_radius: self.settings.kernel_radius,
+                channel: self.debug_channel,
+                sigma_albedo: self.settings.sigma_albedo,
+                sigma_position: self.settings.sigma_position,
+                scene_scale: self.settings.scene_scale,
+                roughness_adaptive_enabled: self.settings.roughness_adaptive_enabled,
+                roughness_radius_scale: self.settings.roughness_radius_scale,
+                roughness_sigma_scale: self.settings.roughness_sigma_scale,
             },
             self.gpu_store,
         );

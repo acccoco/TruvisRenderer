@@ -10,11 +10,12 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::swapchain::surface::GfxSurface;
 use truvis_gfx::swapchain::swapchain::{GfxSwapchain, GfxSwapchainAcquireResult, GfxSwapchainImageInfo};
 use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_render_foundation::pipeline_settings::{DefaultRenderRuntimeSettings, FrameLabel};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
 
+use crate::runtime_defaults::DefaultRenderRuntimeSettings;
 /// 已导入 RenderGraph 的当前窗口 present target。
 ///
 /// 该类型只暴露 graph 内部 image handle 和 swapchain 信息；acquire/render-complete

@@ -5,6 +5,8 @@
 ## 关键组件
 
 - `FrameCounter` / `FrameLabel`
+- `FrameRenderState` / `RenderOptions` / `ViewAccumState`
+- `DlssSrMode` / `DlssSrState`
 - `CmdAllocator`
 - `GfxResourceManager`（Handle + 生命周期管理）
 - `BindlessManager` / `GlobalDescriptorSets`
@@ -13,7 +15,10 @@
 
 ## GpuStore
 
-- `GpuStore` 是 GPU 侧运行时状态集合，包含 `BindlessManager`、`GlobalDescriptorSets`、`GfxResourceManager`、sampler manager、per-frame data、frame counter 和 frame/pipeline settings。
+- `GpuStore` 是 GPU 侧运行时状态集合，包含 `BindlessManager`、`GlobalDescriptorSets`、`GfxResourceManager`、sampler manager、per-frame data、frame counter、`FrameRenderState`、`RenderOptions` 和 `ViewAccumState`。
+- `RenderOptions` 只保存 runtime 全局可调选项；RT debug channel、legacy denoise 参数和实验性 IC 开关属于具体 pipeline/pass，不放入 foundation 全局状态。
+- `FrameRenderState` 是 runtime 派生的 main view 帧状态，记录 HDR format、depth format、render extent 和 output extent；调用方读取它创建 target，但不把它当作用户配置。
+- `ViewAccumState` 是当前 main view 的 temporal state，不是配置项；resize、view 变化或环境切换会让 runtime 重置它。
 - `GpuStore` 不包含 CPU scene 或 asset hub；这些数据属于 `truvis-world::World`。
 - render 阶段通常只借出 `&GpuStore`，使 pass adapter 能读取 GPU 状态并录制命令，但不能随意改写 frame state。
 - resize / shutdown 阶段通过 mutable context 暴露 `GpuStore`，用于重建或释放 manager-owned GPU resources。

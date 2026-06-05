@@ -19,9 +19,10 @@ use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::bindless_manager::BindlessManager;
 use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::frame_counter::FrameLabel;
+use truvis_render_foundation::frame_state::FrameRenderState;
 use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_render_foundation::pipeline_settings::{FrameLabel, FrameSettings};
 
 /// RenderGraph 导入图像所需的 handle、格式和尺寸快照。
 ///
@@ -166,7 +167,7 @@ impl RtWorkingTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         bindless_manager: &mut BindlessManager,
-        frame_settings: &FrameSettings,
+        frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
         // RT working targets 既要作为 storage image 被 compute/ray tracing pass 写入，
@@ -180,8 +181,8 @@ impl RtWorkingTargets {
             gfx_resource_manager,
             TargetImageDesc {
                 name_prefix: "single-frame-rt",
-                format: frame_settings.color_format,
-                extent: frame_settings.render_extent,
+                format: frame_state.hdr_color_format,
+                extent: frame_state.render_extent,
                 usage: storage_usage,
             },
             frame_counter,
@@ -199,7 +200,7 @@ impl RtWorkingTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         bindless_manager: &mut BindlessManager,
         gfx_resource_manager: &mut GfxResourceManager,
-        frame_settings: &FrameSettings,
+        frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
         // resize 走 destroy + new，而不是在原 handle 上复用；这样旧尺寸 image/view/bindless slot
@@ -211,7 +212,7 @@ impl RtWorkingTargets {
             immediate_ctx,
             gfx_resource_manager,
             bindless_manager,
-            frame_settings,
+            frame_state,
             frame_counter,
         );
     }
@@ -271,7 +272,7 @@ impl DlssSrInputTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         bindless_manager: &mut BindlessManager,
-        frame_settings: &FrameSettings,
+        frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
         // raygen 通过 UAV 写入，Debug Viewer 通过 SRV 采样；Streamline evaluate 则直接使用
@@ -285,7 +286,7 @@ impl DlssSrInputTargets {
             TargetImageDesc {
                 name_prefix: "dlss-depth",
                 format: Self::DEPTH_FORMAT,
-                extent: frame_settings.render_extent,
+                extent: frame_state.render_extent,
                 usage,
             },
             frame_counter,
@@ -298,7 +299,7 @@ impl DlssSrInputTargets {
             TargetImageDesc {
                 name_prefix: "dlss-motion-vectors",
                 format: Self::MOTION_VECTOR_FORMAT,
-                extent: frame_settings.render_extent,
+                extent: frame_state.render_extent,
                 usage,
             },
             frame_counter,
@@ -316,7 +317,7 @@ impl DlssSrInputTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         bindless_manager: &mut BindlessManager,
         gfx_resource_manager: &mut GfxResourceManager,
-        frame_settings: &FrameSettings,
+        frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
         self.destroy(resource_ctx, device_ctx, bindless_manager, gfx_resource_manager, DestroyReason::Resize);
@@ -326,7 +327,7 @@ impl DlssSrInputTargets {
             immediate_ctx,
             gfx_resource_manager,
             bindless_manager,
-            frame_settings,
+            frame_state,
             frame_counter,
         );
     }
@@ -392,7 +393,7 @@ impl DlssSrOutputTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         bindless_manager: &mut BindlessManager,
-        frame_settings: &FrameSettings,
+        frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
         // DLSS output 后续作为 storage image 被 SDR pass 读取，也会在 debug viewer 中被采样。
@@ -404,8 +405,8 @@ impl DlssSrOutputTargets {
             gfx_resource_manager,
             TargetImageDesc {
                 name_prefix: "dlss-sr-output",
-                format: frame_settings.color_format,
-                extent: frame_settings.output_extent,
+                format: frame_state.hdr_color_format,
+                extent: frame_state.output_extent,
                 usage: vk::ImageUsageFlags::STORAGE
                     | vk::ImageUsageFlags::TRANSFER_SRC
                     | vk::ImageUsageFlags::TRANSFER_DST
@@ -426,7 +427,7 @@ impl DlssSrOutputTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         bindless_manager: &mut BindlessManager,
         gfx_resource_manager: &mut GfxResourceManager,
-        frame_settings: &FrameSettings,
+        frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
         self.destroy(resource_ctx, device_ctx, bindless_manager, gfx_resource_manager, DestroyReason::Resize);
@@ -436,7 +437,7 @@ impl DlssSrOutputTargets {
             immediate_ctx,
             gfx_resource_manager,
             bindless_manager,
-            frame_settings,
+            frame_state,
             frame_counter,
         );
     }
@@ -492,7 +493,7 @@ impl MainViewTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         bindless_manager: &mut BindlessManager,
-        frame_settings: &FrameSettings,
+        frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
         let color = PerFrameImageSet::new(
@@ -502,8 +503,8 @@ impl MainViewTargets {
             gfx_resource_manager,
             TargetImageDesc {
                 name_prefix: "main-view-color",
-                format: frame_settings.color_format,
-                extent: frame_settings.output_extent,
+                format: frame_state.hdr_color_format,
+                extent: frame_state.output_extent,
                 usage: vk::ImageUsageFlags::STORAGE
                     | vk::ImageUsageFlags::TRANSFER_SRC
                     | vk::ImageUsageFlags::SAMPLED
@@ -511,7 +512,7 @@ impl MainViewTargets {
             },
             frame_counter,
         );
-        let depth = create_depth_target(resource_ctx, device_ctx, gfx_resource_manager, frame_settings, frame_counter);
+        let depth = create_depth_target(resource_ctx, device_ctx, gfx_resource_manager, frame_state, frame_counter);
 
         let targets = Self { color, depth };
         targets.register_bindless(bindless_manager);
@@ -525,7 +526,7 @@ impl MainViewTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         bindless_manager: &mut BindlessManager,
         gfx_resource_manager: &mut GfxResourceManager,
-        frame_settings: &FrameSettings,
+        frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
         self.destroy(resource_ctx, device_ctx, bindless_manager, gfx_resource_manager, DestroyReason::Resize);
@@ -535,7 +536,7 @@ impl MainViewTargets {
             immediate_ctx,
             gfx_resource_manager,
             bindless_manager,
-            frame_settings,
+            frame_state,
             frame_counter,
         );
     }
@@ -610,13 +611,13 @@ fn create_depth_target(
     resource_ctx: GfxResourceCtx<'_>,
     device_ctx: GfxDeviceCtx<'_>,
     gfx_resource_manager: &mut GfxResourceManager,
-    frame_settings: &FrameSettings,
+    frame_state: &FrameRenderState,
     frame_counter: &FrameCounter,
 ) -> ImageTarget {
     let image = create_image(
         resource_ctx,
-        frame_settings.output_extent,
-        frame_settings.depth_format,
+        frame_state.output_extent,
+        frame_state.depth_format,
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
         format!("main-view-depth-{}", frame_counter.frame_id()),
     );
@@ -624,15 +625,15 @@ fn create_depth_target(
     let view_handle = gfx_resource_manager.get_or_create_image_view(
         device_ctx,
         image_handle,
-        GfxImageViewDesc::new_2d(frame_settings.depth_format, vk::ImageAspectFlags::DEPTH),
+        GfxImageViewDesc::new_2d(frame_state.depth_format, vk::ImageAspectFlags::DEPTH),
         format!("main-view-depth-{}", frame_counter.frame_id()),
     );
 
     ImageTarget {
         image: image_handle,
         view: view_handle,
-        format: frame_settings.depth_format,
-        extent: frame_settings.output_extent,
+        format: frame_state.depth_format,
+        extent: frame_state.output_extent,
     }
 }
 

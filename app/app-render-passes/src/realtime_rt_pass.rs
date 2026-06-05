@@ -276,6 +276,8 @@ pub struct RealtimeRtPassData {
     pub single_frame_output: GfxImageHandle,
     pub single_frame_output_view: GfxImageViewHandle,
     pub single_frame_extent: vk::Extent2D,
+    /// App 层 RT pipeline 设置转换后的 shader 调试通道。
+    pub debug_channel: u32,
 
     // ========== GBuffer 数据 ==========
     /// GBufferA：法线 normal.xyz + 粗糙度 roughness
@@ -595,11 +597,11 @@ impl RealtimeRtPass {
         let mut push_constant = gpu::rt::PushConstants {
             spp,
             spp_idx: 0,
-            channel: gpu_store.pipeline_settings.channel,
+            channel: pass_data.debug_channel,
             ic_table: self.hash_table.device_address(),
             ic_entry_pool: self.entry_pool.device_address(),
-            // Radiance/Irradiance Cache 代码保留，但主流程在 SR 接入后不再依赖该缓存路径。
-            // 固定为 0 可以避免 cache buffer barrier 参与每帧 ray tracing 语义。
+            // Irradiance Cache 代码仍作为 shader 实验路径保留，但当前主流程没有配置入口。
+            // 固定为 0，避免一个看似全局配置的开关悄悄改变主渲染语义。
             ic_enabled: 0,
         };
         for spp_idx in 0..spp {
@@ -669,6 +671,7 @@ pub struct RealtimeRtRgPass<'a> {
     /// 单帧 RT 输出图像（只写）
     pub single_frame_image: RgImageHandle,
     pub single_frame_extent: vk::Extent2D,
+    pub debug_channel: u32,
 
     // ========== GBuffer 数据 ==========
     pub gbuffer_a: RgImageHandle,
@@ -712,6 +715,7 @@ impl RgPass for RealtimeRtRgPass<'_> {
                 single_frame_output: single_frame_image,
                 single_frame_output_view: single_frame_view,
                 single_frame_extent: self.single_frame_extent,
+                debug_channel: self.debug_channel,
                 gbuffer_a,
                 gbuffer_a_view,
                 gbuffer_b,

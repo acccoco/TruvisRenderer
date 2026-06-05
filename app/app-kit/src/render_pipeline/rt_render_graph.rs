@@ -11,14 +11,109 @@ use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, Plugi
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::dlss_sr::DlssSrMode;
+use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
 use truvis_render_foundation::gpu_store::GpuStore;
-use truvis_render_foundation::pipeline_settings::{DlssSrMode, FrameLabel};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 
 #[derive(Default)]
 pub struct RtPipeline {
     inner: Option<RtPipelineInner>,
+    /// RT app 自有的可调参数。
+    ///
+    /// 生命周期跟随 `RtPipeline`，由 Truvis / Cornell 等 RT app 在 ImGui update 阶段修改，
+    /// 再在构建 render graph 时显式传给相关 pass。
+    settings: RtPipelineSettings,
+}
+
+/// RT pipeline 自有配置。
+///
+/// 这些选项只影响 app 层 RT pass 和后处理调试输出，不进入 engine `GpuStore`。
+#[derive(Clone, Copy)]
+pub struct RtPipelineSettings {
+    /// 当前 RT 调试输出通道。
+    ///
+    /// 这是 RT 主流程的 pass-local 配置，不影响 engine runtime 的 target 尺寸、DLSS history
+    /// 或全局 per-frame UBO，因此不放入 `GpuStore`。
+    pub debug_channel: RtDebugChannel,
+}
+
+impl Default for RtPipelineSettings {
+    fn default() -> Self {
+        Self {
+            debug_channel: RtDebugChannel::Final,
+        }
+    }
+}
+
+/// 主 RT 流程支持的调试通道。
+///
+/// 数值由 RT/Sdr shader push constant 消费；这里用 enum 固定语义，避免 UI 直接暴露 magic number。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RtDebugChannel {
+    /// 标准最终颜色输出。
+    Final,
+    /// 显示命中点法线，用于检查几何与 shading normal。
+    Normal,
+    /// 显示材质 base color / albedo。
+    BaseColor,
+    /// 显示 next-event estimation 中来自 HDRI 的直接光。
+    NeeHdri,
+    /// 显示自发光材质贡献。
+    Emission,
+    /// 显示 BRDF 采样到 HDRI 的间接贡献。
+    BrdfHdri,
+    /// 显示第 0 次 bounce 的 NEE 贡献。
+    NeeBounce0,
+    /// 显示第 1 次 bounce 的 NEE 贡献。
+    NeeBounce1,
+    /// 显示 shader 实验路径中的 Irradiance Cache 调试结果。
+    ///
+    /// 当前主流程固定 `ic_enabled = 0`，因此该通道只是保留 shader 侧观测入口，
+    /// 不代表 engine 提供了全局 IC 配置。
+    IrradianceCache,
+}
+
+impl RtDebugChannel {
+    pub const ALL: [Self; 9] = [
+        Self::Final,
+        Self::Normal,
+        Self::BaseColor,
+        Self::NeeHdri,
+        Self::Emission,
+        Self::BrdfHdri,
+        Self::NeeBounce0,
+        Self::NeeBounce1,
+        Self::IrradianceCache,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Final => "final",
+            Self::Normal => "normal",
+            Self::BaseColor => "base color",
+            Self::NeeHdri => "from NEE HDRI",
+            Self::Emission => "from emission",
+            Self::BrdfHdri => "from BRDF HDRI",
+            Self::NeeBounce0 => "NEE bounce 0",
+            Self::NeeBounce1 => "NEE bounce 1",
+            Self::IrradianceCache => "Irradiance Cache",
+        }
+    }
+
+    pub fn shader_channel(self) -> u32 {
+        match self {
+            Self::Final => 0,
+            Self::Normal => 1,
+            Self::BaseColor => 2,
+            Self::NeeHdri => 4,
+            Self::Emission => 5,
+            Self::BrdfHdri => 6,
+            Self::NeeBounce0 => 7,
+            Self::NeeBounce1 => 8,
+            Self::IrradianceCache => 9,
+        }
+    }
 }
 
 struct RtPipelineInner {
@@ -77,11 +172,11 @@ impl RtPipelineInner {
             &ctx.gpu_store.global_descriptor_sets,
             ctx.present.swapchain_image_info().image_format,
         );
-        // `RenderRuntime::new` 早于窗口创建，只能给 `FrameSettings` 一个占位 extent；
+        // `RenderRuntime::new` 早于窗口创建，只能给 `FrameRenderState` 一个占位 extent；
         // app-owned target 必须使用 init 阶段已经创建好的 swapchain extent，避免首帧按 400x400
         // 创建中间图像。runtime 会在 `init_after_window` 同步该值，这里仍显式覆盖，保证契约局部可见。
-        let mut target_frame_settings = ctx.gpu_store.frame_settings;
-        target_frame_settings.set_native_extent(ctx.swapchain_image_info.image_extent);
+        let mut target_frame_state = ctx.gpu_store.frame_state;
+        target_frame_state.set_native_extent(ctx.swapchain_image_info.image_extent);
 
         let rt_targets = RtWorkingTargets::new(
             ctx.resource_ctx,
@@ -89,7 +184,7 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &mut ctx.gpu_store.gfx_resource_manager,
             &mut ctx.gpu_store.bindless_manager,
-            &target_frame_settings,
+            &target_frame_state,
             &ctx.gpu_store.frame_counter,
         );
         let main_view_targets = MainViewTargets::new(
@@ -98,7 +193,7 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &mut ctx.gpu_store.gfx_resource_manager,
             &mut ctx.gpu_store.bindless_manager,
-            &target_frame_settings,
+            &target_frame_state,
             &ctx.gpu_store.frame_counter,
         );
         let dlss_sr_inputs = DlssSrInputTargets::new(
@@ -107,7 +202,7 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &mut ctx.gpu_store.gfx_resource_manager,
             &mut ctx.gpu_store.bindless_manager,
-            &target_frame_settings,
+            &target_frame_state,
             &ctx.gpu_store.frame_counter,
         );
         let dlss_sr_outputs = DlssSrOutputTargets::new(
@@ -116,7 +211,7 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &mut ctx.gpu_store.gfx_resource_manager,
             &mut ctx.gpu_store.bindless_manager,
-            &target_frame_settings,
+            &target_frame_state,
             &ctx.gpu_store.frame_counter,
         );
 
@@ -126,7 +221,7 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &mut ctx.gpu_store.gfx_resource_manager,
             &mut ctx.gpu_store.bindless_manager,
-            target_frame_settings.render_extent,
+            target_frame_state.render_extent,
             &ctx.gpu_store.frame_counter,
         );
 
@@ -208,14 +303,14 @@ impl Plugin for RtPipeline {
             // resize ctx 来自 present 层实际重建后的安全点；旧 target 不会再被在飞命令引用。
             // 这里用 `PresentView` 再读一次 swapchain extent，避免 app-owned target 和
             // swapchain 在平台裁剪尺寸时出现细微不一致。
-            let target_frame_settings = ctx.gpu_store.frame_settings;
+            let target_frame_state = ctx.gpu_store.frame_state;
             inner.rt_targets.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
                 &mut ctx.gpu_store.bindless_manager,
                 &mut ctx.gpu_store.gfx_resource_manager,
-                &target_frame_settings,
+                &target_frame_state,
                 &ctx.gpu_store.frame_counter,
             );
             inner.dlss_sr_inputs.rebuild(
@@ -224,7 +319,7 @@ impl Plugin for RtPipeline {
                 ctx.immediate_ctx,
                 &mut ctx.gpu_store.bindless_manager,
                 &mut ctx.gpu_store.gfx_resource_manager,
-                &target_frame_settings,
+                &target_frame_state,
                 &ctx.gpu_store.frame_counter,
             );
             inner.dlss_sr_outputs.rebuild(
@@ -233,7 +328,7 @@ impl Plugin for RtPipeline {
                 ctx.immediate_ctx,
                 &mut ctx.gpu_store.bindless_manager,
                 &mut ctx.gpu_store.gfx_resource_manager,
-                &target_frame_settings,
+                &target_frame_state,
                 &ctx.gpu_store.frame_counter,
             );
             inner.main_view_targets.rebuild(
@@ -242,7 +337,7 @@ impl Plugin for RtPipeline {
                 ctx.immediate_ctx,
                 &mut ctx.gpu_store.bindless_manager,
                 &mut ctx.gpu_store.gfx_resource_manager,
-                &target_frame_settings,
+                &target_frame_state,
                 &ctx.gpu_store.frame_counter,
             );
             inner.gbuffer.rebuild(
@@ -251,7 +346,7 @@ impl Plugin for RtPipeline {
                 ctx.immediate_ctx,
                 &mut ctx.gpu_store.bindless_manager,
                 &mut ctx.gpu_store.gfx_resource_manager,
-                target_frame_settings.render_extent,
+                target_frame_state.render_extent,
                 &ctx.gpu_store.frame_counter,
             );
         }
@@ -265,6 +360,14 @@ impl Plugin for RtPipeline {
 }
 
 impl RtPipeline {
+    pub fn settings(&self) -> &RtPipelineSettings {
+        &self.settings
+    }
+
+    pub fn settings_mut(&mut self) -> &mut RtPipelineSettings {
+        &mut self.settings
+    }
+
     pub fn compute_cmd(&self, frame_label: FrameLabel) -> &GfxCommandBuffer {
         &self.inner().compute_cmds[*frame_label]
     }
@@ -285,6 +388,7 @@ impl RtPipeline {
         let dlss_sr_inputs = &inner.dlss_sr_inputs;
         let dlss_sr_outputs = &inner.dlss_sr_outputs;
         let main_view_targets = &inner.main_view_targets;
+        let debug_channel = self.settings.debug_channel.shader_channel();
 
         // compute graph 导入的是 app-owned 外部图像；RenderGraph 只接管本图内的状态转换，
         // 不拥有图像生命周期。owner 必须活到 graph 录制与提交完成之后。
@@ -382,7 +486,8 @@ impl RtPipeline {
                 gpu_store,
                 render_scene: ctx.render_scene,
                 single_frame_image,
-                single_frame_extent: gpu_store.frame_settings.render_extent,
+                single_frame_extent: gpu_store.frame_state.render_extent,
+                debug_channel,
                 gbuffer_a,
                 gbuffer_b,
                 gbuffer_c,
@@ -391,7 +496,7 @@ impl RtPipeline {
             },
         );
 
-        if dlss_sr_enabled(gpu_store.pipeline_settings.dlss_sr_mode) {
+        if dlss_sr_enabled(gpu_store.render_options.dlss_sr_mode) {
             // SR/DLAA 分支用 Streamline output 进入 SDR；不再运行传统 denoise/accum，
             // 也不在 SR 后追加第二个 upscale pass。
             rg_builder
@@ -414,8 +519,9 @@ impl RtPipeline {
                         gpu_store,
                         src_image: dlss_output,
                         dst_image: render_target,
-                        src_image_extent: gpu_store.frame_settings.output_extent,
-                        dst_image_extent: gpu_store.frame_settings.output_extent,
+                        src_image_extent: gpu_store.frame_state.output_extent,
+                        dst_image_extent: gpu_store.frame_state.output_extent,
+                        debug_channel,
                     },
                 );
         } else {
@@ -428,8 +534,9 @@ impl RtPipeline {
                     gpu_store,
                     src_image: single_frame_image,
                     dst_image: render_target,
-                    src_image_extent: gpu_store.frame_settings.render_extent,
-                    dst_image_extent: gpu_store.frame_settings.output_extent,
+                    src_image_extent: gpu_store.frame_state.render_extent,
+                    dst_image_extent: gpu_store.frame_state.output_extent,
+                    debug_channel,
                 },
             );
         }

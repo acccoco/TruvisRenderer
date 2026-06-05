@@ -29,7 +29,7 @@
 ## 开放问题
 
 - 显式 `extract -> prepare -> render`：当前 `RenderRuntime::prepare()` 仍是单入口，需要进一步拆出 CPU snapshot、GPU upload、descriptor/per-view update 的语义边界。
-- View 抽象：当前主视角仍由 camera、frame settings、per-frame data 和 FIF resources 隐式组合，尚未形成 `ViewDesc` / `PreparedView`。
+- View 抽象：当前主视角仍由 camera、`FrameRenderState`、per-frame data、`ViewAccumState` 和 FIF resources 隐式组合，尚未形成 `ViewDesc` / `PreparedView`。
 - Plugin 装配：当前由 App 显式字段组合能力，尚未支持 `PluginGroup`、依赖声明、拓扑校验和 builtin plugin。
 - Surface 边界：present/swapchain 仍由 runtime 持有，`SurfaceRegistry`、多窗口和 headless 仍是远期方向。
 - `Gfx` 注入：部分底层代码仍有历史全局访问痕迹，后续应继续向显式 owner / typed ctx 收敛。

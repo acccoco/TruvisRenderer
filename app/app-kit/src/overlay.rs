@@ -1,8 +1,10 @@
 use ash::vk;
 use truvis_app_frame::plugin_api::Plugin;
-use truvis_render_foundation::pipeline_settings::{DlssSrMode, PipelineSettings};
+use truvis_render_foundation::dlss_sr::DlssSrMode;
+use truvis_render_foundation::render_options::RenderOptions;
 
 use crate::camera::Camera;
+use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtPipelineSettings};
 
 #[derive(Default)]
 pub struct DebugInfoOverlay;
@@ -68,33 +70,39 @@ pub struct PipelineControlsOverlay;
 impl Plugin for PipelineControlsOverlay {}
 
 impl PipelineControlsOverlay {
-    pub fn build_overlay_ui(&mut self, ui: &imgui::Ui, pipeline_settings: &mut PipelineSettings) {
+    pub fn build_overlay_ui(
+        &mut self,
+        ui: &imgui::Ui,
+        render_options: &mut RenderOptions,
+        rt_settings: Option<&mut RtPipelineSettings>,
+    ) {
         ui.window("Controls")
             .position([10.0, 200.0], imgui::Condition::FirstUseEver)
             .size([250.0, 200.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 // 当前只暴露 DLSS SR/DLAA mode；RR 后续作为独立开关接入，不放进这个质量挡位下拉框。
-                if let Some(_combo) = ui.begin_combo("DLSS SR", pipeline_settings.dlss_sr_mode.label()) {
+                if let Some(_combo) = ui.begin_combo("DLSS SR", render_options.dlss_sr_mode.label()) {
                     for mode in DlssSrMode::ALL {
-                        if ui.selectable_config(mode.label()).selected(pipeline_settings.dlss_sr_mode == mode).build() {
-                            pipeline_settings.dlss_sr_mode = mode;
+                        if ui.selectable_config(mode.label()).selected(render_options.dlss_sr_mode == mode).build() {
+                            render_options.dlss_sr_mode = mode;
                         }
                     }
                 }
-                ui.slider("channel", 0, 9, &mut pipeline_settings.channel);
-                ui.text(match pipeline_settings.channel {
-                    0 => "final",
-                    1 => "normal",
-                    2 => "base color",
-                    3 => "not accum",
-                    4 => "from NEE HDRI",
-                    5 => "from emission",
-                    6 => "from BDRF HDRi",
-                    7 => "NEE bounce 0",
-                    8 => "NEE bounce 1",
-                    9 => "Irradiance Cache",
-                    _ => "Unknown",
-                });
+
+                if let Some(rt_settings) = rt_settings {
+                    ui.separator();
+                    if let Some(_combo) = ui.begin_combo("RT debug", rt_settings.debug_channel.label()) {
+                        for channel in RtDebugChannel::ALL {
+                            if ui
+                                .selectable_config(channel.label())
+                                .selected(rt_settings.debug_channel == channel)
+                                .build()
+                            {
+                                rt_settings.debug_channel = channel;
+                            }
+                        }
+                    }
+                }
             });
     }
 }

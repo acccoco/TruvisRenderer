@@ -15,9 +15,9 @@ use truvis_gfx::{
     },
 };
 use truvis_path::TruvisPath;
+use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_foundation::gpu_store::GpuStore;
-use truvis_render_foundation::pipeline_settings::FrameLabel;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_shader_binding::gpu;
 

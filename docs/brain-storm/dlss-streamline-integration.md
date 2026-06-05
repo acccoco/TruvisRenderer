@@ -91,13 +91,13 @@ TRUVIS_DLSS_SR_MODE=ultra-performance
 当前生产路径走 Vulkan interposer/proxy，不在 runtime 初始化后额外调用 `slSetVulkanInfo`。
 `slSetVulkanInfo` wrapper 仍保留给未来非 proxy 集成方式。
 
-### 3.2 FrameSettings 与 resize
+### 3.2 FrameRenderState 与 resize
 
-`FrameSettings` 已拆分为：
+`FrameRenderState` 当前表达 runtime 派生的 main view 帧状态：
 
 ```rust
-pub struct FrameSettings {
-    pub color_format: vk::Format,
+pub struct FrameRenderState {
+    pub hdr_color_format: vk::Format,
     pub depth_format: vk::Format,
     pub render_extent: vk::Extent2D,
     pub output_extent: vk::Extent2D,

@@ -12,7 +12,7 @@ pub use crate::descriptor_bindings::{
     StaticSamplerDescriptorTarget,
 };
 use crate::frame_counter::FrameCounter;
-use crate::pipeline_settings::FrameLabel;
+use crate::frame_counter::FrameLabel;
 
 pub struct GlobalDescriptorSets {
     layout_0_static: GfxDescriptorSetLayout<StaticDescriptorBinding>,

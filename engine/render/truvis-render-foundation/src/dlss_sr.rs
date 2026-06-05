@@ -1,7 +1,77 @@
 use ash::vk;
 
-use crate::pipeline_settings::FrameSettings;
+use crate::frame_state::FrameRenderState;
 use crate::render_view::RenderView;
+
+/// DLSS Super Resolution / DLAA 模式。
+///
+/// 这里只表示 `kFeatureDLSS` 的模式选择；Ray Reconstruction 后续作为独立开关，
+/// 在执行层替换 SR evaluate，而不是作为这里的另一个互斥质量模式。
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DlssSrMode {
+    /// 关闭 DLSS，runtime 使用 native render extent。
+    Off,
+    /// DLAA 路径仍调用 DLSS feature，但 render extent 与 output extent 相同，只做抗锯齿。
+    Dlaa,
+    /// 质量优先的 SR upscale mode，render extent 由 Streamline optimal settings 决定。
+    Quality,
+    /// 质量与性能折中 SR upscale mode。
+    Balanced,
+    /// 性能优先 SR upscale mode。
+    Performance,
+    /// 最大放大倍率 SR upscale mode，通常只适合高分辨率输出。
+    UltraPerformance,
+}
+
+impl Default for DlssSrMode {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
+impl DlssSrMode {
+    pub const ALL: [Self; 6] = [
+        Self::Off,
+        Self::Dlaa,
+        Self::Quality,
+        Self::Balanced,
+        Self::Performance,
+        Self::UltraPerformance,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Dlaa => "DLAA",
+            Self::Quality => "Quality",
+            Self::Balanced => "Balanced",
+            Self::Performance => "Performance",
+            Self::UltraPerformance => "Ultra Performance",
+        }
+    }
+
+    /// 解析调试启动配置中的 DLSS SR 模式名称。
+    ///
+    /// 允许空格、连字符和下划线差异，是为了让环境变量输入对大小写和写法宽容。
+    pub fn from_config_value(value: &str) -> Option<Self> {
+        let normalized = value
+            .trim()
+            .chars()
+            .filter(|ch| !matches!(ch, ' ' | '-' | '_'))
+            .flat_map(char::to_lowercase)
+            .collect::<String>();
+
+        match normalized.as_str() {
+            "off" => Some(Self::Off),
+            "dlaa" => Some(Self::Dlaa),
+            "quality" => Some(Self::Quality),
+            "balanced" => Some(Self::Balanced),
+            "performance" => Some(Self::Performance),
+            "ultraperformance" => Some(Self::UltraPerformance),
+            _ => None,
+        }
+    }
+}
 
 /// DLSS SR 每帧 evaluate 需要的 common constants。
 ///
@@ -104,7 +174,7 @@ impl DlssSrState {
     ///
     /// `previous_view` 只用于生成上一帧 clip 空间关系；当 history reset pending 时，
     /// 当前帧仍会写出有效矩阵，但 `reset=true` 会通知 DLSS 丢弃内部历史。
-    pub fn update(&mut self, render_view: &RenderView, frame_settings: &FrameSettings) {
+    pub fn update(&mut self, render_view: &RenderView, frame_state: &FrameRenderState) {
         let previous_view = self.previous_view.unwrap_or(*render_view);
         // Streamline 需要 current clip <-> previous clip 的变换来补足 camera motion。
         // 当前 shader motion vectors 第一版写 0，因此这里的矩阵关系是相机运动的主要来源。
@@ -130,7 +200,7 @@ impl DlssSrState {
             camera_near: estimate_camera_near(render_view.projection),
             camera_far: 10000.0,
             camera_fov: estimate_vertical_fov(render_view.projection),
-            camera_aspect_ratio: extent_aspect(frame_settings.output_extent),
+            camera_aspect_ratio: extent_aspect(frame_state.output_extent),
             motion_vectors_invalid_value: -65504.0,
             depth_inverted: false,
             camera_motion_included: false,

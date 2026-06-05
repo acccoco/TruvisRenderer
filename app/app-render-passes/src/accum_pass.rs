@@ -98,7 +98,7 @@ impl<'a> RgPass for AccumRgPass<'a> {
                 single_frame_bindless_uav_handle,
                 accum_bindless_uav_handle,
                 image_size: self.image_extent,
-                accum_frames: self.gpu_store.accum_data.accum_frames_num() as u32,
+                accum_frames: self.gpu_store.view_accum.accum_frames_num() as u32,
             },
             self.gpu_store,
         );

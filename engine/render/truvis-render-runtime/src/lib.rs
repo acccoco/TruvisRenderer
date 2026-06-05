@@ -24,6 +24,7 @@ pub mod ray_cast;
 pub mod render_runtime;
 pub mod render_runtime_ctx;
 mod render_scene;
+mod runtime_defaults;
 mod scene_bridge;
 mod sky_bridge;
 mod texture_resolver;

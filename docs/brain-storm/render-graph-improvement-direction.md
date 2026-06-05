@@ -185,8 +185,8 @@ let gbuffer_a = ctx.image(self.gbuffer_a)?;
 ```rust
 pub struct RenderPassRecordCtx<'a> {
     pub frame_label: FrameLabel,
-    pub frame_settings: &'a FrameSettings,
-    pub pipeline_settings: &'a PipelineSettings,
+    pub frame_state: &'a FrameRenderState,
+    pub render_options: &'a RenderOptions,
     pub global_descriptor_sets: &'a GlobalDescriptorSets,
     pub bindless_manager: &'a BindlessManager,
 }
@@ -231,4 +231,3 @@ upload rays buffer -> trace rays -> copy hits to readback buffer -> export Readb
 - 不把所有 runtime prepare、asset upload、present 生命周期都强行塞进 graph。
 - 不为了减少几行 adapter 代码，让底层 `GfxPipeline` 直接依赖 graph handle。
 - 不在第一阶段做完整 RDG / FrameGraph 的 pass culling、aliasing 和 async queue scheduler。
-

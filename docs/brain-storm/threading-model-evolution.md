@@ -36,10 +36,11 @@ begin_frame
   -> dispatch AssetLoadedEvent to texture / mesh / material owners
 
 update_phase
-  -> update frame settings
+  -> sync FrameRenderState
   -> acquire swapchain image
   -> App update
   -> Plugin update
+  -> sync RenderOptions into FrameRenderState
 
 prepare
   -> update accum state
@@ -108,7 +109,7 @@ rayon IO/decode
 
 - `World` 与 render-side owner 的所有权真正跨线程拆分。
 - update thread 产出 owned frame packet，不能携带借用到 `SceneManager` 或 asset manager 内部缓存。
-- 输入、UI、camera、pipeline settings 和 scene snapshot 都要接受至少一帧延迟。
+- 输入、UI、camera、`RenderOptions` / pipeline-local 配置和 scene snapshot 都要接受至少一帧延迟。
 - shutdown / panic propagation / resize 需要新的跨线程协议。
 
 当前评估：

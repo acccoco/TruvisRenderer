@@ -44,7 +44,8 @@ struct PushConstant
     /// 滤波核半径（基础值，粗糙度自适应时会动态调整）
     int kernel_radius;
 
-    /// 调试通道（0 = 正常渲染，3 = 禁用累积）
+    /// 传统 denoise/accum pass-local 调试通道。
+    /// 主 RT debug UI 不再暴露 legacy “禁用累积”通道。
     uint channel;
 
     // ========== 增强联合双边滤波参数 ==========

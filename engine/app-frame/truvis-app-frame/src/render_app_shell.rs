@@ -114,8 +114,8 @@ where
 
             let mut plugin_ctx = PluginUpdateCtx {
                 world: update_ctx.world,
-                pipeline_settings: update_ctx.pipeline_settings,
-                frame_settings: update_ctx.frame_settings,
+                render_options: update_ctx.render_options,
+                frame_state: update_ctx.frame_state,
                 delta_time_s: update_ctx.delta_time_s,
             };
             app.visit_plugins_mut(&mut |plugin| {
@@ -123,9 +123,9 @@ where
             });
         }
 
-        // PipelineSettings 可能在 update/UI 阶段改变 DLSS SR mode。必须在 prepare/render graph 之前
+        // RenderOptions 可能在 update/UI 阶段改变 DLSS SR mode。必须在 prepare/render graph 之前
         // 同步 render/output extent，并让 app-owned RT/GBuffer/DLSS targets 跟着重建。
-        if let Some(runtime) = render_runtime.sync_pipeline_frame_settings() {
+        if let Some(runtime) = render_runtime.sync_render_options_frame_state() {
             let image_extent = runtime.present.swapchain_image_info().image_extent;
             let new_size = [image_extent.width, image_extent.height];
             let mut app_ctx = RenderAppResizeCtx {

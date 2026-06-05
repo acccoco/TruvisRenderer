@@ -23,9 +23,9 @@ use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::bindless_manager::BindlessManager;
 use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_render_foundation::pipeline_settings::FrameLabel;
 
 /// RT 管线使用的 GBuffer 资源集合。
 ///

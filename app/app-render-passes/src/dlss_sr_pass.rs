@@ -11,8 +11,8 @@ use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_render_foundation::dlss_sr::DlssSrFrameConstants;
+use truvis_render_foundation::dlss_sr::DlssSrMode;
 use truvis_render_foundation::gpu_store::GpuStore;
-use truvis_render_foundation::pipeline_settings::DlssSrMode;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_streamline_binding::dlss;
 
@@ -64,12 +64,12 @@ impl DlssSrPass {
         resource_ctx: GfxResourceCtx<'_>,
         data: DlssSrPassData<'_>,
     ) {
-        let mode = gpu_store.pipeline_settings.dlss_sr_mode;
+        let mode = gpu_store.render_options.dlss_sr_mode;
         if mode == DlssSrMode::Off {
             return;
         }
 
-        let output_extent = gpu_store.frame_settings.output_extent;
+        let output_extent = gpu_store.frame_state.output_extent;
         // options 必须与 runtime 计算出的 output extent 一致；render extent 则来自输入图像尺寸。
         let options = dlss::DlssOptions {
             mode: to_streamline_mode(mode),

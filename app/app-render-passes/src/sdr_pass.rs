@@ -16,6 +16,8 @@ pub struct SdrPassData {
 
     pub dst_image: GfxImageViewHandle,
     pub dst_image_size: vk::Extent2D,
+    /// 当前 RT 调试通道。0 使用 tone mapping；非 0 通道保留 HDR debug color。
+    pub debug_channel: u32,
 }
 
 pub struct SdrPass {
@@ -50,7 +52,7 @@ impl SdrPass {
                 src_image: src_image_bindless_handle.0,
                 dst_image: dst_image_bindless_handle.0,
                 image_size: glam::uvec2(data.src_image_size.width, data.src_image_size.height).into(),
-                channel: gpu_store.pipeline_settings.channel,
+                channel: data.debug_channel,
                 _padding_1: Default::default(),
             },
             glam::uvec3(
@@ -73,6 +75,7 @@ pub struct SdrRgPass<'a> {
 
     pub src_image_extent: vk::Extent2D,
     pub dst_image_extent: vk::Extent2D,
+    pub debug_channel: u32,
 }
 impl<'a> RgPass for SdrRgPass<'a> {
     fn setup(&mut self, builder: &mut RgPassBuilder) {
@@ -91,6 +94,7 @@ impl<'a> RgPass for SdrRgPass<'a> {
                 dst_image,
                 src_image_size: self.src_image_extent,
                 dst_image_size: self.dst_image_extent,
+                debug_channel: self.debug_channel,
             },
             self.gpu_store,
         );

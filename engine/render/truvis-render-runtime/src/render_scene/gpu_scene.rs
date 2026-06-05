@@ -13,7 +13,7 @@ use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_foundation::frame_counter::FrameCounter;
-use truvis_render_foundation::pipeline_settings::FrameLabel;
+use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_shader_binding::gpu;
 

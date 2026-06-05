@@ -3,9 +3,11 @@ use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
 use truvis_render_foundation::cmd_allocator::CmdAllocator;
+use truvis_render_foundation::frame_state::FrameRenderState;
 use truvis_render_foundation::gpu_store::GpuStore;
-use truvis_render_foundation::pipeline_settings::{AccumData, FrameSettings, PipelineSettings};
+use truvis_render_foundation::render_options::RenderOptions;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
+use truvis_render_foundation::view_accum::ViewAccumState;
 use truvis_world::World;
 
 use crate::instance_bridge::InstanceBridge;
@@ -15,16 +17,16 @@ use crate::ray_cast::{RayCastRay, RayCastResult, RayCastService};
 /// Update 阶段上下文，借用 CPU 端更新需要的 RenderRuntime 字段。
 ///
 /// 在 app 执行 update 工作期间保持存活；drop 前 RenderRuntime 会保持借用锁定。
-/// 这个阶段允许修改 `World` 与管线设置，但还没有把 CPU 语义数据翻译到 GPU scene。
+/// 这个阶段允许修改 `World` 与全局渲染选项，但还没有把 CPU 语义数据翻译到 GPU scene。
 pub struct RenderRuntimeUpdateCtx<'a> {
     /// CPU 语义世界；update 阶段允许 app/plugin 修改 scene、asset 请求和运行时实例。
     pub world: &'a mut World,
-    /// 可变管线设置；修改会影响后续 prepare/render 阶段的 pass 行为。
-    pub pipeline_settings: &'a mut PipelineSettings,
-    /// 当前帧尺寸和格式快照，已在 acquire 前与 swapchain 同步。
-    pub frame_settings: &'a FrameSettings,
-    /// 累积渲染状态，只读暴露给上层 UI 或调试逻辑。
-    pub accum_data: &'a AccumData,
+    /// 可变全局渲染选项；修改后由 runtime 在 prepare/render 前统一同步派生状态。
+    pub render_options: &'a mut RenderOptions,
+    /// 当前帧渲染目标状态快照，已在 acquire 前与 swapchain 同步。
+    pub frame_state: &'a FrameRenderState,
+    /// 当前 main view 的累积状态，只读暴露给上层 UI 或调试逻辑。
+    pub view_accum: &'a ViewAccumState,
     /// 当前 swapchain extent，便于 app 在 update 阶段同步相机纵横比。
     pub swapchain_extent: vk::Extent2D,
     /// `begin_frame` 计算出的上一帧 delta time，单位秒。

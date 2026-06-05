@@ -223,7 +223,7 @@ void main(uint3 dispatchThreadID: SV_DispatchThreadID)
     float4 result;
     if (g_params.channel == 3 || g_params.accum_frames == 0)
     {
-        // 调试通道 3（禁用累积）或第一帧：直接写入降噪/未降噪结果
+        // legacy pass-local 调试通道 3 或第一帧：直接写入降噪/未降噪结果
         result = denoised_frame;
     }
     else

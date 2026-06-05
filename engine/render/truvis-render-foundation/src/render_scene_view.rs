@@ -2,7 +2,7 @@ use ash::vk;
 
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 
-use crate::pipeline_settings::FrameLabel;
+use crate::frame_counter::FrameLabel;
 
 /// Render pass 访问 GPU scene 的最小只读契约。
 ///

@@ -8,8 +8,9 @@ use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
 use truvis_render_foundation::cmd_allocator::CmdAllocator;
+use truvis_render_foundation::frame_state::FrameRenderState;
 use truvis_render_foundation::gpu_store::GpuStore;
-use truvis_render_foundation::pipeline_settings::{FrameSettings, PipelineSettings};
+use truvis_render_foundation::render_options::RenderOptions;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_runtime::present::swapchain_presenter::PresentView;
 use truvis_world::World;
@@ -48,15 +49,15 @@ pub struct PluginInitCtx<'a> {
 
 /// 由 app 持有的 plugin 的 CPU 更新上下文。
 ///
-/// 该上下文不提供 command recording 能力，主要用于更新 CPU 状态、读取帧设置、
-/// 调整 pipeline settings，或把 `World` 中的语义状态推进到下一帧。
+/// 该上下文不提供 command recording 能力，主要用于更新 CPU 状态、读取帧状态、
+/// 调整 render options，或把 `World` 中的语义状态推进到下一帧。
 pub struct PluginUpdateCtx<'a> {
     /// CPU 语义世界，Plugin 可在 update 阶段修改其中的运行时状态。
     pub world: &'a mut World,
-    /// 可变 pipeline 设置，供 UI 或控制类 Plugin 调整渲染管线参数。
-    pub pipeline_settings: &'a mut PipelineSettings,
-    /// 当前帧只读设置快照，供 Plugin 按帧状态做更新决策。
-    pub frame_settings: &'a FrameSettings,
+    /// 可变全局渲染选项，供 UI 或控制类 Plugin 调整 runtime 级开关。
+    pub render_options: &'a mut RenderOptions,
+    /// 当前帧只读渲染目标状态快照，供 Plugin 按尺寸/格式做更新决策。
+    pub frame_state: &'a FrameRenderState,
     /// 与上一帧之间的时间间隔，单位为秒。
     pub delta_time_s: f32,
 }

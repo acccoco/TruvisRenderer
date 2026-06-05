@@ -138,7 +138,7 @@ pub trait RenderAppHooks {
     /// 更新 App 自己的 CPU 状态。
     ///
     /// 该 hook 发生在 runtime update phase 中，早于标准 Plugin update 和 runtime
-    /// prepare。适合更新相机、overlay、UI frame state 或全局 pipeline settings。
+    /// prepare。适合更新相机、overlay、UI frame state、`RenderOptions` 或 App 自有配置。
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx);
 
     /// 在 runtime prepare 完成后、render graph 组图前执行 App 同步查询。

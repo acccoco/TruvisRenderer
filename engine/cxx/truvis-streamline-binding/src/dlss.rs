@@ -256,7 +256,7 @@ pub fn query_support(physical_device: u64) -> Result<DlssSupport, StreamlineErro
 
 /// 根据 output extent 和 SR mode 查询推荐 render extent。
 ///
-/// Runtime 会把失败视为 native fallback；本函数不修改 pipeline settings，只返回 Streamline 结果。
+/// Runtime 会把失败视为 native fallback；本函数不修改 `RenderOptions`，只返回 Streamline 结果。
 pub fn get_optimal_settings(options: DlssOptions) -> Result<DlssOptimalSettings, StreamlineError> {
     let ffi_options = options.to_ffi();
     let mut ffi_settings = truvixx::TruvixxSlDlssOptimalSettings::default();

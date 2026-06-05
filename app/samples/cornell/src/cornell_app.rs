@@ -125,10 +125,10 @@ impl RenderAppHooks for CornellApp {
                 ui,
                 self.camera_controller.camera(),
                 ctx.swapchain_extent,
-                ctx.accum_data.accum_frames_num(),
+                ctx.view_accum.accum_frames_num(),
                 ctx.delta_time_s,
             );
-            self.pipeline_overlay.build_overlay_ui(ui, ctx.pipeline_settings);
+            self.pipeline_overlay.build_overlay_ui(ui, ctx.render_options, Some(self.rt_pipeline.settings_mut()));
             self.gui.build_debug_image_viewer_ui(ui);
         }
         self.gui.end_frame();
@@ -156,8 +156,7 @@ impl RenderAppHooks for CornellApp {
 
         self.gui.begin_debug_image_frame();
         // debug image import state 取决于当前 SR mode；SR 输入在 DLSS pass 后会停在 read-only layout。
-        for debug_image in
-            self.rt_pipeline.collect_debug_images(frame_label, ctx.gpu_store.pipeline_settings.dlss_sr_mode)
+        for debug_image in self.rt_pipeline.collect_debug_images(frame_label, ctx.gpu_store.render_options.dlss_sr_mode)
         {
             self.gui.register_debug_image(debug_image);
         }
