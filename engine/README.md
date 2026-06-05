@@ -18,6 +18,7 @@
 
 ## 推荐阅读顺序
 
-1. `../ARCHITECTURE.md`：了解总体分层、依赖方向与生命周期约束。
-2. 各分层目录和 crate 内 README：理解具体模块职责。
-3. `shader/README.md`、`cxx/README.md`：了解工具链与外部边界。
+1. `../ARCHITECTURE.md`：先确认当前架构入口、阅读顺序与最高优先级约束。
+2. `../docs/summaries/`：按主题阅读分层依赖、帧生命周期、Runtime/App/Plugin 边界、RenderGraph 数据流、线程与资源生命周期。
+3. 各分层目录和 crate 内 README：理解具体模块职责。
+4. `shader/README.md`、`cxx/README.md`：了解工具链与外部边界。

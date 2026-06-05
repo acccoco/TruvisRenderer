@@ -1,7 +1,7 @@
 # AGENTS.md
 
 本文件是项目唯一的 AI 协作规则入口，重点约束「如何改」，不描述项目结构细节。
-项目结构、分层、时序与模块关系请查看 `ARCHITECTURE.md`。
+项目结构、分层、时序与模块关系请先查看 `ARCHITECTURE.md`，详细当前事实查看 `docs/summaries/`。
 
 ## 1) 工作方式
 
@@ -38,6 +38,7 @@
 ## 4) 文档职责边界
 
 - `README.md`：面向 GitHub 用户，介绍亮点与上手方式。
-- `ARCHITECTURE.md`：记录总体架构、设计思路、模块约束。
+- `ARCHITECTURE.md`：当前架构入口、阅读顺序和最高优先级约束。
+- `docs/summaries/`：记录当前实现事实，包括分层、生命周期、状态所有权、数据流、线程和资源契约。
 - 模块内 `README.md`：说明模块职责、依赖与常见入口。
-- `docs/brain-strom/`：记录设计讨论与方案评估。其中 `brain-storm/archive` 属于归档，无需维护。
+- `docs/brain-storm/`：记录设计讨论与方案评估。其中 `brain-storm/archive` 属于归档，无需维护。

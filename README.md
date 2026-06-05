@@ -97,14 +97,18 @@ just truvis-direct imgui
 - App 公共组件：`app/app-kit` 提供 GUI、输入/相机、overlay 与 RT pipeline 等 app 层复用能力
 - 主体 App：`app/truvis` 提供 `truvis-app`，samples 位于 `app/samples/*`
 - App 适配：app state 实现 `RenderAppHooks`，由 `truvis-app-frame::RenderAppShell` 包装成 render loop 需要的 `RenderApp`
-- 帧骨架：`truvis-app-frame::RenderAppShell` 持有 `RenderRuntime` 与输入事件队列，负责 `input -> update -> plugin update -> prepare -> render -> present` 固定顺序
+- 帧骨架：`truvis-app-frame::RenderAppShell` 持有 `RenderRuntime` 与输入事件队列，负责
+  `input -> update -> plugin update -> prepare -> render -> present` 固定顺序
 - Plugin 组合：app state 通过 `RenderAppHooks::visit_plugins_mut` 声明标准生命周期 Plugin 顺序；GUI 与渲染管线的特有能力通过具体类型方法暴露
 - 渲染运行时：`truvis-render-runtime::RenderRuntime` 聚焦帧生命周期、CPU/GPU 同步与 GPU 数据上传
-- swapchain 重建：渲染线程通过 `RenderApp::recreate_swapchain_if_needed` 触发，`RenderAppShell` 在实际重建后通知 app state 并批量调用 Plugin resize
+- swapchain 重建：渲染线程通过 `RenderApp::recreate_swapchain_if_needed` 触发，`RenderAppShell` 在实际重建后通知 app state
+  并批量调用 Plugin resize
 
 ## 文档导航
 
-- 架构总览：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
+- 架构入口：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
+- 架构主题总结：[`docs/summaries/`](./docs/summaries/)（分层依赖、帧生命周期、Runtime/App/Plugin 边界、RenderGraph
+  数据流、线程与资源生命周期）
 - AI 协作规则：[`AGENTS.md`](./AGENTS.md)
 - 模块说明：各关键目录下 `README.md`（如 `engine/`、`engine/shader/`、`app/`）
 
