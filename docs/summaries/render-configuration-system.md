@@ -8,18 +8,18 @@
 
 | 类别 | 代表类型 | 所在层 | 是否用户可调 | 主要职责 |
 |------|----------|--------|--------------|----------|
-| runtime 全局渲染选项 | `RenderOptions` | `truvis-render-foundation` | 是 | 保存会影响 runtime 渲染状态的少量全局选项 |
-| runtime 派生帧状态 | `FrameRenderState` | `truvis-render-foundation` | 否 | 保存当前 main view 的格式、render extent 与 output extent |
-| main view temporal 状态 | `ViewAccumState`、`DlssSrState` | `truvis-render-foundation` | 否 | 追踪历史是否可复用，以及 DLSS common constants / reset |
+| runtime 全局渲染选项 | `RenderOptions` | `truvis-render-runtime` | 是 | 保存会影响 runtime 渲染状态的少量全局选项 |
+| runtime 派生帧状态 | `FrameRenderState` | `truvis-render-runtime` | 否 | 保存当前 main view 的格式、render extent 与 output extent |
+| main view temporal 状态 | `ViewAccumState`、`DlssSrState` | `truvis-render-runtime` | 否 | 追踪历史是否可复用，以及 DLSS common constants / reset |
 | app / pipeline 局部设置 | `RtPipelineSettings`、`DenoiseAccumSettings` | app 层 | 取决于 app | 保存具体 pipeline 自己理解的调试或实验参数 |
 
-这次整理后的核心原则是：engine 只把跨 pipeline 的渲染契约和 runtime 派生状态放在 `RenderOptions`、
-`FrameRenderState`、`ViewAccumState` 与 `DlssSrState` 等明确 owner 中；具体 RT pass 的 debug channel、legacy denoise
+这次整理后的核心原则是：`truvis-render-runtime` 持有跨 pipeline 的渲染契约和 runtime 派生状态，
+包括 `RenderOptions`、`FrameRenderState`、`ViewAccumState` 与 `DlssSrState` 等明确 owner；具体 RT pass 的 debug channel、legacy denoise
 参数和实验性 IC 开关不再伪装成 engine 全局配置。
 
 ## RenderOptions
 
-`RenderOptions` 位于 `truvis-render-foundation::render_options`，是用户或调试 UI 可以修改的 runtime 全局渲染选项。
+`RenderOptions` 位于 `truvis-render-runtime::render_options`，是用户或调试 UI 可以修改的 runtime 全局渲染选项。
 
 当前只包含：
 
@@ -37,7 +37,7 @@
 
 ## DlssSrMode 与 DlssSrState
 
-`DlssSrMode` 位于 `truvis-render-foundation::dlss_sr`，和 `DlssSrState` 放在同一个 DLSS SR 语义边界内。
+`DlssSrMode` 位于 `truvis-render-runtime::dlss_sr`，和 `DlssSrState` 放在同一个 DLSS SR 语义边界内。
 
 | mode | render extent 行为 | 执行行为 |
 |------|--------------------|----------|
@@ -49,7 +49,7 @@
 
 ## FrameRenderState
 
-`FrameRenderState` 位于 `truvis-render-foundation::frame_state`，是 runtime 根据窗口、present、DLSS SR mode 和设备能力推导出的当前 main view 帧状态。
+`FrameRenderState` 位于 `truvis-render-runtime::frame_state`，是 runtime 根据窗口、present、DLSS SR mode 和设备能力推导出的当前 main view 帧状态。
 
 | 字段 | 来源 | 用途 |
 |------|------|------|
@@ -62,7 +62,7 @@
 
 ## ViewAccumState
 
-`ViewAccumState` 位于 `truvis-render-foundation::view_accum`，表达当前 main view 的 temporal accumulation 状态。
+`ViewAccumState` 位于 `truvis-render-runtime::view_accum`，表达当前 main view 的 temporal accumulation 状态。
 
 它追踪上一帧的 `RenderViewAccumSignature` 和连续稳定帧数。只要相机、关键 view 参数、sky 绑定或尺寸状态导致历史不再匹配当前 view，就会 reset。
 

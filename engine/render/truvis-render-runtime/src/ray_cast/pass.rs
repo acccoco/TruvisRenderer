@@ -12,12 +12,13 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::sbt_buffer::GfxSBTBuffer;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_path::TruvisPath;
-use truvis_render_foundation::frame_timing::FrameTiming;
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_foundation::shader_binding_system::ShaderBindingView;
 use truvis_shader_binding::gpu;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
+
+use crate::frame_timing::FrameTiming;
 
 struct RayCastRtPipeline {
     pipeline: vk::Pipeline,

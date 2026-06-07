@@ -10,9 +10,9 @@ use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::dlss_sr::DlssSrMode;
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
+use truvis_render_runtime::dlss_sr::DlssSrMode;
 
 #[derive(Default)]
 pub struct RtPipeline {

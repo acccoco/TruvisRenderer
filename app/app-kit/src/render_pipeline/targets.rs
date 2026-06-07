@@ -19,10 +19,10 @@ use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::frame_counter::FrameLabel;
-use truvis_render_foundation::frame_state::FrameRenderState;
 use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_foundation::shader_binding_system::ShaderBindingSystem;
+use truvis_render_runtime::frame_state::FrameRenderState;
 
 /// RenderGraph 导入图像所需的 handle、格式和尺寸快照。
 ///

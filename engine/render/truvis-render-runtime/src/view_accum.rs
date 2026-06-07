@@ -1,4 +1,4 @@
-use crate::render_view::RenderViewAccumSignature;
+use truvis_render_foundation::render_view::RenderViewAccumSignature;
 
 /// 当前 main view 的 temporal accumulation 状态。
 ///

@@ -23,8 +23,8 @@
 - `World` 承载 CPU 侧 `SceneManager` 与 `AssetHub`，供 update/prepare 阶段读取或修改。
 - `GfxResourceManager` 承载 manager-owned GPU image/buffer/view 生命周期。
 - `ShaderBindingSystem` 承载 global descriptors、bindless 和 sampler manager，并向 render 阶段提供只读 shader binding view。
-- `FrameTiming` 承载 frame counter、delta time 和 total time；`PerFrameGpuData` 承载 per-FIF `PerFrameData` UBO。
-- `RenderRuntime` 直接持有 `FrameRenderState`、`RenderOptions`、`ViewAccumState` 和 `DlssSrState` 等 runtime render state。
+- `FrameTiming` 是 runtime-owned 当前帧时间快照，承载 frame counter、delta time 和 total time；`PerFrameGpuData` 承载 per-FIF `PerFrameData` UBO。
+- `FrameRenderState`、`RenderOptions`、`ViewAccumState` 和 `DlssSrState` 定义在本 crate，并由 `RenderRuntime` 直接持有。
 - runtime 内部拥有默认 surface format、present mode 与 depth format 候选顺序；这些默认策略不放入
   foundation 公共配置契约。
 - `GpuScene` 是 runtime 私有的 scene GPU 翻译层，持有 scene/instance/geometry/light/indirect
@@ -49,6 +49,7 @@
 
 - crate 公开入口保持在 `present`、`render_runtime_ctx` 和 `render_runtime`；
   app 层相机不属于 runtime 公共 API，prepare 阶段只接收 `RenderView` 快照。
+- runtime-owned render state 通过 `frame_state`、`render_options`、`view_accum`、`frame_timing` 和 `dlss_sr` 模块公开；foundation 只保留 FIF 基础索引和 GPU resource/binding owner。
 - asset manager、material bridge、instance bridge、GPU scene 数据结构和 prepare 辅助逻辑都是 runtime 私有实现。
 - 生命周期 Ctx 在 `render_runtime_ctx` 模块定义，并由 `render_runtime` 重新导出；
   调用方仍通过 `truvis_render_runtime::render_runtime::*Ctx` 使用这些阶段契约。

@@ -1,30 +1,26 @@
 # truvis-render-foundation
 
-渲染基础层，提供 GPU 帧状态、资源句柄、全局描述符与 GPU 资源管理通用原语。
+渲染基础层，提供 GPU 资源句柄、全局描述符、FIF 索引与 GPU 资源管理通用原语。
 
 ## 关键组件
 
-- `FrameCounter` / `FrameLabel`
-- `FrameRenderState` / `RenderOptions` / `ViewAccumState`
-- `DlssSrMode` / `DlssSrState`
+- `FrameCounter` / `FrameLabel` / `FrameToken`
 - `CmdAllocator`
 - `GfxResourceManager`（Handle + 生命周期管理）
 - `ShaderBindingSystem`（`GlobalDescriptorSets` + `BindlessManager` + sampler manager）
-- `FrameTiming`
 - `PerFrameGpuData`
+- `RenderView`
 - `RenderSceneView`
 
-## Runtime-Owned 基础状态
+## 基础 GPU Owner 与契约
 
 - `GfxResourceManager` 是 manager-owned GPU image/buffer/view 的生命周期 owner，不包装进额外聚合。
 - `ShaderBindingSystem` 是 shader-visible binding owner，聚合 `GlobalDescriptorSets`、`BindlessManager` 和 sampler manager，并提供 bindless 注册/注销与 render 阶段只读 view。
-- `FrameTiming` 聚合 frame counter、delta time 和 total time；`FrameTimer` 只作为 runtime 内部 wall-clock source。
+- `FrameCounter` / `FrameLabel` / `FrameToken` 只表达 FIF slot、帧序号 token 和延迟回收窗口；当前帧时间快照由 `truvis-render-runtime::FrameTiming` 持有。
 - `PerFrameGpuData` 持有 per-FIF `PerFrameData` UBO，负责当前帧 GPU 常量写入和 device address 查询。
-- `RenderOptions` 只保存 runtime 全局可调选项；RT debug channel、legacy denoise 参数和实验性 IC 开关属于具体 pipeline/pass，不放入 foundation 全局状态。
-- `FrameRenderState` 是 runtime 派生的 main view 帧状态，记录 HDR format、depth format、render extent 和 output extent；调用方读取它创建 target，但不把它当作用户配置。
-- `ViewAccumState` 是当前 main view 的 temporal state，不是配置项；resize、view 变化或环境切换会让 runtime 重置它。
 - CPU scene 或 asset hub 属于 `truvis-world::World`，不进入这些 GPU-facing owner。
-- render 阶段由 `truvis-render-runtime` 借出 `RenderPassRecordCtx`，foundation 只提供该上下文引用的基础 owner 和状态类型。
+- `FrameRenderState`、`RenderOptions`、`ViewAccumState`、`DlssSrState` 和 `FrameTiming` 属于 `truvis-render-runtime`；foundation 不承载 runtime-owned render state。
+- render 阶段由 `truvis-render-runtime` 借出 `RenderPassRecordCtx`，foundation 只提供该上下文引用的基础 owner、FIF 索引和视图契约。
 - resize / shutdown 阶段通过 mutable lifecycle context 暴露 `GfxResourceManager` 与 `ShaderBindingSystem`，用于重建、注册或释放 manager-owned GPU resources。
 - `GlobalDescriptorSets` 只作为全局 pipeline 绑定聚合；资源 manager 更新 descriptor 时只能接收专用 target，避免依赖完整全局绑定策略。
 
@@ -49,4 +45,4 @@
 
 - 位于 RHI 与上层渲染逻辑之间
 - 提供稳定的数据契约，减少上层直接触碰底层细节
-- 不依赖 App、Plugin、scene loading 或窗口平台语义
+- 不依赖 App、Plugin、scene loading、窗口平台或 runtime render state 语义

@@ -1,4 +1,4 @@
-use crate::frame_counter::{FrameCounter, FrameLabel, FrameToken};
+use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel, FrameToken};
 
 /// 渲染帧序号、FIF label 与帧时间快照。
 ///
