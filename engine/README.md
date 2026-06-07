@@ -106,7 +106,7 @@ C++ 子系统、CMake/vcpkg 构建和 Rust FFI binding 目录。
 
 ## 推荐阅读顺序
 
-1. `../ARCHITECTURE.md`：先确认当前架构入口、阅读顺序与最高优先级约束。
+1. `../docs/ARCHITECTURE.md`：先确认当前架构入口、阅读顺序与最高优先级约束。
 2. `../docs/summaries/`：按主题阅读分层依赖、帧生命周期、Runtime/App/Plugin 边界、RenderGraph 数据流、线程与资源生命周期。
 3. 本文件：按目录和 crate 定位要阅读的模块。
 4. 各 crate 内 README：深入具体职责、生命周期和边界；重点可先看 `gfx/truvis-gfx/README.md`、`world/truvis-asset/README.md`、

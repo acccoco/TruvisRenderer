@@ -58,12 +58,3 @@
 历史 `Tickable` 注册表方案的动机仍有效：camera/input 不应由 runtime 硬编码。
 但当前主线已经有 App hooks 和 Plugin trait，因此后续应优先通过 builtin plugin / PluginGroup
 解决，而不是恢复独立 `TickRegistry` API。
-
-## 历史来源
-
-本文提炼自以下归档文档：
-
-- [`archive/plugin-pass-eventbus-evolution.md`](archive/plugin-pass-eventbus-evolution.md)
-- [`archive/plugin-imgui-winit-multi-pipeline-integration.md`](archive/plugin-imgui-winit-multi-pipeline-integration.md)
-- [`archive/app-tick-system.md`](archive/app-tick-system.md)
-- [`archive/render-app-layering-analysis.md`](archive/render-app-layering-analysis.md)

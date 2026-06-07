@@ -65,7 +65,3 @@ pub struct PreparedView {
 3. 把 per-frame uniform 写入 helper 改名为 prepared-view upload，保留当前 GPU layout。
 4. 让 App render hook 从 render ctx 读取当前 prepared main view，而不是自己推导 extent / camera 语义。
 5. 多 view 需求出现后再引入 `ViewStore`、per-view temporal state 和 view target 抽象。
-
-## 历史来源
-
-本文提炼自 [`archive/2026-04-23-render-view-concept.md`](archive/2026-04-23-render-view-concept.md)。

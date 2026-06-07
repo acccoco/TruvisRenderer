@@ -1,7 +1,7 @@
 # Asset / Scene Pipeline 当前状态
 
 > 状态：活跃摘要，更新于 2026-05-23。当前事实以
-> [`ARCHITECTURE.md`](../../ARCHITECTURE.md) 和代码为准。
+> [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) 和代码为准。
 
 本文记录资产、场景和 GPU scene 数据流的当前主线，替代早期 asset/bindless 与 scene 迁移草案。
 
@@ -49,13 +49,3 @@ App update
 - 评估 strict readiness 策略；当前 material texture 默认使用 fallback，保证 shader 始终有安全绑定。
 - 资产热重载、跨场景引用计数卸载和 mesh / material 替换后的细粒度 invalidation 仍是后续能力。
 - 如果未来更多 pass 需要 scene 快照，可再评估 `RenderData` owned 化或更明确的 render scene cache。
-
-## 历史来源
-
-本文提炼自以下归档文档：
-
-- [`archive/2026-04-23-assets-bindless-decoupling.md`](archive/2026-04-23-assets-bindless-decoupling.md)
-- [`archive/2026-04-23-asset-resource-naming.md`](archive/2026-04-23-asset-resource-naming.md)
-- [`archive/2026-05-17-asset-module-responsibility.md`](archive/2026-05-17-asset-module-responsibility.md)
-- [`archive/2026-05-17-asset-scene-migration-roadmap.md`](archive/2026-05-17-asset-scene-migration-roadmap.md)
-- [`archive/asset-hub-module-analysis.html`](archive/asset-hub-module-analysis.html)

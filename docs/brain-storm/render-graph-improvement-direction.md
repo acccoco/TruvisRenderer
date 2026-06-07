@@ -1,7 +1,7 @@
 # RenderGraph 改进方向
 
 > 状态：活跃方向，更新于 2026-06-03。当前事实以
-> [`ARCHITECTURE.md`](../../ARCHITECTURE.md) 和代码为准。
+> [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) 和代码为准。
 
 本文记录当前 `truvis-render-graph` 的边界、问题和后续演进方向。目标不是一次性改成
 重型渲染调度系统，而是在保留当前清晰分层的前提下，让 RenderGraph 逐步覆盖更多

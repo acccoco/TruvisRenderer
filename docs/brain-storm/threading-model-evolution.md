@@ -1,7 +1,7 @@
 # 线程模型演进
 
 > 状态：活跃方向，更新于 2026-05-23。当前线程事实以
-> [`ARCHITECTURE.md`](../../ARCHITECTURE.md) 为准。
+> [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) 为准。
 
 ## 当前线程拓扑
 
@@ -120,7 +120,7 @@ rayon IO/decode
 
 优先级：低。
 
-## 历史来源
+## 当前事实来源
 
-- 当前双线程落地细节见 [`archive/render-thread-isolation.md`](archive/render-thread-isolation.md)。
+- 当前线程边界以 [`docs/summaries/threading-and-resource-lifecycle.md`](../summaries/threading-and-resource-lifecycle.md) 和代码为准。
 - 早期线程方案已被本文更新，不再保留旧 AssetDispatch Thread 描述。

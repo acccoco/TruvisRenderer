@@ -5,15 +5,15 @@
 
 ## 推荐阅读顺序
 
-1. [`docs/summaries/layering-and-dependency-boundaries.md`](docs/summaries/layering-and-dependency-boundaries.md)
+1. [`docs/summaries/layering-and-dependency-boundaries.md`](summaries/layering-and-dependency-boundaries.md)
    ：总体分层、依赖方向、app / engine 边界。
-2. [`docs/summaries/frame-lifecycle.md`](docs/summaries/frame-lifecycle.md)：启动、render loop、`RenderRuntime` / App /
+2. [`docs/summaries/frame-lifecycle.md`](summaries/frame-lifecycle.md)：启动、render loop、`RenderRuntime` / App /
    Plugin phase 顺序。
-3. [`docs/summaries/runtime-app-plugin-boundaries.md`](docs/summaries/runtime-app-plugin-boundaries.md)：状态所有权、Ctx
+3. [`docs/summaries/runtime-app-plugin-boundaries.md`](summaries/runtime-app-plugin-boundaries.md)：状态所有权、Ctx
    裁剪、`RenderAppShell` 与 Plugin 模型。
-4. [`docs/summaries/render-graph-and-data-flow.md`](docs/summaries/render-graph-and-data-flow.md)：AssetHub 到 GPU scene
+4. [`docs/summaries/render-graph-and-data-flow.md`](summaries/render-graph-and-data-flow.md)：AssetHub 到 GPU scene
    的同步路径、RenderGraph pass 编排规则。
-5. [`docs/summaries/threading-and-resource-lifecycle.md`](docs/summaries/threading-and-resource-lifecycle.md)：主线程 /
+5. [`docs/summaries/threading-and-resource-lifecycle.md`](summaries/threading-and-resource-lifecycle.md)：主线程 /
    渲染线程边界、GPU 同步、资源创建 / 重建 / 销毁契约。
 
 ## 全局架构约束
@@ -28,7 +28,7 @@
 
 ## 文档职责
 
-- `ARCHITECTURE.md`：当前架构入口、阅读顺序和最高优先级约束。
+- `docs/ARCHITECTURE.md`：当前架构入口、阅读顺序和最高优先级约束。
 - `docs/summaries/`：当前实现事实总结，记录分层、生命周期、状态所有权、数据流、线程和资源契约。
 - 模块内 `README.md`：说明模块职责、依赖与常见入口。
-- `docs/brain-storm/`：记录设计讨论、方案评估和开放方向；归档内容不作为当前事实来源。
+- `docs/brain-storm/`：记录仍有参考价值的设计讨论、方案评估和开放方向；过期内容应提炼或删除，不保留归档机制。

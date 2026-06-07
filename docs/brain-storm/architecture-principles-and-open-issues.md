@@ -1,7 +1,7 @@
 # 架构原则与开放问题
 
 > 状态：活跃摘要，更新于 2026-05-23。当前事实以
-> [`ARCHITECTURE.md`](../../ARCHITECTURE.md) 和代码为准。
+> [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) 和代码为准。
 
 本文提炼历史架构诊断中仍有效的原则，避免在多个旧草案中重复查找。
 
@@ -35,13 +35,3 @@
 - `Gfx` 注入：部分底层代码仍有历史全局访问痕迹，后续应继续向显式 owner / typed ctx 收敛。
 - app-kit 拆分：GUI、camera/input、overlay 和 pipeline glue 可继续拆为更清晰的可复用 feature。
 - 资产上传并发：texture / mesh 上传已经从 AssetHub 移出，但 batched upload 和 staging thread 仍可继续评估。
-
-## 历史来源
-
-本文提炼自以下归档文档：
-
-- [`archive/2026-04-22-architecture-evolution-gap-analysis.md`](archive/2026-04-22-architecture-evolution-gap-analysis.md)
-- [`archive/2026-04-23-structure-responsibility-open-source-comparison.md`](archive/2026-04-23-structure-responsibility-open-source-comparison.md)
-- [`archive/ideal_layered_architecture.md`](archive/ideal_layered_architecture.md)
-- [`archive/ideal-module-architecture.md`](archive/ideal-module-architecture.md)
-- [`archive/render-app-layering-analysis.md`](archive/render-app-layering-analysis.md)

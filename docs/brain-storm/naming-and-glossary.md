@@ -1,7 +1,7 @@
 # 命名与术语表
 
 > 状态：活跃摘要，更新于 2026-05-23。当前命名以代码和
-> [`ARCHITECTURE.md`](../../ARCHITECTURE.md) 为准。
+> [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) 为准。
 
 ## 当前核心术语
 
@@ -33,7 +33,7 @@
 
 ## 历史命名对照
 
-以下名称只用于阅读归档文档：
+以下名称仅用于理解旧提交、旧讨论语境或外部交流中的历史称呼：
 
 | 历史名称 | 当前对应 |
 |---|---|
@@ -52,10 +52,3 @@
 - `Bindless*Handle` 表达 shader-visible descriptor index，不应进入 CPU scene 语义层。
 - `View` 后续应表达渲染视角和输出意图，不等于 camera，也不拥有 scene 或 GPU manager。
 - 名称应优先描述职责边界，不用 Java 风格的 “interface” 泛称承载具体实现。
-
-## 历史来源
-
-本文提炼自以下归档文档：
-
-- [`archive/naming-renderworld-renderer-backend-app.md`](archive/naming-renderworld-renderer-backend-app.md)
-- [`archive/2026-04-23-asset-resource-naming.md`](archive/2026-04-23-asset-resource-naming.md)

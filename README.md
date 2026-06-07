@@ -106,7 +106,7 @@ just truvis-direct imgui
 
 ## 文档导航
 
-- 架构入口：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
+- 架构入口：[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
 - 架构主题总结：[`docs/summaries/`](./docs/summaries/)（分层依赖、帧生命周期、Runtime/App/Plugin 边界、RenderGraph
   数据流、线程与资源生命周期）
 - AI 协作规则：[`AGENTS.md`](./AGENTS.md)
