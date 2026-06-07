@@ -11,8 +11,8 @@ use truvis_gfx::pipelines::rendering_info::GfxRenderingInfo;
 use truvis_gfx::pipelines::shader::GfxShaderStageInfo;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_foundation::gpu_store::GpuStore;
 use truvis_render_foundation::handles::GfxImageViewHandle;
+use truvis_render_foundation::render_pass_record_ctx::RenderPassRecordCtx;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_shader_binding::gpu;
 use truvis_utils::count_indexed_array;
@@ -118,7 +118,7 @@ impl ResolvePass {
     ///
     /// # 参数
     /// - `cmd`: 命令缓冲区
-    /// - `gpu_store`: 渲染上下文
+    /// - `record_ctx`: pass 录制上下文
     /// - `frame_label`: 当前帧标签
     /// - `color_attachment`: 目标 color attachment 的 image view
     /// - `target_extent`: 目标区域的尺寸
@@ -126,15 +126,15 @@ impl ResolvePass {
     pub fn draw(
         &self,
         cmd: &GfxCommandBuffer,
-        gpu_store: &GpuStore,
+        record_ctx: &RenderPassRecordCtx<'_>,
         color_attachment: vk::ImageView,
         target_extent: vk::Extent2D,
         params: &ResolvePassData,
     ) {
-        let frame_label = gpu_store.frame_counter.frame_label();
+        let frame_label = record_ctx.frame_timing.frame_label();
 
         // 获取源图像的 bindless handle
-        let src_srv_handle = gpu_store.bindless_manager.get_shader_srv_handle(params.render_target);
+        let src_srv_handle = record_ctx.shader_bindings.get_shader_srv_handle(params.render_target);
 
         // 构造 push constant
         let push_constant = gpu::resolve::PushConstant {
@@ -185,7 +185,7 @@ impl ResolvePass {
             vk::PipelineBindPoint::GRAPHICS,
             self.pipeline_layout.handle(),
             0,
-            &gpu_store.global_descriptor_sets.global_sets(frame_label),
+            &record_ctx.shader_bindings.global_sets(frame_label),
             None,
         );
 
@@ -207,8 +207,7 @@ impl ResolvePass {
 pub struct ResolveRgPass<'a> {
     pub resolve_pass: &'a ResolvePass,
 
-    // TODO 暂时使用这个肮脏的实现
-    pub gpu_store: &'a GpuStore,
+    pub record_ctx: RenderPassRecordCtx<'a>,
 
     pub render_target: RgImageHandle,
     pub swapchain_image: RgImageHandle,
@@ -232,7 +231,7 @@ impl RgPass for ResolveRgPass<'_> {
 
         self.resolve_pass.draw(
             cmd,
-            self.gpu_store,
+            &self.record_ctx,
             swapchain_image_view.handle(),
             self.swapchain_extent,
             &ResolvePassData {

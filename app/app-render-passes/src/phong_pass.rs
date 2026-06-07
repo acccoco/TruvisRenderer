@@ -17,7 +17,7 @@ use truvis_gfx::{
 use truvis_path::TruvisPath;
 use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_foundation::gpu_store::GpuStore;
+use truvis_render_foundation::render_pass_record_ctx::RenderPassRecordCtx;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_shader_binding::gpu;
 
@@ -28,7 +28,7 @@ pub struct PhongPass {
 /// Phong pass 本帧绘制目标，由调用方显式提供。
 ///
 /// 目标资源属于 app 层具体管线；pass 只消费已经解析好的 Vulkan image view，
-/// 不从 `GpuStore` 中假定某个全局 render target owner。
+/// 不从全局 record ctx 中假定某个 render target owner。
 #[derive(Clone, Copy)]
 pub struct PhongPassTarget {
     /// 本帧 color attachment 的 raw Vulkan view；owner 负责保证 view 在 draw 期间有效。
@@ -85,7 +85,7 @@ impl PhongPass {
     fn bind(
         &self,
         cmd: &GfxCommandBuffer,
-        gpu_store: &GpuStore,
+        record_ctx: &RenderPassRecordCtx<'_>,
         viewport: &vk::Rect2D,
         push_constant: &gpu::raster::PushConstants,
         frame_label: FrameLabel,
@@ -110,12 +110,11 @@ impl PhongPass {
             BytesConvert::bytes_of(push_constant),
         );
 
-        let render_descriptor_sets = &gpu_store.global_descriptor_sets;
         cmd.bind_descriptor_sets(
             vk::PipelineBindPoint::GRAPHICS,
             self.pipeline.layout(),
             0,
-            &render_descriptor_sets.global_sets(frame_label),
+            &record_ctx.shader_bindings.global_sets(frame_label),
             None,
         );
     }
@@ -123,14 +122,14 @@ impl PhongPass {
     pub fn draw(
         &self,
         cmd: &GfxCommandBuffer,
-        gpu_store: &GpuStore,
+        record_ctx: &RenderPassRecordCtx<'_>,
         render_scene: &dyn RenderSceneView,
         target: PhongPassTarget,
     ) {
-        let frame_label = gpu_store.frame_counter.frame_label();
+        let frame_label = record_ctx.frame_timing.frame_label();
 
         // target 由调用方显式传入，使 raster pass 与具体 main-view target owner 解耦。
-        // 这样同一个 pass 后续可以绘制到不同 app-owned target，而不需要读全局 `GpuStore` 字段。
+        // 这样同一个 pass 后续可以绘制到不同 app-owned target，而不需要读全局 record ctx 字段。
         let rendering_info = GfxRenderingInfo::new(
             vec![target.color_view],
             Some(target.depth_view),
@@ -145,10 +144,10 @@ impl PhongPass {
 
         self.bind(
             cmd,
-            gpu_store,
+            record_ctx,
             &target.extent.into(),
             &gpu::raster::PushConstants {
-                frame_data: gpu_store.per_frame_data_buffers[*frame_label].device_address(),
+                frame_data: record_ctx.per_frame_gpu_data.device_address(frame_label),
                 scene: render_scene.scene_buffer_device_address(frame_label),
 
                 submesh_idx: 0,

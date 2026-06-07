@@ -4,8 +4,8 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_foundation::gpu_store::GpuStore;
 use truvis_render_foundation::handles::GfxImageViewHandle;
+use truvis_render_foundation::render_pass_record_ctx::RenderPassRecordCtx;
 use truvis_render_graph::compute_pass::ComputePass;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_shader_binding::gpu;
@@ -39,15 +39,15 @@ impl SdrPass {
         self.sdr_pass.destroy(ctx);
     }
 
-    pub fn exec(&self, cmd: &GfxCommandBuffer, data: SdrPassData, gpu_store: &GpuStore) {
-        let src_image_bindless_handle = gpu_store.bindless_manager.get_shader_uav_handle(data.src_image);
-        let dst_image_bindless_handle = gpu_store.bindless_manager.get_shader_uav_handle(data.dst_image);
+    pub fn exec(&self, cmd: &GfxCommandBuffer, data: SdrPassData, record_ctx: &RenderPassRecordCtx<'_>) {
+        let src_image_bindless_handle = record_ctx.shader_bindings.get_shader_uav_handle(data.src_image);
+        let dst_image_bindless_handle = record_ctx.shader_bindings.get_shader_uav_handle(data.dst_image);
 
-        let frame_label = gpu_store.frame_counter.frame_label();
+        let frame_label = record_ctx.frame_timing.frame_label();
         self.sdr_pass.exec(
             cmd,
             frame_label,
-            &gpu_store.global_descriptor_sets,
+            record_ctx.shader_bindings.global_descriptor_sets(),
             &gpu::sdr::PushConstant {
                 src_image: src_image_bindless_handle.0,
                 dst_image: dst_image_bindless_handle.0,
@@ -67,8 +67,7 @@ impl SdrPass {
 pub struct SdrRgPass<'a> {
     pub sdr_pass: &'a SdrPass,
 
-    // TODO 暂时使用这个肮脏的实现
-    pub gpu_store: &'a GpuStore,
+    pub record_ctx: RenderPassRecordCtx<'a>,
 
     pub src_image: RgImageHandle,
     pub dst_image: RgImageHandle,
@@ -96,7 +95,7 @@ impl<'a> RgPass for SdrRgPass<'a> {
                 dst_image_size: self.dst_image_extent,
                 debug_channel: self.debug_channel,
             },
-            self.gpu_store,
+            &self.record_ctx,
         );
     }
 }

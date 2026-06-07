@@ -24,7 +24,7 @@
   allocator 或 command allocator 引用；创建、resize 和 shutdown 必须通过对应生命周期 Ctx 显式传入
   manager、bindless manager 和 typed Gfx Ctx。
 - RT working target、main view target、GBuffer 等窗口尺寸资源属于具体 pipeline/plugin owner，
-  不进入 engine `GpuStore`。resize 时先注销 bindless view，再通过 `GfxResourceManager` 释放
+  不进入 engine runtime-owned render state。resize 时先注销 bindless view，再通过 `GfxResourceManager` 释放
   manager-owned image，image view 由 manager 跟随 image 按顺序释放。
 - 相机状态属于 app 层；runtime 只消费 `truvis-render-foundation` 中的 `RenderView`，不依赖
   `Camera` 或具体相机控制策略。

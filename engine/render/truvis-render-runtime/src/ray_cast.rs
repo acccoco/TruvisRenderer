@@ -10,9 +10,10 @@ use truvis_gfx::commands::submit_info::GfxSubmitInfo;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxQueueCtx, GfxResourceCtx};
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
+use truvis_render_foundation::frame_timing::FrameTiming;
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_foundation::gpu_store::GpuStore;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
+use truvis_render_foundation::shader_binding_system::ShaderBindingView;
 use truvis_shader_binding::gpu;
 use truvis_world::guid_new_type::InstanceHandle;
 
@@ -103,7 +104,8 @@ impl RayCastService {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-        gpu_store: &GpuStore,
+        frame_timing: &FrameTiming,
+        shader_bindings: ShaderBindingView<'_>,
         render_scene: &dyn RenderSceneView,
         instance_bridge: &InstanceBridge,
         rays: &[RayCastRay],
@@ -114,7 +116,7 @@ impl RayCastService {
             return Ok(Vec::new());
         }
 
-        let frame_label = gpu_store.frame_counter.frame_label();
+        let frame_label = frame_timing.frame_label();
         let Some(tlas) = render_scene.tlas_handle(frame_label) else {
             return Ok(vec![RayCastResult::Miss; rays.len()]);
         };
@@ -141,7 +143,15 @@ impl RayCastService {
                 .src_mask(vk::PipelineStageFlags2::HOST, vk::AccessFlags2::HOST_WRITE)
                 .dst_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR, vk::AccessFlags2::SHADER_READ)],
         );
-        pass.trace(gpu_store, tlas, &cmd, ray_buffer.vk_buffer(), raw_hit_buffer.vk_buffer(), rays.len() as u32);
+        pass.trace(
+            frame_timing,
+            shader_bindings,
+            tlas,
+            &cmd,
+            ray_buffer.vk_buffer(),
+            raw_hit_buffer.vk_buffer(),
+            rays.len() as u32,
+        );
         cmd.buffer_memory_barrier(
             vk::DependencyFlags::empty(),
             &[GfxBufferBarrier::new()

@@ -1,7 +1,7 @@
 # truvis-render-runtime
 
 `truvis-render-runtime` 是被 `truvis-app-frame::RenderAppShell` 驱动的渲染运行时集成层。
-它持有 `Gfx` root owner、CPU `World`、GPU `GpuStore` 和 runtime 私有的 `GpuScene`，
+它持有 `Gfx` root owner、CPU `World`、GPU resource/binding/timing owners 和 runtime 私有的 `GpuScene`，
 并通过阶段化的 typed Ctx 向上层暴露初始化、更新、渲染、resize 与 shutdown 能力。
 
 ## 职责边界
@@ -21,8 +21,10 @@
 ## 状态所有权
 
 - `World` 承载 CPU 侧 `SceneManager` 与 `AssetHub`，供 update/prepare 阶段读取或修改。
-- `GpuStore` 承载 GPU 侧 `FrameRenderState`、`RenderOptions`、`ViewAccumState`、
-  global descriptors、bindless、manager-owned resources 和 per-frame data。
+- `GfxResourceManager` 承载 manager-owned GPU image/buffer/view 生命周期。
+- `ShaderBindingSystem` 承载 global descriptors、bindless 和 sampler manager，并向 render 阶段提供只读 shader binding view。
+- `FrameTiming` 承载 frame counter、delta time 和 total time；`PerFrameGpuData` 承载 per-FIF `PerFrameData` UBO。
+- `RenderRuntime` 直接持有 `FrameRenderState`、`RenderOptions`、`ViewAccumState` 和 `DlssSrState` 等 runtime render state。
 - runtime 内部拥有默认 surface format、present mode 与 depth format 候选顺序；这些默认策略不放入
   foundation 公共配置契约。
 - `GpuScene` 是 runtime 私有的 scene GPU 翻译层，持有 scene/instance/geometry/light/indirect
@@ -50,15 +52,16 @@
 - asset manager、material bridge、instance bridge、GPU scene 数据结构和 prepare 辅助逻辑都是 runtime 私有实现。
 - 生命周期 Ctx 在 `render_runtime_ctx` 模块定义，并由 `render_runtime` 重新导出；
   调用方仍通过 `truvis_render_runtime::render_runtime::*Ctx` 使用这些阶段契约。
-- `RenderRuntimeRenderCtx` 只暴露 `GpuStore`、`RenderSceneView`、`PresentView` 和 timeline；
+- `RenderRuntimeRenderCtx` 只暴露 `RenderPassRecordCtx`、`RenderSceneView`、`PresentView` 和 timeline；
   不暴露 texture/mesh manager owner，pass 不能绕过 runtime 私有 bridge 读取上传缓存。
 - `RenderRuntimeRayCastCtx` 只暴露同步批量 raycast 调用；App 应在 `after_prepare`
   阶段使用它，update/input 阶段不提供该接口。
 
 ## 生命周期
 
-- `RenderRuntime::new` 创建与窗口无关的 runtime root state：`Gfx`、`World`、`GpuStore`、
-  asset manager、`MaterialManager`、`SkyBridge`、bridge、`GpuScene`、global descriptors、sampler 和 per-frame buffer。
+- `RenderRuntime::new` 创建与窗口无关的 runtime root state：`Gfx`、`World`、`GfxResourceManager`、
+  `ShaderBindingSystem`、`FrameTiming`、`PerFrameGpuData`、runtime render state、asset manager、`MaterialManager`、
+  `SkyBridge`、bridge 和 `GpuScene`。
 - `RenderRuntime::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
   swapchain 与 `SwapchainPresenter`，并返回 init Ctx 供 app/plugin 创建长期 GPU 资源。
 - `begin_frame` 是每帧资源回收入口：推进 runtime 私有帧计时器、等待当前 FIF slot、重置 frame command pool、
@@ -74,7 +77,7 @@
 - `ray_cast_phase` 发生在 `prepare` 之后、`render_phase` 之前。同步 raycast 提交到
   graphics queue，并用 fence 阻塞等待 readback；队列顺序保证它能看到本帧 prepare
   提交的 GPU scene/TLAS。
-- `render_phase` 返回只读 render Ctx；pass 只能读取 `GpuStore`、`RenderSceneView`、
+- `render_phase` 返回只读 render Ctx；pass 只能读取 `RenderPassRecordCtx`、`RenderSceneView`、
   present target 和 timeline，不再修改 CPU scene 或接触 manager owner。
 - `present` 只提交当前 swapchain image 到 present queue；渲染命令提交由上层 render graph 完成。
 - `end_frame` 推进 frame counter，切换下一帧的 FIF label。

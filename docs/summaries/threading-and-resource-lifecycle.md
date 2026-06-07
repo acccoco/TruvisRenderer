@@ -47,7 +47,8 @@ flowchart LR
 - 叶子 Vulkan/VMA/WSI wrapper 通过 `destroy(self, ctx, reason)` 或 `destroy_mut(&mut self, ctx, reason)` 释放，释放所需依赖由
   owner 在调用点传入 typed `Gfx` Ctx。
 - `Drop` 不调用 Vulkan/VMA/WSI release API，只通过 debug assertion 暴露遗漏的显式销毁。
-- `GpuStore`、manager、plugin 字段和长期资源 wrapper 不保存 typed `Gfx` Ctx、`&Gfx`、`&GfxDevice` 或 `&VMemAllocator` 引用。
+- Runtime owner、manager、plugin 字段和长期资源 wrapper 不保存 typed `Gfx` Ctx、`&Gfx`、`&GfxDevice` 或
+  `&VMemAllocator` 引用。
 - manager 更新 descriptor 时只接收自身所需的窄 target；`GlobalDescriptorSets` 保持为全局 pipeline 绑定聚合，不作为下层
   manager 的更新入口。
 
@@ -57,7 +58,7 @@ flowchart LR
 - Frame：command buffer、per-frame buffer、FrameLabel / timeline state。
 - Swapchain：swapchain image/view、present semaphore。
 - App / Pipeline targets：RT working target、main view target、GBuffer 等窗口尺寸资源由具体 app/plugin 持有，并在 init /
-  resize / shutdown 阶段通过 `GpuStore` 中的 manager 显式创建或释放。
+  resize / shutdown 阶段通过 ctx 中的 `GfxResourceManager` 与 `ShaderBindingSystem` 显式创建、注册或释放。
 - Asset：`AssetHub` 持有 texture / mesh / material / model 内容资产 handle 与 CPU 加载状态，并负责 Assimp model 到 owned
   CPU 数据的导入；`AssetTextureManager` 持有 texture 的 GPU image/view/bindless 绑定；`AssetMeshManager` 持有 mesh
   vertex/index buffer、BLAS 和 GPU ready 状态；runtime 直接持有私有 `MaterialManager`，它管理 material GPU buffer
@@ -71,7 +72,8 @@ flowchart LR
 
 ## 创建路径
 
-- `RenderRuntime::new` 初始化 `Gfx`，创建 `World` / `GpuStore`。
+- `RenderRuntime::new` 初始化 `Gfx`，创建 `World`、`GfxResourceManager`、`ShaderBindingSystem`、`FrameTiming`、
+  `PerFrameGpuData` 与 runtime-owned render state。
 - `RenderRuntime::init_after_window` 创建 surface、swapchain 和 `SwapchainPresenter`。
 - `RenderAppShell` 创建 `RenderRuntime` 并把 `RenderRuntimeInitCtx` 包装为 `RenderAppInitCtx` 交给 App hooks。
 - App state 从 `RenderAppInitCtx` 中的 RenderRuntime Ctx 构造 `PluginInitCtx`，依次初始化自己持有的 Plugin。
@@ -90,7 +92,7 @@ flowchart LR
 - `RenderApp::shutdown(&mut self)`：`RenderAppShell` 等待 GPU idle 后，先用 `RenderAppShutdownCtx` 调用 App hooks
   shutdown，再用 `PluginShutdownCtx` 反向遍历 Plugin shutdown。
 - App / Plugin shutdown 必须在 `RenderRuntime::destroy()` 释放 runtime 子资源之前释放自己持有的 GPU 资源；需要 manager
-  访问时通过 shutdown context 使用 `GpuStore`。
+  或 shader-visible binding 访问时通过 shutdown context 使用 `GfxResourceManager` 与 `ShaderBindingSystem`。
 - manager-owned image/view 只能通过 `GfxResourceManager` 释放，manager 负责 image-view-before-image、延迟销毁队列与
   `DestroyReason` 诊断。
 - runtime destroy：`gfx.wait_idel()` -> release present/assets/GPU scene/cmd/runtime resources -> `gfx.destroy()`。

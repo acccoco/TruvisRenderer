@@ -12,7 +12,7 @@ use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_render_foundation::dlss_sr::DlssSrFrameConstants;
 use truvis_render_foundation::dlss_sr::DlssSrMode;
-use truvis_render_foundation::gpu_store::GpuStore;
+use truvis_render_foundation::render_pass_record_ctx::RenderPassRecordCtx;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_streamline_binding::dlss;
 
@@ -60,16 +60,16 @@ impl DlssSrPass {
     pub fn evaluate(
         &self,
         cmd: &GfxCommandBuffer,
-        gpu_store: &GpuStore,
+        record_ctx: &RenderPassRecordCtx<'_>,
         resource_ctx: GfxResourceCtx<'_>,
         data: DlssSrPassData<'_>,
     ) {
-        let mode = gpu_store.render_options.dlss_sr_mode;
+        let mode = record_ctx.render_options.dlss_sr_mode;
         if mode == DlssSrMode::Off {
             return;
         }
 
-        let output_extent = gpu_store.frame_state.output_extent;
+        let output_extent = record_ctx.frame_state.output_extent;
         // options 必须与 runtime 计算出的 output extent 一致；render extent 则来自输入图像尺寸。
         let options = dlss::DlssOptions {
             mode: to_streamline_mode(mode),
@@ -82,11 +82,11 @@ impl DlssSrPass {
             return;
         }
 
-        let constants = to_streamline_constants(gpu_store.dlss_sr_state.constants());
+        let constants = to_streamline_constants(record_ctx.dlss_sr_state.constants());
         // `ImageResource` 中的 layout/format/usage 会被 Streamline 作为 Vulkan resource tag 契约读取。
         // 这里不要临时推断 layout，必须和 `setup()` 中声明的 RenderGraph 状态同步维护。
         let desc = dlss::DlssEvaluateDesc {
-            frame_index: gpu_store.frame_counter.frame_id() as u32,
+            frame_index: record_ctx.frame_timing.frame_id() as u32,
             viewport_id: 0,
             command_buffer: cmd.vk_handle().as_raw(),
             constants,
@@ -146,7 +146,7 @@ pub struct DlssSrPassData<'a> {
 /// 它不拥有 Streamline runtime，也不决定当前是否启用 SR；执行分支由 RT pipeline 添加 pass 时决定。
 pub struct DlssSrRgPass<'a> {
     pub dlss_sr_pass: &'a DlssSrPass,
-    pub gpu_store: &'a GpuStore,
+    pub record_ctx: RenderPassRecordCtx<'a>,
     pub resource_ctx: GfxResourceCtx<'a>,
     pub input_color: RgImageHandle,
     pub output_color: RgImageHandle,
@@ -174,7 +174,7 @@ impl RgPass for DlssSrRgPass<'_> {
 
         self.dlss_sr_pass.evaluate(
             ctx.cmd,
-            self.gpu_store,
+            &self.record_ctx,
             self.resource_ctx,
             DlssSrPassData {
                 input_color,

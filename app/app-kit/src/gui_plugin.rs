@@ -16,8 +16,8 @@ use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::frame_counter::FrameCounter;
-use truvis_render_foundation::gpu_store::GpuStore;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::render_pass_record_ctx::RenderPassRecordCtx;
 use truvis_render_graph::render_graph::{
     RenderGraphBuilder, RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext,
 };
@@ -248,7 +248,7 @@ impl GuiPlugin {
     pub fn prepare_render_data(&mut self, ctx: &PluginRenderCtx) {
         let draw_data =
             self.draw_data.map(|ptr| unsafe { &*ptr }).expect("GuiPlugin::prepare_render_data called before end_frame");
-        let frame_label = ctx.gpu_store.frame_counter.frame_label();
+        let frame_label = ctx.record_ctx.frame_timing.frame_label();
         let meshes = self.gui_meshes.as_mut().expect("GuiPlugin not initialized");
 
         ctx.queue_ctx.gfx_queue().begin_label("[ui-pass]create-mesh", LabelColor::COLOR_STAGE);
@@ -280,7 +280,7 @@ impl GuiPlugin {
         canvas_extent: vk::Extent2D,
         imported_debug_images: &[DebugImageGraphEntry],
     ) {
-        let frame_label = ctx.gpu_store.frame_counter.frame_label();
+        let frame_label = ctx.record_ctx.frame_timing.frame_label();
         let debug_image = self.selected_debug_graph_image(graph, imported_debug_images);
         if let Some(debug_image) = debug_image {
             graph.export_image(debug_image.image, debug_image.final_state, None);
@@ -289,7 +289,7 @@ impl GuiPlugin {
             "gui",
             GuiRenderGraphPass {
                 gui_pass: self.gui_pass.as_ref().expect("GuiPlugin not initialized"),
-                gpu_store: ctx.gpu_store,
+                record_ctx: ctx.record_ctx,
                 ui_draw_data: self.draw_data(),
                 gui_mesh: &self.gui_meshes.as_ref().expect("GuiPlugin not initialized")[*frame_label],
                 tex_map: &self.tex_map,
@@ -393,14 +393,14 @@ impl GuiPlugin {
             atlas_texture.data,
             "imgui-fonts",
         );
-        let fonts_image_handle = ctx.gpu_store.gfx_resource_manager.register_image(fonts_image);
-        let fonts_image_view_handle = ctx.gpu_store.gfx_resource_manager.get_or_create_image_view(
+        let fonts_image_handle = ctx.gfx_resource_manager.register_image(fonts_image);
+        let fonts_image_view_handle = ctx.gfx_resource_manager.get_or_create_image_view(
             ctx.device_ctx,
             fonts_image_handle,
             GfxImageViewDesc::new_2d(vk::Format::R8G8B8A8_UNORM, vk::ImageAspectFlags::COLOR),
             "imgui-fonts",
         );
-        ctx.gpu_store.bindless_manager.register_srv(fonts_image_view_handle);
+        ctx.shader_binding_system.register_srv(fonts_image_view_handle);
 
         self.fonts_image_handle = Some(fonts_image_handle);
         self.fonts_image_view_handle = Some(fonts_image_view_handle);
@@ -411,7 +411,7 @@ impl Plugin for GuiPlugin {
     fn init(&mut self, ctx: &mut PluginInitCtx) {
         self.gui_pass = Some(GuiPass::new(
             ctx.device_ctx,
-            &ctx.gpu_store.global_descriptor_sets,
+            ctx.shader_binding_system.global_descriptor_sets(),
             ctx.swapchain_image_info.image_format,
         ));
         self.gui_meshes =
@@ -467,10 +467,10 @@ impl Plugin for GuiPlugin {
         self.selected_debug_image_id.set(None);
 
         if let Some(view_handle) = self.fonts_image_view_handle.take() {
-            ctx.gpu_store.bindless_manager.unregister_srv(view_handle);
+            ctx.shader_binding_system.unregister_srv(view_handle);
         }
         if let Some(image_handle) = self.fonts_image_handle.take() {
-            ctx.gpu_store.gfx_resource_manager.release_image_immediate(
+            ctx.gfx_resource_manager.release_image_immediate(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 image_handle,
@@ -491,7 +491,7 @@ impl Plugin for GuiPlugin {
 
 struct GuiRenderGraphPass<'a> {
     gui_pass: &'a GuiPass,
-    gpu_store: &'a GpuStore,
+    record_ctx: RenderPassRecordCtx<'a>,
     ui_draw_data: &'a DrawData,
     gui_mesh: &'a GuiMesh,
     tex_map: &'a HashMap<TextureId, GfxImageViewHandle>,
@@ -517,11 +517,11 @@ impl RgPass for GuiRenderGraphPass<'_> {
             ctx.get_image_view_handle(self.canvas_color).expect("GuiPass: canvas_color not found");
         let canvas_color_view = ctx.resource_manager.get_image_view(canvas_color_view_handle).unwrap();
 
-        let frame_label = self.gpu_store.frame_counter.frame_label();
+        let frame_label = self.record_ctx.frame_timing.frame_label();
         self.gui_pass.draw(
             frame_label,
-            &self.gpu_store.global_descriptor_sets,
-            &self.gpu_store.bindless_manager,
+            self.record_ctx.shader_bindings.global_descriptor_sets(),
+            self.record_ctx.shader_bindings.bindless_manager(),
             canvas_color_view.handle(),
             self.canvas_extent,
             ctx.cmd,

@@ -12,8 +12,9 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::sbt_buffer::GfxSBTBuffer;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_path::TruvisPath;
+use truvis_render_foundation::frame_timing::FrameTiming;
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_foundation::gpu_store::GpuStore;
+use truvis_render_foundation::shader_binding_system::ShaderBindingView;
 use truvis_shader_binding::gpu;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
@@ -333,14 +334,15 @@ impl RayCastPass {
 
     pub fn trace(
         &self,
-        gpu_store: &GpuStore,
+        frame_timing: &FrameTiming,
+        shader_bindings: ShaderBindingView<'_>,
         tlas: vk::AccelerationStructureKHR,
         cmd: &GfxCommandBuffer,
         ray_buffer: vk::Buffer,
         raw_hit_buffer: vk::Buffer,
         ray_count: u32,
     ) {
-        let frame_label = gpu_store.frame_counter.frame_label();
+        let frame_label = frame_timing.frame_label();
         cmd.begin_label("RayCast", glam::vec4(0.2, 0.7, 1.0, 1.0));
         cmd.cmd_bind_pipeline(vk::PipelineBindPoint::RAY_TRACING_KHR, self.pipeline.pipeline);
 
@@ -367,7 +369,7 @@ impl RayCastPass {
             vk::PipelineBindPoint::RAY_TRACING_KHR,
             self.pipeline.pipeline_layout,
             0,
-            &gpu_store.global_descriptor_sets.global_sets(frame_label),
+            &shader_bindings.global_sets(frame_label),
             None,
         );
 

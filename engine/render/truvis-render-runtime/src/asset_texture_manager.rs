@@ -14,9 +14,10 @@ use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::bindless_manager::{BindlessManager, BindlessSrvHandle};
+use truvis_render_foundation::bindless_manager::BindlessSrvHandle;
 use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::shader_binding_system::ShaderBindingSystem;
 use truvis_shader_binding::gpu;
 
 use crate::texture_resolver::{TextureBinding, TextureResolver};
@@ -242,7 +243,7 @@ impl AssetTextureManager {
         immediate_ctx: GfxImmediateCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
     ) -> Self {
         let _span = tracy_client::span!("AssetTextureManager::new");
 
@@ -253,7 +254,7 @@ impl AssetTextureManager {
                 device_ctx,
                 immediate_ctx,
                 gfx_resource_manager,
-                bindless_manager,
+                shader_binding_system,
             )
         };
 
@@ -275,7 +276,7 @@ impl AssetTextureManager {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
     ) -> UploadedAssetTexture {
         // fallback 使用醒目的 1x1 洋红色纹理，目的是让缺失/未就绪纹理在画面中容易定位；
         // 它在 manager 生命周期内常驻 bindless，避免材质上传阶段产生空 SRV。
@@ -290,8 +291,8 @@ impl AssetTextureManager {
             GfxImageViewDesc::new_2d(image_format, vk::ImageAspectFlags::COLOR),
             "FallbackTextureView",
         );
-        bindless_manager.register_srv(view_handle);
-        let srv_handle = bindless_manager.get_shader_srv_handle(view_handle);
+        shader_binding_system.register_srv(view_handle);
+        let srv_handle = shader_binding_system.get_shader_srv_handle(view_handle);
 
         UploadedAssetTexture {
             image_handle,
@@ -312,7 +313,7 @@ impl AssetTextureManager {
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
     ) {
         let _span = tracy_client::span!("AssetTextureManager::update");
 
@@ -341,7 +342,7 @@ impl AssetTextureManager {
                 resource_ctx,
                 device_ctx,
                 gfx_resource_manager,
-                bindless_manager,
+                shader_binding_system,
                 handle,
                 image,
             );
@@ -353,7 +354,7 @@ impl AssetTextureManager {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         handle: AssetTextureHandle,
         image: GfxImage,
     ) {
@@ -362,7 +363,7 @@ impl AssetTextureManager {
         if let Some(old_texture) = self.textures.remove(handle) {
             // 同一个 asset handle 重新加载时，旧 view 必须先退出 bindless，再释放 manager-owned image。
             // 这里立即释放的前提是 begin_frame 已经等待过 FIF timeline，旧资源不会再被在flight-frame引用。
-            bindless_manager.unregister_srv(old_texture.view_handle);
+            shader_binding_system.unregister_srv(old_texture.view_handle);
             gfx_resource_manager.release_image_immediate(
                 resource_ctx,
                 device_ctx,
@@ -381,8 +382,8 @@ impl AssetTextureManager {
             GfxImageViewDesc::new_2d(image_format, vk::ImageAspectFlags::COLOR),
             "AssetTextureView",
         );
-        bindless_manager.register_srv(view_handle);
-        let srv_handle = bindless_manager.get_shader_srv_handle(view_handle);
+        shader_binding_system.register_srv(view_handle);
+        let srv_handle = shader_binding_system.get_shader_srv_handle(view_handle);
 
         let texture = UploadedAssetTexture {
             image_handle,
@@ -402,12 +403,12 @@ impl AssetTextureManager {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
     ) {
         self.upload_queue.shutdown(resource_ctx, device_ctx);
 
         for (_, texture) in self.textures.drain() {
-            bindless_manager.unregister_srv(texture.view_handle);
+            shader_binding_system.unregister_srv(texture.view_handle);
             gfx_resource_manager.release_image_immediate(
                 resource_ctx,
                 device_ctx,
@@ -416,7 +417,7 @@ impl AssetTextureManager {
             );
         }
 
-        bindless_manager.unregister_srv(self.fallback.view_handle);
+        shader_binding_system.unregister_srv(self.fallback.view_handle);
         gfx_resource_manager.release_image_immediate(
             resource_ctx,
             device_ctx,

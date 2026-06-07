@@ -9,9 +9,9 @@
 
 - `truvis-winit-app` 只负责 winit 事件循环、窗口生命周期、输入转发、resize/exit 信号和渲染线程启动。
 - `truvis-app-frame` 提供 `RenderApp` 契约、`RenderAppShell` 帧骨架、`RenderAppHooks` 和标准 `Plugin` 生命周期。
-- `truvis-render-runtime` 是 GPU 运行时集成层，拥有 `World`、`GpuStore`、runtime 私有 `GpuScene`、present、cmd、sync、asset manager 与 scene bridge。
+- `truvis-render-runtime` 是 GPU 运行时集成层，拥有 `World`、GPU resource/binding/timing owners、runtime 私有 `GpuScene`、present、cmd、sync、asset manager 与 scene bridge。
 - `truvis-world` 是 CPU 语义层，聚合 runtime scene 和 asset hub，不拥有 Vulkan、swapchain、GPU buffer/image 或 frame state。
-- `truvis-render-foundation` 是渲染基础层，提供 `GpuStore`、manager、frame state、global descriptors、FIF 资源和 `RenderSceneView` 等底层契约。
+- `truvis-render-foundation` 是渲染基础层，提供 `GfxResourceManager`、`ShaderBindingSystem`、`FrameTiming`、`PerFrameGpuData`、frame state、global descriptors、FIF 资源和 `RenderSceneView` 等底层契约。
 - `truvis-render-graph` 只做图编排和线性同步推导，不承载 scene / asset 领域对象。
 - `app-render-passes` 位于 app 层，只依赖 render-side 只读视图和 GPU 状态，不回到 CPU world 取数据。
 - `app-kit` 和具体 app 负责组合 GUI、camera/input、overlay、RT / 后处理 / Shadertoy / triangle 等业务能力。
@@ -19,7 +19,7 @@
 ## 设计原则
 
 - 下层不反向依赖上层业务；同层 crate 默认不互相依赖，除非架构文档明确允许。
-- 数据 owner 和执行 owner 分开表达：CPU 语义在 `World`，GPU-facing 状态在 `GpuStore` / runtime 私有 owner。
+- 数据 owner 和执行 owner 分开表达：CPU 语义在 `World`，GPU-facing 状态在明确的 runtime owner 与 runtime 私有 owner。
 - App / Plugin 只拿当前 phase 所需的 typed Ctx，不长期保存 `Gfx`、runtime 内部字段或 manager 借用。
 - RenderGraph pass 只声明资源读写和录制命令，不在 render phase 做 scene extract 或 asset resolve。
 - CPU asset handle、GPU resource handle、shader-visible bindless handle 是三种不同身份，不跨层混用。

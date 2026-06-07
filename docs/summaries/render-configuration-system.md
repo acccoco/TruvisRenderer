@@ -13,7 +13,9 @@
 | main view temporal 状态 | `ViewAccumState`、`DlssSrState` | `truvis-render-foundation` | 否 | 追踪历史是否可复用，以及 DLSS common constants / reset |
 | app / pipeline 局部设置 | `RtPipelineSettings`、`DenoiseAccumSettings` | app 层 | 取决于 app | 保存具体 pipeline 自己理解的调试或实验参数 |
 
-这次整理后的核心原则是：engine `GpuStore` 只保存跨 pipeline 的渲染契约和 runtime 派生状态；具体 RT pass 的 debug channel、legacy denoise 参数和实验性 IC 开关不再伪装成 engine 全局配置。
+这次整理后的核心原则是：engine 只把跨 pipeline 的渲染契约和 runtime 派生状态放在 `RenderOptions`、
+`FrameRenderState`、`ViewAccumState` 与 `DlssSrState` 等明确 owner 中；具体 RT pass 的 debug channel、legacy denoise
+参数和实验性 IC 开关不再伪装成 engine 全局配置。
 
 ## RenderOptions
 

@@ -9,11 +9,9 @@ use app_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
 use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
-use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::dlss_sr::DlssSrMode;
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
-use truvis_render_foundation::gpu_store::GpuStore;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 
 #[derive(Default)]
@@ -28,13 +26,13 @@ pub struct RtPipeline {
 
 /// RT pipeline 自有配置。
 ///
-/// 这些选项只影响 app 层 RT pass 和后处理调试输出，不进入 engine `GpuStore`。
+/// 这些选项只影响 app 层 RT pass 和后处理调试输出，不进入 engine runtime-owned render state。
 #[derive(Clone, Copy)]
 pub struct RtPipelineSettings {
     /// 当前 RT 调试输出通道。
     ///
     /// 这是 RT 主流程的 pass-local 配置，不影响 engine runtime 的 target 尺寸、DLSS history
-    /// 或全局 per-frame UBO，因此不放入 `GpuStore`。
+    /// 或全局 per-frame UBO，因此不放入 engine runtime-owned render state。
     pub debug_channel: RtDebugChannel,
 }
 
@@ -123,7 +121,7 @@ struct RtPipelineInner {
     sdr_pass: SdrPass,
     resolve_pass: ResolvePass,
     gbuffer: GBuffer,
-    /// RT 私有工作图像。它们的格式/用途由 RT pipeline 决定，因此不再放在 engine `GpuStore`。
+    /// RT 私有工作图像。它们的格式/用途由 RT pipeline 决定，因此不再放在 engine runtime state。
     rt_targets: RtWorkingTargets,
     /// DLSS SR 需要的低分辨率 depth/motion-vector 输入。
     ///
@@ -163,66 +161,66 @@ impl RtPipelineInner {
             ctx.device_ctx,
             ctx.device_info_ctx,
             ctx.immediate_ctx,
-            &ctx.gpu_store.global_descriptor_sets,
+            ctx.shader_binding_system.global_descriptor_sets(),
         );
         let dlss_sr_pass = DlssSrPass::new();
-        let sdr_pass = SdrPass::new(ctx.device_ctx, &ctx.gpu_store.global_descriptor_sets);
+        let sdr_pass = SdrPass::new(ctx.device_ctx, ctx.shader_binding_system.global_descriptor_sets());
         let resolve_pass = ResolvePass::new(
             ctx.device_ctx,
-            &ctx.gpu_store.global_descriptor_sets,
+            ctx.shader_binding_system.global_descriptor_sets(),
             ctx.present.swapchain_image_info().image_format,
         );
         // `RenderRuntime::new` 早于窗口创建，只能给 `FrameRenderState` 一个占位 extent；
         // app-owned target 必须使用 init 阶段已经创建好的 swapchain extent，避免首帧按 400x400
         // 创建中间图像。runtime 会在 `init_after_window` 同步该值，这里仍显式覆盖，保证契约局部可见。
-        let mut target_frame_state = ctx.gpu_store.frame_state;
+        let mut target_frame_state = *ctx.frame_state;
         target_frame_state.set_native_extent(ctx.swapchain_image_info.image_extent);
 
         let rt_targets = RtWorkingTargets::new(
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.immediate_ctx,
-            &mut ctx.gpu_store.gfx_resource_manager,
-            &mut ctx.gpu_store.bindless_manager,
+            &mut *ctx.gfx_resource_manager,
+            &mut *ctx.shader_binding_system,
             &target_frame_state,
-            &ctx.gpu_store.frame_counter,
+            ctx.frame_timing.frame_counter(),
         );
         let main_view_targets = MainViewTargets::new(
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.immediate_ctx,
-            &mut ctx.gpu_store.gfx_resource_manager,
-            &mut ctx.gpu_store.bindless_manager,
+            &mut *ctx.gfx_resource_manager,
+            &mut *ctx.shader_binding_system,
             &target_frame_state,
-            &ctx.gpu_store.frame_counter,
+            ctx.frame_timing.frame_counter(),
         );
         let dlss_sr_inputs = DlssSrInputTargets::new(
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.immediate_ctx,
-            &mut ctx.gpu_store.gfx_resource_manager,
-            &mut ctx.gpu_store.bindless_manager,
+            &mut *ctx.gfx_resource_manager,
+            &mut *ctx.shader_binding_system,
             &target_frame_state,
-            &ctx.gpu_store.frame_counter,
+            ctx.frame_timing.frame_counter(),
         );
         let dlss_sr_outputs = DlssSrOutputTargets::new(
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.immediate_ctx,
-            &mut ctx.gpu_store.gfx_resource_manager,
-            &mut ctx.gpu_store.bindless_manager,
+            &mut *ctx.gfx_resource_manager,
+            &mut *ctx.shader_binding_system,
             &target_frame_state,
-            &ctx.gpu_store.frame_counter,
+            ctx.frame_timing.frame_counter(),
         );
 
         let gbuffer = GBuffer::new(
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.immediate_ctx,
-            &mut ctx.gpu_store.gfx_resource_manager,
-            &mut ctx.gpu_store.bindless_manager,
+            &mut *ctx.gfx_resource_manager,
+            &mut *ctx.shader_binding_system,
             target_frame_state.render_extent,
-            &ctx.gpu_store.frame_counter,
+            ctx.frame_timing.frame_counter(),
         );
 
         let compute_cmds = FrameCounter::frame_labes().map(|frame_label| {
@@ -247,47 +245,47 @@ impl RtPipelineInner {
         }
     }
 
-    fn destroy(mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>, gpu_store: &mut GpuStore) {
+    fn destroy(mut self, ctx: &mut PluginShutdownCtx<'_>) {
         // pass pipeline 本身只依赖 device；target image/view 依赖 resource manager 和 bindless。
         // shutdown 阶段 runtime 已经 wait idle，先销毁 pipeline 再释放 target 不会影响 GPU 引用安全，
         // 但 target 仍必须在 runtime `GfxResourceManager` 销毁前显式释放。
-        self.realtime_rt_pass.destroy(resource_ctx, device_ctx);
+        self.realtime_rt_pass.destroy(ctx.resource_ctx, ctx.device_ctx);
         self.dlss_sr_pass.destroy();
-        self.sdr_pass.destroy(device_ctx);
-        self.resolve_pass.destroy(device_ctx);
+        self.sdr_pass.destroy(ctx.device_ctx);
+        self.resolve_pass.destroy(ctx.device_ctx);
         self.gbuffer.destroy(
-            resource_ctx,
-            device_ctx,
-            &mut gpu_store.bindless_manager,
-            &mut gpu_store.gfx_resource_manager,
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            &mut *ctx.shader_binding_system,
+            &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
         self.rt_targets.destroy(
-            resource_ctx,
-            device_ctx,
-            &mut gpu_store.bindless_manager,
-            &mut gpu_store.gfx_resource_manager,
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            &mut *ctx.shader_binding_system,
+            &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
         self.dlss_sr_inputs.destroy(
-            resource_ctx,
-            device_ctx,
-            &mut gpu_store.bindless_manager,
-            &mut gpu_store.gfx_resource_manager,
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            &mut *ctx.shader_binding_system,
+            &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
         self.dlss_sr_outputs.destroy(
-            resource_ctx,
-            device_ctx,
-            &mut gpu_store.bindless_manager,
-            &mut gpu_store.gfx_resource_manager,
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            &mut *ctx.shader_binding_system,
+            &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
         self.main_view_targets.destroy(
-            resource_ctx,
-            device_ctx,
-            &mut gpu_store.bindless_manager,
-            &mut gpu_store.gfx_resource_manager,
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            &mut *ctx.shader_binding_system,
+            &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
     }
@@ -303,58 +301,58 @@ impl Plugin for RtPipeline {
             // resize ctx 来自 present 层实际重建后的安全点；旧 target 不会再被在飞命令引用。
             // 这里用 `PresentView` 再读一次 swapchain extent，避免 app-owned target 和
             // swapchain 在平台裁剪尺寸时出现细微不一致。
-            let target_frame_state = ctx.gpu_store.frame_state;
+            let target_frame_state = *ctx.frame_state;
             inner.rt_targets.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
-                &mut ctx.gpu_store.bindless_manager,
-                &mut ctx.gpu_store.gfx_resource_manager,
+                &mut *ctx.shader_binding_system,
+                &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
-                &ctx.gpu_store.frame_counter,
+                ctx.frame_timing.frame_counter(),
             );
             inner.dlss_sr_inputs.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
-                &mut ctx.gpu_store.bindless_manager,
-                &mut ctx.gpu_store.gfx_resource_manager,
+                &mut *ctx.shader_binding_system,
+                &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
-                &ctx.gpu_store.frame_counter,
+                ctx.frame_timing.frame_counter(),
             );
             inner.dlss_sr_outputs.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
-                &mut ctx.gpu_store.bindless_manager,
-                &mut ctx.gpu_store.gfx_resource_manager,
+                &mut *ctx.shader_binding_system,
+                &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
-                &ctx.gpu_store.frame_counter,
+                ctx.frame_timing.frame_counter(),
             );
             inner.main_view_targets.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
-                &mut ctx.gpu_store.bindless_manager,
-                &mut ctx.gpu_store.gfx_resource_manager,
+                &mut *ctx.shader_binding_system,
+                &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
-                &ctx.gpu_store.frame_counter,
+                ctx.frame_timing.frame_counter(),
             );
             inner.gbuffer.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
-                &mut ctx.gpu_store.bindless_manager,
-                &mut ctx.gpu_store.gfx_resource_manager,
+                &mut *ctx.shader_binding_system,
+                &mut *ctx.gfx_resource_manager,
                 target_frame_state.render_extent,
-                &ctx.gpu_store.frame_counter,
+                ctx.frame_timing.frame_counter(),
             );
         }
     }
 
     fn shutdown(&mut self, ctx: &mut PluginShutdownCtx<'_>) {
         if let Some(inner) = self.inner.take() {
-            inner.destroy(ctx.resource_ctx, ctx.device_ctx, ctx.gpu_store);
+            inner.destroy(ctx);
         }
     }
 }
@@ -382,8 +380,8 @@ impl RtPipeline {
         ctx: &'a PluginRenderCtx<'a>,
     ) {
         let inner = self.inner();
-        let gpu_store = ctx.gpu_store;
-        let frame_label = gpu_store.frame_counter.frame_label();
+        let record_ctx = ctx.record_ctx;
+        let frame_label = record_ctx.frame_timing.frame_label();
         let rt_targets = &inner.rt_targets;
         let dlss_sr_inputs = &inner.dlss_sr_inputs;
         let dlss_sr_outputs = &inner.dlss_sr_outputs;
@@ -483,10 +481,10 @@ impl RtPipeline {
             "ray-tracing",
             RealtimeRtRgPass {
                 rt_pass: &inner.realtime_rt_pass,
-                gpu_store,
+                record_ctx,
                 render_scene: ctx.render_scene,
                 single_frame_image,
-                single_frame_extent: gpu_store.frame_state.render_extent,
+                single_frame_extent: record_ctx.frame_state.render_extent,
                 debug_channel,
                 gbuffer_a,
                 gbuffer_b,
@@ -496,7 +494,7 @@ impl RtPipeline {
             },
         );
 
-        if dlss_sr_enabled(gpu_store.render_options.dlss_sr_mode) {
+        if dlss_sr_enabled(record_ctx.render_options.dlss_sr_mode) {
             // SR/DLAA 分支用 Streamline output 进入 SDR；不再运行传统 denoise/accum，
             // 也不在 SR 后追加第二个 upscale pass。
             rg_builder
@@ -504,7 +502,7 @@ impl RtPipeline {
                     "dlss-sr",
                     DlssSrRgPass {
                         dlss_sr_pass: &inner.dlss_sr_pass,
-                        gpu_store,
+                        record_ctx,
                         resource_ctx: ctx.resource_ctx,
                         input_color: single_frame_image,
                         output_color: dlss_output,
@@ -516,11 +514,11 @@ impl RtPipeline {
                     "hdr-to-sdr",
                     SdrRgPass {
                         sdr_pass: &inner.sdr_pass,
-                        gpu_store,
+                        record_ctx,
                         src_image: dlss_output,
                         dst_image: render_target,
-                        src_image_extent: gpu_store.frame_state.output_extent,
-                        dst_image_extent: gpu_store.frame_state.output_extent,
+                        src_image_extent: record_ctx.frame_state.output_extent,
+                        dst_image_extent: record_ctx.frame_state.output_extent,
                         debug_channel,
                     },
                 );
@@ -531,11 +529,11 @@ impl RtPipeline {
                 "hdr-to-sdr",
                 SdrRgPass {
                     sdr_pass: &inner.sdr_pass,
-                    gpu_store,
+                    record_ctx,
                     src_image: single_frame_image,
                     dst_image: render_target,
-                    src_image_extent: gpu_store.frame_state.render_extent,
-                    dst_image_extent: gpu_store.frame_state.output_extent,
+                    src_image_extent: record_ctx.frame_state.render_extent,
+                    dst_image_extent: record_ctx.frame_state.output_extent,
                     debug_channel,
                 },
             );
@@ -601,8 +599,8 @@ impl RtPipeline {
         ctx: &'a PluginRenderCtx<'a>,
     ) -> RtPresentGraphTargets {
         let inner = self.inner();
-        let gpu_store = ctx.gpu_store;
-        let frame_label = gpu_store.frame_counter.frame_label();
+        let record_ctx = ctx.record_ctx;
+        let frame_label = record_ctx.frame_timing.frame_label();
         let main_view_targets = &inner.main_view_targets;
 
         // present graph 只读取 compute graph 导出的主视图 color，再 resolve 到当前 swapchain image。
@@ -624,7 +622,7 @@ impl RtPipeline {
             "resolve",
             ResolveRgPass {
                 resolve_pass: &inner.resolve_pass,
-                gpu_store,
+                record_ctx,
                 render_target,
                 swapchain_image: present_image,
                 swapchain_extent: present_target.image_info.image_extent,

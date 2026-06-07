@@ -7,7 +7,7 @@
 
 - 提供具体 GPU pass 的 pipeline、descriptor、dispatch/draw 逻辑。
 - 提供可接入 `truvis-render-graph` 的 pass adapter。
-- 使用 `GpuStore` 读取 GPU frame state、global descriptors、bindless 和资源 manager。
+- 使用 `RenderPassRecordCtx` 读取 GPU frame state、shader-visible bindings 和资源 manager。
 - 在需要场景数据的 pass 中通过 `RenderSceneView` 读取 scene buffer / TLAS / raster draw 能力，不在 render phase 访问 `World` 或重新 prepare scene。
 
 ## 边界约束

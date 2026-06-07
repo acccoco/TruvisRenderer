@@ -5,7 +5,8 @@
 
 本文把一帧理解成三层协作：
 
-- `RenderRuntime` 提供底层阶段化能力，拥有 `World`、`GpuStore`、`GpuScene`、present、cmd 和同步资源。
+- `RenderRuntime` 提供底层阶段化能力，拥有 `World`、GPU resource/binding/timing owners、runtime-owned render state、
+  `GpuScene`、present、cmd 和同步资源。
 - `RenderAppShell` 固定一帧顺序，把 runtime phase 裁剪成 App / Plugin 可用的上下文。
 - 具体 App 持有 camera、input、GUI、overlay 和具体渲染 Plugin，并决定这些能力如何组合。
 
@@ -26,7 +27,7 @@ After Render  = present + end_frame
 
 ```mermaid
 flowchart TB
-    Runtime["RenderRuntime<br/>资源与 GPU 快照 owner<br/>World / GpuStore / GpuScene / Present / Sync"]
+    Runtime["RenderRuntime<br/>资源与 GPU 快照 owner<br/>World / Resource+Binding+Timing / GpuScene / Present / Sync"]
     Shell["RenderAppShell<br/>一帧顺序编排者<br/>把 runtime phase 裁剪成 hook ctx"]
     App["Concrete App<br/>业务状态 owner<br/>camera / input / GUI / overlay / pipeline plugin"]
     Plugin["Plugin<br/>App 持有的能力单元<br/>标准生命周期 + 具体特有能力"]

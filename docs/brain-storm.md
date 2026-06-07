@@ -11,7 +11,8 @@
 - winit 主线程与渲染线程已分离；主线程只负责事件循环、窗口生命周期和跨线程信号。
 - `RenderAppShell` 是平台无关的帧骨架，具体 App 通过 `RenderAppHooks` 接入。
 - `Plugin` trait 已提供 init / input / update / resize / shutdown 生命周期，具体 App 通过字段显式组合插件能力。
-- `RenderRuntime` 持有 `World + GpuStore + GpuScene + present/cmd/sync`，并通过 typed lifecycle Ctx 暴露窄能力。
+- `RenderRuntime` 持有 `World + GPU resource/binding/timing owners + GpuScene + present/cmd/sync`，并通过 typed lifecycle
+  Ctx 暴露窄能力。
 - `World` 是 CPU 侧聚合层，只持有 `SceneManager + AssetHub`。
 - `AssetHub` 已收敛为内容资产身份、CPU 加载状态和加载事件来源，不再创建 GPU image/view 或注册 bindless。
 - texture / mesh / material / instance 的 GPU 可见状态由 render-side manager / bridge 管理。

@@ -314,17 +314,18 @@ impl RenderAppHooks for TruvisApp {
             resource_ctx: ctx.resource_ctx,
             queue_ctx: ctx.queue_ctx,
             device_info_ctx: ctx.device_info_ctx,
-            gpu_store: ctx.gpu_store,
+            record_ctx: ctx.record_ctx,
             render_scene: ctx.render_scene,
             present: ctx.present,
             timeline: ctx.timeline,
         };
-        let frame_label = ctx.gpu_store.frame_counter.frame_label();
-        let frame_id = ctx.gpu_store.frame_counter.frame_id();
+        let frame_label = ctx.record_ctx.frame_timing.frame_label();
+        let frame_id = ctx.record_ctx.frame_timing.frame_id();
 
         self.gui.begin_debug_image_frame();
         // debug image import state 取决于当前 SR mode；SR 输入在 DLSS pass 后会停在 read-only layout。
-        for debug_image in self.rt_pipeline.collect_debug_images(frame_label, ctx.gpu_store.render_options.dlss_sr_mode)
+        for debug_image in
+            self.rt_pipeline.collect_debug_images(frame_label, ctx.record_ctx.render_options.dlss_sr_mode)
         {
             self.gui.register_debug_image(debug_image);
         }
@@ -343,7 +344,7 @@ impl RenderAppHooks for TruvisApp {
 
             let cmd = self.rt_pipeline.compute_cmd(frame_label);
             cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-compute-graph");
-            compiled_graph.execute(cmd, &ctx.gpu_store.gfx_resource_manager);
+            compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
             cmd.end();
             compiled_graph.build_submit_info(std::slice::from_ref(cmd))
         };
@@ -375,7 +376,7 @@ impl RenderAppHooks for TruvisApp {
 
             let cmd = self.rt_pipeline.present_cmd(frame_label);
             cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-present-graph");
-            compiled_graph.execute(cmd, &ctx.gpu_store.gfx_resource_manager);
+            compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
             cmd.end();
             compiled_graph.build_submit_info(std::slice::from_ref(cmd))
         };

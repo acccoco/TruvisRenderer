@@ -49,7 +49,7 @@ impl ShaderToyPlugin {
             move |context| {
                 let canvas_view = context.get_image_view(canvas_color).unwrap();
                 self.shader_toy_pass.as_ref().expect("ShaderToyPlugin not initialized").draw(
-                    ctx.gpu_store,
+                    &ctx.record_ctx,
                     context.cmd,
                     canvas_view,
                     canvas_extent,
@@ -136,15 +136,15 @@ impl RenderAppHooks for ShaderToy {
             resource_ctx: ctx.resource_ctx,
             queue_ctx: ctx.queue_ctx,
             device_info_ctx: ctx.device_info_ctx,
-            gpu_store: ctx.gpu_store,
+            record_ctx: ctx.record_ctx,
             render_scene: ctx.render_scene,
             present: ctx.present,
             timeline: ctx.timeline,
         };
         self.gui.prepare_render_data(&plugin_ctx);
 
-        let frame_label = ctx.gpu_store.frame_counter.frame_label();
-        let frame_id = ctx.gpu_store.frame_counter.frame_id();
+        let frame_label = ctx.record_ctx.frame_timing.frame_label();
+        let frame_id = ctx.record_ctx.frame_timing.frame_id();
 
         let mut graph = RenderGraphBuilder::new();
         graph.signal_semaphore(RgSemaphoreInfo::timeline(
@@ -169,7 +169,7 @@ impl RenderAppHooks for ShaderToy {
 
         let cmd = &self.cmds[*frame_label];
         cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "shader-toy-graph");
-        compiled_graph.execute(cmd, &ctx.gpu_store.gfx_resource_manager);
+        compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
         cmd.end();
 
         let submit_info = compiled_graph.build_submit_info(std::slice::from_ref(cmd));

@@ -20,7 +20,8 @@
 
 - 项目保持无环依赖：上层可以依赖下层，下层不反向依赖上层业务；同层 crate 默认不互相依赖，除非 summaries 中明确记录。
 - 平台层只负责窗口、事件循环和渲染线程启动；渲染线程通过 `Box<dyn RenderApp>` 驱动 App，并创建、使用、销毁所有 Vulkan 对象。
-- `RenderRuntime` 拥有 `Gfx`、`World`、`GpuStore`、`GpuScene`、present、cmd 和同步资源；App / Plugin 只通过 phase-appropriate
+- `RenderRuntime` 拥有 `Gfx`、`World`、`GfxResourceManager`、`ShaderBindingSystem`、`FrameTiming`、`PerFrameGpuData`、
+  runtime-owned render state、`GpuScene`、present、cmd 和同步资源；App / Plugin 只通过 phase-appropriate
   Ctx 使用窄能力，不长期持有完整 runtime 或 typed `Gfx` Ctx。
 - App state 持有 GUI、camera/input、overlay 和具体渲染管线能力，并显式决定 RenderGraph pass 顺序；标准 `Plugin` trait
   只承载通用生命周期，特有能力由具体类型方法暴露。

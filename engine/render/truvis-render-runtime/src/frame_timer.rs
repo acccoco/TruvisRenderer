@@ -1,7 +1,7 @@
 /// runtime 帧生命周期使用的单线程计时器。
 ///
 /// `RenderRuntime::begin_frame` 在每帧开始调用 `tick`，随后 update/render 阶段读取
-/// delta/total time 写入 `GpuStore` 与 per-frame GPU 数据。它不负责限帧策略，
+/// delta/total time 写入 `FrameTiming` 与 per-frame GPU 数据。它不负责限帧策略，
 /// `time_to_render` 只是用当前 tick 后经过的时间与 `FrameCounter` 的期望间隔比较。
 #[derive(Debug)]
 pub(crate) struct FrameTimer {

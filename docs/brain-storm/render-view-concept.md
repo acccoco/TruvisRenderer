@@ -49,13 +49,13 @@ pub struct PreparedView {
 - 纯数据类型优先放在 render foundation 或 runtime 公共 API 中，避免依赖具体 App state。
 - camera 快照应是 POD 风格数据，不要求 View 类型直接依赖 App 持有的 camera controller。
 - `PreparedView` 由 runtime 在 prepare 阶段生成，并写入当前 FIF 对应的 uniform / descriptor。
-- `RenderSceneView` 继续表达 scene 数据；View 不应拥有 scene、GpuStore、manager 或 RenderGraph。
+- `RenderSceneView` 继续表达 scene 数据；View 不应拥有 scene、runtime GPU owner、manager 或 RenderGraph。
 
 ## 非目标
 
 - 不做 UE 风格重型 ViewFamily。
 - 不在第一版支持多窗口、多 surface、shadow atlas 或 per-view culling。
-- 不把 View 做成新的大上下文；pass 仍通过明确参数、`GpuStore` 和 `RenderSceneView` 读取所需能力。
+- 不把 View 做成新的大上下文；pass 仍通过明确参数、`RenderPassRecordCtx` 和 `RenderSceneView` 读取所需能力。
 - 不为了 View 立即修改 shader binding 布局，除非 per-view 命名必须同步更新。
 
 ## 演进步骤

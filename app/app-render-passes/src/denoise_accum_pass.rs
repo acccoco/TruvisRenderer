@@ -5,7 +5,7 @@ use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::bindless_manager::BindlessUavHandle;
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_foundation::gpu_store::GpuStore;
+use truvis_render_foundation::render_pass_record_ctx::RenderPassRecordCtx;
 use truvis_render_graph::compute_pass::ComputePass;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_shader_binding::gpu;
@@ -44,7 +44,7 @@ pub struct DenoiseAccumPassData {
 /// 保留的传统降噪累积 pass 默认参数。
 ///
 /// 当前 RT 主流程已经旁路该 pass；这里的默认值只服务显式重新接入此 pass 的实验路径，
-/// 不再通过 engine 全局 `GpuStore` 暴露为项目级配置。
+/// 不再通过 engine 全局 record ctx 暴露为项目级配置。
 #[derive(Copy, Clone)]
 pub struct DenoiseAccumSettings {
     pub enabled: bool,
@@ -99,12 +99,12 @@ impl DenoiseAccumPass {
         self.denoise_accum_pass.destroy(ctx);
     }
 
-    pub fn exec(&self, cmd: &GfxCommandBuffer, data: DenoiseAccumPassData, gpu_store: &GpuStore) {
-        let frame_label = gpu_store.frame_counter.frame_label();
+    pub fn exec(&self, cmd: &GfxCommandBuffer, data: DenoiseAccumPassData, record_ctx: &RenderPassRecordCtx<'_>) {
+        let frame_label = record_ctx.frame_timing.frame_label();
         self.denoise_accum_pass.exec(
             cmd,
             frame_label,
-            &gpu_store.global_descriptor_sets,
+            record_ctx.shader_bindings.global_descriptor_sets(),
             &gpu::denoise_accum::PushConstant {
                 single_frame_input: data.single_frame_bindless_uav_handle.0,
                 accum_output: data.accum_bindless_uav_handle.0,
@@ -142,7 +142,7 @@ impl DenoiseAccumPass {
 pub struct DenoiseAccumRgPass<'a> {
     pub denoise_accum_pass: &'a DenoiseAccumPass,
 
-    pub gpu_store: &'a GpuStore,
+    pub record_ctx: RenderPassRecordCtx<'a>,
 
     /// 单帧 RT 输出（只读）
     pub single_frame_image: RgImageHandle,
@@ -156,7 +156,7 @@ pub struct DenoiseAccumRgPass<'a> {
     pub gbuffer_c: RgImageHandle,
 
     pub image_extent: vk::Extent2D,
-    /// 显式传入的 pass-local 参数；不再从 `GpuStore` 读取全局配置。
+    /// 显式传入的 pass-local 参数；不再从全局 record ctx 读取配置。
     pub settings: DenoiseAccumSettings,
     pub debug_channel: u32,
 }
@@ -181,14 +181,14 @@ impl<'a> RgPass for DenoiseAccumRgPass<'a> {
         let gbuffer_c_view_handle = ctx.get_image_view_handle(self.gbuffer_c).unwrap();
 
         let single_frame_bindless_uav_handle =
-            self.gpu_store.bindless_manager.get_shader_uav_handle(single_frame_view_handle);
-        let accum_bindless_uav_handle = self.gpu_store.bindless_manager.get_shader_uav_handle(accum_view_handle);
+            self.record_ctx.shader_bindings.get_shader_uav_handle(single_frame_view_handle);
+        let accum_bindless_uav_handle = self.record_ctx.shader_bindings.get_shader_uav_handle(accum_view_handle);
         let gbuffer_a_bindless_uav_handle =
-            self.gpu_store.bindless_manager.get_shader_uav_handle(gbuffer_a_view_handle);
+            self.record_ctx.shader_bindings.get_shader_uav_handle(gbuffer_a_view_handle);
         let gbuffer_b_bindless_uav_handle =
-            self.gpu_store.bindless_manager.get_shader_uav_handle(gbuffer_b_view_handle);
+            self.record_ctx.shader_bindings.get_shader_uav_handle(gbuffer_b_view_handle);
         let gbuffer_c_bindless_uav_handle =
-            self.gpu_store.bindless_manager.get_shader_uav_handle(gbuffer_c_view_handle);
+            self.record_ctx.shader_bindings.get_shader_uav_handle(gbuffer_c_view_handle);
 
         self.denoise_accum_pass.exec(
             ctx.cmd,
@@ -199,7 +199,7 @@ impl<'a> RgPass for DenoiseAccumRgPass<'a> {
                 gbuffer_b_bindless_uav_handle,
                 gbuffer_c_bindless_uav_handle,
                 image_size: self.image_extent,
-                accum_frames: self.gpu_store.view_accum.accum_frames_num() as u32,
+                accum_frames: self.record_ctx.view_accum.accum_frames_num() as u32,
                 denoise_enabled: self.settings.enabled,
                 sigma_color: self.settings.sigma_color,
                 sigma_depth: self.settings.sigma_depth,
@@ -213,7 +213,7 @@ impl<'a> RgPass for DenoiseAccumRgPass<'a> {
                 roughness_radius_scale: self.settings.roughness_radius_scale,
                 roughness_sigma_scale: self.settings.roughness_sigma_scale,
             },
-            self.gpu_store,
+            &self.record_ctx,
         );
     }
 }

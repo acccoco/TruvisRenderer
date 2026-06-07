@@ -10,9 +10,9 @@
 flowchart TB
     L6["L6 app/truvis + samples<br/>主体 app 与独立示例入口<br/><br/>L6 truvis-winit-app<br/>winit 事件循环、窗口生命周期、渲染线程启动"]
     L5["L5 app-kit<br/>GuiPlugin、私有 GUI backend、overlay plugin、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp / RenderAppHooks / Plugin 契约与 Plugin Ctx<br/>RenderAppShell 帧骨架 + render loop"]
-    L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GpuStore + GpuScene + swapchain/present/cmd/sync 生命周期"]
+    L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GPU resource/binding/timing owners + GpuScene + swapchain/present/cmd/sync 生命周期"]
     L3["L3 truvis-render-graph / truvis-world / truvis-asset<br/>按帧同步辅助、CPU 场景、资产加载"]
-    L2["L2 truvis-render-foundation<br/>GpuStore、BindlessManager、RenderSceneView、FrameCounter、CmdAllocator"]
+    L2["L2 truvis-render-foundation<br/>GfxResourceManager、ShaderBindingSystem、FrameTiming、PerFrameGpuData、RenderPassRecordCtx、RenderSceneView、CmdAllocator"]
     L1["L1 truvis-gfx<br/>Vulkan RHI 封装"]
     L0["L0 truvis-utils / truvis-logs / truvis-path / descriptor-layout"]
     L6 --> L5 --> L4 --> L3 --> L2 --> L1 --> L0

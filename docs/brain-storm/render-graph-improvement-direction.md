@@ -53,8 +53,8 @@ state 对齐。
 `GfxImageHandle` / `GfxImageViewHandle`，再组装底层 pass data，最后调用具体
 `Gfx` pipeline 录制命令。这条边界是合理的，但每个 pass 手写转换会显得繁琐。
 
-更值得收敛的是部分 `RgPass` adapter 直接捕获完整 `GpuStore`。长期应把它裁剪成更窄的
-record context，让 pass 依赖更清楚。
+更值得收敛的是部分 `RgPass` adapter 直接捕获完整 GPU-facing runtime state。当前已经用更窄的
+`RenderPassRecordCtx` 表达 pass 录制依赖，让 pass 依赖更清楚。
 
 ## 目标形态：FrameGraph + Subgraph / Scope
 
@@ -180,7 +180,7 @@ let gbuffer_a = ctx.image(self.gbuffer_a)?;
 
 而不是每个 pass 都手写 `get_image_and_view_handle`、再查 manager、再组装 pass data。
 
-同时，用更窄的 record context 替代 adapter 捕获完整 `GpuStore`：
+同时，用更窄的 record context 替代 adapter 捕获完整 runtime state：
 
 ```rust
 pub struct RenderPassRecordCtx<'a> {
@@ -220,7 +220,7 @@ upload rays buffer -> trace rays -> copy hits to readback buffer -> export Readb
 1. 扩展当前 RenderGraph 的 resource model：增加 buffer handle、buffer state 和 buffer barrier。
 2. 为当前 compute graph / present graph 增加 export/import 状态校验，先降低人工协议风险。
 3. 增强 `RgPassContext` 的 resource resolve helper，减少 adapter 层样板代码。
-4. 引入更窄的 `RenderPassRecordCtx`，逐步替代 adapter 直接捕获完整 `GpuStore`。
+4. 引入更窄的 `RenderPassRecordCtx`，替代 adapter 直接捕获完整 runtime state。
 5. 引入 `FrameGraphBuilder` 原型，允许 `RtPipeline`、`GuiPlugin` 等贡献 scope / subgraph。
 6. 初期保持线性执行，先统一资源表和跨 subgraph 状态推导。
 7. 再评估 submit planner、async compute、transient resource、aliasing、readback ticket 和 graph visualization。

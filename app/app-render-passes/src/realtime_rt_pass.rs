@@ -15,8 +15,8 @@ use truvis_gfx::{
 };
 use truvis_path::TruvisPath;
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_foundation::gpu_store::GpuStore;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::render_pass_record_ctx::RenderPassRecordCtx;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_shader_binding::gpu;
@@ -493,29 +493,29 @@ impl RealtimeRtPass {
     }
     pub fn ray_trace(
         &self,
-        gpu_store: &GpuStore,
+        record_ctx: &RenderPassRecordCtx<'_>,
         render_scene: &dyn RenderSceneView,
         cmd: &GfxCommandBuffer,
         pass_data: RealtimeRtPassData,
     ) {
-        let frame_label = gpu_store.frame_counter.frame_label();
+        let frame_label = record_ctx.frame_timing.frame_label();
         let Some(tlas) = render_scene.tlas_handle(frame_label) else {
             log::trace!("RealtimeRtPass: skip ray tracing because TLAS is not ready for {}", frame_label);
             return;
         };
 
-        let _rt_handle = gpu_store.bindless_manager.get_shader_uav_handle(pass_data.single_frame_output_view);
-        let rt_image = gpu_store.gfx_resource_manager.get_image(pass_data.single_frame_output).unwrap().handle();
+        let _rt_handle = record_ctx.shader_bindings.get_shader_uav_handle(pass_data.single_frame_output_view);
+        let rt_image = record_ctx.gfx_resource_manager.get_image(pass_data.single_frame_output).unwrap().handle();
         let rt_image_view =
-            gpu_store.gfx_resource_manager.get_image_view(pass_data.single_frame_output_view).unwrap().handle();
+            record_ctx.gfx_resource_manager.get_image_view(pass_data.single_frame_output_view).unwrap().handle();
 
         // 获取 GBuffer 与 DLSS input image views。它们都由 raygen 以 storage image 写入当前 render extent。
-        let gbuffer_a_view = gpu_store.gfx_resource_manager.get_image_view(pass_data.gbuffer_a_view).unwrap().handle();
-        let gbuffer_b_view = gpu_store.gfx_resource_manager.get_image_view(pass_data.gbuffer_b_view).unwrap().handle();
-        let gbuffer_c_view = gpu_store.gfx_resource_manager.get_image_view(pass_data.gbuffer_c_view).unwrap().handle();
-        let depth_view = gpu_store.gfx_resource_manager.get_image_view(pass_data.depth_view).unwrap().handle();
+        let gbuffer_a_view = record_ctx.gfx_resource_manager.get_image_view(pass_data.gbuffer_a_view).unwrap().handle();
+        let gbuffer_b_view = record_ctx.gfx_resource_manager.get_image_view(pass_data.gbuffer_b_view).unwrap().handle();
+        let gbuffer_c_view = record_ctx.gfx_resource_manager.get_image_view(pass_data.gbuffer_c_view).unwrap().handle();
+        let depth_view = record_ctx.gfx_resource_manager.get_image_view(pass_data.depth_view).unwrap().handle();
         let motion_vectors_view =
-            gpu_store.gfx_resource_manager.get_image_view(pass_data.motion_vectors_view).unwrap().handle();
+            record_ctx.gfx_resource_manager.get_image_view(pass_data.motion_vectors_view).unwrap().handle();
 
         cmd.begin_label("Ray trace", glam::vec4(0.0, 1.0, 0.0, 1.0));
 
@@ -589,7 +589,7 @@ impl RealtimeRtPass {
             vk::PipelineBindPoint::RAY_TRACING_KHR,
             self.pipeline.pipeline_layout,
             0,
-            &gpu_store.global_descriptor_sets.global_sets(frame_label),
+            &record_ctx.shader_bindings.global_sets(frame_label),
             None,
         );
         // FIXME 这个变量废除了，现在只有 spp 1
@@ -664,8 +664,7 @@ mod helper {
 pub struct RealtimeRtRgPass<'a> {
     pub rt_pass: &'a RealtimeRtPass,
 
-    // TODO 暂时使用这个肮脏的实现
-    pub gpu_store: &'a GpuStore,
+    pub record_ctx: RenderPassRecordCtx<'a>,
     pub render_scene: &'a dyn RenderSceneView,
 
     /// 单帧 RT 输出图像（只写）
@@ -708,7 +707,7 @@ impl RgPass for RealtimeRtRgPass<'_> {
             ctx.get_image_and_view_handle(self.motion_vectors).expect("RealtimeRtRgPass: motion_vectors not found");
 
         self.rt_pass.ray_trace(
-            self.gpu_store,
+            &self.record_ctx,
             self.render_scene,
             ctx.cmd,
             RealtimeRtPassData {

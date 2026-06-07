@@ -9,9 +9,12 @@ use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueC
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
 use truvis_render_foundation::cmd_allocator::CmdAllocator;
 use truvis_render_foundation::frame_state::FrameRenderState;
-use truvis_render_foundation::gpu_store::GpuStore;
+use truvis_render_foundation::frame_timing::FrameTiming;
+use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::render_options::RenderOptions;
+use truvis_render_foundation::render_pass_record_ctx::RenderPassRecordCtx;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
+use truvis_render_foundation::shader_binding_system::ShaderBindingSystem;
 use truvis_render_runtime::present::swapchain_presenter::PresentView;
 use truvis_world::World;
 
@@ -37,8 +40,14 @@ pub struct PluginInitCtx<'a> {
     pub surface_ctx: GfxSurfaceCtx<'a>,
     /// CPU 语义世界，可在初始化时注册或读取 App/scene 侧状态。
     pub world: &'a mut World,
-    /// GPU-facing 状态仓库，可注册 Plugin 持有或依赖的 GPU 资源和全局渲染状态。
-    pub gpu_store: &'a mut GpuStore,
+    /// manager-owned buffer/image/view 资源生命周期 owner。
+    pub gfx_resource_manager: &'a mut GfxResourceManager,
+    /// shader-visible descriptor、bindless 和 sampler owner。
+    pub shader_binding_system: &'a mut ShaderBindingSystem,
+    /// 当前帧序号、FIF label 和时间快照。
+    pub frame_timing: &'a FrameTiming,
+    /// 当前 main view / frame 的渲染目标状态。
+    pub frame_state: &'a FrameRenderState,
     /// 命令分配器，供初始化阶段创建一次性或持久命令资源。
     pub cmd_allocator: &'a mut CmdAllocator,
     /// 当前 swapchain image 信息，供创建尺寸或格式相关资源。
@@ -64,7 +73,7 @@ pub struct PluginUpdateCtx<'a> {
 
 /// 由 app 持有的 plugin 的渲染上下文。
 ///
-/// 该上下文面向渲染录制和 render graph pass 贡献。它提供只读 `GpuStore`、
+/// 该上下文面向渲染录制和 render graph pass 贡献。它提供只读 pass record ctx、
 /// scene view、present 和队列同步相关能力，但不包含 App 级 GUI draw data；
 /// GUI draw data 刻意保留在具体 GUI plugin 内部。
 pub struct PluginRenderCtx<'a> {
@@ -76,8 +85,8 @@ pub struct PluginRenderCtx<'a> {
     pub queue_ctx: GfxQueueCtx<'a>,
     /// 设备能力只读信息，供 pass 根据 feature 选择渲染路径。
     pub device_info_ctx: GfxDeviceInfoCtx<'a>,
-    /// 只读 GPU-facing 状态仓库，暴露全局 GPU 资源、manager 和帧状态。
-    pub gpu_store: &'a GpuStore,
+    /// pass 录制需要的只读 GPU-facing 状态。
+    pub record_ctx: RenderPassRecordCtx<'a>,
     /// runtime 准备好的场景只读视图，供 pass 访问 scene buffer、TLAS 和 draw 数据。
     pub render_scene: &'a dyn RenderSceneView,
     /// present 边界只读视图，供 pass 导入当前 present target。
@@ -90,7 +99,7 @@ pub struct PluginRenderCtx<'a> {
 ///
 /// 该上下文只在 runtime 确认 swapchain 或窗口尺寸相关资源发生重建后出现。
 /// Plugin 应在这里释放或重建自己持有的窗口尺寸相关资源；manager-owned image/view
-/// 必须继续通过 `GpuStore` 中的 manager 释放。
+/// 必须继续通过 `GfxResourceManager` 释放。
 pub struct PluginResizeCtx<'a> {
     /// 设备级 Vulkan 操作能力，用于重建依赖 logical device 的对象。
     pub device_ctx: GfxDeviceCtx<'a>,
@@ -100,8 +109,14 @@ pub struct PluginResizeCtx<'a> {
     pub immediate_ctx: GfxImmediateCtx<'a>,
     /// surface 相关能力，用于依赖窗口 surface 的重建流程。
     pub surface_ctx: GfxSurfaceCtx<'a>,
-    /// 可变 GPU-facing 状态仓库，供 Plugin 更新或释放其注册的 GPU 资源。
-    pub gpu_store: &'a mut GpuStore,
+    /// manager-owned buffer/image/view 资源生命周期 owner。
+    pub gfx_resource_manager: &'a mut GfxResourceManager,
+    /// shader-visible descriptor、bindless 和 sampler owner。
+    pub shader_binding_system: &'a mut ShaderBindingSystem,
+    /// 当前帧序号、FIF label 和时间快照。
+    pub frame_timing: &'a FrameTiming,
+    /// resize 后的 main view / frame 渲染目标状态。
+    pub frame_state: &'a FrameRenderState,
     /// 新的 present 边界只读视图，供 Plugin 查询重建后的 swapchain 状态。
     pub present: PresentView<'a>,
 }
@@ -121,8 +136,14 @@ pub struct PluginShutdownCtx<'a> {
     pub immediate_ctx: GfxImmediateCtx<'a>,
     /// surface 相关能力，用于释放依赖窗口 surface 的资源。
     pub surface_ctx: GfxSurfaceCtx<'a>,
-    /// 可变 GPU-facing 状态仓库，供 Plugin 通过 manager 释放已注册的 GPU 资源。
-    pub gpu_store: &'a mut GpuStore,
+    /// 仍然存活的 manager-owned buffer/image/view 资源生命周期 owner。
+    pub gfx_resource_manager: &'a mut GfxResourceManager,
+    /// 仍然存活的 shader-visible descriptor、bindless 和 sampler owner。
+    pub shader_binding_system: &'a mut ShaderBindingSystem,
+    /// 当前帧序号、FIF label 和时间快照。
+    pub frame_timing: &'a FrameTiming,
+    /// shutdown 前最后的 main view / frame 渲染目标状态。
+    pub frame_state: &'a FrameRenderState,
     /// 命令分配器，供 Plugin 释放自己持有或登记的命令资源。
     pub cmd_allocator: &'a mut CmdAllocator,
 }

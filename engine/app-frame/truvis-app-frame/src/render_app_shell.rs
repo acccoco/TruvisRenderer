@@ -79,7 +79,10 @@ where
                 immediate_ctx: runtime.immediate_ctx,
                 surface_ctx: runtime.surface_ctx,
                 world: runtime.world,
-                gpu_store: runtime.gpu_store,
+                gfx_resource_manager: runtime.gfx_resource_manager,
+                shader_binding_system: runtime.shader_binding_system,
+                frame_timing: runtime.frame_timing,
+                frame_state: runtime.frame_state,
                 cmd_allocator: runtime.cmd_allocator,
                 swapchain_image_info: runtime.swapchain_image_info,
                 present: runtime.present,
@@ -140,7 +143,10 @@ where
                 resource_ctx: runtime.resource_ctx,
                 immediate_ctx: runtime.immediate_ctx,
                 surface_ctx: runtime.surface_ctx,
-                gpu_store: runtime.gpu_store,
+                gfx_resource_manager: runtime.gfx_resource_manager,
+                shader_binding_system: runtime.shader_binding_system,
+                frame_timing: runtime.frame_timing,
+                frame_state: runtime.frame_state,
                 present: runtime.present,
             };
             app.visit_plugins_mut(&mut |plugin| {
@@ -202,7 +208,10 @@ where
             resource_ctx: runtime.resource_ctx,
             immediate_ctx: runtime.immediate_ctx,
             surface_ctx: runtime.surface_ctx,
-            gpu_store: runtime.gpu_store,
+            gfx_resource_manager: runtime.gfx_resource_manager,
+            shader_binding_system: runtime.shader_binding_system,
+            frame_timing: runtime.frame_timing,
+            frame_state: runtime.frame_state,
             present: runtime.present,
         };
         app.visit_plugins_mut(&mut |plugin| {
@@ -238,7 +247,10 @@ where
                     queue_ctx: runtime.queue_ctx,
                     immediate_ctx: runtime.immediate_ctx,
                     surface_ctx: runtime.surface_ctx,
-                    gpu_store: runtime.gpu_store,
+                    gfx_resource_manager: runtime.gfx_resource_manager,
+                    shader_binding_system: runtime.shader_binding_system,
+                    frame_timing: runtime.frame_timing,
+                    frame_state: runtime.frame_state,
                     cmd_allocator: runtime.cmd_allocator,
                 };
                 self.app.visit_plugins_mut_rev(&mut |plugin| {

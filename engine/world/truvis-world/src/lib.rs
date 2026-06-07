@@ -2,7 +2,7 @@
 //!
 //! `World` 是 update 阶段和 render runtime prepare 阶段之间的 CPU 数据入口，聚合
 //! runtime scene 状态与 `truvis-asset` 的内容资产状态。它不拥有 Vulkan、swapchain、
-//! GPU buffer/image、frame state 或 `GpuStore` 资源；这些对象由 render-side runtime 管理。
+//! GPU buffer/image、frame state 或 shader binding 资源；这些对象由 render-side runtime 管理。
 
 use truvis_asset::asset_hub::AssetHub;
 
@@ -15,9 +15,9 @@ use crate::scene_manager::SceneManager;
 
 /// CPU 侧场景状态的聚合容器。
 ///
-/// 与 GPU-facing 状态（`GpuStore`）物理分离，建立 CPU/GPU 数据的所有权边界。App /
+/// 与 GPU-facing 状态物理分离，建立 CPU/GPU 数据的所有权边界。App /
 /// Plugin 在 update 阶段通过这里修改 CPU state；`RenderRuntime::prepare` 再读取这些数据，
-/// 同步到 render-side manager、bridge、`GpuScene` 和 `GpuStore`。
+/// 同步到 render-side manager、bridge、`GpuScene` 和 shader-visible bindings。
 pub struct World {
     /// runtime scene 语义数据，包括 live instance 和 light。
     ///

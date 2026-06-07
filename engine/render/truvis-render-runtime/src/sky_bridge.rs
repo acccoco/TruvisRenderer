@@ -8,9 +8,10 @@ use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_path::TruvisPath;
-use truvis_render_foundation::bindless_manager::{BindlessManager, BindlessSrvHandle};
+use truvis_render_foundation::bindless_manager::BindlessSrvHandle;
 use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::shader_binding_system::ShaderBindingSystem;
 use truvis_shader_binding::gpu;
 
 use crate::environment_binding::EnvironmentSkyBinding;
@@ -49,12 +50,17 @@ impl SkyBridge {
         immediate_ctx: GfxImmediateCtx<'_>,
         asset_hub: &mut AssetHub,
         gfx_resource_manager: &mut GfxResourceManager,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
     ) -> Self {
         let _span = tracy_client::span!("SkyBridge::new");
         let sky_texture = asset_hub.load_texture(TruvisPath::resources_path("sky.jpg"));
-        let fallback =
-            Self::create_fallback_sky(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, bindless_manager);
+        let fallback = Self::create_fallback_sky(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            shader_binding_system,
+        );
 
         Self {
             sky_texture,
@@ -98,11 +104,11 @@ impl SkyBridge {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
     ) {
         if !self.fallback.view_handle.is_null() {
-            bindless_manager.unregister_srv(self.fallback.view_handle);
+            shader_binding_system.unregister_srv(self.fallback.view_handle);
         }
         if !self.fallback.image_handle.is_null() {
             gfx_resource_manager.release_image_immediate(
@@ -128,7 +134,7 @@ impl SkyBridge {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
     ) -> FallbackSkyTexture {
         // sky fallback 需要视觉中性，避免材质缺失用的洋红色污染环境光。
         // shader 当前会将 sky sample 乘以 8，因此这里保持低亮度灰蓝。
@@ -143,8 +149,8 @@ impl SkyBridge {
             GfxImageViewDesc::new_2d(image_format, vk::ImageAspectFlags::COLOR),
             "FallbackSkyView",
         );
-        bindless_manager.register_srv(view_handle);
-        let srv_handle = bindless_manager.get_shader_srv_handle(view_handle);
+        shader_binding_system.register_srv(view_handle);
+        let srv_handle = shader_binding_system.get_shader_srv_handle(view_handle);
 
         FallbackSkyTexture {
             image_handle,

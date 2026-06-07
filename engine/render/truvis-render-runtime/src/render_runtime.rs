@@ -4,30 +4,28 @@ use ash::vk::{self, Handle};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use truvis_asset::asset_hub::{AssetHub, AssetLoadedEvent};
-use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::commands::submit_info::GfxSubmitInfo;
 use truvis_gfx::gfx::{Gfx, GfxDeviceInfoCtx};
-use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
-use truvis_render_foundation::bindless_manager::BindlessManager;
 use truvis_render_foundation::cmd_allocator::CmdAllocator;
 use truvis_render_foundation::dlss_sr::{DlssSrMode, DlssSrState};
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::frame_state::FrameRenderState;
+use truvis_render_foundation::frame_timing::FrameTiming;
 use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
-use truvis_render_foundation::global_descriptor_sets::{GlobalDescriptorSets, PerFrameDescriptorBinding};
+use truvis_render_foundation::global_descriptor_sets::PerFrameDescriptorBinding;
+use truvis_render_foundation::per_frame_gpu_data::PerFrameGpuData;
 use truvis_render_foundation::render_options::RenderOptions;
+use truvis_render_foundation::render_pass_record_ctx::RenderPassRecordCtx;
 use truvis_render_foundation::render_view::RenderView;
-use truvis_render_foundation::sampler_manager::RenderSamplerManager;
+use truvis_render_foundation::shader_binding_system::ShaderBindingSystem;
 use truvis_render_foundation::view_accum::ViewAccumState;
 use truvis_shader_binding::gpu;
 use truvis_world::scene_manager::SceneManager;
 
-use truvis_render_foundation::gpu_store::GpuStore;
 use truvis_streamline_binding::dlss;
 use truvis_world::World;
 
@@ -54,7 +52,7 @@ pub use crate::render_runtime_ctx::{
 /// 只通过返回类型化 Ctx 结构的生命周期方法暴露状态。
 /// 生命周期由外部代码驱动；RenderRuntime 不感知 Plugin、GUI 或 app 编排概念。
 ///
-/// 它位于 `RenderAppShell` 之下、`truvis-gfx`/`GpuStore` 之上，是 CPU scene、
+/// 它位于 `RenderAppShell` 之下、`truvis-gfx` 与 foundation GPU owner 之上，是 CPU scene、
 /// render-side 资产上传、GPU scene 翻译、swapchain/present 和 FIF 同步的聚合 owner。
 /// 上层只能在对应阶段拿到窄化后的 Ctx，不能长期保存完整 `Gfx` 或 runtime 内部字段。
 /// 这保证资源销毁顺序仍由 runtime 集中控制：plugin/app 可以在生命周期阶段创建或释放资源，
@@ -77,7 +75,14 @@ pub struct RenderRuntime {
     gfx: Gfx,
 
     world: World,
-    gpu_store: GpuStore,
+    gfx_resource_manager: GfxResourceManager,
+    shader_binding_system: ShaderBindingSystem,
+    frame_timing: FrameTiming,
+    per_frame_gpu_data: PerFrameGpuData,
+    frame_state: FrameRenderState,
+    render_options: RenderOptions,
+    dlss_sr_state: DlssSrState,
+    view_accum: ViewAccumState,
     gpu_scene: GpuScene,
     asset_texture_manager: AssetTextureManager,
     sky_bridge: SkyBridge,
@@ -102,7 +107,7 @@ pub struct RenderRuntime {
 impl RenderRuntime {
     /// 创建不依赖窗口系统的 runtime root state。
     ///
-    /// 这里会初始化 `Gfx`、CPU `World`、GPU `GpuStore`、资产管理器、SkyBridge、
+    /// 这里会初始化 `Gfx`、CPU `World`、GPU resource/binding/timing owner、资产管理器、SkyBridge、
     /// material/instance bridge、私有 `GpuScene` 和全局描述符，但不会创建 surface/swapchain。窗口相关资源必须等
     /// `init_after_window` 收到平台层 raw handle 后再创建。
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
@@ -142,17 +147,17 @@ impl RenderRuntime {
             )
         };
 
-        let (mut gfx_resource_manager, mut cmd_allocator, frame_counter, mut bindless_manager) = {
+        let (mut gfx_resource_manager, mut cmd_allocator, frame_timing, mut shader_binding_system) = {
             let _span = tracy_client::span!("RenderRuntime::new/managers");
             let gfx_resource_manager = GfxResourceManager::new();
             let cmd_allocator = CmdAllocator::new(gfx.device_ctx(), gfx.device_info_ctx());
 
             // 初始值应该是 1，因为 timeline semaphore 初始值是 0
             let init_frame_id = 1;
-            let frame_counter = FrameCounter::new(init_frame_id, 60.0);
-            let bindless_manager = BindlessManager::new(frame_counter.frame_token());
+            let frame_timing = FrameTiming::new(FrameCounter::new(init_frame_id, 60.0));
+            let shader_binding_system = ShaderBindingSystem::new(gfx.device_ctx(), frame_timing.frame_token());
 
-            (gfx_resource_manager, cmd_allocator, frame_counter, bindless_manager)
+            (gfx_resource_manager, cmd_allocator, frame_timing, shader_binding_system)
         };
 
         let asset_texture_manager = {
@@ -163,7 +168,7 @@ impl RenderRuntime {
                 gfx.immediate_ctx(),
                 gfx.queue_ctx(),
                 &mut gfx_resource_manager,
-                &mut bindless_manager,
+                &mut shader_binding_system,
             )
         };
         let asset_mesh_manager = {
@@ -172,7 +177,7 @@ impl RenderRuntime {
         };
         let material_manager = {
             let _span = tracy_client::span!("RenderRuntime::new/material_manager");
-            MaterialManager::new(gfx.resource_ctx(), frame_counter.frame_token())
+            MaterialManager::new(gfx.resource_ctx(), frame_timing.frame_token())
         };
         let material_bridge = {
             let _span = tracy_client::span!("RenderRuntime::new/material_bridge");
@@ -180,7 +185,7 @@ impl RenderRuntime {
         };
         let instance_bridge = {
             let _span = tracy_client::span!("RenderRuntime::new/instance_bridge");
-            InstanceBridge::new(frame_counter.frame_token())
+            InstanceBridge::new(frame_timing.frame_token())
         };
         let scene_manager = {
             let _span = tracy_client::span!("RenderRuntime::new/scene_manager");
@@ -198,7 +203,7 @@ impl RenderRuntime {
                 gfx.immediate_ctx(),
                 &mut asset_hub,
                 &mut gfx_resource_manager,
-                &mut bindless_manager,
+                &mut shader_binding_system,
             )
         };
         let gpu_scene = {
@@ -206,14 +211,6 @@ impl RenderRuntime {
             GpuScene::new(gfx.resource_ctx())
         };
 
-        let render_descriptor_sets = {
-            let _span = tracy_client::span!("RenderRuntime::new/global_descriptors");
-            GlobalDescriptorSets::new(gfx.device_ctx())
-        };
-        let sampler_manager = {
-            let _span = tracy_client::span!("RenderRuntime::new/samplers");
-            RenderSamplerManager::new(gfx.device_ctx(), render_descriptor_sets.static_sampler_target())
-        };
         let ray_cast_service = {
             let _span = tracy_client::span!("RenderRuntime::new/ray_cast_service");
             RayCastService::new(
@@ -221,19 +218,13 @@ impl RenderRuntime {
                 gfx.device_ctx(),
                 gfx.device_info_ctx(),
                 gfx.queue_ctx(),
-                &render_descriptor_sets,
+                shader_binding_system.global_descriptor_sets(),
             )
         };
 
-        let per_frame_data_buffers = {
-            let _span = tracy_client::span!("RenderRuntime::new/per_frame_data_buffers");
-            FrameCounter::frame_labes().map(|frame_label| {
-                GfxStructuredBuffer::<gpu::PerFrameData>::new_ubo(
-                    gfx.resource_ctx(),
-                    1,
-                    format!("per-frame-data-buffer-{frame_label}"),
-                )
-            })
+        let per_frame_gpu_data = {
+            let _span = tracy_client::span!("RenderRuntime::new/per_frame_gpu_data");
+            PerFrameGpuData::new(gfx.resource_ctx())
         };
 
         let cmds = {
@@ -269,22 +260,14 @@ impl RenderRuntime {
                 instance_bridge,
                 ray_cast_service,
                 gpu_scene,
-                gpu_store: GpuStore {
-                    bindless_manager,
-                    global_descriptor_sets: render_descriptor_sets,
-                    gfx_resource_manager,
-                    sampler_manager,
-                    per_frame_data_buffers,
-
-                    frame_counter,
-                    frame_state,
-                    render_options: Self::initial_render_options(),
-                    dlss_sr_state: DlssSrState::default(),
-
-                    delta_time_s: 0.0,
-                    total_time_s: 0.0,
-                    view_accum,
-                },
+                gfx_resource_manager,
+                shader_binding_system,
+                frame_timing,
+                per_frame_gpu_data,
+                frame_state,
+                render_options: Self::initial_render_options(),
+                dlss_sr_state: DlssSrState::default(),
+                view_accum,
             }
         }
     }
@@ -377,7 +360,7 @@ impl RenderRuntime {
                 self.gfx.resource_ctx(),
                 self.gfx.device_ctx(),
                 self.gfx.surface_ctx(),
-                &mut self.gpu_store.gfx_resource_manager,
+                &mut self.gfx_resource_manager,
             );
         }
 
@@ -390,29 +373,26 @@ impl RenderRuntime {
         self.sky_bridge.destroy_mut(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
-            &mut self.gpu_store.bindless_manager,
-            &mut self.gpu_store.gfx_resource_manager,
+            &mut self.shader_binding_system,
+            &mut self.gfx_resource_manager,
         );
         self.asset_texture_manager.destroy(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
-            &mut self.gpu_store.gfx_resource_manager,
-            &mut self.gpu_store.bindless_manager,
+            &mut self.gfx_resource_manager,
+            &mut self.shader_binding_system,
         );
         self.world.asset_hub.destroy();
         self.gpu_scene.destroy_mut(self.gfx.resource_ctx(), self.gfx.device_ctx());
         self.asset_mesh_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
         // per-frame UBO 与 command allocator 在所有使用它们的 scene/present 资源之后释放。
-        for buffer in &mut self.gpu_store.per_frame_data_buffers {
-            buffer.destroy_mut(self.gfx.resource_ctx(), DestroyReason::Shutdown);
-        }
+        self.per_frame_gpu_data.destroy(self.gfx.resource_ctx());
         self.gpu_scene_update_cmds.clear();
         self.cmd_allocator.destroy(self.gfx.device_ctx());
-        self.gpu_store.gfx_resource_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
+        self.gfx_resource_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
         self.fif_timeline_semaphore.destroy(self.gfx.device_ctx());
         // descriptor/sampler 依赖 device 但不依赖业务资源，放在资源管理器之后、Gfx 之前销毁。
-        self.gpu_store.sampler_manager.destroy(self.gfx.device_ctx());
-        self.gpu_store.global_descriptor_sets.destroy(self.gfx.device_ctx());
+        self.shader_binding_system.destroy(self.gfx.device_ctx());
         self.gfx.destroy();
     }
 }
@@ -430,7 +410,7 @@ impl RenderRuntime {
 
         {
             let _span = tracy_client::span!("wait fif timeline");
-            let current_frame_id = self.gpu_store.frame_counter.frame_id();
+            let current_frame_id = self.frame_timing.frame_id();
             let fif_count = FrameCounter::fif_count();
             let wait_frame_id = current_frame_id.saturating_sub(fif_count as u64);
             const WAIT_SEMAPHORE_TIMEOUT_NS: u64 = 30 * 1000 * 1000 * 1000;
@@ -442,21 +422,20 @@ impl RenderRuntime {
         {
             // command allocator 和 resource manager 都以 frame label/frame id 作为回收边界；
             // 上面的 timeline wait 确保不会重置 GPU 仍在读取的命令池或资源。
-            self.cmd_allocator.reset_frame_commands(self.gfx.device_ctx(), self.gpu_store.frame_counter.frame_label());
-            self.gpu_store.gfx_resource_manager.cleanup(
+            self.cmd_allocator.reset_frame_commands(self.gfx.device_ctx(), self.frame_timing.frame_label());
+            self.gfx_resource_manager.cleanup(
                 self.gfx.resource_ctx(),
                 self.gfx.device_ctx(),
-                self.gpu_store.frame_counter.frame_id(),
+                self.frame_timing.frame_id(),
             );
         }
 
-        self.gpu_store.delta_time_s = self.timer.delta_time_s();
-        self.gpu_store.total_time_s = self.timer.total_time_s();
+        self.frame_timing.update_time(self.timer.delta_time_s(), self.timer.total_time_s());
 
-        let frame_token = self.gpu_store.frame_counter.frame_token();
+        let frame_token = self.frame_timing.frame_token();
         // bindless/material/instance 都使用同一个 frame token 推进延迟回收窗口，
         // 保持 shader-visible slot 与 handle 的复用节奏一致。
-        self.gpu_store.bindless_manager.begin_frame(frame_token);
+        self.shader_binding_system.begin_frame(frame_token);
         self.material_manager.begin_frame(frame_token);
         self.instance_bridge.begin_frame(frame_token);
 
@@ -476,11 +455,12 @@ impl RenderRuntime {
 
         RenderRuntimeUpdateCtx {
             world: &mut self.world,
-            render_options: &mut self.gpu_store.render_options,
-            frame_state: &self.gpu_store.frame_state,
-            view_accum: &self.gpu_store.view_accum,
-            swapchain_extent: self.gpu_store.frame_state.output_extent,
-            delta_time_s: self.gpu_store.delta_time_s,
+            render_options: &mut self.render_options,
+            frame_state: &self.frame_state,
+            view_accum: &self.view_accum,
+            swapchain_extent: self.frame_state.output_extent,
+            frame_timing: &self.frame_timing,
+            delta_time_s: self.frame_timing.delta_time_s(),
         }
     }
 
@@ -494,7 +474,7 @@ impl RenderRuntime {
 
         self.update_view_accum(render_view);
         // DLSS constants 与本帧相机快照绑定，必须在 render graph 录制 evaluate 前更新。
-        self.gpu_store.dlss_sr_state.update(render_view, &self.gpu_store.frame_state);
+        self.dlss_sr_state.update(render_view, &self.frame_state);
         self.prepare_gpu_scene(render_view);
         self.update_perframe_descriptor_set();
     }
@@ -508,7 +488,8 @@ impl RenderRuntime {
             device_ctx: self.gfx.device_ctx(),
             resource_ctx: self.gfx.resource_ctx(),
             queue_ctx: self.gfx.queue_ctx(),
-            gpu_store: &self.gpu_store,
+            frame_timing: &self.frame_timing,
+            shader_bindings: self.shader_binding_system.view(),
             render_scene: &self.gpu_scene,
             instance_bridge: &self.instance_bridge,
             ray_cast_service: &mut self.ray_cast_service,
@@ -529,7 +510,16 @@ impl RenderRuntime {
             resource_ctx: self.gfx.resource_ctx(),
             queue_ctx: self.gfx.queue_ctx(),
             device_info_ctx: self.gfx.device_info_ctx(),
-            gpu_store: &self.gpu_store,
+            record_ctx: RenderPassRecordCtx {
+                frame_timing: &self.frame_timing,
+                frame_state: &self.frame_state,
+                render_options: &self.render_options,
+                view_accum: &self.view_accum,
+                dlss_sr_state: &self.dlss_sr_state,
+                shader_bindings: self.shader_binding_system.view(),
+                gfx_resource_manager: &self.gfx_resource_manager,
+                per_frame_gpu_data: &self.per_frame_gpu_data,
+            },
             render_scene: &self.gpu_scene,
             present: self.swapchain_presenter.as_ref().unwrap().view(),
             timeline: &self.fif_timeline_semaphore,
@@ -558,16 +548,16 @@ impl RenderRuntime {
     /// DLSS mode 变化可能只影响 pass 分支，也可能改变低分辨率 render extent。前者只需要
     /// 重置 DLSS history，后者必须让 app/plugin 重建 RT/GBuffer/DLSS input targets。
     pub fn sync_render_options_frame_state(&mut self) -> Option<RenderRuntimeResizeCtx<'_>> {
-        let old_state = self.gpu_store.frame_state;
+        let old_state = self.frame_state;
         let old_mode = self.last_applied_dlss_sr_mode;
-        let requested_mode = self.gpu_store.render_options.dlss_sr_mode;
+        let requested_mode = self.render_options.dlss_sr_mode;
         let output_extent = self.swapchain_presenter.as_ref().unwrap().extent();
         if old_mode == requested_mode && old_state.output_extent == output_extent {
             return None;
         }
 
         let new_state = self.resolve_frame_state_for_output(output_extent);
-        let new_mode = self.gpu_store.render_options.dlss_sr_mode;
+        let new_mode = self.render_options.dlss_sr_mode;
         let mode_changed = old_mode != new_mode;
 
         if !mode_changed && old_state == new_state {
@@ -578,7 +568,7 @@ impl RenderRuntime {
 
         if mode_changed {
             log::info!("DLSS SR mode changed: {:?} -> {:?}", old_mode, new_mode);
-            self.gpu_store.dlss_sr_state.request_reset();
+            self.dlss_sr_state.request_reset();
             if old_mode != DlssSrMode::Off && new_mode == DlssSrMode::Off {
                 // slFreeResources 会销毁 Streamline 内部 Vulkan image/buffer；必须先等待
                 // 上一帧 DLSS evaluate 相关 GPU work 完成，再释放 viewport 0 的内部资源。
@@ -613,17 +603,20 @@ impl RenderRuntime {
         if !gpu_idle_waited {
             self.gfx.wait_idel();
         }
-        self.gpu_store.frame_state = new_state;
-        self.gpu_store.view_accum.reset();
+        self.frame_state = new_state;
+        self.view_accum.reset();
         // render extent 变化会让 DLSS history 的 sample grid 失效，即使相机没有变化也必须 reset。
-        self.gpu_store.dlss_sr_state.request_reset();
+        self.dlss_sr_state.request_reset();
 
         Some(RenderRuntimeResizeCtx {
             device_ctx: self.gfx.device_ctx(),
             resource_ctx: self.gfx.resource_ctx(),
             immediate_ctx: self.gfx.immediate_ctx(),
             surface_ctx: self.gfx.surface_ctx(),
-            gpu_store: &mut self.gpu_store,
+            gfx_resource_manager: &mut self.gfx_resource_manager,
+            shader_binding_system: &mut self.shader_binding_system,
+            frame_timing: &self.frame_timing,
+            frame_state: &self.frame_state,
             present: self.swapchain_presenter.as_ref().unwrap().view(),
         })
     }
@@ -640,7 +633,7 @@ impl RenderRuntime {
     /// render graph，但 frame counter 仍需要前进；提交一个空 signal 可以保持后续
     /// `begin_frame` 对 timeline 的等待不会落到永远无人 signal 的 frame id 上。
     pub fn signal_current_frame_complete(&self) {
-        let frame_id = self.gpu_store.frame_counter.frame_id();
+        let frame_id = self.frame_timing.frame_id();
         let submit_info = GfxSubmitInfo::new(&[]).signal(
             &self.fif_timeline_semaphore,
             vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
@@ -655,14 +648,14 @@ impl RenderRuntime {
     /// present 之后，作为本帧生命周期的最后一步。
     pub fn end_frame(&mut self) {
         let _span = tracy_client::span!("RenderRuntime::end_frame");
-        self.gpu_store.frame_counter.next_frame();
+        self.frame_timing.next_frame();
     }
 
     /// 查询是否已经到达下一帧的渲染时间。
     ///
     /// 该方法只做时间判断，不推进 frame counter，也不会等待 GPU。
     pub fn time_to_render(&self) -> bool {
-        self.gpu_store.frame_counter.frame_delta_time_limit_us() < self.timer.elapsed_since_tick().as_micros() as f32
+        self.frame_timing.frame_delta_time_limit_us() < self.timer.elapsed_since_tick().as_micros() as f32
     }
 
     /// 处理窗口 resize。只有 present 层实际重建 swapchain 时才返回 `Some(ctx)`。
@@ -681,7 +674,7 @@ impl RenderRuntime {
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.surface_ctx(),
-            &mut self.gpu_store.gfx_resource_manager,
+            &mut self.gfx_resource_manager,
         );
         // runtime 只同步 frame state；具体 RT / main-view / GBuffer target 的重建由随后
         // 返回的 resize ctx 交给 app/plugin 完成，避免 engine 反向持有管线策略资源。
@@ -692,14 +685,17 @@ impl RenderRuntime {
             resource_ctx: self.gfx.resource_ctx(),
             immediate_ctx: self.gfx.immediate_ctx(),
             surface_ctx: self.gfx.surface_ctx(),
-            gpu_store: &mut self.gpu_store,
+            gfx_resource_manager: &mut self.gfx_resource_manager,
+            shader_binding_system: &mut self.shader_binding_system,
+            frame_timing: &self.frame_timing,
+            frame_state: &self.frame_state,
             present: self.swapchain_presenter.as_ref().unwrap().view(),
         })
     }
 
     /// 生成 shutdown 阶段上下文，供 app/plugin 在 runtime 子资源销毁前释放自己持有的 GPU 资源。
     ///
-    /// 这个阶段仍暴露 `GpuStore` 与 `CmdAllocator` 的可变借用，但不再允许继续进入 update/render
+    /// 这个阶段仍暴露 GPU 资源/binding owner 与 `CmdAllocator` 的可变借用，但不再允许继续进入 update/render
     /// 帧流程；调用者应在 `wait_idle` 后使用它清理长期资源，再让 `destroy` 接管 runtime-owned 资源。
     pub fn shutdown_phase(&mut self) -> RenderRuntimeShutdownCtx<'_> {
         RenderRuntimeShutdownCtx {
@@ -708,7 +704,10 @@ impl RenderRuntime {
             queue_ctx: self.gfx.queue_ctx(),
             immediate_ctx: self.gfx.immediate_ctx(),
             surface_ctx: self.gfx.surface_ctx(),
-            gpu_store: &mut self.gpu_store,
+            gfx_resource_manager: &mut self.gfx_resource_manager,
+            shader_binding_system: &mut self.shader_binding_system,
+            frame_timing: &self.frame_timing,
+            frame_state: &self.frame_state,
             cmd_allocator: &mut self.cmd_allocator,
         }
     }
@@ -727,7 +726,7 @@ impl RenderRuntime {
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.surface_ctx(),
-            &mut self.gpu_store.gfx_resource_manager,
+            &mut self.gfx_resource_manager,
             raw_display_handle,
             raw_window_handle,
             vk::Extent2D {
@@ -736,7 +735,7 @@ impl RenderRuntime {
             },
         ));
         // surface 创建后才能知道平台裁剪后的实际 swapchain extent。这里先同步到
-        // `GpuStore.frame_state`，让后续 PluginInitCtx 创建 app-owned target 时拿到真实尺寸。
+        // `frame_state`，让后续 PluginInitCtx 创建 app-owned target 时拿到真实尺寸。
         self.sync_frame_extent_after_present_resize();
 
         RenderRuntimeInitCtx {
@@ -747,7 +746,10 @@ impl RenderRuntime {
             immediate_ctx: self.gfx.immediate_ctx(),
             surface_ctx: self.gfx.surface_ctx(),
             world: &mut self.world,
-            gpu_store: &mut self.gpu_store,
+            gfx_resource_manager: &mut self.gfx_resource_manager,
+            shader_binding_system: &mut self.shader_binding_system,
+            frame_timing: &self.frame_timing,
+            frame_state: &self.frame_state,
             cmd_allocator: &mut self.cmd_allocator,
             swapchain_image_info: self.swapchain_presenter.as_ref().unwrap().swapchain_image_info(),
             present: self.swapchain_presenter.as_ref().unwrap().view(),
@@ -790,8 +792,8 @@ impl RenderRuntime {
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.queue_ctx(),
-            &mut self.gpu_store.gfx_resource_manager,
-            &mut self.gpu_store.bindless_manager,
+            &mut self.gfx_resource_manager,
+            &mut self.shader_binding_system,
         );
         self.asset_mesh_manager.update(
             mesh_events,
@@ -806,7 +808,7 @@ impl RenderRuntime {
     ///
     /// 累积渲染关心最终视图/投影是否变化；后续 pass 根据这里的计数决定是否复用上一帧结果。
     fn update_view_accum(&mut self, render_view: &RenderView) {
-        self.gpu_store.view_accum.update_accum_frames(render_view.accum_signature());
+        self.view_accum.update_accum_frames(render_view.accum_signature());
     }
 
     /// 合成 `GpuScene` 用于判断 TLAS 是否过期的 scene revision。
@@ -823,8 +825,8 @@ impl RenderRuntime {
     /// render graph 在后续命令提交中通过常规 queue 顺序看到这些写入。
     fn prepare_gpu_scene(&mut self, render_view: &RenderView) {
         let _span = tracy_client::span!("RenderRuntime::prepare_gpu_scene");
-        let frame_extent = self.gpu_store.frame_state.render_extent;
-        let frame_label = self.gpu_store.frame_counter.frame_label();
+        let frame_extent = self.frame_state.render_extent;
+        let frame_label = self.frame_timing.frame_label();
         let cmd = self.gpu_scene_update_cmds[*frame_label].clone();
 
         // GPU scene 更新使用独立命令缓冲，把 material/instance/geometry/light/scene buffer
@@ -841,18 +843,13 @@ impl RenderRuntime {
             dst_access: vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::UNIFORM_READ,
         };
 
-        let bindless_target = self.gpu_store.global_descriptor_sets.bindless_target();
         // bindless 表先更新，因为 material upload 和环境绑定都可能立即解析 texture SRV handle；
         // 后续 scene root buffer 会写入这些 shader-visible handle。
-        self.gpu_store.bindless_manager.prepare_render_data(
-            self.gfx.device_ctx(),
-            &self.gpu_store.gfx_resource_manager,
-            bindless_target,
-        );
+        self.shader_binding_system.prepare_render_data(self.gfx.device_ctx(), &self.gfx_resource_manager);
         let sky_update = self.sky_bridge.update_sky_binding(&self.asset_texture_manager);
         if sky_update.changed {
             // sky 从 fallback 切换到真实贴图时，历史累积帧已经不再对应当前环境光。
-            self.gpu_store.view_accum.reset();
+            self.view_accum.reset();
         }
         let environment_binding = EnvironmentBinding {
             sky: sky_update.binding,
@@ -888,7 +885,7 @@ impl RenderRuntime {
             self.gfx.immediate_ctx(),
             &cmd,
             transfer_barrier_mask,
-            &self.gpu_store.frame_counter,
+            self.frame_timing.frame_counter(),
             &scene_render_data,
             material_buffer_device_address,
             scene_revision,
@@ -906,7 +903,7 @@ impl RenderRuntime {
             camera_forward: render_view.forward_ws.into(),
             time_ms: self.timer.total_time_ms(),
             delta_time_ms: self.timer.delta_time_ms(),
-            frame_id: self.gpu_store.frame_counter.frame_id(),
+            frame_id: self.frame_timing.frame_id(),
             resolution: gpu::Float2 {
                 x: frame_extent.width as f32,
                 y: frame_extent.height as f32,
@@ -917,12 +914,11 @@ impl RenderRuntime {
             _padding_1: Default::default(),
             _padding_2: Default::default(),
         };
-        let crt_frame_data_buffer = &self.gpu_store.per_frame_data_buffers[*frame_label];
-        cmd.cmd_update_buffer(crt_frame_data_buffer.vk_buffer(), 0, BytesConvert::bytes_of(&per_frame_data));
+        self.per_frame_gpu_data.write(frame_label, &cmd, per_frame_data);
         cmd.buffer_memory_barrier(
             vk::DependencyFlags::empty(),
             &[GfxBufferBarrier::default()
-                .buffer(crt_frame_data_buffer.vk_buffer(), 0, vk::WHOLE_SIZE)
+                .buffer(self.per_frame_gpu_data.buffer(frame_label).vk_buffer(), 0, vk::WHOLE_SIZE)
                 .mask(transfer_barrier_mask)],
         );
         cmd.end();
@@ -942,7 +938,7 @@ impl RenderRuntime {
         self.swapchain_presenter
             .as_mut()
             .unwrap()
-            .acquire_image(self.gfx.surface_ctx(), self.gpu_store.frame_counter.frame_label())
+            .acquire_image(self.gfx.surface_ctx(), self.frame_timing.frame_label())
     }
 
     /// 同步 swapchain extent 到 `FrameRenderState`。
@@ -956,7 +952,7 @@ impl RenderRuntime {
     /// 同步 present extent 到 runtime frame state，并在尺寸变化时清空历史累积。
     fn sync_frame_extent_after_present_resize(&mut self) {
         let swapchain_extent = self.swapchain_presenter.as_ref().unwrap().extent();
-        if self.gpu_store.frame_state.output_extent == swapchain_extent {
+        if self.frame_state.output_extent == swapchain_extent {
             return;
         }
 
@@ -964,8 +960,8 @@ impl RenderRuntime {
         // runtime 只更新 shader/per-frame data 会读取的 extent，并清零累积帧计数；
         // 具体 image 重建在 Plugin::on_resize 中发生。
         let old_mode = self.last_applied_dlss_sr_mode;
-        self.gpu_store.frame_state = self.resolve_frame_state_for_output(swapchain_extent);
-        let new_mode = self.gpu_store.render_options.dlss_sr_mode;
+        self.frame_state = self.resolve_frame_state_for_output(swapchain_extent);
+        let new_mode = self.render_options.dlss_sr_mode;
         if old_mode != DlssSrMode::Off && new_mode == DlssSrMode::Off {
             // resize 期间查询 optimal settings 失败可能把 SR mode 降级为 Off；此时同样需要先等待
             // 上一帧 DLSS evaluate 完成，再释放原 viewport resource。
@@ -975,15 +971,15 @@ impl RenderRuntime {
             }
         }
         self.last_applied_dlss_sr_mode = new_mode;
-        self.gpu_store.view_accum.reset();
-        self.gpu_store.dlss_sr_state.request_reset();
+        self.view_accum.reset();
+        self.dlss_sr_state.request_reset();
     }
 
     fn resolve_frame_state_for_output(&mut self, output_extent: vk::Extent2D) -> FrameRenderState {
-        let mut frame_state = self.gpu_store.frame_state;
+        let mut frame_state = self.frame_state;
         frame_state.output_extent = output_extent;
 
-        let mode = self.gpu_store.render_options.dlss_sr_mode;
+        let mode = self.render_options.dlss_sr_mode;
         if mode == DlssSrMode::Off || mode == DlssSrMode::Dlaa {
             // Off 是 native fallback；DLAA 仍走 kFeatureDLSS，但不做低分辨率渲染。
             frame_state.render_extent = output_extent;
@@ -1026,13 +1022,13 @@ impl RenderRuntime {
                     mode
                 );
                 // 不接受 0 尺寸 optimal settings。直接降级 Off，保证后续 graph 仍有 native target。
-                self.gpu_store.render_options.dlss_sr_mode = DlssSrMode::Off;
+                self.render_options.dlss_sr_mode = DlssSrMode::Off;
                 frame_state.render_extent = output_extent;
             }
             Err(err) => {
                 log::warn!("DLSS SR optimal settings failed for mode {:?}: {}; falling back to Off/native.", mode, err);
                 // capability/driver/runtime 异常都按 native fallback 处理，避免因为 SR 不可用阻塞 app 启动。
-                self.gpu_store.render_options.dlss_sr_mode = DlssSrMode::Off;
+                self.render_options.dlss_sr_mode = DlssSrMode::Off;
                 frame_state.render_extent = output_extent;
             }
         }
@@ -1045,10 +1041,11 @@ impl RenderRuntime {
     /// descriptor 指向刚写入的 per-frame UBO 和 `GpuScene` scene root buffer；render pass
     /// 通过全局 descriptor set 读取本帧相机、时间与 scene device address。
     fn update_perframe_descriptor_set(&mut self) {
-        let frame_label = self.gpu_store.frame_counter.frame_label();
-        let per_frame_data_buffer = &self.gpu_store.per_frame_data_buffers[*frame_label];
+        let frame_label = self.frame_timing.frame_label();
+        let per_frame_data_buffer = self.per_frame_gpu_data.buffer(frame_label);
         let gpu_scene_buffer = self.gpu_scene.scene_buffer(frame_label);
-        let perframe_set = self.gpu_store.global_descriptor_sets.current_perframe_set(frame_label).handle();
+        let perframe_set =
+            self.shader_binding_system.global_descriptor_sets().current_perframe_set(frame_label).handle();
 
         let perframe_data_buffer_info = vec![
             vk::DescriptorBufferInfo::default()

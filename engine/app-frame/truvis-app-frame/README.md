@@ -25,11 +25,11 @@
 
 ## Ctx 边界
 
-- `PluginInitCtx` 同时携带 `World`、`GpuStore` 和初始化所需的 typed `Gfx` Ctx，用于创建 App/Plugin 持有的 GPU 资源。
+- `PluginInitCtx` 同时携带 `World`、`GfxResourceManager`、`ShaderBindingSystem` 和初始化所需的 typed `Gfx` Ctx，用于创建 App/Plugin 持有的 GPU 资源。
 - `PluginUpdateCtx` 面向 CPU 更新，提供 `World` 和帧设置相关状态，不承担 command recording。
 - `RenderRuntimeRayCastCtx` 只在 App `after_prepare` hook 中出现，不进入通用 Plugin Ctx。
-- `PluginRenderCtx` 面向渲染录制，提供只读 `GpuStore` 与 command/queue 相关能力，不包含 GUI draw data。
-- `PluginResizeCtx` 和 `PluginShutdownCtx` 用于重建或释放 Plugin-owned GPU 资源，manager-owned image/view 必须通过 `GpuStore` 中的 manager 释放。
+- `PluginRenderCtx` 面向渲染录制，提供只读 `RenderPassRecordCtx` 与 command/queue 相关能力，不包含 GUI draw data。
+- `PluginResizeCtx` 和 `PluginShutdownCtx` 用于重建或释放 Plugin-owned GPU 资源，manager-owned image/view 必须通过 ctx 中的 `GfxResourceManager` 释放，shader-visible view 必须通过 `ShaderBindingSystem` 注销。
 
 ## 边界约束
 

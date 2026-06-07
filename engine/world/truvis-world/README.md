@@ -11,11 +11,11 @@
 
 ## 边界约束
 
-- `World` 不持有 Vulkan、`Gfx`、`GpuStore` 或 swapchain 资源。
+- `World` 不持有 Vulkan、`Gfx`、GPU resource/binding owner 或 swapchain 资源。
 - `World` 不持有 GPU buffer、image、BLAS、material slot 或 frame state。
 - `World` 不依赖 `truvis-render-runtime`、`truvis-app-frame` 或 App/Plugin 契约。
-- GPU frame state、bindless、global descriptor 和 manager-owned image/view 属于 `truvis-render-foundation::gpu_store::GpuStore`；具体窗口尺寸 render target 由 app 层 pipeline/plugin 持有。
+- GPU frame state、bindless、global descriptor 和 manager-owned image/view 属于 render-side runtime owner；具体窗口尺寸 render target 由 app 层 pipeline/plugin 持有。
 
 ## 设计意图
 
-`World` / `GpuStore` 的拆分让 CPU 语义数据和 GPU 执行状态有清晰边界。App 和 Plugin 在 update 阶段修改 CPU 世界；runtime 在 prepare 阶段把需要的 scene/asset 数据同步到 `GpuStore` 管理的 GPU 资源；render 阶段主要读取 `GpuStore` 录制命令。
+`World` / render-side GPU owner 的拆分让 CPU 语义数据和 GPU 执行状态有清晰边界。App 和 Plugin 在 update 阶段修改 CPU 世界；runtime 在 prepare 阶段把需要的 scene/asset 数据同步到 GPU resources 和 shader-visible bindings；render 阶段主要读取 `RenderPassRecordCtx` 录制命令。

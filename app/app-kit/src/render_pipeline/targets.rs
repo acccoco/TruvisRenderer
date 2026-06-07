@@ -17,12 +17,12 @@ use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::bindless_manager::BindlessManager;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::frame_state::FrameRenderState;
 use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::shader_binding_system::ShaderBindingSystem;
 
 /// RenderGraph 导入图像所需的 handle、格式和尺寸快照。
 ///
@@ -106,27 +106,27 @@ impl PerFrameImageSet {
         }
     }
 
-    fn register_uav(&self, bindless_manager: &mut BindlessManager) {
+    fn register_uav(&self, shader_binding_system: &mut ShaderBindingSystem) {
         for view in &self.views {
-            bindless_manager.register_uav(*view);
+            shader_binding_system.register_uav(*view);
         }
     }
 
-    fn register_srv(&self, bindless_manager: &mut BindlessManager) {
+    fn register_srv(&self, shader_binding_system: &mut ShaderBindingSystem) {
         for view in &self.views {
-            bindless_manager.register_srv(*view);
+            shader_binding_system.register_srv(*view);
         }
     }
 
-    fn unregister_uav(&self, bindless_manager: &mut BindlessManager) {
+    fn unregister_uav(&self, shader_binding_system: &mut ShaderBindingSystem) {
         for view in &self.views {
-            bindless_manager.unregister_uav(*view);
+            shader_binding_system.unregister_uav(*view);
         }
     }
 
-    fn unregister_srv(&self, bindless_manager: &mut BindlessManager) {
+    fn unregister_srv(&self, shader_binding_system: &mut ShaderBindingSystem) {
         for view in &self.views {
-            bindless_manager.unregister_srv(*view);
+            shader_binding_system.unregister_srv(*view);
         }
     }
 
@@ -166,7 +166,7 @@ impl RtWorkingTargets {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
@@ -189,7 +189,7 @@ impl RtWorkingTargets {
         );
 
         let targets = Self { single_frame_rt };
-        targets.register_bindless(bindless_manager);
+        targets.register_bindless(shader_binding_system);
         targets
     }
 
@@ -198,20 +198,20 @@ impl RtWorkingTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
         // resize 走 destroy + new，而不是在原 handle 上复用；这样旧尺寸 image/view/bindless slot
         // 会按明确的 DestroyReason 离开全局表，RenderGraph 下一帧只看到新尺寸 target。
-        self.destroy(resource_ctx, device_ctx, bindless_manager, gfx_resource_manager, DestroyReason::Resize);
+        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
         *self = Self::new(
             resource_ctx,
             device_ctx,
             immediate_ctx,
             gfx_resource_manager,
-            bindless_manager,
+            shader_binding_system,
             frame_state,
             frame_counter,
         );
@@ -221,13 +221,13 @@ impl RtWorkingTargets {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
         // bindless slot 可能仍被 shader-visible descriptor table 引用；必须先注销 view，
         // 再释放 manager image，避免后续 descriptor 更新读到已释放的 view handle。
-        self.unregister_bindless(bindless_manager);
+        self.unregister_bindless(shader_binding_system);
         self.single_frame_rt.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
     }
 
@@ -236,14 +236,14 @@ impl RtWorkingTargets {
         self.single_frame_rt.target(frame_label)
     }
 
-    fn register_bindless(&self, bindless_manager: &mut BindlessManager) {
-        self.single_frame_rt.register_uav(bindless_manager);
-        self.single_frame_rt.register_srv(bindless_manager);
+    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        self.single_frame_rt.register_uav(shader_binding_system);
+        self.single_frame_rt.register_srv(shader_binding_system);
     }
 
-    fn unregister_bindless(&self, bindless_manager: &mut BindlessManager) {
-        self.single_frame_rt.unregister_srv(bindless_manager);
-        self.single_frame_rt.unregister_uav(bindless_manager);
+    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        self.single_frame_rt.unregister_srv(shader_binding_system);
+        self.single_frame_rt.unregister_uav(shader_binding_system);
     }
 }
 
@@ -271,7 +271,7 @@ impl DlssSrInputTargets {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
@@ -306,7 +306,7 @@ impl DlssSrInputTargets {
         );
 
         let targets = Self { depth, motion_vectors };
-        targets.register_bindless(bindless_manager);
+        targets.register_bindless(shader_binding_system);
         targets
     }
 
@@ -315,18 +315,18 @@ impl DlssSrInputTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
-        self.destroy(resource_ctx, device_ctx, bindless_manager, gfx_resource_manager, DestroyReason::Resize);
+        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
         *self = Self::new(
             resource_ctx,
             device_ctx,
             immediate_ctx,
             gfx_resource_manager,
-            bindless_manager,
+            shader_binding_system,
             frame_state,
             frame_counter,
         );
@@ -336,12 +336,12 @@ impl DlssSrInputTargets {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
         // SR input 同时注册 UAV/SRV；销毁前必须对两个 bindless 表都撤销注册。
-        self.unregister_bindless(bindless_manager);
+        self.unregister_bindless(shader_binding_system);
         self.depth.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
         self.motion_vectors.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
     }
@@ -356,18 +356,18 @@ impl DlssSrInputTargets {
         self.motion_vectors.target(frame_label)
     }
 
-    fn register_bindless(&self, bindless_manager: &mut BindlessManager) {
-        self.depth.register_uav(bindless_manager);
-        self.depth.register_srv(bindless_manager);
-        self.motion_vectors.register_uav(bindless_manager);
-        self.motion_vectors.register_srv(bindless_manager);
+    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        self.depth.register_uav(shader_binding_system);
+        self.depth.register_srv(shader_binding_system);
+        self.motion_vectors.register_uav(shader_binding_system);
+        self.motion_vectors.register_srv(shader_binding_system);
     }
 
-    fn unregister_bindless(&self, bindless_manager: &mut BindlessManager) {
-        self.depth.unregister_srv(bindless_manager);
-        self.depth.unregister_uav(bindless_manager);
-        self.motion_vectors.unregister_srv(bindless_manager);
-        self.motion_vectors.unregister_uav(bindless_manager);
+    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        self.depth.unregister_srv(shader_binding_system);
+        self.depth.unregister_uav(shader_binding_system);
+        self.motion_vectors.unregister_srv(shader_binding_system);
+        self.motion_vectors.unregister_uav(shader_binding_system);
     }
 }
 
@@ -392,7 +392,7 @@ impl DlssSrOutputTargets {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
@@ -416,7 +416,7 @@ impl DlssSrOutputTargets {
         );
 
         let targets = Self { color };
-        targets.register_bindless(bindless_manager);
+        targets.register_bindless(shader_binding_system);
         targets
     }
 
@@ -425,18 +425,18 @@ impl DlssSrOutputTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
-        self.destroy(resource_ctx, device_ctx, bindless_manager, gfx_resource_manager, DestroyReason::Resize);
+        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
         *self = Self::new(
             resource_ctx,
             device_ctx,
             immediate_ctx,
             gfx_resource_manager,
-            bindless_manager,
+            shader_binding_system,
             frame_state,
             frame_counter,
         );
@@ -446,11 +446,11 @@ impl DlssSrOutputTargets {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
-        self.unregister_bindless(bindless_manager);
+        self.unregister_bindless(shader_binding_system);
         self.color.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
     }
 
@@ -459,14 +459,14 @@ impl DlssSrOutputTargets {
         self.color.target(frame_label)
     }
 
-    fn register_bindless(&self, bindless_manager: &mut BindlessManager) {
-        self.color.register_uav(bindless_manager);
-        self.color.register_srv(bindless_manager);
+    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        self.color.register_uav(shader_binding_system);
+        self.color.register_srv(shader_binding_system);
     }
 
-    fn unregister_bindless(&self, bindless_manager: &mut BindlessManager) {
-        self.color.unregister_srv(bindless_manager);
-        self.color.unregister_uav(bindless_manager);
+    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        self.color.unregister_srv(shader_binding_system);
+        self.color.unregister_uav(shader_binding_system);
     }
 }
 
@@ -480,7 +480,7 @@ impl Drop for DlssSrOutputTargets {
 ///
 /// color target 是 per-frame 的，因为 compute graph 与 present graph 会围绕当前 frame label
 /// 读写它；depth target 目前是单张窗口尺寸资源，作为 raster pass 的 depth attachment。
-/// 它们属于 app 的主视图策略，不进入 engine `GpuStore`。
+/// 它们属于 app 的主视图策略，不进入 engine runtime-owned render state。
 pub struct MainViewTargets {
     color: PerFrameImageSet,
     depth: ImageTarget,
@@ -492,7 +492,7 @@ impl MainViewTargets {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
@@ -515,7 +515,7 @@ impl MainViewTargets {
         let depth = create_depth_target(resource_ctx, device_ctx, gfx_resource_manager, frame_state, frame_counter);
 
         let targets = Self { color, depth };
-        targets.register_bindless(bindless_manager);
+        targets.register_bindless(shader_binding_system);
         targets
     }
 
@@ -524,18 +524,18 @@ impl MainViewTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
-        self.destroy(resource_ctx, device_ctx, bindless_manager, gfx_resource_manager, DestroyReason::Resize);
+        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
         *self = Self::new(
             resource_ctx,
             device_ctx,
             immediate_ctx,
             gfx_resource_manager,
-            bindless_manager,
+            shader_binding_system,
             frame_state,
             frame_counter,
         );
@@ -545,11 +545,11 @@ impl MainViewTargets {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        bindless_manager: &mut BindlessManager,
+        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
-        self.unregister_bindless(bindless_manager);
+        self.unregister_bindless(shader_binding_system);
         self.color.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
         gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, self.depth.image, reason);
         self.depth = ImageTarget::default();
@@ -565,16 +565,16 @@ impl MainViewTargets {
         self.depth
     }
 
-    fn register_bindless(&self, bindless_manager: &mut BindlessManager) {
+    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
         // main view color 既可能被 compute/post-process 写入，也会在 present/GUI 合成阶段被读取；
         // 因此同时注册 UAV 和 SRV。depth target 只作为 attachment 使用，不进入 bindless。
-        self.color.register_uav(bindless_manager);
-        self.color.register_srv(bindless_manager);
+        self.color.register_uav(shader_binding_system);
+        self.color.register_srv(shader_binding_system);
     }
 
-    fn unregister_bindless(&self, bindless_manager: &mut BindlessManager) {
-        self.color.unregister_uav(bindless_manager);
-        self.color.unregister_srv(bindless_manager);
+    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        self.color.unregister_uav(shader_binding_system);
+        self.color.unregister_srv(shader_binding_system);
     }
 }
 
