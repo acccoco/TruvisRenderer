@@ -37,6 +37,7 @@ use crate::environment_binding::EnvironmentBinding;
 use crate::frame_timer::FrameTimer;
 use crate::instance_bridge::InstanceBridge;
 use crate::material_bridge::MaterialBridge;
+use crate::material_manager::MaterialManager;
 use crate::present::swapchain_presenter::SwapchainPresenter;
 use crate::ray_cast::RayCastService;
 use crate::render_scene::gpu_scene::GpuScene;
@@ -81,6 +82,7 @@ pub struct RenderRuntime {
     asset_texture_manager: AssetTextureManager,
     sky_bridge: SkyBridge,
     asset_mesh_manager: AssetMeshManager,
+    material_manager: MaterialManager,
     material_bridge: MaterialBridge,
     instance_bridge: InstanceBridge,
     ray_cast_service: RayCastService,
@@ -168,9 +170,13 @@ impl RenderRuntime {
             let _span = tracy_client::span!("RenderRuntime::new/asset_mesh_manager");
             AssetMeshManager::new(gfx.device_ctx(), gfx.queue_ctx())
         };
+        let material_manager = {
+            let _span = tracy_client::span!("RenderRuntime::new/material_manager");
+            MaterialManager::new(gfx.resource_ctx(), frame_counter.frame_token())
+        };
         let material_bridge = {
             let _span = tracy_client::span!("RenderRuntime::new/material_bridge");
-            MaterialBridge::new(gfx.resource_ctx(), frame_counter.frame_token())
+            MaterialBridge::new()
         };
         let instance_bridge = {
             let _span = tracy_client::span!("RenderRuntime::new/instance_bridge");
@@ -258,6 +264,7 @@ impl RenderRuntime {
                 asset_texture_manager,
                 sky_bridge,
                 asset_mesh_manager,
+                material_manager,
                 material_bridge,
                 instance_bridge,
                 ray_cast_service,
@@ -378,7 +385,8 @@ impl RenderRuntime {
         // CPU scene/asset 与 render-side bridge 按依赖方向释放：先停止 scene runtime，
         // 再释放 material/texture/mesh/GpuScene 等 GPU 翻译缓存。
         self.world.scene_manager.destroy();
-        self.material_bridge.destroy(self.gfx.resource_ctx());
+        self.material_bridge.destroy();
+        self.material_manager.destroy(self.gfx.resource_ctx());
         self.sky_bridge.destroy_mut(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -449,7 +457,7 @@ impl RenderRuntime {
         // bindless/material/instance 都使用同一个 frame token 推进延迟回收窗口，
         // 保持 shader-visible slot 与 handle 的复用节奏一致。
         self.gpu_store.bindless_manager.begin_frame(frame_token);
-        self.material_bridge.begin_frame(frame_token);
+        self.material_manager.begin_frame(frame_token);
         self.instance_bridge.begin_frame(frame_token);
 
         self.dispatch_loaded_asset_events();
@@ -791,7 +799,7 @@ impl RenderRuntime {
             self.gfx.device_ctx(),
             self.gfx.queue_ctx(),
         );
-        self.material_bridge.apply_material_events(material_events);
+        self.material_bridge.apply_material_events(material_events, &mut self.material_manager);
     }
 
     /// 根据 app render view 快照更新 main view 累积帧计数。
@@ -852,8 +860,8 @@ impl RenderRuntime {
 
         // material loaded 事件已在 begin_frame 进入稳定 slot；这里只根据 texture ready/fallback
         // 状态写当前 FIF 的 material buffer。
-        self.material_bridge.update_textures(&self.asset_texture_manager);
-        self.material_bridge.upload(
+        self.material_manager.update(&self.asset_texture_manager);
+        self.material_manager.upload(
             self.gfx.resource_ctx(),
             &cmd,
             transfer_barrier_mask,
@@ -863,12 +871,13 @@ impl RenderRuntime {
 
         // instance 阶段是 CPU scene 到 render-side `RenderData` 的边界；只有 mesh 与 material
         // 都解析成功的实例会进入 active 列表。
+        let material_slot_resolver = self.material_bridge.slot_resolver(&self.material_manager);
         let scene_render_data = self.instance_bridge.prepare_render_data(
             &self.world.scene_manager,
-            &self.material_bridge,
+            &material_slot_resolver,
             &self.asset_mesh_manager,
         );
-        let material_buffer_device_address = self.material_bridge.material_buffer_device_address(frame_label);
+        let material_buffer_device_address = self.material_manager.material_buffer_device_address(frame_label);
         // mesh ready 与 instance 变化都会影响 TLAS；两个 revision 合成一条 scene revision，
         // 交给 GpuScene 判断当前 FIF 的 TLAS 是否需要重建。
         let scene_revision =

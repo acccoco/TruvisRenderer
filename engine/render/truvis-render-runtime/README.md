@@ -34,8 +34,8 @@
   默认 sky 的真实 texture 也复用该上传路径，但 sky fallback 由 `SkyBridge` 独立维护。
 - `AssetMeshManager` 消费 `AssetHub` 的 mesh CPU 数据，在 graphics queue 上完成 vertex/index
   buffer copy 和 BLAS build；mesh 完成前不会被 `InstanceBridge` 激活。
-- `MaterialBridge` 消费 `MaterialLoaded` 事件并维护 `AssetMaterialHandle -> GpuMaterialHandle` 桥接，
-  底层 `MaterialManager` 负责 stable material slot、FIF material buffer、dirty region 上传、texture ready 检查和延迟 slot 回收。
+- `MaterialBridge` 消费 `MaterialLoaded` 事件并维护 `AssetMaterialHandle -> GpuMaterialHandle` 桥接；
+  `RenderRuntime` 直接拥有 `MaterialManager`，由它负责 stable material slot、FIF material buffer、dirty region 上传、texture ready 检查和延迟 slot 回收。
 - `InstanceBridge` 同步 `InstanceHandle -> GpuInstanceSlot`，在 mesh/material 都 GPU ready 前保持
   pending，并按稳定 slot 输出 active render list，同时为同步 raycast 生成当前 prepare 快照的 slot 反查表。
 - `RayCastService` 持有 runtime 私有的专用 ray tracing pipeline/SBT、可增长 ray/result/readback buffer、
@@ -58,7 +58,7 @@
 ## 生命周期
 
 - `RenderRuntime::new` 创建与窗口无关的 runtime root state：`Gfx`、`World`、`GpuStore`、
-  asset manager、`SkyBridge`、bridge、`GpuScene`、global descriptors、sampler 和 per-frame buffer。
+  asset manager、`MaterialManager`、`SkyBridge`、bridge、`GpuScene`、global descriptors、sampler 和 per-frame buffer。
 - `RenderRuntime::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
   swapchain 与 `SwapchainPresenter`，并返回 init Ctx 供 app/plugin 创建长期 GPU 资源。
 - `begin_frame` 是每帧资源回收入口：推进 runtime 私有帧计时器、等待当前 FIF slot、重置 frame command pool、
@@ -79,21 +79,21 @@
 - `present` 只提交当前 swapchain image 到 present queue；渲染命令提交由上层 render graph 完成。
 - `end_frame` 推进 frame counter，切换下一帧的 FIF label。
 - `wait_idle` 在 app/plugin shutdown 前调用，确保上层资源释放时不再被 GPU command 引用。
-- `destroy` 等待 GPU idle，依次释放 present、scene/assets、SkyBridge、GPU scene、mesh manager、
+- `destroy` 等待 GPU idle，依次释放 present、scene/assets、MaterialManager、SkyBridge、GPU scene、mesh manager、
   command allocator、resource manager、sync、sampler、descriptor 等资源，最后销毁 `Gfx`。
 
 ## Prepare 数据流
 
 - `RenderRuntime::dispatch_loaded_asset_events` 将 `AssetHub::update()` 产出的 texture 事件交给 `AssetTextureManager`，mesh 事件交给
-  `AssetMeshManager`，material 事件交给 `MaterialBridge`；model ready/failed 状态由 App 通过 `AssetHub` 查询，实例化入口在 `SceneManager`。
+  `AssetMeshManager`，material 事件交给 `MaterialBridge`，并由 runtime 显式传入 `MaterialManager` 完成注册或更新；model ready/failed 状态由 App 通过 `AssetHub` 查询，实例化入口在 `SceneManager`。
 - `RenderRuntime::prepare` 是 update 与 render 之间的固定桥接阶段，按 bindless、material、instance、
   GPU scene、per-frame data 的顺序准备渲染可见数据。
-- `MaterialBridge` 在 begin-frame 阶段消费 `MaterialLoaded` 事件并同步到 `MaterialManager`，
-  prepare 阶段再通过 `TextureResolver` 把 texture fallback/ready 状态按 dirty slot 局部写入 material buffer。
+- `MaterialBridge` 在 begin-frame 的 asset event 分发中消费 `MaterialLoaded` 事件并同步到 `MaterialManager`；
+  prepare 阶段由 `MaterialManager` 通过 `TextureResolver` 把 texture fallback/ready 状态按 dirty slot 局部写入 material buffer。
 - `SkyBridge` 在 prepare 阶段通过 `TextureResolver` 查询默认 sky 是否 GPU ready；
   未 ready 或失败时写入纯色 fallback SRV，切换到真实 sky 时重置累积帧。
 - `InstanceBridge` 读取 `SceneManager`，并通过 `MaterialSlotResolver` 与 `MeshRenderResolver`
-  做 ready gate，只有完整可渲染的实例才进入 `RenderData`。
+  做 ready gate；material resolver 由 `MaterialBridge` 身份映射和 `MaterialManager` stable slot 表组合而成，只有完整可渲染的实例才进入 `RenderData`。
 - `InstanceBridge` 在同一次 prepare 输出中同步生成 `GpuInstanceSlot -> CPU record`
   反查快照。raycast readback 只信任这个快照，避免查询阶段重新遍历 CPU scene。
 - `GpuScene` 消费 `RenderData`，按当前 FIF 上传 geometry、instance、light、indirect 和 scene

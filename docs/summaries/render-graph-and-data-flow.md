@@ -7,15 +7,15 @@
 CPU 语义数据从 `World` 进入 RenderRuntime。资产加载先由 `AssetHub` 产出 upload-ready CPU bytes，再由 `AssetTextureManager`
 在渲染线程上传到 GPU 并注册 bindless。
 
-material 参数由 `AssetHub` 通过 `MaterialLoaded` 事件交给 render-side `MaterialBridge`，再写入 runtime 私有
-`MaterialManager`。mesh CPU 数据由 `AssetMeshManager` 在 graphics queue 上上传 vertex/index buffer 并构建 BLAS。
+material 参数由 `AssetHub` 通过 `MaterialLoaded` 事件交给 render-side `MaterialBridge`，再由 runtime 显式传入
+`MaterialManager` 完成注册或更新。mesh CPU 数据由 `AssetMeshManager` 在 graphics queue 上上传 vertex/index buffer 并构建 BLAS。
 
 Assimp model 读取由 `AssetHub::load_model` 在后台完成，只保存 `ModelData` / prefab CPU 数据；App 根据 ready 的 model data
 显式调用 `SceneManager::spawn_model`。`SceneManager` 保存运行时语义，`InstanceBridge` 负责稳定 GPU instance slot、ready
 gate 和 active render list。
 
 mesh/material ready 查询通过 `truvis-render-runtime` 私有 scene bridge trait 连接到 `AssetMeshManager` 与
-`MaterialBridge`，这些 resolver 不属于 `truvis-world`。
+`MaterialBridge` / `MaterialManager` 组合 resolver，这些 resolver 不属于 `truvis-world`。
 
 默认 sky 通过 `SkyBridge` 请求 `AssetHub::load_texture` 异步加载，并在真实贴图 GPU ready 前使用常驻纯色 fallback。
 
@@ -30,16 +30,19 @@ flowchart LR
     AssetHub["AssetHub<br/>path/key -> CPU asset data"] --> TextureManager["AssetTextureManager<br/>texture GPU upload + bindless"]
     AssetHub --> SkyBridge["SkyBridge<br/>default sky handle + fallback"]
     AssetHub --> MeshManager["AssetMeshManager<br/>mesh buffer upload + BLAS"]
-    AssetHub --> MaterialBridge["MaterialBridge / MaterialManager<br/>stable material slot + material buffer"]
+    AssetHub --> MaterialBridge["MaterialBridge<br/>asset material -> GPU material handle"]
+    MaterialBridge --> MaterialManager["MaterialManager(RenderRuntime)<br/>stable material slot + material buffer"]
     AssetHub --> ModelData["ModelData<br/>prefab asset"]
     ModelData --> SceneSpawner["SceneManager::spawn_model"]
     SceneSpawner --> Scene["SceneManager<br/>runtime instance / light"]
     Scene --> InstanceBridge["InstanceBridge<br/>stable instance slot + ready gate"]
-    TextureManager --> MaterialBridge
+    TextureManager --> MaterialManager
     TextureManager --> SkyBridge
     MeshManager --> InstanceBridge
     Scene --> Prepare["RenderRuntime::prepare(render_view)"]
     MaterialBridge --> InstanceBridge
+    MaterialManager --> InstanceBridge
+    MaterialManager --> Prepare
     SkyBridge --> Prepare
     InstanceBridge --> Prepare
     Prepare --> GpuResources["GpuScene(RenderRuntime) / BindlessManager / GlobalDescriptorSets"]

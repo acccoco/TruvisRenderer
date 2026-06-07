@@ -60,8 +60,8 @@ flowchart LR
   resize / shutdown 阶段通过 `GpuStore` 中的 manager 显式创建或释放。
 - Asset：`AssetHub` 持有 texture / mesh / material / model 内容资产 handle 与 CPU 加载状态，并负责 Assimp model 到 owned
   CPU 数据的导入；`AssetTextureManager` 持有 texture 的 GPU image/view/bindless 绑定；`AssetMeshManager` 持有 mesh
-  vertex/index buffer、BLAS 和 GPU ready 状态；runtime 私有 `MaterialManager` 由 `MaterialBridge` 驱动，持有 material GPU
-  buffer 与稳定 slot；App 将 ready `ModelData` 通过 `SceneManager::spawn_model` 变为 runtime instances；`InstanceBridge`
+  vertex/index buffer、BLAS 和 GPU ready 状态；runtime 直接持有私有 `MaterialManager`，它管理 material GPU buffer
+  与稳定 slot；`MaterialBridge` 只维护 asset material 到 runtime material handle 的桥接；App 将 ready `ModelData` 通过 `SceneManager::spawn_model` 变为 runtime instances；`InstanceBridge`
   持有 runtime instance 到稳定 GPU instance slot 的映射。
 - Scene GPU：runtime 私有 `GpuScene` 持有 instance / geometry / light / indirect buffer、TLAS 和当前 FIF 的 raster draw
   cache，并通过 `RenderSceneView` 向 render pass 暴露只读能力；默认 sky 由 runtime 私有 `SkyBridge` 通过 `AssetHub` /
