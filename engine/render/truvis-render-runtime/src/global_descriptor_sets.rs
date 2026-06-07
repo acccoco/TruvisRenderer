@@ -11,8 +11,8 @@ pub use crate::descriptor_bindings::{
     BindlessDescriptorBinding, BindlessDescriptorTarget, PerFrameDescriptorBinding, StaticDescriptorBinding,
     StaticSamplerDescriptorTarget,
 };
-use crate::frame_counter::FrameCounter;
-use crate::frame_counter::FrameLabel;
+use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::frame_counter::FrameLabel;
 
 pub struct GlobalDescriptorSets {
     layout_0_static: GfxDescriptorSetLayout<StaticDescriptorBinding>,

@@ -9,6 +9,7 @@
 
 pub mod accum_pass;
 pub mod blit_pass;
+mod compute_pass;
 pub mod denoise_accum_pass;
 pub mod dlss_sr_pass;
 pub mod gbuffer;

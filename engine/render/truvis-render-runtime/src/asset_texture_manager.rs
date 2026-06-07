@@ -3,6 +3,9 @@ use std::collections::VecDeque;
 use ash::vk;
 use slotmap::SecondaryMap;
 
+use crate::bindless_manager::BindlessSrvHandle;
+use crate::gfx_resource_manager::GfxResourceManager;
+use crate::shader_binding_system::ShaderBindingSystem;
 use truvis_asset::asset_hub::AssetLoadedEvent;
 use truvis_asset::handle::{AssetTextureHandle, TextureBytes};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -14,10 +17,7 @@ use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::bindless_manager::BindlessSrvHandle;
-use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_render_foundation::shader_binding_system::ShaderBindingSystem;
 use truvis_shader_binding::gpu;
 
 use crate::texture_resolver::{TextureBinding, TextureResolver};

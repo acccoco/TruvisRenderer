@@ -1,4 +1,4 @@
-use truvis_render_foundation::bindless_manager::BindlessSrvHandle;
+use crate::bindless_manager::BindlessSrvHandle;
 use truvis_shader_binding::gpu;
 
 /// scene root buffer 写入的 sky 绑定。

@@ -2,7 +2,7 @@ use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 
-use crate::frame_counter::FrameCounter;
+use truvis_render_foundation::frame_counter::FrameCounter;
 
 pub struct StageBufferManager {
     buffers: [Vec<GfxBuffer>; FrameCounter::fif_count()],

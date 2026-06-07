@@ -7,15 +7,15 @@
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
-use truvis_render_foundation::cmd_allocator::CmdAllocator;
-use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
-use truvis_render_foundation::shader_binding_system::ShaderBindingSystem;
+use truvis_render_runtime::cmd_allocator::CmdAllocator;
 use truvis_render_runtime::frame_state::FrameRenderState;
 use truvis_render_runtime::frame_timing::FrameTiming;
+use truvis_render_runtime::gfx_resource_manager::GfxResourceManager;
 use truvis_render_runtime::present::swapchain_presenter::PresentView;
 use truvis_render_runtime::render_options::RenderOptions;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
+use truvis_render_runtime::shader_binding_system::ShaderBindingSystem;
 use truvis_world::World;
 
 use crate::input_event::InputEvent;

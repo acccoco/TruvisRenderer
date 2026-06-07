@@ -13,14 +13,20 @@ mod asset_mesh_manager;
 /// AssetHub 纹理事件到 GPU image/view/bindless 绑定的渲染侧管理器。
 mod asset_texture_manager;
 
+pub mod bindless_manager;
+pub mod cmd_allocator;
+pub mod descriptor_bindings;
 pub mod dlss_sr;
 mod environment_binding;
 pub mod frame_state;
 mod frame_timer;
 pub mod frame_timing;
+pub mod gfx_resource_manager;
+pub mod global_descriptor_sets;
 mod instance_bridge;
 mod material_bridge;
 mod material_manager;
+pub mod per_frame_gpu_data;
 /// prepare 后供 App 同步查询可见表面命中的 raycast API。
 pub mod ray_cast;
 pub mod render_options;
@@ -29,7 +35,10 @@ pub mod render_runtime;
 pub mod render_runtime_ctx;
 mod render_scene;
 mod runtime_defaults;
+pub mod sampler_manager;
 mod scene_bridge;
+pub mod shader_binding_system;
 mod sky_bridge;
+pub mod stage_buffer_manager;
 mod texture_resolver;
 pub mod view_accum;

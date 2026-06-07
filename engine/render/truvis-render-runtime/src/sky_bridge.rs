@@ -1,6 +1,9 @@
 use ash::vk;
 use slotmap::Key;
 
+use crate::bindless_manager::BindlessSrvHandle;
+use crate::gfx_resource_manager::GfxResourceManager;
+use crate::shader_binding_system::ShaderBindingSystem;
 use truvis_asset::asset_hub::AssetHub;
 use truvis_asset::handle::AssetTextureHandle;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
@@ -8,10 +11,7 @@ use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_path::TruvisPath;
-use truvis_render_foundation::bindless_manager::BindlessSrvHandle;
-use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_render_foundation::shader_binding_system::ShaderBindingSystem;
 use truvis_shader_binding::gpu;
 
 use crate::environment_binding::EnvironmentSkyBinding;

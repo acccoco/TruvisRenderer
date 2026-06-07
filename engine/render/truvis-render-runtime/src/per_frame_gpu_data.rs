@@ -7,7 +7,7 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_shader_binding::gpu;
 
-use crate::frame_counter::{FrameCounter, FrameLabel};
+use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
 
 /// 每个 FIF slot 一份的 `PerFrameData` UBO owner。
 ///

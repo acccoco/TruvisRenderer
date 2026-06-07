@@ -3642,15 +3642,8 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "glam",
- "itertools 0.10.5",
- "log",
  "slotmap",
- "tracy-client",
- "truvis-descriptor-layout-macro",
- "truvis-descriptor-layout-trait",
  "truvis-gfx",
- "truvis-shader-binding",
- "vk-mem",
 ]
 
 [[package]]

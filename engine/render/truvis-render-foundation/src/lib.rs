@@ -1,13 +1,5 @@
-pub mod bindless_manager;
-pub mod cmd_allocator;
-pub mod descriptor_bindings;
 pub mod frame_counter;
-pub mod gfx_resource_manager;
-pub mod global_descriptor_sets;
 pub mod handles;
-pub mod per_frame_gpu_data;
 pub mod render_scene_view;
 pub mod render_view;
-pub mod sampler_manager;
-pub mod shader_binding_system;
-pub mod stage_buffer_manager;
+pub mod resource_access;

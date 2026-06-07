@@ -11,8 +11,8 @@ workspace 顶层 `app/`。
 
 - L0 基础层：`foundation/`、`utils/` 和 descriptor-layout crate，提供日志、路径、通用工具和 shader binding layout 元信息。
 - L1 RHI 层：`gfx/truvis-gfx` 封装 Vulkan root owner、typed Ctx、资源、队列、同步、swapchain 与管线基础能力。
-- L2 GPU 基础设施：`render/truvis-render-foundation` 提供 `GfxResourceManager`、`ShaderBindingSystem`、`FrameCounter` /
-  `FrameLabel`、`PerFrameGpuData`、资源句柄和 view 契约。
+- L2 渲染契约：`render/truvis-render-foundation` 提供 `FrameCounter` / `FrameLabel`、资源句柄、`RenderView` /
+  `RenderSceneView` 和 `GfxResourceAccess`。
 - L3 语义与编排辅助：`world/` 保存 CPU asset/scene 语义，`render/truvis-render-graph` 负责按 App 指定顺序推导 pass 同步。
 - L4 Runtime 集成层：`render/truvis-render-runtime` 持有 `Gfx`、`World`、GPU resource/binding/timing owners、runtime render state、GPU scene、present、`RenderPassRecordCtx` 和 asset-to-GPU bridge。
 - L5 App 框架层：`app-frame/truvis-app-frame` 定义 `RenderApp`、`RenderAppShell`、`RenderAppHooks`、`Plugin` 和 render loop
@@ -63,11 +63,11 @@ CPU 侧语义层，负责 asset 身份、加载状态、scene runtime 身份与 
 
 通用渲染基础设施目录，覆盖 GPU 状态、RenderGraph 同步辅助和 Runtime 集成。
 
-- `truvis-render-foundation/`：`GfxResourceManager`、`ShaderBindingSystem`、`FrameCounter` / `FrameLabel`、`PerFrameGpuData`、
-  `RenderView`、`RenderSceneView`、frame/cmd 资源等 GPU 基础状态；不包含 CPU scene、窗口平台或 runtime render state 语义。
+- `truvis-render-foundation/`：跨渲染 crate 的最小契约层，提供 `FrameCounter` / `FrameLabel`、GPU 资源句柄、
+  `RenderView`、`RenderSceneView` 和 `GfxResourceAccess`；不包含 GPU owner、CPU scene、窗口平台或 runtime render state 语义。
 - `truvis-render-graph/`：按 App 添加 pass 的线性顺序推导 image barrier、layout transition 和 semaphore submit
   信息；不做自动调度、资源 aliasing 或业务 pass 逻辑。
-- `truvis-render-runtime/`：渲染运行时集成层，拥有 `Gfx`、`World`、GPU resource/binding/timing owners、runtime render state、runtime 私有 `GpuScene`、present、同步资源、`RenderPassRecordCtx` 和 CPU-to-GPU bridge；不负责窗口事件循环、GUI 适配或具体 App pass 顺序。
+- `truvis-render-runtime/`：渲染运行时集成层，拥有 `Gfx`、`World`、`GfxResourceManager`、`ShaderBindingSystem`、`CmdAllocator`、`PerFrameGpuData`、runtime render state、runtime 私有 `GpuScene`、present、同步资源、`RenderPassRecordCtx` 和 CPU-to-GPU bridge；不负责窗口事件循环、GUI 适配或具体 App pass 顺序。
 
 ### `app-frame/`
 

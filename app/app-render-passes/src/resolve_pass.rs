@@ -10,9 +10,9 @@ use truvis_gfx::pipelines::graphics_pipeline::{GfxGraphicsPipeline, GfxGraphicsP
 use truvis_gfx::pipelines::rendering_info::GfxRenderingInfo;
 use truvis_gfx::pipelines::shader::GfxShaderStageInfo;
 use truvis_path::TruvisPath;
-use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
+use truvis_render_runtime::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_shader_binding::gpu;
 use truvis_utils::count_indexed_array;

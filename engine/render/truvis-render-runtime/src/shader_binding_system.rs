@@ -5,11 +5,11 @@ use truvis_gfx::gfx::GfxDeviceCtx;
 
 use crate::bindless_manager::{BindlessManager, BindlessSrvHandle, BindlessUavHandle};
 use crate::descriptor_bindings::{BindlessDescriptorBinding, PerFrameDescriptorBinding, StaticDescriptorBinding};
-use crate::frame_counter::{FrameLabel, FrameToken};
 use crate::gfx_resource_manager::GfxResourceManager;
 use crate::global_descriptor_sets::GlobalDescriptorSets;
-use crate::handles::GfxImageViewHandle;
 use crate::sampler_manager::RenderSamplerManager;
+use truvis_render_foundation::frame_counter::{FrameLabel, FrameToken};
+use truvis_render_foundation::handles::GfxImageViewHandle;
 
 /// shader-visible binding 系统的长期 owner。
 ///

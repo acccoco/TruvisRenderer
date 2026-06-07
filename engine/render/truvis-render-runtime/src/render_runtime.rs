@@ -3,6 +3,11 @@ use std::{env, ffi::CStr};
 use ash::vk::{self, Handle};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
+use crate::cmd_allocator::CmdAllocator;
+use crate::gfx_resource_manager::GfxResourceManager;
+use crate::global_descriptor_sets::PerFrameDescriptorBinding;
+use crate::per_frame_gpu_data::PerFrameGpuData;
+use crate::shader_binding_system::ShaderBindingSystem;
 use truvis_asset::asset_hub::{AssetHub, AssetLoadedEvent};
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -10,13 +15,8 @@ use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::commands::submit_info::GfxSubmitInfo;
 use truvis_gfx::gfx::{Gfx, GfxDeviceInfoCtx};
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
-use truvis_render_foundation::cmd_allocator::CmdAllocator;
 use truvis_render_foundation::frame_counter::FrameCounter;
-use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
-use truvis_render_foundation::global_descriptor_sets::PerFrameDescriptorBinding;
-use truvis_render_foundation::per_frame_gpu_data::PerFrameGpuData;
 use truvis_render_foundation::render_view::RenderView;
-use truvis_render_foundation::shader_binding_system::ShaderBindingSystem;
 use truvis_shader_binding::gpu;
 use truvis_world::scene_manager::SceneManager;
 

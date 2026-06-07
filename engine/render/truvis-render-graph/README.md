@@ -10,6 +10,7 @@
 - 汇总 imported image wait semaphore、exported image signal semaphore 以及额外 signal semaphore
 - 编译为 `CompiledGraph`，再执行 command recording 并生成 queue submit 所需信息
 - 输出 execution plan，辅助定位 pass 顺序、资源访问、barrier 和 semaphore
+- 执行阶段只通过 `GfxResourceAccess` 查询 imported image / image view，不依赖 runtime 的 concrete resource manager
 
 ## 顺序执行模型
 
@@ -25,6 +26,7 @@
 ## 边界约束
 
 - 仅关注 imported image 的状态跟踪、同步和命令录制辅助，不依赖 scene/asset 等领域模块
+- 不依赖 `truvis-render-runtime`，也不持有 `GfxResourceManager`、descriptor 或 bindless owner
 - App 和具体 Plugin 显式决定 pass 添加顺序，RenderGraph 不重排 pass
 - transient image/buffer、buffer barrier 录制、多队列调度和资源 aliasing 暂不属于当前能力
 - 业务 pass 逻辑在上层模块组织（如 `truvis-app`）

@@ -1,6 +1,8 @@
 use anyhow::{Result, bail};
 use ash::vk;
 
+use crate::global_descriptor_sets::GlobalDescriptorSets;
+use crate::shader_binding_system::ShaderBindingView;
 use truvis_asset::handle::{AssetMaterialHandle, AssetMeshHandle};
 use truvis_gfx::commands::barrier::GfxBufferBarrier;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -10,9 +12,7 @@ use truvis_gfx::commands::submit_info::GfxSubmitInfo;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxQueueCtx, GfxResourceCtx};
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
-use truvis_render_foundation::shader_binding_system::ShaderBindingView;
 use truvis_shader_binding::gpu;
 use truvis_world::guid_new_type::InstanceHandle;
 

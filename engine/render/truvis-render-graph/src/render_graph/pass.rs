@@ -4,6 +4,7 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::resource_access::GfxResourceAccess;
 
 use crate::render_graph::{RgImageHandle, RgImageState};
 
@@ -14,8 +15,8 @@ pub struct RgPassContext<'a> {
     /// 命令缓冲区
     pub cmd: &'a GfxCommandBuffer,
 
-    /// 资源管理器引用（用于获取物理资源）
-    pub resource_manager: &'a truvis_render_foundation::gfx_resource_manager::GfxResourceManager,
+    /// 资源查询契约（用于获取物理资源）
+    pub resource_manager: &'a dyn GfxResourceAccess,
 
     /// 物理资源查询表（编译后填充）
     pub(crate) image_handles: &'a SecondaryMap<RgImageHandle, (GfxImageHandle, GfxImageViewHandle)>,

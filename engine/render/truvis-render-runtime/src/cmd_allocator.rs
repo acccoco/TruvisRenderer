@@ -5,8 +5,8 @@ use truvis_gfx::{
     gfx::{GfxDeviceCtx, GfxDeviceInfoCtx},
 };
 
-use crate::frame_counter::FrameCounter;
-use crate::frame_counter::FrameLabel;
+use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::frame_counter::FrameLabel;
 
 /// 命令缓冲分配器
 ///

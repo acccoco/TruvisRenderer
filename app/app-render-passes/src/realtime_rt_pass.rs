@@ -14,10 +14,10 @@ use truvis_gfx::{
     resources::special_buffers::sbt_buffer::GfxSBTBuffer,
 };
 use truvis_path::TruvisPath;
-use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
+use truvis_render_runtime::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_shader_binding::gpu;
 use truvis_utils::count_indexed_array;

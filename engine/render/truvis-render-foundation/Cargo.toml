@@ -6,15 +6,7 @@ description = "GPU 的边界"
 
 [dependencies]
 truvis-gfx = { workspace = true }
-truvis-shader-binding = { workspace = true }
-truvis-descriptor-layout-trait = { workspace = true }
-truvis-descriptor-layout-macro = { workspace = true }
-
 
 ash = { workspace = true }
-vk-mem = { workspace = true }
 glam = { workspace = true }
-itertools = { workspace = true }
-log = { workspace = true }
 slotmap = { workspace = true }
-tracy-client = { workspace = true }

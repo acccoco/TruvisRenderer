@@ -7,9 +7,9 @@ use truvis_gfx::{gfx::GfxDeviceCtx, utilities::descriptor_cursor::GfxDescriptorC
 use truvis_shader_binding::gpu;
 
 use crate::descriptor_bindings::{BindlessDescriptorBinding, BindlessDescriptorTarget};
-use crate::frame_counter::{FrameCounter, FrameToken};
 use crate::gfx_resource_manager::GfxResourceManager;
-use crate::handles::GfxImageViewHandle;
+use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
+use truvis_render_foundation::handles::GfxImageViewHandle;
 
 #[derive(Copy, Clone)]
 pub struct BindlessUavHandle(pub gpu::UavHandle);

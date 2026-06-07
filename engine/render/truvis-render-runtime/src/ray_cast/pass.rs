@@ -2,6 +2,8 @@ use ash::vk;
 use ash::vk::Handle;
 use itertools::Itertools;
 
+use crate::global_descriptor_sets::GlobalDescriptorSets;
+use crate::shader_binding_system::ShaderBindingView;
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -12,8 +14,6 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::sbt_buffer::GfxSBTBuffer;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_path::TruvisPath;
-use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_foundation::shader_binding_system::ShaderBindingView;
 use truvis_shader_binding::gpu;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;

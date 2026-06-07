@@ -11,8 +11,8 @@ use slotmap::SecondaryMap;
 
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::submit_info::GfxSubmitInfo;
-use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::resource_access::GfxResourceAccess;
 
 use crate::render_graph::barrier::{PassBarriers, RgImageBarrierDesc};
 use crate::render_graph::export_info::RgExportInfo;
@@ -368,8 +368,8 @@ impl CompiledGraph<'_> {
     ///
     /// # 参数
     /// - `cmd`: 命令缓冲区（已经 begin）
-    /// - `resource_manager`: 资源管理器（用于获取物理资源）
-    pub fn execute(&self, cmd: &GfxCommandBuffer, resource_manager: &GfxResourceManager) {
+    /// - `resource_manager`: 资源只读查询契约（用于获取物理资源）
+    pub fn execute(&self, cmd: &GfxCommandBuffer, resource_manager: &dyn GfxResourceAccess) {
         let _span = tracy_client::span!("CompiledGraph::execute");
 
         // 构建物理资源查询表（使用 SecondaryMap）
@@ -464,7 +464,7 @@ impl CompiledGraph<'_> {
         &self,
         cmd: &GfxCommandBuffer,
         pass_barriers: &PassBarriers,
-        resource_manager: &GfxResourceManager,
+        resource_manager: &dyn GfxResourceAccess,
     ) {
         use truvis_gfx::commands::barrier::GfxImageBarrier;
 

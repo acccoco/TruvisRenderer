@@ -26,7 +26,7 @@
 | `GpuScene` | runtime 私有 GPU scene owner，保存 scene buffers、TLAS 和 raster draw cache。 |
 | `RenderSceneView` | pass 可见的只读 scene 契约，隐藏 concrete `GpuScene` owner。 |
 | `RenderPresent` | runtime 持有的 surface / swapchain / present 资源 owner。 |
-| `truvis-render-foundation` | 渲染基础层 crate，承载 GPU 资源状态、manager 和基础契约。 |
+| `truvis-render-foundation` | 渲染契约 crate，承载 FIF 索引、GPU 资源句柄、`RenderView` / `RenderSceneView` 和 `GfxResourceAccess`。 |
 
 ## 已完成命名决策
 

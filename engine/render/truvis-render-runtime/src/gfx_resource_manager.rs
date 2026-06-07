@@ -10,9 +10,9 @@ use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-
-use crate::frame_counter::FrameCounter;
-use crate::handles::{GfxBufferHandle, GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::handles::{GfxBufferHandle, GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::resource_access::GfxResourceAccess;
 
 /// 资源管理器
 ///
@@ -344,5 +344,15 @@ impl GfxResourceManager {
     /// 获取 ImageView 资源引用
     pub fn get_image_view(&self, handle: GfxImageViewHandle) -> Option<&GfxImageView> {
         self.image_view_pool.get(handle)
+    }
+}
+
+impl GfxResourceAccess for GfxResourceManager {
+    fn get_image(&self, handle: GfxImageHandle) -> Option<&GfxImage> {
+        self.get_image(handle)
+    }
+
+    fn get_image_view(&self, handle: GfxImageViewHandle) -> Option<&GfxImageView> {
+        self.get_image_view(handle)
     }
 }
