@@ -3,11 +3,12 @@ use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
 use truvis_render_foundation::cmd_allocator::CmdAllocator;
+use truvis_render_foundation::dlss_sr::DlssSrState;
 use truvis_render_foundation::frame_state::FrameRenderState;
 use truvis_render_foundation::frame_timing::FrameTiming;
 use truvis_render_foundation::gfx_resource_manager::GfxResourceManager;
+use truvis_render_foundation::per_frame_gpu_data::PerFrameGpuData;
 use truvis_render_foundation::render_options::RenderOptions;
-use truvis_render_foundation::render_pass_record_ctx::RenderPassRecordCtx;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_foundation::shader_binding_system::{ShaderBindingSystem, ShaderBindingView};
 use truvis_render_foundation::view_accum::ViewAccumState;
@@ -16,6 +17,22 @@ use truvis_world::World;
 use crate::instance_bridge::InstanceBridge;
 use crate::present::swapchain_presenter::PresentView;
 use crate::ray_cast::{RayCastRay, RayCastResult, RayCastService};
+
+/// pass 录制阶段的只读共享渲染上下文。
+///
+/// 该上下文只表达 pass 录制确实需要的 GPU-facing 状态。资源创建、bindless 注册、
+/// resize 和 shutdown 仍通过对应生命周期 Ctx 的可变 owner 完成。
+#[derive(Clone, Copy)]
+pub struct RenderPassRecordCtx<'a> {
+    pub frame_timing: &'a FrameTiming,
+    pub frame_state: &'a FrameRenderState,
+    pub render_options: &'a RenderOptions,
+    pub view_accum: &'a ViewAccumState,
+    pub dlss_sr_state: &'a DlssSrState,
+    pub shader_bindings: ShaderBindingView<'a>,
+    pub gfx_resource_manager: &'a GfxResourceManager,
+    pub per_frame_gpu_data: &'a PerFrameGpuData,
+}
 
 /// Update 阶段上下文，借用 CPU 端更新需要的 RenderRuntime 字段。
 ///

@@ -12,7 +12,6 @@
 - `ShaderBindingSystem`（`GlobalDescriptorSets` + `BindlessManager` + sampler manager）
 - `FrameTiming`
 - `PerFrameGpuData`
-- `RenderPassRecordCtx`
 - `RenderSceneView`
 
 ## Runtime-Owned 基础状态
@@ -21,12 +20,11 @@
 - `ShaderBindingSystem` 是 shader-visible binding owner，聚合 `GlobalDescriptorSets`、`BindlessManager` 和 sampler manager，并提供 bindless 注册/注销与 render 阶段只读 view。
 - `FrameTiming` 聚合 frame counter、delta time 和 total time；`FrameTimer` 只作为 runtime 内部 wall-clock source。
 - `PerFrameGpuData` 持有 per-FIF `PerFrameData` UBO，负责当前帧 GPU 常量写入和 device address 查询。
-- `RenderPassRecordCtx` 是 render/pass 录制阶段的窄只读上下文，只暴露 pass 需要的 frame timing、render state、shader bindings、resource manager 和 per-frame GPU data。
 - `RenderOptions` 只保存 runtime 全局可调选项；RT debug channel、legacy denoise 参数和实验性 IC 开关属于具体 pipeline/pass，不放入 foundation 全局状态。
 - `FrameRenderState` 是 runtime 派生的 main view 帧状态，记录 HDR format、depth format、render extent 和 output extent；调用方读取它创建 target，但不把它当作用户配置。
 - `ViewAccumState` 是当前 main view 的 temporal state，不是配置项；resize、view 变化或环境切换会让 runtime 重置它。
 - CPU scene 或 asset hub 属于 `truvis-world::World`，不进入这些 GPU-facing owner。
-- render 阶段通常只借出 `RenderPassRecordCtx`，使 pass adapter 能读取 GPU 状态并录制命令，但不能随意改写 frame state。
+- render 阶段由 `truvis-render-runtime` 借出 `RenderPassRecordCtx`，foundation 只提供该上下文引用的基础 owner 和状态类型。
 - resize / shutdown 阶段通过 mutable lifecycle context 暴露 `GfxResourceManager` 与 `ShaderBindingSystem`，用于重建、注册或释放 manager-owned GPU resources。
 - `GlobalDescriptorSets` 只作为全局 pipeline 绑定聚合；资源 manager 更新 descriptor 时只能接收专用 target，避免依赖完整全局绑定策略。
 

@@ -10,7 +10,6 @@ pub mod global_descriptor_sets;
 pub mod handles;
 pub mod per_frame_gpu_data;
 pub mod render_options;
-pub mod render_pass_record_ctx;
 pub mod render_scene_view;
 pub mod render_view;
 pub mod sampler_manager;

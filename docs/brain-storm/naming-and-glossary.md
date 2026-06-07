@@ -17,7 +17,7 @@
 | `ShaderBindingSystem` | Shader-visible binding owner，聚合 global descriptor sets、bindless table 和 sampler manager。 |
 | `FrameTiming` | 帧计数与时间状态，聚合 frame counter、delta time 和 total time。 |
 | `PerFrameGpuData` | per-FIF `PerFrameData` UBO owner，负责当前帧 GPU 常量写入和 device address 查询。 |
-| `RenderPassRecordCtx` | pass 录制阶段只读上下文，裁剪出 frame timing、render state、shader bindings、resource manager 和 per-frame GPU data。 |
+| `RenderPassRecordCtx` | runtime render phase 的 pass 录制阶段只读上下文，裁剪出 frame timing、render state、shader bindings、resource manager 和 per-frame GPU data。 |
 | `AssetHub` | 内容资产身份、去重、CPU 加载状态和加载事件来源。 |
 | `AssetTextureManager` | render-side texture GPU upload、image/view、bindless SRV 与 fallback resolver owner。 |
 | `AssetMeshManager` | render-side mesh buffer upload、BLAS build 和 mesh ready cache owner。 |

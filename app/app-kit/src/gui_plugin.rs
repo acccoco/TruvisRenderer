@@ -17,10 +17,10 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_render_foundation::render_pass_record_ctx::RenderPassRecordCtx;
 use truvis_render_graph::render_graph::{
     RenderGraphBuilder, RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext,
 };
+use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 
 const FONT_TEXTURE_ID: usize = 0;
 const DEBUG_TEXTURE_ID_BASE: usize = 1;

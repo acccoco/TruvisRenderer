@@ -12,8 +12,8 @@ use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_render_foundation::dlss_sr::DlssSrFrameConstants;
 use truvis_render_foundation::dlss_sr::DlssSrMode;
-use truvis_render_foundation::render_pass_record_ctx::RenderPassRecordCtx;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
+use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_streamline_binding::dlss;
 
 /// DLSS SR 输入资源在 evaluate 前的稳定状态。

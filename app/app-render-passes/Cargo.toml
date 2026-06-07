@@ -8,6 +8,7 @@ description = "App-layer shared render pass implementations (RT, post-process, e
 truvis-gfx = { workspace = true }
 truvis-render-foundation = { workspace = true }
 truvis-render-graph = { workspace = true }
+truvis-render-runtime = { workspace = true }
 truvis-shader-binding = { workspace = true }
 truvis-path = { workspace = true }
 truvis-utils = { workspace = true }

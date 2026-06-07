@@ -17,8 +17,8 @@ use truvis_gfx::{
 use truvis_path::TruvisPath;
 use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_foundation::render_pass_record_ctx::RenderPassRecordCtx;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
+use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_shader_binding::gpu;
 
 pub struct PhongPass {
