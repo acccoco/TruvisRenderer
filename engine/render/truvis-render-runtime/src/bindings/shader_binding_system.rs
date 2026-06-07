@@ -3,11 +3,13 @@ use ash::vk;
 use truvis_gfx::descriptors::descriptor::GfxDescriptorSet;
 use truvis_gfx::gfx::GfxDeviceCtx;
 
-use crate::bindless_manager::{BindlessManager, BindlessSrvHandle, BindlessUavHandle};
-use crate::descriptor_bindings::{BindlessDescriptorBinding, PerFrameDescriptorBinding, StaticDescriptorBinding};
-use crate::gfx_resource_manager::GfxResourceManager;
-use crate::global_descriptor_sets::GlobalDescriptorSets;
-use crate::sampler_manager::RenderSamplerManager;
+use crate::bindings::bindless_manager::{BindlessManager, BindlessSrvHandle, BindlessUavHandle};
+use crate::bindings::descriptor_bindings::{
+    BindlessDescriptorBinding, PerFrameDescriptorBinding, StaticDescriptorBinding,
+};
+use crate::bindings::global_descriptor_sets::GlobalDescriptorSets;
+use crate::bindings::sampler_manager::RenderSamplerManager;
+use crate::resources::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::frame_counter::{FrameLabel, FrameToken};
 use truvis_render_foundation::handles::GfxImageViewHandle;
 

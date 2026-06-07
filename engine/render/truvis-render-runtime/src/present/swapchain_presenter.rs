@@ -2,7 +2,7 @@ use ash::vk;
 use itertools::Itertools;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::gfx_resource_manager::GfxResourceManager;
+use crate::resources::gfx_resource_manager::GfxResourceManager;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::resources::image::GfxImage;

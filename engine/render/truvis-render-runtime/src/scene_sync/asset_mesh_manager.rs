@@ -8,7 +8,7 @@ use slotmap::SecondaryMap;
 
 use crate::render_scene::geometry::RtGeometry;
 use crate::render_scene::render_data::MeshRenderData;
-use crate::scene_bridge::MeshRenderResolver;
+use crate::scene_sync::scene_bridge::MeshRenderResolver;
 use truvis_asset::asset_hub::AssetLoadedEvent;
 use truvis_asset::handle::{AssetMeshHandle, MeshData};
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};

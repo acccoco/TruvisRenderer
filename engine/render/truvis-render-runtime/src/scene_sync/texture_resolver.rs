@@ -4,7 +4,7 @@
 //! 查询 asset texture 是否 ready，并取得 shader 可读取的 bindless binding。
 //! 纹理上传、fallback 资源所有权和 bindless 注册仍由纹理管理器等实现方负责。
 
-use crate::bindless_manager::BindlessSrvHandle;
+use crate::bindings::bindless_manager::BindlessSrvHandle;
 use truvis_asset::handle::AssetTextureHandle;
 use truvis_shader_binding::gpu;
 

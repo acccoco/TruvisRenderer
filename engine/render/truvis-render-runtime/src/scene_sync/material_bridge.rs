@@ -3,7 +3,7 @@ use slotmap::SecondaryMap;
 use truvis_asset::asset_hub::AssetLoadedEvent;
 use truvis_asset::handle::{AssetMaterialHandle, MaterialData};
 
-use crate::{
+use crate::scene_sync::{
     material_manager::{GpuMaterialHandle, MaterialManager, RenderMaterialParams},
     scene_bridge::MaterialSlotResolver,
 };

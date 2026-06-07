@@ -6,7 +6,7 @@ use truvis_gfx::sampler::{GfxSampler, GfxSamplerDesc};
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_shader_binding::gpu;
 
-use crate::descriptor_bindings::{StaticDescriptorBinding, StaticSamplerDescriptorTarget};
+use crate::bindings::descriptor_bindings::{StaticDescriptorBinding, StaticSamplerDescriptorTarget};
 
 // Sampler 管理器
 pub struct RenderSamplerManager {

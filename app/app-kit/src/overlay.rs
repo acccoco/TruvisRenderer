@@ -1,7 +1,7 @@
 use ash::vk;
 use truvis_app_frame::plugin_api::Plugin;
-use truvis_render_runtime::dlss_sr::DlssSrMode;
-use truvis_render_runtime::render_options::RenderOptions;
+use truvis_render_runtime::state::dlss_sr::DlssSrMode;
+use truvis_render_runtime::state::render_options::RenderOptions;
 
 use crate::camera::Camera;
 use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtPipelineSettings};

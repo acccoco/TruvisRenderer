@@ -17,7 +17,7 @@ use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
 use truvis_shader_binding::gpu;
 
-use crate::texture_resolver::{TextureBinding, TextureResolver};
+use crate::scene_sync::texture_resolver::{TextureBinding, TextureResolver};
 
 new_key_type! {
     /// runtime 私有的 GPU material handle。

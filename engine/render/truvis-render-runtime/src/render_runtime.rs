@@ -3,11 +3,11 @@ use std::{env, ffi::CStr};
 use ash::vk::{self, Handle};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::cmd_allocator::CmdAllocator;
-use crate::gfx_resource_manager::GfxResourceManager;
-use crate::global_descriptor_sets::PerFrameDescriptorBinding;
-use crate::per_frame_gpu_data::PerFrameGpuData;
-use crate::shader_binding_system::ShaderBindingSystem;
+use crate::bindings::global_descriptor_sets::PerFrameDescriptorBinding;
+use crate::bindings::per_frame_gpu_data::PerFrameGpuData;
+use crate::bindings::shader_binding_system::ShaderBindingSystem;
+use crate::resources::cmd_allocator::CmdAllocator;
+use crate::resources::gfx_resource_manager::GfxResourceManager;
 use truvis_asset::asset_hub::{AssetHub, AssetLoadedEvent};
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -23,24 +23,24 @@ use truvis_world::scene_manager::SceneManager;
 use truvis_streamline_binding::dlss;
 use truvis_world::World;
 
-use crate::asset_mesh_manager::AssetMeshManager;
-use crate::asset_texture_manager::AssetTextureManager;
-use crate::dlss_sr::{DlssSrMode, DlssSrState};
-use crate::environment_binding::EnvironmentBinding;
-use crate::frame_state::FrameRenderState;
-use crate::frame_timer::FrameTimer;
-use crate::frame_timing::FrameTiming;
-use crate::instance_bridge::InstanceBridge;
-use crate::material_bridge::MaterialBridge;
-use crate::material_manager::MaterialManager;
 use crate::present::swapchain_presenter::SwapchainPresenter;
 use crate::ray_cast::RayCastService;
-use crate::render_options::RenderOptions;
 use crate::render_runtime_ctx::RenderPassRecordCtx;
 use crate::render_scene::gpu_scene::GpuScene;
 use crate::runtime_defaults::DefaultRenderRuntimeSettings;
-use crate::sky_bridge::SkyBridge;
-use crate::view_accum::ViewAccumState;
+use crate::scene_sync::asset_mesh_manager::AssetMeshManager;
+use crate::scene_sync::asset_texture_manager::AssetTextureManager;
+use crate::scene_sync::environment_binding::EnvironmentBinding;
+use crate::scene_sync::instance_bridge::InstanceBridge;
+use crate::scene_sync::material_bridge::MaterialBridge;
+use crate::scene_sync::material_manager::MaterialManager;
+use crate::scene_sync::sky_bridge::SkyBridge;
+use crate::state::dlss_sr::{DlssSrMode, DlssSrState};
+use crate::state::frame_state::FrameRenderState;
+use crate::state::frame_timer::FrameTimer;
+use crate::state::frame_timing::FrameTiming;
+use crate::state::render_options::RenderOptions;
+use crate::state::view_accum::ViewAccumState;
 
 pub use crate::render_runtime_ctx::{
     RenderRuntimeInitCtx, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx,

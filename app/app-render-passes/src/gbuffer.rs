@@ -24,8 +24,8 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_render_runtime::gfx_resource_manager::GfxResourceManager;
-use truvis_render_runtime::shader_binding_system::ShaderBindingSystem;
+use truvis_render_runtime::bindings::shader_binding_system::ShaderBindingSystem;
+use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
 
 /// RT 管线使用的 GBuffer 资源集合。
 ///

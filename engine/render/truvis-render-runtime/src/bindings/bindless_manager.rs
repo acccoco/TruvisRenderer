@@ -6,8 +6,8 @@ use slotmap::{Key, SecondaryMap};
 use truvis_gfx::{gfx::GfxDeviceCtx, utilities::descriptor_cursor::GfxDescriptorCursor};
 use truvis_shader_binding::gpu;
 
-use crate::descriptor_bindings::{BindlessDescriptorBinding, BindlessDescriptorTarget};
-use crate::gfx_resource_manager::GfxResourceManager;
+use crate::bindings::descriptor_bindings::{BindlessDescriptorBinding, BindlessDescriptorTarget};
+use crate::resources::gfx_resource_manager::GfxResourceManager;
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
 use truvis_render_foundation::handles::GfxImageViewHandle;
 

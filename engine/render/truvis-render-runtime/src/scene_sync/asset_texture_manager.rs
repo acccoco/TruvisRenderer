@@ -3,9 +3,9 @@ use std::collections::VecDeque;
 use ash::vk;
 use slotmap::SecondaryMap;
 
-use crate::bindless_manager::BindlessSrvHandle;
-use crate::gfx_resource_manager::GfxResourceManager;
-use crate::shader_binding_system::ShaderBindingSystem;
+use crate::bindings::bindless_manager::BindlessSrvHandle;
+use crate::bindings::shader_binding_system::ShaderBindingSystem;
+use crate::resources::gfx_resource_manager::GfxResourceManager;
 use truvis_asset::asset_hub::AssetLoadedEvent;
 use truvis_asset::handle::{AssetTextureHandle, TextureBytes};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -20,7 +20,7 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_shader_binding::gpu;
 
-use crate::texture_resolver::{TextureBinding, TextureResolver};
+use crate::scene_sync::texture_resolver::{TextureBinding, TextureResolver};
 
 /// 已提交到 transfer queue、但尚未确认 copy 完成的 texture 上传任务。
 ///

@@ -1,7 +1,7 @@
-use crate::cmd_allocator::CmdAllocator;
-use crate::gfx_resource_manager::GfxResourceManager;
-use crate::per_frame_gpu_data::PerFrameGpuData;
-use crate::shader_binding_system::{ShaderBindingSystem, ShaderBindingView};
+use crate::bindings::per_frame_gpu_data::PerFrameGpuData;
+use crate::bindings::shader_binding_system::{ShaderBindingSystem, ShaderBindingView};
+use crate::resources::cmd_allocator::CmdAllocator;
+use crate::resources::gfx_resource_manager::GfxResourceManager;
 use ash::vk;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
@@ -9,14 +9,14 @@ use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_world::World;
 
-use crate::dlss_sr::DlssSrState;
-use crate::frame_state::FrameRenderState;
-use crate::frame_timing::FrameTiming;
-use crate::instance_bridge::InstanceBridge;
 use crate::present::swapchain_presenter::PresentView;
 use crate::ray_cast::{RayCastRay, RayCastResult, RayCastService};
-use crate::render_options::RenderOptions;
-use crate::view_accum::ViewAccumState;
+use crate::scene_sync::instance_bridge::InstanceBridge;
+use crate::state::dlss_sr::DlssSrState;
+use crate::state::frame_state::FrameRenderState;
+use crate::state::frame_timing::FrameTiming;
+use crate::state::render_options::RenderOptions;
+use crate::state::view_accum::ViewAccumState;
 
 /// pass 录制阶段的只读共享渲染上下文。
 ///

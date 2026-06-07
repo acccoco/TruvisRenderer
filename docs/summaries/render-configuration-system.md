@@ -19,7 +19,7 @@
 
 ## RenderOptions
 
-`RenderOptions` 位于 `truvis-render-runtime::render_options`，是用户或调试 UI 可以修改的 runtime 全局渲染选项。
+`RenderOptions` 位于 `truvis-render-runtime::state::render_options`，是用户或调试 UI 可以修改的 runtime 全局渲染选项。
 
 当前只包含：
 
@@ -37,7 +37,7 @@
 
 ## DlssSrMode 与 DlssSrState
 
-`DlssSrMode` 位于 `truvis-render-runtime::dlss_sr`，和 `DlssSrState` 放在同一个 DLSS SR 语义边界内。
+`DlssSrMode` 位于 `truvis-render-runtime::state::dlss_sr`，和 `DlssSrState` 放在同一个 DLSS SR 语义边界内。
 
 | mode | render extent 行为 | 执行行为 |
 |------|--------------------|----------|
@@ -49,7 +49,7 @@
 
 ## FrameRenderState
 
-`FrameRenderState` 位于 `truvis-render-runtime::frame_state`，是 runtime 根据窗口、present、DLSS SR mode 和设备能力推导出的当前 main view 帧状态。
+`FrameRenderState` 位于 `truvis-render-runtime::state::frame_state`，是 runtime 根据窗口、present、DLSS SR mode 和设备能力推导出的当前 main view 帧状态。
 
 | 字段 | 来源 | 用途 |
 |------|------|------|
@@ -62,7 +62,7 @@
 
 ## ViewAccumState
 
-`ViewAccumState` 位于 `truvis-render-runtime::view_accum`，表达当前 main view 的 temporal accumulation 状态。
+`ViewAccumState` 位于 `truvis-render-runtime::state::view_accum`，表达当前 main view 的 temporal accumulation 状态。
 
 它追踪上一帧的 `RenderViewAccumSignature` 和连续稳定帧数。只要相机、关键 view 参数、sky 绑定或尺寸状态导致历史不再匹配当前 view，就会 reset。
 

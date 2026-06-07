@@ -47,11 +47,12 @@
 
 ## 对外接口
 
-- crate 公开入口保持在 `present`、`render_runtime_ctx` 和 `render_runtime`；
+- crate 生命周期入口保持在 `present`、`render_runtime_ctx` 和 `render_runtime`；
   app 层相机不属于 runtime 公共 API，prepare 阶段只接收 `RenderView` 快照。
-- runtime-owned render state 通过 `frame_state`、`render_options`、`view_accum`、`frame_timing` 和 `dlss_sr` 模块公开；foundation 只保留 FIF 基础索引、资源句柄、view trait 和 `GfxResourceAccess` 契约。
-- GPU resource/binding owner 在本 crate 公开，包括 `GfxResourceManager`、`ShaderBindingSystem`、`GlobalDescriptorSets`、`BindlessManager`、`CmdAllocator` 和 `PerFrameGpuData`。
-- asset manager、material bridge、instance bridge、GPU scene 数据结构和 prepare 辅助逻辑都是 runtime 私有实现。
+- runtime-owned render state 通过 `state::{frame_state, render_options, view_accum, frame_timing, dlss_sr}` 模块公开；foundation 只保留 FIF 基础索引、资源句柄、view trait 和 `GfxResourceAccess` 契约。
+- GPU resource owner 通过 `resources` 模块公开，包括 `GfxResourceManager`、`CmdAllocator` 和 `StageBufferManager`。
+- shader-visible binding owner 通过 `bindings` 模块公开，包括 `ShaderBindingSystem`、`GlobalDescriptorSets`、`BindlessManager` 和 `PerFrameGpuData`。
+- asset manager、material bridge、instance bridge、GPU scene 数据结构和 prepare 辅助逻辑都是 runtime 私有实现；其中 prepare 桥接实现收敛在私有 `scene_sync` 模块。
 - 生命周期 Ctx 在 `render_runtime_ctx` 模块定义，并由 `render_runtime` 重新导出；
   调用方仍通过 `truvis_render_runtime::render_runtime::*Ctx` 使用这些阶段契约。
 - `RenderRuntimeRenderCtx` 只暴露 `RenderPassRecordCtx`、`RenderSceneView`、`PresentView` 和 timeline；

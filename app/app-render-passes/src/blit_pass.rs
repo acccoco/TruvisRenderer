@@ -4,8 +4,8 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_path::TruvisPath;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
-use truvis_render_runtime::bindless_manager::BindlessUavHandle;
-use truvis_render_runtime::global_descriptor_sets::GlobalDescriptorSets;
+use truvis_render_runtime::bindings::bindless_manager::BindlessUavHandle;
+use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_shader_binding::gpu;
 

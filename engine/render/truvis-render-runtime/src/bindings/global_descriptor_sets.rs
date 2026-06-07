@@ -7,7 +7,7 @@ use truvis_gfx::descriptors::descriptor::{GfxDescriptorSet, GfxDescriptorSetLayo
 use truvis_gfx::descriptors::descriptor_pool::{GfxDescriptorPool, GfxDescriptorPoolCreateInfo};
 use truvis_gfx::gfx::GfxDeviceCtx;
 
-pub use crate::descriptor_bindings::{
+pub use crate::bindings::descriptor_bindings::{
     BindlessDescriptorBinding, BindlessDescriptorTarget, PerFrameDescriptorBinding, StaticDescriptorBinding,
     StaticSamplerDescriptorTarget,
 };

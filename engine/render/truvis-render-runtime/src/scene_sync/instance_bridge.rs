@@ -10,7 +10,7 @@ use truvis_world::guid_new_type::InstanceHandle;
 use truvis_world::scene_manager::SceneManager;
 
 use crate::render_scene::render_data::{GpuInstanceSlot, InstanceRenderData, MeshRenderData, RenderData};
-use crate::scene_bridge::{MaterialSlotResolver, MeshRenderResolver};
+use crate::scene_sync::scene_bridge::{MaterialSlotResolver, MeshRenderResolver};
 
 const MAX_INSTANCE_COUNT: u32 = 1024;
 

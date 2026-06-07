@@ -1,9 +1,9 @@
 use ash::vk;
 use slotmap::Key;
 
-use crate::bindless_manager::BindlessSrvHandle;
-use crate::gfx_resource_manager::GfxResourceManager;
-use crate::shader_binding_system::ShaderBindingSystem;
+use crate::bindings::bindless_manager::BindlessSrvHandle;
+use crate::bindings::shader_binding_system::ShaderBindingSystem;
+use crate::resources::gfx_resource_manager::GfxResourceManager;
 use truvis_asset::asset_hub::AssetHub;
 use truvis_asset::handle::AssetTextureHandle;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
@@ -14,8 +14,8 @@ use truvis_path::TruvisPath;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_shader_binding::gpu;
 
-use crate::environment_binding::EnvironmentSkyBinding;
-use crate::texture_resolver::TextureResolver;
+use crate::scene_sync::environment_binding::EnvironmentSkyBinding;
+use crate::scene_sync::texture_resolver::TextureResolver;
 
 #[derive(Clone, Copy, Default)]
 struct FallbackSkyTexture {

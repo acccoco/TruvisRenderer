@@ -1,7 +1,7 @@
 use super::buffers::GpuSceneBuffers;
 use super::raster_draw_cache::{RasterDrawItem, draw_raster_cache, update_raster_draw_cache};
-use crate::environment_binding::EnvironmentBinding;
 use crate::render_scene::render_data::{InstanceRenderData, RenderData};
+use crate::scene_sync::environment_binding::EnvironmentBinding;
 use ash::vk;
 use itertools::Itertools;
 use truvis_gfx::basic::bytes::BytesConvert;

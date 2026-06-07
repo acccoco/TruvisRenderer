@@ -1,7 +1,7 @@
 use ash::vk;
 use truvis_render_foundation::render_view::RenderView;
 
-use crate::frame_state::FrameRenderState;
+use crate::state::frame_state::FrameRenderState;
 
 /// DLSS Super Resolution / DLAA 模式。
 ///

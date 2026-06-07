@@ -1,8 +1,8 @@
 use anyhow::{Result, bail};
 use ash::vk;
 
-use crate::global_descriptor_sets::GlobalDescriptorSets;
-use crate::shader_binding_system::ShaderBindingView;
+use crate::bindings::global_descriptor_sets::GlobalDescriptorSets;
+use crate::bindings::shader_binding_system::ShaderBindingView;
 use truvis_asset::handle::{AssetMaterialHandle, AssetMeshHandle};
 use truvis_gfx::commands::barrier::GfxBufferBarrier;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -16,8 +16,8 @@ use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_shader_binding::gpu;
 use truvis_world::guid_new_type::InstanceHandle;
 
-use crate::frame_timing::FrameTiming;
-use crate::instance_bridge::InstanceBridge;
+use crate::scene_sync::instance_bridge::InstanceBridge;
+use crate::state::frame_timing::FrameTiming;
 
 mod pass;
 
