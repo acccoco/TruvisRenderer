@@ -9,7 +9,8 @@ fn main() -> Result<()> {
     // 初始化日志
     init_log_with_file(current_exe_log_file_path(TruvisPath::temp_dir()));
 
-    let fetcher = GitHubResourceFetcher::with_temp_dir(TruvisPath::temp_dir())?;
+    let resource_temp_dir = TruvisPath::temp_dir().join("resource");
+    let fetcher = GitHubResourceFetcher::with_temp_dir(resource_temp_dir)?;
 
     let config_path = TruvisPath::workspace_path().join("resources.toml");
 
