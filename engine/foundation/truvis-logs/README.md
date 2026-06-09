@@ -13,10 +13,11 @@
 ## 文件日志
 
 - 文件日志使用 `env_logger::Target::Pipe` 接入内部 tee writer，同一条日志同时写入 console 和文件。
+- 双输出模式会让 formatter 生成 ANSI style；console 端通过 `anstream` 适配终端能力，file 端通过 `StripStream`
+  移除 ANSI escape sequence，保证文件日志保持纯文本。
 - `.temp` 目录由调用方通过 `TruvisPath::temp_dir()` 传入；这样 `truvis-logs` 保持路径无关。
 - 日志文件名包含当前 exe 名称、时间和 pid，不同 app、sample、tooling exe 会自然区分。
 - 创建目录或打开文件失败时会退回 console-only，并通过 `eprintln!` 输出失败原因。
-- 双输出模式默认关闭 ANSI style，避免文件中出现颜色转义字符。
 
 ## 线程上下文
 

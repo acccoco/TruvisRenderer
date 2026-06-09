@@ -9,4 +9,5 @@ description = ""
 log = { workspace = true }
 env_logger = { workspace = true }
 anstyle = { workspace = true }
+anstream = { workspace = true }
 chrono = { workspace = true }

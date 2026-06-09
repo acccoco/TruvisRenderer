@@ -49,15 +49,15 @@ thread_local! {
 }
 
 struct TeeWriter {
-    console: io::Stderr,
-    file: File,
+    console: anstream::Stderr,
+    file: anstream::StripStream<File>,
 }
 
 impl TeeWriter {
     fn new(file: File) -> Self {
         Self {
-            console: io::stderr(),
-            file,
+            console: anstream::stderr(),
+            file: anstream::StripStream::new(file),
         }
     }
 }
@@ -169,7 +169,9 @@ fn init_log_with_target(target: Option<env_logger::Target>) {
         .filter(None, if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info });
 
     if let Some(target) = target {
-        builder.target(target).write_style(env_logger::WriteStyle::Never);
+        // `Target::Pipe` 在 env_logger 中不能自动探测终端能力；这里必须生成 ANSI，
+        // 再由 `TeeWriter` 分别交给 console 适配和 file strip。
+        builder.target(target).write_style(env_logger::WriteStyle::Always);
     }
 
     builder.init();

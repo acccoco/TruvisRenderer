@@ -3621,6 +3621,7 @@ dependencies = [
 name = "truvis-logs"
 version = "0.1.0"
 dependencies = [
+ "anstream",
  "anstyle",
  "chrono",
  "env_logger",
