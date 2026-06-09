@@ -34,9 +34,21 @@ RWTexture2D<float4> gbuffer_c;
 [[vk::binding(5, RT_SET_NUM)]]
 RWTexture2D<float> dlss_depth;
 
-/// DLSS SR motion vectors 输入。第一版只提供物体运动，camera motion 由 Streamline constants 计算。
+/// DLSS SR motion vectors 输入。写入 pixel-space 2D motion，方向为当前像素回溯到上一帧位置。
 [[vk::binding(6, RT_SET_NUM)]]
 RWTexture2D<float2> dlss_motion_vectors;
+
+/// DLSS RR diffuse albedo 输入。
+[[vk::binding(7, RT_SET_NUM)]]
+RWTexture2D<float4> dlss_rr_diffuse_albedo;
+
+/// DLSS RR specular albedo 输入。
+[[vk::binding(8, RT_SET_NUM)]]
+RWTexture2D<float4> dlss_rr_specular_albedo;
+
+/// DLSS RR specular motion vectors 输入。写入反射虚拟几何的 pixel-space 2D motion。
+[[vk::binding(9, RT_SET_NUM)]]
+RWTexture2D<float2> dlss_rr_specular_motion_vectors;
 
 #endif
 

@@ -22,6 +22,7 @@ typedef enum : uint32_t
 {
     TruvixxSlFeatureFlagDlss = 1u << 0,
     TruvixxSlFeatureFlagImgui = 1u << 1,
+    TruvixxSlFeatureFlagDlssRr = 1u << 2,
 } TruvixxSlFeatureFlag;
 
 /// Rust 侧全局日志回调的签名。

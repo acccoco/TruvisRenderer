@@ -14,6 +14,11 @@ struct Instance
 
     float4x4 model;
     float4x4 inv_model;
+    /// 上一帧用于 motion vector 回溯的模型矩阵。
+    ///
+    /// 新激活实例或 history reset 帧会写为当前 model，避免旧 slot / 旧 history
+    /// 污染 DLSS motion vector。
+    float4x4 prev_model;
 };
 
 struct GPUScene

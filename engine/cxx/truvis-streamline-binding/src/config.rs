@@ -14,13 +14,14 @@ const STREAMLINE_IMGUI_ENV: &str = "TRUVIS_STREAMLINE_IMGUI";
 /// Streamline feature 请求位。
 ///
 /// Rust 侧决定要加载哪些 feature，C++ wrapper 只负责把这些稳定 bit 翻译成
-/// Streamline SDK 的 feature id。默认只加载 DLSS SR；Debug 可通过环境变量显式打开 SL ImGui。
+/// Streamline SDK 的 feature id。默认加载 DLSS SR 与 RR；Debug 可通过环境变量显式打开 SL ImGui。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StreamlineFeatureFlags(u32);
 
 impl StreamlineFeatureFlags {
     pub const DLSS: Self = Self(truvixx::TruvixxSlFeatureFlag_TruvixxSlFeatureFlagDlss);
     pub const IMGUI: Self = Self(truvixx::TruvixxSlFeatureFlag_TruvixxSlFeatureFlagImgui);
+    pub const DLSS_RR: Self = Self(truvixx::TruvixxSlFeatureFlag_TruvixxSlFeatureFlagDlssRr);
 
     #[inline]
     pub const fn bits(self) -> u32 {
@@ -42,6 +43,9 @@ impl StreamlineFeatureFlags {
         if self.contains(Self::DLSS) {
             names.push("DLSS");
         }
+        if self.contains(Self::DLSS_RR) {
+            names.push("DLSS_RR");
+        }
         if self.contains(Self::IMGUI) {
             names.push("ImGui");
         }
@@ -56,6 +60,7 @@ impl StreamlineFeatureFlags {
 impl Default for StreamlineFeatureFlags {
     fn default() -> Self {
         let mut flags = Self::DLSS;
+        flags.insert(Self::DLSS_RR);
         if should_enable_streamline_imgui() {
             flags.insert(Self::IMGUI);
         }
@@ -106,7 +111,8 @@ fn parse_bool_env(value: &str) -> Option<bool> {
 /// Streamline 初始化参数。
 ///
 /// `plugin_dir` 是 Streamline plugin/runtime 搜索目录，必须包含 `sl.interposer.dll`、
-/// `sl.common.dll`、`sl.pcl.dll`、`sl.dlss.dll` 和 `nvngx_dlss.dll`。项目的
+/// `sl.common.dll`、`sl.pcl.dll`、`sl.dlss.dll`、`nvngx_dlss.dll`、`sl.dlss_d.dll`
+/// 和 `nvngx_dlssd.dll`。项目的
 /// `cxx-build` 会把这些文件复制到 `build/{profile}` 和
 /// `build/{profile}/examples`，所以默认值使用当前 executable 所在目录。
 ///
@@ -126,7 +132,7 @@ pub struct StreamlineInitInfo {
     /// 是否使用 verbose 级别日志。
     pub verbose_log: bool,
 
-    /// 请求加载的 Streamline feature。默认只包含 DLSS SR；Debug 可通过
+    /// 请求加载的 Streamline feature。默认包含 DLSS SR 与 RR；Debug 可通过
     /// `TRUVIS_STREAMLINE_IMGUI` 显式请求 SL ImGui。
     pub feature_flags: StreamlineFeatureFlags,
 }

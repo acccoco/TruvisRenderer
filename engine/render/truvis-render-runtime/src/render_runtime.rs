@@ -101,6 +101,7 @@ pub struct RenderRuntime {
 
     swapchain_presenter: Option<SwapchainPresenter>,
     last_applied_dlss_sr_mode: DlssSrMode,
+    last_applied_dlss_rr_enabled: bool,
 }
 
 // 创建与初始化
@@ -118,6 +119,7 @@ impl RenderRuntime {
             Gfx::new("Truvis".to_string(), extra_instance_ext)
         };
         Self::query_streamline_dlss_support(&gfx);
+        Self::query_streamline_dlss_rr_support(&gfx);
 
         let frame_state = {
             let _span = tracy_client::span!("RenderRuntime::new/frame_state");
@@ -247,6 +249,7 @@ impl RenderRuntime {
                 gpu_scene_update_cmds: cmds,
                 swapchain_presenter: None,
                 last_applied_dlss_sr_mode: DlssSrMode::Off,
+                last_applied_dlss_rr_enabled: false,
 
                 world: World {
                     scene_manager,
@@ -304,6 +307,23 @@ impl RenderRuntime {
         }
     }
 
+    fn query_streamline_dlss_rr_support(gfx: &Gfx) {
+        match dlss::query_rr_support(gfx.physical_device().vk_handle().as_raw()) {
+            Ok(support) => {
+                log::info!(
+                    "DLSS RR support: supported={}, flags={}, max_viewports={}, max_cpu_threads={}",
+                    support.supported,
+                    support.flags,
+                    support.max_num_viewports,
+                    support.max_num_cpu_threads
+                );
+            }
+            Err(err) => {
+                log::warn!("DLSS RR support query failed: {}", err);
+            }
+        }
+    }
+
     fn initial_render_options() -> RenderOptions {
         let mut options = RenderOptions::default();
 
@@ -320,8 +340,53 @@ impl RenderRuntime {
                 }
             }
         }
+        if let Ok(value) = env::var("TRUVIS_DLSS_RR") {
+            match parse_bool_env(&value) {
+                Some(enabled) => {
+                    options.dlss_rr_enabled = enabled;
+                    log::info!("Initial DLSS RR enabled from TRUVIS_DLSS_RR={value}: {enabled}");
+                }
+                None => {
+                    log::warn!("Ignoring unsupported TRUVIS_DLSS_RR value: {value}");
+                }
+            }
+        }
 
         options
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ActiveDlssFeature {
+    Sr,
+    Rr,
+}
+
+fn active_dlss_feature(mode: DlssSrMode, rr_enabled: bool) -> Option<ActiveDlssFeature> {
+    if mode == DlssSrMode::Off {
+        None
+    } else if rr_enabled {
+        Some(ActiveDlssFeature::Rr)
+    } else {
+        Some(ActiveDlssFeature::Sr)
+    }
+}
+
+fn free_streamline_feature_resources(feature: ActiveDlssFeature, context: &'static str) {
+    let result = match feature {
+        ActiveDlssFeature::Sr => dlss::free_resources(0),
+        ActiveDlssFeature::Rr => dlss::free_rr_resources(0),
+    };
+    if let Err(err) = result {
+        log::warn!("Failed to free {feature:?} resources for viewport 0 {context}: {err}");
+    }
+}
+
+fn parse_bool_env(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "on" | "yes" | "enable" | "enabled" => Some(true),
+        "0" | "false" | "off" | "no" | "disable" | "disabled" => Some(false),
+        _ => None,
     }
 }
 
@@ -550,37 +615,53 @@ impl RenderRuntime {
     pub fn sync_render_options_frame_state(&mut self) -> Option<RenderRuntimeResizeCtx<'_>> {
         let old_state = self.frame_state;
         let old_mode = self.last_applied_dlss_sr_mode;
+        let old_rr_enabled = self.last_applied_dlss_rr_enabled;
+        let old_feature = active_dlss_feature(old_mode, old_rr_enabled);
         let requested_mode = self.render_options.dlss_sr_mode;
+        let requested_rr_enabled = self.render_options.dlss_rr_enabled;
         let output_extent = self.swapchain_presenter.as_ref().unwrap().extent();
-        if old_mode == requested_mode && old_state.output_extent == output_extent {
+        if old_mode == requested_mode
+            && old_rr_enabled == requested_rr_enabled
+            && old_state.output_extent == output_extent
+        {
             return None;
         }
 
         let new_state = self.resolve_frame_state_for_output(output_extent);
         let new_mode = self.render_options.dlss_sr_mode;
-        let mode_changed = old_mode != new_mode;
+        let new_rr_enabled = self.render_options.dlss_rr_enabled;
+        let new_feature = active_dlss_feature(new_mode, new_rr_enabled);
+        let dlss_options_changed = old_mode != new_mode || old_rr_enabled != new_rr_enabled;
 
-        if !mode_changed && old_state == new_state {
+        if !dlss_options_changed && old_state == new_state {
             return None;
         }
 
         let mut gpu_idle_waited = false;
 
-        if mode_changed {
-            log::info!("DLSS SR mode changed: {:?} -> {:?}", old_mode, new_mode);
+        if dlss_options_changed {
+            log::info!(
+                "DLSS options changed: mode {:?} -> {:?}, rr {} -> {}",
+                old_mode,
+                new_mode,
+                old_rr_enabled,
+                new_rr_enabled
+            );
             self.dlss_sr_state.request_reset();
-            if old_mode != DlssSrMode::Off && new_mode == DlssSrMode::Off {
-                // slFreeResources 会销毁 Streamline 内部 Vulkan image/buffer；必须先等待
-                // 上一帧 DLSS evaluate 相关 GPU work 完成，再释放 viewport 0 的内部资源。
-                self.gfx.wait_idel();
-                gpu_idle_waited = true;
-                if let Err(err) = dlss::free_resources(0) {
-                    log::warn!("Failed to free DLSS SR resources for viewport 0: {}", err);
+            self.instance_bridge.request_motion_history_reset();
+            if old_feature != new_feature {
+                if let Some(feature) = old_feature {
+                    // slFreeResources 会销毁 Streamline 内部 Vulkan image/buffer；必须先等待上一帧
+                    // evaluate 相关 GPU work 完成，再释放旧 feature 在 viewport 0 上的内部资源。
+                    self.gfx.wait_idel();
+                    gpu_idle_waited = true;
+                    free_streamline_feature_resources(feature, "after DLSS feature switch");
                 }
             }
         }
 
         self.last_applied_dlss_sr_mode = new_mode;
+        self.last_applied_dlss_rr_enabled = new_rr_enabled;
 
         if old_state == new_state {
             return None;
@@ -607,6 +688,7 @@ impl RenderRuntime {
         self.view_accum.reset();
         // render extent 变化会让 DLSS history 的 sample grid 失效，即使相机没有变化也必须 reset。
         self.dlss_sr_state.request_reset();
+        self.instance_bridge.request_motion_history_reset();
 
         Some(RenderRuntimeResizeCtx {
             device_ctx: self.gfx.device_ctx(),
@@ -894,11 +976,14 @@ impl RenderRuntime {
 
         // per-frame uniform 放在 GPU scene 上传之后写入同一条命令缓冲，保证本帧 shader
         // 看到的相机、分辨率、时间和 scene buffer 都来自同一个 prepare 快照。
+        let previous_view = self.dlss_sr_state.motion_vector_previous_view().unwrap_or(*render_view);
         let per_frame_data = gpu::PerFrameData {
             projection: render_view.projection.into(),
             view: render_view.view.into(),
             inv_view: render_view.inv_view.into(),
             inv_projection: render_view.inv_projection.into(),
+            prev_view: previous_view.view.into(),
+            prev_projection: previous_view.projection.into(),
             camera_pos: render_view.position_ws.into(),
             camera_forward: render_view.forward_ws.into(),
             time_ms: self.timer.total_time_ms(),
@@ -960,19 +1045,25 @@ impl RenderRuntime {
         // runtime 只更新 shader/per-frame data 会读取的 extent，并清零累积帧计数；
         // 具体 image 重建在 Plugin::on_resize 中发生。
         let old_mode = self.last_applied_dlss_sr_mode;
+        let old_rr_enabled = self.last_applied_dlss_rr_enabled;
+        let old_feature = active_dlss_feature(old_mode, old_rr_enabled);
         self.frame_state = self.resolve_frame_state_for_output(swapchain_extent);
         let new_mode = self.render_options.dlss_sr_mode;
-        if old_mode != DlssSrMode::Off && new_mode == DlssSrMode::Off {
-            // resize 期间查询 optimal settings 失败可能把 SR mode 降级为 Off；此时同样需要先等待
-            // 上一帧 DLSS evaluate 完成，再释放原 viewport resource。
-            self.gfx.wait_idel();
-            if let Err(err) = dlss::free_resources(0) {
-                log::warn!("Failed to free DLSS SR resources for viewport 0 after resize fallback: {}", err);
+        let new_rr_enabled = self.render_options.dlss_rr_enabled;
+        let new_feature = active_dlss_feature(new_mode, new_rr_enabled);
+        if old_feature != new_feature {
+            if let Some(feature) = old_feature {
+                // resize 期间查询 optimal settings 失败可能把当前 DLSS feature 降级为 Off；
+                // 此时同样需要先等待上一帧 evaluate 完成，再释放原 viewport resource。
+                self.gfx.wait_idel();
+                free_streamline_feature_resources(feature, "after resize fallback");
             }
         }
         self.last_applied_dlss_sr_mode = new_mode;
+        self.last_applied_dlss_rr_enabled = new_rr_enabled;
         self.view_accum.reset();
         self.dlss_sr_state.request_reset();
+        self.instance_bridge.request_motion_history_reset();
     }
 
     fn resolve_frame_state_for_output(&mut self, output_extent: vk::Extent2D) -> FrameRenderState {

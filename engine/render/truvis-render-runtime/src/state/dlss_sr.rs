@@ -82,6 +82,8 @@ impl DlssSrMode {
 pub struct DlssSrFrameConstants {
     pub camera_view_to_clip: [f32; 16],
     pub clip_to_camera_view: [f32; 16],
+    pub world_to_camera_view: [f32; 16],
+    pub camera_view_to_world: [f32; 16],
     pub clip_to_prev_clip: [f32; 16],
     pub prev_clip_to_clip: [f32; 16],
     pub jitter_offset: [f32; 2],
@@ -106,6 +108,8 @@ impl Default for DlssSrFrameConstants {
         Self {
             camera_view_to_clip: row_major(glam::Mat4::IDENTITY),
             clip_to_camera_view: row_major(glam::Mat4::IDENTITY),
+            world_to_camera_view: row_major(glam::Mat4::IDENTITY),
+            camera_view_to_world: row_major(glam::Mat4::IDENTITY),
             clip_to_prev_clip: row_major(glam::Mat4::IDENTITY),
             prev_clip_to_clip: row_major(glam::Mat4::IDENTITY),
             jitter_offset: [0.0, 0.0],
@@ -142,6 +146,7 @@ impl Default for DlssSrFrameConstants {
 pub struct DlssSrState {
     constants: DlssSrFrameConstants,
     previous_view: Option<RenderView>,
+    motion_vector_previous_view: Option<RenderView>,
     reset_pending: bool,
 }
 
@@ -150,6 +155,7 @@ impl Default for DlssSrState {
         Self {
             constants: DlssSrFrameConstants::default(),
             previous_view: None,
+            motion_vector_previous_view: None,
             reset_pending: true,
         }
     }
@@ -161,11 +167,17 @@ impl DlssSrState {
         self.constants
     }
 
+    #[inline]
+    pub fn motion_vector_previous_view(&self) -> Option<RenderView> {
+        self.motion_vector_previous_view
+    }
+
     /// 请求下一次 evaluate 重置 DLSS history。
     ///
     /// 调用点包括窗口尺寸变化、render extent 变化、DLSS mode 切换和未来场景大跳变。
     pub fn request_reset(&mut self) {
         self.previous_view = None;
+        self.motion_vector_previous_view = None;
         self.reset_pending = true;
         self.constants.reset = true;
     }
@@ -176,8 +188,8 @@ impl DlssSrState {
     /// 当前帧仍会写出有效矩阵，但 `reset=true` 会通知 DLSS 丢弃内部历史。
     pub fn update(&mut self, render_view: &RenderView, frame_state: &FrameRenderState) {
         let previous_view = self.previous_view.unwrap_or(*render_view);
-        // Streamline 需要 current clip <-> previous clip 的变换来补足 camera motion。
-        // 当前 shader motion vectors 第一版写 0，因此这里的矩阵关系是相机运动的主要来源。
+        // Streamline 仍需要 current clip <-> previous clip 的关系；shader 写入的 2D
+        // motion vector 已包含 camera motion，因此这里不再让 Streamline 补相机运动。
         let current_clip_from_world = render_view.projection * render_view.view;
         let previous_clip_from_world = previous_view.projection * previous_view.view;
         let clip_to_prev_clip = previous_clip_from_world * current_clip_from_world.inverse();
@@ -187,12 +199,17 @@ impl DlssSrState {
         self.constants = DlssSrFrameConstants {
             camera_view_to_clip: row_major(render_view.projection),
             clip_to_camera_view: row_major(render_view.inv_projection),
+            world_to_camera_view: row_major(render_view.view),
+            camera_view_to_world: row_major(render_view.inv_view),
             clip_to_prev_clip: row_major(clip_to_prev_clip),
             prev_clip_to_clip: row_major(prev_clip_to_clip),
             jitter_offset: [0.0, 0.0],
-            // 当前 RT shader 只写物体 motion vector，且第一版为 0；camera motion 交给
-            // Streamline 根据矩阵计算，因此 scale 只需保持有效值。
-            mvec_scale: [1.0, 1.0],
+            // shader 写入 pixel-space motion vector，方向为当前像素回溯到上一帧位置。
+            // Streamline 通过 scale 归一化到 [-1, 1]。
+            mvec_scale: [
+                reciprocal_extent(frame_state.render_extent.width),
+                reciprocal_extent(frame_state.render_extent.height),
+            ],
             camera_pos: render_view.position_ws.to_array(),
             camera_up: normalize_or(render_view.inv_view.y_axis.truncate(), glam::Vec3::Y).to_array(),
             camera_right: normalize_or(render_view.inv_view.x_axis.truncate(), glam::Vec3::X).to_array(),
@@ -203,14 +220,19 @@ impl DlssSrState {
             camera_aspect_ratio: extent_aspect(frame_state.output_extent),
             motion_vectors_invalid_value: -65504.0,
             depth_inverted: false,
-            camera_motion_included: false,
+            camera_motion_included: true,
             motion_vectors_3d: false,
             reset,
         };
 
+        self.motion_vector_previous_view = Some(previous_view);
         self.previous_view = Some(*render_view);
         self.reset_pending = false;
     }
+}
+
+fn reciprocal_extent(value: u32) -> f32 {
+    if value == 0 { 1.0 } else { 1.0 / value as f32 }
 }
 
 fn row_major(matrix: glam::Mat4) -> [f32; 16] {

@@ -1,7 +1,8 @@
 use crate::gui_plugin::{DebugImageEntry, DebugImageGraphEntry};
 use crate::render_pipeline::targets::{
-    DlssSrInputTargets, DlssSrOutputTargets, ImageTarget, MainViewTargets, RtWorkingTargets,
+    DlssRrInputTargets, DlssSrInputTargets, DlssSrOutputTargets, ImageTarget, MainViewTargets, RtWorkingTargets,
 };
+use app_render_passes::dlss_rr_pass::{DlssRrPass, DlssRrRgPass};
 use app_render_passes::dlss_sr_pass::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
 use app_render_passes::gbuffer::GBuffer;
 use app_render_passes::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};
@@ -118,6 +119,8 @@ struct RtPipelineInner {
     realtime_rt_pass: RealtimeRtPass,
     /// DLSS SR 是外部 opaque pass，不拥有 shader pipeline；只在 SR/DLAA 分支被加入 compute graph。
     dlss_sr_pass: DlssSrPass,
+    /// DLSS RR 是 SR 基础设施上的替代 evaluate 分支，不与 `dlss_sr_pass` 连续运行。
+    dlss_rr_pass: DlssRrPass,
     sdr_pass: SdrPass,
     resolve_pass: ResolvePass,
     gbuffer: GBuffer,
@@ -127,6 +130,8 @@ struct RtPipelineInner {
     ///
     /// 即使 SR 关闭也会由 raygen 写入，便于 ImGui debug viewer 验证深度和 motion vector。
     dlss_sr_inputs: DlssSrInputTargets,
+    /// DLSS RR 额外需要的低分辨率输入。
+    dlss_rr_inputs: DlssRrInputTargets,
     /// DLSS SR 输出的高分辨率 HDR color。
     dlss_sr_outputs: DlssSrOutputTargets,
     /// 主视图离屏目标。compute graph 写入 color，present graph 再 resolve 到 swapchain。
@@ -164,6 +169,7 @@ impl RtPipelineInner {
             ctx.shader_binding_system.global_descriptor_sets(),
         );
         let dlss_sr_pass = DlssSrPass::new();
+        let dlss_rr_pass = DlssRrPass::new();
         let sdr_pass = SdrPass::new(ctx.device_ctx, ctx.shader_binding_system.global_descriptor_sets());
         let resolve_pass = ResolvePass::new(
             ctx.device_ctx,
@@ -203,6 +209,15 @@ impl RtPipelineInner {
             &target_frame_state,
             ctx.frame_timing.frame_counter(),
         );
+        let dlss_rr_inputs = DlssRrInputTargets::new(
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            ctx.immediate_ctx,
+            &mut *ctx.gfx_resource_manager,
+            &mut *ctx.shader_binding_system,
+            &target_frame_state,
+            ctx.frame_timing.frame_counter(),
+        );
         let dlss_sr_outputs = DlssSrOutputTargets::new(
             ctx.resource_ctx,
             ctx.device_ctx,
@@ -233,11 +248,13 @@ impl RtPipelineInner {
         Self {
             realtime_rt_pass,
             dlss_sr_pass,
+            dlss_rr_pass,
             sdr_pass,
             resolve_pass,
             gbuffer,
             rt_targets,
             dlss_sr_inputs,
+            dlss_rr_inputs,
             dlss_sr_outputs,
             main_view_targets,
             compute_cmds,
@@ -251,6 +268,7 @@ impl RtPipelineInner {
         // 但 target 仍必须在 runtime `GfxResourceManager` 销毁前显式释放。
         self.realtime_rt_pass.destroy(ctx.resource_ctx, ctx.device_ctx);
         self.dlss_sr_pass.destroy();
+        self.dlss_rr_pass.destroy();
         self.sdr_pass.destroy(ctx.device_ctx);
         self.resolve_pass.destroy(ctx.device_ctx);
         self.gbuffer.destroy(
@@ -268,6 +286,13 @@ impl RtPipelineInner {
             DestroyReason::Shutdown,
         );
         self.dlss_sr_inputs.destroy(
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            &mut *ctx.shader_binding_system,
+            &mut *ctx.gfx_resource_manager,
+            DestroyReason::Shutdown,
+        );
+        self.dlss_rr_inputs.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
             &mut *ctx.shader_binding_system,
@@ -312,6 +337,15 @@ impl Plugin for RtPipeline {
                 ctx.frame_timing.frame_counter(),
             );
             inner.dlss_sr_inputs.rebuild(
+                ctx.resource_ctx,
+                ctx.device_ctx,
+                ctx.immediate_ctx,
+                &mut *ctx.shader_binding_system,
+                &mut *ctx.gfx_resource_manager,
+                &target_frame_state,
+                ctx.frame_timing.frame_counter(),
+            );
+            inner.dlss_rr_inputs.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
@@ -384,6 +418,7 @@ impl RtPipeline {
         let frame_label = record_ctx.frame_timing.frame_label();
         let rt_targets = &inner.rt_targets;
         let dlss_sr_inputs = &inner.dlss_sr_inputs;
+        let dlss_rr_inputs = &inner.dlss_rr_inputs;
         let dlss_sr_outputs = &inner.dlss_sr_outputs;
         let main_view_targets = &inner.main_view_targets;
         let debug_channel = self.settings.debug_channel.shader_channel();
@@ -453,6 +488,36 @@ impl RtPipeline {
             None,
         );
 
+        let rr_diffuse_albedo_target = dlss_rr_inputs.diffuse_albedo(frame_label);
+        let rr_diffuse_albedo = rg_builder.import_image(
+            "dlss-rr-diffuse-albedo",
+            rr_diffuse_albedo_target.image,
+            Some(rr_diffuse_albedo_target.view),
+            rr_diffuse_albedo_target.format,
+            RgImageState::UNDEFINED_TOP,
+            None,
+        );
+
+        let rr_specular_albedo_target = dlss_rr_inputs.specular_albedo(frame_label);
+        let rr_specular_albedo = rg_builder.import_image(
+            "dlss-rr-specular-albedo",
+            rr_specular_albedo_target.image,
+            Some(rr_specular_albedo_target.view),
+            rr_specular_albedo_target.format,
+            RgImageState::UNDEFINED_TOP,
+            None,
+        );
+
+        let rr_specular_motion_vectors_target = dlss_rr_inputs.specular_motion_vectors(frame_label);
+        let rr_specular_motion_vectors = rg_builder.import_image(
+            "dlss-rr-specular-motion-vectors",
+            rr_specular_motion_vectors_target.image,
+            Some(rr_specular_motion_vectors_target.view),
+            rr_specular_motion_vectors_target.format,
+            RgImageState::UNDEFINED_TOP,
+            None,
+        );
+
         let dlss_output_target = dlss_sr_outputs.color(frame_label);
         let dlss_output = rg_builder.import_image(
             "dlss-sr-output",
@@ -491,10 +556,43 @@ impl RtPipeline {
                 gbuffer_c,
                 depth,
                 motion_vectors,
+                rr_diffuse_albedo,
+                rr_specular_albedo,
+                rr_specular_motion_vectors,
             },
         );
 
-        if dlss_sr_enabled(record_ctx.render_options.dlss_sr_mode) {
+        if dlss_rr_active(record_ctx.render_options.dlss_sr_mode, record_ctx.render_options.dlss_rr_enabled) {
+            rg_builder
+                .add_pass(
+                    "dlss-rr",
+                    DlssRrRgPass {
+                        dlss_rr_pass: &inner.dlss_rr_pass,
+                        record_ctx,
+                        resource_ctx: ctx.resource_ctx,
+                        input_color: single_frame_image,
+                        output_color: dlss_output,
+                        depth,
+                        motion_vectors,
+                        diffuse_albedo: rr_diffuse_albedo,
+                        specular_albedo: rr_specular_albedo,
+                        normal_roughness: gbuffer_a,
+                        specular_motion_vectors: rr_specular_motion_vectors,
+                    },
+                )
+                .add_pass(
+                    "hdr-to-sdr",
+                    SdrRgPass {
+                        sdr_pass: &inner.sdr_pass,
+                        record_ctx,
+                        src_image: dlss_output,
+                        dst_image: render_target,
+                        src_image_extent: record_ctx.frame_state.output_extent,
+                        dst_image_extent: record_ctx.frame_state.output_extent,
+                        debug_channel,
+                    },
+                );
+        } else if dlss_sr_enabled(record_ctx.render_options.dlss_sr_mode) {
             // SR/DLAA 分支用 Streamline output 进入 SDR；不再运行传统 denoise/accum，
             // 也不在 SR 后追加第二个 upscale pass。
             rg_builder
@@ -540,11 +638,17 @@ impl RtPipeline {
         }
     }
 
-    pub fn collect_debug_images(&self, frame_label: FrameLabel, dlss_sr_mode: DlssSrMode) -> Vec<DebugImageEntry> {
+    pub fn collect_debug_images(
+        &self,
+        frame_label: FrameLabel,
+        dlss_sr_mode: DlssSrMode,
+        dlss_rr_enabled: bool,
+    ) -> Vec<DebugImageEntry> {
         let inner = self.inner();
         let rt_targets = &inner.rt_targets;
         let main_view_targets = &inner.main_view_targets;
         let dlss_sr_inputs = &inner.dlss_sr_inputs;
+        let dlss_rr_inputs = &inner.dlss_rr_inputs;
         let dlss_sr_outputs = &inner.dlss_sr_outputs;
         let gbuffer = &inner.gbuffer;
 
@@ -552,27 +656,52 @@ impl RtPipeline {
         let main_view_color = main_view_targets.color(frame_label);
         let depth = dlss_sr_inputs.depth(frame_label);
         let motion_vectors = dlss_sr_inputs.motion_vectors(frame_label);
+        let rr_diffuse_albedo = dlss_rr_inputs.diffuse_albedo(frame_label);
+        let rr_specular_albedo = dlss_rr_inputs.specular_albedo(frame_label);
+        let rr_specular_motion_vectors = dlss_rr_inputs.specular_motion_vectors(frame_label);
         let dlss_output = dlss_sr_outputs.color(frame_label);
         let (gbuffer_a_image, gbuffer_a_view) = gbuffer.a_handle(frame_label);
         let (gbuffer_b_image, gbuffer_b_view) = gbuffer.b_handle(frame_label);
         let (gbuffer_c_image, gbuffer_c_view) = gbuffer.c_handle(frame_label);
-        // SR 开启后这些输入已经在 compute graph 末尾停留在 DLSS read layout；
+        let rr_active = dlss_rr_active(dlss_sr_mode, dlss_rr_enabled);
+        // SR/RR 开启后这些输入已经在 compute graph 末尾停留在 DLSS read layout；
         // present graph 的 debug preview 必须用同一状态 import，不能再假设所有 storage image 都是 GENERAL。
-        let sr_input_state = if dlss_sr_enabled(dlss_sr_mode) { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
+        let sl_input_state = if dlss_sr_enabled(dlss_sr_mode) { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
+        let rr_input_state = if rr_active { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
+        let gbuffer_a_state = if rr_active { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
 
         vec![
-            debug_entry_with_state("single-frame-rt", "Single Frame RT", single_frame, sr_input_state),
+            debug_entry_with_state("single-frame-rt", "Single Frame RT", single_frame, sl_input_state),
             debug_entry("main-view-color", "Main View Color", main_view_color),
             debug_entry("dlss-sr-output", "DLSS SR Output", dlss_output),
-            debug_entry_with_state("dlss-depth", "DLSS Depth", depth, sr_input_state),
-            debug_entry_with_state("dlss-motion-vectors", "DLSS Motion Vectors", motion_vectors, sr_input_state),
-            DebugImageEntry::raw(
+            debug_entry_with_state("dlss-depth", "DLSS Depth", depth, sl_input_state),
+            debug_entry_with_state("dlss-motion-vectors", "DLSS Motion Vectors", motion_vectors, sl_input_state),
+            debug_entry_with_state(
+                "dlss-rr-diffuse-albedo",
+                "DLSS RR Diffuse Albedo",
+                rr_diffuse_albedo,
+                rr_input_state,
+            ),
+            debug_entry_with_state(
+                "dlss-rr-specular-albedo",
+                "DLSS RR Specular Albedo",
+                rr_specular_albedo,
+                rr_input_state,
+            ),
+            debug_entry_with_state(
+                "dlss-rr-specular-motion-vectors",
+                "DLSS RR Specular Motion Vectors",
+                rr_specular_motion_vectors,
+                rr_input_state,
+            ),
+            DebugImageEntry::raw_with_graph_state(
                 "gbuffer-a",
                 "GBuffer-A",
                 gbuffer_a_image,
                 gbuffer_a_view,
                 GBuffer::A_FORMAT,
                 gbuffer.extent(),
+                gbuffer_a_state,
             ),
             DebugImageEntry::raw(
                 "gbuffer-b",
@@ -663,6 +792,10 @@ fn debug_entry_with_state(
 
 fn dlss_sr_enabled(mode: DlssSrMode) -> bool {
     mode != DlssSrMode::Off
+}
+
+fn dlss_rr_active(mode: DlssSrMode, rr_enabled: bool) -> bool {
+    mode != DlssSrMode::Off && rr_enabled
 }
 
 impl Drop for RtPipeline {

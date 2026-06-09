@@ -278,6 +278,7 @@ impl GpuScene {
                 material_count: submesh_cnt as u32,
                 model: instance.transform.into(),
                 inv_model: instance.transform.inverse().into(),
+                prev_model: instance.previous_transform.into(),
             };
 
             // 将 geometry 索引写入间接索引 buffer。

@@ -323,10 +323,12 @@ impl RenderAppHooks for TruvisApp {
         let frame_id = ctx.record_ctx.frame_timing.frame_id();
 
         self.gui.begin_debug_image_frame();
-        // debug image import state 取决于当前 SR mode；SR 输入在 DLSS pass 后会停在 read-only layout。
-        for debug_image in
-            self.rt_pipeline.collect_debug_images(frame_label, ctx.record_ctx.render_options.dlss_sr_mode)
-        {
+        // debug image import state 取决于当前 SR/RR mode；Streamline 输入在 evaluate 后会停在 read-only layout。
+        for debug_image in self.rt_pipeline.collect_debug_images(
+            frame_label,
+            ctx.record_ctx.render_options.dlss_sr_mode,
+            ctx.record_ctx.render_options.dlss_rr_enabled,
+        ) {
             self.gui.register_debug_image(debug_image);
         }
         self.gui.prepare_render_data(&plugin_ctx);

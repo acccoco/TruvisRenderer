@@ -68,6 +68,18 @@ GBufferData make_gbuffer_data(
     return data;
 }
 
+/// 根据项目 PBR 约定计算 RR 所需的 diffuse/specular albedo。
+/// @param base_color 材质基础颜色
+/// @param metallic 金属度
+/// @param out_diffuse_albedo 输出 diffuse albedo
+/// @param out_specular_albedo 输出 specular albedo / f0
+void compute_rr_albedo(float3 base_color, float metallic, out float3 out_diffuse_albedo, out float3 out_specular_albedo)
+{
+    const float reflectance = 0.8f;
+    out_diffuse_albedo = (1.0f - metallic) * base_color;
+    out_specular_albedo = lerp(0.16f * reflectance * reflectance, base_color, metallic);
+}
+
 /// 写入 GBuffer（命中情况）
 /// @param thread_id 当前像素坐标
 /// @param data GBuffer 数据
@@ -86,13 +98,26 @@ void write_gbuffer_hit(uint2 thread_id, GBufferData data)
 /// 写入 DLSS SR 的 per-pixel 输入（命中情况）
 /// @param thread_id 当前像素坐标
 /// @param depth projection 后的 device depth
-/// @note 当前 RT 管线没有上一帧 object transform；第一版 motion vector 写 0，
-///       camera motion 由 Streamline constants 和 cameraMotionIncluded=false 处理。
-void write_dlss_sr_hit(uint2 thread_id, float depth)
+/// @param motion_vector_pixels pixel-space motion vector，方向为当前像素回溯到上一帧位置。
+void write_dlss_sr_hit(uint2 thread_id, float depth, float2 motion_vector_pixels)
 {
     rt::dlss_depth.Store(thread_id, depth);
-    // 当前没有 object previous transform，先写 0；camera motion 由 Streamline common constants 计算。
-    rt::dlss_motion_vectors.Store(thread_id, float2(0.0f, 0.0f));
+    rt::dlss_motion_vectors.Store(thread_id, motion_vector_pixels);
+}
+
+/// 写入 DLSS RR 的 per-pixel 输入（命中情况）。
+/// @param thread_id 当前像素坐标
+/// @param data GBuffer 数据
+/// @param specular_motion_vector_pixels 反射虚拟几何的 pixel-space motion vector。
+/// @note normal+roughness 直接复用 GBufferA；这里额外写 RR 需要的材质拆分与反射运动。
+void write_dlss_rr_hit(uint2 thread_id, GBufferData data, float2 specular_motion_vector_pixels)
+{
+    float3 diffuse_albedo;
+    float3 specular_albedo;
+    compute_rr_albedo(data.albedo, data.metallic, diffuse_albedo, specular_albedo);
+    rt::dlss_rr_diffuse_albedo.Store(thread_id, float4(diffuse_albedo, 1.0f));
+    rt::dlss_rr_specular_albedo.Store(thread_id, float4(specular_albedo, 1.0f));
+    rt::dlss_rr_specular_motion_vectors.Store(thread_id, specular_motion_vector_pixels);
 }
 
 /// 写入 GBuffer（miss 情况）
@@ -117,6 +142,15 @@ void write_dlss_sr_miss(uint2 thread_id)
     // miss 写远平面 device depth，避免天空像素在 SR 中继承上一帧命中深度。
     rt::dlss_depth.Store(thread_id, 1.0f);
     rt::dlss_motion_vectors.Store(thread_id, float2(0.0f, 0.0f));
+}
+
+/// 写入 DLSS RR 的 per-pixel 输入（miss 情况）。
+/// @param thread_id 当前像素坐标
+void write_dlss_rr_miss(uint2 thread_id)
+{
+    rt::dlss_rr_diffuse_albedo.Store(thread_id, float4(0.0f));
+    rt::dlss_rr_specular_albedo.Store(thread_id, float4(0.0f));
+    rt::dlss_rr_specular_motion_vectors.Store(thread_id, float2(0.0f, 0.0f));
 }
 
 } // namespace gbuffer

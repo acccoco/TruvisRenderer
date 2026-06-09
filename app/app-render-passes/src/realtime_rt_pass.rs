@@ -293,9 +293,18 @@ pub struct RealtimeRtPassData {
     /// DLSS SR depth 输出。这里写的是 projection 后的 device depth，不是 GBufferB.w 的 hit distance。
     pub depth: GfxImageHandle,
     pub depth_view: GfxImageViewHandle,
-    /// DLSS SR motion vectors 输出。第一版 object motion 为 0，camera motion 由 Streamline constants 表达。
+    /// DLSS SR motion vectors 输出。写入 pixel-space 2D motion，包含 camera 与 object motion。
     pub motion_vectors: GfxImageHandle,
     pub motion_vectors_view: GfxImageViewHandle,
+    /// DLSS RR diffuse albedo 输出。
+    pub rr_diffuse_albedo: GfxImageHandle,
+    pub rr_diffuse_albedo_view: GfxImageViewHandle,
+    /// DLSS RR specular albedo 输出。
+    pub rr_specular_albedo: GfxImageHandle,
+    pub rr_specular_albedo_view: GfxImageViewHandle,
+    /// DLSS RR specular motion vectors 输出。写入反射虚拟几何的 pixel-space 2D motion。
+    pub rr_specular_motion_vectors: GfxImageHandle,
+    pub rr_specular_motion_vectors_view: GfxImageViewHandle,
 }
 
 #[derive(DescriptorBinding)]
@@ -348,6 +357,27 @@ struct RealtimeRtDescriptorBinding {
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
     _dlss_motion_vectors: (),
+
+    /// DLSS RR diffuse albedo。
+    #[binding = 7]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _dlss_rr_diffuse_albedo: (),
+
+    /// DLSS RR specular albedo。
+    #[binding = 8]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _dlss_rr_specular_albedo: (),
+
+    /// DLSS RR specular motion vectors。
+    #[binding = 9]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _dlss_rr_specular_motion_vectors: (),
 }
 
 pub struct RealtimeRtPass {
@@ -516,6 +546,12 @@ impl RealtimeRtPass {
         let depth_view = record_ctx.gfx_resource_manager.get_image_view(pass_data.depth_view).unwrap().handle();
         let motion_vectors_view =
             record_ctx.gfx_resource_manager.get_image_view(pass_data.motion_vectors_view).unwrap().handle();
+        let rr_diffuse_albedo_view =
+            record_ctx.gfx_resource_manager.get_image_view(pass_data.rr_diffuse_albedo_view).unwrap().handle();
+        let rr_specular_albedo_view =
+            record_ctx.gfx_resource_manager.get_image_view(pass_data.rr_specular_albedo_view).unwrap().handle();
+        let rr_specular_motion_vectors_view =
+            record_ctx.gfx_resource_manager.get_image_view(pass_data.rr_specular_motion_vectors_view).unwrap().handle();
 
         cmd.begin_label("Ray trace", glam::vec4(0.0, 1.0, 0.0, 1.0));
 
@@ -580,6 +616,33 @@ impl RealtimeRtPass {
                         vk::DescriptorImageInfo::default()
                             .image_layout(vk::ImageLayout::GENERAL)
                             .image_view(motion_vectors_view),
+                    ],
+                ),
+                RealtimeRtDescriptorBinding::dlss_rr_diffuse_albedo().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    vec![
+                        vk::DescriptorImageInfo::default()
+                            .image_layout(vk::ImageLayout::GENERAL)
+                            .image_view(rr_diffuse_albedo_view),
+                    ],
+                ),
+                RealtimeRtDescriptorBinding::dlss_rr_specular_albedo().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    vec![
+                        vk::DescriptorImageInfo::default()
+                            .image_layout(vk::ImageLayout::GENERAL)
+                            .image_view(rr_specular_albedo_view),
+                    ],
+                ),
+                RealtimeRtDescriptorBinding::dlss_rr_specular_motion_vectors().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    vec![
+                        vk::DescriptorImageInfo::default()
+                            .image_layout(vk::ImageLayout::GENERAL)
+                            .image_view(rr_specular_motion_vectors_view),
                     ],
                 ),
             ],
@@ -678,6 +741,9 @@ pub struct RealtimeRtRgPass<'a> {
     pub gbuffer_c: RgImageHandle,
     pub depth: RgImageHandle,
     pub motion_vectors: RgImageHandle,
+    pub rr_diffuse_albedo: RgImageHandle,
+    pub rr_specular_albedo: RgImageHandle,
+    pub rr_specular_motion_vectors: RgImageHandle,
 }
 impl RgPass for RealtimeRtRgPass<'_> {
     fn setup(&mut self, builder: &mut RgPassBuilder) {
@@ -689,6 +755,9 @@ impl RgPass for RealtimeRtRgPass<'_> {
         builder.write_image(self.gbuffer_c, RgImageState::STORAGE_WRITE_RAY_TRACING);
         builder.write_image(self.depth, RgImageState::STORAGE_WRITE_RAY_TRACING);
         builder.write_image(self.motion_vectors, RgImageState::STORAGE_WRITE_RAY_TRACING);
+        builder.write_image(self.rr_diffuse_albedo, RgImageState::STORAGE_WRITE_RAY_TRACING);
+        builder.write_image(self.rr_specular_albedo, RgImageState::STORAGE_WRITE_RAY_TRACING);
+        builder.write_image(self.rr_specular_motion_vectors, RgImageState::STORAGE_WRITE_RAY_TRACING);
     }
 
     fn execute(&self, ctx: &RgPassContext<'_>) {
@@ -705,6 +774,15 @@ impl RgPass for RealtimeRtRgPass<'_> {
         let (depth, depth_view) = ctx.get_image_and_view_handle(self.depth).expect("RealtimeRtRgPass: depth not found");
         let (motion_vectors, motion_vectors_view) =
             ctx.get_image_and_view_handle(self.motion_vectors).expect("RealtimeRtRgPass: motion_vectors not found");
+        let (rr_diffuse_albedo, rr_diffuse_albedo_view) = ctx
+            .get_image_and_view_handle(self.rr_diffuse_albedo)
+            .expect("RealtimeRtRgPass: rr_diffuse_albedo not found");
+        let (rr_specular_albedo, rr_specular_albedo_view) = ctx
+            .get_image_and_view_handle(self.rr_specular_albedo)
+            .expect("RealtimeRtRgPass: rr_specular_albedo not found");
+        let (rr_specular_motion_vectors, rr_specular_motion_vectors_view) = ctx
+            .get_image_and_view_handle(self.rr_specular_motion_vectors)
+            .expect("RealtimeRtRgPass: rr_specular_motion_vectors not found");
 
         self.rt_pass.ray_trace(
             &self.record_ctx,
@@ -725,6 +803,12 @@ impl RgPass for RealtimeRtRgPass<'_> {
                 depth_view,
                 motion_vectors,
                 motion_vectors_view,
+                rr_diffuse_albedo,
+                rr_diffuse_albedo_view,
+                rr_specular_albedo,
+                rr_specular_albedo_view,
+                rr_specular_motion_vectors,
+                rr_specular_motion_vectors_view,
             },
         );
     }

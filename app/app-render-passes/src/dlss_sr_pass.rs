@@ -4,38 +4,18 @@
 //! RenderGraph 只负责把输入/输出图像转到 Streamline 期望的 layout，并保证 evaluate
 //! 发生在 ray tracing 之后、SDR pass 之前。
 
-use ash::vk;
-use ash::vk::Handle;
+use crate::streamline_pass::{SL_INPUT_READ, SL_WRITE, image_resource, to_streamline_constants, to_streamline_mode};
+use ash::vk::{self, Handle};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
-use truvis_render_runtime::state::dlss_sr::DlssSrFrameConstants;
 use truvis_render_runtime::state::dlss_sr::DlssSrMode;
 use truvis_streamline_binding::dlss;
 
-/// DLSS SR 输入资源在 evaluate 前的稳定状态。
-///
-/// Streamline 通过 resource tag 读取 color/depth/motion vectors，内部可能在 graphics /
-/// compute 阶段访问这些图像，因此这里用 `ALL_COMMANDS + MEMORY_READ` 表达外部 opaque pass
-/// 的保守读依赖。layout 必须和传给 `sl::Resource` 的 layout 保持一致。
-pub const DLSS_SR_INPUT_READ: RgImageState = RgImageState::new(
-    vk::PipelineStageFlags2::ALL_COMMANDS,
-    vk::AccessFlags2::MEMORY_READ,
-    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-);
-
-/// DLSS SR 输出由 Streamline 内部写入，后续 `hdr-to-sdr` 仍按 storage image 读取。
-///
-/// 这里保持 `GENERAL`，避免 SR output 在 opaque pass 和项目 compute pass 之间出现
-/// image layout 契约分裂。
-const DLSS_WRITE: RgImageState = RgImageState::new(
-    vk::PipelineStageFlags2::ALL_COMMANDS,
-    vk::AccessFlags2::from_raw(vk::AccessFlags2::MEMORY_READ.as_raw() | vk::AccessFlags2::MEMORY_WRITE.as_raw()),
-    vk::ImageLayout::GENERAL,
-);
+pub const DLSS_SR_INPUT_READ: RgImageState = SL_INPUT_READ;
 
 /// Streamline DLSS SR 的无状态 pass owner。
 ///
@@ -160,7 +140,7 @@ impl RgPass for DlssSrRgPass<'_> {
         builder.read_image(self.input_color, DLSS_SR_INPUT_READ);
         builder.read_image(self.depth, DLSS_SR_INPUT_READ);
         builder.read_image(self.motion_vectors, DLSS_SR_INPUT_READ);
-        builder.write_image(self.output_color, DLSS_WRITE);
+        builder.write_image(self.output_color, SL_WRITE);
     }
 
     fn execute(&self, ctx: &RgPassContext<'_>) {
@@ -187,64 +167,5 @@ impl RgPass for DlssSrRgPass<'_> {
                 motion_vectors_view,
             },
         );
-    }
-}
-
-fn image_resource(
-    resource_ctx: GfxResourceCtx<'_>,
-    image: &GfxImage,
-    image_view: &GfxImageView,
-    layout: vk::ImageLayout,
-) -> dlss::ImageResource {
-    let extent = image.extent();
-    // Streamline 需要原始 Vulkan handle、image memory 和 native format；这些信息不在
-    // RenderGraph handle 中，因此必须从 manager-owned `GfxImage` 取快照。
-    dlss::ImageResource {
-        image: image.handle().as_raw(),
-        memory: image.device_memory(resource_ctx).as_raw(),
-        image_view: image_view.handle().as_raw(),
-        layout: layout.as_raw() as u32,
-        format: image.format().as_raw() as u32,
-        width: extent.width,
-        height: extent.height,
-        mip_levels: 1,
-        array_layers: 1,
-        flags: image.flags().as_raw(),
-        usage: image.usage().as_raw(),
-    }
-}
-
-fn to_streamline_constants(value: DlssSrFrameConstants) -> dlss::Constants {
-    dlss::Constants {
-        camera_view_to_clip: value.camera_view_to_clip,
-        clip_to_camera_view: value.clip_to_camera_view,
-        clip_to_prev_clip: value.clip_to_prev_clip,
-        prev_clip_to_clip: value.prev_clip_to_clip,
-        jitter_offset: value.jitter_offset,
-        mvec_scale: value.mvec_scale,
-        camera_pos: value.camera_pos,
-        camera_up: value.camera_up,
-        camera_right: value.camera_right,
-        camera_fwd: value.camera_fwd,
-        camera_near: value.camera_near,
-        camera_far: value.camera_far,
-        camera_fov: value.camera_fov,
-        camera_aspect_ratio: value.camera_aspect_ratio,
-        motion_vectors_invalid_value: value.motion_vectors_invalid_value,
-        depth_inverted: value.depth_inverted,
-        camera_motion_included: value.camera_motion_included,
-        motion_vectors_3d: value.motion_vectors_3d,
-        reset: value.reset,
-    }
-}
-
-fn to_streamline_mode(mode: DlssSrMode) -> dlss::DlssMode {
-    match mode {
-        DlssSrMode::Off => dlss::DlssMode::Off,
-        DlssSrMode::Dlaa => dlss::DlssMode::Dlaa,
-        DlssSrMode::Quality => dlss::DlssMode::Quality,
-        DlssSrMode::Balanced => dlss::DlssMode::Balanced,
-        DlssSrMode::Performance => dlss::DlssMode::Performance,
-        DlssSrMode::UltraPerformance => dlss::DlssMode::UltraPerformance,
     }
 }

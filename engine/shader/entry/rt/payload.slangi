@@ -34,6 +34,10 @@ struct HitInfo
     // ========== 几何信息 ==========
     /// 世界空间命中位置
     float3 position;
+    /// 命中点的 object/local 空间位置，用于用 current/previous model 计算 motion vector。
+    float3 object_position;
+    /// TLAS custom index 对应的稳定 instance slot。
+    uint instance_id;
     /// 朝向 Ray 起点的法线（已翻转，确保与入射方向同侧）
     float3 forward_normal;
     /// 原始世界空间法线（未翻转，用于判断正反面）

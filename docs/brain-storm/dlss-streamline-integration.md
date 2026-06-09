@@ -1,10 +1,12 @@
 # DLSS / Streamline 接入方案
 
-> 状态：更新于 2026-06-02。当前项目已经接入 DLSS Super Resolution
-> (SR) 的 Streamline 基础闭环：feature support 查询、SR mode、render/output
-> extent 拆分、SR 输入资源、common constants、resource tagging、`kFeatureDLSS`
-> evaluate、resize/mode reset 和 ImGui 控制。DLSS Ray Reconstruction (RR)
-> 尚未接入，后续作为 SR 基础设施上的替代 evaluate 分支扩展。
+> 状态：更新于 2026-06-09。当前项目已经接入 DLSS Super Resolution
+> (SR) 和 DLSS Ray Reconstruction (RR) 的 Streamline MVP 闭环：feature
+> support 查询、SR mode + RR enable flag、render/output extent 拆分、SR/RR
+> 输入资源、common constants、resource tagging、`kFeatureDLSS` /
+> `kFeatureDLSS_RR` evaluate、resize/mode/feature reset 和 ImGui 控制。
+> RR 第一版已经作为 SR 基础设施上的替代 evaluate 分支落地；当前仍需继续
+> 验证真实反射 motion vectors、temporal jitter 和画质稳定性。
 
 本文记录 NVIDIA Streamline 2.11.1 在 `truvis-app` RT pipeline 中的 SR/RR
 接入约定。Frame Generation、Reflex、NIS、DirectSR 不在当前范围内。
@@ -46,7 +48,7 @@ RR-on:
 
 ## 2. 用户可见模式
 
-当前 UI 和运行时只接入 SR mode：
+当前 UI 和运行时接入 “SR mode + RR enable flag”：
 
 - `Off`
 - `DLAA`
@@ -58,9 +60,11 @@ RR-on:
 `Quality / Balanced / Performance / Ultra Performance` 由
 `slDLSSGetOptimalSettings` 决定 render extent；`Off / DLAA` 使用 native extent。
 
-RR 后续建议以 “SR mode + RR enable flag” 表达，不要把
+RR 以 “SR mode + RR enable flag” 表达，不要把
 `DLSSRayReconstruction` 写成和 `Quality/Balanced/Performance` 平级且互斥的质量挡位。
-RR 复用 SR 的 Performance Quality Mode，不新增独立 RR 质量挡位。
+RR 复用 SR 的 Performance Quality Mode，不新增独立 RR 质量挡位。`DLSS RR`
+checkbox 只有在 SR mode 非 `Off` 时才会让 RenderGraph 走 `kFeatureDLSS_RR`；
+`Off + RR enabled` 仍保持 native 输出。
 
 调试启动可用：
 
@@ -71,6 +75,7 @@ TRUVIS_DLSS_SR_MODE=quality
 TRUVIS_DLSS_SR_MODE=balanced
 TRUVIS_DLSS_SR_MODE=performance
 TRUVIS_DLSS_SR_MODE=ultra-performance
+TRUVIS_DLSS_RR=1
 ```
 
 ## 3. 当前 SR 落地形态
@@ -80,13 +85,16 @@ TRUVIS_DLSS_SR_MODE=ultra-performance
 已完成：
 
 - `resources.toml` 拉取 Streamline SDK 2.11.1。
-- `truvis-cxx-build` 复制 DLSS SR 所需 runtime DLL 和项目维护的 `sl.*.json`。
+- `truvis-cxx-build` 复制 DLSS SR/RR 所需 runtime DLL 和项目维护的 `sl.*.json`。
 - `StreamlineRuntime` 封装 `slInit` / `slShutdown` / 日志桥。
 - `Gfx::new(...)` 默认通过 `sl.interposer.dll` 创建 Vulkan entry。
-- SR support 查询通过 `slIsFeatureSupported(kFeatureDLSS)` 和
-  `slGetFeatureRequirements(kFeatureDLSS)` 打日志。
+- SR/RR support 查询通过 `slIsFeatureSupported(...)` 和
+  `slGetFeatureRequirements(...)` 打日志。
 - SR FFI 已封装 `slDLSSGetOptimalSettings`、`slDLSSSetOptions`、common constants、
   resource tags、`slEvaluateFeature(kFeatureDLSS)` 和 `slFreeResources(kFeatureDLSS)`。
+- RR FFI 已封装 `slDLSSDGetOptimalSettings`、`slDLSSDSetOptions`、
+  `DLSSDOptions`、RR resource tags、`slEvaluateFeature(kFeatureDLSS_RR)` 和
+  `slFreeResources(kFeatureDLSS_RR)`。
 
 当前生产路径走 Vulkan interposer/proxy，不在 runtime 初始化后额外调用 `slSetVulkanInfo`。
 `slSetVulkanInfo` wrapper 仍保留给未来非 proxy 集成方式。
@@ -111,8 +119,10 @@ pub struct FrameRenderState {
   `slDLSSGetOptimalSettings`。
 - RT、GBuffer、DLSS depth、motion vectors 使用 `render_extent`。
 - DLSS output、SDR、GUI、present 使用 `output_extent`。
-- mode 切换、render extent 变化、窗口 resize 会 request SR history reset。
-- 关闭 SR 时释放 viewport 0 的 DLSS resources。
+- mode 切换、RR enable flag 切换、render extent 变化、窗口 resize 会 request
+  DLSS history reset。
+- SR/RR feature 切换或关闭时，先等待 GPU idle，再释放旧 feature 在 viewport 0
+  上的 Streamline resources。
 
 ### 3.3 RenderGraph 主流程
 
@@ -139,15 +149,32 @@ DLSS SR / DLAA:
       -> dlss-sr-output(output_extent)
   hdr-to-sdr(dlss-sr-output -> main_view_color)
   resolve + gui
+
+DLSS RR:
+  ray-tracing(render_extent)
+    -> single_frame_rt
+    -> gbuffer_a / gbuffer_b / gbuffer_c
+    -> dlss-depth / dlss-motion-vectors
+    -> dlss-rr-diffuse-albedo / dlss-rr-specular-albedo
+    -> dlss-rr-specular-motion-vectors
+  DlssRrRgPass:
+    single_frame_rt + dlss-depth + dlss-motion-vectors
+      + diffuse/specular albedo + gbuffer_a(normal+roughness)
+      + specular motion vectors
+      -> kFeatureDLSS_RR
+      -> dlss-sr-output(output_extent)
+  hdr-to-sdr(dlss-sr-output -> main_view_color)
+  resolve + gui
 ```
 
 DLAA 属于 `kFeatureDLSS` 分支，只是 `render_extent == output_extent`；SR upscale mode
 则使用 `slDLSSGetOptimalSettings` 返回的低分辨率 `render_extent`。
 
-`DlssSrRgPass` 是 opaque external pass：RenderGraph 只负责 pass 前后的 resource state
-和命令录制顺序；Streamline 负责 DLSS 内部命令。
+`DlssSrRgPass` 和 `DlssRrRgPass` 都是 opaque external pass：RenderGraph 只负责
+pass 前后的 resource state 和命令录制顺序；Streamline 负责 DLSS 内部命令。RR
+开启时不会再额外运行 SR pass，二者每帧只选一个 evaluate 分支。
 
-### 3.4 SR 资源契约
+### 3.4 SR / RR 资源契约
 
 当前 SR 每帧 tag 的资源：
 
@@ -156,10 +183,20 @@ DLAA 属于 `kFeatureDLSS` 分支，只是 `render_extent == output_extent`；SR
 | `kBufferTypeScalingInputColor` | `single_frame_rt` | HDR color, `render_extent` | 低分辨率 RT color。 |
 | `kBufferTypeScalingOutputColor` | `dlss-sr-output` | HDR color, `output_extent` | SR 输出，后续进入 SDR。 |
 | `kBufferTypeDepth` | `dlss-depth` | `R32_SFLOAT`, `render_extent` | raygen 写入 device depth；不是 `GBufferB.w` 的 hit distance。 |
-| `kBufferTypeMotionVectors` | `dlss-motion-vectors` | `R32G32_SFLOAT`, `render_extent` | 第一版写 0，camera motion 由 Streamline constants 处理。 |
+| `kBufferTypeMotionVectors` | `dlss-motion-vectors` | `R32G32_SFLOAT`, `render_extent` | raygen 写入 pixel-space 2D motion vector，包含 camera 和 object motion；方向为 `previous_pixel - current_pixel`。 |
 
-`GBufferB.w` 仍保留 primary-ray hit distance / linear depth 语义，供项目自身 debug 或后续 RR
-扩展参考；不要把它直接当作当前 DLSS SR tag depth。
+RR 在 SR 基础输入外额外 tag：
+
+| Streamline tag | 当前资源 | 格式 / 尺寸 | 说明 |
+| --- | --- | --- | --- |
+| `kBufferTypeAlbedo` | `dlss-rr-diffuse-albedo` | `R16G16B16A16_SFLOAT`, `render_extent` | shader 从 base color / metallic 拆出的 diffuse albedo。 |
+| `kBufferTypeSpecularAlbedo` | `dlss-rr-specular-albedo` | `R16G16B16A16_SFLOAT`, `render_extent` | shader 按项目 PBR 约定拆出的 specular albedo。 |
+| `kBufferTypeNormalRoughness` | `gbuffer-a` | `R16G16B16A16_SFLOAT`, `render_extent` | `normal.xyz + roughness`，`DLSSDOptions.normalRoughnessMode = Packed`。 |
+| `kBufferTypeSpecularMotionVectors` | `dlss-rr-specular-motion-vectors` | `R32G32_SFLOAT`, `render_extent` | raygen 沿 primary hit 的镜面反射方向追踪虚拟几何后写入 pixel-space 2D motion；未命中时写 0。 |
+
+`GBufferB.w` 仍保留 primary-ray hit distance / linear depth 语义，供项目自身 debug 或后续
+RR 扩展参考；当前 SR/RR 都 tag `dlss-depth` 作为 device depth，不直接把 `GBufferB.w`
+交给 Streamline。
 
 SR 输入在 RenderGraph 中使用 `DLSS_SR_INPUT_READ`：
 
@@ -184,60 +221,74 @@ SR 输入误按 `GENERAL` 导入 present graph。
 - camera position/right/up/forward、near/far/fov/aspect。
 - reset history 标记。
 - `jitterOffset = 0`。
-- `mvecScale = {1, 1}`。
-- `cameraMotionIncluded = false`。
+- `mvecScale = {1 / render_width, 1 / render_height}`。
+- `cameraMotionIncluded = true`。
 - `motionVectors3D = false`。
 - `depthInverted = false`。
 
-当前 motion vector image 只表达 object motion，第一版写 0；camera motion 交给 Streamline
-根据矩阵计算。后续如果 shader 写入 camera-included motion vectors，必须同步调整
-`cameraMotionIncluded`、`mvecScale` 和 debug 验证标准。
+当前 motion vector image 写入完整 2D screen motion。runtime 会在 `PerFrameData`
+写入 previous view/projection，在 `Instance` 写入 `prev_model`；新激活实例、resize、
+DLSS mode/RR 切换或 history reset 帧会把 previous 数据对齐到当前帧，避免第一帧脏向量。
+后续接 temporal jitter 时，需要同步 motion vector 是否包含 jitter delta 与
+`motionVectorsJittered` / jitter offset 契约。
 
-## 4. RR 后续接入点
+## 4. RR 当前落地与剩余缺口
 
-RR 不是 SR 后追加 pass，而是替换 SR evaluate 的分支。规划层接口可保持：
+RR 不是 SR 后追加 pass，而是替换 SR evaluate 的分支。当前 RenderGraph 接口为：
 
 ```rust
 pub struct DlssRrRgPass<'a> {
-    pub noisy_color: RgImageHandle,
-    pub depth_or_linear_depth: RgImageHandle,
+    pub input_color: RgImageHandle,
+    pub output_color: RgImageHandle,
+    pub depth: RgImageHandle,
     pub motion_vectors: RgImageHandle,
     pub diffuse_albedo: RgImageHandle,
     pub specular_albedo: RgImageHandle,
     pub normal_roughness: RgImageHandle,
-    pub specular_motion_or_hit_distance: RgImageHandle,
-    pub output_color: RgImageHandle,
+    pub specular_motion_vectors: RgImageHandle,
 }
 ```
 
-RR 阶段需要补：
+已落地：
 
-- RR runtime DLL / JSON / feature flag。
+- RR runtime DLL、feature flag 和 support 查询。
 - `slDLSSDGetOptimalSettings` / `slDLSSDSetOptions` / `DLSSDOptions` FFI。
 - `kFeatureDLSS_RR` support 查询、resource tagging、evaluate、free resources。
-- diffuse albedo、specular albedo。
-- normal + roughness packing 与 `DLSSDOptions` 一致性。
-- specular motion vectors，或 specular hit distance + 相关矩阵。
+- `DlssRrPass` / `DlssRrRgPass` opaque external pass。
+- `DlssRrInputTargets` 管理 diffuse albedo、specular albedo、specular motion vectors。
+- raygen 写出 RR 所需 diffuse/specular albedo；normal + roughness 复用 GBufferA。
+- raygen 写出 primary full-screen motion vectors，并用一次反射 `RayQuery` 写出
+  RR specular motion vectors；反射未命中时使用零向量作为保守 fallback。
+- SR/RR feature 切换时释放旧 feature resources，避免 Streamline viewport resource
+  跨 feature 残留。
 
-RR 开启后的目标分支：
+仍需继续补齐或验证：
 
-```text
-single_frame_rt(noisy HDR) + GBuffer/material + depth + motion_vectors
-  -> DlssRrRgPass(kFeatureDLSS_RR)
-  -> dlss-sr-output 或后续重命名的 dlss-output
-  -> hdr-to-sdr
-```
-
-这里的 output 可以沿用 SR 输出资源，也可以在接 RR 时重命名为更中性的
-`dlss-output`；关键是不要形成 `RR -> SR` 的连续 pass。
+- temporal jitter 当前仍为 0；后续接 DLSS 推荐 jitter pattern 时，需要同步 raygen、projection
+  constants、history reset 和 debug 验证。
+- specular motion vectors 当前采用 single reflection RayQuery，不处理透明材质、粒子或多层反射；
+  后续如需要更高质量，可补 specular hit distance / 多 bounce 策略。
+- 当前 output 仍沿用 `dlss-sr-output` 资源名；功能正确但命名偏 SR，后续可以改为
+  `dlss-output`，避免 debug UI 误读。
+- `slDLSSDGetOptimalSettings` FFI 已暴露，但 runtime 仍复用 SR optimal settings 计算
+  render extent。若 SDK/driver 对 RR optimal settings 有额外约束，应再切到 RR-specific query。
 
 ## 5. 验证记录
 
 当前代码验证过：
 
 - `cargo fmt`：通过；仅有项目现有 nightly-only rustfmt 配置警告。
-- `cargo check`：通过。
+- `clang-format -i ...`：通过。
+- `cargo run --bin shader-build`：通过。
+- `cargo build -p truvis-shader-binding`：通过。
+- `cargo run --bin cxx-build`：通过，Debug/Release 输出均复制 SR/RR runtime DLL。
+- `cargo build -p truvis-assimp-binding -p truvis-streamline-binding`：通过。
+- `cargo check --all`：通过。
 - `cargo build --bin truvis-app`：通过。
+- `cargo build --bin rt-cornell`：通过。
+
+既有 SR 运行时回归记录（本轮 RR 接入后尚未重跑交互式窗口验证）：
+
 - DLSS Off + Vulkan validation + 窗口 resize：退出码 0，未扫到 `VUID` / validation error。
 - `TRUVIS_DLSS_SR_MODE=quality` + Vulkan validation + 窗口 resize：退出码 0，未扫到
   `VUID` / validation error / `DLSS SR evaluate failed`。
@@ -256,16 +307,17 @@ DLSSD
 
 - SR mode 切换后 render/output extent 日志是否符合 `slDLSSGetOptimalSettings`。
 - resize 后是否触发 DLSS history reset 和 target rebuild。
-- Debug Viewer 中 `dlss-depth`、`dlss-motion-vectors`、`dlss-sr-output` 是否能按当前 frame label 查看。
-- camera/object motion vector 真正接入后，静止画面应接近 0，移动方向和尺度应稳定。
+- Debug Viewer 中 SR/RR 输入与 `dlss-sr-output` 是否能按当前 frame label 查看。
+- camera/object/specular motion vector 静止画面应接近 0，移动方向和尺度应稳定。
+- RR 开启时日志中不应出现 `DLSS RR evaluate failed`，且不应再出现同一帧连续 SR evaluate。
 
 ## 6. 当前限制
 
-- SR 已能 evaluate，但第一版 motion vectors 仍写 0；camera motion 依赖 Streamline constants。
 - jitter 仍为 0，尚未做 temporal jitter pattern。
+- motion vectors 已接入 full-screen 2D motion，但尚未做 runtime 可视化量纲校验和 DLSS 画质回归。
 - fallback 策略目前以 mode 切换和错误日志为主，尚未做更细的 runtime degrade UI。
 - 传统 denoise/accum pass 仍保留在代码中，但 RT 主流程已经旁路；后续可以单独清理未使用 pass。
-- RR 尚未接入，不能把当前 SR 输出当作 Ray Reconstruction 结果。
+- RR output 资源名仍为 `dlss-sr-output`，语义上已经按当前 feature 分支区分，命名后续可清理。
 
 ## 7. 设计原则
 

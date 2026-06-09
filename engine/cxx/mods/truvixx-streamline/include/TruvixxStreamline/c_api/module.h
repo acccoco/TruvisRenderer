@@ -122,10 +122,46 @@ typedef struct
     uint32_t use_linear_depth;
 } TruvixxSlDlssEvaluateDesc;
 
+// DLSS Ray Reconstruction options 的最小字段集合。
+// RR 使用与 SR 相同的 Performance Quality Mode，但作为 kFeatureDLSS_RR 独立 evaluate。
+typedef struct
+{
+    uint32_t mode;
+    uint32_t output_width;
+    uint32_t output_height;
+    float pre_exposure;
+    float exposure_scale;
+    uint32_t color_buffers_hdr;
+    uint32_t normal_roughness_packed;
+    float world_to_camera_view[16];
+    float camera_view_to_world[16];
+} TruvixxSlDlssRrOptions;
+
+// 一次 DLSS Ray Reconstruction evaluate 的完整输入。
+// normal_roughness 当前按 packed 模式 tag 为 kBufferTypeNormalRoughness。
+typedef struct
+{
+    uint32_t frame_index;
+    uint32_t viewport_id;
+    uint64_t command_buffer;
+    TruvixxSlConstants constants;
+    TruvixxSlImageResource input_color;
+    TruvixxSlImageResource output_color;
+    TruvixxSlImageResource depth_or_linear_depth;
+    TruvixxSlImageResource motion_vectors;
+    TruvixxSlImageResource diffuse_albedo;
+    TruvixxSlImageResource specular_albedo;
+    TruvixxSlImageResource normal_roughness;
+    TruvixxSlImageResource specular_motion_vectors;
+    uint32_t use_linear_depth;
+} TruvixxSlDlssRrEvaluateDesc;
+
 // 手动 Vulkan hook 路径使用；proxy/interposer 路径不需要额外调用。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_set_vulkan_info(const TruvixxSlVulkanInfo* info);
 // 查询 kFeatureDLSS support / requirements，不分配 feature resource。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_query_support(uint64_t physical_device, TruvixxSlFeatureSupport* out_support);
+// 查询 kFeatureDLSS_RR support / requirements，不分配 feature resource。
+TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_query_support(uint64_t physical_device, TruvixxSlFeatureSupport* out_support);
 // 查询 SR mode 对应的推荐 render extent。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_get_optimal_settings(
     const TruvixxSlDlssOptions* options,
@@ -137,6 +173,20 @@ TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_set_options(uint32_t viewport_id,
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_evaluate(const TruvixxSlDlssEvaluateDesc* desc);
 // 释放指定 viewport 的 kFeatureDLSS 内部资源。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_free_resources(uint32_t viewport_id);
+// 查询 RR mode 对应的推荐 render extent。
+TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_get_optimal_settings(
+    const TruvixxSlDlssRrOptions* options,
+    TruvixxSlDlssOptimalSettings* out_settings
+);
+// 设置指定 viewport 的 RR options；evaluate 前必须与 output resource extent 一致。
+TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_set_options(
+    uint32_t viewport_id,
+    const TruvixxSlDlssRrOptions* options
+);
+// 在传入的 Vulkan command buffer 上 tag resource 并执行 kFeatureDLSS_RR。
+TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_evaluate(const TruvixxSlDlssRrEvaluateDesc* desc);
+// 释放指定 viewport 的 kFeatureDLSS_RR 内部资源。
+TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_free_resources(uint32_t viewport_id);
 
 #ifdef __cplusplus
 }

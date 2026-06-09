@@ -55,6 +55,102 @@ float compute_device_depth(float3 world_position)
     return saturate(clip_position.z / clip_position.w);
 }
 
+bool is_projectable_clip(float4 clip_position)
+{
+    return abs(clip_position.w) > 1e-6f;
+}
+
+float2 clip_to_pixel(float4 clip_position)
+{
+    const float2 ndc = clip_position.xy / clip_position.w;
+    const float2 uv = float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f);
+    return uv * per_frame_data.resolution;
+}
+
+float4 project_world_to_clip(float3 world_position, float4x4 view, float4x4 projection)
+{
+    const float4 view_position = mul(view, float4(world_position, 1.0f));
+    return mul(projection, view_position);
+}
+
+/// 计算 DLSS 使用的 pixel-space 2D motion vector。
+///
+/// 方向约定为“当前像素回溯到上一帧位置”，即 previous_pixel - current_pixel。
+/// `PerFrameData` 中的 previous view/projection 和 instance.prev_model 在 history reset
+/// 帧会被 runtime 对齐为当前帧，保证 reset 首帧写出稳定零向量。
+float2 compute_motion_vector_pixels(float3 current_world_position, float3 previous_world_position)
+{
+    const float4 current_clip = project_world_to_clip(
+        current_world_position,
+        per_frame_data.view,
+        per_frame_data.projection
+    );
+    const float4 previous_clip = project_world_to_clip(
+        previous_world_position,
+        per_frame_data.prev_view,
+        per_frame_data.prev_projection
+    );
+
+    if (!is_projectable_clip(current_clip) || !is_projectable_clip(previous_clip))
+    {
+        return float2(0.0f, 0.0f);
+    }
+
+    return clip_to_pixel(previous_clip) - clip_to_pixel(current_clip);
+}
+
+float2 compute_instance_motion_vector_pixels(uint instance_id, float3 object_position)
+{
+    Instance* instance = gpu_scene.get_instance(instance_id);
+    const float3 current_world_position = mul(instance.model, float4(object_position, 1.0f)).xyz;
+    const float3 previous_world_position = mul(instance.prev_model, float4(object_position, 1.0f)).xyz;
+    return compute_motion_vector_pixels(current_world_position, previous_world_position);
+}
+
+/// 为 RR specular motion vectors 追踪一次镜面方向上的虚拟几何。
+///
+/// 未命中时返回零向量；这是 RR 可接受的保守 fallback，比复用 primary motion 更不容易把
+/// 错误历史强行拖到反射区域。
+float2 compute_specular_motion_vector_pixels(const HitInfo primary_hit, float3 primary_ray_dir)
+{
+    const float3 reflection_dir = normalize(reflect(normalize(primary_ray_dir), primary_hit.forward_normal));
+    RayDesc specular_ray;
+    specular_ray.Origin = primary_hit.position + 0.001f * reflection_dir;
+    specular_ray.Direction = reflection_dir;
+    specular_ray.TMin = 0.001f;
+    specular_ray.TMax = 10000.0f;
+
+    RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> rq;
+    rq.TraceRayInline(
+        rt::rt_tlas,
+        RAY_FLAG_NONE,
+        0xFF,
+        specular_ray
+    );
+    while (rq.Proceed())
+    {
+        if (rq.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE)
+        {
+            rq.CommitNonOpaqueTriangleHit();
+        }
+    }
+
+    if (rq.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
+    {
+        return float2(0.0f, 0.0f);
+    }
+
+    const uint instance_id = rq.CommittedInstanceID();
+    const uint geometry_id = rq.CommittedGeometryIndex();
+    const uint primitive_id = rq.CommittedPrimitiveIndex();
+    const float2 barycentrics = rq.CommittedTriangleBarycentrics();
+
+    Geometry* geometry = gpu_scene.get_geometry(instance_id, geometry_id);
+    const uint3 triangle = geometry.get_triangle(primitive_id);
+    const float3 object_position = geometry.get_interp_position(triangle, barycentrics);
+    return compute_instance_motion_vector_pixels(instance_id, object_position);
+}
+
 /// 初始化光线载荷
 /// @param random_seed 随机种子
 /// @return 初始化的载荷
@@ -628,6 +724,7 @@ void main_ray_gen()
                 gbuffer::write_gbuffer_miss(thread_id);
                 // miss 像素也必须写入 DLSS 输入，避免 SR 读取上一帧残留的 depth/mvec。
                 gbuffer::write_dlss_sr_miss(thread_id);
+                gbuffer::write_dlss_rr_miss(thread_id);
                 gbuffer_written = true;
             }
 
@@ -687,8 +784,14 @@ void main_ray_gen()
                 payload.info.roughness
             );
             gbuffer::write_gbuffer_hit(thread_id, gbuffer_data);
+            const float2 primary_motion_vector = compute_instance_motion_vector_pixels(
+                payload.info.instance_id,
+                payload.info.object_position
+            );
+            const float2 specular_motion_vector = compute_specular_motion_vector_pixels(payload.info, ray.Direction);
             // DLSS depth 与 GBuffer linear_depth 分开写，保证 SR 输入和 debug GBuffer 各自语义稳定。
-            gbuffer::write_dlss_sr_hit(thread_id, compute_device_depth(payload.info.position));
+            gbuffer::write_dlss_sr_hit(thread_id, compute_device_depth(payload.info.position), primary_motion_vector);
+            gbuffer::write_dlss_rr_hit(thread_id, gbuffer_data, specular_motion_vector);
             gbuffer_written = true;
         }
 

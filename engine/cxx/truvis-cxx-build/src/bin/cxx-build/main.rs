@@ -35,9 +35,9 @@ impl BuildType {
     }
 }
 
-// 第一阶段只接 DLSS Super Resolution，所以 Release 只复制 SL core + DLSS SR 所需 DLL。
+// 默认复制 DLSS Super Resolution 与 Ray Reconstruction 所需 DLL。
 // NvLowLatencyVk.dll 是 SL Vulkan backend 启动时加载的低延迟 helper，不表示启用 Reflex feature。
-// Frame Generation、Ray Reconstruction、Reflex、NIS、DirectSR 等 feature 的 DLL 不在这里出现；
+// Frame Generation、Reflex、NIS、DirectSR 等 feature 的 DLL 不在这里出现；
 // 后续启用新 feature 时，应先扩展 Rust 侧 feature flags，再同步扩展这个清单。
 const STREAMLINE_REQUIRED_DLLS: &[&str] = &[
     "sl.interposer.dll",
@@ -45,6 +45,8 @@ const STREAMLINE_REQUIRED_DLLS: &[&str] = &[
     "sl.pcl.dll",
     "sl.dlss.dll",
     "nvngx_dlss.dll",
+    "sl.dlss_d.dll",
+    "nvngx_dlssd.dll",
     "NvLowLatencyVk.dll",
 ];
 

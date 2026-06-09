@@ -378,6 +378,158 @@ impl Drop for DlssSrInputTargets {
     }
 }
 
+/// DLSS Ray Reconstruction 额外需要的低分辨率输入图像。
+///
+/// normal+roughness 复用现有 GBufferA；这里补齐 RR 专用的 diffuse albedo、specular
+/// albedo 和 specular motion vectors。specular motion vector 由 raygen 追踪反射方向上的
+/// 虚拟几何后写入，未命中时使用零向量作为保守 fallback。
+pub struct DlssRrInputTargets {
+    diffuse_albedo: PerFrameImageSet,
+    specular_albedo: PerFrameImageSet,
+    specular_motion_vectors: PerFrameImageSet,
+}
+
+impl DlssRrInputTargets {
+    pub const ALBEDO_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
+    pub const SPECULAR_MOTION_VECTOR_FORMAT: vk::Format = vk::Format::R32G32_SFLOAT;
+
+    pub fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+        shader_binding_system: &mut ShaderBindingSystem,
+        frame_state: &FrameRenderState,
+        frame_counter: &FrameCounter,
+    ) -> Self {
+        let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
+        let diffuse_albedo = PerFrameImageSet::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            TargetImageDesc {
+                name_prefix: "dlss-rr-diffuse-albedo",
+                format: Self::ALBEDO_FORMAT,
+                extent: frame_state.render_extent,
+                usage,
+            },
+            frame_counter,
+        );
+        let specular_albedo = PerFrameImageSet::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            TargetImageDesc {
+                name_prefix: "dlss-rr-specular-albedo",
+                format: Self::ALBEDO_FORMAT,
+                extent: frame_state.render_extent,
+                usage,
+            },
+            frame_counter,
+        );
+        let specular_motion_vectors = PerFrameImageSet::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            TargetImageDesc {
+                name_prefix: "dlss-rr-specular-motion-vectors",
+                format: Self::SPECULAR_MOTION_VECTOR_FORMAT,
+                extent: frame_state.render_extent,
+                usage,
+            },
+            frame_counter,
+        );
+
+        let targets = Self {
+            diffuse_albedo,
+            specular_albedo,
+            specular_motion_vectors,
+        };
+        targets.register_bindless(shader_binding_system);
+        targets
+    }
+
+    pub fn rebuild(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        shader_binding_system: &mut ShaderBindingSystem,
+        gfx_resource_manager: &mut GfxResourceManager,
+        frame_state: &FrameRenderState,
+        frame_counter: &FrameCounter,
+    ) {
+        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            shader_binding_system,
+            frame_state,
+            frame_counter,
+        );
+    }
+
+    pub fn destroy(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        shader_binding_system: &mut ShaderBindingSystem,
+        gfx_resource_manager: &mut GfxResourceManager,
+        reason: DestroyReason,
+    ) {
+        self.unregister_bindless(shader_binding_system);
+        self.diffuse_albedo.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.specular_albedo.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.specular_motion_vectors.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+    }
+
+    #[inline]
+    pub fn diffuse_albedo(&self, frame_label: FrameLabel) -> ImageTarget {
+        self.diffuse_albedo.target(frame_label)
+    }
+
+    #[inline]
+    pub fn specular_albedo(&self, frame_label: FrameLabel) -> ImageTarget {
+        self.specular_albedo.target(frame_label)
+    }
+
+    #[inline]
+    pub fn specular_motion_vectors(&self, frame_label: FrameLabel) -> ImageTarget {
+        self.specular_motion_vectors.target(frame_label)
+    }
+
+    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        self.diffuse_albedo.register_uav(shader_binding_system);
+        self.diffuse_albedo.register_srv(shader_binding_system);
+        self.specular_albedo.register_uav(shader_binding_system);
+        self.specular_albedo.register_srv(shader_binding_system);
+        self.specular_motion_vectors.register_uav(shader_binding_system);
+        self.specular_motion_vectors.register_srv(shader_binding_system);
+    }
+
+    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        self.diffuse_albedo.unregister_srv(shader_binding_system);
+        self.diffuse_albedo.unregister_uav(shader_binding_system);
+        self.specular_albedo.unregister_srv(shader_binding_system);
+        self.specular_albedo.unregister_uav(shader_binding_system);
+        self.specular_motion_vectors.unregister_srv(shader_binding_system);
+        self.specular_motion_vectors.unregister_uav(shader_binding_system);
+    }
+}
+
+impl Drop for DlssRrInputTargets {
+    fn drop(&mut self) {
+        debug_assert!(self.diffuse_albedo.images.iter().all(|img| img.is_null()));
+        debug_assert!(self.specular_albedo.images.iter().all(|img| img.is_null()));
+        debug_assert!(self.specular_motion_vectors.images.iter().all(|img| img.is_null()));
+    }
+}
+
 /// DLSS SR 的高分辨率 HDR 输出图像。
 ///
 /// SR evaluate 写入 output extent 下的 linear HDR color；后续 tone mapping pass 再把它写入

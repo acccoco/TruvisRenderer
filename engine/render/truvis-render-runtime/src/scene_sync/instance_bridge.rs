@@ -29,6 +29,7 @@ struct InstanceBinding {
     slot: GpuInstanceSlot,
     state: InstanceState,
     last_transform: glam::Mat4,
+    previous_transform: glam::Mat4,
 }
 
 /// 已删除 instance 的 slot 延迟回收记录。
@@ -63,6 +64,7 @@ pub struct InstanceBridge {
     frame_token: FrameToken,
     revision: u64,
     ray_cast_records: Vec<Option<RayCastInstanceRecord>>,
+    motion_history_reset_pending: bool,
 }
 
 impl InstanceBridge {
@@ -79,6 +81,7 @@ impl InstanceBridge {
             frame_token,
             revision: 0,
             ray_cast_records: vec![None; MAX_INSTANCE_COUNT as usize],
+            motion_history_reset_pending: true,
         }
     }
 
@@ -94,6 +97,14 @@ impl InstanceBridge {
     /// 实例增删、ready 状态变化和 active transform 变化都会推进该值。
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// 请求下一次 prepare 把所有 active instance 的 motion history 对齐到当前 transform。
+    ///
+    /// DLSS history reset 后，上一帧输出已不可复用；即使 CPU transform 没变，也不能继续把
+    /// 旧模型矩阵写给 motion vector shader，否则第一帧会产生不对应任何 DLSS history 的向量。
+    pub fn request_motion_history_reset(&mut self) {
+        self.motion_history_reset_pending = true;
     }
 
     /// 读取当前 prepare 快照中的 raycast 反查记录。
@@ -162,6 +173,7 @@ impl InstanceBridge {
                 mesh_index,
                 material_slots,
                 transform: instance.transform,
+                previous_transform: binding.previous_transform,
             });
             self.ray_cast_records[binding.slot.as_usize()] = Some(RayCastInstanceRecord {
                 instance: handle,
@@ -187,6 +199,7 @@ impl InstanceBridge {
         material_slot_resolver: &dyn MaterialSlotResolver,
         mesh_resolver: &dyn MeshRenderResolver,
     ) {
+        let reset_motion_history = self.motion_history_reset_pending;
         // 先处理 CPU scene 中已经不存在的实例，避免后续 active 列表继续输出 stale slot。
         self.retire_stale_instances(scene_manager);
 
@@ -201,6 +214,8 @@ impl InstanceBridge {
             let binding = self.bindings.get_mut(handle).expect("instance binding missing after register");
 
             if binding.last_transform != instance.transform {
+                binding.previous_transform =
+                    if reset_motion_history { instance.transform } else { binding.last_transform };
                 binding.last_transform = instance.transform;
                 if binding.state == InstanceState::Active {
                     // transform 变化会影响 instance buffer 与 TLAS transform，
@@ -212,12 +227,15 @@ impl InstanceBridge {
                         binding.slot.as_u32()
                     );
                 }
+            } else {
+                binding.previous_transform = binding.last_transform;
             }
 
             match (binding.state, ready) {
                 (InstanceState::Pending, true) => {
                     // mesh/material 都 ready 后才激活，避免 draw/TLAS 使用空 BLAS 或无效 material slot。
                     binding.state = InstanceState::Active;
+                    binding.previous_transform = instance.transform;
                     self.revision = self.revision.saturating_add(1);
                     log::trace!("InstanceBridge: activate handle={:?} stable_slot={}", handle, binding.slot.as_u32());
                 }
@@ -231,6 +249,8 @@ impl InstanceBridge {
                 _ => {}
             }
         }
+
+        self.motion_history_reset_pending = false;
     }
 
     fn register_instance(&mut self, handle: InstanceHandle, instance: &Instance) {
@@ -242,6 +262,7 @@ impl InstanceBridge {
                 slot,
                 state: InstanceState::Pending,
                 last_transform: instance.transform,
+                previous_transform: instance.transform,
             },
         );
         log::trace!("InstanceBridge: register handle={:?} stable_slot={}", handle, slot.as_u32());

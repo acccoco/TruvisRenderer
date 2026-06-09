@@ -57,6 +57,37 @@ impl DlssOptions {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+/// `slDLSSDSetOptions` / `slDLSSDGetOptimalSettings` 共用的最小 RR options。
+///
+/// RR 使用与 DLSS SR 相同的 Performance Quality Mode，但通过 `kFeatureDLSS_RR`
+/// 独立 evaluate。当前管线把 roughness 打包在 normal 的 alpha 通道中。
+pub struct DlssRrOptions {
+    pub mode: DlssMode,
+    pub output_width: u32,
+    pub output_height: u32,
+    pub color_buffers_hdr: bool,
+    pub normal_roughness_packed: bool,
+    pub world_to_camera_view: [f32; 16],
+    pub camera_view_to_world: [f32; 16],
+}
+
+impl DlssRrOptions {
+    fn to_ffi(self) -> truvixx::TruvixxSlDlssRrOptions {
+        truvixx::TruvixxSlDlssRrOptions {
+            mode: self.mode.to_ffi(),
+            output_width: self.output_width,
+            output_height: self.output_height,
+            pre_exposure: 1.0,
+            exposure_scale: 1.0,
+            color_buffers_hdr: u32::from(self.color_buffers_hdr),
+            normal_roughness_packed: u32::from(self.normal_roughness_packed),
+            world_to_camera_view: self.world_to_camera_view,
+            camera_view_to_world: self.camera_view_to_world,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 /// Streamline 为目标输出尺寸和 SR mode 推荐的低分辨率渲染尺寸。
 ///
@@ -90,7 +121,7 @@ impl From<truvixx::TruvixxSlDlssOptimalSettings> for DlssOptimalSettings {
 /// DLSS feature support 与 requirements 查询结果。
 ///
 /// `supported=false` 不代表 runtime 初始化失败，只表示当前 adapter/driver/feature 组合不支持
-/// DLSS SR；调用方应降级到 native path，而不是让进程启动失败。
+/// 对应 DLSS feature；调用方应降级到 native path，而不是让进程启动失败。
 pub struct DlssSupport {
     pub supported: bool,
     pub flags: u32,
@@ -220,6 +251,27 @@ pub struct DlssEvaluateDesc {
     pub use_linear_depth: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+/// 一次 DLSS Ray Reconstruction evaluate 的完整描述。
+///
+/// 当前 Truvis RR MVP 使用 packed normal+roughness，并提供独立 diffuse/specular albedo
+/// 与 specular motion vectors。specular motion vectors 的质量由 shader 侧输入决定，本层只搬运资源。
+pub struct DlssRrEvaluateDesc {
+    pub frame_index: u32,
+    pub viewport_id: u32,
+    pub command_buffer: u64,
+    pub constants: Constants,
+    pub input_color: ImageResource,
+    pub output_color: ImageResource,
+    pub depth_or_linear_depth: ImageResource,
+    pub motion_vectors: ImageResource,
+    pub diffuse_albedo: ImageResource,
+    pub specular_albedo: ImageResource,
+    pub normal_roughness: ImageResource,
+    pub specular_motion_vectors: ImageResource,
+    pub use_linear_depth: bool,
+}
+
 fn check(result: i32, context: &'static str) -> Result<(), StreamlineError> {
     if result == 0 { Ok(()) } else { Err(StreamlineError::new(result, context)) }
 }
@@ -254,6 +306,21 @@ pub fn query_support(physical_device: u64) -> Result<DlssSupport, StreamlineErro
     })
 }
 
+/// 查询当前物理设备是否支持 DLSS Ray Reconstruction。
+pub fn query_rr_support(physical_device: u64) -> Result<DlssSupport, StreamlineError> {
+    let mut ffi = truvixx::TruvixxSlFeatureSupport::default();
+    let result = unsafe { truvixx::truvixx_sl_dlss_rr_query_support(physical_device, &mut ffi) };
+    if result != 0 {
+        return Err(StreamlineError::new(result, "DLSS RR support query"));
+    }
+    Ok(DlssSupport {
+        supported: ffi.supported != 0,
+        flags: ffi.flags,
+        max_num_viewports: ffi.max_num_viewports,
+        max_num_cpu_threads: ffi.max_num_cpu_threads,
+    })
+}
+
 /// 根据 output extent 和 SR mode 查询推荐 render extent。
 ///
 /// Runtime 会把失败视为 native fallback；本函数不修改 `RenderOptions`，只返回 Streamline 结果。
@@ -267,12 +334,29 @@ pub fn get_optimal_settings(options: DlssOptions) -> Result<DlssOptimalSettings,
     Ok(ffi_settings.into())
 }
 
+/// 根据 output extent 和 RR mode 查询推荐 render extent。
+pub fn get_rr_optimal_settings(options: DlssRrOptions) -> Result<DlssOptimalSettings, StreamlineError> {
+    let ffi_options = options.to_ffi();
+    let mut ffi_settings = truvixx::TruvixxSlDlssOptimalSettings::default();
+    check(
+        unsafe { truvixx::truvixx_sl_dlss_rr_get_optimal_settings(&ffi_options, &mut ffi_settings) },
+        "DLSS RR optimal settings",
+    )?;
+    Ok(ffi_settings.into())
+}
+
 /// 设置当前 viewport 的 DLSS SR options。
 ///
 /// 需要在 evaluate 前调用，且 options 的 output extent 必须与 tagged output color 一致。
 pub fn set_options(viewport_id: u32, options: DlssOptions) -> Result<(), StreamlineError> {
     let ffi_options = options.to_ffi();
     check(unsafe { truvixx::truvixx_sl_dlss_set_options(viewport_id, &ffi_options) }, "DLSS set options")
+}
+
+/// 设置当前 viewport 的 DLSS Ray Reconstruction options。
+pub fn set_rr_options(viewport_id: u32, options: DlssRrOptions) -> Result<(), StreamlineError> {
+    let ffi_options = options.to_ffi();
+    check(unsafe { truvixx::truvixx_sl_dlss_rr_set_options(viewport_id, &ffi_options) }, "DLSS RR set options")
 }
 
 /// 调用 `slEvaluateFeature(kFeatureDLSS)`。
@@ -294,9 +378,34 @@ pub fn evaluate(desc: DlssEvaluateDesc) -> Result<(), StreamlineError> {
     check(unsafe { truvixx::truvixx_sl_dlss_evaluate(&ffi) }, "DLSS evaluate")
 }
 
+/// 调用 `slEvaluateFeature(kFeatureDLSS_RR)`。
+pub fn evaluate_rr(desc: DlssRrEvaluateDesc) -> Result<(), StreamlineError> {
+    let ffi = truvixx::TruvixxSlDlssRrEvaluateDesc {
+        frame_index: desc.frame_index,
+        viewport_id: desc.viewport_id,
+        command_buffer: desc.command_buffer,
+        constants: desc.constants.to_ffi(),
+        input_color: desc.input_color.to_ffi(),
+        output_color: desc.output_color.to_ffi(),
+        depth_or_linear_depth: desc.depth_or_linear_depth.to_ffi(),
+        motion_vectors: desc.motion_vectors.to_ffi(),
+        diffuse_albedo: desc.diffuse_albedo.to_ffi(),
+        specular_albedo: desc.specular_albedo.to_ffi(),
+        normal_roughness: desc.normal_roughness.to_ffi(),
+        specular_motion_vectors: desc.specular_motion_vectors.to_ffi(),
+        use_linear_depth: u32::from(desc.use_linear_depth),
+    };
+    check(unsafe { truvixx::truvixx_sl_dlss_rr_evaluate(&ffi) }, "DLSS RR evaluate")
+}
+
 /// 释放指定 viewport 的 DLSS feature resources。
 ///
 /// mode 切回 Off、resize fallback 或 shutdown 前应确保相关 GPU work 已完成，再调用该函数。
 pub fn free_resources(viewport_id: u32) -> Result<(), StreamlineError> {
     check(unsafe { truvixx::truvixx_sl_dlss_free_resources(viewport_id) }, "DLSS free resources")
+}
+
+/// 释放指定 viewport 的 DLSS Ray Reconstruction feature resources。
+pub fn free_rr_resources(viewport_id: u32) -> Result<(), StreamlineError> {
+    check(unsafe { truvixx::truvixx_sl_dlss_rr_free_resources(viewport_id) }, "DLSS RR free resources")
 }

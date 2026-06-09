@@ -7,6 +7,7 @@
 
 #include <sl.h>
 #include <sl_dlss.h>
+#include <sl_dlss_d.h>
 #include <sl_helpers_vk.h>
 
 #include <array>
@@ -53,6 +54,8 @@ struct SlApi
 
     PFun_slDLSSGetOptimalSettings* sl_dlss_get_optimal_settings = nullptr;
     PFun_slDLSSSetOptions* sl_dlss_set_options = nullptr;
+    PFun_slDLSSDGetOptimalSettings* sl_dlssd_get_optimal_settings = nullptr;
+    PFun_slDLSSDSetOptions* sl_dlssd_set_options = nullptr;
 
     bool is_loaded() const
     {
@@ -78,6 +81,8 @@ struct SlApi
         sl_set_vulkan_info = nullptr;
         sl_dlss_get_optimal_settings = nullptr;
         sl_dlss_set_options = nullptr;
+        sl_dlssd_get_optimal_settings = nullptr;
+        sl_dlssd_set_options = nullptr;
         if (module)
         {
             FreeLibrary(module);
@@ -90,7 +95,7 @@ SlApi g_sl_api;
 
 void emit_wrapper_log(TruvixxSlLogType type, const std::string& message);
 
-template<typename T>
+template <typename T>
 T* resolve_required_export(HMODULE module, const char* name)
 {
     // 所有基础入口都视为必需；缺任一导出说明当前 DLL 与 SDK 头文件不匹配。
@@ -107,7 +112,7 @@ T* resolve_required_export(HMODULE module, const char* name)
     return function;
 }
 
-template<typename T>
+template <typename T>
 T to_vk_handle(uint64_t raw)
 {
     // Rust 侧只传 raw handle 数值，C++ 层在进入 Streamline 前恢复为 Vulkan handle 类型。
@@ -242,6 +247,8 @@ sl::DLSSMode to_sl_dlss_mode(const uint32_t mode)
     }
 }
 
+void copy_matrix(sl::float4x4& dst, const float* src);
+
 sl::DLSSOptions make_dlss_options(const TruvixxSlDlssOptions& src)
 {
     sl::DLSSOptions options{};
@@ -254,6 +261,22 @@ sl::DLSSOptions make_dlss_options(const TruvixxSlDlssOptions& src)
     // 当前 SR 接入没有单独曝光链路，也不把 alpha 当作可重建信号；先显式关闭，避免
     // 默认值随 SDK 变化影响画面契约。
     options.useAutoExposure = sl::Boolean::eFalse;
+    options.alphaUpscalingEnabled = sl::Boolean::eFalse;
+    return options;
+}
+
+sl::DLSSDOptions make_dlssd_options(const TruvixxSlDlssRrOptions& src)
+{
+    sl::DLSSDOptions options{};
+    options.mode = to_sl_dlss_mode(src.mode);
+    options.outputWidth = src.output_width;
+    options.outputHeight = src.output_height;
+    options.preExposure = src.pre_exposure;
+    options.exposureScale = src.exposure_scale;
+    options.colorBuffersHDR = to_sl_boolean(src.color_buffers_hdr);
+    options.normalRoughnessMode = src.normal_roughness_packed != 0 ? sl::DLSSDNormalRoughnessMode::ePacked : sl::DLSSDNormalRoughnessMode::eUnpacked;
+    copy_matrix(options.worldToCameraView, src.world_to_camera_view);
+    copy_matrix(options.cameraViewToWorld, src.camera_view_to_world);
     options.alphaUpscalingEnabled = sl::Boolean::eFalse;
     return options;
 }
@@ -349,6 +372,62 @@ sl::Result ensure_dlss_feature_api()
     return sl::Result::eOk;
 }
 
+sl::Result ensure_dlss_rr_feature_api()
+{
+    if (!g_sl_api.is_loaded() || !g_sl_api.sl_get_feature_function)
+    {
+        return sl::Result::eErrorNotInitialized;
+    }
+    if (!g_sl_api.sl_dlssd_get_optimal_settings)
+    {
+        void* function = nullptr;
+        const sl::Result result =
+            g_sl_api.sl_get_feature_function(sl::kFeatureDLSS_RR, "slDLSSDGetOptimalSettings", function);
+        if (result != sl::Result::eOk)
+        {
+            return result;
+        }
+        g_sl_api.sl_dlssd_get_optimal_settings = reinterpret_cast<PFun_slDLSSDGetOptimalSettings*>(function);
+    }
+    if (!g_sl_api.sl_dlssd_set_options)
+    {
+        void* function = nullptr;
+        const sl::Result result = g_sl_api.sl_get_feature_function(sl::kFeatureDLSS_RR, "slDLSSDSetOptions", function);
+        if (result != sl::Result::eOk)
+        {
+            return result;
+        }
+        g_sl_api.sl_dlssd_set_options = reinterpret_cast<PFun_slDLSSDSetOptions*>(function);
+    }
+    return sl::Result::eOk;
+}
+
+int32_t query_feature_support(sl::Feature feature, uint64_t physical_device, TruvixxSlFeatureSupport* out_support)
+{
+    if (!g_sl_api.is_loaded() || !g_sl_api.sl_is_feature_supported || !g_sl_api.sl_get_feature_requirements ||
+        !out_support)
+    {
+        return static_cast<int32_t>(sl::Result::eErrorInvalidParameter);
+    }
+
+    sl::FeatureRequirements requirements{};
+    const sl::Result requirements_result = g_sl_api.sl_get_feature_requirements(feature, requirements);
+    out_support->flags = static_cast<uint32_t>(requirements.flags);
+    out_support->max_num_viewports = requirements.maxNumViewports;
+    out_support->max_num_cpu_threads = requirements.maxNumCPUThreads;
+
+    sl::AdapterInfo adapter_info{};
+    adapter_info.vkPhysicalDevice = to_vk_handle<VkPhysicalDevice>(physical_device);
+    const sl::Result support_result = g_sl_api.sl_is_feature_supported(feature, adapter_info);
+    out_support->supported = support_result == sl::Result::eOk ? 1u : 0u;
+
+    if (requirements_result != sl::Result::eOk)
+    {
+        return static_cast<int32_t>(requirements_result);
+    }
+    return static_cast<int32_t>(sl::Result::eOk);
+}
+
 } // namespace
 
 int32_t truvixx_sl_init(const TruvixxSlInitDesc* desc)
@@ -377,11 +456,15 @@ int32_t truvixx_sl_init(const TruvixxSlInitDesc* desc)
     }
 
     const wchar_t* plugin_paths[] = { plugin_dir };
-    std::array<sl::Feature, 2> features_to_load{};
+    std::array<sl::Feature, 3> features_to_load{};
     uint32_t feature_count = 0;
     if ((feature_flags & TruvixxSlFeatureFlagDlss) != 0)
     {
         features_to_load[feature_count++] = sl::kFeatureDLSS;
+    }
+    if ((feature_flags & TruvixxSlFeatureFlagDlssRr) != 0)
+    {
+        features_to_load[feature_count++] = sl::kFeatureDLSS_RR;
     }
     if ((feature_flags & TruvixxSlFeatureFlagImgui) != 0)
     {
@@ -459,28 +542,12 @@ int32_t truvixx_sl_set_vulkan_info(const TruvixxSlVulkanInfo* info)
 
 int32_t truvixx_sl_dlss_query_support(uint64_t physical_device, TruvixxSlFeatureSupport* out_support)
 {
-    if (!g_sl_api.is_loaded() || !g_sl_api.sl_is_feature_supported || !g_sl_api.sl_get_feature_requirements ||
-        !out_support)
-    {
-        return static_cast<int32_t>(sl::Result::eErrorInvalidParameter);
-    }
+    return query_feature_support(sl::kFeatureDLSS, physical_device, out_support);
+}
 
-    sl::FeatureRequirements requirements{};
-    const sl::Result requirements_result = g_sl_api.sl_get_feature_requirements(sl::kFeatureDLSS, requirements);
-    out_support->flags = static_cast<uint32_t>(requirements.flags);
-    out_support->max_num_viewports = requirements.maxNumViewports;
-    out_support->max_num_cpu_threads = requirements.maxNumCPUThreads;
-
-    sl::AdapterInfo adapter_info{};
-    adapter_info.vkPhysicalDevice = to_vk_handle<VkPhysicalDevice>(physical_device);
-    const sl::Result support_result = g_sl_api.sl_is_feature_supported(sl::kFeatureDLSS, adapter_info);
-    out_support->supported = support_result == sl::Result::eOk ? 1u : 0u;
-
-    if (requirements_result != sl::Result::eOk)
-    {
-        return static_cast<int32_t>(requirements_result);
-    }
-    return static_cast<int32_t>(support_result);
+int32_t truvixx_sl_dlss_rr_query_support(uint64_t physical_device, TruvixxSlFeatureSupport* out_support)
+{
+    return query_feature_support(sl::kFeatureDLSS_RR, physical_device, out_support);
 }
 
 int32_t truvixx_sl_dlss_get_optimal_settings(
@@ -600,5 +667,132 @@ int32_t truvixx_sl_dlss_free_resources(uint32_t viewport_id)
     const sl::ViewportHandle viewport{ viewport_id };
     // 调用方需要先等待相关 GPU work 完成；wrapper 不在这里做 device idle。
     const sl::Result result = g_sl_api.sl_free_resources(sl::kFeatureDLSS, viewport);
+    return static_cast<int32_t>(result);
+}
+
+int32_t truvixx_sl_dlss_rr_get_optimal_settings(
+    const TruvixxSlDlssRrOptions* options,
+    TruvixxSlDlssOptimalSettings* out_settings
+)
+{
+    if (!options || !out_settings)
+    {
+        return static_cast<int32_t>(sl::Result::eErrorInvalidParameter);
+    }
+    const sl::Result api_result = ensure_dlss_rr_feature_api();
+    if (api_result != sl::Result::eOk)
+    {
+        return static_cast<int32_t>(api_result);
+    }
+
+    sl::DLSSDOptimalSettings settings{};
+    const sl::DLSSDOptions dlssd_options = make_dlssd_options(*options);
+    const sl::Result result = g_sl_api.sl_dlssd_get_optimal_settings(dlssd_options, settings);
+    if (result == sl::Result::eOk)
+    {
+        out_settings->optimal_render_width = settings.optimalRenderWidth;
+        out_settings->optimal_render_height = settings.optimalRenderHeight;
+        out_settings->optimal_sharpness = settings.optimalSharpness;
+        out_settings->render_width_min = settings.renderWidthMin;
+        out_settings->render_height_min = settings.renderHeightMin;
+        out_settings->render_width_max = settings.renderWidthMax;
+        out_settings->render_height_max = settings.renderHeightMax;
+    }
+    return static_cast<int32_t>(result);
+}
+
+int32_t truvixx_sl_dlss_rr_set_options(uint32_t viewport_id, const TruvixxSlDlssRrOptions* options)
+{
+    if (!options)
+    {
+        return static_cast<int32_t>(sl::Result::eErrorInvalidParameter);
+    }
+    const sl::Result api_result = ensure_dlss_rr_feature_api();
+    if (api_result != sl::Result::eOk)
+    {
+        return static_cast<int32_t>(api_result);
+    }
+
+    const sl::ViewportHandle viewport{ viewport_id };
+    const sl::DLSSDOptions dlssd_options = make_dlssd_options(*options);
+    const sl::Result result = g_sl_api.sl_dlssd_set_options(viewport, dlssd_options);
+    return static_cast<int32_t>(result);
+}
+
+int32_t truvixx_sl_dlss_rr_evaluate(const TruvixxSlDlssRrEvaluateDesc* desc)
+{
+    if (!g_sl_api.is_loaded() || !g_sl_api.sl_get_new_frame_token || !g_sl_api.sl_set_constants ||
+        !g_sl_api.sl_set_tag_for_frame || !g_sl_api.sl_evaluate_feature || !desc || desc->command_buffer == 0)
+    {
+        return static_cast<int32_t>(sl::Result::eErrorInvalidParameter);
+    }
+
+    sl::FrameToken* frame = nullptr;
+    const sl::Result frame_result = g_sl_api.sl_get_new_frame_token(frame, &desc->frame_index);
+    if (frame_result != sl::Result::eOk)
+    {
+        return static_cast<int32_t>(frame_result);
+    }
+
+    const sl::ViewportHandle viewport{ desc->viewport_id };
+    const sl::Constants constants = make_constants(desc->constants);
+    const sl::Result constants_result = g_sl_api.sl_set_constants(constants, *frame, viewport);
+    if (constants_result != sl::Result::eOk)
+    {
+        return static_cast<int32_t>(constants_result);
+    }
+
+    sl::Resource input_color = make_image_resource(desc->input_color);
+    sl::Resource output_color = make_image_resource(desc->output_color);
+    sl::Resource depth = make_image_resource(desc->depth_or_linear_depth);
+    sl::Resource motion_vectors = make_image_resource(desc->motion_vectors);
+    sl::Resource diffuse_albedo = make_image_resource(desc->diffuse_albedo);
+    sl::Resource specular_albedo = make_image_resource(desc->specular_albedo);
+    sl::Resource normal_roughness = make_image_resource(desc->normal_roughness);
+    sl::Resource specular_motion_vectors = make_image_resource(desc->specular_motion_vectors);
+
+    const sl::Extent render_extent{ 0, 0, desc->input_color.width, desc->input_color.height };
+    const sl::Extent output_extent{ 0, 0, desc->output_color.width, desc->output_color.height };
+    const sl::BufferType depth_buffer_type =
+        desc->use_linear_depth != 0 ? sl::kBufferTypeLinearDepth : sl::kBufferTypeDepth;
+    std::array<sl::ResourceTag, 8> tags{
+        sl::ResourceTag(&input_color, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
+        sl::ResourceTag(&output_color, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent, &output_extent),
+        sl::ResourceTag(&depth, depth_buffer_type, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
+        sl::ResourceTag(&motion_vectors, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
+        sl::ResourceTag(&diffuse_albedo, sl::kBufferTypeAlbedo, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
+        sl::ResourceTag(&specular_albedo, sl::kBufferTypeSpecularAlbedo, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
+        sl::ResourceTag(&normal_roughness, sl::kBufferTypeNormalRoughness, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
+        sl::ResourceTag(&specular_motion_vectors, sl::kBufferTypeSpecularMotionVectors, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
+    };
+
+    auto* command_buffer = to_vk_handle<sl::CommandBuffer*>(desc->command_buffer);
+    const sl::Result tag_result =
+        g_sl_api.sl_set_tag_for_frame(*frame, viewport, tags.data(), static_cast<uint32_t>(tags.size()), command_buffer);
+    if (tag_result != sl::Result::eOk)
+    {
+        return static_cast<int32_t>(tag_result);
+    }
+
+    const sl::BaseStructure* inputs[] = { &viewport };
+    const sl::Result evaluate_result = g_sl_api.sl_evaluate_feature(
+        sl::kFeatureDLSS_RR,
+        *frame,
+        inputs,
+        static_cast<uint32_t>(sizeof(inputs) / sizeof(inputs[0])),
+        command_buffer
+    );
+    return static_cast<int32_t>(evaluate_result);
+}
+
+int32_t truvixx_sl_dlss_rr_free_resources(uint32_t viewport_id)
+{
+    if (!g_sl_api.is_loaded() || !g_sl_api.sl_free_resources)
+    {
+        return static_cast<int32_t>(sl::Result::eErrorNotInitialized);
+    }
+
+    const sl::ViewportHandle viewport{ viewport_id };
+    const sl::Result result = g_sl_api.sl_free_resources(sl::kFeatureDLSS_RR, viewport);
     return static_cast<int32_t>(result);
 }

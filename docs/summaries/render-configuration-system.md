@@ -21,13 +21,14 @@
 
 `RenderOptions` 位于 `truvis-render-runtime::state::render_options`，是用户或调试 UI 可以修改的 runtime 全局渲染选项。
 
-当前只包含：
+当前包含：
 
 | 字段 | 含义 | 修改后如何生效 |
 |------|------|----------------|
 | `dlss_sr_mode: DlssSrMode` | DLSS SR / DLAA 模式 | `RenderRuntime::sync_render_options_frame_state` 解析该 mode，必要时更新 `FrameRenderState`、触发 app-owned target rebuild，并重置 DLSS history |
+| `dlss_rr_enabled: bool` | 是否用 DLSS RR 替代普通 SR evaluate | 非 `Off` mode 下生效；切换时 runtime 等待 GPU idle，释放旧 DLSS feature resources，并重置 DLSS history |
 
-`TRUVIS_DLSS_SR_MODE` 会在 runtime 初始化时作为启动默认值读取。运行中仍以 ImGui overlay 修改 `RenderOptions.dlss_sr_mode`，再由 shell 在 `prepare` 前调用同步入口使其生效。
+`TRUVIS_DLSS_SR_MODE` 和 `TRUVIS_DLSS_RR` 会在 runtime 初始化时作为启动默认值读取。运行中仍以 ImGui overlay 修改 `RenderOptions`，再由 shell 在 `prepare` 前调用同步入口使其生效。
 
 不放入 `RenderOptions` 的内容：
 
@@ -109,16 +110,17 @@ RT debug channel 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hell
 DLSS mode 的变化在一帧中按固定路径生效：
 
 ```text
-Overlay 修改 RenderOptions.dlss_sr_mode
+Overlay 修改 RenderOptions.dlss_sr_mode / dlss_rr_enabled
   -> RenderAppShell 调用 RenderRuntime::sync_render_options_frame_state
   -> runtime 用 output extent + mode 查询 Streamline optimal settings
   -> 派生 FrameRenderState.render_extent / output_extent
   -> 如尺寸变化，返回 RenderRuntimeResizeCtx
   -> App / Plugin 重建 RT target、GBuffer、DLSS input/output、main view target
+  -> 如 SR/RR feature 分支变化，runtime 等待 GPU idle 并释放旧 feature resources
   -> runtime 重置 ViewAccumState 与 DlssSrState history
-  -> 下一帧 prepare/render graph 使用新的 render/output extent
+  -> 下一帧 prepare/render graph 使用新的 render/output extent 和 active DLSS feature
 ```
 
 如果 Streamline 查询失败或返回非法尺寸，runtime 会把 `RenderOptions.dlss_sr_mode` 降级为 `Off`，并回到 native extent，保证 app 仍能继续渲染。
 
-从 DLSS SR / DLAA 切回 `Off` 时，runtime 会先等待 GPU idle，再调用 `slFreeResources` 释放 Streamline viewport 0 的内部资源；这是因为这些内部 image / buffer 可能仍被上一帧 DLSS evaluate 录制的 command buffer 引用。
+从 DLSS SR / DLAA / RR 切回 `Off`，或在 SR 与 RR 之间切换时，runtime 会先等待 GPU idle，再调用对应 feature 的 `slFreeResources` 释放 Streamline viewport 0 的内部资源；这是因为这些内部 image / buffer 可能仍被上一帧 DLSS evaluate 录制的 command buffer 引用。

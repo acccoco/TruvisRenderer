@@ -7,6 +7,13 @@ struct PerFrameData
     float4x4 view;
     float4x4 inv_view;
     float4x4 inv_projection;
+    /// 上一帧用于 motion vector 回溯的 view 矩阵。
+    ///
+    /// DLSS history reset、新视图或无上一帧历史时由 runtime 写为当前帧 view，
+    /// 保证第一帧不会产生脏 motion vector。
+    float4x4 prev_view;
+    /// 上一帧用于 motion vector 回溯的 projection 矩阵。
+    float4x4 prev_projection;
 
     float3 camera_pos;
     float time_ms;

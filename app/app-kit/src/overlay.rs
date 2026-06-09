@@ -80,7 +80,7 @@ impl PipelineControlsOverlay {
             .position([10.0, 200.0], imgui::Condition::FirstUseEver)
             .size([250.0, 200.0], imgui::Condition::FirstUseEver)
             .build(|| {
-                // 当前只暴露 DLSS SR/DLAA mode；RR 后续作为独立开关接入，不放进这个质量挡位下拉框。
+                // RR 作为独立开关接入，不放进 SR/DLAA 质量挡位下拉框。
                 if let Some(_combo) = ui.begin_combo("DLSS SR", render_options.dlss_sr_mode.label()) {
                     for mode in DlssSrMode::ALL {
                         if ui.selectable_config(mode.label()).selected(render_options.dlss_sr_mode == mode).build() {
@@ -88,6 +88,7 @@ impl PipelineControlsOverlay {
                         }
                     }
                 }
+                ui.checkbox("DLSS RR", &mut render_options.dlss_rr_enabled);
 
                 if let Some(rt_settings) = rt_settings {
                     ui.separator();
