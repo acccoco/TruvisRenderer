@@ -95,6 +95,7 @@ where
     }
 
     fn run_frame(&mut self) {
+        let _span = tracy_client::span!("RenderAppShell::run_frame");
         let Self {
             render_runtime,
             input_events,
@@ -102,7 +103,10 @@ where
         } = self;
         let render_runtime = render_runtime.as_mut().expect("RenderRuntime missing in RenderAppShell::run_frame");
 
-        render_runtime.begin_frame();
+        {
+            let _span = tracy_client::span!("RenderAppShell::begin_frame");
+            render_runtime.begin_frame();
+        }
 
         {
             let _span = tracy_client::span!("RenderAppShell::input");
@@ -128,41 +132,55 @@ where
 
         // RenderOptions 可能在 update/UI 阶段改变 DLSS SR mode。必须在 prepare/render graph 之前
         // 同步 render/output extent，并让 app-owned RT/GBuffer/DLSS targets 跟着重建。
-        if let Some(runtime) = render_runtime.sync_render_options_frame_state() {
-            let image_extent = runtime.present.swapchain_image_info().image_extent;
-            let new_size = [image_extent.width, image_extent.height];
-            let mut app_ctx = RenderAppResizeCtx {
-                runtime,
-                window_size: new_size,
-            };
-            app.on_resize(&mut app_ctx);
+        {
+            let _span = tracy_client::span!("RenderAppShell::sync_render_options_frame_state");
+            if let Some(runtime) = render_runtime.sync_render_options_frame_state() {
+                let image_extent = runtime.present.swapchain_image_info().image_extent;
+                let new_size = [image_extent.width, image_extent.height];
+                let mut app_ctx = RenderAppResizeCtx {
+                    runtime,
+                    window_size: new_size,
+                };
+                app.on_resize(&mut app_ctx);
 
-            let RenderAppResizeCtx { runtime, .. } = app_ctx;
-            let mut plugin_ctx = PluginResizeCtx {
-                device_ctx: runtime.device_ctx,
-                resource_ctx: runtime.resource_ctx,
-                immediate_ctx: runtime.immediate_ctx,
-                surface_ctx: runtime.surface_ctx,
-                gfx_resource_manager: runtime.gfx_resource_manager,
-                shader_binding_system: runtime.shader_binding_system,
-                frame_timing: runtime.frame_timing,
-                frame_state: runtime.frame_state,
-                present: runtime.present,
-            };
-            app.visit_plugins_mut(&mut |plugin| {
-                plugin.on_resize(&mut plugin_ctx);
-            });
+                let RenderAppResizeCtx { runtime, .. } = app_ctx;
+                let mut plugin_ctx = PluginResizeCtx {
+                    device_ctx: runtime.device_ctx,
+                    resource_ctx: runtime.resource_ctx,
+                    immediate_ctx: runtime.immediate_ctx,
+                    surface_ctx: runtime.surface_ctx,
+                    gfx_resource_manager: runtime.gfx_resource_manager,
+                    shader_binding_system: runtime.shader_binding_system,
+                    frame_timing: runtime.frame_timing,
+                    frame_state: runtime.frame_state,
+                    present: runtime.present,
+                };
+                app.visit_plugins_mut(&mut |plugin| {
+                    plugin.on_resize(&mut plugin_ctx);
+                });
+            }
         }
 
         if !render_runtime.current_frame_has_present_target() {
-            log::debug!("RenderAppShell skips render/present because current frame has no acquired swapchain image.");
-            render_runtime.signal_current_frame_complete();
-            render_runtime.end_frame();
+            {
+                let _span = tracy_client::span!("RenderAppShell::skip_present_target");
+                log::debug!(
+                    "RenderAppShell skips render/present because current frame has no acquired swapchain image."
+                );
+                render_runtime.signal_current_frame_complete();
+            }
+            {
+                let _span = tracy_client::span!("RenderAppShell::end_frame");
+                render_runtime.end_frame();
+            }
             tracy_client::frame_mark();
             return;
         }
 
-        render_runtime.prepare(&app.render_view());
+        {
+            let _span = tracy_client::span!("RenderAppShell::prepare");
+            render_runtime.prepare(&app.render_view());
+        }
         {
             let _span = tracy_client::span!("RenderAppShell::after_prepare");
             let mut ray_cast_ctx = render_runtime.ray_cast_phase();
@@ -175,8 +193,14 @@ where
             app.render(&render_ctx);
         }
 
-        render_runtime.present();
-        render_runtime.end_frame();
+        {
+            let _span = tracy_client::span!("RenderAppShell::present");
+            render_runtime.present();
+        }
+        {
+            let _span = tracy_client::span!("RenderAppShell::end_frame");
+            render_runtime.end_frame();
+        }
         tracy_client::frame_mark();
     }
 
@@ -185,6 +209,7 @@ where
     }
 
     fn recreate_swapchain_if_needed(&mut self, new_size: [u32; 2]) {
+        let _span = tracy_client::span!("RenderAppShell::recreate_swapchain_if_needed");
         let Self {
             render_runtime, app, ..
         } = self;
