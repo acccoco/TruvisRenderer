@@ -1,6 +1,7 @@
 use truvis_app_frame::input_event::InputEvent;
 use truvis_app_frame::plugin_api::{Plugin, PluginRenderCtx};
 use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx};
+use truvis_asset::asset_hub::AssetHub;
 use truvis_asset::handle::{AssetMaterialKey, AssetModelHandle, LoadStatus, MaterialData};
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
@@ -257,10 +258,10 @@ impl TruvisApp {
         }
     }
 
-    fn build_raycast_overlay_ui(&self, ui: &imgui::Ui) {
+    fn build_raycast_overlay_ui(&self, ui: &imgui::Ui, asset_hub: &AssetHub) {
         ui.window("Raycast")
             .position([10.0, 420.0], imgui::Condition::FirstUseEver)
-            .size([340.0, 250.0], imgui::Condition::FirstUseEver)
+            .size([430.0, 430.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 ui.text("Trigger: left mouse click");
                 if self.click_ray_cast_probe.has_pending_cast() {
@@ -298,6 +299,7 @@ impl TruvisApp {
                         ui.text(format!("Material: {:?}", hit.material));
                         ui.text(format!("Submesh: {}", hit.submesh_index));
                         ui.text(format!("Primitive: {}", hit.primitive_index));
+                        Self::build_material_info_ui(ui, asset_hub.get_material_data(hit.material));
                         ui.text(format!("Hit T: {:.3}", hit.hit_t));
                         ui.text(format!(
                             "Position: ({:.2}, {:.2}, {:.2})",
@@ -314,6 +316,28 @@ impl TruvisApp {
                     }
                 }
             });
+    }
+
+    fn build_material_info_ui(ui: &imgui::Ui, material: Option<&MaterialData>) {
+        let Some(material) = material else {
+            ui.text("Material data: unavailable");
+            return;
+        };
+
+        ui.text(format!("Material name: {}", material.name));
+        ui.text(format!(
+            "Base color: ({:.3}, {:.3}, {:.3}, {:.3})",
+            material.base_color.x, material.base_color.y, material.base_color.z, material.base_color.w
+        ));
+        ui.text(format!(
+            "Emissive: ({:.3}, {:.3}, {:.3}, {:.3})",
+            material.emissive.x, material.emissive.y, material.emissive.z, material.emissive.w
+        ));
+        ui.text(format!("Metallic: {:.3}", material.metallic));
+        ui.text(format!("Roughness: {:.3}", material.roughness));
+        ui.text(format!("Opaque: {:.3}", material.opaque));
+        ui.text(format!("Diffuse texture: {:?}", material.diffuse_texture));
+        ui.text(format!("Normal texture: {:?}", material.normal_texture));
     }
 
     fn cast_single_ray(ctx: &mut RenderRuntimeRayCastCtx<'_>, ray: RayCastRay) -> Result<RayCastResult, String> {
@@ -381,7 +405,7 @@ impl RenderAppHooks for TruvisApp {
                 ctx.delta_time_s,
             );
             self.pipeline_overlay.build_overlay_ui(ui, ctx.render_options, Some(self.rt_pipeline.settings_mut()));
-            self.build_raycast_overlay_ui(ui);
+            self.build_raycast_overlay_ui(ui, &ctx.world.asset_hub);
             self.gui.build_debug_image_viewer_ui(ui);
         }
         self.gui.end_frame();

@@ -5,7 +5,8 @@
 ## 目录职责
 
 - `app-kit/`：公共 app 组件，包括 GUI、输入/相机控制、overlay 与 RT pipeline glue。
-- `truvis/`：主体 app crate，提供 `truvis-app`，默认加载 Sponza 并叠加程序化材质测试 cubes。
+- `truvis/`：主体 app crate，提供 `truvis-app`，默认加载 Sponza 并叠加程序化材质测试 cubes；左键 raycast
+  overlay 会显示命中 submesh 的基础材质信息。
 - `samples/hello-triangle/`：Triangle 示例，提供 `triangle`。
 - `samples/shader-toy/`：ShaderToy 示例，提供 `shader-toy`。
 - `samples/cornell/`：Cornell Box 光追示例，提供 `rt-cornell`。
