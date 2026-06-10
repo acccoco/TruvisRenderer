@@ -91,119 +91,6 @@ enumed_map!(RayCastShaderGroups<GfxShaderGroupInfo>: {
     },
 });
 
-struct RayCastSbtRegions {
-    raygen: vk::StridedDeviceAddressRegionKHR,
-    miss: vk::StridedDeviceAddressRegionKHR,
-    hit: vk::StridedDeviceAddressRegionKHR,
-    callable: vk::StridedDeviceAddressRegionKHR,
-    sbt_buffer: GfxSBTBuffer,
-}
-
-impl RayCastSbtRegions {
-    const RAYGEN_REGION: usize = RayCastShaderGroups::RayGen.index();
-    const MISS_REGION: &'static [usize] = &[RayCastShaderGroups::Miss.index()];
-    const HIT_REGION: &'static [usize] = &[RayCastShaderGroups::Hit.index()];
-
-    fn create_sbt(
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        device_info_ctx: GfxDeviceInfoCtx<'_>,
-        pipeline: &RayCastRtPipeline,
-    ) -> Self {
-        let rt_pipeline_props = device_info_ctx.rt_pipeline_props();
-        let aligned_shader_group_handle_size = helper::align_up(
-            rt_pipeline_props.shader_group_handle_size,
-            rt_pipeline_props.shader_group_handle_alignment,
-        );
-
-        let raygen_size =
-            helper::align_up(aligned_shader_group_handle_size, rt_pipeline_props.shader_group_base_alignment);
-        let miss_size = helper::align_up(
-            Self::MISS_REGION.len() as u32 * aligned_shader_group_handle_size,
-            rt_pipeline_props.shader_group_base_alignment,
-        );
-        let hit_size = helper::align_up(
-            Self::HIT_REGION.len() as u32 * aligned_shader_group_handle_size,
-            rt_pipeline_props.shader_group_base_alignment,
-        );
-        let total_size = raygen_size + miss_size + hit_size;
-
-        let sbt_buffer = GfxSBTBuffer::new(
-            resource_ctx,
-            total_size as vk::DeviceSize,
-            rt_pipeline_props.shader_group_base_alignment as vk::DeviceSize,
-            "raycast-sbt",
-        );
-        let sbt_address = sbt_buffer.device_address();
-
-        let raygen = vk::StridedDeviceAddressRegionKHR::default()
-            .stride(raygen_size as vk::DeviceSize)
-            .size(raygen_size as vk::DeviceSize)
-            .device_address(sbt_address);
-        let miss = vk::StridedDeviceAddressRegionKHR::default()
-            .stride(aligned_shader_group_handle_size as vk::DeviceSize)
-            .size(miss_size as vk::DeviceSize)
-            .device_address(sbt_address + raygen_size as vk::DeviceSize);
-        let hit = vk::StridedDeviceAddressRegionKHR::default()
-            .stride(aligned_shader_group_handle_size as vk::DeviceSize)
-            .size(hit_size as vk::DeviceSize)
-            .device_address(sbt_address + raygen_size as vk::DeviceSize + miss_size as vk::DeviceSize);
-
-        let shader_group_handle_data = unsafe {
-            device_ctx
-                .device()
-                .ray_tracing_pipeline()
-                .get_ray_tracing_shader_group_handles(
-                    pipeline.pipeline,
-                    0,
-                    RayCastShaderGroups::COUNT as u32,
-                    (RayCastShaderGroups::COUNT as u32 * rt_pipeline_props.shader_group_handle_size) as usize,
-                )
-                .unwrap()
-        };
-
-        let copy_shader_group_handle = |group_handle_idx: usize, sbt_handle_host_addr: *mut u8| unsafe {
-            let start_bytes = rt_pipeline_props.shader_group_handle_size as usize * group_handle_idx;
-            let length_bytes = rt_pipeline_props.shader_group_handle_size as usize;
-            let src = &shader_group_handle_data[start_bytes..start_bytes + length_bytes];
-            let dst = std::slice::from_raw_parts_mut(
-                sbt_handle_host_addr,
-                rt_pipeline_props.shader_group_handle_size as usize,
-            );
-            dst.copy_from_slice(src);
-        };
-
-        let sbt_host_address = sbt_buffer.mapped_ptr();
-        copy_shader_group_handle(Self::RAYGEN_REGION, sbt_host_address);
-
-        let miss_host_address = sbt_host_address.wrapping_byte_add(raygen.size as usize);
-        for (idx, group_handle_idx) in Self::MISS_REGION.iter().enumerate() {
-            copy_shader_group_handle(
-                *group_handle_idx,
-                miss_host_address.wrapping_byte_add(idx * miss.stride as usize),
-            );
-        }
-
-        let hit_host_address = miss_host_address.wrapping_byte_add(miss.size as usize);
-        for (idx, group_handle_idx) in Self::HIT_REGION.iter().enumerate() {
-            copy_shader_group_handle(*group_handle_idx, hit_host_address.wrapping_byte_add(idx * hit.stride as usize));
-        }
-        sbt_buffer.flush(resource_ctx, 0, sbt_buffer.size());
-
-        Self {
-            raygen,
-            miss,
-            hit,
-            callable: vk::StridedDeviceAddressRegionKHR::default(),
-            sbt_buffer,
-        }
-    }
-
-    fn destroy(self, resource_ctx: GfxResourceCtx<'_>) {
-        self.sbt_buffer.destroy(resource_ctx, DestroyReason::Shutdown);
-    }
-}
-
 #[derive(DescriptorBinding)]
 struct RayCastDescriptorBinding {
     #[binding = 0]
@@ -227,7 +114,7 @@ struct RayCastDescriptorBinding {
 
 pub struct RayCastPass {
     pipeline: RayCastRtPipeline,
-    sbt: RayCastSbtRegions,
+    sbt: GfxSBTBuffer,
     descriptor_set_layout: GfxDescriptorSetLayout<RayCastDescriptorBinding>,
 }
 
@@ -313,7 +200,18 @@ impl RayCastPass {
             pipeline,
             pipeline_layout,
         };
-        let sbt = RayCastSbtRegions::create_sbt(resource_ctx, device_ctx, device_info_ctx, &pipeline);
+        let sbt = GfxSBTBuffer::from_shader_groups(
+            resource_ctx,
+            device_ctx,
+            device_info_ctx,
+            pipeline.pipeline,
+            RayCastShaderGroups::COUNT as u32,
+            RayCastShaderGroups::RayGen.index(),
+            &[RayCastShaderGroups::Miss.index()],
+            &[RayCastShaderGroups::Hit.index()],
+            &[],
+            "raycast-sbt",
+        );
 
         Self {
             pipeline,
@@ -329,7 +227,7 @@ impl RayCastPass {
             descriptor_set_layout,
         } = self;
         pipeline.destroy(device_ctx);
-        sbt.destroy(resource_ctx);
+        sbt.destroy(resource_ctx, DestroyReason::Shutdown);
         descriptor_set_layout.destroy(device_ctx);
     }
 
@@ -390,14 +288,13 @@ impl RayCastPass {
             BytesConvert::bytes_of(&push_constant),
         );
 
-        cmd.trace_rays(&self.sbt.raygen, &self.sbt.miss, &self.sbt.hit, &self.sbt.callable, [ray_count, 1, 1]);
+        cmd.trace_rays(
+            self.sbt.raygen_region(),
+            self.sbt.miss_region(),
+            self.sbt.hit_region(),
+            self.sbt.callable_region(),
+            [ray_count, 1, 1],
+        );
         cmd.end_label();
-    }
-}
-
-mod helper {
-    pub fn align_up(x: u32, align: u32) -> u32 {
-        assert!(align.is_power_of_two());
-        (x + (align - 1)) & !(align - 1)
     }
 }

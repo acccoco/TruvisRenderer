@@ -5,6 +5,7 @@ use itertools::Itertools;
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::descriptors::descriptor::GfxDescriptorSetLayout;
+use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_gfx::{
@@ -111,164 +112,6 @@ enumed_map!(ShaderGroups<GfxShaderGroupInfo>: {
         ..GfxShaderGroupInfo::unused()
     },
 });
-
-pub struct SBTRegions {
-    sbt_region_raygen: vk::StridedDeviceAddressRegionKHR,
-    sbt_region_miss: vk::StridedDeviceAddressRegionKHR,
-    sbt_region_hit: vk::StridedDeviceAddressRegionKHR,
-    sbt_region_callable: vk::StridedDeviceAddressRegionKHR,
-
-    _sbt_buffer: GfxSBTBuffer,
-}
-impl SBTRegions {
-    const RAYGEN_SBT_REGION: usize = ShaderGroups::RayGen.index();
-    const MISS_SBT_REGION: &'static [usize] = &[ShaderGroups::SkyMiss.index(), ShaderGroups::ShadowMiss.index()];
-    const HIT_SBT_REGION: &'static [usize] = &[ShaderGroups::Hit.index()];
-    const CALLABLE_SBT_REGION: &'static [usize] = &[ShaderGroups::DiffuseCall.index()];
-
-    pub fn create_sbt(
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        device_info_ctx: GfxDeviceInfoCtx<'_>,
-        pipeline: &GfxRtPipeline,
-    ) -> Self {
-        let rt_pipeline_props = device_info_ctx.rt_pipeline_props();
-
-        // 因为不需要 user data，所以可以直接使用 shader group handle size
-        let aligned_shader_group_handle_size = helper::align_up(
-            rt_pipeline_props.shader_group_handle_size,
-            rt_pipeline_props.shader_group_handle_alignment,
-        );
-
-        // 每一个 region 需要使用 base align 进行对齐
-        let raygen_shader_group_region_size =
-            helper::align_up(aligned_shader_group_handle_size, rt_pipeline_props.shader_group_base_alignment);
-        let miss_shader_group_region_size = helper::align_up(
-            Self::MISS_SBT_REGION.len() as u32 * aligned_shader_group_handle_size,
-            rt_pipeline_props.shader_group_base_alignment,
-        );
-        let hit_shader_group_region_size = helper::align_up(
-            Self::HIT_SBT_REGION.len() as u32 * aligned_shader_group_handle_size,
-            rt_pipeline_props.shader_group_base_alignment,
-        );
-        let callable_shader_group_region_size = helper::align_up(
-            Self::CALLABLE_SBT_REGION.len() as u32 * aligned_shader_group_handle_size,
-            rt_pipeline_props.shader_group_base_alignment,
-        );
-
-        let sbt_buffer = GfxSBTBuffer::new(
-            resource_ctx,
-            (raygen_shader_group_region_size
-                + miss_shader_group_region_size
-                + hit_shader_group_region_size
-                + callable_shader_group_region_size) as vk::DeviceSize,
-            rt_pipeline_props.shader_group_base_alignment as vk::DeviceSize,
-            "simple-rt-sbt",
-        );
-
-        // 找到每个 shader group 在 SBT 中的地址
-        let sbt_address = sbt_buffer.device_address();
-
-        let sbt_region_raygen = vk::StridedDeviceAddressRegionKHR::default()
-            .stride(raygen_shader_group_region_size as vk::DeviceSize) // raygen 的 stride 需要和 size 一样
-            .size(raygen_shader_group_region_size as vk::DeviceSize)
-            .device_address(sbt_address);
-        let sbt_region_miss = vk::StridedDeviceAddressRegionKHR::default()
-            .stride(aligned_shader_group_handle_size as vk::DeviceSize)
-            .size(miss_shader_group_region_size as vk::DeviceSize)
-            .device_address(sbt_address + raygen_shader_group_region_size as vk::DeviceSize);
-        let sbt_region_hit = vk::StridedDeviceAddressRegionKHR::default()
-            .stride(aligned_shader_group_handle_size as vk::DeviceSize)
-            .size(hit_shader_group_region_size as vk::DeviceSize)
-            .device_address(
-                sbt_address
-                    + raygen_shader_group_region_size as vk::DeviceSize
-                    + miss_shader_group_region_size as vk::DeviceSize,
-            );
-        let sbt_region_callable = vk::StridedDeviceAddressRegionKHR::default()
-            .stride(aligned_shader_group_handle_size as vk::DeviceSize)
-            .size(callable_shader_group_region_size as vk::DeviceSize)
-            .device_address(
-                sbt_address
-                    + raygen_shader_group_region_size as vk::DeviceSize
-                    + miss_shader_group_region_size as vk::DeviceSize
-                    + hit_shader_group_region_size as vk::DeviceSize,
-            );
-
-        // 从 pipeline 中获取 shader 的 handle，并且将 shader handle 写入到 shader
-        // binding table 中
-        {
-            let shader_group_handle_data = unsafe {
-                device_ctx
-                    .device()
-                    .ray_tracing_pipeline()
-                    .get_ray_tracing_shader_group_handles(
-                        pipeline.pipeline,
-                        0,
-                        ShaderGroups::COUNT as u32,
-                        (ShaderGroups::COUNT as u32 * rt_pipeline_props.shader_group_handle_size) as usize,
-                    )
-                    .unwrap()
-            };
-
-            let copy_shader_group_hande = |group_handle_idx: usize, sbt_handle_host_addr: *mut u8| unsafe {
-                let start_bytes = rt_pipeline_props.shader_group_handle_size as usize * group_handle_idx;
-                let length_bytes = rt_pipeline_props.shader_group_handle_size as usize;
-                let src = &shader_group_handle_data[start_bytes..start_bytes + length_bytes];
-
-                let dst = std::slice::from_raw_parts_mut(
-                    sbt_handle_host_addr,
-                    rt_pipeline_props.shader_group_handle_size as usize,
-                );
-                dst.copy_from_slice(src);
-            };
-
-            let sbt_buffer_size = sbt_buffer.size();
-            let sbt_host_address = sbt_buffer.mapped_ptr();
-
-            let sbt_host_addr_raygen = sbt_host_address;
-            copy_shader_group_hande(Self::RAYGEN_SBT_REGION, sbt_host_address);
-
-            let sbt_host_addr_miss = sbt_host_addr_raygen.wrapping_byte_add(sbt_region_raygen.size as usize);
-            for (idx, group_handle_idx) in Self::MISS_SBT_REGION.iter().enumerate() {
-                copy_shader_group_hande(
-                    *group_handle_idx,
-                    sbt_host_addr_miss.wrapping_byte_add(idx * sbt_region_miss.stride as usize),
-                );
-            }
-
-            let sbt_host_addr_hit = sbt_host_addr_miss.wrapping_byte_add(sbt_region_miss.size as usize);
-            for (idx, group_handle_idx) in Self::HIT_SBT_REGION.iter().enumerate() {
-                copy_shader_group_hande(
-                    *group_handle_idx,
-                    sbt_host_addr_hit.wrapping_byte_add(idx * sbt_region_hit.stride as usize),
-                );
-            }
-
-            let sbt_host_addr_callable = sbt_host_addr_hit.wrapping_byte_add(sbt_region_hit.size as usize);
-            for (idx, group_handle_idx) in Self::CALLABLE_SBT_REGION.iter().enumerate() {
-                copy_shader_group_hande(
-                    *group_handle_idx,
-                    sbt_host_addr_callable.wrapping_byte_add(idx * sbt_region_callable.stride as usize),
-                );
-            }
-
-            sbt_buffer.flush(resource_ctx, 0, sbt_buffer_size);
-        }
-
-        Self {
-            sbt_region_raygen,
-            sbt_region_miss,
-            sbt_region_hit,
-            sbt_region_callable,
-            _sbt_buffer: sbt_buffer,
-        }
-    }
-
-    pub fn destroy(self, resource_ctx: GfxResourceCtx<'_>) {
-        self._sbt_buffer.destroy(resource_ctx, truvis_gfx::resources::lifecycle::DestroyReason::Shutdown);
-    }
-}
 
 /// 传入 pass 的数据
 pub struct RealtimeRtPassData {
@@ -382,7 +225,7 @@ struct RealtimeRtDescriptorBinding {
 
 pub struct RealtimeRtPass {
     pipeline: GfxRtPipeline,
-    _sbt: SBTRegions,
+    sbt: GfxSBTBuffer,
     _rt_descriptor_set_layout: GfxDescriptorSetLayout<RealtimeRtDescriptorBinding>,
 
     hash_table: GfxStructuredBuffer<gpu::ic::Table>,
@@ -474,7 +317,18 @@ impl RealtimeRtPass {
             pipeline,
             pipeline_layout,
         };
-        let sbt = SBTRegions::create_sbt(resource_ctx, device_ctx, device_info_ctx, &rt_pipeline);
+        let sbt = GfxSBTBuffer::from_shader_groups(
+            resource_ctx,
+            device_ctx,
+            device_info_ctx,
+            rt_pipeline.pipeline,
+            ShaderGroups::COUNT as u32,
+            ShaderGroups::RayGen.index(),
+            &[ShaderGroups::SkyMiss.index(), ShaderGroups::ShadowMiss.index()],
+            &[ShaderGroups::Hit.index()],
+            &[ShaderGroups::DiffuseCall.index()],
+            "simple-rt-sbt",
+        );
 
         let mut hash_table = GfxStructuredBuffer::<gpu::ic::Table>::new(
             resource_ctx,
@@ -499,7 +353,7 @@ impl RealtimeRtPass {
 
         Self {
             pipeline: rt_pipeline,
-            _sbt: sbt,
+            sbt,
             _rt_descriptor_set_layout: rt_descriptor_set_layout,
 
             hash_table,
@@ -510,16 +364,16 @@ impl RealtimeRtPass {
     pub fn destroy(self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
         let Self {
             pipeline,
-            _sbt,
+            sbt,
             _rt_descriptor_set_layout,
             mut hash_table,
             mut entry_pool,
         } = self;
         pipeline.destroy(device_ctx);
-        _sbt.destroy(resource_ctx);
+        sbt.destroy(resource_ctx, DestroyReason::Shutdown);
         _rt_descriptor_set_layout.destroy(device_ctx);
-        hash_table.destroy_mut(resource_ctx, truvis_gfx::resources::lifecycle::DestroyReason::Shutdown);
-        entry_pool.destroy_mut(resource_ctx, truvis_gfx::resources::lifecycle::DestroyReason::Shutdown);
+        hash_table.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        entry_pool.destroy_mut(resource_ctx, DestroyReason::Shutdown);
     }
     pub fn ray_trace(
         &self,
@@ -700,10 +554,10 @@ impl RealtimeRtPass {
             );
 
             cmd.trace_rays(
-                &self._sbt.sbt_region_raygen,
-                &self._sbt.sbt_region_miss,
-                &self._sbt.sbt_region_hit,
-                &self._sbt.sbt_region_callable,
+                self.sbt.raygen_region(),
+                self.sbt.miss_region(),
+                self.sbt.hit_region(),
+                self.sbt.callable_region(),
                 [
                     pass_data.single_frame_extent.width,
                     pass_data.single_frame_extent.height,
@@ -713,14 +567,6 @@ impl RealtimeRtPass {
         }
 
         cmd.end_label();
-    }
-}
-mod helper {
-    /// 将 x 向上对齐到 align 的倍数
-    pub fn align_up(x: u32, align: u32) -> u32 {
-        assert!(align.is_power_of_two());
-
-        (x + (align - 1)) & !(align - 1)
     }
 }
 
