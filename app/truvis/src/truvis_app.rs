@@ -1,14 +1,14 @@
 use truvis_app_frame::input_event::InputEvent;
 use truvis_app_frame::plugin_api::{Plugin, PluginRenderCtx};
 use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx};
-use truvis_asset::handle::{AssetModelHandle, LoadStatus};
+use truvis_asset::handle::{AssetMaterialKey, AssetModelHandle, LoadStatus, MaterialData};
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
 use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
 use truvis_render_runtime::render_runtime::{RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 use truvis_shader_binding::gpu;
-use truvis_world::World;
+use truvis_world::{World, components::instance::Instance, procedural_mesh::ProceduralMeshKind};
 
 use app_kit::camera::Camera;
 use app_kit::camera_controller::CameraController;
@@ -28,6 +28,17 @@ pub struct TruvisApp {
     click_ray_cast_probe: ClickRayCastProbe,
     model_asset: Option<AssetModelHandle>,
     model_spawned: bool,
+}
+
+#[derive(Clone, Copy)]
+struct MaterialCubeSpec {
+    name: &'static str,
+    center: glam::Vec3,
+    base_color: glam::Vec4,
+    emissive: glam::Vec4,
+    metallic: f32,
+    roughness: f32,
+    opaque: f32,
 }
 
 struct ClickRayCastProbe {
@@ -132,6 +143,95 @@ impl TruvisApp {
         world.asset_hub.load_model(TruvisPath::assets_path("fbx/sponza/sponza.fbx"))
     }
 
+    fn spawn_material_test_cubes(world: &mut World) {
+        const MATERIAL_SOURCE: &str = "procedural://material-test-cubes";
+        const CUBE_SCALE: f32 = 100.0;
+
+        let cube_kind = ProceduralMeshKind::Cube;
+        let cube_mesh = world.asset_hub.register_mesh_data(cube_kind.asset_key(), cube_kind.mesh_data());
+        let material_source_path = std::path::PathBuf::from(MATERIAL_SOURCE);
+        let cube_y = 100.0;
+        let cube_z = -25.0;
+        let cube_specs = [
+            MaterialCubeSpec {
+                name: "glass",
+                center: glam::vec3(-800.0, cube_y, cube_z),
+                base_color: glam::vec4(0.65, 0.85, 1.0, 1.0),
+                emissive: glam::Vec4::ZERO,
+                metallic: 0.0,
+                roughness: 0.0,
+                opaque: 0.25,
+            },
+            MaterialCubeSpec {
+                name: "mirror",
+                center: glam::vec3(-450.0, cube_y, cube_z),
+                base_color: glam::vec4(0.96, 0.96, 0.92, 1.0),
+                emissive: glam::Vec4::ZERO,
+                metallic: 1.0,
+                roughness: 0.0,
+                opaque: 1.0,
+            },
+            MaterialCubeSpec {
+                name: "glossy-plastic",
+                center: glam::vec3(-100.0, cube_y, cube_z),
+                base_color: glam::vec4(0.95, 0.08, 0.18, 1.0),
+                emissive: glam::Vec4::ZERO,
+                metallic: 0.0,
+                roughness: 0.18,
+                opaque: 1.0,
+            },
+            MaterialCubeSpec {
+                name: "rough-plastic",
+                center: glam::vec3(250.0, cube_y, cube_z),
+                base_color: glam::vec4(0.18, 0.95, 0.25, 1.0),
+                emissive: glam::Vec4::ZERO,
+                metallic: 0.0,
+                roughness: 0.75,
+                opaque: 1.0,
+            },
+            MaterialCubeSpec {
+                name: "emissive-reference",
+                center: glam::vec3(600.0, cube_y, cube_z),
+                base_color: glam::vec4(1.0, 0.65, 0.18, 1.0),
+                emissive: glam::vec4(4.0, 2.2, 0.5, 1.0),
+                metallic: 0.0,
+                roughness: 1.0,
+                opaque: 1.0,
+            },
+        ];
+
+        // cube 为单位模型，scale=100 且中心 y=50，使所有顶点落在给定场景范围内；
+        // 这些材质参数刻意覆盖当前 shader 的透明、镜面、光泽/粗糙 diffuse 和 emissive 分支。
+        for (material_index, spec) in cube_specs.into_iter().enumerate() {
+            let material = world.asset_hub.register_material_data(
+                AssetMaterialKey {
+                    source_path: material_source_path.clone(),
+                    material_index: material_index as u32,
+                },
+                MaterialData {
+                    base_color: spec.base_color,
+                    emissive: spec.emissive,
+                    metallic: spec.metallic,
+                    roughness: spec.roughness,
+                    opaque: spec.opaque,
+                    diffuse_texture: None,
+                    normal_texture: None,
+                    name: format!("material-test-cube-{}", spec.name),
+                },
+            );
+
+            world.scene_manager.register_instance(Instance {
+                mesh: cube_mesh,
+                materials: vec![material],
+                transform: glam::Mat4::from_scale_rotation_translation(
+                    glam::Vec3::splat(CUBE_SCALE),
+                    glam::Quat::IDENTITY,
+                    spec.center,
+                ),
+            });
+        }
+    }
+
     fn spawn_model_if_ready(&mut self, world: &mut World) {
         if self.model_spawned {
             return;
@@ -228,6 +328,7 @@ impl RenderAppHooks for TruvisApp {
         self.gui.set_hidpi_factor(ctx.scale_factor);
         self.gui.set_display_size(ctx.window_size);
 
+        Self::spawn_material_test_cubes(&mut *ctx.runtime.world);
         self.model_asset = Some(Self::request_model(&mut *ctx.runtime.world, self.camera_controller.camera_mut()));
     }
 
