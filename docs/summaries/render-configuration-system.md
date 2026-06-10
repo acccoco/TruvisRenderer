@@ -14,8 +14,8 @@
 | app / pipeline 局部设置 | `RtPipelineSettings`、`DenoiseAccumSettings` | app 层 | 取决于 app | 保存具体 pipeline 自己理解的调试或实验参数 |
 
 这次整理后的核心原则是：`truvis-render-runtime` 持有跨 pipeline 的渲染契约和 runtime 派生状态，
-包括 `RenderOptions`、`FrameRenderState`、`ViewAccumState` 与 `DlssSrState` 等明确 owner；具体 RT pass 的 debug channel、legacy denoise
-参数和实验性 IC 开关不再伪装成 engine 全局配置。
+包括 `RenderOptions`、`FrameRenderState`、`ViewAccumState` 与 `DlssSrState` 等明确 owner；具体 RT pass 的 debug channel、SDR
+tone mapping、legacy denoise 参数和实验性 IC 开关不再伪装成 engine 全局配置。
 
 ## RenderOptions
 
@@ -33,6 +33,7 @@
 不放入 `RenderOptions` 的内容：
 
 - RT debug channel：只属于 RT pipeline 的 shader 调试输出。
+- SDR tone mapping：只属于 RT pipeline 的最终显示映射，不影响 runtime target 尺寸或 DLSS history。
 - denoise 参数：当前主 RT 流程已旁路传统 denoise/accum pass；保留 pass 时只能作为 pass-local 实验设置。
 - IC 开关：Irradiance Cache 仍是 shader 实验路径，主流程 push constant 固定为关闭。
 
@@ -73,15 +74,18 @@
 
 `RtPipelineSettings` 位于 app 层 `app-kit::render_pipeline::rt_render_graph`，由 `RtPipeline` 持有。
 
-当前只包含：
+当前包含：
 
 | 字段 | 含义 |
 |------|------|
 | `debug_channel: RtDebugChannel` | 主 RT shader / SDR pass 使用的调试输出通道 |
+| `tone_mapping: SdrToneMappingSettings` | SDR 输出路径使用的手动曝光和 ACES fitted tone mapping 参数 |
 
-RT debug channel 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hello Triangle / ShaderToy 只显示 DLSS SR mode，不暴露 RT 调试通道。
+RT debug channel 与 tone mapping 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hello Triangle / ShaderToy 只显示 DLSS SR mode，不暴露 RT 调试或 tone mapping 参数。
 
 `RtDebugChannel` 使用 enum 表达当前主 RT 流程支持的通道：final、normal、base color、NEE HDRI、emission、BRDF HDRI、NEE bounce 0/1 和 IC debug。旧的 magic number “not accum” 通道不再通过 UI 暴露。
+
+`SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道。当前使用实时渲染常用的 ACES fitted approximation，并提供 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display transform，也不做自动曝光或参数持久化。
 
 ## Runtime Defaults
 

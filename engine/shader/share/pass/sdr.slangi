@@ -13,6 +13,9 @@ struct PushConstant
 
     uint2 image_size;
     uint channel;
+    float exposure_ev;
+    float aces_strength;
+    float aces_white_point;
     uint _padding_1;
 };
 };

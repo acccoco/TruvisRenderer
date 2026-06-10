@@ -78,7 +78,7 @@ impl PipelineControlsOverlay {
     ) {
         ui.window("Controls")
             .position([10.0, 200.0], imgui::Condition::FirstUseEver)
-            .size([250.0, 200.0], imgui::Condition::FirstUseEver)
+            .size([320.0, 300.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 // RR 作为独立开关接入，不放进 SR/DLAA 质量挡位下拉框。
                 if let Some(_combo) = ui.begin_combo("DLSS SR", render_options.dlss_sr_mode.label()) {
@@ -103,6 +103,18 @@ impl PipelineControlsOverlay {
                             }
                         }
                     }
+
+                    ui.separator();
+                    ui.text("Tone Mapping");
+                    ui.slider_config("Exposure EV", -8.0_f32, 8.0_f32)
+                        .display_format("%.2f")
+                        .build(&mut rt_settings.tone_mapping.exposure_ev);
+                    ui.slider_config("ACES Strength", 0.0_f32, 1.0_f32)
+                        .display_format("%.2f")
+                        .build(&mut rt_settings.tone_mapping.aces_strength);
+                    ui.slider_config("White Point", 1.0_f32, 32.0_f32)
+                        .display_format("%.2f")
+                        .build(&mut rt_settings.tone_mapping.aces_white_point);
                 }
             });
     }

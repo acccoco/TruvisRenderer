@@ -7,7 +7,7 @@ use app_render_passes::dlss_sr_pass::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPa
 use app_render_passes::gbuffer::GBuffer;
 use app_render_passes::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};
 use app_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
-use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
+use app_render_passes::sdr_pass::{SdrPass, SdrRgPass, SdrToneMappingSettings};
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
@@ -35,12 +35,18 @@ pub struct RtPipelineSettings {
     /// 这是 RT 主流程的 pass-local 配置，不影响 engine runtime 的 target 尺寸、DLSS history
     /// 或全局 per-frame UBO，因此不放入 engine runtime-owned render state。
     pub debug_channel: RtDebugChannel,
+    /// SDR 输出路径的 tone mapping 参数。
+    ///
+    /// 只影响 Final 通道的 `hdr-to-sdr` pass，不改变 render extent、DLSS feature resource
+    /// 或 runtime-owned temporal state。
+    pub tone_mapping: SdrToneMappingSettings,
 }
 
 impl Default for RtPipelineSettings {
     fn default() -> Self {
         Self {
             debug_channel: RtDebugChannel::Final,
+            tone_mapping: SdrToneMappingSettings::default(),
         }
     }
 }
@@ -422,6 +428,7 @@ impl RtPipeline {
         let dlss_sr_outputs = &inner.dlss_sr_outputs;
         let main_view_targets = &inner.main_view_targets;
         let debug_channel = self.settings.debug_channel.shader_channel();
+        let tone_mapping = self.settings.tone_mapping;
 
         // compute graph 导入的是 app-owned 外部图像；RenderGraph 只接管本图内的状态转换，
         // 不拥有图像生命周期。owner 必须活到 graph 录制与提交完成之后。
@@ -590,6 +597,7 @@ impl RtPipeline {
                         src_image_extent: record_ctx.frame_state.output_extent,
                         dst_image_extent: record_ctx.frame_state.output_extent,
                         debug_channel,
+                        tone_mapping,
                     },
                 );
         } else if dlss_sr_enabled(record_ctx.render_options.dlss_sr_mode) {
@@ -618,6 +626,7 @@ impl RtPipeline {
                         src_image_extent: record_ctx.frame_state.output_extent,
                         dst_image_extent: record_ctx.frame_state.output_extent,
                         debug_channel,
+                        tone_mapping,
                     },
                 );
         } else {
@@ -633,6 +642,7 @@ impl RtPipeline {
                     src_image_extent: record_ctx.frame_state.render_extent,
                     dst_image_extent: record_ctx.frame_state.output_extent,
                     debug_channel,
+                    tone_mapping,
                 },
             );
         }
