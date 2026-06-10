@@ -539,16 +539,23 @@ float3 eval_brdf(const HitInfo info, const float3 view_dir, const float3 light_d
 // 调试通道
 // ============================================================================
 
+float3 encode_normal_debug_color(float3 normal)
+{
+    return normal * 0.5f + 0.5f;
+}
+
 /// 处理调试通道（首次命中）
 /// @param info 命中信息
 /// @param channel 调试通道号
 /// @param out_color 输出颜色
 /// @return true 表示是调试模式
 /// @note 通道 0: 正常渲染
-///       通道 1: 法线可视化
+///       通道 1: forward/shading normal 可视化
 ///       通道 2: 基础颜色
 ///       通道 4/5/6/7/8: 需要完整路径追踪，在此函数中不处理
 ///       通道 9: 首次命中位置的 IC 查询结果（需要完整路径追踪）
+///       通道 10: 未翻转 world-space normal 可视化
+///       通道 11: object/local-space normal 可视化
 bool handle_debug_channel(const HitInfo info, uint channel, out float3 out_color)
 {
     out_color = float3(0.f);
@@ -558,10 +565,24 @@ bool handle_debug_channel(const HitInfo info, uint channel, out float3 out_color
         return false;
     }
 
-    // 通道 1：法线可视化
+    // 通道 1：forward/shading normal，可用于确认当前 BRDF 和 RR 输入实际使用的法线。
     if (channel == 1)
     {
-        out_color = info.forward_normal * 0.5f + 0.5f;
+        out_color = encode_normal_debug_color(info.forward_normal);
+        return true;
+    }
+
+    // 通道 10：未翻转 world-space 几何法线，用于排查模型法线方向或 instance normal matrix。
+    if (channel == 10)
+    {
+        out_color = encode_normal_debug_color(info.origin_normal);
+        return true;
+    }
+
+    // 通道 11：object/local-space 插值法线，用于区分 mesh 原始数据问题和 world transform 问题。
+    if (channel == 11)
+    {
+        out_color = encode_normal_debug_color(info.object_normal);
         return true;
     }
 

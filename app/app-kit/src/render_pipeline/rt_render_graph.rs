@@ -58,8 +58,14 @@ impl Default for RtPipelineSettings {
 pub enum RtDebugChannel {
     /// 标准最终颜色输出。
     Final,
-    /// 显示命中点法线，用于检查几何与 shading normal。
-    Normal,
+    /// 显示 RT shading 当前实际使用的 world-space forward normal。
+    ///
+    /// 该法线经过 `faceforward` 翻面，会随入射 ray 保持同侧；这是旧 `normal` 通道的兼容语义。
+    ForwardNormal,
+    /// 显示未经过 `faceforward` 翻面的 world-space 几何法线。
+    WorldNormal,
+    /// 显示 mesh object/local space 中的插值顶点法线。
+    ObjectNormal,
     /// 显示材质 base color / albedo。
     BaseColor,
     /// 显示 next-event estimation 中来自 HDRI 的直接光。
@@ -80,9 +86,11 @@ pub enum RtDebugChannel {
 }
 
 impl RtDebugChannel {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 11] = [
         Self::Final,
-        Self::Normal,
+        Self::ForwardNormal,
+        Self::WorldNormal,
+        Self::ObjectNormal,
         Self::BaseColor,
         Self::NeeHdri,
         Self::Emission,
@@ -95,7 +103,9 @@ impl RtDebugChannel {
     pub fn label(self) -> &'static str {
         match self {
             Self::Final => "final",
-            Self::Normal => "normal",
+            Self::ForwardNormal => "forward normal",
+            Self::WorldNormal => "world normal",
+            Self::ObjectNormal => "object normal",
             Self::BaseColor => "base color",
             Self::NeeHdri => "from NEE HDRI",
             Self::Emission => "from emission",
@@ -109,7 +119,9 @@ impl RtDebugChannel {
     pub fn shader_channel(self) -> u32 {
         match self {
             Self::Final => 0,
-            Self::Normal => 1,
+            Self::ForwardNormal => 1,
+            Self::WorldNormal => 10,
+            Self::ObjectNormal => 11,
             Self::BaseColor => 2,
             Self::NeeHdri => 4,
             Self::Emission => 5,

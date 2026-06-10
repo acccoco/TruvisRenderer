@@ -18,7 +18,7 @@ RaytracingAccelerationStructure rt_tlas;
 RWTexture2D<float4> rt_single_frame_output;
 
 // ========== GBuffer 输出 ==========
-/// GBufferA：法线 normal.xyz + 粗糙度 roughness (R16G16B16A16_SFLOAT)
+/// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness (R16G16B16A16_SFLOAT)
 [[vk::binding(2, RT_SET_NUM)]]
 RWTexture2D<float4> gbuffer_a;
 

@@ -35,10 +35,13 @@ struct HitInfo
     float3 object_position;
     /// TLAS custom index 对应的稳定 instance slot。
     uint instance_id;
-    /// 朝向 Ray 起点的法线（已翻转，确保与入射方向同侧）
+    /// world-space forward/shading 法线。
+    /// 该法线已经按当前 ray `faceforward` 翻面，是 BRDF 采样和 RR NormalRoughness 输入使用的法线。
     float3 forward_normal;
-    /// 原始世界空间法线（未翻转，用于判断正反面）
+    /// 未经过 `faceforward` 的 world-space 几何法线，用于检查模型法线方向和判断正反面。
     float3 origin_normal;
+    /// object/local space 插值顶点法线，用于诊断 mesh 原始法线数据和 instance 变换后的差异。
+    float3 object_normal;
     /// 纹理坐标
     float2 uv;
     /// 光线 t 值（线性深度）

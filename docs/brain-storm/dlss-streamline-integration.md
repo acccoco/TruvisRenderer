@@ -160,7 +160,7 @@ DLSS RR:
     -> dlss-rr-specular-motion-vectors
   DlssRrRgPass:
     single_frame_rt + dlss-depth + dlss-motion-vectors
-      + diffuse/specular albedo + gbuffer_a(normal+roughness)
+      + diffuse/specular albedo + gbuffer_a(forward/shading normal+roughness)
       + specular motion vectors
       -> kFeatureDLSS_RR
       -> dlss-sr-output(output_extent)
@@ -192,7 +192,7 @@ RR 在 SR 基础输入外额外 tag：
 | --- | --- | --- | --- |
 | `kBufferTypeAlbedo` | `dlss-rr-diffuse-albedo` | `R16G16B16A16_SFLOAT`, `render_extent` | shader 从 base color / metallic 拆出的 diffuse albedo。 |
 | `kBufferTypeSpecularAlbedo` | `dlss-rr-specular-albedo` | `R16G16B16A16_SFLOAT`, `render_extent` | shader 按项目 PBR 约定拆出的 specular albedo。 |
-| `kBufferTypeNormalRoughness` | `gbuffer-a` | `R16G16B16A16_SFLOAT`, `render_extent` | `normal.xyz + roughness`，`DLSSDOptions.normalRoughnessMode = Packed`。 |
+| `kBufferTypeNormalRoughness` | `gbuffer-a` | `R16G16B16A16_SFLOAT`, `render_extent` | `forward/shading normal.xyz + roughness`，`DLSSDOptions.normalRoughnessMode = Packed`。 |
 | `kBufferTypeSpecularMotionVectors` | `dlss-rr-specular-motion-vectors` | `R32G32_SFLOAT`, `render_extent` | raygen 沿 primary hit 的镜面反射方向追踪虚拟几何后写入 pixel-space 2D motion；未命中时写 0。 |
 
 `GBufferB.w` 仍保留 primary-ray hit distance / linear depth 语义，供项目自身 debug 或后续
@@ -259,7 +259,7 @@ pub struct DlssRrRgPass<'a> {
 - `kFeatureDLSS_RR` support 查询、resource tagging、evaluate、free resources。
 - `DlssRrPass` / `DlssRrRgPass` opaque external pass。
 - `DlssRrInputTargets` 管理 diffuse albedo、specular albedo、specular motion vectors。
-- raygen 写出 RR 所需 diffuse/specular albedo；normal + roughness 复用 GBufferA。
+- raygen 写出 RR 所需 diffuse/specular albedo；forward/shading normal + roughness 复用 GBufferA。
 - raygen 写出 primary full-screen motion vectors，并用一次反射 `RayQuery` 写出
   RR specular motion vectors；反射未命中时使用零向量作为保守 fallback。
 - SR/RR feature 切换时释放旧 feature resources，避免 Streamline viewport resource

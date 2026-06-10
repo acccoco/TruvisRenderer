@@ -2,7 +2,7 @@
 /// @brief GBuffer 写入辅助函数
 ///
 /// GBuffer 布局：
-/// - GBufferA (R16G16B16A16_SFLOAT)：法线 normal.xyz + 粗糙度 roughness
+/// - GBufferA (R16G16B16A16_SFLOAT)：world-space forward/shading normal.xyz + 粗糙度 roughness
 /// - GBufferB (R16G16B16A16_SFLOAT)：世界位置 world_position.xyz + 线性深度 linear_depth
 /// - GBufferC (R8G8B8A8_UNORM)：反照率 albedo.rgb + 金属度 metallic
 
@@ -27,7 +27,7 @@ static const float DEFAULT_LINEAR_DEPTH = 10000.0f;
 /// GBuffer 数据（用于收集首次命中信息）
 struct GBufferData
 {
-    float3 normal;      ///< 世界空间法线
+    float3 normal;      ///< world-space forward/shading 法线
     float roughness;    ///< 粗糙度
 
     float3 position;    ///< 世界空间位置
@@ -43,7 +43,7 @@ struct GBufferData
 
 /// 从命中信息构建 GBuffer 数据
 /// @param position 世界空间命中位置
-/// @param normal 法线 世界空间法线（应为 forward_normal）
+/// @param normal world-space forward/shading 法线（应为 HitInfo.forward_normal）
 /// @param linear_depth 线性深度（光线 t 值）
 /// @param albedo 基础颜色
 /// @param metallic 金属度
@@ -85,7 +85,8 @@ void compute_rr_albedo(float3 base_color, float metallic, out float3 out_diffuse
 /// @param data GBuffer 数据
 void write_gbuffer_hit(uint2 thread_id, GBufferData data)
 {
-    // GBufferA：法线 normal.xyz + 粗糙度 roughness
+    // GBufferA：写入与当前 path tracing BRDF 一致的 forward/shading normal。
+    // DLSS RR 直接把该 image 作为 kBufferTypeNormalRoughness，因此这里不使用未翻转的几何 normal。
     rt::gbuffer_a.Store(thread_id, float4(data.normal, data.roughness));
 
     // GBufferB：世界位置 world_position.xyz + 线性深度 linear_depth
@@ -109,7 +110,7 @@ void write_dlss_sr_hit(uint2 thread_id, float depth, float2 motion_vector_pixels
 /// @param thread_id 当前像素坐标
 /// @param data GBuffer 数据
 /// @param specular_motion_vector_pixels 反射虚拟几何的 pixel-space motion vector。
-/// @note normal+roughness 直接复用 GBufferA；这里额外写 RR 需要的材质拆分与反射运动。
+/// @note forward/shading normal+roughness 直接复用 GBufferA；这里额外写 RR 需要的材质拆分与反射运动。
 void write_dlss_rr_hit(uint2 thread_id, GBufferData data, float2 specular_motion_vector_pixels)
 {
     float3 diffuse_albedo;

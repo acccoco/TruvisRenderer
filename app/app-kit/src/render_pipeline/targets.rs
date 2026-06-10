@@ -380,7 +380,7 @@ impl Drop for DlssSrInputTargets {
 
 /// DLSS Ray Reconstruction 额外需要的低分辨率输入图像。
 ///
-/// normal+roughness 复用现有 GBufferA；这里补齐 RR 专用的 diffuse albedo、specular
+/// forward/shading normal+roughness 复用现有 GBufferA；这里补齐 RR 专用的 diffuse albedo、specular
 /// albedo 和 specular motion vectors。specular motion vector 由 raygen 追踪反射方向上的
 /// 虚拟几何后写入，未命中时使用零向量作为保守 fallback。
 pub struct DlssRrInputTargets {

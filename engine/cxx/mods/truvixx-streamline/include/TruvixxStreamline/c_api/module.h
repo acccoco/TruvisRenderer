@@ -138,7 +138,7 @@ typedef struct
 } TruvixxSlDlssRrOptions;
 
 // 一次 DLSS Ray Reconstruction evaluate 的完整输入。
-// normal_roughness 当前按 packed 模式 tag 为 kBufferTypeNormalRoughness。
+// normal_roughness 当前按 packed 模式 tag 为 kBufferTypeNormalRoughness，normal.xyz 为 forward/shading normal。
 typedef struct
 {
     uint32_t frame_index;

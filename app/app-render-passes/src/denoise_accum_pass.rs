@@ -149,7 +149,7 @@ pub struct DenoiseAccumRgPass<'a> {
     pub single_frame_image: RgImageHandle,
     /// 累积结果（读写）
     pub accum_image: RgImageHandle,
-    /// GBufferA：normal.xyz + roughness（只读）
+    /// GBufferA：world-space forward/shading normal.xyz + roughness（只读）
     pub gbuffer_a: RgImageHandle,
     /// GBufferB：world_position.xyz + linear_depth（只读）
     pub gbuffer_b: RgImageHandle,

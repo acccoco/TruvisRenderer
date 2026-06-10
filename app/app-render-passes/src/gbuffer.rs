@@ -5,7 +5,7 @@
 //!
 //! | 通道 | 格式 | 内容 |
 //! |------|------|------|
-//! | A | R16G16B16A16_SFLOAT | normal.xyz + roughness |
+//! | A | R16G16B16A16_SFLOAT | world-space forward/shading normal.xyz + roughness |
 //! | B | R16G16B16A16_SFLOAT | world_position.xyz + linear_depth |
 //! | C | R8G8B8A8_UNORM | albedo.rgb + metallic |
 //!
@@ -35,7 +35,7 @@ use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
 ///
 /// 格式和通道语义是管线策略决策，由 app 层决定，不属于 engine 基础设施。
 pub struct GBuffer {
-    /// GBufferA：法线 normal.xyz + 粗糙度 roughness (R16G16B16A16_SFLOAT)
+    /// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness (R16G16B16A16_SFLOAT)
     a_images: [GfxImageHandle; FrameCounter::fif_count()],
     a_views: [GfxImageViewHandle; FrameCounter::fif_count()],
     /// GBufferB：世界位置 world_position.xyz + 线性深度 linear_depth (R16G16B16A16_SFLOAT)
@@ -190,7 +190,7 @@ impl GBuffer {
     pub const B_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
     pub const C_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 
-    /// GBufferA（法线 + 粗糙度）的当前帧 image 和 view handle。
+    /// GBufferA（forward/shading 法线 + 粗糙度）的当前帧 image 和 view handle。
     #[inline]
     pub fn a_handle(&self, frame_label: FrameLabel) -> (GfxImageHandle, GfxImageViewHandle) {
         (self.a_images[*frame_label], self.a_views[*frame_label])

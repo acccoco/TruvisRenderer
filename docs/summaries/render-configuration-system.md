@@ -83,7 +83,7 @@ tone mapping、legacy denoise 参数和实验性 IC 开关不再伪装成 engine
 
 RT debug channel 与 tone mapping 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hello Triangle / ShaderToy 只显示 DLSS SR mode，不暴露 RT 调试或 tone mapping 参数。
 
-`RtDebugChannel` 使用 enum 表达当前主 RT 流程支持的通道：final、normal、base color、NEE HDRI、emission、BRDF HDRI、NEE bounce 0/1 和 IC debug。旧的 magic number “not accum” 通道不再通过 UI 暴露。
+`RtDebugChannel` 使用 enum 表达当前主 RT 流程支持的通道：final、forward normal、world normal、object normal、base color、NEE HDRI、emission、BRDF HDRI、NEE bounce 0/1 和 IC debug。forward normal 是当前 path tracing BRDF 和 DLSS RR `NormalRoughness` 输入使用的 world-space shading normal，会按 ray `faceforward`；world normal 是未翻转的 world-space 几何法线；object normal 是 mesh object/local space 的插值顶点法线。旧的 magic number “not accum” 通道不再通过 UI 暴露。
 
 `SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道。当前使用实时渲染常用的 ACES fitted approximation，并提供 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display transform，也不做自动曝光或参数持久化。
 

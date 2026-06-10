@@ -17,6 +17,7 @@ void sky_miss(inout HitPayload payload)
     payload.info.position = float3(0.f);
     payload.info.forward_normal = -WorldRayDirection();
     payload.info.origin_normal = -WorldRayDirection();
+    payload.info.object_normal = -WorldRayDirection();
     payload.info.uv = uv;
 
     payload.info.base_color = sky_color;

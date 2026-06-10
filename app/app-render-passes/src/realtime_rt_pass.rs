@@ -123,7 +123,7 @@ pub struct RealtimeRtPassData {
     pub debug_channel: u32,
 
     // ========== GBuffer 数据 ==========
-    /// GBufferA：法线 normal.xyz + 粗糙度 roughness
+    /// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness
     pub gbuffer_a: GfxImageHandle,
     pub gbuffer_a_view: GfxImageViewHandle,
     /// GBufferB：世界位置 world_position.xyz + 线性深度 linear_depth
@@ -166,7 +166,7 @@ struct RealtimeRtDescriptorBinding {
     _rt_single_frame_output: (),
 
     // ========== GBuffer 数据 ==========
-    /// GBufferA：法线 normal.xyz + 粗糙度 roughness
+    /// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness
     #[binding = 2]
     #[descriptor_type = "STORAGE_IMAGE"]
     #[stage = "RAYGEN_KHR"]

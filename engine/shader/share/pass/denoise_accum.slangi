@@ -19,7 +19,7 @@ struct PushConstant
     UavHandle single_frame_input;
     /// 累积结果（读写）
     UavHandle accum_output;
-    /// GBufferA：normal.xyz + roughness（只读）
+    /// GBufferA：world-space forward/shading normal.xyz + roughness（只读）
     UavHandle gbuffer_a;
     /// GBufferB：world_position.xyz + linear_depth（只读）
     UavHandle gbuffer_b;

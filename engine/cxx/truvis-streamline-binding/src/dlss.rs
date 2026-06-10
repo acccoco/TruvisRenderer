@@ -254,7 +254,7 @@ pub struct DlssEvaluateDesc {
 #[derive(Clone, Copy, Debug)]
 /// 一次 DLSS Ray Reconstruction evaluate 的完整描述。
 ///
-/// 当前 Truvis RR MVP 使用 packed normal+roughness，并提供独立 diffuse/specular albedo
+/// 当前 Truvis RR MVP 使用 packed forward/shading normal+roughness，并提供独立 diffuse/specular albedo
 /// 与 specular motion vectors。specular motion vectors 的质量由 shader 侧输入决定，本层只搬运资源。
 pub struct DlssRrEvaluateDesc {
     pub frame_index: u32,
