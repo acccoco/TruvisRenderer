@@ -1,0 +1,4 @@
+interface:
+  display_name: "实现约束"
+  short_description: "修改代码时约束复用、结构内聚和中文注释"
+  default_prompt: "Use $implementation-guardrails 修改代码时遵守项目实现约束：先复用、不过度抽象、函数归属到 struct/impl，并补充中文注释。"
