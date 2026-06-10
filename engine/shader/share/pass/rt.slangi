@@ -57,9 +57,9 @@ struct PushConstants
     PTR(ic::Table, ic_table);
     PTR(ic::EntryPool, ic_entry_pool);
 
-    uint spp;
     uint spp_idx;
     uint channel;
     uint ic_enabled; // 0=禁用, 1=启用 Irradiance Cache
+    uint _padding_0;
 };
 };

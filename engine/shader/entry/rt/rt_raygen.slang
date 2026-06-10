@@ -29,11 +29,10 @@
 
 /// 生成相机光线
 /// @param thread_id 当前线程 ID
-/// @param subpixel_jitter 子像素抖动偏移
 /// @return 光线描述
-RayDesc generate_camera_ray(uint2 thread_id, float2 subpixel_jitter)
+RayDesc generate_camera_ray(uint2 thread_id)
 {
-    const float2 pixel_center = float2(thread_id) + subpixel_jitter;
+    const float2 pixel_center = float2(thread_id) + float2(0.5f, 0.5f) + per_frame_data.temporal_jitter_px;
     const float2 in_uv = pixel_center / float2(DispatchRaysDimensions().xy);
     const float4 target_in_view = mul(per_frame_data.inv_projection, float4(in_uv.x * 2.0 - 1.0, 1.0 - in_uv.y * 2.0, 1.0, 1.0));
     const float4 direction = mul(per_frame_data.inv_view, float4(normalize(target_in_view.xyz), 0.0));
@@ -624,22 +623,14 @@ bool shadow_ray_any_hit(RaytracingAccelerationStructure tlas, const RayDesc ray)
 [shader("raygeneration")]
 void main_ray_gen()
 {
-    const uint accum_samples = per_frame_data.accum_frames * push_const.spp + push_const.spp_idx;
-    if (accum_samples >= max_accum_samples)
-    {
-        return;
-    }
-
     uint2 thread_id = DispatchRaysIndex().xy;
 
-    // 子像素抖动
     uint random_seed = Random::tea(
         thread_id.y * DispatchRaysDimensions().x + thread_id.x,
         (uint)per_frame_data.frame_id + push_const.spp_idx
     );
-    const float2 subpixel_jitter = (accum_samples == 0 || push_const.channel != 0) ? float2(0.5f) : float2(0.5f) + 0.375f * Random::rand_gaussian(random_seed);
 
-    RayDesc ray = generate_camera_ray(thread_id, subpixel_jitter);
+    RayDesc ray = generate_camera_ray(thread_id);
     HitPayload payload = init_payload(random_seed);
 
     // 路径追踪主循环

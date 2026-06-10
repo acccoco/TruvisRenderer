@@ -46,7 +46,7 @@
 | `Dlaa` | `render_extent == output_extent` | 调用 DLSS feature 做抗锯齿，不做 upscale |
 | `Quality` / `Balanced` / `Performance` / `UltraPerformance` | 通过 Streamline optimal settings 派生低分辨率 `render_extent` | RT/GBuffer/DLSS input 用低分辨率渲染，DLSS output 回到 `output_extent` |
 
-`DlssSrState` 不是配置。它保存每帧 evaluate 所需的 common constants、previous view 和 reset 标记。窗口尺寸变化、render extent 变化、mode 切换等会调用 `request_reset`，让下一次 DLSS evaluate 丢弃旧 history。
+`DlssSrState` 不是配置。它保存每帧 evaluate 所需的 common constants、previous view、temporal jitter sequence 和 reset 标记。DLSS SR / DLAA / RR 启用时，它按 Halton(2,3) 生成 pixel-space frame-wide jitter；DLSS Off 时 jitter 为 0 且不推进序列。窗口尺寸变化、render extent 变化、mode 切换等会调用 `request_reset`，让下一次 DLSS evaluate 丢弃旧 history，并把 jitter sequence 重置到固定起点。
 
 ## FrameRenderState
 

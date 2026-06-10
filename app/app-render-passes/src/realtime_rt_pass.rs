@@ -658,7 +658,6 @@ impl RealtimeRtPass {
         // FIXME 这个变量废除了，现在只有 spp 1
         let spp = 1;
         let mut push_constant = gpu::rt::PushConstants {
-            spp,
             spp_idx: 0,
             channel: pass_data.debug_channel,
             ic_table: self.hash_table.device_address(),
@@ -666,6 +665,7 @@ impl RealtimeRtPass {
             // Irradiance Cache 代码仍作为 shader 实验路径保留，但当前主流程没有配置入口。
             // 固定为 0，避免一个看似全局配置的开关悄悄改变主渲染语义。
             ic_enabled: 0,
+            _padding_0: Default::default(),
         };
         for spp_idx in 0..spp {
             push_constant.spp_idx = spp_idx;

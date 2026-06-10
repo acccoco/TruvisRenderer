@@ -136,7 +136,8 @@ impl Default for DlssSrFrameConstants {
 /// 职责边界：
 /// - 负责把 app 提供的当前 `RenderView` 转换成 Streamline common constants；
 /// - 持有上一帧 `RenderView`，用于计算 current clip 与 previous clip 的转换；
-/// - 在 resize、DLSS mode 切换等历史失效点提供 reset 标记。
+/// - 维护 DLSS 使用的帧级 temporal jitter，并在 resize、DLSS mode 切换等历史失效点
+///   提供 reset 标记。
 ///
 /// 非职责：
 /// - 不创建或 tag GPU resource；
@@ -147,6 +148,7 @@ pub struct DlssSrState {
     constants: DlssSrFrameConstants,
     previous_view: Option<RenderView>,
     motion_vector_previous_view: Option<RenderView>,
+    jitter_sequence_index: u32,
     reset_pending: bool,
 }
 
@@ -156,6 +158,7 @@ impl Default for DlssSrState {
             constants: DlssSrFrameConstants::default(),
             previous_view: None,
             motion_vector_previous_view: None,
+            jitter_sequence_index: 0,
             reset_pending: true,
         }
     }
@@ -178,7 +181,9 @@ impl DlssSrState {
     pub fn request_reset(&mut self) {
         self.previous_view = None;
         self.motion_vector_previous_view = None;
+        self.jitter_sequence_index = 0;
         self.reset_pending = true;
+        self.constants.jitter_offset = [0.0, 0.0];
         self.constants.reset = true;
     }
 
@@ -186,7 +191,10 @@ impl DlssSrState {
     ///
     /// `previous_view` 只用于生成上一帧 clip 空间关系；当 history reset pending 时，
     /// 当前帧仍会写出有效矩阵，但 `reset=true` 会通知 DLSS 丢弃内部历史。
-    pub fn update(&mut self, render_view: &RenderView, frame_state: &FrameRenderState) {
+    ///
+    /// `dlss_active` 决定本帧是否生成 temporal jitter。DLSS 关闭时必须写 0 且不推进
+    /// jitter sequence，避免 native 路径和下一次 DLSS reset 继承不可见的采样状态。
+    pub fn update(&mut self, render_view: &RenderView, frame_state: &FrameRenderState, dlss_active: bool) {
         let previous_view = self.previous_view.unwrap_or(*render_view);
         // Streamline 仍需要 current clip <-> previous clip 的关系；shader 写入的 2D
         // motion vector 已包含 camera motion，因此这里不再让 Streamline 补相机运动。
@@ -195,6 +203,7 @@ impl DlssSrState {
         let clip_to_prev_clip = previous_clip_from_world * current_clip_from_world.inverse();
         let prev_clip_to_clip = clip_to_prev_clip.inverse();
         let reset = self.reset_pending || self.previous_view.is_none();
+        let jitter_offset = self.next_jitter_offset(dlss_active);
 
         self.constants = DlssSrFrameConstants {
             camera_view_to_clip: row_major(render_view.projection),
@@ -203,7 +212,7 @@ impl DlssSrState {
             camera_view_to_world: row_major(render_view.inv_view),
             clip_to_prev_clip: row_major(clip_to_prev_clip),
             prev_clip_to_clip: row_major(prev_clip_to_clip),
-            jitter_offset: [0.0, 0.0],
+            jitter_offset,
             // shader 写入 pixel-space motion vector，方向为当前像素回溯到上一帧位置。
             // Streamline 通过 scale 归一化到 [-1, 1]。
             mvec_scale: [
@@ -229,10 +238,34 @@ impl DlssSrState {
         self.previous_view = Some(*render_view);
         self.reset_pending = false;
     }
+
+    fn next_jitter_offset(&mut self, dlss_active: bool) -> [f32; 2] {
+        if !dlss_active {
+            return [0.0, 0.0];
+        }
+
+        let next_index = self.jitter_sequence_index.wrapping_add(1);
+        let index = if next_index == 0 { 1 } else { next_index };
+        self.jitter_sequence_index = index;
+        [halton(index, 2) - 0.5, halton(index, 3) - 0.5]
+    }
 }
 
 fn reciprocal_extent(value: u32) -> f32 {
     if value == 0 { 1.0 } else { 1.0 / value as f32 }
+}
+
+fn halton(mut index: u32, base: u32) -> f32 {
+    debug_assert!(base > 1);
+
+    let mut fraction = 1.0;
+    let mut result = 0.0;
+    while index > 0 {
+        fraction /= base as f32;
+        result += fraction * (index % base) as f32;
+        index /= base;
+    }
+    result
 }
 
 fn row_major(matrix: glam::Mat4) -> [f32; 16] {

@@ -14,9 +14,6 @@ rt::PushConstants push_const;
 /// 路径追踪最大深度
 const static uint max_depth = 16;
 
-/// 超过一定数量后，就不再重新计算了
-const static uint max_accum_samples = 4096;
-
 /// 材质类型枚举
 enum MaterialType : uint
 {

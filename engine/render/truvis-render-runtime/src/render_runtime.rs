@@ -539,7 +539,8 @@ impl RenderRuntime {
 
         self.update_view_accum(render_view);
         // DLSS constants 与本帧相机快照绑定，必须在 render graph 录制 evaluate 前更新。
-        self.dlss_sr_state.update(render_view, &self.frame_state);
+        let dlss_active = self.render_options.dlss_sr_mode != DlssSrMode::Off;
+        self.dlss_sr_state.update(render_view, &self.frame_state, dlss_active);
         self.prepare_gpu_scene(render_view);
         self.update_perframe_descriptor_set();
     }
@@ -977,6 +978,7 @@ impl RenderRuntime {
         // per-frame uniform 放在 GPU scene 上传之后写入同一条命令缓冲，保证本帧 shader
         // 看到的相机、分辨率、时间和 scene buffer 都来自同一个 prepare 快照。
         let previous_view = self.dlss_sr_state.motion_vector_previous_view().unwrap_or(*render_view);
+        let temporal_jitter_px = self.dlss_sr_state.constants().jitter_offset;
         let per_frame_data = gpu::PerFrameData {
             projection: render_view.projection.into(),
             view: render_view.view.into(),
@@ -992,6 +994,10 @@ impl RenderRuntime {
             resolution: gpu::Float2 {
                 x: frame_extent.width as f32,
                 y: frame_extent.height as f32,
+            },
+            temporal_jitter_px: gpu::Float2 {
+                x: temporal_jitter_px[0],
+                y: temporal_jitter_px[1],
             },
             // 主流程已不再做 progressive accumulation；保持为 0 可以让 raygen 每帧稳定写入当前图像。
             accum_frames: 0,

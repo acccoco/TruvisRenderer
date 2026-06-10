@@ -1,12 +1,13 @@
 # DLSS / Streamline 接入方案
 
-> 状态：更新于 2026-06-09。当前项目已经接入 DLSS Super Resolution
+> 状态：更新于 2026-06-10。当前项目已经接入 DLSS Super Resolution
 > (SR) 和 DLSS Ray Reconstruction (RR) 的 Streamline MVP 闭环：feature
 > support 查询、SR mode + RR enable flag、render/output extent 拆分、SR/RR
 > 输入资源、common constants、resource tagging、`kFeatureDLSS` /
 > `kFeatureDLSS_RR` evaluate、resize/mode/feature reset 和 ImGui 控制。
-> RR 第一版已经作为 SR 基础设施上的替代 evaluate 分支落地；当前仍需继续
-> 验证真实反射 motion vectors、temporal jitter 和画质稳定性。
+> RR 第一版已经作为 SR 基础设施上的替代 evaluate 分支落地；temporal jitter
+> 已按 Halton(2,3) 帧级 pattern 接入，当前仍需继续验证真实反射 motion vectors
+> 和画质稳定性。
 
 本文记录 NVIDIA Streamline 2.11.1 在 `truvis-app` RT pipeline 中的 SR/RR
 接入约定。Frame Generation、Reflex、NIS、DirectSR 不在当前范围内。
@@ -220,17 +221,19 @@ SR 输入误按 `GENERAL` 导入 present graph。
 - current clip 和 previous clip 的变换。
 - camera position/right/up/forward、near/far/fov/aspect。
 - reset history 标记。
-- `jitterOffset = 0`。
+- DLSS SR / DLAA / RR 启用时，按 Halton(2,3) 生成 pixel-space frame-wide
+  `jitterOffset`；DLSS Off 时写 0 且不推进序列。
 - `mvecScale = {1 / render_width, 1 / render_height}`。
 - `cameraMotionIncluded = true`。
 - `motionVectors3D = false`。
 - `depthInverted = false`。
 
-当前 motion vector image 写入完整 2D screen motion。runtime 会在 `PerFrameData`
-写入 previous view/projection，在 `Instance` 写入 `prev_model`；新激活实例、resize、
-DLSS mode/RR 切换或 history reset 帧会把 previous 数据对齐到当前帧，避免第一帧脏向量。
-后续接 temporal jitter 时，需要同步 motion vector 是否包含 jitter delta 与
-`motionVectorsJittered` / jitter offset 契约。
+当前 motion vector image 写入完整 2D screen motion，但不包含 jitter delta。runtime
+会在 `PerFrameData` 写入 previous view/projection 和当前帧 `temporal_jitter_px`，
+在 `Instance` 写入 `prev_model`；新激活实例、resize、DLSS mode/RR 切换或 history
+reset 帧会把 previous 数据对齐到当前帧，并把 jitter sequence 重置到固定起点。
+Streamline 侧保持 `motionVectorsJittered = false`，通过 `jitterOffset` 单独接收当前帧
+pixel-space jitter。
 
 ## 4. RR 当前落地与剩余缺口
 
@@ -264,8 +267,8 @@ pub struct DlssRrRgPass<'a> {
 
 仍需继续补齐或验证：
 
-- temporal jitter 当前仍为 0；后续接 DLSS 推荐 jitter pattern 时，需要同步 raygen、projection
-  constants、history reset 和 debug 验证。
+- temporal jitter 已接入 Halton(2,3) frame-wide pattern；仍需结合 Debug Viewer 和实机场景
+  验证 SR/RR 画质稳定性。
 - specular motion vectors 当前采用 single reflection RayQuery，不处理透明材质、粒子或多层反射；
   后续如需要更高质量，可补 specular hit distance / 多 bounce 策略。
 - 当前 output 仍沿用 `dlss-sr-output` 资源名；功能正确但命名偏 SR，后续可以改为
@@ -313,7 +316,6 @@ DLSSD
 
 ## 6. 当前限制
 
-- jitter 仍为 0，尚未做 temporal jitter pattern。
 - motion vectors 已接入 full-screen 2D motion，但尚未做 runtime 可视化量纲校验和 DLSS 画质回归。
 - fallback 策略目前以 mode 切换和错误日志为主，尚未做更细的 runtime degrade UI。
 - 传统 denoise/accum pass 仍保留在代码中，但 RT 主流程已经旁路；后续可以单独清理未使用 pass。
