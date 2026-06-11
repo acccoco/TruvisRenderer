@@ -56,48 +56,48 @@ impl StreamlineFeatureFlags {
             _ => names.join("|"),
         }
     }
+
+    fn should_enable_imgui_from_env() -> bool {
+        let env_value = match env::var(STREAMLINE_IMGUI_ENV) {
+            Ok(value) => value,
+            Err(env::VarError::NotPresent) => return false,
+            Err(env::VarError::NotUnicode(value)) => {
+                log::warn!("{} contains non-unicode value {:?}; SL ImGui disabled.", STREAMLINE_IMGUI_ENV, value);
+                return false;
+            }
+        };
+
+        match ConfigUtils::parse_bool_env(&env_value) {
+            Some(false) => false,
+            Some(true) if cfg!(debug_assertions) => true,
+            Some(true) => {
+                log::warn!(
+                    "{}={} requested SL ImGui, but release runtime does not copy sl.imgui.dll; SL ImGui disabled.",
+                    STREAMLINE_IMGUI_ENV,
+                    env_value
+                );
+                false
+            }
+            None => {
+                log::warn!(
+                    "Invalid {} value `{}`; expected one of 1/true/on/yes/enable/enabled or 0/false/off/no/disable/disabled. SL ImGui disabled.",
+                    STREAMLINE_IMGUI_ENV,
+                    env_value
+                );
+                false
+            }
+        }
+    }
 }
 
 impl Default for StreamlineFeatureFlags {
     fn default() -> Self {
         let mut flags = Self::DLSS;
         flags.insert(Self::DLSS_RR);
-        if should_enable_streamline_imgui() {
+        if Self::should_enable_imgui_from_env() {
             flags.insert(Self::IMGUI);
         }
         flags
-    }
-}
-
-fn should_enable_streamline_imgui() -> bool {
-    let env_value = match env::var(STREAMLINE_IMGUI_ENV) {
-        Ok(value) => value,
-        Err(env::VarError::NotPresent) => return false,
-        Err(env::VarError::NotUnicode(value)) => {
-            log::warn!("{} contains non-unicode value {:?}; SL ImGui disabled.", STREAMLINE_IMGUI_ENV, value);
-            return false;
-        }
-    };
-
-    match ConfigUtils::parse_bool_env(&env_value) {
-        Some(false) => false,
-        Some(true) if cfg!(debug_assertions) => true,
-        Some(true) => {
-            log::warn!(
-                "{}={} requested SL ImGui, but release runtime does not copy sl.imgui.dll; SL ImGui disabled.",
-                STREAMLINE_IMGUI_ENV,
-                env_value
-            );
-            false
-        }
-        None => {
-            log::warn!(
-                "Invalid {} value `{}`; expected one of 1/true/on/yes/enable/enabled or 0/false/off/no/disable/disabled. SL ImGui disabled.",
-                STREAMLINE_IMGUI_ENV,
-                env_value
-            );
-            false
-        }
     }
 }
 
@@ -130,6 +130,16 @@ pub struct StreamlineInitInfo {
     pub feature_flags: StreamlineFeatureFlags,
 }
 
+impl StreamlineInitInfo {
+    /// 返回默认 executable 目录中的 Streamline Vulkan loader 路径。
+    ///
+    /// 这个路径规则和默认 `plugin_dir` 保持一致，只计算路径，不检查 DLL 是否存在；
+    /// DLL 布置仍由 `cxx-build` 负责。
+    pub fn default_vulkan_loader_path() -> Result<PathBuf, std::io::Error> {
+        Ok(PathUtils::current_exe_dir()?.join("sl.interposer.dll"))
+    }
+}
+
 impl Default for StreamlineInitInfo {
     fn default() -> Self {
         Self {
@@ -140,11 +150,4 @@ impl Default for StreamlineInitInfo {
             feature_flags: StreamlineFeatureFlags::default(),
         }
     }
-}
-
-/// 返回当前 executable 目录中的 Streamline Vulkan loader 路径。
-///
-/// 这个 helper 只计算路径，不检查 DLL 是否存在；DLL 布置由 `cxx-build` 负责。
-pub fn default_vulkan_loader_path() -> Result<PathBuf, std::io::Error> {
-    Ok(PathUtils::current_exe_dir()?.join("sl.interposer.dll"))
 }

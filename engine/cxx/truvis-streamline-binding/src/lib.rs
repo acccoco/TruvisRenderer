@@ -22,5 +22,5 @@ pub mod dlss;
 mod log_bridge;
 mod runtime;
 
-pub use config::{StreamlineFeatureFlags, StreamlineInitInfo, default_vulkan_loader_path};
+pub use config::{StreamlineFeatureFlags, StreamlineInitInfo};
 pub use runtime::{StreamlineError, StreamlineRuntime};
