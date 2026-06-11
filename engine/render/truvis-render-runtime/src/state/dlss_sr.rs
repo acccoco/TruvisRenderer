@@ -106,12 +106,12 @@ pub struct DlssSrFrameConstants {
 impl Default for DlssSrFrameConstants {
     fn default() -> Self {
         Self {
-            camera_view_to_clip: row_major(glam::Mat4::IDENTITY),
-            clip_to_camera_view: row_major(glam::Mat4::IDENTITY),
-            world_to_camera_view: row_major(glam::Mat4::IDENTITY),
-            camera_view_to_world: row_major(glam::Mat4::IDENTITY),
-            clip_to_prev_clip: row_major(glam::Mat4::IDENTITY),
-            prev_clip_to_clip: row_major(glam::Mat4::IDENTITY),
+            camera_view_to_clip: Self::row_major(glam::Mat4::IDENTITY),
+            clip_to_camera_view: Self::row_major(glam::Mat4::IDENTITY),
+            world_to_camera_view: Self::row_major(glam::Mat4::IDENTITY),
+            camera_view_to_world: Self::row_major(glam::Mat4::IDENTITY),
+            clip_to_prev_clip: Self::row_major(glam::Mat4::IDENTITY),
+            prev_clip_to_clip: Self::row_major(glam::Mat4::IDENTITY),
             jitter_offset: [0.0, 0.0],
             mvec_scale: [1.0, 1.0],
             camera_pos: [0.0, 0.0, 0.0],
@@ -128,6 +128,149 @@ impl Default for DlssSrFrameConstants {
             motion_vectors_3d: false,
             reset: true,
         }
+    }
+}
+
+impl DlssSrFrameConstants {
+    fn row_major(matrix: glam::Mat4) -> [f32; 16] {
+        // glam 内部按列存储；Streamline common constants 按 row-major 语义读取。
+        let cols = matrix.to_cols_array_2d();
+        [
+            cols[0][0], cols[1][0], cols[2][0], cols[3][0], cols[0][1], cols[1][1], cols[2][1], cols[3][1], cols[0][2],
+            cols[1][2], cols[2][2], cols[3][2], cols[0][3], cols[1][3], cols[2][3], cols[3][3],
+        ]
+    }
+}
+
+/// DLSS temporal jitter 的短生命周期状态。
+///
+/// sequence index 必须跟随 `DlssSrState` reset 一起回到固定起点；DLSS 关闭时不推进
+/// 序列，避免 native 路径隐藏消耗采样状态。
+#[derive(Clone, Copy, Debug, Default)]
+struct DlssJitterSequence {
+    index: u32,
+}
+
+impl DlssJitterSequence {
+    fn reset(&mut self) {
+        self.index = 0;
+    }
+
+    fn next_offset(&mut self, dlss_active: bool) -> [f32; 2] {
+        if !dlss_active {
+            return [0.0, 0.0];
+        }
+
+        let next_index = self.index.wrapping_add(1);
+        let index = if next_index == 0 { 1 } else { next_index };
+        self.index = index;
+        [Self::halton(index, 2) - 0.5, Self::halton(index, 3) - 0.5]
+    }
+
+    fn halton(mut index: u32, base: u32) -> f32 {
+        debug_assert!(base > 1);
+
+        let mut fraction = 1.0;
+        let mut result = 0.0;
+        while index > 0 {
+            fraction /= base as f32;
+            result += fraction * (index % base) as f32;
+            index /= base;
+        }
+        result
+    }
+}
+
+/// 将 `RenderView` 与当前 frame state 收敛为 Streamline common constants。
+///
+/// builder 不持有跨帧状态，也不接触 Streamline FFI；它只负责一次 `update` 内的矩阵、
+/// camera 和 extent 派生，保证 `DlssSrState` 聚焦 temporal 状态推进。
+#[derive(Clone, Copy)]
+struct DlssCommonConstantsBuilder<'a> {
+    render_view: &'a RenderView,
+    previous_view: RenderView,
+    frame_state: &'a FrameRenderState,
+    jitter_offset: [f32; 2],
+    reset: bool,
+}
+
+impl<'a> DlssCommonConstantsBuilder<'a> {
+    fn new(
+        render_view: &'a RenderView,
+        previous_view: RenderView,
+        frame_state: &'a FrameRenderState,
+        jitter_offset: [f32; 2],
+        reset: bool,
+    ) -> Self {
+        Self {
+            render_view,
+            previous_view,
+            frame_state,
+            jitter_offset,
+            reset,
+        }
+    }
+
+    fn build(self) -> DlssSrFrameConstants {
+        let current_clip_from_world = self.render_view.projection * self.render_view.view;
+        let previous_clip_from_world = self.previous_view.projection * self.previous_view.view;
+        // Streamline 仍需要 current clip <-> previous clip 的关系；shader 写入的 2D
+        // motion vector 已包含 camera motion，因此这里不再让 Streamline 补相机运动。
+        let clip_to_prev_clip = previous_clip_from_world * current_clip_from_world.inverse();
+        let prev_clip_to_clip = clip_to_prev_clip.inverse();
+
+        DlssSrFrameConstants {
+            camera_view_to_clip: DlssSrFrameConstants::row_major(self.render_view.projection),
+            clip_to_camera_view: DlssSrFrameConstants::row_major(self.render_view.inv_projection),
+            world_to_camera_view: DlssSrFrameConstants::row_major(self.render_view.view),
+            camera_view_to_world: DlssSrFrameConstants::row_major(self.render_view.inv_view),
+            clip_to_prev_clip: DlssSrFrameConstants::row_major(clip_to_prev_clip),
+            prev_clip_to_clip: DlssSrFrameConstants::row_major(prev_clip_to_clip),
+            jitter_offset: self.jitter_offset,
+            // shader 写入 pixel-space motion vector，方向为当前像素回溯到上一帧位置。
+            // Streamline 通过 scale 归一化到 [-1, 1]。
+            mvec_scale: [
+                Self::reciprocal_extent(self.frame_state.render_extent.width),
+                Self::reciprocal_extent(self.frame_state.render_extent.height),
+            ],
+            camera_pos: self.render_view.position_ws.to_array(),
+            camera_up: Self::normalize_or(self.render_view.inv_view.y_axis.truncate(), glam::Vec3::Y).to_array(),
+            camera_right: Self::normalize_or(self.render_view.inv_view.x_axis.truncate(), glam::Vec3::X).to_array(),
+            camera_fwd: Self::normalize_or(self.render_view.forward_ws, -glam::Vec3::Z).to_array(),
+            camera_near: Self::estimate_camera_near(self.render_view.projection),
+            camera_far: 10000.0,
+            camera_fov: Self::estimate_vertical_fov(self.render_view.projection),
+            camera_aspect_ratio: Self::extent_aspect(self.frame_state.output_extent),
+            motion_vectors_invalid_value: -65504.0,
+            depth_inverted: false,
+            camera_motion_included: true,
+            motion_vectors_3d: false,
+            reset: self.reset,
+        }
+    }
+
+    fn reciprocal_extent(value: u32) -> f32 {
+        if value == 0 { 1.0 } else { 1.0 / value as f32 }
+    }
+
+    fn normalize_or(value: glam::Vec3, fallback: glam::Vec3) -> glam::Vec3 {
+        value.try_normalize().unwrap_or(fallback)
+    }
+
+    fn estimate_vertical_fov(projection: glam::Mat4) -> f32 {
+        let cot_half_fov = projection.y_axis.y.abs();
+        if cot_half_fov > f32::EPSILON { 2.0 * (1.0 / cot_half_fov).atan() } else { 60.0_f32.to_radians() }
+    }
+
+    fn estimate_camera_near(projection: glam::Mat4) -> f32 {
+        // 当前 RenderView 没有直接保留 near/far；这里给 Streamline 提供一个稳定的近似值。
+        // 后续如果相机系统显式保存 near/far，应替换为真实相机参数。
+        let near = -projection.w_axis.z * 0.5;
+        if near.is_finite() && near > 0.0 { near } else { 0.1 }
+    }
+
+    fn extent_aspect(extent: vk::Extent2D) -> f32 {
+        if extent.height == 0 { 1.0 } else { extent.width as f32 / extent.height as f32 }
     }
 }
 
@@ -148,7 +291,7 @@ pub struct DlssSrState {
     constants: DlssSrFrameConstants,
     previous_view: Option<RenderView>,
     motion_vector_previous_view: Option<RenderView>,
-    jitter_sequence_index: u32,
+    jitter_sequence: DlssJitterSequence,
     reset_pending: bool,
 }
 
@@ -158,7 +301,7 @@ impl Default for DlssSrState {
             constants: DlssSrFrameConstants::default(),
             previous_view: None,
             motion_vector_previous_view: None,
-            jitter_sequence_index: 0,
+            jitter_sequence: DlssJitterSequence::default(),
             reset_pending: true,
         }
     }
@@ -181,7 +324,7 @@ impl DlssSrState {
     pub fn request_reset(&mut self) {
         self.previous_view = None;
         self.motion_vector_previous_view = None;
-        self.jitter_sequence_index = 0;
+        self.jitter_sequence.reset();
         self.reset_pending = true;
         self.constants.jitter_offset = [0.0, 0.0];
         self.constants.reset = true;
@@ -196,103 +339,13 @@ impl DlssSrState {
     /// jitter sequence，避免 native 路径和下一次 DLSS reset 继承不可见的采样状态。
     pub fn update(&mut self, render_view: &RenderView, frame_state: &FrameRenderState, dlss_active: bool) {
         let previous_view = self.previous_view.unwrap_or(*render_view);
-        // Streamline 仍需要 current clip <-> previous clip 的关系；shader 写入的 2D
-        // motion vector 已包含 camera motion，因此这里不再让 Streamline 补相机运动。
-        let current_clip_from_world = render_view.projection * render_view.view;
-        let previous_clip_from_world = previous_view.projection * previous_view.view;
-        let clip_to_prev_clip = previous_clip_from_world * current_clip_from_world.inverse();
-        let prev_clip_to_clip = clip_to_prev_clip.inverse();
         let reset = self.reset_pending || self.previous_view.is_none();
-        let jitter_offset = self.next_jitter_offset(dlss_active);
-
-        self.constants = DlssSrFrameConstants {
-            camera_view_to_clip: row_major(render_view.projection),
-            clip_to_camera_view: row_major(render_view.inv_projection),
-            world_to_camera_view: row_major(render_view.view),
-            camera_view_to_world: row_major(render_view.inv_view),
-            clip_to_prev_clip: row_major(clip_to_prev_clip),
-            prev_clip_to_clip: row_major(prev_clip_to_clip),
-            jitter_offset,
-            // shader 写入 pixel-space motion vector，方向为当前像素回溯到上一帧位置。
-            // Streamline 通过 scale 归一化到 [-1, 1]。
-            mvec_scale: [
-                reciprocal_extent(frame_state.render_extent.width),
-                reciprocal_extent(frame_state.render_extent.height),
-            ],
-            camera_pos: render_view.position_ws.to_array(),
-            camera_up: normalize_or(render_view.inv_view.y_axis.truncate(), glam::Vec3::Y).to_array(),
-            camera_right: normalize_or(render_view.inv_view.x_axis.truncate(), glam::Vec3::X).to_array(),
-            camera_fwd: normalize_or(render_view.forward_ws, -glam::Vec3::Z).to_array(),
-            camera_near: estimate_camera_near(render_view.projection),
-            camera_far: 10000.0,
-            camera_fov: estimate_vertical_fov(render_view.projection),
-            camera_aspect_ratio: extent_aspect(frame_state.output_extent),
-            motion_vectors_invalid_value: -65504.0,
-            depth_inverted: false,
-            camera_motion_included: true,
-            motion_vectors_3d: false,
-            reset,
-        };
+        let jitter_offset = self.jitter_sequence.next_offset(dlss_active);
+        self.constants =
+            DlssCommonConstantsBuilder::new(render_view, previous_view, frame_state, jitter_offset, reset).build();
 
         self.motion_vector_previous_view = Some(previous_view);
         self.previous_view = Some(*render_view);
         self.reset_pending = false;
     }
-
-    fn next_jitter_offset(&mut self, dlss_active: bool) -> [f32; 2] {
-        if !dlss_active {
-            return [0.0, 0.0];
-        }
-
-        let next_index = self.jitter_sequence_index.wrapping_add(1);
-        let index = if next_index == 0 { 1 } else { next_index };
-        self.jitter_sequence_index = index;
-        [halton(index, 2) - 0.5, halton(index, 3) - 0.5]
-    }
-}
-
-fn reciprocal_extent(value: u32) -> f32 {
-    if value == 0 { 1.0 } else { 1.0 / value as f32 }
-}
-
-fn halton(mut index: u32, base: u32) -> f32 {
-    debug_assert!(base > 1);
-
-    let mut fraction = 1.0;
-    let mut result = 0.0;
-    while index > 0 {
-        fraction /= base as f32;
-        result += fraction * (index % base) as f32;
-        index /= base;
-    }
-    result
-}
-
-fn row_major(matrix: glam::Mat4) -> [f32; 16] {
-    // glam 内部按列存储；Streamline common constants 按 row-major 语义读取。
-    let cols = matrix.to_cols_array_2d();
-    [
-        cols[0][0], cols[1][0], cols[2][0], cols[3][0], cols[0][1], cols[1][1], cols[2][1], cols[3][1], cols[0][2],
-        cols[1][2], cols[2][2], cols[3][2], cols[0][3], cols[1][3], cols[2][3], cols[3][3],
-    ]
-}
-
-fn normalize_or(value: glam::Vec3, fallback: glam::Vec3) -> glam::Vec3 {
-    value.try_normalize().unwrap_or(fallback)
-}
-
-fn estimate_vertical_fov(projection: glam::Mat4) -> f32 {
-    let cot_half_fov = projection.y_axis.y.abs();
-    if cot_half_fov > f32::EPSILON { 2.0 * (1.0 / cot_half_fov).atan() } else { 60.0_f32.to_radians() }
-}
-
-fn estimate_camera_near(projection: glam::Mat4) -> f32 {
-    // 当前 RenderView 没有直接保留 near/far；这里给 Streamline 提供一个稳定的近似值。
-    // 后续如果相机系统显式保存 near/far，应替换为真实相机参数。
-    let near = -projection.w_axis.z * 0.5;
-    if near.is_finite() && near > 0.0 { near } else { 0.1 }
-}
-
-fn extent_aspect(extent: vk::Extent2D) -> f32 {
-    if extent.height == 0 { 1.0 } else { extent.width as f32 / extent.height as f32 }
 }
