@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
 use slotmap::SlotMap;
+use truvis_path::PathUtils;
 
 use crate::asset_loader::{AssetLoader, LoadResult, ModelLoadRequest, TextureLoadRequest};
 use crate::handle::{
@@ -410,12 +411,26 @@ impl AssetHub {
             opaque: raw.opaque,
             diffuse_texture: raw
                 .diffuse_texture_path
-                .map(|path| self.load_texture(helper::resolve_scene_texture_path(source_path, path))),
+                .map(|path| self.load_texture(Self::resolve_scene_texture_path(source_path, path))),
             normal_texture: raw
                 .normal_texture_path
-                .map(|path| self.load_texture(helper::resolve_scene_texture_path(source_path, path))),
+                .map(|path| self.load_texture(Self::resolve_scene_texture_path(source_path, path))),
             name: raw.name,
         }
+    }
+
+    /// 将 scene 内引用的 texture path 解析为 `AssetHub` 使用的内容路径。
+    ///
+    /// Assimp 通常返回模型文件内的相对路径；这里只组合 scene source 目录与
+    /// texture path，通用词法归一化交给 `PathUtils`，并且不访问文件系统。
+    fn resolve_scene_texture_path(source_path: &Path, texture_path: PathBuf) -> PathBuf {
+        let path = if texture_path.is_absolute() {
+            texture_path
+        } else {
+            source_path.parent().unwrap_or_else(|| Path::new("")).join(texture_path)
+        };
+
+        PathUtils::normalize_path_lexically(path)
     }
 
     /// 吸收一次 model 导入结果。
@@ -491,43 +506,5 @@ impl AssetHub {
             },
             immediate_events,
         ))
-    }
-}
-
-mod helper {
-    use std::path::{Component, Path, PathBuf};
-
-    /// 将 scene 内引用的 texture path 解析为 `AssetHub` 使用的内容路径。
-    ///
-    /// Assimp 通常返回模型文件内的相对路径；这里只做词法归一化，不访问文件系统，
-    /// 让纹理暂缺时仍沿用 `load_texture` 的失败路径。
-    pub(super) fn resolve_scene_texture_path(source_path: &Path, texture_path: PathBuf) -> PathBuf {
-        let path = if texture_path.is_absolute() {
-            texture_path
-        } else {
-            source_path.parent().unwrap_or_else(|| Path::new("")).join(texture_path)
-        };
-
-        normalize_path_lexically(path)
-    }
-
-    pub(super) fn normalize_path_lexically(path: PathBuf) -> PathBuf {
-        let mut normalized = PathBuf::new();
-
-        for component in path.components() {
-            match component {
-                Component::CurDir => {}
-                Component::ParentDir => {
-                    if !normalized.pop() {
-                        normalized.push(component.as_os_str());
-                    }
-                }
-                Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                    normalized.push(component.as_os_str());
-                }
-            }
-        }
-
-        normalized
     }
 }

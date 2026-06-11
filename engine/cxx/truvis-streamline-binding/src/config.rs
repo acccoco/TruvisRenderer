@@ -6,6 +6,7 @@
 use std::{env, path::PathBuf};
 
 use truvis_path::{PathUtils, TruvisPath};
+use truvis_utils::ConfigUtils;
 
 use crate::truvixx;
 
@@ -78,7 +79,7 @@ fn should_enable_streamline_imgui() -> bool {
         }
     };
 
-    match parse_bool_env(&env_value) {
+    match ConfigUtils::parse_bool_env(&env_value) {
         Some(false) => false,
         Some(true) if cfg!(debug_assertions) => true,
         Some(true) => {
@@ -97,14 +98,6 @@ fn should_enable_streamline_imgui() -> bool {
             );
             false
         }
-    }
-}
-
-fn parse_bool_env(value: &str) -> Option<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "on" | "yes" | "enable" | "enabled" => Some(true),
-        "0" | "false" | "off" | "no" | "disable" | "disabled" => Some(false),
-        _ => None,
     }
 }
 

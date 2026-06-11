@@ -32,11 +32,11 @@ pub use render_loop::render_loop;
 pub use render_thread::{RenderInitMsg, SendWrapper, SharedState, pack_size, unpack_size};
 
 pub fn init_env() {
-    init_env_with_log_init(truvis_logs::init_log);
+    init_env_with_log_init(truvis_logs::TruvisLogger::init);
 }
 
 pub fn init_env_with_log_file(log_file_path: impl AsRef<std::path::Path>) {
-    init_env_with_log_init(move || truvis_logs::init_log_with_file(log_file_path));
+    init_env_with_log_init(move || truvis_logs::TruvisLogger::init_with_file(log_file_path));
 }
 
 fn init_env_with_log_init(init_log: impl FnOnce()) {

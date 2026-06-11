@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 truvis-assimp-binding = { workspace = true }
+truvis-path = { workspace = true }
 
 ash = { workspace = true }
 glam = { workspace = true }

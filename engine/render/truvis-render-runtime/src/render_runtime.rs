@@ -18,6 +18,7 @@ use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_shader_binding::gpu;
+use truvis_utils::ConfigUtils;
 use truvis_world::scene_manager::SceneManager;
 
 use truvis_streamline_binding::dlss;
@@ -341,7 +342,7 @@ impl RenderRuntime {
             }
         }
         if let Ok(value) = env::var("TRUVIS_DLSS_RR") {
-            match parse_bool_env(&value) {
+            match ConfigUtils::parse_bool_env(&value) {
                 Some(enabled) => {
                     options.dlss_rr_enabled = enabled;
                     log::info!("Initial DLSS RR enabled from TRUVIS_DLSS_RR={value}: {enabled}");
@@ -379,14 +380,6 @@ fn free_streamline_feature_resources(feature: ActiveDlssFeature, context: &'stat
     };
     if let Err(err) = result {
         log::warn!("Failed to free {feature:?} resources for viewport 0 {context}: {err}");
-    }
-}
-
-fn parse_bool_env(value: &str) -> Option<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "on" | "yes" | "enable" | "enabled" => Some(true),
-        "0" | "false" | "off" | "no" | "disable" | "disabled" => Some(false),
-        _ => None,
     }
 }
 

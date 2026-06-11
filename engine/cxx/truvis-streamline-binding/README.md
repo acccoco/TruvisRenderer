@@ -37,7 +37,7 @@ Streamline logMessageCallback
 可以把这条链路理解成一条传送带：C++ 负责从 Streamline 手里接过日志，Rust callback
 负责快速投递，`streamline-logger` 线程才是真正写入 Rust 日志系统的一端。
 
-如果应用入口没有初始化 `truvis_logs::init_log()` 或其他 `log` backend，日志事件仍会进入
+如果应用入口没有初始化 `truvis_logs::TruvisLogger::init()` 或其他 `log` backend，日志事件仍会进入
 `log` facade，但不会自动显示。这和项目里其他 `log::info!` / `log::warn!` 调用一致。
 
 ## C++ 侧职责

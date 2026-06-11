@@ -3546,6 +3546,7 @@ dependencies = [
  "slotmap",
  "tracy-client",
  "truvis-assimp-binding",
+ "truvis-path",
 ]
 
 [[package]]
@@ -3717,6 +3718,7 @@ dependencies = [
  "bindgen",
  "log",
  "truvis-path",
+ "truvis-utils",
 ]
 
 [[package]]

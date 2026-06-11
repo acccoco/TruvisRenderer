@@ -1,12 +1,13 @@
 use std::{
     os::windows::ffi::OsStrExt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 /// 和进程运行位置、Windows 路径编码相关的通用工具。
 ///
 /// `TruvisPath` 负责 workspace 内固定目录；`PathUtils` 负责运行时才能知道的路径，
-/// 例如当前 executable 位置，以及传给 Windows / C++ wide API 的 UTF-16 路径。
+/// 例如当前 executable 位置、传给 Windows / C++ wide API 的 UTF-16 路径，以及
+/// 不访问文件系统的词法路径归一化。
 pub struct PathUtils;
 
 impl PathUtils {
@@ -34,5 +35,29 @@ impl PathUtils {
     /// UTF-16。返回值包含末尾 `0`，可以在 FFI 调用期间直接作为 `*const u16` 传递。
     pub fn path_to_utf16_null_terminated(path: impl AsRef<Path>) -> Vec<u16> {
         path.as_ref().as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    /// 只按路径 component 做词法归一化，不访问文件系统。
+    ///
+    /// 该 helper 用于 asset/importer 返回的路径清理：即使目标文件暂时不存在，也要让
+    /// 后续加载流程保留原有失败路径，而不是在这里通过 `canonicalize` 提前失败。
+    pub fn normalize_path_lexically(path: impl AsRef<Path>) -> PathBuf {
+        let mut normalized = PathBuf::new();
+
+        for component in path.as_ref().components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if !normalized.pop() {
+                        normalized.push(component.as_os_str());
+                    }
+                }
+                Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                    normalized.push(component.as_os_str());
+                }
+            }
+        }
+
+        normalized
     }
 }

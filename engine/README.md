@@ -28,15 +28,16 @@ workspace 顶层 `app/`。
 
 基础工具层，不依赖窗口、渲染运行时或 App 业务语义。
 
-- `truvis-utils/`：通用小工具 crate，目前提供带索引常量数组等 helper；不承载 Vulkan、asset 或 App 生命周期语义。
+- `truvis-utils/`：通用小工具 crate，提供带索引常量数组、基础配置解析等 helper；不承载 Vulkan、asset 或 App
+  生命周期语义。
 - `truvis-logs/`：项目统一日志初始化和 formatter；业务 crate 继续使用 `log` facade，不在调用点手工拼接线程上下文。
 
 ### `utils/`
 
 引擎工具层，面向 workspace 路径和资源准备，不等同于运行时 asset 系统。
 
-- `truvis-path/`：基于根目录 `map.toml` 的统一路径入口，提供 workspace、assets、resources、shader build、CXX 等路径
-  helper；不负责下载或加载资源内容。
+- `truvis-path/`：基于根目录 `map.toml` 的统一路径入口，提供 workspace、assets、resources、shader build、CXX、
+  运行时路径编码和词法路径归一化等 helper；不负责下载或加载资源内容。
 - `truvis-fetch-res/`：`fetch_res` 工具 crate，读取 `resources.toml` 并下载模型资产或外部工具资源；不参与渲染线程的 asset
   loading。
 
