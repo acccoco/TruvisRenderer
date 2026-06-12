@@ -1,4 +1,4 @@
-#include "share/__common.slangi"
+#include "share/common_share.slangi"
 
 namespace sdr
 {

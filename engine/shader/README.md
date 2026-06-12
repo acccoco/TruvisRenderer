@@ -26,4 +26,5 @@
 ## 注意事项
 
 - 共享结构变更会影响 Rust 绑定，需要重新执行 `just shader`。
+- `share/common_share.slangi` 是共享结构聚合入口；pass 结构按 `share/pass/*.slangi` 直接 include，避免恢复隐藏的 pass 聚合层。
 - 新 pass 建议复用已有全局描述符布局约定，避免新增碎片化绑定模型。

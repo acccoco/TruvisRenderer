@@ -1,7 +1,6 @@
 #pragma once
 
-#include "share/__common.slangi"
-#include "share/irradiance_cache_data.slangi"
+#include "share/common_share.slangi"
 
 namespace rt
 {

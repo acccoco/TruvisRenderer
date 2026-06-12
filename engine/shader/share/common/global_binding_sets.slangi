@@ -1,6 +1,6 @@
 #pragma once
-#include "share/frame_data.slangi"
-#include "share/scene.slangi"
+#include "share/common/frame_data.slangi"
+#include "share/common/scene.slangi"
 
 #ifdef __SLANG__
 

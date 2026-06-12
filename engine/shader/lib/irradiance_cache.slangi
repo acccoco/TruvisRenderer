@@ -1,7 +1,6 @@
 #pragma once
 
-#include "share/ptr.slangi"
-#include "share/irradiance_cache_data.slangi"
+#include "share/common_share.slangi"
 
 namespace ic
 {
@@ -334,7 +333,7 @@ static bool insert(
     int3 cell_coord = world_to_cell(position);
     uint bucket_idx = get_bucket_index(cell_coord);
 
-        // 直接丢弃超出最大 entry 数的情况
+    // 直接丢弃超出最大 entry 数的情况
     uint slot;
     InterlockedAdd(hash_table->buckets[bucket_idx].entry_count, 1u, slot);
     if (slot >= MAX_ENTRY_IN_BUCKET)

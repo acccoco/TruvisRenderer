@@ -1,5 +1,5 @@
 #pragma once
-#include "share/bindless.slangi"
+#include "share/common/bindless.slangi"
 
 struct PBRMaterial
 {

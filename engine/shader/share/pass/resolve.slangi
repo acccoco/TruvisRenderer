@@ -1,4 +1,4 @@
-#include "share/__common.slangi"
+#include "share/common_share.slangi"
 
 /// resolve pass 将指定的 image 按照给定的 offset 和 size 绘制到 color attachment
 namespace resolve

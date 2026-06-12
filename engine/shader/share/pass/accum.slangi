@@ -1,4 +1,4 @@
-#include "share/__common.slangi"
+#include "share/common_share.slangi"
 
 /// 累积 Pass 的数据定义
 /// 将单帧 RT 结果累积到 accum_image 中

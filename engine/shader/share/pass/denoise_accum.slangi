@@ -1,4 +1,4 @@
-#include "share/__common.slangi"
+#include "share/common_share.slangi"
 
 /// 降噪累积 Pass 的数据定义
 /// 对单帧 RT 结果进行增强联合双边滤波降噪，然后累积到 accum_image 中

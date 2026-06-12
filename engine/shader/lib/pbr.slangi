@@ -1,5 +1,5 @@
 #pragma once
-#include "share/__common.slangi"
+#include "share/common_share.slangi"
 #include "lib/common.slangi"
 #include "lib/sample/random.slangi"
 #include "lib/sample/sample.slangi"

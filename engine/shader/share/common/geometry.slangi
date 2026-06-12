@@ -1,5 +1,5 @@
 #pragma once
-#include "share/ptr.slangi"
+#include "share/common/ptr.slangi"
 
 struct Geometry
 {

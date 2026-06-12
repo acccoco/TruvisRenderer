@@ -1,9 +1,9 @@
 #pragma once
-#include "share/bindless.slangi"
-#include "share/geometry.slangi"
-#include "share/light.slangi"
-#include "share/material.slangi"
-#include "share/ptr.slangi"
+#include "share/common/bindless.slangi"
+#include "share/common/geometry.slangi"
+#include "share/common/light.slangi"
+#include "share/common/material.slangi"
+#include "share/common/ptr.slangi"
 
 struct Instance
 {
