@@ -21,7 +21,7 @@ impl ShaderCompiler for GlslCompiler {
         ShaderCompilerType::Glsl
     }
 
-    fn compile(&self, task: &ShaderCompileTask) {
+    fn compile(&self, task: &ShaderCompileTask) -> Result<(), String> {
         let output = std::process::Command::new("glslc")
             .args([
                 &format!("-I{:?}", EnvPath::shader_root_path()),
@@ -35,6 +35,6 @@ impl ShaderCompiler for GlslCompiler {
             .output()
             .expect("Failed to execute glslc");
 
-        self.process_cmd_output(output);
+        self.process_cmd_output(task, output)
     }
 }

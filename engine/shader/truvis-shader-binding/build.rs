@@ -1,6 +1,20 @@
 use bindgen::callbacks::ItemInfo;
 use truvis_path::TruvisPath;
 
+fn write_binding_if_changed(bindings: bindgen::Bindings, out_path: std::path::PathBuf) {
+    let mut generated = Vec::new();
+    bindings.write(Box::new(&mut generated)).expect("Couldn't render bindings!");
+
+    // 生成文件仍放在 src/ 下供当前模块结构直接 include，但只有内容变化时才写回。
+    // 这样 bindgen 每次运行不会单纯刷新 ignored 文件时间戳，避免 Cargo 把 shader binding
+    // 及其下游渲染 crate 误判为需要重新编译；共享结构变化时内容不同，仍会正常触发 rebuild。
+    if std::fs::read(&out_path).is_ok_and(|old_content| old_content == generated) {
+        return;
+    }
+
+    std::fs::write(out_path, generated).expect("Couldn't write bindings!");
+}
+
 // 创建自定义回调实现
 #[derive(Debug)]
 struct ModifyAdder;
@@ -62,7 +76,7 @@ fn gen_rust_binding() {
 
     // 将 bindings 写入 crate 内的生成文件。
     let out_path = std::path::PathBuf::from("src").join("_shader_bindings.rs");
-    bindings.write_to_file(out_path).expect("Couldn't write bindings!");
+    write_binding_if_changed(bindings, out_path);
 }
 
 fn main() {

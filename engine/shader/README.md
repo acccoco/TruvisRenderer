@@ -19,6 +19,9 @@
 
 `just shader` 会先运行 `cargo run --bin shader-build` 生成 `build/shader/**/*.spv`，
 再构建 `truvis-shader-binding`，让 Rust 侧绑定跟随共享结构更新。
+`shader-build` 在 `build/shader/.state/` 记录 manifest：单个入口 shader 变化时只重编该入口；
+`share/`、`lib/` 或 entry 下的 include 文件变化时保守重编全部入口。需要绕过 manifest 时执行
+`just shader-force`。
 
 ## 注意事项
 

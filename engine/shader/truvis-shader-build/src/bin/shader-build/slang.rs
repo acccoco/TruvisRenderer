@@ -21,7 +21,7 @@ impl ShaderCompiler for SlangCompiler {
         ShaderCompilerType::Slang
     }
 
-    fn compile(&self, task: &ShaderCompileTask) {
+    fn compile(&self, task: &ShaderCompileTask) -> Result<(), String> {
         let output = std::process::Command::new(EnvPath::slangc_path())
             .args([
                 "-I",
@@ -38,6 +38,6 @@ impl ShaderCompiler for SlangCompiler {
             .output()
             .expect("Failed to execute slangc");
 
-        self.process_cmd_output(output);
+        self.process_cmd_output(task, output)
     }
 }

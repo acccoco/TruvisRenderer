@@ -18,16 +18,34 @@ build-all: shader cxx
 fetch-res:
     cargo run --bin fetch_res
 
-# 编译 shader 并更新 Rust 绑定
+# 增量编译 shader 并更新 Rust 绑定
 [group('2 资源生成与构建')]
 shader:
     cargo run --bin shader-build
     cargo build -p truvis-shader-binding
 
-# 编译 CXX 项目并更新 Rust 绑定
+# 强制重新编译全部 shader 并更新 Rust 绑定
+[group('2 资源生成与构建')]
+shader-force:
+    cargo run --bin shader-build -- --force
+    cargo build -p truvis-shader-binding
+
+# 增量准备 Debug CXX 产物，供 dev cargo run / just truvis 使用
+[group('2 资源生成与构建')]
+cxx-debug:
+    cargo run --bin cxx-build -- --profile debug
+    cargo build -p truvis-assimp-binding -p truvis-streamline-binding
+
+# 增量编译 Debug + Release CXX 项目并更新 Rust 绑定
 [group('2 资源生成与构建')]
 cxx:
-    cargo run --bin cxx-build
+    cargo run --bin cxx-build -- --profile all
+    cargo build -p truvis-assimp-binding -p truvis-streamline-binding
+
+# 强制重新编译 Debug + Release CXX 项目并更新 Rust 绑定
+[group('2 资源生成与构建')]
+cxx-force:
+    cargo run --bin cxx-build -- --profile all --force
     cargo build -p truvis-assimp-binding -p truvis-streamline-binding
 
 # 运行 Triangle 示例
@@ -40,11 +58,11 @@ shader-toy *run_opts: shader (_run-cargo-bin "shader-toy" run_opts)
 
 # 运行 Cornell 光追示例
 [group('3 运行示例')]
-cornell *run_opts: shader cxx (_run-cargo-bin "rt-cornell" run_opts)
+cornell *run_opts: shader cxx-debug (_run-cargo-bin "rt-cornell" run_opts)
 
 # 运行 Truvis 主体应用；可追加 imgui / no-validation 选项
 [group('3 运行示例')]
-truvis *run_opts: shader cxx (_run-cargo-bin "truvis-app" run_opts)
+truvis *run_opts: shader cxx-debug (_run-cargo-bin "truvis-app" run_opts)
 
 # 直接运行 Truvis 主体应用，不更新 shader / CXX 绑定；可追加 imgui / no-validation 选项
 [group('3 运行示例')]

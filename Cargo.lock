@@ -3562,8 +3562,11 @@ name = "truvis-cxx-build"
 version = "0.1.0"
 dependencies = [
  "log",
+ "serde",
+ "serde_json",
  "truvis-logs",
  "truvis-path",
+ "walkdir",
 ]
 
 [[package]]
@@ -3706,6 +3709,8 @@ version = "0.1.0"
 dependencies = [
  "log",
  "rayon",
+ "serde",
+ "serde_json",
  "truvis-logs",
  "truvis-path",
  "walkdir",

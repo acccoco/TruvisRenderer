@@ -1,12 +1,27 @@
 # 使用 Visual Studio 作为项目 generator
 
-推荐通过 workspace 命令自动检测 VS2026 / VS2022：
+推荐通过 workspace 命令自动检测 VS2026 / VS2022。日常运行 Truvis 时只需要 Debug 产物：
+
+```shell
+just cxx-debug
+```
+
+需要同时准备 Debug + Release 时使用：
 
 ```shell
 just cxx
 ```
 
-`just cxx` 会运行 `cargo run --bin cxx-build` 并重新构建 `truvis-assimp-binding`。
+需要绕过 manifest、强制清理 profile 输出并重新构建时使用：
+
+```shell
+just cxx-force
+```
+
+`just cxx-debug` 会运行 `cargo run --bin cxx-build -- --profile debug` 并构建 CXX 绑定 crate；
+`just cxx` 会运行 `cargo run --bin cxx-build -- --profile all`。`cxx-build` 在
+`build/cxx/.state/` 记录 profile 级 manifest，输入未变化且 CMake/Cargo 输出仍存在时会跳过
+CMake configure/build，只做必要的 DLL/json 同步检查。
 `cxx-build` 只使用 PATH 上的 `cmake`。CMake presets 文件要求 CMake 3.21+；
 使用 VS2026 preset 时需要 PATH 上的 CMake 4.2+。
 CMake binary dir 位于 workspace 根目录的 `build/cxx/`，native 输出目录为

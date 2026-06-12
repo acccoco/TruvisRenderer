@@ -47,7 +47,7 @@ impl ShaderCompiler for HlslCompiler {
         ShaderCompilerType::Hlsl
     }
 
-    fn compile(&self, task: &ShaderCompileTask) {
+    fn compile(&self, task: &ShaderCompileTask) -> Result<(), String> {
         // Shader Model 版本:
         // - 6.3: 支持 Ray Tracing
         // - 6.5: 支持 Task/Mesh Shader
@@ -71,6 +71,6 @@ impl ShaderCompiler for HlslCompiler {
             .output()
             .expect("Failed to execute dxc");
 
-        self.process_cmd_output(output);
+        self.process_cmd_output(task, output)
     }
 }

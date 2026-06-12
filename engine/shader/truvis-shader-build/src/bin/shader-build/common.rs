@@ -83,21 +83,31 @@ pub trait ShaderCompiler: Send + Sync {
     fn compiler_type(&self) -> ShaderCompilerType;
 
     /// 编译着色器
-    fn compile(&self, task: &ShaderCompileTask);
+    fn compile(&self, task: &ShaderCompileTask) -> Result<(), String>;
 
     /// 根据 cmd 执行的结果，处理输出信息
-    fn process_cmd_output(&self, output: std::process::Output) {
+    fn process_cmd_output(&self, task: &ShaderCompileTask, output: std::process::Output) -> Result<(), String> {
         if !output.stdout.is_empty() {
             log::info!("stdout: {}", String::from_utf8_lossy(&output.stdout));
         }
         if !output.stderr.is_empty() {
             log::error!("stderr: {}", String::from_utf8_lossy(&output.stderr));
         }
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Shader 编译失败: {}，退出码: {}",
+                task.shader_path.display(),
+                output.status.code().map_or_else(|| "unknown".to_string(), |code| code.to_string())
+            ))
+        }
     }
 }
 
 /// 一个具体的编译任务
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ShaderCompileTask {
     pub shader_path: std::path::PathBuf,
     pub output_path: std::path::PathBuf,
