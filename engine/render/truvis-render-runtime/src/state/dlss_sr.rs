@@ -1,5 +1,6 @@
 use ash::vk;
 use truvis_render_foundation::render_view::RenderView;
+use truvis_streamline_binding::dlss;
 
 use crate::state::frame_state::FrameRenderState;
 
@@ -47,6 +48,21 @@ impl DlssSrMode {
             Self::Balanced => "Balanced",
             Self::Performance => "Performance",
             Self::UltraPerformance => "Ultra Performance",
+        }
+    }
+
+    /// 转换为 Streamline 的 SR/DLAA quality mode。
+    ///
+    /// 这里是项目内唯一的 `DlssSrMode -> dlss::DlssMode` 映射入口；RR 仍复用同一
+    /// quality mode，但是否走 `kFeatureDLSS_RR` 由 `DlssOptions` 决定。
+    pub fn to_streamline_mode(self) -> dlss::DlssMode {
+        match self {
+            Self::Off => dlss::DlssMode::Off,
+            Self::Dlaa => dlss::DlssMode::Dlaa,
+            Self::Quality => dlss::DlssMode::Quality,
+            Self::Balanced => dlss::DlssMode::Balanced,
+            Self::Performance => dlss::DlssMode::Performance,
+            Self::UltraPerformance => dlss::DlssMode::UltraPerformance,
         }
     }
 

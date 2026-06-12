@@ -12,10 +12,10 @@ use truvis_world::World;
 use crate::present::swapchain_presenter::PresentView;
 use crate::ray_cast::{RayCastRay, RayCastResult, RayCastService};
 use crate::scene_sync::instance_bridge::InstanceBridge;
+use crate::state::dlss_options::DlssOptions;
 use crate::state::dlss_sr::DlssSrState;
 use crate::state::frame_state::FrameRenderState;
 use crate::state::frame_timing::FrameTiming;
-use crate::state::render_options::RenderOptions;
 use crate::state::view_accum::ViewAccumState;
 
 /// pass 录制阶段的只读共享渲染上下文。
@@ -26,7 +26,7 @@ use crate::state::view_accum::ViewAccumState;
 pub struct RenderPassRecordCtx<'a> {
     pub frame_timing: &'a FrameTiming,
     pub frame_state: &'a FrameRenderState,
-    pub render_options: &'a RenderOptions,
+    pub dlss_options: &'a DlssOptions,
     pub view_accum: &'a ViewAccumState,
     pub dlss_sr_state: &'a DlssSrState,
     pub shader_bindings: ShaderBindingView<'a>,
@@ -37,12 +37,12 @@ pub struct RenderPassRecordCtx<'a> {
 /// Update 阶段上下文，借用 CPU 端更新需要的 RenderRuntime 字段。
 ///
 /// 在 app 执行 update 工作期间保持存活；drop 前 RenderRuntime 会保持借用锁定。
-/// 这个阶段允许修改 `World` 与全局渲染选项，但还没有把 CPU 语义数据翻译到 GPU scene。
+/// 这个阶段允许修改 `World` 与 runtime DLSS 选项，但还没有把 CPU 语义数据翻译到 GPU scene。
 pub struct RenderRuntimeUpdateCtx<'a> {
     /// CPU 语义世界；update 阶段允许 app/plugin 修改 scene、asset 请求和运行时实例。
     pub world: &'a mut World,
-    /// 可变全局渲染选项；修改后由 runtime 在 prepare/render 前统一同步派生状态。
-    pub render_options: &'a mut RenderOptions,
+    /// 可变 DLSS 选项；修改后由 runtime 在 prepare/render 前统一同步派生状态。
+    pub dlss_options: &'a mut DlssOptions,
     /// 当前帧渲染目标状态快照，已在 acquire 前与 swapchain 同步。
     pub frame_state: &'a FrameRenderState,
     /// 当前 main view 的累积状态，只读暴露给上层 UI 或调试逻辑。

@@ -3,7 +3,7 @@
 //! RR 是 DLSS SR 基础设施上的替代 evaluate 分支：开启 RR 时调用 `kFeatureDLSS_RR`，
 //! 不再追加普通 `kFeatureDLSS` SR pass，也不再运行 legacy denoise/accum。
 
-use crate::streamline_pass::{SL_INPUT_READ, SL_WRITE, image_resource, to_streamline_constants, to_streamline_mode};
+use crate::streamline_pass::{SL_INPUT_READ, SL_WRITE, image_resource, to_streamline_constants};
 use ash::vk;
 use ash::vk::Handle;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -12,7 +12,6 @@ use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_render_graph::render_graph::{RgImageHandle, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
-use truvis_render_runtime::state::dlss_sr::DlssSrMode;
 use truvis_streamline_binding::dlss;
 
 pub struct DlssRrPass;
@@ -31,15 +30,16 @@ impl DlssRrPass {
         resource_ctx: GfxResourceCtx<'_>,
         data: DlssRrPassData<'_>,
     ) {
-        let mode = record_ctx.render_options.dlss_sr_mode;
-        if mode == DlssSrMode::Off || !record_ctx.render_options.dlss_rr_enabled {
+        let dlss_options = *record_ctx.dlss_options;
+        if !dlss_options.is_rr_active() {
             return;
         }
+        let mode = dlss_options.sr_mode();
 
         let output_extent = record_ctx.frame_state.output_extent;
         let frame_constants = record_ctx.dlss_sr_state.constants();
         let options = dlss::DlssRrOptions {
-            mode: to_streamline_mode(mode),
+            mode: mode.to_streamline_mode(),
             output_width: output_extent.width,
             output_height: output_extent.height,
             color_buffers_hdr: true,

@@ -1,4 +1,4 @@
-﻿# 帧生命周期与 Phase 关系
+# 帧生命周期与 Phase 关系
 
 > 状态：当前实现事实总结。本文只解释现有 `RenderRuntime`、`RenderAppShell`、
 > `RenderAppHooks` 和 `Plugin` 的 phase 边界，不提出新的 API 或重命名方案。
@@ -85,7 +85,7 @@ flowchart LR
     subgraph R["RenderRuntime"]
         R0["begin_frame<br/>FIF 等待 / 命令池重置 / 延迟释放 / asset 事件分发"]
         R1["update_phase<br/>同步 FrameRenderState<br/>acquire present target"]
-        R2["sync_render_options_frame_state<br/>必要时同步 render/output extent"]
+        R2["sync_dlss_options_frame_state<br/>必要时同步 render/output extent"]
         R3{"has present target?"}
         R4["prepare(render_view)<br/>CPU scene -> GPU scene 快照<br/>descriptor / per-frame data"]
         R5["ray_cast_phase<br/>只暴露同步 raycast"]
@@ -164,7 +164,7 @@ pass，再叠加 GUI；如果把所有 render 能力都放进统一 trait，App 
 | `init_after_window`            | 窗口 raw handle 就绪后            | 创建 surface、swapchain、present owner                                                           | `RenderRuntimeInitCtx`           |
 | `begin_frame`                  | 每帧开始                         | 等待 FIF timeline、重置 frame command pool、清理延迟释放、推进 bindless/material/instance token、分发 asset 事件 | 不直接暴露 ctx                        |
 | `update_phase`                 | input 后、App update 前         | 同步 present extent 到 `FrameRenderState`，acquire 当前 present target，提供 CPU 更新能力                   | `RenderRuntimeUpdateCtx`         |
-| `sync_render_options_frame_state` | App / Plugin update 后        | 当 `RenderOptions` 改变 DLSS SR mode 或 render extent 时同步 `FrameRenderState`，并触发上层 resize          | `Option<RenderRuntimeResizeCtx>` |
+| `sync_dlss_options_frame_state` | App / Plugin update 后        | 当 `DlssOptions` 改变 DLSS SR mode 或 render extent 时同步 `FrameRenderState`，并触发上层 resize          | `Option<RenderRuntimeResizeCtx>` |
 | `prepare(render_view)`         | update / resize 后、render 前   | 读取 App 的 `RenderView` 快照，把 `World`、asset、material、instance 同步成 GPU scene 与 descriptor 数据     | 不直接暴露 ctx                        |
 | `ray_cast_phase`               | prepare 后、render graph 前     | 允许 App 对刚准备好的 GPU scene 做同步 raycast                                                          | `RenderRuntimeRayCastCtx`        |
 | `render_phase`                 | App render 前                 | 提供只读 render ctx，供 RenderGraph/pass 读取 GPU scene、present view 与 timeline                      | `RenderRuntimeRenderCtx`         |
@@ -181,7 +181,7 @@ Runtime phase 的核心意图是用借用和 ctx 限制能力：update 阶段可
 |-----------------|-------------------------------------|--------------------------------------------------------------|----------------------------------------------------------------|
 | `init`          | `RenderAppShell::init_after_window` | 初始化 App 自有状态和资源                                              | 发生在 runtime window 绑定后、标准 Plugin `init` 前                      |
 | `on_input`      | `RenderAppShell::run_frame`         | 处理本帧累积输入，决定 GUI、camera、业务输入的消费策略                             | 标准 Plugin `on_input` 不自动批量调用，App 可显式调用具体 Plugin                |
-| `update`        | `RenderAppShell::run_frame`         | 更新 camera、overlay、UI frame state、`RenderOptions` 或 app-local pipeline 配置、CPU scene | 运行在 `RenderRuntimeUpdateCtx` 内，早于 `Plugin::update` 和 `prepare` |
+| `update`        | `RenderAppShell::run_frame`         | 更新 camera、overlay、UI frame state、`DlssOptions` 或 app-local pipeline 配置、CPU scene | 运行在 `RenderRuntimeUpdateCtx` 内，早于 `Plugin::update` 和 `prepare` |
 | `after_prepare` | `RenderAppShell::run_frame`         | 对已同步的 GPU scene 做同步查询                                        | 只拿 `RenderRuntimeRayCastCtx`，常见用途是拾取                           |
 | `render`        | `RenderAppShell::run_frame`         | 创建 RenderGraph，显式决定具体 Plugin pass 与 GUI pass 的加入顺序           | 读取 `RenderRuntimeRenderCtx`，通常在这里构造 `PluginRenderCtx`          |
 | `render_view`   | `RenderAppShell::run_frame`         | 提供当前 camera / view 的纯数据快照                                    | runtime 在 `prepare` 中读取，不拥有 App camera                         |
@@ -197,7 +197,7 @@ App 是业务编排层。它既不拥有 runtime，也不把具体 Plugin 交给
 |-------------|------------------|-------------------------------------------------|-----------------------------------|
 | `init`      | 是                | 初始化 Plugin-owned 长期资源                           | 使用 `PluginInitCtx`                |
 | `on_input`  | 否                | 处理单个输入事件并返回是否消费                                 | 输入消费顺序属于 App 策略                   |
-| `update`    | 是                | 更新 Plugin CPU 状态，调整 `World`、`RenderOptions` 或 plugin-local 配置 | 发生在 App `update` 后                |
+| `update`    | 是                | 更新 Plugin CPU 状态，调整 `World`、`DlssOptions` 或 plugin-local 配置 | 发生在 App `update` 后                |
 | `on_resize` | 是                | 重建 Plugin-owned 窗口尺寸资源                          | 发生在 App `on_resize` 后             |
 | `shutdown`  | 是                | 显式释放 Plugin-owned GPU 资源                        | 通过 `visit_plugins_mut_rev` 支持反向释放 |
 

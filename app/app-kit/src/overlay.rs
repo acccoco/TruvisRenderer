@@ -1,7 +1,7 @@
 use ash::vk;
 use truvis_app_frame::plugin_api::Plugin;
+use truvis_render_runtime::state::dlss_options::DlssOptions;
 use truvis_render_runtime::state::dlss_sr::DlssSrMode;
-use truvis_render_runtime::state::render_options::RenderOptions;
 
 use crate::camera::Camera;
 use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtPipelineSettings};
@@ -73,7 +73,7 @@ impl PipelineControlsOverlay {
     pub fn build_overlay_ui(
         &mut self,
         ui: &imgui::Ui,
-        render_options: &mut RenderOptions,
+        dlss_options: &mut DlssOptions,
         rt_settings: Option<&mut RtPipelineSettings>,
     ) {
         ui.window("Controls")
@@ -81,14 +81,14 @@ impl PipelineControlsOverlay {
             .size([320.0, 300.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 // RR 作为独立开关接入，不放进 SR/DLAA 质量挡位下拉框。
-                if let Some(_combo) = ui.begin_combo("DLSS SR", render_options.dlss_sr_mode.label()) {
+                if let Some(_combo) = ui.begin_combo("DLSS SR", dlss_options.dlss_sr_mode.label()) {
                     for mode in DlssSrMode::ALL {
-                        if ui.selectable_config(mode.label()).selected(render_options.dlss_sr_mode == mode).build() {
-                            render_options.dlss_sr_mode = mode;
+                        if ui.selectable_config(mode.label()).selected(dlss_options.dlss_sr_mode == mode).build() {
+                            dlss_options.dlss_sr_mode = mode;
                         }
                     }
                 }
-                ui.checkbox("DLSS RR", &mut render_options.dlss_rr_enabled);
+                ui.checkbox("DLSS RR", &mut dlss_options.dlss_rr_enabled);
 
                 if let Some(rt_settings) = rt_settings {
                     ui.separator();

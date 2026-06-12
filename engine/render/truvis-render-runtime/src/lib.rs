@@ -20,5 +20,5 @@ pub mod resources;
 mod runtime_defaults;
 /// CPU scene/assets 到 runtime 私有 GPU scene 的 prepare 桥接层。
 mod scene_sync;
-/// runtime 派生帧状态、渲染选项、时间快照和 DLSS SR 状态。
+/// runtime 派生帧状态、DLSS 选项、时间快照和 DLSS SR 状态。
 pub mod state;

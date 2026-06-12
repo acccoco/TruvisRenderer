@@ -186,7 +186,7 @@ let gbuffer_a = ctx.image(self.gbuffer_a)?;
 pub struct RenderPassRecordCtx<'a> {
     pub frame_label: FrameLabel,
     pub frame_state: &'a FrameRenderState,
-    pub render_options: &'a RenderOptions,
+    pub dlss_options: &'a DlssOptions,
     pub global_descriptor_sets: &'a GlobalDescriptorSets,
     pub bindless_manager: &'a BindlessManager,
 }

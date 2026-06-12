@@ -4,7 +4,7 @@
 //! RenderGraph 只负责把输入/输出图像转到 Streamline 期望的 layout，并保证 evaluate
 //! 发生在 ray tracing 之后、SDR pass 之前。
 
-use crate::streamline_pass::{SL_INPUT_READ, SL_WRITE, image_resource, to_streamline_constants, to_streamline_mode};
+use crate::streamline_pass::{SL_INPUT_READ, SL_WRITE, image_resource, to_streamline_constants};
 use ash::vk::{self, Handle};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
@@ -12,7 +12,6 @@ use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
-use truvis_render_runtime::state::dlss_sr::DlssSrMode;
 use truvis_streamline_binding::dlss;
 
 pub const DLSS_SR_INPUT_READ: RgImageState = SL_INPUT_READ;
@@ -44,15 +43,16 @@ impl DlssSrPass {
         resource_ctx: GfxResourceCtx<'_>,
         data: DlssSrPassData<'_>,
     ) {
-        let mode = record_ctx.render_options.dlss_sr_mode;
-        if mode == DlssSrMode::Off {
+        let dlss_options = *record_ctx.dlss_options;
+        if !dlss_options.is_sr_active() {
             return;
         }
+        let mode = dlss_options.sr_mode();
 
         let output_extent = record_ctx.frame_state.output_extent;
         // options 必须与 runtime 计算出的 output extent 一致；render extent 则来自输入图像尺寸。
         let options = dlss::DlssOptions {
-            mode: to_streamline_mode(mode),
+            mode: mode.to_streamline_mode(),
             output_width: output_extent.width,
             output_height: output_extent.height,
             color_buffers_hdr: true,

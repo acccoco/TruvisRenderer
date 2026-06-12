@@ -128,7 +128,7 @@ impl RenderAppHooks for CornellApp {
                 ctx.view_accum.accum_frames_num(),
                 ctx.delta_time_s,
             );
-            self.pipeline_overlay.build_overlay_ui(ui, ctx.render_options, Some(self.rt_pipeline.settings_mut()));
+            self.pipeline_overlay.build_overlay_ui(ui, ctx.dlss_options, Some(self.rt_pipeline.settings_mut()));
             self.gui.build_debug_image_viewer_ui(ui);
         }
         self.gui.end_frame();
@@ -156,11 +156,7 @@ impl RenderAppHooks for CornellApp {
 
         self.gui.begin_debug_image_frame();
         // debug image import state 取决于当前 SR/RR mode；Streamline 输入在 evaluate 后会停在 read-only layout。
-        for debug_image in self.rt_pipeline.collect_debug_images(
-            frame_label,
-            ctx.record_ctx.render_options.dlss_sr_mode,
-            ctx.record_ctx.render_options.dlss_rr_enabled,
-        ) {
+        for debug_image in self.rt_pipeline.collect_debug_images(frame_label, *ctx.record_ctx.dlss_options) {
             self.gui.register_debug_image(debug_image);
         }
         self.gui.prepare_render_data(&plugin_ctx);

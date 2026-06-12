@@ -13,9 +13,9 @@ use truvis_render_runtime::present::swapchain_presenter::PresentView;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_render_runtime::resources::cmd_allocator::CmdAllocator;
 use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
+use truvis_render_runtime::state::dlss_options::DlssOptions;
 use truvis_render_runtime::state::frame_state::FrameRenderState;
 use truvis_render_runtime::state::frame_timing::FrameTiming;
-use truvis_render_runtime::state::render_options::RenderOptions;
 use truvis_world::World;
 
 use crate::input_event::InputEvent;
@@ -59,12 +59,12 @@ pub struct PluginInitCtx<'a> {
 /// 由 app 持有的 plugin 的 CPU 更新上下文。
 ///
 /// 该上下文不提供 command recording 能力，主要用于更新 CPU 状态、读取帧状态、
-/// 调整 render options，或把 `World` 中的语义状态推进到下一帧。
+/// 调整 DLSS options，或把 `World` 中的语义状态推进到下一帧。
 pub struct PluginUpdateCtx<'a> {
     /// CPU 语义世界，Plugin 可在 update 阶段修改其中的运行时状态。
     pub world: &'a mut World,
-    /// 可变全局渲染选项，供 UI 或控制类 Plugin 调整 runtime 级开关。
-    pub render_options: &'a mut RenderOptions,
+    /// 可变 DLSS 选项，供 UI 或控制类 Plugin 调整 runtime 级 SR/RR 开关。
+    pub dlss_options: &'a mut DlssOptions,
     /// 当前帧只读渲染目标状态快照，供 Plugin 按尺寸/格式做更新决策。
     pub frame_state: &'a FrameRenderState,
     /// 与上一帧之间的时间间隔，单位为秒。

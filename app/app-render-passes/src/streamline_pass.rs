@@ -9,7 +9,7 @@ use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_render_graph::render_graph::RgImageState;
-use truvis_render_runtime::state::dlss_sr::{DlssSrFrameConstants, DlssSrMode};
+use truvis_render_runtime::state::dlss_sr::DlssSrFrameConstants;
 use truvis_streamline_binding::dlss;
 
 /// Streamline 输入资源在 evaluate 前的稳定状态。
@@ -75,16 +75,5 @@ pub fn to_streamline_constants(value: DlssSrFrameConstants) -> dlss::Constants {
         camera_motion_included: value.camera_motion_included,
         motion_vectors_3d: value.motion_vectors_3d,
         reset: value.reset,
-    }
-}
-
-pub fn to_streamline_mode(mode: DlssSrMode) -> dlss::DlssMode {
-    match mode {
-        DlssSrMode::Off => dlss::DlssMode::Off,
-        DlssSrMode::Dlaa => dlss::DlssMode::Dlaa,
-        DlssSrMode::Quality => dlss::DlssMode::Quality,
-        DlssSrMode::Balanced => dlss::DlssMode::Balanced,
-        DlssSrMode::Performance => dlss::DlssMode::Performance,
-        DlssSrMode::UltraPerformance => dlss::DlssMode::UltraPerformance,
     }
 }

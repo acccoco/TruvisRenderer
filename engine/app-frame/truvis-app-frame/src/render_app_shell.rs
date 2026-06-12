@@ -121,7 +121,7 @@ where
 
             let mut plugin_ctx = PluginUpdateCtx {
                 world: update_ctx.world,
-                render_options: update_ctx.render_options,
+                dlss_options: update_ctx.dlss_options,
                 frame_state: update_ctx.frame_state,
                 delta_time_s: update_ctx.delta_time_s,
             };
@@ -130,11 +130,11 @@ where
             });
         }
 
-        // RenderOptions 可能在 update/UI 阶段改变 DLSS SR mode。必须在 prepare/render graph 之前
+        // DlssOptions 可能在 update/UI 阶段改变 DLSS SR mode。必须在 prepare/render graph 之前
         // 同步 render/output extent，并让 app-owned RT/GBuffer/DLSS targets 跟着重建。
         {
-            let _span = tracy_client::span!("RenderAppShell::sync_render_options_frame_state");
-            if let Some(runtime) = render_runtime.sync_render_options_frame_state() {
+            let _span = tracy_client::span!("RenderAppShell::sync_dlss_options_frame_state");
+            if let Some(runtime) = render_runtime.sync_dlss_options_frame_state() {
                 let image_extent = runtime.present.swapchain_image_info().image_extent;
                 let new_size = [image_extent.width, image_extent.height];
                 let mut app_ctx = RenderAppResizeCtx {

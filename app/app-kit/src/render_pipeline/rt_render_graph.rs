@@ -13,7 +13,7 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
-use truvis_render_runtime::state::dlss_sr::DlssSrMode;
+use truvis_render_runtime::state::dlss_options::DlssOptions;
 
 #[derive(Default)]
 pub struct RtPipeline {
@@ -581,7 +581,8 @@ impl RtPipeline {
             },
         );
 
-        if dlss_rr_active(record_ctx.render_options.dlss_sr_mode, record_ctx.render_options.dlss_rr_enabled) {
+        let dlss_options = *record_ctx.dlss_options;
+        if dlss_options.is_rr_active() {
             rg_builder
                 .add_pass(
                     "dlss-rr",
@@ -612,7 +613,7 @@ impl RtPipeline {
                         tone_mapping,
                     },
                 );
-        } else if dlss_sr_enabled(record_ctx.render_options.dlss_sr_mode) {
+        } else if dlss_options.is_sr_active() {
             // SR/DLAA 分支用 Streamline output 进入 SDR；不再运行传统 denoise/accum，
             // 也不在 SR 后追加第二个 upscale pass。
             rg_builder
@@ -660,12 +661,7 @@ impl RtPipeline {
         }
     }
 
-    pub fn collect_debug_images(
-        &self,
-        frame_label: FrameLabel,
-        dlss_sr_mode: DlssSrMode,
-        dlss_rr_enabled: bool,
-    ) -> Vec<DebugImageEntry> {
+    pub fn collect_debug_images(&self, frame_label: FrameLabel, dlss_options: DlssOptions) -> Vec<DebugImageEntry> {
         let inner = self.inner();
         let rt_targets = &inner.rt_targets;
         let main_view_targets = &inner.main_view_targets;
@@ -685,12 +681,11 @@ impl RtPipeline {
         let (gbuffer_a_image, gbuffer_a_view) = gbuffer.a_handle(frame_label);
         let (gbuffer_b_image, gbuffer_b_view) = gbuffer.b_handle(frame_label);
         let (gbuffer_c_image, gbuffer_c_view) = gbuffer.c_handle(frame_label);
-        let rr_active = dlss_rr_active(dlss_sr_mode, dlss_rr_enabled);
         // SR/RR 开启后这些输入已经在 compute graph 末尾停留在 DLSS read layout；
         // present graph 的 debug preview 必须用同一状态 import，不能再假设所有 storage image 都是 GENERAL。
-        let sl_input_state = if dlss_sr_enabled(dlss_sr_mode) { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
-        let rr_input_state = if rr_active { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
-        let gbuffer_a_state = if rr_active { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
+        let sl_input_state = if dlss_options.is_dlss_active() { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
+        let rr_input_state = if dlss_options.is_rr_active() { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
+        let gbuffer_a_state = if dlss_options.is_rr_active() { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
 
         vec![
             debug_entry_with_state("single-frame-rt", "Single Frame RT", single_frame, sl_input_state),
@@ -810,14 +805,6 @@ fn debug_entry_with_state(
         target.extent,
         graph_state,
     )
-}
-
-fn dlss_sr_enabled(mode: DlssSrMode) -> bool {
-    mode != DlssSrMode::Off
-}
-
-fn dlss_rr_active(mode: DlssSrMode, rr_enabled: bool) -> bool {
-    mode != DlssSrMode::Off && rr_enabled
 }
 
 impl Drop for RtPipeline {

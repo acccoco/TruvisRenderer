@@ -115,7 +115,7 @@ impl RenderAppHooks for HelloTriangleApp {
                 ctx.view_accum.accum_frames_num(),
                 ctx.delta_time_s,
             );
-            self.pipeline_overlay.build_overlay_ui(ui, ctx.render_options, None);
+            self.pipeline_overlay.build_overlay_ui(ui, ctx.dlss_options, None);
         }
         self.gui.end_frame();
 

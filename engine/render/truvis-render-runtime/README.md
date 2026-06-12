@@ -24,7 +24,8 @@
 - `GfxResourceManager` 承载 manager-owned GPU image/buffer/view 生命周期。
 - `ShaderBindingSystem` 承载 global descriptors、bindless 和 sampler manager，并向 render 阶段提供只读 shader binding view。
 - `FrameTiming` 是 runtime-owned 当前帧时间快照，承载 frame counter、delta time 和 total time；`PerFrameGpuData` 承载 per-FIF `PerFrameData` UBO。
-- `FrameRenderState`、`RenderOptions`、`ViewAccumState` 和 `DlssSrState` 定义在本 crate，并由 `RenderRuntime` 直接持有。
+- `FrameRenderState`、`DlssOptions`、`ViewAccumState` 和 `DlssSrState` 定义在本 crate，
+  并由 `RenderRuntime` 持有；`DlssOptions` 同时提供 SR/RR active feature 决策。
 - runtime 内部拥有默认 surface format、present mode 与 depth format 候选顺序；这些默认策略不放入
   foundation 公共配置契约。
 - `GpuScene` 是 runtime 私有的 scene GPU 翻译层，持有 scene/instance/geometry/light/indirect
@@ -49,7 +50,8 @@
 
 - crate 生命周期入口保持在 `present`、`render_runtime_ctx` 和 `render_runtime`；
   app 层相机不属于 runtime 公共 API，prepare 阶段只接收 `RenderView` 快照。
-- runtime-owned render state 通过 `state::{frame_state, render_options, view_accum, frame_timing, dlss_sr}` 模块公开；foundation 只保留 FIF 基础索引、资源句柄、view trait 和 `GfxResourceAccess` 契约。
+- runtime-owned render state 通过 `state::{frame_state, dlss_options, view_accum, frame_timing, dlss_sr}` 模块公开；
+  其中 `dlss_options` 提供 `DlssOptions`，作为 SR/RR active 判断、旧 feature 比较和资源释放的统一 owner；foundation 只保留 FIF 基础索引、资源句柄、view trait 和 `GfxResourceAccess` 契约。
 - GPU resource owner 通过 `resources` 模块公开，包括 `GfxResourceManager`、`CmdAllocator` 和 `StageBufferManager`。
 - shader-visible binding owner 通过 `bindings` 模块公开，包括 `ShaderBindingSystem`、`GlobalDescriptorSets`、`BindlessManager` 和 `PerFrameGpuData`。
 - asset manager、material bridge、instance bridge、GPU scene 数据结构和 prepare 辅助逻辑都是 runtime 私有实现；其中 prepare 桥接实现收敛在私有 `scene_sync` 模块。
@@ -71,7 +73,7 @@
   清理延迟释放队列、推进 bindless/material/instance frame token，并在 `RenderRuntime`
   内部分发 AssetHub 事件。
 - `update_phase` 同步 present extent 到 `FrameRenderState`、acquire 当前 swapchain image，并返回 CPU update Ctx。具体窗口尺寸 render target 由 app/plugin 在 init/resize/shutdown 阶段管理。
-- App / Plugin update 结束后，`RenderAppShell` 调用 `sync_render_options_frame_state`，把 `RenderOptions`
+- App / Plugin update 结束后，`RenderAppShell` 调用 `sync_dlss_options_frame_state`，把 `DlssOptions`
   中的 DLSS SR mode 变化解析为新的 render/output extent；如果 target 尺寸变化，则返回 resize Ctx
   交给 app/plugin 重建自己持有的 RT target、GBuffer 和 main-view target。
 - `prepare(render_view)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 app 提供的 `RenderView`，

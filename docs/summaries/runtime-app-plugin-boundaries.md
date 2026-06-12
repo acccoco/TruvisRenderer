@@ -14,7 +14,7 @@ RenderRuntime
   -> ShaderBindingSystem global descriptors + bindless + sampler
   -> FrameTiming frame counter + delta/total time
   -> PerFrameGpuData per-FIF PerFrameData UBO
-  -> FrameRenderState / RenderOptions / ViewAccumState / DlssSrState runtime render state
+  -> FrameRenderState / DlssOptions / ViewAccumState / DlssSrState runtime render state
   -> GpuScene    runtime 私有 GPU scene buffer / TLAS / raster draw cache
   -> RayCastService prepare 后同步 raycast 的 runtime-owned pipeline / buffer / fence
   -> SwapchainPresenter swapchain/present resources
