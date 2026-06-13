@@ -1,0 +1,54 @@
+#pragma once
+
+#include "api/common/mod.slangi"
+
+/// SceneAccess 是 shader 侧访问 scene::GpuScene 间接表的唯一入口。
+/// 全局 `gpu_scene` 来自 set 2；raster pass 也可显式传入 scene 指针复用同一套索引规则。
+struct SceneAccess
+{
+    [ForceInline]
+    static scene::Instance* instance(scene::GpuScene* scene_data, uint instance_idx)
+    {
+        return scene_data.all_instances + instance_idx;
+    }
+
+    [ForceInline]
+    static scene::Instance* instance(uint instance_idx)
+    {
+        return gpu_scene.all_instances + instance_idx;
+    }
+
+    static geometry::Geometry* geometry(scene::GpuScene* scene_data, uint instance_idx, uint submesh_idx)
+    {
+        scene::Instance* inst = instance(scene_data, instance_idx);
+        const uint geometry_map_idx = inst.geometry_indirect_idx + submesh_idx;
+        const uint geometry_idx = scene_data.instance_geometry_map[geometry_map_idx];
+        return scene_data.all_geometries + geometry_idx;
+    }
+
+    [ForceInline]
+    static geometry::Geometry* geometry(uint instance_idx, uint submesh_idx)
+    {
+        scene::Instance* inst = instance(instance_idx);
+        const uint geometry_map_idx = inst.geometry_indirect_idx + submesh_idx;
+        const uint geometry_idx = gpu_scene.instance_geometry_map[geometry_map_idx];
+        return gpu_scene.all_geometries + geometry_idx;
+    }
+
+    static material::PbrMaterial* material(scene::GpuScene* scene_data, uint instance_idx, uint submesh_idx)
+    {
+        scene::Instance* inst = instance(scene_data, instance_idx);
+        const uint material_map_idx = inst.material_indirect_idx + submesh_idx;
+        const uint material_idx = scene_data.instance_material_map[material_map_idx];
+        return scene_data.all_mats + material_idx;
+    }
+
+    [ForceInline]
+    static material::PbrMaterial* material(uint instance_idx, uint submesh_idx)
+    {
+        scene::Instance* inst = instance(instance_idx);
+        const uint material_map_idx = inst.material_indirect_idx + submesh_idx;
+        const uint material_idx = gpu_scene.instance_material_map[material_map_idx];
+        return gpu_scene.all_mats + material_idx;
+    }
+};

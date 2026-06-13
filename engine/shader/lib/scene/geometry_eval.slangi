@@ -1,0 +1,74 @@
+#pragma once
+
+#include "api/common/mod.slangi"
+
+/// GeometryEval 只承载 shader 侧几何读取与插值逻辑。
+/// api/common/geometry.slangi 保持纯 ABI 数据，避免 CPU 绑定同时暴露运行时代码。
+struct GeometryEval
+{
+    [ForceInline]
+    static float3* position(geometry::Geometry* geom, uint vertex_idx)
+    {
+        return geom.position_buffer + vertex_idx;
+    }
+
+    [ForceInline]
+    static float3* normal(geometry::Geometry* geom, uint vertex_idx)
+    {
+        return geom.normal_buffer + vertex_idx;
+    }
+
+    [ForceInline]
+    static float3* tangent(geometry::Geometry* geom, uint vertex_idx)
+    {
+        return geom.tangent_buffer + vertex_idx;
+    }
+
+    [ForceInline]
+    static float2* uv(geometry::Geometry* geom, uint vertex_idx)
+    {
+        return geom.uv_buffer + vertex_idx;
+    }
+
+    [ForceInline]
+    static uint3 triangle(geometry::Geometry* geom, uint primitive_id)
+    {
+        return uint3(
+            geom.index_buffer[primitive_id * 3 + 0],
+            geom.index_buffer[primitive_id * 3 + 1],
+            geom.index_buffer[primitive_id * 3 + 2]
+        );
+    }
+
+    static float3 interp_position(geometry::Geometry* geom, uint3 tri, float2 barycentrics)
+    {
+        const float a = 1.f - barycentrics.x - barycentrics.y;
+        const float b = barycentrics.x;
+        const float c = barycentrics.y;
+        return (*position(geom, tri.x)) * a + (*position(geom, tri.y)) * b + (*position(geom, tri.z)) * c;
+    }
+
+    static float3 interp_normal(geometry::Geometry* geom, uint3 tri, float2 barycentrics)
+    {
+        const float a = 1.f - barycentrics.x - barycentrics.y;
+        const float b = barycentrics.x;
+        const float c = barycentrics.y;
+        return normalize((*normal(geom, tri.x)) * a + (*normal(geom, tri.y)) * b + (*normal(geom, tri.z)) * c);
+    }
+
+    static float3 interp_tangent(geometry::Geometry* geom, uint3 tri, float2 barycentrics)
+    {
+        const float a = 1.f - barycentrics.x - barycentrics.y;
+        const float b = barycentrics.x;
+        const float c = barycentrics.y;
+        return normalize((*tangent(geom, tri.x)) * a + (*tangent(geom, tri.y)) * b + (*tangent(geom, tri.z)) * c);
+    }
+
+    static float2 interp_uv(geometry::Geometry* geom, uint3 tri, float2 barycentrics)
+    {
+        const float a = 1.f - barycentrics.x - barycentrics.y;
+        const float b = barycentrics.x;
+        const float c = barycentrics.y;
+        return (*uv(geom, tri.x)) * a + (*uv(geom, tri.y)) * b + (*uv(geom, tri.z)) * c;
+    }
+};

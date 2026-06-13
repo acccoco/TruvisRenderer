@@ -90,7 +90,7 @@ impl DenoiseAccumPass {
             ctx,
             render_descriptor_sets,
             c"main",
-            TruvisPath::shader_build_path_str("pp/denoise_accum.slang").as_str(),
+            TruvisPath::shader_build_path_str("post/denoise_accum.slang").as_str(),
         );
 
         Self { denoise_accum_pass }

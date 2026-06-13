@@ -52,7 +52,7 @@ impl SdrPass {
             ctx,
             render_descriptor_sets,
             c"main",
-            TruvisPath::shader_build_path_str("pp/sdr.slang").as_str(),
+            TruvisPath::shader_build_path_str("post/sdr.slang").as_str(),
         );
 
         Self { sdr_pass }

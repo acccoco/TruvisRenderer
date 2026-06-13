@@ -50,7 +50,7 @@ fn config() -> &'static MapConfig {
 /// ```ignore
 /// let model   = TruvisPath::assets("sponza.fbx");
 /// let texture = TruvisPath::resources("sky.jpg"); // assets/resources/sky.jpg
-/// let spv     = TruvisPath::shader_build_spv("rt/rt_raygen.slang"); // build/shader/rt/rt_raygen.slang.spv
+/// let spv     = TruvisPath::shader_build_spv("realtime_rt/raygen.slang"); // build/shader/realtime_rt/raygen.slang.spv
 /// ```
 pub struct TruvisPath;
 

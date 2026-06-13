@@ -47,8 +47,8 @@ impl PhongPass {
         render_descriptor_sets: &GlobalDescriptorSets,
     ) -> Self {
         let mut ci = GfxGraphicsPipelineCreateInfo::default();
-        ci.vertex_shader_stage(&TruvisPath::shader_build_path_str("phong/phong3d.vs.slang"), c"main");
-        ci.fragment_shader_stage(&TruvisPath::shader_build_path_str("phong/phong.ps.slang"), c"main");
+        ci.vertex_shader_stage(&TruvisPath::shader_build_path_str("raster/phong3d.vs.slang"), c"main");
+        ci.fragment_shader_stage(&TruvisPath::shader_build_path_str("raster/phong.ps.slang"), c"main");
 
         ci.vertex_binding(VertexLayoutSoA3D::vertex_input_bindings());
         ci.vertex_attribute(VertexLayoutSoA3D::vertex_input_attributes());

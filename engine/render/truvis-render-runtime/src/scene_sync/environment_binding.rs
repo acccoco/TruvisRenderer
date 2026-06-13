@@ -7,7 +7,7 @@ use truvis_shader_binding::gpu;
 #[derive(Clone, Copy)]
 pub(crate) struct EnvironmentSkyBinding {
     pub(crate) srv_handle: BindlessSrvHandle,
-    pub(crate) sampler: gpu::ESamplerType,
+    pub(crate) sampler: gpu::bindless::ESamplerType,
 }
 
 /// 本帧 GPU scene 使用的环境资源快照。

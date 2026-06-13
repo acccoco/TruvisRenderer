@@ -1,0 +1,69 @@
+#include "api/common/mod.slangi"
+
+/// 降噪累积 Pass 的数据定义
+/// 对单帧 RT 结果进行增强联合双边滤波降噪，然后累积到 accum_image 中
+/// 
+/// 增强特性：
+/// - 世界空间位置权重（比纯深度差异更能保护边缘）
+/// - Albedo 引导权重（材质相似性）
+/// - 粗糙度自适应滤波（粗糙表面更激进，光滑表面保留细节）
+namespace denoise_accum
+{
+
+static const int SHADER_X = 8;
+static const int SHADER_Y = 8;
+
+struct PushConstant
+{
+    /// 单帧 RT 输出（只读）
+    bindless::UavHandle single_frame_input;
+    /// 累积结果（读写）
+    bindless::UavHandle accum_output;
+    /// GBufferA：world-space forward/shading normal.xyz + roughness（只读）
+    bindless::UavHandle gbuffer_a;
+    /// GBufferB：world_position.xyz + linear_depth（只读）
+    bindless::UavHandle gbuffer_b;
+    /// GBufferC：albedo.rgb + metallic（只读）
+    bindless::UavHandle gbuffer_c;
+    /// Padding 使 image_size (uint2) 8 字节对齐
+    uint _padding0;
+
+    /// 图像尺寸
+    uint2 image_size;
+    /// 累积帧数（0 表示第一帧，直接复制）
+    uint accum_frames;
+    /// 是否启用降噪（0 = 禁用，1 = 启用）
+    uint denoise_enabled;
+
+    /// 颜色差异的 sigma 参数
+    float sigma_color;
+    /// 深度差异的 sigma 参数
+    float sigma_depth;
+    /// 法线差异的 sigma 参数
+    float sigma_normal;
+    /// 滤波核半径（基础值，粗糙度自适应时会动态调整）
+    int kernel_radius;
+
+    /// 传统 denoise/accum pass-local 调试通道。
+    /// 主 RT debug UI 不再暴露 legacy “禁用累积”通道。
+    uint channel;
+
+    // ========== 增强联合双边滤波参数 ==========
+    
+    /// Albedo 差异的 sigma 参数
+    float sigma_albedo;
+    /// 世界空间位置差异的 sigma 参数（归一化到 scene_scale）
+    float sigma_position;
+    /// 场景尺度（用于归一化世界空间距离，如 Cornell Box 约 400）
+    float scene_scale;
+    
+    // ========== 粗糙度自适应参数 ==========
+    
+    /// 是否启用粗糙度自适应滤波（0 = 禁用，1 = 启用）
+    uint roughness_adaptive_enabled;
+    /// 粗糙度对滤波半径的影响因子（roughness=1 时半径放大倍数，默认 2.0）
+    float roughness_radius_scale;
+    /// 粗糙度对 sigma_normal 的影响因子（roughness=1 时 sigma 放大倍数，默认 1.5）
+    float roughness_sigma_scale;
+};
+};

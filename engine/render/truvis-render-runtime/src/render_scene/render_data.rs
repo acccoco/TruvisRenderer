@@ -82,7 +82,7 @@ pub(crate) struct RenderData<'a> {
     /// 本帧 active 实例引用到的去重 mesh GPU 数据。
     pub(crate) all_meshes: Vec<MeshRenderData<'a>>,
     /// 当前 CPU scene 中的点光源快照，按 SceneManager 迭代顺序上传。
-    pub(crate) all_point_lights: Vec<gpu::PointLight>,
+    pub(crate) all_point_lights: Vec<gpu::light::PointLight>,
 
     /// 每个 mesh 在 geometry buffer 中的起始索引，长度与 `all_meshes` 相同。
     pub(crate) mesh_geometry_start_indices: Vec<usize>,

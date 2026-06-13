@@ -1,0 +1,102 @@
+#pragma once
+#include "api/common/mod.slangi"
+
+struct BindlessTexture
+{
+[ForceInline]
+static float4 sample(bindless::TextureHandle handle, float2 uv)
+{
+    if (handle.index == bindless::INVALID_TEX_ID)
+    {
+        return bindless::INVALID_TEX_COLOR;
+    }
+    else
+    {
+        return bindless_textures[NonUniformResourceIndex(handle.index)].Sample(uv);
+    }
+}
+
+static float4 sample_level(bindless::TextureHandle handle, float2 uv, float level)
+{
+    if (handle.index == bindless::INVALID_TEX_ID)
+    {
+        return bindless::INVALID_TEX_COLOR;
+    }
+    else
+    {
+        return bindless_textures[NonUniformResourceIndex(handle.index)].SampleLevel(uv, level);
+    }
+}
+
+[ForceInline]
+static bool is_valid(bindless::TextureHandle handle)
+{
+    return handle.index != bindless::INVALID_TEX_ID;
+}
+
+};
+
+struct BindlessUav
+{
+
+[ForceInline]
+static void store(bindless::UavHandle handle, uint2 coord, float4 value)
+{
+    bindless_uavs[NonUniformResourceIndex(handle.index)].Store(coord, value);
+}
+
+[ForceInline]
+static float4 load(bindless::UavHandle handle, uint2 coord)
+{
+    return bindless_uavs[NonUniformResourceIndex(handle.index)].Load(coord);
+}
+
+[ForceInline]
+static bool is_valid(bindless::UavHandle handle)
+{
+    return handle.index != bindless::INVALID_TEX_ID;
+}
+
+};
+
+struct BindlessSrv
+{
+[ForceInline]
+static float4 sample(bindless::SrvHandle handle, float2 uv_coord, bindless::ESamplerType sampler_type)
+{
+    if (!is_valid(handle) || sampler_type >= bindless::ESamplerType::_Count_)
+    {
+        return bindless::INVALID_TEX_COLOR;
+    }
+    else
+    {
+        return bindless_srvs[NonUniformResourceIndex(handle.index)].Sample(
+            global_samplers[NonUniformResourceIndex((int)sampler_type)],
+            uv_coord
+        );
+    }
+}
+
+[ForceInline]
+static float4 sample_level(bindless::SrvHandle handle, float2 uv_coord, bindless::ESamplerType sampler_type, float level)
+{
+    if (!is_valid(handle) || sampler_type >= bindless::ESamplerType::_Count_)
+    {
+        return bindless::INVALID_TEX_COLOR;
+    }
+    else
+    {
+        return bindless_srvs[NonUniformResourceIndex(handle.index)].SampleLevel(
+            global_samplers[NonUniformResourceIndex((int)sampler_type)],
+            uv_coord,
+            level
+        );
+    }
+}
+
+[ForceInline]
+static bool is_valid(bindless::SrvHandle handle)
+{
+    return handle.index != bindless::INVALID_TEX_ID;
+}
+};

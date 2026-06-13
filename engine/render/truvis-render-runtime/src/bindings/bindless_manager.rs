@@ -12,16 +12,16 @@ use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
 use truvis_render_foundation::handles::GfxImageViewHandle;
 
 #[derive(Copy, Clone)]
-pub struct BindlessUavHandle(pub gpu::UavHandle);
+pub struct BindlessUavHandle(pub gpu::bindless::UavHandle);
 impl BindlessUavHandle {
     #[inline]
     pub fn new(index: usize) -> Self {
-        Self(gpu::UavHandle { index: index as i32 })
+        Self(gpu::bindless::UavHandle { index: index as i32 })
     }
     #[inline]
     pub fn null() -> Self {
-        Self(gpu::UavHandle {
-            index: gpu::INVALID_TEX_ID,
+        Self(gpu::bindless::UavHandle {
+            index: gpu::bindless::INVALID_TEX_ID,
         })
     }
     #[inline]
@@ -36,16 +36,16 @@ impl Default for BindlessUavHandle {
 }
 
 #[derive(Copy, Clone)]
-pub struct BindlessSrvHandle(pub gpu::SrvHandle);
+pub struct BindlessSrvHandle(pub gpu::bindless::SrvHandle);
 impl BindlessSrvHandle {
     #[inline]
     pub fn new(index: usize) -> Self {
-        Self(gpu::SrvHandle { index: index as i32 })
+        Self(gpu::bindless::SrvHandle { index: index as i32 })
     }
     #[inline]
     pub fn null() -> Self {
-        Self(gpu::SrvHandle {
-            index: gpu::INVALID_TEX_ID,
+        Self(gpu::bindless::SrvHandle {
+            index: gpu::bindless::INVALID_TEX_ID,
         })
     }
     #[inline]

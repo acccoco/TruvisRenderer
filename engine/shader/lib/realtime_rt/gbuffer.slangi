@@ -1,0 +1,156 @@
+/// @file gbuffer.slangi
+/// @brief GBuffer 写入辅助函数
+///
+/// GBuffer 布局：
+/// - GBufferA (R16G16B16A16_SFLOAT)：world-space forward/shading normal.xyz + 粗糙度 roughness
+/// - GBufferB (R16G16B16A16_SFLOAT)：世界位置 world_position.xyz + 线性深度 linear_depth
+/// - GBufferC (R8G8B8A8_UNORM)：反照率 albedo.rgb + 金属度 metallic
+
+#pragma once
+
+#include "api/pass/realtime_rt.slangi"
+
+// ============================================================================
+// 常量定义
+// ============================================================================
+
+/// 默认线性深度（用于 miss 情况）
+static const float DEFAULT_LINEAR_DEPTH = 10000.0f;
+
+// ============================================================================
+// GBuffer 数据结构
+// ============================================================================
+
+/// GBuffer 数据（用于收集首次命中信息）
+struct RtGBufferData
+{
+    float3 normal;      ///< world-space forward/shading 法线
+    float roughness;    ///< 粗糙度
+
+    float3 position;    ///< 世界空间位置
+    float linear_depth; ///< 线性深度（光线 t 值）
+
+    float3 albedo;      ///< 基础颜色（漫反射颜色）
+    float metallic;     ///< 金属度
+};
+
+// ============================================================================
+// GBuffer 写入函数
+// ============================================================================
+
+/// 从命中信息构建 GBuffer 数据
+/// @param position 世界空间命中位置
+/// @param normal world-space forward/shading 法线（应为 HitInfo.forward_normal）
+/// @param linear_depth 线性深度（光线 t 值）
+/// @param albedo 基础颜色
+/// @param metallic 金属度
+/// @param roughness 粗糙度 粗糙度
+/// @return 填充好的 GBuffer 数据
+struct RtGBufferWriter
+{
+static RtGBufferData make_data(
+    float3 position,
+    float3 normal,
+    float linear_depth,
+    float3 albedo,
+    float metallic,
+    float roughness
+)
+{
+    RtGBufferData data;
+    data.position = position;
+    data.normal = normal;
+    data.linear_depth = linear_depth;
+    data.albedo = albedo;
+    data.metallic = metallic;
+    data.roughness = roughness;
+    return data;
+}
+
+/// 根据项目 PBR 约定计算 RR 所需的 diffuse/specular albedo。
+/// @param base_color 材质基础颜色
+/// @param metallic 金属度
+/// @param out_diffuse_albedo 输出 diffuse albedo
+/// @param out_specular_albedo 输出 specular albedo / f0
+static void compute_rr_albedo(float3 base_color, float metallic, out float3 out_diffuse_albedo, out float3 out_specular_albedo)
+{
+    const float reflectance = 0.8f;
+    out_diffuse_albedo = (1.0f - metallic) * base_color;
+    out_specular_albedo = lerp(0.16f * reflectance * reflectance, base_color, metallic);
+}
+
+/// 写入 GBuffer（命中情况）
+/// @param thread_id 当前像素坐标
+/// @param data GBuffer 数据
+static void write_gbuffer_hit(uint2 thread_id, RtGBufferData data)
+{
+    // GBufferA：写入与当前 path tracing BRDF 一致的 forward/shading normal。
+    // DLSS RR 直接把该 image 作为 kBufferTypeNormalRoughness，因此这里不使用未翻转的几何 normal。
+    realtime_rt::gbuffer_a.Store(thread_id, float4(data.normal, data.roughness));
+
+    // GBufferB：世界位置 world_position.xyz + 线性深度 linear_depth
+    realtime_rt::gbuffer_b.Store(thread_id, float4(data.position, data.linear_depth));
+
+    // GBufferC：反照率 albedo.rgb + 金属度 metallic
+    realtime_rt::gbuffer_c.Store(thread_id, float4(data.albedo, data.metallic));
+}
+
+/// 写入 DLSS SR 的 per-pixel 输入（命中情况）
+/// @param thread_id 当前像素坐标
+/// @param depth projection 后的 device depth
+/// @param motion_vector_pixels pixel-space motion vector，方向为当前像素回溯到上一帧位置。
+static void write_dlss_sr_hit(uint2 thread_id, float depth, float2 motion_vector_pixels)
+{
+    realtime_rt::dlss_depth.Store(thread_id, depth);
+    realtime_rt::dlss_motion_vectors.Store(thread_id, motion_vector_pixels);
+}
+
+/// 写入 DLSS RR 的 per-pixel 输入（命中情况）。
+/// @param thread_id 当前像素坐标
+/// @param data GBuffer 数据
+/// @param specular_motion_vector_pixels 反射虚拟几何的 pixel-space motion vector。
+/// @note forward/shading normal+roughness 直接复用 GBufferA；这里额外写 RR 需要的材质拆分与反射运动。
+static void write_dlss_rr_hit(uint2 thread_id, RtGBufferData data, float2 specular_motion_vector_pixels)
+{
+    float3 diffuse_albedo;
+    float3 specular_albedo;
+    compute_rr_albedo(data.albedo, data.metallic, diffuse_albedo, specular_albedo);
+    realtime_rt::dlss_rr_diffuse_albedo.Store(thread_id, float4(diffuse_albedo, 1.0f));
+    realtime_rt::dlss_rr_specular_albedo.Store(thread_id, float4(specular_albedo, 1.0f));
+    realtime_rt::dlss_rr_specular_motion_vectors.Store(thread_id, specular_motion_vector_pixels);
+}
+
+/// 写入 GBuffer（miss 情况）
+/// @param thread_id 当前像素坐标
+/// @note miss 时写入默认值：depth = DEFAULT_LINEAR_DEPTH, 其他为 0
+static void write_gbuffer_miss(uint2 thread_id)
+{
+    // GBufferA：法线 normal = (0,0,0)，粗糙度 roughness = 0
+    realtime_rt::gbuffer_a.Store(thread_id, float4(0.0f, 0.0f, 0.0f, 0.0f));
+
+    // GBufferB：位置 position = (0,0,0)，深度 depth = DEFAULT_LINEAR_DEPTH
+    realtime_rt::gbuffer_b.Store(thread_id, float4(0.0f, 0.0f, 0.0f, DEFAULT_LINEAR_DEPTH));
+
+    // GBufferC：反照率 albedo = (0,0,0)，金属度 metallic = 0
+    realtime_rt::gbuffer_c.Store(thread_id, float4(0.0f, 0.0f, 0.0f, 0.0f));
+}
+
+/// 写入 DLSS SR 的 per-pixel 输入（miss 情况）
+/// @param thread_id 当前像素坐标
+static void write_dlss_sr_miss(uint2 thread_id)
+{
+    // miss 写远平面 device depth，避免天空像素在 SR 中继承上一帧命中深度。
+    realtime_rt::dlss_depth.Store(thread_id, 1.0f);
+    realtime_rt::dlss_motion_vectors.Store(thread_id, float2(0.0f, 0.0f));
+}
+
+/// 写入 DLSS RR 的 per-pixel 输入（miss 情况）。
+/// @param thread_id 当前像素坐标
+static void write_dlss_rr_miss(uint2 thread_id)
+{
+    realtime_rt::dlss_rr_diffuse_albedo.Store(thread_id, float4(0.0f));
+    realtime_rt::dlss_rr_specular_albedo.Store(thread_id, float4(0.0f));
+    realtime_rt::dlss_rr_specular_motion_vectors.Store(thread_id, float2(0.0f, 0.0f));
+}
+
+};

@@ -21,12 +21,12 @@ enumed_map!(ShaderStage<GfxShaderStageInfo>: {
     Vertex: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::VERTEX,
         entry_point: c"vsmain",
-        path: TruvisPath::shader_build_path_str("hello_triangle/triangle.slang"),
+        path: TruvisPath::shader_build_path_str("samples/hello_triangle/triangle.slang"),
     },
     Fragment: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::FRAGMENT,
         entry_point: c"psmain",
-        path: TruvisPath::shader_build_path_str("hello_triangle/triangle.slang"),
+        path: TruvisPath::shader_build_path_str("samples/hello_triangle/triangle.slang"),
     },
 });
 

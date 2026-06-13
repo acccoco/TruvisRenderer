@@ -55,32 +55,27 @@ enumed_map!(ShaderStages<GfxShaderStageInfo>: {
     RayGen: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::RAYGEN_KHR,
         entry_point: c"main_ray_gen",
-        path: TruvisPath::shader_build_path_str("rt/rt_raygen.slang"),
+        path: TruvisPath::shader_build_path_str("realtime_rt/raygen.slang"),
     },
     SkyMiss: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::MISS_KHR,
         entry_point: c"sky_miss",
-        path: TruvisPath::shader_build_path_str("rt/rt_miss_sky.slang"),
+        path: TruvisPath::shader_build_path_str("realtime_rt/miss_sky.slang"),
     },
     ShadowMiss: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::MISS_KHR,
         entry_point: c"shadow_miss",
-        path: TruvisPath::shader_build_path_str("rt/rt_miss_shadow.slang"),
+        path: TruvisPath::shader_build_path_str("realtime_rt/miss_shadow.slang"),
     },
     ClosestHit: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::CLOSEST_HIT_KHR,
         entry_point: c"main_closest_hit",
-        path: TruvisPath::shader_build_path_str("rt/rt_closest_hit.slang"),
+        path: TruvisPath::shader_build_path_str("realtime_rt/closest_hit.slang"),
     },
     TransAny: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::ANY_HIT_KHR,
         entry_point: c"trans_any",
-        path: TruvisPath::shader_build_path_str("rt/rt_any_hit.slang"),
-    },
-    DiffuseCall: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::CALLABLE_KHR,
-        entry_point: c"diffuse_callable",
-        path: TruvisPath::shader_build_path_str("rt/rt_callable.slang"),
+        path: TruvisPath::shader_build_path_str("realtime_rt/any_hit.slang"),
     },
 });
 
@@ -104,11 +99,6 @@ enumed_map!(ShaderGroups<GfxShaderGroupInfo>: {
         ty: vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP,
         closest_hit: ShaderStages::ClosestHit.index() as u32,
         any_hit: ShaderStages::TransAny.index() as u32,
-        ..GfxShaderGroupInfo::unused()
-    },
-    DiffuseCall: GfxShaderGroupInfo {
-        ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
-        general: ShaderStages::DiffuseCall.index() as u32,
         ..GfxShaderGroupInfo::unused()
     },
 });
@@ -154,14 +144,14 @@ pub struct RealtimeRtPassData {
 struct RealtimeRtDescriptorBinding {
     #[binding = 0]
     #[descriptor_type = "ACCELERATION_STRUCTURE_KHR"]
-    #[stage = "RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR"]
+    #[stage = "RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR"]
     #[count = 1]
     _tlas: (),
 
     /// 单帧 RT 输出
     #[binding = 1]
     #[descriptor_type = "STORAGE_IMAGE"]
-    #[stage = "RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR"]
+    #[stage = "RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR"]
     #[count = 1]
     _rt_single_frame_output: (),
 
@@ -228,8 +218,8 @@ pub struct RealtimeRtPass {
     sbt: GfxSBTBuffer,
     _rt_descriptor_set_layout: GfxDescriptorSetLayout<RealtimeRtDescriptorBinding>,
 
-    hash_table: GfxStructuredBuffer<gpu::ic::Table>,
-    entry_pool: GfxStructuredBuffer<gpu::ic::EntryPool>,
+    hash_table: GfxStructuredBuffer<gpu::irradiance_cache::Table>,
+    entry_pool: GfxStructuredBuffer<gpu::irradiance_cache::EntryPool>,
 }
 impl RealtimeRtPass {
     pub fn new(
@@ -267,11 +257,10 @@ impl RealtimeRtPass {
                 vk::ShaderStageFlags::RAYGEN_KHR
                     | vk::ShaderStageFlags::MISS_KHR
                     | vk::ShaderStageFlags::ANY_HIT_KHR
-                    | vk::ShaderStageFlags::CALLABLE_KHR
                     | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
             )
             .offset(0)
-            .size(size_of::<gpu::rt::PushConstants>() as u32);
+            .size(size_of::<gpu::realtime_rt::PushConstants>() as u32);
 
         let rt_descriptor_set_layout = GfxDescriptorSetLayout::<RealtimeRtDescriptorBinding>::new(
             device_ctx,
@@ -326,11 +315,11 @@ impl RealtimeRtPass {
             ShaderGroups::RayGen.index(),
             &[ShaderGroups::SkyMiss.index(), ShaderGroups::ShadowMiss.index()],
             &[ShaderGroups::Hit.index()],
-            &[ShaderGroups::DiffuseCall.index()],
+            &[],
             "simple-rt-sbt",
         );
 
-        let mut hash_table = GfxStructuredBuffer::<gpu::ic::Table>::new(
+        let mut hash_table = GfxStructuredBuffer::<gpu::irradiance_cache::Table>::new(
             resource_ctx,
             "ic-hash-table",
             1,
@@ -340,7 +329,7 @@ impl RealtimeRtPass {
             false,
         );
         hash_table.clear(immediate_ctx);
-        let mut entry_pool = GfxStructuredBuffer::<gpu::ic::EntryPool>::new(
+        let mut entry_pool = GfxStructuredBuffer::<gpu::irradiance_cache::EntryPool>::new(
             resource_ctx,
             "ic-entry-pool",
             1,
@@ -414,7 +403,7 @@ impl RealtimeRtPass {
         cmd.push_descriptor_set(
             vk::PipelineBindPoint::RAY_TRACING_KHR,
             self.pipeline.pipeline_layout,
-            gpu::RT_SET_NUM,
+            gpu::REALTIME_RT_SET_NUM,
             &[
                 RealtimeRtDescriptorBinding::tlas().write_tals(vk::DescriptorSet::null(), 0, vec![tlas]),
                 RealtimeRtDescriptorBinding::rt_single_frame_output().write_image(
@@ -511,7 +500,7 @@ impl RealtimeRtPass {
         );
         // FIXME 这个变量废除了，现在只有 spp 1
         let spp = 1;
-        let mut push_constant = gpu::rt::PushConstants {
+        let mut push_constant = gpu::realtime_rt::PushConstants {
             spp_idx: 0,
             channel: pass_data.debug_channel,
             ic_table: self.hash_table.device_address(),
@@ -547,7 +536,6 @@ impl RealtimeRtPass {
                 vk::ShaderStageFlags::RAYGEN_KHR
                     | vk::ShaderStageFlags::MISS_KHR
                     | vk::ShaderStageFlags::ANY_HIT_KHR
-                    | vk::ShaderStageFlags::CALLABLE_KHR
                     | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
                 0,
                 BytesConvert::bytes_of(&push_constant),

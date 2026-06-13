@@ -60,9 +60,9 @@ impl EnvPath {
         PATH.get_or_init(TruvisPath::shader_build_dir)
     }
 
-    pub fn shader_share_path() -> &'static std::path::Path {
+    pub fn shader_api_path() -> &'static std::path::Path {
         static PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| TruvisPath::shader_root_path().join("share"))
+        PATH.get_or_init(|| TruvisPath::shader_root_path().join("api"))
     }
 
     /// Slang 编译器路径

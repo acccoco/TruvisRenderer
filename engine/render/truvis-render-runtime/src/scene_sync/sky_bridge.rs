@@ -90,7 +90,7 @@ impl SkyBridge {
             let texture = texture_resolver.resolve_texture(self.sky_texture);
             EnvironmentSkyBinding {
                 srv_handle: texture.srv_handle,
-                sampler: gpu::ESamplerType_LinearClamp,
+                sampler: gpu::bindless::ESamplerType_LinearClamp,
             }
         } else {
             self.fallback_binding()
@@ -125,7 +125,7 @@ impl SkyBridge {
     fn fallback_binding(&self) -> EnvironmentSkyBinding {
         EnvironmentSkyBinding {
             srv_handle: self.fallback.srv_handle,
-            sampler: gpu::ESamplerType_LinearClamp,
+            sampler: gpu::bindless::ESamplerType_LinearClamp,
         }
     }
 

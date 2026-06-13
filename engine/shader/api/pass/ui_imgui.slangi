@@ -1,0 +1,15 @@
+#include "api/common/mod.slangi"
+
+namespace ui_imgui
+{
+
+struct PushConstant
+{
+    float4x4 ortho;
+
+    bindless::SrvHandle texture;
+    bindless::ESamplerType texture_sampler_type;
+    int _padding_0;
+    int _padding_1;
+};
+};

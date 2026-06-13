@@ -1,0 +1,38 @@
+#pragma once
+
+namespace bindless
+{
+
+const static int INVALID_TEX_ID = -1;
+const static float4 INVALID_TEX_COLOR = float4(1.0f, 0.0f, 1.0f, 1.0f);
+
+enum ESamplerType : uint
+{
+    PointRepeat = 0,
+    PointClamp,
+    LinearRepeat,
+    LinearClamp,
+    AnisoRepeat,
+    AnisoClamp,
+
+    _Count_,
+};
+
+struct TextureHandle
+{
+    /// 纹理的索引
+    int index;
+};
+
+struct UavHandle
+{
+    /// 纹理的索引
+    int index;
+};
+
+struct SrvHandle
+{
+    int index;
+};
+
+}

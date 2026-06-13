@@ -14,13 +14,17 @@ use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
 /// runtime 在 prepare 阶段写入当前 frame label，pass 只读取当前 buffer 的
 /// device address 或通过全局 per-frame descriptor set 访问它。
 pub struct PerFrameGpuData {
-    buffers: [GfxStructuredBuffer<gpu::PerFrameData>; FrameCounter::fif_count()],
+    buffers: [GfxStructuredBuffer<gpu::frame::PerFrameData>; FrameCounter::fif_count()],
 }
 
 impl PerFrameGpuData {
     pub fn new(ctx: GfxResourceCtx<'_>) -> Self {
         let buffers = FrameCounter::frame_labes().map(|frame_label| {
-            GfxStructuredBuffer::<gpu::PerFrameData>::new_ubo(ctx, 1, format!("per-frame-data-buffer-{frame_label}"))
+            GfxStructuredBuffer::<gpu::frame::PerFrameData>::new_ubo(
+                ctx,
+                1,
+                format!("per-frame-data-buffer-{frame_label}"),
+            )
         });
         Self { buffers }
     }
@@ -32,7 +36,7 @@ impl PerFrameGpuData {
     }
 
     #[inline]
-    pub fn buffer(&self, frame_label: FrameLabel) -> &GfxStructuredBuffer<gpu::PerFrameData> {
+    pub fn buffer(&self, frame_label: FrameLabel) -> &GfxStructuredBuffer<gpu::frame::PerFrameData> {
         &self.buffers[*frame_label]
     }
 
@@ -42,7 +46,7 @@ impl PerFrameGpuData {
     }
 
     #[inline]
-    pub fn write(&self, frame_label: FrameLabel, cmd: &GfxCommandBuffer, data: gpu::PerFrameData) {
+    pub fn write(&self, frame_label: FrameLabel, cmd: &GfxCommandBuffer, data: gpu::frame::PerFrameData) {
         cmd.cmd_update_buffer(self.buffer(frame_label).vk_buffer(), 0, BytesConvert::bytes_of(&data));
     }
 }

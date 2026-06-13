@@ -1,0 +1,26 @@
+#pragma once
+#include "api/common/bindless.slangi"
+
+namespace material
+{
+
+struct PbrMaterial
+{
+    float3 base_color;
+    float metallic;
+
+    float3 emissive;
+    float roughness;
+
+    bindless::SrvHandle diffuse_map;
+    bindless::ESamplerType diffuse_map_sampler_type;
+    bindless::SrvHandle normal_map;
+    bindless::ESamplerType normal_map_sampler_type;
+
+    float opaque;
+    float _padding_1;
+    float _padding_2;
+    float _padding_3;
+};
+
+}

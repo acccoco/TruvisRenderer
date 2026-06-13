@@ -68,9 +68,9 @@ struct SlotDirtyInfo {
 /// 单个 FIF frame label 对应的材质 GPU buffer 与 staging buffer。
 struct MaterialBuffers {
     /// Device-local SSBO，shader 通过 scene root buffer 中的 device address 读取。
-    material_buffer: GfxStructuredBuffer<gpu::PBRMaterial>,
+    material_buffer: GfxStructuredBuffer<gpu::material::PbrMaterial>,
     /// Host-mapped staging buffer，CPU 写入后在 prepare 命令中复制到 SSBO。
-    material_stage_buffer: GfxStructuredBuffer<gpu::PBRMaterial>,
+    material_stage_buffer: GfxStructuredBuffer<gpu::material::PbrMaterial>,
 }
 
 impl MaterialBuffers {
@@ -431,13 +431,13 @@ impl MaterialManager {
     ///
     /// texture handle 在这里通过 resolver 转成 bindless SRV index；resolver 保证未 ready
     /// 的 texture 也会返回 fallback，因此 GPU 数据不会包含悬空句柄。
-    fn build_gpu_material(params: &RenderMaterialParams, resolver: &dyn TextureResolver) -> gpu::PBRMaterial {
+    fn build_gpu_material(params: &RenderMaterialParams, resolver: &dyn TextureResolver) -> gpu::material::PbrMaterial {
         let diffuse_binding =
             params.diffuse_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
         let normal_binding =
             params.normal_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
 
-        gpu::PBRMaterial {
+        gpu::material::PbrMaterial {
             base_color: params.base_color.truncate().into(),
             emissive: params.emissive.truncate().into(),
             metallic: params.metallic,
@@ -458,7 +458,7 @@ impl MaterialManager {
     /// dirty slot 在 HashMap 中无序保存；上传前按 slot 排序并合并相邻范围，避免把未变化
     /// 的 material 一起复制到 GPU，也避免每个 slot 都录制单独 copy。
     fn material_copy_regions(written_slots: &mut Vec<usize>) -> Vec<vk::BufferCopy> {
-        let element_size = size_of::<gpu::PBRMaterial>() as vk::DeviceSize;
+        let element_size = size_of::<gpu::material::PbrMaterial>() as vk::DeviceSize;
         debug_assert!(element_size > 0);
         debug_assert_eq!(element_size % 4, 0, "PBRMaterial size must satisfy Vulkan buffer copy alignment");
 
@@ -506,8 +506,8 @@ impl MaterialManager {
     fn flush_copy_regions_and_barrier(
         ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
-        stage_buffer: &mut GfxStructuredBuffer<gpu::PBRMaterial>,
-        dst_buffer: &mut GfxStructuredBuffer<gpu::PBRMaterial>,
+        stage_buffer: &mut GfxStructuredBuffer<gpu::material::PbrMaterial>,
+        dst_buffer: &mut GfxStructuredBuffer<gpu::material::PbrMaterial>,
         barrier_mask: GfxBarrierMask,
         regions: &[vk::BufferCopy],
     ) {

@@ -21,7 +21,7 @@ use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_runtime::bindings::bindless_manager::BindlessManager;
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_shader_binding::gpu;
-use truvis_shader_binding::gpu::SrvHandle;
+use truvis_shader_binding::gpu::bindless::SrvHandle;
 use truvis_utils::count_indexed_array;
 use truvis_utils::enumed_map;
 
@@ -32,12 +32,12 @@ enumed_map!(ShaderStage<GfxShaderStageInfo>: {
     Vertex: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::VERTEX,
         entry_point: c"vsmain",
-        path: TruvisPath::shader_build_path_str("imgui/imgui.slang"),
+        path: TruvisPath::shader_build_path_str("ui/imgui.slang"),
     },
     Fragment: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::FRAGMENT,
         entry_point: c"psmain",
-        path: TruvisPath::shader_build_path_str("imgui/imgui.slang"),
+        path: TruvisPath::shader_build_path_str("ui/imgui.slang"),
     },
 });
 
@@ -54,7 +54,7 @@ impl GuiPass {
             &[vk::PushConstantRange {
                 stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 offset: 0,
-                size: size_of::<gpu::imgui::PushConstant>() as u32,
+                size: size_of::<gpu::ui_imgui::PushConstant>() as u32,
             }],
             "uipass",
         ));
@@ -137,7 +137,7 @@ impl GuiPass {
         cmd.cmd_bind_pipeline(vk::PipelineBindPoint::GRAPHICS, self.pipeline.handle());
         cmd.cmd_set_viewport(0, std::slice::from_ref(&viewport));
 
-        let mut push_constant = gpu::imgui::PushConstant {
+        let mut push_constant = gpu::ui_imgui::PushConstant {
             ortho: glam::Mat4::orthographic_rh(
                 0.0,
                 draw_data.display_size[0],
@@ -148,9 +148,9 @@ impl GuiPass {
             )
             .into(),
             texture: SrvHandle {
-                index: gpu::INVALID_TEX_ID,
+                index: gpu::bindless::INVALID_TEX_ID,
             },
-            texture_sampler_type: gpu::ESamplerType_LinearRepeat,
+            texture_sampler_type: gpu::bindless::ESamplerType_LinearRepeat,
             _padding_0: Default::default(),
             _padding_1: Default::default(),
         };

@@ -1,0 +1,36 @@
+#pragma once
+
+#include "api/common/mod.slangi"
+#include "lib/core/bindless.slangi"
+
+/// 材质贴图读取统一集中在这里，避免 RT、raycast、raster 各自维护透明度和 fallback 规则。
+struct MaterialAccess
+{
+    static float4 base_color_rgba(material::PbrMaterial* mat, float2 uv)
+    {
+        if (BindlessSrv::is_valid(mat.diffuse_map))
+        {
+            return BindlessSrv::sample_level(mat.diffuse_map, uv, mat.diffuse_map_sampler_type, 0.0);
+        }
+
+        return float4(mat.base_color, mat.opaque);
+    }
+
+    static float3 base_color(material::PbrMaterial* mat, float2 uv)
+    {
+        return base_color_rgba(mat, uv).xyz;
+    }
+};
+
+struct MaterialOpacity
+{
+    static float alpha(material::PbrMaterial* mat, float2 uv)
+    {
+        return mat.opaque * MaterialAccess::base_color_rgba(mat, uv).w;
+    }
+
+    static bool is_cutout(material::PbrMaterial* mat, float2 uv)
+    {
+        return alpha(mat, uv) <= 0.01f;
+    }
+};

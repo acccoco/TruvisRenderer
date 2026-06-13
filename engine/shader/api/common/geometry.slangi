@@ -1,0 +1,17 @@
+#pragma once
+#include "api/common/ptr.slangi"
+
+namespace geometry
+{
+
+struct Geometry
+{
+    PTR(float3, position_buffer);
+    PTR(float3, normal_buffer);
+    PTR(float3, tangent_buffer);
+    PTR(float2, uv_buffer);
+
+    PTR(uint, index_buffer);
+};
+
+}

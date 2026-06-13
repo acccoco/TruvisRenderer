@@ -1,0 +1,42 @@
+#pragma once
+#include "lib/core/common.slangi"
+#include "lib/core/random.slangi"
+
+struct Sample
+{
+    /// 半球方向上，pdf = cos(theta) / pi 的随机采样
+    /// @return 返回 local 坐标系中的单位向量
+    static float3 get_cos_hemisphere_sample(inout uint seed)
+    {
+        const float2 rand_val = float2(Random::rnd(seed), Random::rnd(seed));
+
+        const float radius = sqrt(rand_val.x);
+        const float phi = 2.f * M_PI * rand_val.y;
+
+        float3 direction = float3(
+            radius * cos(phi),
+            radius * sin(phi),
+            sqrt(1.f - rand_val.x)
+        );
+        return direction;
+    }
+
+    /// 根据输入的法线，创建一个局部坐标系
+    /// 右手系，基向量为：(tangent, bitangent, normal)
+    static void create_local_coord(in float3 normal, out float3 tangent, out float3 bitangent)
+    {
+        bitangent = get_perpendicular_vector(normal);
+        tangent = cross(bitangent, normal);
+    }
+
+    /// 获得垂直于输入向量的单位向量
+    ///    （来自 "Efficient Construction of Perpendicular Vectors Without Branching"）
+    static float3 get_perpendicular_vector(float3 u)
+    {
+        float3 a = abs(u);
+        uint xm = ((a.x - a.y) < 0 && (a.x - a.z) < 0) ? 1 : 0;
+        uint ym = (a.y - a.z) < 0 ? (1 ^ xm) : 0;
+        uint zm = 1 ^ (xm | ym);
+        return normalize(cross(u, float3(xm, ym, zm)));
+    }
+};

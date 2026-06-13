@@ -182,7 +182,7 @@ impl InstanceBridge {
             });
         }
 
-        let all_point_lights: Vec<gpu::PointLight> =
+        let all_point_lights: Vec<gpu::light::PointLight> =
             scene_manager.point_light_map().iter().map(|(_, light)| *light).collect();
 
         RenderData {

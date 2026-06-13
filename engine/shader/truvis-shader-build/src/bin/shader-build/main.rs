@@ -28,10 +28,10 @@ use truvis_path::TruvisPath;
 
 // manifest schema 版本用于处理 JSON 字段结构变化；一旦结构变化到无法安全兼容旧文件，
 // 提升该版本即可让旧 manifest 自动失效，并触发下一轮完整输入判断。
-const MANIFEST_VERSION: u32 = 1;
+const MANIFEST_VERSION: u32 = 2;
 // 编译器参数属于 shader ABI 的隐性输入：即使 shader 源文件没有变化，debug info、matrix layout、
 // target-env 或 entrypoint 规则变化也会改变 SPIR-V 语义。用单独版本隔离这类“命令行契约”变更。
-const COMPILER_ARGS_VERSION: &str = "shader-compiler-args-v1";
+const COMPILER_ARGS_VERSION: &str = "shader-compiler-args-v2";
 
 /// 命令行只暴露最小控制面。
 ///
@@ -117,14 +117,14 @@ impl ShaderBuildRunner {
     fn run(&self) -> Result<(), String> {
         // 这三条日志是 shader 编译问题排查的第一入口：include、entry 和 output 任一目录解析错误，
         // 都会直接表现为找不到输入或运行时加载不到 SPIR-V。
-        log::info!("Shader include path: {:?}", EnvPath::shader_share_path());
+        log::info!("Shader api path: {:?}", EnvPath::shader_api_path());
         log::info!("Shader entry path: {:?}", EnvPath::shader_entry_path());
         log::info!("Shader output path: {:?}", EnvPath::shader_build_path());
 
         let previous_manifest = ShaderBuildManifest::load(self.layout.manifest_path())?;
         let tasks = self.collect_tasks();
         let shared_inputs = self.collect_shared_inputs()?;
-        // entry shader 自身可以按文件粒度判断；share/lib 和 entry 下的 include 文件则作为
+        // entry shader 自身可以按文件粒度判断；api/lib 和 entry 下的 include 文件则作为
         // 全局 shared inputs 处理。当前工具不解析 Slang/GLSL include graph，因此 shared
         // inputs 一旦变化，就保守重编所有入口，避免少编某个间接依赖它的 shader。
         let shared_inputs_changed =
@@ -193,14 +193,14 @@ impl ShaderBuildRunner {
 
     /// 收集会影响多个入口的共享输入。
     ///
-    /// 当前工具没有解析 include graph，因此共享输入采用保守模型：`share/`、`lib/` 和 entry 下不能直接
+    /// 当前工具没有解析 include graph，因此共享输入采用保守模型：`api/`、`lib/` 和 entry 下不能直接
     /// 编译的 include-like 文件任一变化，都让所有入口重新编译。这样牺牲少量增量精度，换取 shader ABI
     /// 和 SPIR-V 产物不会因为漏掉间接依赖而失配。
     fn collect_shared_inputs(&self) -> Result<Vec<FileStamp>, String> {
         let mut inputs = Vec::new();
 
         for root in [
-            EnvPath::shader_share_path().to_path_buf(),
+            EnvPath::shader_api_path().to_path_buf(),
             EnvPath::shader_root_path().join("lib"),
             EnvPath::shader_entry_path().to_path_buf(),
         ] {

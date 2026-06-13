@@ -121,19 +121,19 @@ impl TruvisApp {
         camera.euler_yaw_deg = 90.0;
         camera.euler_pitch_deg = 0.0;
 
-        world.scene_manager.register_point_light(gpu::PointLight {
+        world.scene_manager.register_point_light(gpu::light::PointLight {
             pos: glam::vec3(-20.0, 40.0, 0.0).into(),
             color: (glam::vec3(5.0, 6.0, 1.0) * 2.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
-        world.scene_manager.register_point_light(gpu::PointLight {
+        world.scene_manager.register_point_light(gpu::light::PointLight {
             pos: glam::vec3(40.0, 40.0, -30.0).into(),
             color: (glam::vec3(1.0, 6.0, 7.0) * 3.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
-        world.scene_manager.register_point_light(gpu::PointLight {
+        world.scene_manager.register_point_light(gpu::light::PointLight {
             pos: glam::vec3(40.0, 40.0, 30.0).into(),
             color: (glam::vec3(5.0, 1.0, 8.0) * 3.0).into(),
             _pos_padding: Default::default(),

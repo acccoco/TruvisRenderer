@@ -1,0 +1,13 @@
+#pragma once
+
+#include "api/common/mod.slangi"
+
+#include "api/pass/denoise_accum.slangi"
+#include "api/pass/post_accum.slangi"
+#include "api/pass/raster.slangi"
+#include "api/pass/raycast.slangi"
+#include "api/pass/realtime_rt.slangi"
+#include "api/pass/resolve.slangi"
+#include "api/pass/sdr.slangi"
+#include "api/pass/ui_blit.slangi"
+#include "api/pass/ui_imgui.slangi"

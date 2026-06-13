@@ -1,0 +1,29 @@
+#pragma once
+
+namespace light
+{
+
+/// 单个点光源
+struct PointLight
+{
+    float3 pos;
+    float _pos_padding;
+
+    float3 color;
+    float _color_padding;
+};
+
+/// 单个 spot light
+struct SpotLight
+{
+    float3 pos;
+    float inner_angle;
+
+    float3 color;
+    float outer_angle;
+
+    float3 dir;
+    float _dir_padding;
+};
+
+}

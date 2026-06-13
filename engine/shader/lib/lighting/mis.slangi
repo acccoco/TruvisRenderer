@@ -1,0 +1,41 @@
+/// @file mis.slangi
+/// @brief 多重重要性采样 (MIS) 工具函数
+///
+/// 提供 MIS 权重计算，用于结合不同采样策略
+
+#pragma once
+
+struct Mis
+{
+    /// 平衡启发式 (Balance Heuristic)
+    /// @param pdf_a 策略 A 的 PDF
+    /// @param pdf_b 策略 B 的 PDF
+    /// @return 策略 A 的权重
+    static float balance_heuristic(float pdf_a, float pdf_b)
+    {
+        return pdf_a / max(pdf_a + pdf_b, 1e-7f);
+    }
+
+    /// 幂次启发式 (Power Heuristic)，使用平方加权
+    /// @param pdf_a 策略 A 的 PDF
+    /// @param pdf_b 策略 B 的 PDF
+    /// @return 策略 A 的权重 = pdf_a^2 / (pdf_a^2 + pdf_b^2)
+    static float power_heuristic(float pdf_a, float pdf_b)
+    {
+        const float a2 = pdf_a * pdf_a;
+        const float b2 = pdf_b * pdf_b;
+        return a2 / max(a2 + b2, 1e-7f);
+    }
+
+    /// 幂次启发式，可指定幂次
+    /// @param pdf_a 策略 A 的 PDF
+    /// @param pdf_b 策略 B 的 PDF
+    /// @param beta 幂次参数（常用 beta=2）
+    /// @return 策略 A 的权重 = pdf_a^beta / (pdf_a^beta + pdf_b^beta)
+    static float power_heuristic_beta(float pdf_a, float pdf_b, float beta)
+    {
+        const float a_pow = pow(pdf_a, beta);
+        const float b_pow = pow(pdf_b, beta);
+        return a_pow / max(a_pow + b_pow, 1e-7f);
+    }
+};

@@ -20,15 +20,15 @@ pub struct BlitPassData {
 }
 
 pub struct BlitPass {
-    blit_pass: ComputePass<gpu::blit::PushConstant>,
+    blit_pass: ComputePass<gpu::ui_blit::PushConstant>,
 }
 impl BlitPass {
     pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets) -> Self {
-        let blit_pass = ComputePass::<gpu::blit::PushConstant>::new(
+        let blit_pass = ComputePass::<gpu::ui_blit::PushConstant>::new(
             ctx,
             render_descriptor_sets,
             c"main",
-            TruvisPath::shader_build_path_str("imgui/blit.slang").as_str(),
+            TruvisPath::shader_build_path_str("ui/blit.slang").as_str(),
         );
 
         Self { blit_pass }
@@ -44,15 +44,15 @@ impl BlitPass {
             cmd,
             frame_label,
             record_ctx.shader_bindings.global_descriptor_sets(),
-            &gpu::blit::PushConstant {
+            &gpu::ui_blit::PushConstant {
                 src_image: data.src_bindless_uav_handle.0,
                 dst_image: data.dst_bindless_uav_handle.0,
                 src_image_size: glam::uvec2(data.src_image_size.width, data.dst_image_size.height).into(),
                 offset: glam::uvec2(0, 0).into(),
             },
             glam::uvec3(
-                data.dst_image_size.width.div_ceil(gpu::blit::SHADER_X as u32),
-                data.dst_image_size.height.div_ceil(gpu::blit::SHADER_Y as u32),
+                data.dst_image_size.width.div_ceil(gpu::ui_blit::SHADER_X as u32),
+                data.dst_image_size.height.div_ceil(gpu::ui_blit::SHADER_Y as u32),
                 1,
             ),
         );

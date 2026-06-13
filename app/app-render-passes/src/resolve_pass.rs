@@ -22,12 +22,12 @@ enumed_map!(ShaderStage<GfxShaderStageInfo>: {
     Vertex: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::VERTEX,
         entry_point: c"vsmain",
-        path: TruvisPath::shader_build_path_str("resolve/resolve.slang"),
+        path: TruvisPath::shader_build_path_str("post/resolve.slang"),
     },
     Fragment: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::FRAGMENT,
         entry_point: c"psmain",
-        path: TruvisPath::shader_build_path_str("resolve/resolve.slang"),
+        path: TruvisPath::shader_build_path_str("post/resolve.slang"),
     },
 });
 
@@ -36,7 +36,7 @@ pub struct ResolvePassData {
     /// 源图像的 texture handle（将从 bindless_textures 中采样）
     pub render_target: GfxImageViewHandle,
     /// 采样器类型
-    pub sampler_type: gpu::ESamplerType,
+    pub sampler_type: gpu::bindless::ESamplerType,
     /// 在 color attachment 上的偏移量（像素坐标）
     pub offset: glam::Vec2,
     /// 绘制区域的大小（像素尺寸）
@@ -236,7 +236,7 @@ impl RgPass for ResolveRgPass<'_> {
             self.swapchain_extent,
             &ResolvePassData {
                 render_target: render_target_view_handle,
-                sampler_type: gpu::ESamplerType_LinearClamp,
+                sampler_type: gpu::bindless::ESamplerType_LinearClamp,
                 offset: glam::vec2(0.0, 0.0),
                 size: glam::vec2(self.swapchain_extent.width as f32, self.swapchain_extent.height as f32),
             },

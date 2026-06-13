@@ -219,7 +219,7 @@ pub struct UploadedAssetTexture {
     /// bindless 表中的稳定 SRV 引用。
     pub srv_handle: BindlessSrvHandle,
     /// 材质写入 GPU buffer 时使用的 sampler 类型。
-    pub sampler: gpu::ESamplerType,
+    pub sampler: gpu::bindless::ESamplerType,
 }
 
 /// 渲染侧纹理资产上传与绑定缓存。
@@ -298,7 +298,7 @@ impl AssetTextureManager {
             image_handle,
             view_handle,
             srv_handle,
-            sampler: gpu::ESamplerType_LinearRepeat,
+            sampler: gpu::bindless::ESamplerType_LinearRepeat,
         }
     }
 
@@ -389,7 +389,7 @@ impl AssetTextureManager {
             image_handle,
             view_handle,
             srv_handle,
-            sampler: gpu::ESamplerType_LinearRepeat,
+            sampler: gpu::bindless::ESamplerType_LinearRepeat,
         };
         self.textures.insert(handle, texture);
     }

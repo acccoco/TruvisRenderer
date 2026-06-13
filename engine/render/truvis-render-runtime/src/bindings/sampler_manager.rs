@@ -10,7 +10,7 @@ use crate::bindings::descriptor_bindings::{StaticDescriptorBinding, StaticSample
 
 // Sampler 管理器
 pub struct RenderSamplerManager {
-    _samplers: [GfxSampler; gpu::ESamplerType__Count_ as usize],
+    _samplers: [GfxSampler; gpu::bindless::ESamplerType__Count_ as usize],
 }
 
 impl RenderSamplerManager {
@@ -39,9 +39,9 @@ impl RenderSamplerManager {
         Self { _samplers: samplers }
     }
 
-    fn create_sampler(ctx: GfxDeviceCtx<'_>) -> [GfxSampler; gpu::ESamplerType__Count_ as usize] {
+    fn create_sampler(ctx: GfxDeviceCtx<'_>) -> [GfxSampler; gpu::bindless::ESamplerType__Count_ as usize] {
         let mut sampler_descs =
-            [0; gpu::ESamplerType__Count_ as usize].map(|_| (String::new(), GfxSamplerDesc::default()));
+            [0; gpu::bindless::ESamplerType__Count_ as usize].map(|_| (String::new(), GfxSamplerDesc::default()));
 
         fn create_sampler_desc(filter: vk::Filter, address_mode: vk::SamplerAddressMode) -> GfxSamplerDesc {
             GfxSamplerDesc {
@@ -59,22 +59,22 @@ impl RenderSamplerManager {
             }
         }
 
-        sampler_descs[gpu::ESamplerType_PointRepeat as usize] =
+        sampler_descs[gpu::bindless::ESamplerType_PointRepeat as usize] =
             ("PointRepeat".to_string(), create_sampler_desc(vk::Filter::NEAREST, vk::SamplerAddressMode::REPEAT));
-        sampler_descs[gpu::ESamplerType_PointClamp as usize] =
+        sampler_descs[gpu::bindless::ESamplerType_PointClamp as usize] =
             ("PointClamp".to_string(), create_sampler_desc(vk::Filter::NEAREST, vk::SamplerAddressMode::CLAMP_TO_EDGE));
-        sampler_descs[gpu::ESamplerType_LinearRepeat as usize] =
+        sampler_descs[gpu::bindless::ESamplerType_LinearRepeat as usize] =
             ("LinearRepeat".to_string(), create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::REPEAT));
-        sampler_descs[gpu::ESamplerType_LinearClamp as usize] =
+        sampler_descs[gpu::bindless::ESamplerType_LinearClamp as usize] =
             ("LinearClamp".to_string(), create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::CLAMP_TO_EDGE));
-        sampler_descs[gpu::ESamplerType_AnisoRepeat as usize] = (
+        sampler_descs[gpu::bindless::ESamplerType_AnisoRepeat as usize] = (
             "AnisoRepeat".to_string(),
             GfxSamplerDesc {
                 max_anisotropy: 16,
                 ..create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::REPEAT)
             },
         );
-        sampler_descs[gpu::ESamplerType_AnisoClamp as usize] = (
+        sampler_descs[gpu::bindless::ESamplerType_AnisoClamp as usize] = (
             "AnisoClamp".to_string(),
             GfxSamplerDesc {
                 max_anisotropy: 16,

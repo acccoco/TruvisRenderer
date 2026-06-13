@@ -1,6 +1,6 @@
 #pragma once
 
-#include "share/pass/raycast.slangi"
+#include "api/pass/raycast.slangi"
 
 [[vk::push_constant]]
 raycast::PushConstants push_const;

@@ -16,7 +16,7 @@ pub struct BindlessDescriptorTarget {
 pub struct StaticDescriptorBinding {
     #[binding = 0]
     #[descriptor_type = "SAMPLER"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
+    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR | COMPUTE"]
     #[count = 32]
     #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND"]
     _samplers: (),
@@ -26,21 +26,21 @@ pub struct StaticDescriptorBinding {
 pub struct BindlessDescriptorBinding {
     #[binding = 0]
     #[descriptor_type = "COMBINED_IMAGE_SAMPLER"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
+    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR | COMPUTE"]
     #[count = 128]
     #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING"]
     _textures: (),
 
     #[binding = 1]
     #[descriptor_type = "STORAGE_IMAGE"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
+    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR | COMPUTE"]
     #[count = 128]
     #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING"]
     _uavs: (),
 
     #[binding = 2]
     #[descriptor_type = "SAMPLED_IMAGE"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
+    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR | COMPUTE"]
     #[count = 128]
     #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING"]
     _srvs: (),
@@ -59,13 +59,13 @@ impl BindlessDescriptorBinding {
 pub struct PerFrameDescriptorBinding {
     #[binding = 0]
     #[descriptor_type = "UNIFORM_BUFFER"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
+    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR | COMPUTE"]
     #[count = 1]
     _per_frame_data: (),
 
     #[binding = 1]
     #[descriptor_type = "UNIFORM_BUFFER"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | CALLABLE_KHR | MISS_KHR | COMPUTE"]
+    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR | COMPUTE"]
     #[count = 1]
     _gpu_scene: (),
 }

@@ -1,0 +1,58 @@
+/// @file env_map.slangi
+/// @brief 环境贴图采样工具
+///
+/// 提供方向向量到球面坐标的转换，用于天空盒和环境贴图采样
+
+#pragma once
+#include "lib/core/common.slangi"
+#include "lib/core/random.slangi"
+
+struct EnvMap
+{
+    /// 将方向向量转换为球面角度。
+    /// 坐标系约定：phi=0 指向 -Z，phi=90° 指向 -X，Y 轴向上。
+    static float2 dir_to_angle(const float3 dir)
+    {
+        const float phi = atan2(dir.x, dir.z);
+        const float theta = asin(dir.y);
+        return float2(phi, theta);
+    }
+
+    /// 将球面角度转换为等距圆柱投影 UV。
+    static float2 angle_to_uv(const float2 angle)
+    {
+        return float2(angle.x / M_PI * 0.5 + 0.5, 0.5 - angle.y / M_PI);
+    }
+
+    /// 从方向向量直接获取环境贴图 UV。
+    static float2 dir_to_uv(const float3 dir)
+    {
+        return angle_to_uv(dir_to_angle(dir));
+    }
+
+// ============================================================================
+// 环境贴图采样（用于 NEE）
+// ============================================================================
+
+    static float uniform_pdf()
+    {
+        return 1.f / (4.f * M_PI);
+    }
+
+    static void sample_uniform(inout uint seed, out float3 out_dir, out float out_pdf)
+    {
+        const float u1 = Random::rnd(seed);
+        const float u2 = Random::rnd(seed);
+
+        const float phi = 2.f * M_PI * u1;
+        const float cos_theta = 1.f - 2.f * u2;
+        const float sin_theta = sqrt(max(0.f, 1.f - cos_theta * cos_theta));
+
+        out_dir = float3(
+            sin_theta * cos(phi),
+            cos_theta,
+            sin_theta * sin(phi)
+        );
+        out_pdf = uniform_pdf();
+    }
+};

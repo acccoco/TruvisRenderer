@@ -1,0 +1,11 @@
+#pragma once
+
+#include "api/common/bindless.slangi"
+#include "api/common/frame_data.slangi"
+#include "api/common/geometry.slangi"
+#include "api/common/global_binding_sets.slangi"
+#include "api/common/irradiance_cache_data.slangi"
+#include "api/common/light.slangi"
+#include "api/common/material.slangi"
+#include "api/common/ptr.slangi"
+#include "api/common/scene.slangi"

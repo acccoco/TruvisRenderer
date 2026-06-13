@@ -21,16 +21,16 @@ pub struct AccumPassData {
 
 /// 累积 Pass - 将单帧 RT 结果累积到 accum_image 中
 pub struct AccumPass {
-    accum_pass: ComputePass<gpu::accum::PushConstant>,
+    accum_pass: ComputePass<gpu::post_accum::PushConstant>,
 }
 
 impl AccumPass {
     pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets) -> Self {
-        let accum_pass = ComputePass::<gpu::accum::PushConstant>::new(
+        let accum_pass = ComputePass::<gpu::post_accum::PushConstant>::new(
             ctx,
             render_descriptor_sets,
             c"main",
-            TruvisPath::shader_build_path_str("pp/accum.slang").as_str(),
+            TruvisPath::shader_build_path_str("post/accum.slang").as_str(),
         );
 
         Self { accum_pass }
@@ -46,7 +46,7 @@ impl AccumPass {
             cmd,
             frame_label,
             record_ctx.shader_bindings.global_descriptor_sets(),
-            &gpu::accum::PushConstant {
+            &gpu::post_accum::PushConstant {
                 single_frame_input: data.single_frame_bindless_uav_handle.0,
                 accum_output: data.accum_bindless_uav_handle.0,
                 image_size: glam::uvec2(data.image_size.width, data.image_size.height).into(),
@@ -54,8 +54,8 @@ impl AccumPass {
                 _padding_: 0,
             },
             glam::uvec3(
-                data.image_size.width.div_ceil(gpu::accum::SHADER_X as u32),
-                data.image_size.height.div_ceil(gpu::accum::SHADER_Y as u32),
+                data.image_size.width.div_ceil(gpu::post_accum::SHADER_X as u32),
+                data.image_size.height.div_ceil(gpu::post_accum::SHADER_Y as u32),
                 1,
             ),
         );

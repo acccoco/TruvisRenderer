@@ -1,0 +1,33 @@
+#pragma once
+#include "api/common/frame_data.slangi"
+#include "api/common/scene.slangi"
+
+#ifdef __SLANG__
+
+// set 0：静态资源
+[[vk::binding(0, 0)]]
+SamplerState global_samplers[];
+
+// set 1：bindless 资源
+// 注意：需要 nonuniform，表示同一个 wavefront 的下标是不同的
+[[vk::binding(0, 1)]]
+Sampler2D<float4> bindless_textures[];
+
+[[vk::binding(1, 1)]]
+RWTexture2D<float4> bindless_uavs[];
+
+[[vk::binding(2, 1)]]
+Texture2D<float4> bindless_srvs[];
+
+// set 2：per-frame 数据
+[[vk::binding(0, 2)]]
+ConstantBuffer<frame::PerFrameData, ScalarDataLayout> per_frame_data;
+
+[[vk::binding(1, 2)]]
+ConstantBuffer<scene::GpuScene, ScalarDataLayout> gpu_scene;
+
+#endif
+
+#ifndef GLOBAL_SETS_COUNT
+    #define GLOBAL_SETS_COUNT 3
+#endif

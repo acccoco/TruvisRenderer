@@ -17,7 +17,7 @@ pub struct SceneManager {
     /// live instance 存储；slotmap key 是 CPU scene 内部的 runtime 身份。
     all_instances: SlotMap<InstanceHandle, Instance>,
     /// live point light 存储；GPU 侧打包和上传由 render runtime 处理。
-    all_point_lights: SlotMap<LightHandle, gpu::PointLight>,
+    all_point_lights: SlotMap<LightHandle, gpu::light::PointLight>,
 }
 // 创建与初始化
 impl SceneManager {
@@ -42,7 +42,7 @@ impl SceneManager {
     /// `PointLight` 类型来自 shader binding，是 CPU/GPU 共享布局数据；本 manager 只保存
     /// CPU 记录，具体 buffer 上传属于 render runtime。
     #[inline]
-    pub fn point_light_map(&self) -> &SlotMap<LightHandle, gpu::PointLight> {
+    pub fn point_light_map(&self) -> &SlotMap<LightHandle, gpu::light::PointLight> {
         &self.all_point_lights
     }
 
@@ -111,7 +111,7 @@ impl SceneManager {
     ///
     /// 光源使用 shader binding 中的共享布局类型，但这里仍只负责 CPU 侧生命周期；GPU buffer
     /// 更新由 render runtime 的 scene 同步流程处理。
-    pub fn register_point_light(&mut self, light: gpu::PointLight) -> LightHandle {
+    pub fn register_point_light(&mut self, light: gpu::light::PointLight) -> LightHandle {
         self.all_point_lights.insert(light)
     }
 }

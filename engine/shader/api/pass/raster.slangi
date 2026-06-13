@@ -1,0 +1,18 @@
+#include "api/common/mod.slangi"
+
+namespace raster
+{
+struct PushConstants
+{
+    PTR(frame::PerFrameData, frame_data);
+    PTR(scene::GpuScene, scene);
+
+    /// 仅 raster 使用
+    uint instance_idx;
+    /// 仅 raster 使用
+    uint submesh_idx;
+    uint _padding_1;
+    uint _padding_2;
+};
+
+};

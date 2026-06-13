@@ -53,22 +53,22 @@ enumed_map!(RayCastShaderStages<GfxShaderStageInfo>: {
     RayGen: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::RAYGEN_KHR,
         entry_point: c"main_ray_gen",
-        path: TruvisPath::shader_build_path_str("raycast/raycast_raygen.slang"),
+        path: TruvisPath::shader_build_path_str("raycast/raygen.slang"),
     },
     Miss: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::MISS_KHR,
         entry_point: c"main_miss",
-        path: TruvisPath::shader_build_path_str("raycast/raycast_miss.slang"),
+        path: TruvisPath::shader_build_path_str("raycast/miss.slang"),
     },
     ClosestHit: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::CLOSEST_HIT_KHR,
         entry_point: c"main_closest_hit",
-        path: TruvisPath::shader_build_path_str("raycast/raycast_closest_hit.slang"),
+        path: TruvisPath::shader_build_path_str("raycast/closest_hit.slang"),
     },
     AnyHit: GfxShaderStageInfo {
         stage: vk::ShaderStageFlags::ANY_HIT_KHR,
         entry_point: c"main_any_hit",
-        path: TruvisPath::shader_build_path_str("raycast/raycast_any_hit.slang"),
+        path: TruvisPath::shader_build_path_str("raycast/any_hit.slang"),
     },
 });
 

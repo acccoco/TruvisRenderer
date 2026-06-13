@@ -1,0 +1,42 @@
+#pragma once
+
+namespace frame
+{
+
+/// 渲染需要的一些公用参数，每帧更新
+struct PerFrameData
+{
+    float4x4 projection;
+    float4x4 view;
+    float4x4 inv_view;
+    float4x4 inv_projection;
+    /// 上一帧用于 motion vector 回溯的 view 矩阵。
+    ///
+    /// DLSS history reset、新视图或无上一帧历史时由 runtime 写为当前帧 view，
+    /// 保证第一帧不会产生脏 motion vector。
+    float4x4 prev_view;
+    /// 上一帧用于 motion vector 回溯的 projection 矩阵。
+    float4x4 prev_projection;
+
+    float3 camera_pos;
+    float time_ms;
+
+    float3 camera_forward;
+    float delta_time_ms;
+
+    float2 resolution;
+    /// DLSS temporal jitter，单位为 render target pixel。
+    ///
+    /// projection / prev_projection 保持不带 jitter；raygen 只把该偏移用于当前帧主光线，
+    /// motion vector 继续按 unjittered clip 计算，并通过 Streamline jitterOffset 单独告知 DLSS。
+    float2 temporal_jitter_px;
+    uint64_t frame_id;
+
+    /// 累计的帧数
+    uint accum_frames;
+    uint _padding_0;
+    uint _padding_1;
+    uint _padding_2;
+};
+
+}
