@@ -8,9 +8,10 @@ use crate::state::frame_state::FrameRenderState;
 ///
 /// 这里只表示 `kFeatureDLSS` 的模式选择；Ray Reconstruction 后续作为独立开关，
 /// 在执行层替换 SR evaluate，而不是作为这里的另一个互斥质量模式。
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum DlssSrMode {
     /// 关闭 DLSS，runtime 使用 native render extent。
+    #[default]
     Off,
     /// DLAA 路径仍调用 DLSS feature，但 render extent 与 output extent 相同，只做抗锯齿。
     Dlaa,
@@ -22,12 +23,6 @@ pub enum DlssSrMode {
     Performance,
     /// 最大放大倍率 SR upscale mode，通常只适合高分辨率输出。
     UltraPerformance,
-}
-
-impl Default for DlssSrMode {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 impl DlssSrMode {

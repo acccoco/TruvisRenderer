@@ -350,7 +350,7 @@ impl GuiPlugin {
     fn debug_image_preview_size(extent: vk::Extent2D, available_width: f32) -> [f32; 2] {
         let src_width = extent.width.max(1) as f32;
         let src_height = extent.height.max(1) as f32;
-        let max_width = available_width.max(160.0).min(720.0);
+        let max_width = available_width.clamp(160.0, 720.0);
         let max_height = 420.0;
         let scale = (max_width / src_width).min(max_height / src_height).min(1.0);
         [(src_width * scale).max(1.0), (src_height * scale).max(1.0)]

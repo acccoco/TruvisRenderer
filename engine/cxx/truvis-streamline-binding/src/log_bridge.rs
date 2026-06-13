@@ -180,7 +180,7 @@ unsafe fn enqueue_log_message(ty: truvixx::TruvixxSlLogType, message_utf8: *cons
 
 unsafe fn copy_streamline_message(message_utf8: *const c_char, message_len: u32) -> String {
     let bytes = unsafe { slice::from_raw_parts(message_utf8.cast::<u8>(), message_len as usize) };
-    String::from_utf8_lossy(bytes).trim_end_matches(|ch| ch == '\r' || ch == '\n').to_owned()
+    String::from_utf8_lossy(bytes).trim_end_matches(['\r', '\n']).to_owned()
 }
 
 fn map_log_type(ty: truvixx::TruvixxSlLogType) -> StreamlineLogType {

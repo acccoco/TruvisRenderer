@@ -317,7 +317,7 @@ impl MeshUploadQueue {
         if data.indices.is_empty() {
             bail!("mesh '{}' has no indices", data.name);
         }
-        if data.indices.len() % 3 != 0 {
+        if !data.indices.len().is_multiple_of(3) {
             bail!("mesh '{}' index count is not a multiple of 3", data.name);
         }
         Ok(())

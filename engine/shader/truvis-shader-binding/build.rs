@@ -39,20 +39,6 @@ impl bindgen::callbacks::ParseCallbacks for ModifyAdder {
             &_ => None,
         }
     }
-
-    fn add_derives(&self, info: &bindgen::callbacks::DeriveInfo) -> Vec<String> {
-        // 为结构体添加 Pod 和相关 traits
-        if info.kind == bindgen::callbacks::TypeKind::Struct {
-            vec![
-                // "Clone".into(), //
-                // "Copy".into(),  //
-                // "bytemuck::Pod".into(),      //
-                // "bytemuck::Zeroable".into(), //
-            ]
-        } else {
-            vec![]
-        }
-    }
 }
 
 fn gen_rust_binding() {
