@@ -1,11 +1,22 @@
 #pragma once
 
+/// CPU 与 shader 共享的 bindless 句柄 ABI。
+///
+/// 这些 handle 只保存全局 bindless 表中的稳定 slot，不拥有 GPU 资源。资源生命周期由
+/// Rust 侧 `ShaderBindingSystem` / manager 维护，shader 只能把 index 当作描述符数组下标使用。
+/// 结构体保持为单个 `int`，是为了让 Slang、C++ bindgen 与 Rust 侧布局完全一致。
 namespace bindless
 {
 
+/// 无效贴图 slot。所有 shader 侧 fallback 都以这个 sentinel 判断资源是否可采样。
 const static int INVALID_TEX_ID = -1;
+/// 亮紫色用于暴露缺失贴图或错误绑定；它应该在画面上足够明显，便于定位资源同步问题。
 const static float4 INVALID_TEX_COLOR = float4(1.0f, 0.0f, 1.0f, 1.0f);
 
+/// 全局 sampler 表的约定顺序。
+///
+/// 枚举值必须和 Rust 侧创建 `global_samplers[]` 的顺序保持一致；shader 不直接创建 sampler，
+/// 只通过枚举选择已经绑定到 set 0 的采样器。
 enum ESamplerType : uint
 {
     PointRepeat = 0,
@@ -20,18 +31,24 @@ enum ESamplerType : uint
 
 struct TextureHandle
 {
-    /// 纹理的索引
+    /// `bindless_textures[]` 中的索引；当前保留给旧 Texture2D 无采样器路径。
     int index;
 };
 
 struct UavHandle
 {
-    /// 纹理的索引
+    /// `bindless_uavs[]` 中的 storage image 索引。
+    ///
+    /// UAV handle 可能被 compute/post pass 同时读写，调用方必须先在 RenderGraph 中声明正确的
+    /// image state，shader 侧不承担同步或 layout transition。
     int index;
 };
 
 struct SrvHandle
 {
+    /// `bindless_srvs[]` 中的 sampled image 索引。
+    ///
+    /// SRV 与 sampler 分离存储；实际采样器由相邻的 `ESamplerType` 字段决定。
     int index;
 };
 

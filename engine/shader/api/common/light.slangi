@@ -3,25 +3,35 @@
 namespace light
 {
 
-/// 单个点光源
+/// 单个点光源的 CPU/GPU 共享 ABI。
+///
+/// 当前主 RT 路径主要使用 HDRI，点光源数据仍保留在 scene ABI 中，供 raster 或后续直接光照路径复用。
 struct PointLight
 {
+    /// 世界空间位置。
     float3 pos;
+    /// 显式 padding，保证后续颜色从 16 字节边界开始。
     float _pos_padding;
 
+    /// 线性空间光源颜色/强度。
     float3 color;
     float _color_padding;
 };
 
-/// 单个 spot light
+/// 单个 spot light 的 CPU/GPU 共享 ABI。
 struct SpotLight
 {
+    /// 世界空间位置。
     float3 pos;
+    /// 内锥角，单位与 CPU 侧写入保持一致。
     float inner_angle;
 
+    /// 线性空间光源颜色/强度。
     float3 color;
+    /// 外锥角。
     float outer_angle;
 
+    /// 世界空间照射方向。
     float3 dir;
     float _dir_padding;
 };

@@ -1,3 +1,7 @@
 #pragma once
 
+/// shader 侧公共数学常量。
+///
+/// 放在独立文件中是为了让 GLSL/Slang helper 共用同一个 PI 定义，避免 BRDF、采样 PDF 和
+/// 环境贴图映射之间出现细小但难排查的常量差异。
 const static float M_PI = 3.14159265358979323846f;

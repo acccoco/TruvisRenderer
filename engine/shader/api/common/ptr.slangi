@@ -1,5 +1,7 @@
 #pragma once
 
+/// 共享头文件在 C++/bindgen 路径下不能使用真实 shader 指针，因此把指针 ABI 映射为 `uint64_t`。
+/// Slang 编译 shader 时再恢复为对应元素类型的指针，保证 shader 可以自然下标访问 GPU buffer。
 #ifndef PTR
     #ifdef __SLANG__
         #define PTR(T, ident) T* ident

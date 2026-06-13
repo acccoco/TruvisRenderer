@@ -4,30 +4,36 @@
 
 #ifdef __SLANG__
 
-// set 0：静态资源
+// set 0：静态资源。该 set 在所有复用全局 layout 的 pipeline 中保持稳定。
+// sampler 不携带资源所有权，只由 bindless SRV 采样时通过 `ESamplerType` 选择。
 [[vk::binding(0, 0)]]
 SamplerState global_samplers[];
 
-// set 1：bindless 资源
-// 注意：需要 nonuniform，表示同一个 wavefront 的下标是不同的
+// set 1：bindless 资源。
+// 注意：所有动态下标都需要通过 NonUniformResourceIndex 包装，因为同一个 wavefront 内不同像素
+// 可能访问不同 texture/UAV/SRV。遗漏该包装会让 Vulkan descriptor indexing 语义不可靠。
 [[vk::binding(0, 1)]]
 Sampler2D<float4> bindless_textures[];
 
+// storage image 表。RenderGraph 负责声明读写状态和 layout transition。
 [[vk::binding(1, 1)]]
 RWTexture2D<float4> bindless_uavs[];
 
+// sampled image 表。采样器来自 set 0，SRV 本身只表达 image view slot。
 [[vk::binding(2, 1)]]
 Texture2D<float4> bindless_srvs[];
 
-// set 2：per-frame 数据
+// set 2：per-frame 数据。由 runtime 在 prepare 后冻结，render pass 只能读取这个快照。
 [[vk::binding(0, 2)]]
 ConstantBuffer<frame::PerFrameData, ScalarDataLayout> per_frame_data;
 
+// 当前帧 GPU scene 间接表。它是 runtime 私有 scene 同步的输出，不允许 shader 修改。
 [[vk::binding(1, 2)]]
 ConstantBuffer<scene::GpuScene, ScalarDataLayout> gpu_scene;
 
 #endif
 
 #ifndef GLOBAL_SETS_COUNT
+    // pass-local descriptor set 从全局 set 之后开始，避免不同 pass 重复定义基础 set 编号。
     #define GLOBAL_SETS_COUNT 3
 #endif

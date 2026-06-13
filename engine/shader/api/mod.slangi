@@ -1,5 +1,9 @@
 #pragma once
 
+/// Rust binding 生成和 shader entry 共用的顶层 API 聚合入口。
+///
+/// 该文件只负责暴露共享 ABI 与 pass 契约，不放运行时代码。保持单一入口可以让 `just shader`
+/// 重新生成绑定时稳定覆盖所有 CPU/GPU 共享类型。
 #include "api/common/mod.slangi"
 
 #include "api/pass/denoise_accum.slangi"

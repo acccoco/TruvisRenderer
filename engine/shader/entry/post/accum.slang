@@ -3,6 +3,9 @@
 ///
 /// 当 accum_frames == 0 时，直接复制单帧结果
 /// 否则执行 lerp(old_accum, new_frame, 1/(accum_frames+1)) 混合
+///
+/// 该入口只表达历史累积公式，不判断相机、sky、材质或尺寸历史是否仍可复用。调用方必须在
+/// `ViewAccumState` reset 后把 accum_frames 传为 0，并在 RenderGraph 中声明 accum image 的读写状态。
 
 #include "api/pass/post_accum.slangi"
 #include "lib/core/bindless.slangi"
@@ -18,6 +21,7 @@ void main(uint3 dispatchThreadID: SV_DispatchThreadID)
     if (dispatchThreadID.x >= g_params.image_size.x ||
         dispatchThreadID.y >= g_params.image_size.y)
     {
+        // dispatch 按线程组向上取整，超出有效 render extent 的线程不能写 storage image。
         return; // Out of bounds
     }
 

@@ -35,10 +35,12 @@ void main_ray_gen()
     RtDebugAccumulator debug_state = RtDebugAccumulator::make();
     RtIrradianceCacheState ic_state = RtIrradianceCacheState::make();
 
+    // GBuffer / DLSS 输入只描述 camera primary 第一次可见事件；后续反弹不能覆盖它。
     bool gbuffer_written = false;
 
     for (uint depth = 0; depth < max_depth; ++depth)
     {
+        // 每次 TraceRay 只返回一个 surface/miss 事件；path 积分、debug 和 IC 状态都在 raygen 侧推进。
         TraceRay(
             realtime_rt::rt_tlas,
             RAY_FLAG_NONE,
@@ -64,6 +66,7 @@ void main_ray_gen()
         {
             if (!gbuffer_written)
             {
+                // sky pixel 也必须写满 GBuffer/DLSS 输入，避免 storage image 中保留上一帧几何数据。
                 RtRaygenView::write_primary_miss_outputs(thread_id);
                 gbuffer_written = true;
             }
@@ -81,6 +84,7 @@ void main_ray_gen()
 
         if (!gbuffer_written)
         {
+            // 首次命中时同步写 GBuffer、DLSS depth/motion 和 RR 材质输入。
             RtRaygenView::write_primary_hit_outputs(thread_id, surface, ray.Direction);
             gbuffer_written = true;
         }
@@ -108,6 +112,7 @@ void main_ray_gen()
 
         if (ic_state.try_resolve_or_schedule(payload, surface, path))
         {
+            // IC 命中并决定复用缓存时，当前 path 已经得到间接贡献，可以提前终止。
             break;
         }
 
@@ -131,6 +136,7 @@ void main_ray_gen()
         ray.Direction = material_sample.direction;
     }
 
+    // IC 写入延迟到 path 完成后执行，确保记录的是从缓存点出发的完整剩余 radiance。
     ic_state.flush();
 
     const float3 output_radiance = debug_state.resolve(push_const.channel, path.radiance);

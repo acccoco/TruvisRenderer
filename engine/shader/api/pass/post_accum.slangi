@@ -1,7 +1,10 @@
 #include "api/common/mod.slangi"
 
-/// 累积 Pass 的数据定义
-/// 将单帧 RT 结果累积到 accum_image 中
+/// 累积 Pass 的数据定义。
+///
+/// 这是不含降噪的 legacy temporal accumulation 路径。它只根据 `accum_frames` 做
+/// `lerp(old, new, 1/(n+1))`，不判断相机或 scene 历史是否可复用；历史重置由 runtime
+/// 的 `ViewAccumState` 和调用方传入的帧数共同保证。
 namespace post_accum
 {
 
@@ -15,7 +18,7 @@ struct PushConstant
     /// 累积结果（读写）
     bindless::UavHandle accum_output;
 
-    /// 图像尺寸
+    /// 当前 dispatch 有效图像尺寸；多余线程必须跳过写入。
     uint2 image_size;
     /// 累积帧数（0 表示第一帧，直接复制）
     uint accum_frames;

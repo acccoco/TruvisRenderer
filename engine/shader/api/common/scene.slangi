@@ -8,14 +8,24 @@
 namespace scene
 {
 
+/// 单个 runtime instance 的 shader-visible 间接索引。
+///
+/// `InstanceBridge` 保证 instance slot 稳定；shader 使用该 slot 访问 geometry/material 间接表。
+/// 这里不保存 CPU handle，raycast readback 会在 runtime 侧把 slot 转回应用可理解的 handle。
 struct Instance
 {
+    /// 指向 `GpuScene::instance_geometry_map` 的起始位置。
     uint geometry_indirect_idx;
+    /// 当前 instance 拥有的 submesh/geometry 数量。
     uint geometry_count;
+    /// 指向 `GpuScene::instance_material_map` 的起始位置。
     uint material_indirect_idx;
+    /// 当前 instance 可用的 material slot 数量。
     uint material_count;
 
+    /// 当前帧 object/local -> world 矩阵。
     float4x4 model;
+    /// 当前帧 world -> object/local 矩阵；法线变换使用它的转置。
     float4x4 inv_model;
     /// 上一帧用于 motion vector 回溯的模型矩阵。
     ///
@@ -24,22 +34,35 @@ struct Instance
     float4x4 prev_model;
 };
 
+/// 当前帧 GPU scene 的根间接表。
+///
+/// 这是 `RenderRuntime::prepare` 后的只读快照。entry shader 只能通过 `SceneAccess` 消费这些表，
+/// 避免各 pass 重复维护 instance -> geometry/material 的映射规则。
 struct GpuScene
 {
+    /// 全局 material 数组，slot 由 `MaterialManager` 分配。
     PTR(material::PbrMaterial, all_mats);
+    /// 全局 geometry 数组，slot 来自 mesh manager 的 GPU-ready 缓存。
     PTR(geometry::Geometry, all_geometries);
 
+    /// instance-local material index -> global material slot。
     PTR(uint, instance_material_map);
+    /// instance-local geometry index -> global geometry slot。
     PTR(uint, instance_geometry_map);
 
+    /// 预留的点光源数组。
     PTR(light::PointLight, point_lights);
+    /// 预留的 spot light 数组。
     PTR(light::SpotLight, spot_lights);
 
+    /// 稳定 instance slot 数组。
     PTR(Instance, all_instances);
     uint point_light_count;
     uint spot_light_count;
 
+    /// 默认 sky 的 bindless SRV；真实贴图未 ready 时 runtime 写入 fallback。
     bindless::SrvHandle sky;
+    /// sky 采样器类型。
     bindless::ESamplerType sky_sampler_type;
 };
 

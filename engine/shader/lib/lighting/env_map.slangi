@@ -1,7 +1,10 @@
 /// @file env_map.slangi
 /// @brief 环境贴图采样工具
 ///
-/// 提供方向向量到球面坐标的转换，用于天空盒和环境贴图采样
+/// 提供方向向量到球面坐标的转换，用于天空盒和环境贴图采样。
+///
+/// 当前 NEE 仍使用均匀球面采样，没有构建 HDRI luminance CDF。`uniform_pdf` 因此必须与
+/// `sample_uniform` 保持一致，否则 MIS 会错误加权环境光贡献。
 
 #pragma once
 #include "lib/core/common.slangi"
@@ -19,6 +22,7 @@ struct EnvMap
     }
 
     /// 将球面角度转换为等距圆柱投影 UV。
+    /// U 方向横向环绕，V=0 对应上方，匹配项目 sky texture 的采样约定。
     static float2 angle_to_uv(const float2 angle)
     {
         return float2(angle.x / M_PI * 0.5 + 0.5, 0.5 - angle.y / M_PI);
@@ -39,6 +43,10 @@ struct EnvMap
         return 1.f / (4.f * M_PI);
     }
 
+    /// 均匀采样整球面方向。
+    ///
+    /// 该采样不考虑环境贴图亮度，只适合当前简单 HDRI NEE；未来若增加重要性采样表，
+    /// 必须同时替换返回 PDF 和 `RtPathState::add_sky_miss` 中的 env PDF。
     static void sample_uniform(inout uint seed, out float3 out_dir, out float out_pdf)
     {
         const float u1 = Random::rnd(seed);

@@ -2,8 +2,16 @@
 
 #include "api/common/mod.slangi"
 
+/// raster sample 使用的简化 Phong 光照。
+///
+/// 这是调试/示例路径，不参与主 RT 的 PBR 能量守恒约定。函数仍读取共享 light ABI，
+/// 方便 raster pass 验证 scene buffer 与材质采样链路。
 struct PhongLight
 {
+    /// 计算单个点光源贡献。
+    ///
+    /// `obj_pos` / `obj_normal` 必须与 camera/light 位于同一世界空间；当前实现使用固定衰减
+    /// 和硬编码 shininess，适合可视化而不是物理正确材质。
     static float3 eval_point_light(
         light::PointLight point_light,
         float3 camera_pos,

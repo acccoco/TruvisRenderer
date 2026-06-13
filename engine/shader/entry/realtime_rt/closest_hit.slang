@@ -4,6 +4,10 @@
 #include "lib/scene/material_access.slangi"
 #include "lib/scene/scene_access.slangi"
 
+/// hit shader 内的粗粒度材质分类。
+///
+/// 当前分类直接基于常量材质参数，目的是为 raygen 选择 diffuse/specular/transparent/emissive
+/// 分支。更细的 BRDF 评估仍归属 `RtMaterialSampler`，不放在 hit shader 中。
 struct RtMaterialClassifier
 {
     static MaterialType classify(material::PbrMaterial* mat)

@@ -4,6 +4,9 @@
 
 /// SceneAccess 是 shader 侧访问 scene::GpuScene 间接表的唯一入口。
 /// 全局 `gpu_scene` 来自 set 2；raster pass 也可显式传入 scene 指针复用同一套索引规则。
+///
+/// 所有函数都假设 `InstanceBridge` 已经过 ready gate，只把 mesh/material 都 ready 的实例放入
+/// active render list。shader 侧因此不做空指针或 slot 越界恢复；相关错误应在 prepare 阶段暴露。
 struct SceneAccess
 {
     [ForceInline]
@@ -21,6 +24,7 @@ struct SceneAccess
     static geometry::Geometry* geometry(scene::GpuScene* scene_data, uint instance_idx, uint submesh_idx)
     {
         scene::Instance* inst = instance(scene_data, instance_idx);
+        // submesh_idx 是 instance-local 索引，需要先经过 instance_geometry_map 才能得到全局 geometry slot。
         const uint geometry_map_idx = inst.geometry_indirect_idx + submesh_idx;
         const uint geometry_idx = scene_data.instance_geometry_map[geometry_map_idx];
         return scene_data.all_geometries + geometry_idx;
@@ -38,6 +42,7 @@ struct SceneAccess
     static material::PbrMaterial* material(scene::GpuScene* scene_data, uint instance_idx, uint submesh_idx)
     {
         scene::Instance* inst = instance(scene_data, instance_idx);
+        // material 与 geometry 独立映射，允许同一 mesh submesh 在不同 instance 上使用不同材质。
         const uint material_map_idx = inst.material_indirect_idx + submesh_idx;
         const uint material_idx = scene_data.instance_material_map[material_map_idx];
         return scene_data.all_mats + material_idx;

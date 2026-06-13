@@ -5,28 +5,48 @@
 namespace raycast
 {
 
+/// 同步 raycast 使用的 pass-local descriptor set 编号。
+///
+/// set 0..GLOBAL_SETS_COUNT-1 保留给全局资源；raycast 的 TLAS、输入 ray 和输出 raw hit
+/// 放在紧随其后的 set，避免与普通 render pass 绑定模型冲突。
 #define RAYCAST_SET_NUM GLOBAL_SETS_COUNT
 
 /// CPU 传入的 world-space ray 描述。
+///
+/// raycast service 在 `after_prepare` 阶段写入该 buffer，坐标必须已经是 world space。
 struct Ray
 {
+    /// 光线起点，世界空间。
     float3 origin_ws;
+    /// 起始 t，通常用于避开起点附近的自交。
     float t_min;
+    /// 光线方向，shader 入口会 normalize 以容忍 CPU 侧数值误差。
     float3 direction_ws;
+    /// 最大追踪距离。
     float t_max;
 };
 
 /// GPU 原始命中结果；runtime 会把 instance slot 转回 CPU handle。
+///
+/// 该结构是 readback ABI。shader 只写稳定 instance slot / submesh / primitive，
+/// 不写 CPU handle，避免 GPU 侧依赖 world 层类型。
 struct RawHit
 {
+    /// 0 = miss，1 = hit。
     uint hit;
+    /// 稳定 GPU instance slot；miss 时写 `0xFFFFFFFF`。
     uint instance_slot;
+    /// instance-local submesh index；miss 时写 `0xFFFFFFFF`。
     uint submesh_index;
+    /// mesh primitive index；miss 时写 `0xFFFFFFFF`。
     uint primitive_index;
 
+    /// 世界空间命中位置。
     float3 position_ws;
+    /// ray t 值。
     float hit_t;
 
+    /// world-space 几何法线。
     float3 normal_ws;
     uint _padding_0;
 
@@ -37,12 +57,15 @@ struct RawHit
 
 #ifdef __SLANG__
 
+/// raycast 专用 TLAS。它来自 prepare 后的 GPU scene 快照，只在同步查询 command buffer 中使用。
 [[vk::binding(0, RAYCAST_SET_NUM)]]
 RaytracingAccelerationStructure raycast_tlas;
 
+/// 输入 ray 数组。
 [[vk::binding(1, RAYCAST_SET_NUM)]]
 StructuredBuffer<Ray> rays;
 
+/// 输出 raw hit 数组，长度至少为 `PushConstants::ray_count`。
 [[vk::binding(2, RAYCAST_SET_NUM)]]
 RWStructuredBuffer<RawHit> raw_hits;
 
@@ -50,6 +73,7 @@ RWStructuredBuffer<RawHit> raw_hits;
 
 struct PushConstants
 {
+    /// 本次 dispatch 有效 ray 数；多余 raygen invocation 必须直接 return。
     uint ray_count;
     uint _padding_0;
     uint _padding_1;

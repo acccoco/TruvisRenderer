@@ -2,15 +2,23 @@
 
 namespace raster
 {
+/// raster pass 的 per-draw push constants。
+///
+/// raster 路径不直接绑定整套 global descriptor set，而是通过 GPU address 指针读取当前帧
+/// `PerFrameData` 和 `GpuScene`。instance/submesh 由 CPU draw loop 按 draw call 写入，
+/// shader 侧再复用 `SceneAccess` 的索引规则。
 struct PushConstants
 {
+    /// 指向当前帧全局数据快照。
     PTR(frame::PerFrameData, frame_data);
+    /// 指向当前帧 GPU scene 根表。
     PTR(scene::GpuScene, scene);
 
-    /// 仅 raster 使用
+    /// 当前 draw 对应的稳定 instance slot。
     uint instance_idx;
-    /// 仅 raster 使用
+    /// 当前 draw 对应的 instance-local submesh index。
     uint submesh_idx;
+    /// 显式 padding，保持 push constant 16 字节对齐。
     uint _padding_1;
     uint _padding_2;
 };

@@ -8,8 +8,11 @@
 
 struct RtDebugAccumulator
 {
+    /// 累计所有 NEE 直接光照贡献。
     float3 nee_radiance;
+    /// 累计命中 emissive surface 的贡献。
     float3 emissive_radiance;
+    /// 累计 sky miss / HDRI 贡献。
     float3 hdri_radiance;
     float3 nee_bounce1_radiance;
     float3 nee_bounce2_radiance;
@@ -34,10 +37,14 @@ struct RtDebugAccumulator
 
     static float3 encode_normal(float3 normal)
     {
+        // debug normal 输出映射到 [0,1]，便于直接经过 SDR/resolve 显示。
         return normal * 0.5f + 0.5f;
     }
 
     /// 处理只依赖首次命中表面数据的 debug channel。
+    ///
+    /// 这些通道可以在 path loop 早退，减少 debug 模式下的额外噪声和成本。miss shader 会写一个
+    /// 虚拟 surface，因此 sky 方向也能参与 normal/base-color 类调试显示。
     static bool try_surface_channel(const RtSurfaceHit surface, uint channel, out float3 out_color)
     {
         out_color = float3(0.0f);
@@ -71,6 +78,7 @@ struct RtDebugAccumulator
     [mutating]
     void record_first_hit(const RtSurfaceHit surface)
     {
+        // IC debug 通道只关心 camera primary 的首次真实表面，后续反弹不能覆盖它。
         if (!first_hit_recorded)
         {
             first_hit_position = surface.position;

@@ -1,6 +1,9 @@
 #include "api/common/mod.slangi"
 
-/// blit 这个 pass 需要的数据
+/// UI / debug blit compute pass 的参数。
+///
+/// 该 pass 做简单像素搬运，不执行采样过滤。src/dst 都按 storage image 访问，调用方必须保证
+/// `offset + src_image_size` 落在目标图像有效范围内，shader 只对 dispatch 自身做边界保护。
 namespace ui_blit
 {
 
@@ -9,12 +12,14 @@ static const int SHADER_Y = 8;
 
 struct PushConstant
 {
-    /// RT 渲染
+    /// 源 storage image。
     bindless::UavHandle src_image;
-    /// 最终用于 present 的图像
+    /// 目标 storage image。
     bindless::UavHandle dst_image;
 
+    /// 源图像有效尺寸，也是 dispatch 的有效像素范围。
     uint2 src_image_size;
+    /// 写入目标图像时的像素偏移。
     uint2 offset;
 };
 };

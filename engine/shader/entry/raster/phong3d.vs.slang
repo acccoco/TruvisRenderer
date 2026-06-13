@@ -1,6 +1,10 @@
 #include "api/pass/raster.slangi"
 #include "./phong.slangi"
 
+/// Phong raster vertex shader 的 3D asset layout 变体。
+///
+/// 该入口保留 tangent/bitangent 的 location 空洞，匹配部分模型导入后的顶点布局；当前 shader
+/// 只消费 position/normal/uv，不改变 pipeline vertex binding。
 struct VsInput
 {
     [[vk::location(0)]]
@@ -41,6 +45,7 @@ VsOutput main(VsInput input)
     output.pos = mul(mvp, float4(input.pos, 1.0));
     output.coarse_vertex.world_pos = mul(instance.model, float4(input.pos, 1.0)).xyz;
     output.coarse_vertex.uv = input.uv;
+    // 这里保留与 `phong.vs.slang` 相同的法线变换约定，保证两个 layout 变体输出一致。
     output.coarse_vertex.frag_normal = mul(instance.inv_model, float4(input.normal, 0.0)).xyz;
 
     return output;

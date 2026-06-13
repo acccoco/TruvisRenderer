@@ -6,6 +6,10 @@
 /// 材质贴图读取统一集中在这里，避免 RT、raycast、raster 各自维护透明度和 fallback 规则。
 struct MaterialAccess
 {
+    /// 读取 base color + alpha。
+    ///
+    /// 有 diffuse_map 时 alpha 来自贴图；无贴图时 alpha 使用材质常量 `opaque`。这样 any-hit
+    /// 和 closest-hit 对透明度的解释保持一致。
     static float4 base_color_rgba(material::PbrMaterial* mat, float2 uv)
     {
         if (BindlessSrv::is_valid(mat.diffuse_map))
@@ -24,11 +28,15 @@ struct MaterialAccess
 
 struct MaterialOpacity
 {
+    /// 综合材质常量 opaque 与贴图 alpha 后的有效透明度。
     static float alpha(material::PbrMaterial* mat, float2 uv)
     {
         return mat.opaque * MaterialAccess::base_color_rgba(mat, uv).w;
     }
 
+    /// alpha cutout 判定。
+    ///
+    /// realtime RT 与同步 raycast 共同使用该阈值，保证可见性和拾取结果不会因为路径不同而分歧。
     static bool is_cutout(material::PbrMaterial* mat, float2 uv)
     {
         return alpha(mat, uv) <= 0.01f;

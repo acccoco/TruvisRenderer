@@ -4,13 +4,22 @@
 namespace geometry
 {
 
+/// 单个 submesh 的 GPU 几何视图。
+///
+/// 字段是 device address 风格的指针包装，由 render-side mesh manager 在 mesh ready 后写入。
+/// shader 只通过 `GeometryEval` 读取三角形和顶点属性；不要在 entry shader 中复制 buffer 寻址规则。
 struct Geometry
 {
+    /// object/local space 顶点位置数组。
     PTR(float3, position_buffer);
+    /// object/local space 顶点法线数组。
     PTR(float3, normal_buffer);
+    /// 预留切线数组；当前主路径主要依赖法线和 UV。
     PTR(float3, tangent_buffer);
+    /// 顶点 UV 数组。
     PTR(float2, uv_buffer);
 
+    /// 三角形索引数组，按 3 个 `uint` 组成一个 primitive。
     PTR(uint, index_buffer);
 };
 

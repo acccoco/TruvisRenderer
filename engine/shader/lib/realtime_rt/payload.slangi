@@ -7,7 +7,10 @@
 #pragma once
 #include "api/pass/realtime_rt.slangi"
 
-/// Push Constants 声明（所有 RT 着色器共享）
+/// Push Constants 声明（所有 RT 着色器共享）。
+///
+/// raygen、hit 和 miss 使用同一个 push constant block，确保 channel / IC 参数在一次 trace
+/// 的所有 shader invocation 中一致。
 [[vk::push_constant]]
 realtime_rt::PushConstants push_const;
 
@@ -103,6 +106,9 @@ struct RtTracePayload
 };
 
 /// 阴影/遮挡查询载荷：miss 表示没有遮挡物。
+///
+/// 当前主 NEE 使用 RayQuery inline path，不走这个 payload；它保留给需要独立 shadow miss group
+/// 的实验或后续 pipeline。
 struct ShadowMissPayload
 {
     bool miss;

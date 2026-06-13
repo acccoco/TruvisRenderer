@@ -1,6 +1,10 @@
 #pragma once
 #include "api/common/mod.slangi"
 
+/// 旧 Texture2D bindless 表访问器。
+///
+/// 新代码优先使用 SRV + sampler 的 `BindlessSrv`；该类型保留给仍直接使用 `Sampler2D`
+/// 全局数组的入口。动态下标必须包装 `NonUniformResourceIndex`。
 struct BindlessTexture
 {
 [ForceInline]
@@ -39,6 +43,7 @@ static bool is_valid(bindless::TextureHandle handle)
 struct BindlessUav
 {
 
+/// storage image 写入。调用方必须在 RenderGraph 中声明 image 处于 storage write/read-write 状态。
 [ForceInline]
 static void store(bindless::UavHandle handle, uint2 coord, float4 value)
 {
@@ -61,6 +66,9 @@ static bool is_valid(bindless::UavHandle handle)
 
 struct BindlessSrv
 {
+/// sampled image 采样。
+///
+/// 无效 handle 或非法 sampler 都返回统一 fallback，避免 shader 因资源尚未 ready 读取未定义描述符。
 [ForceInline]
 static float4 sample(bindless::SrvHandle handle, float2 uv_coord, bindless::ESamplerType sampler_type)
 {

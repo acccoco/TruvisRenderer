@@ -5,23 +5,30 @@
 namespace realtime_rt
 {
 
+/// realtime RT pass-local descriptor set 编号。
+///
+/// 全局 set 之后追加 TLAS、single-frame 输出、GBuffer 与 DLSS 输入输出 image。
+/// Rust 侧 pipeline layout 必须按同一 set 编号绑定这些资源。
 #define REALTIME_RT_SET_NUM GLOBAL_SETS_COUNT
 
 #ifdef __SLANG__
 
+/// 主渲染 TLAS，由 prepare 后的 GPU scene 提供；raygen/closest-hit/shadow query 共用它。
 [[vk::binding(0, REALTIME_RT_SET_NUM)]]
 RaytracingAccelerationStructure rt_tlas;
 
-/// 单帧 RT 输出（每帧写入，用于后续累积）
+/// 单帧 RT HDR 输出。当前主流程每帧重写，后续 SDR / DLSS 分支读取它。
 [[vk::binding(1, REALTIME_RT_SET_NUM)]]
 RWTexture2D<float4> rt_single_frame_output;
 
 // ========== GBuffer 输出 ==========
-/// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness (R16G16B16A16_SFLOAT)
+/// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness (R16G16B16A16_SFLOAT)。
+/// normal 必须与 path tracing BRDF 使用的 faceforward normal 一致，供 RR NormalRoughness 复用。
 [[vk::binding(2, REALTIME_RT_SET_NUM)]]
 RWTexture2D<float4> gbuffer_a;
 
-/// GBufferB：世界位置 world_position.xyz + 线性深度 linear_depth (R16G16B16A16_SFLOAT)
+/// GBufferB：世界位置 world_position.xyz + 线性深度 linear_depth (R16G16B16A16_SFLOAT)。
+/// linear_depth 是 ray hit_t，不等同于 DLSS depth image 中的 device depth。
 [[vk::binding(3, REALTIME_RT_SET_NUM)]]
 RWTexture2D<float4> gbuffer_b;
 
@@ -53,10 +60,14 @@ RWTexture2D<float2> dlss_rr_specular_motion_vectors;
 
 struct PushConstants
 {
+    /// Irradiance Cache hash table。IC 禁用时仍保持 ABI，但 shader 不应读取它。
     PTR(irradiance_cache::Table, ic_table);
+    /// Irradiance Cache entry pool。与 `ic_table` 一起由实验路径使用。
     PTR(irradiance_cache::EntryPool, ic_entry_pool);
 
+    /// sample-per-pixel 序号，用于扰动随机种子。
     uint spp_idx;
+    /// RT debug channel，由 app 层 `RtPipelineSettings` 写入。
     uint channel;
     uint ic_enabled; // 0=禁用, 1=启用 Irradiance Cache
     uint _padding_0;

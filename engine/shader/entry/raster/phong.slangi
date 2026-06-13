@@ -1,5 +1,9 @@
 #pragma once
 
+/// raster Phong pass 在 VS/PS 之间传递的插值属性。
+///
+/// world_pos 和 frag_normal 由 vertex shader 明确写入，fragment shader 只做归一化和光照；
+/// 这样 sample raster path 不需要访问 runtime scene 的 vertex buffer。
 struct CoarseVertex
 {
     [[vk::location(0)]]

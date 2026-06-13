@@ -2,6 +2,10 @@
 
 #include "api/common/mod.slangi"
 
+/// Irradiance Cache 查询与写入工具。
+///
+/// 这是 realtime RT 的实验路径：表和 entry pool 由 push constant 指针传入，shader 负责在路径末尾
+/// 查询、更新或插入缓存项。主流程关闭 IC 时不应读取这些结构；开启时也必须接受 hash 冲突和容量上限。
 struct RtIrradianceCacheTrace
 {
 

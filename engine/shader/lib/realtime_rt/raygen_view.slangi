@@ -42,11 +42,13 @@ struct RtRaygenView
 
     static bool is_projectable_clip(float4 clip_position)
     {
+        // w 接近 0 表示点不可稳定投影到屏幕，motion vector 回退为 0 更安全。
         return abs(clip_position.w) > 1e-6f;
     }
 
     static float2 clip_to_pixel(float4 clip_position)
     {
+        // Vulkan NDC y 向上，纹理/像素坐标 y 向下，因此这里做 0.5 - ndc.y * 0.5 的翻转。
         const float2 ndc = clip_position.xy / clip_position.w;
         const float2 uv = float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f);
         return uv * per_frame_data.resolution;
@@ -84,6 +86,7 @@ struct RtRaygenView
 
     static float2 instance_motion_vector_pixels(uint instance_id, float3 object_position)
     {
+        // 使用 object position 分别乘 current/previous model，才能同时表达相机和物体运动。
         scene::Instance* instance = SceneAccess::instance(instance_id);
         const float3 current_world_position = mul(instance.model, float4(object_position, 1.0f)).xyz;
         const float3 previous_world_position = mul(instance.prev_model, float4(object_position, 1.0f)).xyz;
@@ -112,6 +115,7 @@ struct RtRaygenView
         );
         while (rq.Proceed())
         {
+            // 反射 motion vector 只需要几何命中位置；alpha cutout 由 inline query 直接提交非不透明候选。
             if (rq.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE)
             {
                 rq.CommitNonOpaqueTriangleHit();

@@ -4,20 +4,33 @@
 namespace material
 {
 
+/// PBR 材质的 shader-visible 表示。
+///
+/// 该结构由 render-side material manager 写入稳定 slot，instance/geometry 只保存 slot 映射。
+/// 贴图字段是 bindless SRV handle；无效 handle 时 shader 侧必须回退到常量材质参数。
 struct PbrMaterial
 {
+    /// 常量基础色；没有 diffuse_map 时直接作为 base color。
     float3 base_color;
+    /// 金属度，范围按资产导入结果传入，shader 侧不做额外 clamp。
     float metallic;
 
+    /// 自发光颜色，会在 closest-hit 中乘以 base color 得到实际 emissive。
     float3 emissive;
+    /// 粗糙度；RT 采样中会平方为 GGX alpha。
     float roughness;
 
+    /// base color 贴图 SRV；无效时使用 `base_color`。
     bindless::SrvHandle diffuse_map;
+    /// diffuse_map 使用的全局 sampler 类型。
     bindless::ESamplerType diffuse_map_sampler_type;
+    /// 法线贴图 SRV，当前主路径尚未消费但保留 ABI。
     bindless::SrvHandle normal_map;
     bindless::ESamplerType normal_map_sampler_type;
 
+    /// 不透明度；小于 1 时 any-hit / 材质采样会按透明路径处理。
     float opaque;
+    /// 显式 padding，保持结构体 16 字节对齐并稳定 Rust 绑定布局。
     float _padding_1;
     float _padding_2;
     float _padding_3;

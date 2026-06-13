@@ -3,12 +3,15 @@
 #include "lib/core/bindless.slangi"
 #include "lib/lighting/env_map.slangi"
 
-/// 天空 miss 着色器
-/// 当光线未命中任何几何体时，返回天空信息
+/// 天空 miss 着色器。
+///
+/// 当光线未命中任何几何体时，miss shader 把 sky 采样整理成一个虚拟环境事件交给 raygen。
+/// radiance 累加、MIS 权重和 debug 记录仍由 raygen 的 path/debug state 统一处理。
 [shader("miss")]
 void sky_miss(inout RtTracePayload payload)
 {
     const float2 uv = EnvMap::dir_to_uv(WorldRayDirection());
+    // sky 贴图可能是 runtime fallback；shader 不区分真实贴图和 fallback，只按 SRV 采样。
     const float3 sky_color = float3(BindlessSrv::sample_level(gpu_scene.sky, uv, gpu_scene.sky_sampler_type, 0.0).xyz) * 8.f;
 
     payload.hit = false;

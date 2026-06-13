@@ -1,6 +1,10 @@
 #include "api/pass/raster.slangi"
 #include "./phong.slangi"
 
+/// Phong raster vertex shader。
+///
+/// 该入口用于较简单的 vertex layout：position/normal/uv 连续占用 location 0..2。
+/// draw call 通过 push constant 指定 instance/submesh，shader 从 scene 指针读取 transform。
 struct VsInput
 {
     [[vk::location(0)]]
@@ -35,6 +39,7 @@ VsOutput main(VsInput input)
     output.pos = mul(mvp, float4(input.pos, 1.0));
     output.coarse_vertex.world_pos = mul(instance.model, float4(input.pos, 1.0)).xyz;
     output.coarse_vertex.uv = input.uv;
+    // 使用 inv_model 变换法线，适配非均匀缩放；fragment shader 负责归一化。
     output.coarse_vertex.frag_normal = mul(instance.inv_model, float4(input.normal, 0.0)).xyz;
 
     return output;

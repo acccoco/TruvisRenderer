@@ -12,6 +12,9 @@
 /// 当 denoise_enabled == 0 时，跳过降噪直接累积
 /// 当 accum_frames == 0 时，直接写入结果（不累积）
 /// 否则执行 lerp(old_accum, denoised_frame, 1/(accum_frames+1)) 混合
+///
+/// 这是保留的 legacy 后处理路径；当前主 RT + DLSS 分支通常绕过它。注释仍保留完整数学含义，
+/// 便于后续重新启用或对比 denoise/accum 结果。
 
 #include "api/pass/denoise_accum.slangi"
 #include "lib/core/bindless.slangi"
@@ -22,6 +25,7 @@ denoise_accum::PushConstant g_params;
 /// 计算空间高斯权重
 float spatial_weight(float2 offset)
 {
+    // kernel_radius 控制窗口大小，sigma 取半径的一半，让越接近中心的样本权重越高。
     // 固定 sigma_spatial = kernel_radius / 2
     float sigma_spatial = max(float(g_params.kernel_radius) * 0.5, 0.5);
     float dist_sq = dot(offset, offset);
@@ -151,6 +155,8 @@ float4 bilateral_filter(uint2 pixel, float4 center_color, float3 center_normal,
             // - 空间权重：基础高斯
             // - 几何权重：position * normal * depth（保护边缘，depth 作为备份）
             // - 材质权重：max(color, albedo)（避免过度平滑）
+            // 多项权重相乘会快速压低跨边缘样本，保留高频轮廓；材质项用 max 是为了避免
+            // noisy color 单独把同材质区域排除得过强。
             float w_geometry = w_position * w_normal * w_depth;
             float w_material = max(w_color, w_albedo);
             float weight = w_spatial * w_geometry * w_material;

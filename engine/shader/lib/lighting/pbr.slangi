@@ -4,6 +4,10 @@
 #include "lib/core/random.slangi"
 #include "lib/core/sample.slangi"
 
+/// GGX specular BRDF 评估器。
+///
+/// 构造时缓存 D/F/V 和常用 dot 项，避免路径采样、NEE 和 PDF 计算各自重复推导。
+/// `roughness` 期望已经是 alpha/real roughness；调用方负责把艺术粗糙度平方后传入。
 struct SpecularBrdf
 {
     float3 f0;
@@ -51,6 +55,10 @@ struct SpecularBrdf
         return this.F * this.D * this.V;
     }
 
+    /// Trowbridge-Reitz GGX normal distribution function。
+    ///
+    /// 这里使用数值保护后的等价形式；roughness 接近 0 时仍可能产生很尖锐的分布，
+    /// 因此分母必须保留 epsilon。
     float ndf_ggx()
     {
         // 注意，当粗糙度接近 0 时，可能导致除零错误
@@ -59,12 +67,14 @@ struct SpecularBrdf
         return k * k * (1.f / M_PI);
     }
 
+    /// Schlick Fresnel 近似，返回 RGB F 项。
     float3 fresnel_schlick()
     {
         const float f = pow(1.f - this.vdoth, 5.f);
         return f + this.f0 * (1.f - f);
     }
 
+    /// Smith correlated visibility 项。
     float visibility_smith_ggx_correlated()
     {
         const float a2 = this.roughness * this.roughness;
@@ -99,6 +109,7 @@ struct SpecularBrdf
         return this.D * this.ndoth / max(4.f * this.vdoth, 1e-7f);
     }
 
+    /// 返回 `BRDF / PDF` 中 specular 相关的化简项，保留给调试或未来路径复用。
     float3 brdf_with_pdf()
     {
         return this.F * this.V * (4.f * this.vdoth) / max(this.ndoth, 1e-7f);
@@ -113,6 +124,7 @@ struct SpecularBrdf
 struct DiffuseBrdf
 {
 
+    /// Lambert BRDF。颜色项由调用方单独乘入，保证 PDF 与材质颜色解耦。
     static float3 brdf()
     {
         // TODO

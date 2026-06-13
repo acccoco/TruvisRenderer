@@ -5,6 +5,9 @@
 /// - GBufferA (R16G16B16A16_SFLOAT)：world-space forward/shading normal.xyz + 粗糙度 roughness
 /// - GBufferB (R16G16B16A16_SFLOAT)：世界位置 world_position.xyz + 线性深度 linear_depth
 /// - GBufferC (R8G8B8A8_UNORM)：反照率 albedo.rgb + 金属度 metallic
+///
+/// GBuffer 只记录 camera primary 首次命中。raygen 必须保证每个像素恰好写一次 hit 或 miss 输出，
+/// 否则 DLSS SR/RR 和 legacy denoise 会读取上一帧或未定义内容。
 
 #pragma once
 
@@ -68,6 +71,9 @@ static RtGBufferData make_data(
 }
 
 /// 根据项目 PBR 约定计算 RR 所需的 diffuse/specular albedo。
+///
+/// 该拆分必须和 `RtMaterialSampler` 的 F0/metallic 约定保持一致，避免 RR 看到的材质分量
+/// 与 path tracing 主颜色不一致。
 /// @param base_color 材质基础颜色
 /// @param metallic 金属度
 /// @param out_diffuse_albedo 输出 diffuse albedo

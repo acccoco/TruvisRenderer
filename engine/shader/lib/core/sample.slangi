@@ -2,10 +2,14 @@
 #include "lib/core/common.slangi"
 #include "lib/core/random.slangi"
 
+/// 几何采样 helper。
+///
+/// 本文件只返回局部坐标系或把局部方向转换所需的基向量，不直接读取材质/场景。这样 BRDF、
+/// path tracing 和未来其它采样路径可以共享同一套 PDF 约定。
 struct Sample
 {
     /// 半球方向上，pdf = cos(theta) / pi 的随机采样
-    /// @return 返回 local 坐标系中的单位向量
+    /// @return 返回 local 坐标系中的单位向量，z 轴代表输入法线方向
     static float3 get_cos_hemisphere_sample(inout uint seed)
     {
         const float2 rand_val = float2(Random::rnd(seed), Random::rnd(seed));
@@ -21,16 +25,16 @@ struct Sample
         return direction;
     }
 
-    /// 根据输入的法线，创建一个局部坐标系
-    /// 右手系，基向量为：(tangent, bitangent, normal)
+    /// 根据输入的法线，创建一个局部坐标系。
+    /// 右手系，基向量为：(tangent, bitangent, normal)。调用方负责保证 normal 已归一化。
     static void create_local_coord(in float3 normal, out float3 tangent, out float3 bitangent)
     {
         bitangent = get_perpendicular_vector(normal);
         tangent = cross(bitangent, normal);
     }
 
-    /// 获得垂直于输入向量的单位向量
-    ///    （来自 "Efficient Construction of Perpendicular Vectors Without Branching"）
+    /// 获得垂直于输入向量的单位向量。
+    /// （来自 "Efficient Construction of Perpendicular Vectors Without Branching"）
     static float3 get_perpendicular_vector(float3 u)
     {
         float3 a = abs(u);

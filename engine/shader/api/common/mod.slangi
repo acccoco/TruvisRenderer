@@ -1,5 +1,9 @@
 #pragma once
 
+/// shader 侧共享 ABI 聚合入口。
+///
+/// `api/mod.slangi` 和 bindgen 都会经过这里引入基础类型；新增共享结构时应先放入
+/// `api/common/` 的明确职责文件，再从本文件统一暴露，避免 entry shader 依赖零散路径。
 #include "api/common/bindless.slangi"
 #include "api/common/frame_data.slangi"
 #include "api/common/geometry.slangi"

@@ -30,6 +30,9 @@ struct RtDirectLightingSample
 struct RtDirectLighting
 {
     /// shadow ray 只需要判断是否有任何可见几何遮挡，不运行 closest-hit。
+    ///
+    /// 这里用 RayQuery inline path，是为了把 NEE 阴影测试保持在 raygen helper 内，不增加额外
+    /// SBT miss/hit group。非 opaque triangle 直接 commit，当前语义等价于“任何 alpha 后仍提交的候选都遮挡”。
     static bool is_occluded(RaytracingAccelerationStructure tlas, const RayDesc ray)
     {
         RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> rq;
@@ -52,6 +55,7 @@ struct RtDirectLighting
     /// 对 HDRI 做一次均匀采样并返回 NEE 贡献。
     ///
     /// 当前 EnvMap 还没有重要性采样表，因此这里保持旧路径的 uniform sphere PDF 和 power heuristic。
+    /// delta surface 跳过 NEE，因为它们的贡献由路径追踪的 deterministic reflection/refraction 继续推进。
     static RtDirectLightingSample sample_hdri(
         inout RtTracePayload payload,
         const RtSurfaceHit surface,
@@ -87,6 +91,7 @@ struct RtDirectLighting
         }
 
         const float2 env_uv = EnvMap::dir_to_uv(light_dir);
+        // sky texture 仍沿用主 RT 的固定强度缩放；MIS 权重只处理采样策略概率，不负责曝光。
         const float3 li = BindlessSrv::sample_level(gpu_scene.sky, env_uv, gpu_scene.sky_sampler_type, 0.0f).xyz * 8.0f;
         const float3 brdf_cos = RtMaterialSampler::eval_brdf(surface, view_dir, light_dir);
         const float brdf_pdf = RtMaterialSampler::eval_brdf_pdf(surface, view_dir, light_dir);

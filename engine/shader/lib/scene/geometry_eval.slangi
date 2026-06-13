@@ -4,6 +4,10 @@
 
 /// GeometryEval 只承载 shader 侧几何读取与插值逻辑。
 /// api/common/geometry.slangi 保持纯 ABI 数据，避免 CPU 绑定同时暴露运行时代码。
+///
+/// DXR/Slang 提供的 barycentrics 只包含第二、第三个顶点权重；第一个权重需要按
+/// `1 - x - y` 重建。所有插值都保持在 object/local space，world transform 由 entry shader
+/// 根据 pass 需求显式执行。
 struct GeometryEval
 {
     [ForceInline]
@@ -42,6 +46,7 @@ struct GeometryEval
 
     static float3 interp_position(geometry::Geometry* geom, uint3 tri, float2 barycentrics)
     {
+        // DXR triangle barycentrics 约定为 (b, c)，第一个顶点权重 a 需要显式补回。
         const float a = 1.f - barycentrics.x - barycentrics.y;
         const float b = barycentrics.x;
         const float c = barycentrics.y;
@@ -50,6 +55,7 @@ struct GeometryEval
 
     static float3 interp_normal(geometry::Geometry* geom, uint3 tri, float2 barycentrics)
     {
+        // 法线插值后必须归一化，否则非均匀三角形上的 BRDF / GBuffer normal 会随面积变化。
         const float a = 1.f - barycentrics.x - barycentrics.y;
         const float b = barycentrics.x;
         const float c = barycentrics.y;

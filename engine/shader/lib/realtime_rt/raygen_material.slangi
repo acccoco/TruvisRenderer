@@ -13,11 +13,17 @@
 /// delta 路径的 `brdf_pdf` 固定为 1，不参与 MIS；非 delta 路径使用混合 BRDF PDF。
 struct RtMaterialSample
 {
+    /// 下一跳 ray origin，已按方向做微小偏移以降低自交概率。
     float3 origin;
+    /// 下一跳 ray direction，世界空间单位向量。
     float3 direction;
+    /// 路径 throughput 乘子，通常为 BRDF*cos/pdf 或 delta Fresnel/透射颜色。
     float3 throughput;
+    /// 当前表面直接产生的 emission；raygen 会乘旧 throughput 累加。
     float3 emission;
+    /// true 表示材质采样已经终止路径。
     bool done;
+    /// 当前采样方向对应的 BRDF PDF，供后续 sky/emissive MIS 使用。
     float brdf_pdf;
 
     static RtMaterialSample make_default(const RtSurfaceHit surface, float3 ray_dir)
@@ -42,6 +48,7 @@ struct RtMaterialSampler
         out float3 out_throughput
     )
     {
+        // 简化 specular 路径使用 Schlick Fresnel 调制 throughput；它是 delta 事件，不参与 BRDF PDF 混合。
         out_dir = reflect(ray_dir, surface.forward_normal);
         const float reflectance = 0.8f;
         const float3 f0 = lerp(0.16f * reflectance * reflectance, surface.base_color, surface.metallic);
@@ -63,6 +70,7 @@ struct RtMaterialSampler
         out_dir = refract(ray_dir, surface.forward_normal, eta);
         if (length(out_dir) < 1e-6f)
         {
+            // 全内反射或数值失败交给调用方回退为镜面反射。
             out_dir = float3(0.0f);
             out_throughput = float3(0.0f);
             return false;
@@ -116,6 +124,7 @@ struct RtMaterialSampler
 
         if (choose_diffuse)
         {
+            // diffuse 分支使用 cosine hemisphere sampling，因此 PDF 为 cos(theta)/pi。
             const float3 local_dir = Sample::get_cos_hemisphere_sample(payload.random_seed);
             float3 tangent, bitangent;
             Sample::create_local_coord(surface.forward_normal, tangent, bitangent);
@@ -123,6 +132,7 @@ struct RtMaterialSampler
         }
         else
         {
+            // glossy 分支按 GGX NDF 采样 half vector，再反射 view direction 得到出射方向。
             const float reflectance = 0.8f;
             const float3 f0 = lerp(0.16f * reflectance * reflectance, surface.base_color, surface.metallic);
             const float real_roughness = surface.roughness * surface.roughness;
@@ -141,6 +151,7 @@ struct RtMaterialSampler
 
         const float3 brdf_cos = eval_brdf(surface, view_dir, sample.direction);
         sample.brdf_pdf = eval_brdf_pdf(surface, view_dir, sample.direction);
+        // throughput 使用混合 BRDF 的 full PDF，保证 diffuse/specular 随机分支仍是无偏估计。
         sample.throughput = brdf_cos / max(sample.brdf_pdf, 1e-7f);
         sample.origin = surface.position + 0.0001f * sample.direction;
         return sample;
@@ -173,6 +184,9 @@ struct RtMaterialSampler
     }
 
     /// 计算给定方向的 BRDF PDF（用于 MIS）。
+    ///
+    /// diffuse/specular 混合概率与 `sample_diffuse` 中的随机分支保持一致，否则 NEE 的 MIS
+    /// 会低估或高估环境采样贡献。
     static float eval_brdf_pdf(const RtSurfaceHit surface, const float3 view_dir, const float3 light_dir)
     {
         if (surface.is_delta_path())
@@ -194,6 +208,8 @@ struct RtMaterialSampler
     }
 
     /// 评估 BRDF * cos(theta)，用于 NEE 直接光照贡献。
+    ///
+    /// 这里不乘 path throughput，也不除以 light PDF；这些权重由 direct lighting/path state 组合。
     static float3 eval_brdf(const RtSurfaceHit surface, const float3 view_dir, const float3 light_dir)
     {
         const float ndotl = max(dot(surface.forward_normal, light_dir), 0.0f);

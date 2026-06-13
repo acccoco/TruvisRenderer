@@ -4,6 +4,9 @@
 
 #include "./shadertoy.inc.glsl"
 
+// ShaderToy 适配 vertex shader。
+// 只负责生成全屏矩形和传递像素坐标；真正的效果代码通过 `main.frag` include works 下的示例。
+
 // 定义全屏矩形的 6 个顶点（两个三角形）
 const vec3 positions[6] = vec3[](
     vec3(-1.0, -1.0, 0.0),  // 左下

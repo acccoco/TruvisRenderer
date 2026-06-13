@@ -3,7 +3,10 @@
 #include "lib/scene/material_access.slangi"
 #include "lib/scene/scene_access.slangi"
 
-/// 根据 texture 的透明度，判断光线是否应该穿过
+/// realtime RT alpha cutout any-hit。
+///
+/// 这里只决定候选三角形是否被忽略，不写 radiance/path 状态。透明材质的折射/反射仍由
+/// closest-hit 写入 surface 后交给 raygen 材质采样处理。
 [shader("anyhit")]
 void trans_any(inout RtTracePayload payload, in BuiltInTriangleIntersectionAttributes attr)
 {

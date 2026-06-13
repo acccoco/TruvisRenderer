@@ -2,17 +2,33 @@
 
 #include "api/pass/raycast.slangi"
 
+/// 同步 raycast shader 的共享 push constant。
+///
+/// 该 pipeline 由 runtime 私有 `RayCastService` 在 `after_prepare` 阶段提交；它不进入普通
+/// RenderGraph，因此所有输入/输出 buffer 契约都集中在 `api/pass/raycast.slangi`。
 [[vk::push_constant]]
 raycast::PushConstants push_const;
 
+/// TraceRay 在 raycast pipeline 内传递的最小 payload。
+///
+/// closest-hit 只写 GPU readback 需要的原始命中数据；raygen 再把它转成 `RawHit` 数组。
+/// CPU handle 还原必须留在 runtime 侧，shader 只认识稳定 GPU instance slot。
 struct RayCastPayload
 {
+    /// 是否命中经过 alpha cutout 后仍有效的几何。
     bool hit;
+    /// 稳定 GPU instance slot。
     uint instance_slot;
+    /// instance-local submesh index。
     uint submesh_index;
+    /// primitive index。
     uint primitive_index;
+    /// 世界空间命中位置。
     float3 position_ws;
+    /// world-space forward normal，用于拾取结果显示或后续相机 pivot。
     float3 normal_ws;
+    /// 命中点 UV。
     float2 uv;
+    /// ray t 值。
     float hit_t;
 };

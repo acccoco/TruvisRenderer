@@ -11,7 +11,9 @@
 
 struct RtRussianRouletteResult
 {
+    /// false 表示路径终止，raygen 不再发出下一跳光线。
     bool survived;
+    /// survivor 的 throughput 补偿系数；IC 记录路径也需要同步缩放。
     float throughput_scale;
 
     static RtRussianRouletteResult keep()
@@ -25,9 +27,13 @@ struct RtRussianRouletteResult
 
 struct RtPathState
 {
+    /// 当前路径累计 radiance。
     float3 radiance;
+    /// 下一次命中或 miss 的路径 throughput。
     float3 throughput;
+    /// 上一次非 delta BRDF 采样的 PDF，用于 miss/emissive 的 MIS 权重。
     float prev_brdf_pdf;
+    /// 上一次事件是否为 delta 路径；delta 路径不与环境采样做 MIS。
     bool prev_is_delta;
 
     static RtPathState make()
@@ -50,6 +56,7 @@ struct RtPathState
     float3 add_sky_miss(uint depth, float3 sky_color)
     {
         float3 contribution;
+        // camera ray 或 delta 链路命中 sky 时不存在可竞争的 NEE 策略，直接累加环境 radiance。
         if (prev_is_delta || depth == 0)
         {
             contribution = sky_color * throughput;
@@ -75,6 +82,7 @@ struct RtPathState
     [mutating]
     void apply_material_sample(const RtSurfaceHit surface, const RtMaterialSample sample)
     {
+        // emission 在材质采样阶段乘当前 throughput；后续 throughput 只影响下一跳。
         radiance += sample.emission * throughput;
         throughput *= sample.throughput;
         prev_brdf_pdf = sample.brdf_pdf;
@@ -84,12 +92,14 @@ struct RtPathState
     [mutating]
     RtRussianRouletteResult apply_russian_roulette(inout RtTracePayload payload, uint depth)
     {
+        // 前几跳保留完整路径，避免近处直接/一次反弹贡献被 Russian roulette 引入高方差。
         if (depth < 3)
         {
             return RtRussianRouletteResult::keep();
         }
 
         RtRussianRouletteResult result;
+        // 用最大通道作为存活概率，既保守保留高能量路径，也避免 RGB throughput 改变色相。
         float p = max(throughput.x, max(throughput.y, throughput.z));
         p = clamp(p, 0.05f, 0.95f);
         if (Random::rnd(payload.random_seed) > p)

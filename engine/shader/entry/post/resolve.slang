@@ -1,6 +1,10 @@
 #include "api/pass/resolve.slangi"
 #include "lib/core/bindless.slangi"
 
+/// graphics resolve 入口。
+///
+/// vertex shader 在目标 color attachment 上生成一个指定像素区域的 quad；fragment shader 从
+/// bindless SRV 采样源图像。它用于把 main view、DLSS output 或 debug image 合成到 swapchain。
 [[vk::push_constant]]
 resolve::PushConstant g_params;
 
@@ -49,6 +53,7 @@ VsOutput vsmain(uint vertexID: SV_VertexID)
     // 将像素坐标转换为 NDC 坐标 [-1, 1]
     // NDC.x = (pixelPos.x / target_size.x) * 2.0 - 1.0
     // NDC.y = (pixelPos.y / target_size.y) * 2.0 - 1.0
+    // 这里依赖上层 viewport/scissor 已匹配目标 attachment，不在 shader 内做裁剪。
     float2 ndc = (pixelPos / g_params.target_size) * 2.0 - 1.0;
 
     VsOutput output;

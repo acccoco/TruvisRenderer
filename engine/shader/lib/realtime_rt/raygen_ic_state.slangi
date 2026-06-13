@@ -14,9 +14,13 @@
 
 struct RtIrradianceCacheState
 {
+    /// 已经过的 diffuse 表面数，用于决定何时允许查询/写入 IC。
     uint diffuse_bounce_count;
+    /// 本路径结束时需要更新已有 entry。
     bool pending_update;
+    /// 本路径结束时需要插入新 entry。
     bool pending_insert;
+    /// 每条路径最多查询一次 IC，避免多次查询改变主路径概率结构。
     bool has_query;
     uint entry_index;
     float3 position;
@@ -101,6 +105,7 @@ struct RtIrradianceCacheState
 
         if (found && max_weight > RtIrradianceCacheTrace::IC_LOOKUP_THRESHOLD)
         {
+            // 命中高可信缓存时以概率方式终止路径；剩余概率继续追踪并为缓存提供更新样本。
             if (Random::rnd(payload.random_seed) < 0.7f)
             {
                 path.add_radiance(path.throughput * query_radiance);
@@ -116,6 +121,7 @@ struct RtIrradianceCacheState
         }
         else if (!found && push_const.spp_idx == 0)
         {
+            // 只让 spp 0 插入新 entry，避免同一帧多个 sample 在同一位置竞争分配过多 slot。
             pending_insert = true;
             begin_record(surface);
         }
@@ -126,6 +132,7 @@ struct RtIrradianceCacheState
     [mutating]
     void begin_record(const RtSurfaceHit surface)
     {
+        // 记录点以当前 diffuse 表面为原点；后续 radiance 使用相对 throughput 累积。
         position = surface.position;
         normal = surface.forward_normal;
         throughput = float3(1.0f);
@@ -200,6 +207,7 @@ struct RtIrradianceCacheState
     [mutating]
     void flush()
     {
+        // 写入延迟到 path 结束统一执行，保证记录到的是从 query/insert 表面之后的完整间接贡献。
         if (!enabled() || !has_pending_write())
         {
             return;

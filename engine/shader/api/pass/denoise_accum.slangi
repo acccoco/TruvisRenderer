@@ -1,7 +1,10 @@
 #include "api/common/mod.slangi"
 
-/// 降噪累积 Pass 的数据定义
-/// 对单帧 RT 结果进行增强联合双边滤波降噪，然后累积到 accum_image 中
+/// 降噪累积 Pass 的数据定义。
+///
+/// 该 pass 是 legacy 后处理路径：读取单帧 RT 输出和 GBuffer，先做增强联合双边滤波，再写回
+/// 累积 image。所有 image 都通过 bindless UAV 访问，因此调用方必须在 RenderGraph 中声明
+/// storage read/write 状态；shader 侧只负责像素内算法，不负责同步。
 /// 
 /// 增强特性：
 /// - 世界空间位置权重（比纯深度差异更能保护边缘）
@@ -13,6 +16,10 @@ namespace denoise_accum
 static const int SHADER_X = 8;
 static const int SHADER_Y = 8;
 
+/// compute dispatch 的 push constant。
+///
+/// 字段顺序对应 Rust 侧 `gpu::denoise_accum::PushConstant`，包含显式 padding 来满足 Slang /
+/// C++ / Rust 共同布局；新增字段必须同步检查生成绑定。
 struct PushConstant
 {
     /// 单帧 RT 输出（只读）
@@ -28,18 +35,18 @@ struct PushConstant
     /// Padding 使 image_size (uint2) 8 字节对齐
     uint _padding0;
 
-    /// 图像尺寸
+    /// 当前 dispatch 有效图像尺寸；线程越界时必须直接 return。
     uint2 image_size;
     /// 累积帧数（0 表示第一帧，直接复制）
     uint accum_frames;
     /// 是否启用降噪（0 = 禁用，1 = 启用）
     uint denoise_enabled;
 
-    /// 颜色差异的 sigma 参数
+    /// 颜色差异的 sigma 参数，作用于 noisy RT color。
     float sigma_color;
-    /// 深度差异的 sigma 参数
+    /// 深度差异的 sigma 参数，当前按相对线性深度差计算。
     float sigma_depth;
-    /// 法线差异的 sigma 参数
+    /// 法线差异的 sigma 参数，粗糙度自适应开启时会被动态缩放。
     float sigma_normal;
     /// 滤波核半径（基础值，粗糙度自适应时会动态调整）
     int kernel_radius;
@@ -50,16 +57,16 @@ struct PushConstant
 
     // ========== 增强联合双边滤波参数 ==========
     
-    /// Albedo 差异的 sigma 参数
+    /// Albedo 差异的 sigma 参数，用于减少跨材质边界的颜色泄漏。
     float sigma_albedo;
-    /// 世界空间位置差异的 sigma 参数（归一化到 scene_scale）
+    /// 世界空间位置差异的 sigma 参数（归一化到 scene_scale），比纯深度更能保护侧向边缘。
     float sigma_position;
     /// 场景尺度（用于归一化世界空间距离，如 Cornell Box 约 400）
     float scene_scale;
     
     // ========== 粗糙度自适应参数 ==========
     
-    /// 是否启用粗糙度自适应滤波（0 = 禁用，1 = 启用）
+    /// 是否启用粗糙度自适应滤波（0 = 禁用，1 = 启用）。
     uint roughness_adaptive_enabled;
     /// 粗糙度对滤波半径的影响因子（roughness=1 时半径放大倍数，默认 2.0）
     float roughness_radius_scale;

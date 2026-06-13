@@ -3,12 +3,19 @@
 namespace frame
 {
 
-/// 渲染需要的一些公用参数，每帧更新
+/// 每帧由 `RenderRuntime::prepare` 写入的全局渲染快照。
+///
+/// 该结构使用 `ScalarDataLayout` 绑定到 shader，字段顺序和 padding 同时是 CPU/Rust 与 GPU 的 ABI。
+/// projection / view 均采用项目现有 Vulkan 坐标约定；shader 侧不能在局部 pass 中重新解释矩阵含义。
 struct PerFrameData
 {
+    /// 当前帧无 jitter 投影矩阵。DLSS jitter 通过 `temporal_jitter_px` 单独进入 raygen。
     float4x4 projection;
+    /// 当前帧 view 矩阵。
     float4x4 view;
+    /// 当前帧 view 逆矩阵，用于从相机空间构建世界空间 primary ray。
     float4x4 inv_view;
+    /// 当前帧 projection 逆矩阵，用于从 NDC / clip 空间回推 view-space 方向。
     float4x4 inv_projection;
     /// 上一帧用于 motion vector 回溯的 view 矩阵。
     ///
@@ -19,11 +26,15 @@ struct PerFrameData
     float4x4 prev_projection;
 
     float3 camera_pos;
+    /// 从应用启动后的时间，单位毫秒；主要用于 sample shader 或调试动画。
     float time_ms;
 
+    /// 世界空间相机前向，用于 UI/debug 或不需要完整矩阵的 shader。
     float3 camera_forward;
+    /// 当前帧 delta，单位毫秒。
     float delta_time_ms;
 
+    /// 当前 render extent，单位像素；DLSS 开启时不一定等于最终 output extent。
     float2 resolution;
     /// DLSS temporal jitter，单位为 render target pixel。
     ///
@@ -32,8 +43,11 @@ struct PerFrameData
     float2 temporal_jitter_px;
     uint64_t frame_id;
 
-    /// 累计的帧数
+    /// 当前 view 可复用历史的连续帧数。
+    ///
+    /// 主 RT 路径当前不再做 progressive accumulation，但保留该字段给 legacy pass 与调试显示。
     uint accum_frames;
+    /// 显式 padding 保持 16 字节对齐，避免 Rust 绑定和 shader 常量缓冲布局分歧。
     uint _padding_0;
     uint _padding_1;
     uint _padding_2;

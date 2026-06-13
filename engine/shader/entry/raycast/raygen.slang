@@ -1,5 +1,9 @@
 #include "./payload.slangi"
 
+/// 初始化 miss 状态。
+///
+/// sentinel 统一使用 `0xFFFFFFFF`，与 `raycast::RawHit` 的 miss 表示保持一致，便于 CPU readback
+/// 直接判断字段是否有效。
 RayCastPayload init_payload()
 {
     RayCastPayload payload = {};
@@ -28,6 +32,10 @@ raycast::RawHit make_miss()
     return raw;
 }
 
+/// 将 closest-hit payload 压平成 readback ABI。
+///
+/// 这里不做 instance slot -> CPU handle 转换；runtime 在 fence 等待后读取 raw hit，再结合
+/// `InstanceBridge` 做还原。
 raycast::RawHit make_hit(const RayCastPayload payload)
 {
     raycast::RawHit raw = {};
@@ -48,12 +56,14 @@ void main_ray_gen()
     const uint ray_idx = DispatchRaysIndex().x;
     if (ray_idx >= push_const.ray_count)
     {
+        // SBT dispatch 可以按对齐后的 ray 数发起，多余 invocation 不写输出 buffer。
         return;
     }
 
     const raycast::Ray input_ray = raycast::rays[ray_idx];
 
     RayDesc ray;
+    // 输入 ray 已经是 world space；shader 只归一化方向，保留 CPU 侧指定的 t_min/t_max。
     ray.Origin = input_ray.origin_ws;
     ray.Direction = normalize(input_ray.direction_ws);
     ray.TMin = input_ray.t_min;

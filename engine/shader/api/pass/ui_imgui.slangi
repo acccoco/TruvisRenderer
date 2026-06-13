@@ -3,12 +3,20 @@
 namespace ui_imgui
 {
 
+/// ImGui draw call push constant。
+///
+/// GUI backend 会按 ImGui draw command 更新 texture handle 和 scissor；ortho 矩阵把 ImGui
+/// display-space 坐标变换到 Vulkan clip space。字段布局需与 Rust 侧 `gpu::ui_imgui` 保持一致。
 struct PushConstant
 {
+    /// display-space -> clip-space 的正交投影矩阵。
     float4x4 ortho;
 
+    /// 当前 draw command 使用的字体图或用户注册 debug image。
     bindless::SrvHandle texture;
+    /// texture 对应的全局 sampler。
     bindless::ESamplerType texture_sampler_type;
+    /// 显式 padding，保持 push constant 布局稳定。
     int _padding_0;
     int _padding_1;
 };

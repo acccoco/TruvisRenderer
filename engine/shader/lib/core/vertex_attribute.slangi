@@ -2,6 +2,10 @@
 
 namespace soa
 {
+/// sample/raster 路径使用的 SoA 顶点输入布局。
+///
+/// location 编号必须和 Rust 侧 pipeline vertex layout 保持一致；这里不承载 scene buffer
+/// 读取逻辑，真正的运行时 mesh 访问由 `GeometryEval` 处理。
 struct VsInput
 {
     [[vk::location(0)]]
@@ -16,6 +20,7 @@ struct VsInput
 
 struct CoarseVertex
 {
+    /// 传给 fragment shader 的插值法线，仍处于 object/local 或调用方约定空间。
     [[vk::location(0)]]
     float3 Normal : NORMAL;
     [[vk::location(1)]]
@@ -26,8 +31,10 @@ struct CoarseVertex
 
 struct VsOutput
 {
+    /// Vulkan clip-space 位置。
     float4 Pos : SV_POSITION;
 
+    /// 插值属性包，避免每个 sample shader 重复定义语义。
     CoarseVertex coarse_vertex : CoarseVertex;
 };
 

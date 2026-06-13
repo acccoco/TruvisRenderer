@@ -1,25 +1,30 @@
 #pragma once
 #include "lib/core/common.slangi"
 
+/// shader 侧轻量随机数工具。
+///
+/// 设计目标是“每像素、每路径状态可复制”，不是加密随机。raygen 先用 TEA 从像素和 frame/sample
+/// 生成 decorrelated seed，后续所有随机采样都通过 inout seed 单调推进，避免多个模块各自维护随机状态。
 struct Random
 {
+    /// 当前 LCG 状态；调用 `next` 或静态 `rnd` 都会推进它。
     uint rng_stage;
     __init(uint a, uint b)
     {
         rng_stage = tea(a, b);
     }
 
-    /// 获得下一个随机数，uniform[0, 1]
+    /// 获得下一个随机数，uniform[0, 1)。
     [mutating]
     float next()
     {
         return rnd(rng_stage);
     }
 
-    // 生成随机数的初始种子
-    // 使用 Tiny Encryption Algorithm 的 16 轮变换，
-    // 从两个无符号整数生成随机无符号整数。参见 Zafar, Olano, and Curtis:
-    // "GPU Random Numbers via the Tiny Encryption Algorithm"
+    // 生成随机数的初始种子。
+    // 使用 Tiny Encryption Algorithm 的 16 轮变换，把像素线性 index 和 frame/sample index
+    // 混合成初始状态。它的职责是打散相邻像素相关性，后续采样仍由 LCG 快速推进。
+    // 参见 Zafar, Olano, and Curtis: "GPU Random Numbers via the Tiny Encryption Algorithm"。
     static uint tea(uint v0, uint v1)
     {
         uint s0 = 0;
@@ -34,8 +39,8 @@ struct Random
         return v0;
     }
 
-    // 根据当前 RNG 状态生成 [0, 2^24) 范围内的随机无符号整数
-    // 使用 Numerical Recipes 的线性同余生成器
+    // 根据当前 RNG 状态生成 [0, 2^24) 范围内的随机无符号整数。
+    // 使用 Numerical Recipes 的线性同余生成器；低 24 bit 正好可稳定转换为 float 随机数。
     static uint lcg(inout uint pre_state)
     {
         uint LCG_A = 1664525u;
@@ -44,13 +49,15 @@ struct Random
         return pre_state & 0x00FFFFFF;
     }
 
-    // 根据当前 RNG 状态生成 [0, 1) 范围内的随机浮点数
+    // 根据当前 RNG 状态生成 [0, 1) 范围内的随机浮点数，并原地推进 seed。
     static float rnd(inout uint pre_state)
     {
         return (float(lcg(pre_state)) / float(0x01000000));
     }
 
-    /// 生成符合高斯分布的随机数：中心为 0，标准差为 1
+    /// 生成符合高斯分布的随机数：中心为 0，标准差为 1。
+    ///
+    /// 使用 Box-Muller 变换；调用方应记住它一次消耗两个 uniform random。
     static float2 rand_gaussian(inout uint pre_state)
     {
         // 近似均匀分布于 (0,1]，确保取值永不为 0

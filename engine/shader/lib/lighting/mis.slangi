@@ -1,7 +1,10 @@
 /// @file mis.slangi
 /// @brief 多重重要性采样 (MIS) 工具函数
 ///
-/// 提供 MIS 权重计算，用于结合不同采样策略
+/// 提供 MIS 权重计算，用于结合不同采样策略。
+///
+/// 当前 RT 路径用它把 BRDF 采样和 HDRI 均匀采样组合起来。所有函数都对分母做 epsilon
+/// 保护，避免极小 PDF 在 GPU 上生成 NaN 并污染后续累积。
 
 #pragma once
 
