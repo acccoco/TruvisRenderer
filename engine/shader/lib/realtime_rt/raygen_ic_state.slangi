@@ -1,0 +1,229 @@
+/// @file raygen_ic_state.slangi
+/// @brief raygen 中 Irradiance Cache 实验路径的状态推进。
+
+#pragma once
+
+#include "lib/realtime_rt/payload.slangi"
+#include "lib/core/random.slangi"
+#include "lib/lighting/env_map.slangi"
+#include "lib/lighting/mis.slangi"
+#include "lib/realtime_rt/irradiance_cache.slangi"
+#include "lib/realtime_rt/raygen_direct_lighting.slangi"
+#include "lib/realtime_rt/raygen_material.slangi"
+#include "lib/realtime_rt/raygen_path_state.slangi"
+
+struct RtIrradianceCacheState
+{
+    uint diffuse_bounce_count;
+    bool pending_update;
+    bool pending_insert;
+    bool has_query;
+    uint entry_index;
+    float3 position;
+    float3 normal;
+    float3 throughput;
+    float3 radiance;
+
+    static RtIrradianceCacheState make()
+    {
+        RtIrradianceCacheState state;
+        state.diffuse_bounce_count = 0;
+        state.pending_update = false;
+        state.pending_insert = false;
+        state.has_query = false;
+        state.entry_index = 0xFFFFFFFF;
+        state.position = float3(0.0f);
+        state.normal = float3(0.0f);
+        state.throughput = float3(1.0f);
+        state.radiance = float3(0.0f);
+        return state;
+    }
+
+    bool enabled()
+    {
+        return push_const.ic_enabled != 0;
+    }
+
+    bool has_pending_write()
+    {
+        return pending_update || pending_insert;
+    }
+
+    /// IC 追踪模式下，足够 diffuse 的后续表面强制走纯 diffuse 分支，提高缓存样本一致性。
+    [mutating]
+    void force_diffuse_surface(inout RtSurfaceHit surface)
+    {
+        if (
+            enabled() &&
+            diffuse_bounce_count >= realtime_rt::IC_MIN_DIFFUSE_BOUNCES &&
+            RtIrradianceCacheTrace::is_diffuse_surface(surface.roughness, surface.metallic)
+        )
+        {
+            surface.roughness = 1.0f;
+            surface.metallic = 0.0f;
+            surface.material_type = MaterialType::DIFFUSE;
+        }
+    }
+
+    [mutating]
+    bool try_resolve_or_schedule(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface,
+        inout RtPathState path
+    )
+    {
+        if (
+            !enabled() ||
+            diffuse_bounce_count < realtime_rt::IC_MIN_DIFFUSE_BOUNCES ||
+            !RtIrradianceCacheTrace::is_diffuse_surface(surface.roughness, surface.metallic) ||
+            has_pending_write() ||
+            has_query
+        )
+        {
+            return false;
+        }
+
+        float3 query_radiance;
+        float query_weight;
+        uint max_weight_entry_index;
+        float max_weight;
+        bool found = RtIrradianceCacheTrace::lookup(
+            push_const.ic_table,
+            push_const.ic_entry_pool,
+            surface.position,
+            surface.forward_normal,
+            query_radiance,
+            query_weight,
+            max_weight_entry_index,
+            max_weight
+        );
+        has_query = true;
+
+        if (found && max_weight > RtIrradianceCacheTrace::IC_LOOKUP_THRESHOLD)
+        {
+            if (Random::rnd(payload.random_seed) < 0.7f)
+            {
+                path.add_radiance(path.throughput * query_radiance);
+                return true;
+            }
+        }
+
+        if (found && max_weight > RtIrradianceCacheTrace::IC_UPDATE_THRESHOLD)
+        {
+            pending_update = true;
+            entry_index = max_weight_entry_index;
+            begin_record(surface);
+        }
+        else if (!found && push_const.spp_idx == 0)
+        {
+            pending_insert = true;
+            begin_record(surface);
+        }
+
+        return false;
+    }
+
+    [mutating]
+    void begin_record(const RtSurfaceHit surface)
+    {
+        position = surface.position;
+        normal = surface.forward_normal;
+        throughput = float3(1.0f);
+        radiance = float3(0.0f);
+    }
+
+    [mutating]
+    void record_sky_miss(uint depth, float3 sky_color, const RtPathState path)
+    {
+        if (!has_pending_write())
+        {
+            return;
+        }
+
+        if (path.prev_is_delta || depth == 0)
+        {
+            radiance += sky_color * throughput;
+        }
+        else
+        {
+            const float env_pdf = EnvMap::uniform_pdf();
+            const float mis_weight = Mis::power_heuristic(path.prev_brdf_pdf, env_pdf);
+            radiance += sky_color * throughput * mis_weight;
+        }
+    }
+
+    [mutating]
+    void record_emissive(const RtSurfaceHit surface)
+    {
+        if (has_pending_write())
+        {
+            radiance += surface.emissive * throughput;
+        }
+    }
+
+    [mutating]
+    void record_direct_lighting(const RtDirectLightingSample sample)
+    {
+        if (has_pending_write() && sample.valid)
+        {
+            radiance += throughput * sample.relative_contribution;
+        }
+    }
+
+    [mutating]
+    void apply_material_sample(const RtMaterialSample sample)
+    {
+        if (has_pending_write())
+        {
+            throughput *= sample.throughput;
+        }
+    }
+
+    [mutating]
+    void scale_throughput(float scale)
+    {
+        if (has_pending_write())
+        {
+            throughput *= scale;
+        }
+    }
+
+    [mutating]
+    void note_surface_after_sample(const RtSurfaceHit surface)
+    {
+        if (RtIrradianceCacheTrace::is_diffuse_surface(surface.roughness, surface.metallic))
+        {
+            diffuse_bounce_count++;
+        }
+    }
+
+    [mutating]
+    void flush()
+    {
+        if (!enabled() || !has_pending_write())
+        {
+            return;
+        }
+
+        if (pending_update)
+        {
+            RtIrradianceCacheTrace::update(
+                push_const.ic_entry_pool,
+                entry_index,
+                position,
+                normal,
+                radiance
+            );
+        }
+        else if (pending_insert && push_const.spp_idx == 0)
+        {
+            RtIrradianceCacheTrace::insert(
+                push_const.ic_table,
+                push_const.ic_entry_pool,
+                position,
+                normal,
+                radiance
+            );
+        }
+    }
+};

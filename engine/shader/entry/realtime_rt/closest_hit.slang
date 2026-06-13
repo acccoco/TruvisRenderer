@@ -25,7 +25,7 @@ struct RtMaterialClassifier
 };
 
 [shader("closesthit")]
-void main_closest_hit(inout HitPayload payload, in BuiltInTriangleIntersectionAttributes attr)
+void main_closest_hit(inout RtTracePayload payload, in BuiltInTriangleIntersectionAttributes attr)
 {
     const uint instance_id = InstanceID();
     const uint geometry_id = GeometryIndex();
@@ -61,29 +61,25 @@ void main_closest_hit(inout HitPayload payload, in BuiltInTriangleIntersectionAt
         base_color = MaterialAccess::base_color(mat, interp_uv);
     }
 
-    // ========== 填充命中信息 ==========
+    // closest-hit 只整理一次几何表面事件；path 积分状态由 raygen 侧状态对象持有。
     payload.hit = true;
 
-    // 几何信息
-    payload.info.position = world_pos;
-    payload.info.object_position = interp_pos;
-    payload.info.instance_id = instance_id;
-    payload.info.forward_normal = world_normal;
-    payload.info.origin_normal = origin_world_normal;
-    payload.info.object_normal = interp_normal;
-    payload.info.uv = interp_uv;
-    payload.info.hit_t = RayTCurrent();  // 线性深度
+    payload.surface.position = world_pos;
+    payload.surface.object_position = interp_pos;
+    payload.surface.instance_id = instance_id;
+    payload.surface.forward_normal = world_normal;
+    payload.surface.origin_normal = origin_world_normal;
+    payload.surface.object_normal = interp_normal;
+    payload.surface.uv = interp_uv;
+    payload.surface.hit_t = RayTCurrent();
 
-    // 材质参数
-    payload.info.base_color = base_color;
-    payload.info.metallic = mat.metallic;
-    payload.info.roughness = mat.roughness;
-    payload.info.opaque = mat.opaque;
-    payload.info.ior = 1.5f; // 默认折射率，后续可从材质中读取
+    payload.surface.base_color = base_color;
+    payload.surface.metallic = mat.metallic;
+    payload.surface.roughness = mat.roughness;
+    payload.surface.opaque = mat.opaque;
+    payload.surface.ior = 1.5f; // 默认折射率，后续可从材质中读取
 
-    // 自发光
-    payload.info.emissive = mat.emissive * base_color;
+    payload.surface.emissive = mat.emissive * base_color;
 
-    // 材质类型
-    payload.info.material_type = RtMaterialClassifier::classify(mat);
+    payload.surface.material_type = RtMaterialClassifier::classify(mat);
 }

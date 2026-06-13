@@ -1,0 +1,158 @@
+/// @file raygen_debug_state.slangi
+/// @brief realtime RT debug channel 的早退与累积输出状态。
+
+#pragma once
+
+#include "lib/realtime_rt/payload.slangi"
+#include "lib/realtime_rt/irradiance_cache.slangi"
+
+struct RtDebugAccumulator
+{
+    float3 nee_radiance;
+    float3 emissive_radiance;
+    float3 hdri_radiance;
+    float3 nee_bounce1_radiance;
+    float3 nee_bounce2_radiance;
+
+    float3 first_hit_position;
+    float3 first_hit_normal;
+    bool first_hit_recorded;
+
+    static RtDebugAccumulator make()
+    {
+        RtDebugAccumulator state;
+        state.nee_radiance = float3(0.0f);
+        state.emissive_radiance = float3(0.0f);
+        state.hdri_radiance = float3(0.0f);
+        state.nee_bounce1_radiance = float3(0.0f);
+        state.nee_bounce2_radiance = float3(0.0f);
+        state.first_hit_position = float3(0.0f);
+        state.first_hit_normal = float3(0.0f);
+        state.first_hit_recorded = false;
+        return state;
+    }
+
+    static float3 encode_normal(float3 normal)
+    {
+        return normal * 0.5f + 0.5f;
+    }
+
+    /// 处理只依赖首次命中表面数据的 debug channel。
+    static bool try_surface_channel(const RtSurfaceHit surface, uint channel, out float3 out_color)
+    {
+        out_color = float3(0.0f);
+        if (channel == 0)
+        {
+            return false;
+        }
+        if (channel == 1)
+        {
+            out_color = encode_normal(surface.forward_normal);
+            return true;
+        }
+        if (channel == 10)
+        {
+            out_color = encode_normal(surface.origin_normal);
+            return true;
+        }
+        if (channel == 11)
+        {
+            out_color = encode_normal(surface.object_normal);
+            return true;
+        }
+        if (channel == 2)
+        {
+            out_color = surface.base_color;
+            return true;
+        }
+        return false;
+    }
+
+    [mutating]
+    void record_first_hit(const RtSurfaceHit surface)
+    {
+        if (!first_hit_recorded)
+        {
+            first_hit_position = surface.position;
+            first_hit_normal = surface.forward_normal;
+            first_hit_recorded = true;
+        }
+    }
+
+    [mutating]
+    void record_nee(uint depth, float3 contribution)
+    {
+        nee_radiance += contribution;
+        if (depth == 0)
+        {
+            nee_bounce1_radiance = contribution;
+        }
+        else if (depth == 1)
+        {
+            nee_bounce2_radiance = contribution;
+        }
+    }
+
+    [mutating]
+    void record_emissive(float3 contribution)
+    {
+        emissive_radiance += contribution;
+    }
+
+    [mutating]
+    void record_hdri(float3 contribution)
+    {
+        hdri_radiance += contribution;
+    }
+
+    /// 根据最终 debug channel 选择输出。
+    ///
+    /// channel 9 查询的是首次命中点的 IC 结果，必须等路径完成后再执行，避免改变主路径采样状态。
+    float3 resolve(uint channel, float3 path_radiance)
+    {
+        if (channel == 4)
+        {
+            return nee_radiance;
+        }
+        if (channel == 5)
+        {
+            return emissive_radiance;
+        }
+        if (channel == 6)
+        {
+            return hdri_radiance;
+        }
+        if (channel == 7)
+        {
+            return nee_bounce1_radiance;
+        }
+        if (channel == 8)
+        {
+            return nee_bounce2_radiance;
+        }
+        if (channel == 9)
+        {
+            if (!first_hit_recorded)
+            {
+                return float3(0.0f);
+            }
+
+            float3 ic_query_radiance;
+            float ic_weight;
+            uint ic_max_weight_entry_index;
+            float ic_max_weight;
+            bool ic_found = RtIrradianceCacheTrace::lookup(
+                push_const.ic_table,
+                push_const.ic_entry_pool,
+                first_hit_position,
+                first_hit_normal,
+                ic_query_radiance,
+                ic_weight,
+                ic_max_weight_entry_index,
+                ic_max_weight
+            );
+            return ic_found ? ic_query_radiance : float3(0.0f);
+        }
+        return path_radiance;
+    }
+};

@@ -40,7 +40,7 @@ struct RtGBufferData
 
 /// 从命中信息构建 GBuffer 数据
 /// @param position 世界空间命中位置
-/// @param normal world-space forward/shading 法线（应为 HitInfo.forward_normal）
+/// @param normal world-space forward/shading 法线（应为 RtSurfaceHit.forward_normal）
 /// @param linear_depth 线性深度（光线 t 值）
 /// @param albedo 基础颜色
 /// @param metallic 金属度

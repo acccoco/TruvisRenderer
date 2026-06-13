@@ -5,7 +5,7 @@
 
 /// 根据 texture 的透明度，判断光线是否应该穿过
 [shader("anyhit")]
-void trans_any(inout HitPayload payload, in BuiltInTriangleIntersectionAttributes attr)
+void trans_any(inout RtTracePayload payload, in BuiltInTriangleIntersectionAttributes attr)
 {
     const uint instance_id = InstanceID();
     const uint geometry_id = GeometryIndex();

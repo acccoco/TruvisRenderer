@@ -1,0 +1,100 @@
+/// @file raygen_direct_lighting.slangi
+/// @brief raygen path loop 的直接光照采样。
+
+#pragma once
+
+#include "lib/realtime_rt/payload.slangi"
+#include "lib/core/bindless.slangi"
+#include "lib/lighting/env_map.slangi"
+#include "lib/lighting/mis.slangi"
+#include "lib/realtime_rt/raygen_material.slangi"
+
+struct RtDirectLightingSample
+{
+    /// 当前 path throughput 加权后的实际贡献。
+    float3 contribution;
+    /// 未乘 path throughput 的局部直接光照贡献，供 IC 在记录点使用自己的相对 throughput 累积。
+    float3 relative_contribution;
+    bool valid;
+
+    static RtDirectLightingSample empty()
+    {
+        RtDirectLightingSample sample;
+        sample.contribution = float3(0.0f);
+        sample.relative_contribution = float3(0.0f);
+        sample.valid = false;
+        return sample;
+    }
+};
+
+struct RtDirectLighting
+{
+    /// shadow ray 只需要判断是否有任何可见几何遮挡，不运行 closest-hit。
+    static bool is_occluded(RaytracingAccelerationStructure tlas, const RayDesc ray)
+    {
+        RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> rq;
+        rq.TraceRayInline(
+            tlas,
+            RAY_FLAG_NONE,
+            0xFF,
+            ray
+        );
+        while (rq.Proceed())
+        {
+            if (rq.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE)
+            {
+                rq.CommitNonOpaqueTriangleHit();
+            }
+        }
+        return rq.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+    }
+
+    /// 对 HDRI 做一次均匀采样并返回 NEE 贡献。
+    ///
+    /// 当前 EnvMap 还没有重要性采样表，因此这里保持旧路径的 uniform sphere PDF 和 power heuristic。
+    static RtDirectLightingSample sample_hdri(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface,
+        const float3 view_dir,
+        const float3 throughput
+    )
+    {
+        RtDirectLightingSample result = RtDirectLightingSample::empty();
+        if (surface.is_delta_path())
+        {
+            return result;
+        }
+
+        float3 light_dir;
+        float env_pdf;
+        EnvMap::sample_uniform(payload.random_seed, light_dir, env_pdf);
+
+        const float ndotl = dot(surface.forward_normal, light_dir);
+        if (ndotl <= 0.0f)
+        {
+            return result;
+        }
+
+        RayDesc shadow_ray;
+        shadow_ray.Origin = surface.position + 0.001f * light_dir;
+        shadow_ray.Direction = light_dir;
+        shadow_ray.TMin = 0.001f;
+        shadow_ray.TMax = 10000.0f;
+
+        if (is_occluded(realtime_rt::rt_tlas, shadow_ray))
+        {
+            return result;
+        }
+
+        const float2 env_uv = EnvMap::dir_to_uv(light_dir);
+        const float3 li = BindlessSrv::sample_level(gpu_scene.sky, env_uv, gpu_scene.sky_sampler_type, 0.0f).xyz * 8.0f;
+        const float3 brdf_cos = RtMaterialSampler::eval_brdf(surface, view_dir, light_dir);
+        const float brdf_pdf = RtMaterialSampler::eval_brdf_pdf(surface, view_dir, light_dir);
+        const float mis_weight = Mis::power_heuristic(env_pdf, brdf_pdf);
+
+        result.relative_contribution = li * brdf_cos / max(env_pdf, 1e-7f) * mis_weight;
+        result.contribution = throughput * result.relative_contribution;
+        result.valid = true;
+        return result;
+    }
+};

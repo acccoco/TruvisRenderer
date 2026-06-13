@@ -1,0 +1,162 @@
+/// @file raygen_view.slangi
+/// @brief raygen 的 view、depth 与 motion-vector 相关计算。
+
+#pragma once
+
+#include "lib/realtime_rt/payload.slangi"
+#include "lib/realtime_rt/gbuffer.slangi"
+#include "lib/scene/geometry_eval.slangi"
+#include "lib/scene/scene_access.slangi"
+
+struct RtRaygenView
+{
+    /// 生成 primary camera ray。
+    ///
+    /// temporal jitter 只影响当前帧 primary ray；`per_frame_data.projection / prev_projection`
+    /// 保持无 jitter，保证 motion vector 语义稳定为 previous_pixel - current_pixel。
+    static RayDesc camera_ray(uint2 thread_id)
+    {
+        const float2 pixel_center = float2(thread_id) + float2(0.5f, 0.5f) + per_frame_data.temporal_jitter_px;
+        const float2 in_uv = pixel_center / float2(DispatchRaysDimensions().xy);
+        const float4 target_in_view = mul(
+            per_frame_data.inv_projection,
+            float4(in_uv.x * 2.0 - 1.0, 1.0 - in_uv.y * 2.0, 1.0, 1.0)
+        );
+        const float4 direction = mul(per_frame_data.inv_view, float4(normalize(target_in_view.xyz), 0.0));
+
+        RayDesc ray;
+        ray.Origin = per_frame_data.camera_pos;
+        ray.Direction = direction.xyz;
+        ray.TMin = 0.001f;
+        ray.TMax = 10000.0f;
+        return ray;
+    }
+
+    /// DLSS SR 使用 projection 后的 device depth；不要与 GBufferB.w 中的 ray hit_t 混用。
+    static float device_depth(float3 world_position)
+    {
+        const float4 view_position = mul(per_frame_data.view, float4(world_position, 1.0f));
+        const float4 clip_position = mul(per_frame_data.projection, view_position);
+        return saturate(clip_position.z / clip_position.w);
+    }
+
+    static bool is_projectable_clip(float4 clip_position)
+    {
+        return abs(clip_position.w) > 1e-6f;
+    }
+
+    static float2 clip_to_pixel(float4 clip_position)
+    {
+        const float2 ndc = clip_position.xy / clip_position.w;
+        const float2 uv = float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f);
+        return uv * per_frame_data.resolution;
+    }
+
+    static float4 project_world_to_clip(float3 world_position, float4x4 view, float4x4 projection)
+    {
+        const float4 view_position = mul(view, float4(world_position, 1.0f));
+        return mul(projection, view_position);
+    }
+
+    /// 计算 DLSS 使用的 pixel-space 2D motion vector。
+    ///
+    /// 方向约定为“当前像素回溯到上一帧位置”，即 previous_pixel - current_pixel。
+    static float2 motion_vector_pixels(float3 current_world_position, float3 previous_world_position)
+    {
+        const float4 current_clip = project_world_to_clip(
+            current_world_position,
+            per_frame_data.view,
+            per_frame_data.projection
+        );
+        const float4 previous_clip = project_world_to_clip(
+            previous_world_position,
+            per_frame_data.prev_view,
+            per_frame_data.prev_projection
+        );
+
+        if (!is_projectable_clip(current_clip) || !is_projectable_clip(previous_clip))
+        {
+            return float2(0.0f, 0.0f);
+        }
+
+        return clip_to_pixel(previous_clip) - clip_to_pixel(current_clip);
+    }
+
+    static float2 instance_motion_vector_pixels(uint instance_id, float3 object_position)
+    {
+        scene::Instance* instance = SceneAccess::instance(instance_id);
+        const float3 current_world_position = mul(instance.model, float4(object_position, 1.0f)).xyz;
+        const float3 previous_world_position = mul(instance.prev_model, float4(object_position, 1.0f)).xyz;
+        return motion_vector_pixels(current_world_position, previous_world_position);
+    }
+
+    /// 为 RR specular motion vectors 追踪一次镜面方向上的虚拟几何。
+    ///
+    /// 未命中时返回零向量；这是 RR 可接受的保守 fallback，比复用 primary motion 更不容易把
+    /// 错误历史强行拖到反射区域。
+    static float2 specular_motion_vector_pixels(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
+    {
+        const float3 reflection_dir = normalize(reflect(normalize(primary_ray_dir), primary_hit.forward_normal));
+        RayDesc specular_ray;
+        specular_ray.Origin = primary_hit.position + 0.001f * reflection_dir;
+        specular_ray.Direction = reflection_dir;
+        specular_ray.TMin = 0.001f;
+        specular_ray.TMax = 10000.0f;
+
+        RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> rq;
+        rq.TraceRayInline(
+            realtime_rt::rt_tlas,
+            RAY_FLAG_NONE,
+            0xFF,
+            specular_ray
+        );
+        while (rq.Proceed())
+        {
+            if (rq.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE)
+            {
+                rq.CommitNonOpaqueTriangleHit();
+            }
+        }
+
+        if (rq.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
+        {
+            return float2(0.0f, 0.0f);
+        }
+
+        const uint instance_id = rq.CommittedInstanceID();
+        const uint geometry_id = rq.CommittedGeometryIndex();
+        const uint primitive_id = rq.CommittedPrimitiveIndex();
+        const float2 barycentrics = rq.CommittedTriangleBarycentrics();
+
+        geometry::Geometry* geometry = SceneAccess::geometry(instance_id, geometry_id);
+        const uint3 triangle = GeometryEval::triangle(geometry, primitive_id);
+        const float3 object_position = GeometryEval::interp_position(geometry, triangle, barycentrics);
+        return instance_motion_vector_pixels(instance_id, object_position);
+    }
+
+    /// 写入首次命中的 GBuffer 与 DLSS 输入。
+    static void write_primary_hit_outputs(uint2 thread_id, const RtSurfaceHit surface, float3 primary_ray_dir)
+    {
+        RtGBufferData gbuffer_data = RtGBufferWriter::make_data(
+            surface.position,
+            surface.forward_normal,
+            surface.hit_t,
+            surface.base_color,
+            surface.metallic,
+            surface.roughness
+        );
+        RtGBufferWriter::write_gbuffer_hit(thread_id, gbuffer_data);
+        const float2 primary_motion_vector = instance_motion_vector_pixels(surface.instance_id, surface.object_position);
+        const float2 specular_motion_vector = specular_motion_vector_pixels(surface, primary_ray_dir);
+        RtGBufferWriter::write_dlss_sr_hit(thread_id, device_depth(surface.position), primary_motion_vector);
+        RtGBufferWriter::write_dlss_rr_hit(thread_id, gbuffer_data, specular_motion_vector);
+    }
+
+    /// miss 像素也必须写入 DLSS 输入，避免 SR/RR 读取上一帧残留。
+    static void write_primary_miss_outputs(uint2 thread_id)
+    {
+        RtGBufferWriter::write_gbuffer_miss(thread_id);
+        RtGBufferWriter::write_dlss_sr_miss(thread_id);
+        RtGBufferWriter::write_dlss_rr_miss(thread_id);
+    }
+};

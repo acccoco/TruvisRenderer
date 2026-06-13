@@ -1,0 +1,217 @@
+/// @file raygen_material.slangi
+/// @brief raygen path loop 使用的材质采样与 BRDF 评估。
+
+#pragma once
+
+#include "lib/realtime_rt/payload.slangi"
+#include "lib/core/random.slangi"
+#include "lib/core/sample.slangi"
+#include "lib/lighting/pbr.slangi"
+
+/// 材质采样结果。
+///
+/// delta 路径的 `brdf_pdf` 固定为 1，不参与 MIS；非 delta 路径使用混合 BRDF PDF。
+struct RtMaterialSample
+{
+    float3 origin;
+    float3 direction;
+    float3 throughput;
+    float3 emission;
+    bool done;
+    float brdf_pdf;
+
+    static RtMaterialSample make_default(const RtSurfaceHit surface, float3 ray_dir)
+    {
+        RtMaterialSample sample;
+        sample.origin = surface.position;
+        sample.direction = ray_dir;
+        sample.throughput = float3(1.0f);
+        sample.emission = float3(0.0f);
+        sample.done = false;
+        sample.brdf_pdf = 1.0f;
+        return sample;
+    }
+};
+
+struct RtMaterialSampler
+{
+    static void sample_perfect_reflection(
+        const RtSurfaceHit surface,
+        const float3 ray_dir,
+        out float3 out_dir,
+        out float3 out_throughput
+    )
+    {
+        out_dir = reflect(ray_dir, surface.forward_normal);
+        const float reflectance = 0.8f;
+        const float3 f0 = lerp(0.16f * reflectance * reflectance, surface.base_color, surface.metallic);
+        const float cos_theta = saturate(dot(-ray_dir, surface.forward_normal));
+        const float fresnel = pow(1.0f - cos_theta, 5.0f);
+        out_throughput = f0 + (1.0f - f0) * fresnel;
+    }
+
+    static bool sample_refraction(
+        const RtSurfaceHit surface,
+        const float3 ray_dir,
+        out float3 out_dir,
+        out float3 out_throughput
+    )
+    {
+        // 使用未翻转法线判断进入/离开介质；forward normal 只用于实际折射方向。
+        const float eta = dot(ray_dir, surface.origin_normal) > 0.0f ? surface.ior : 1.0f / surface.ior;
+
+        out_dir = refract(ray_dir, surface.forward_normal, eta);
+        if (length(out_dir) < 1e-6f)
+        {
+            out_dir = float3(0.0f);
+            out_throughput = float3(0.0f);
+            return false;
+        }
+
+        out_throughput = surface.base_color;
+        return true;
+    }
+
+    static RtMaterialSample sample_transparent(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface,
+        const float3 ray_dir
+    )
+    {
+        RtMaterialSample sample = RtMaterialSample::make_default(surface, ray_dir);
+        const bool choose_refract = Random::rnd(payload.random_seed) >= surface.opaque;
+        if (choose_refract)
+        {
+            if (!sample_refraction(surface, ray_dir, sample.direction, sample.throughput))
+            {
+                sample_perfect_reflection(surface, ray_dir, sample.direction, sample.throughput);
+            }
+        }
+        else
+        {
+            sample_perfect_reflection(surface, ray_dir, sample.direction, sample.throughput);
+        }
+        sample.origin = surface.position + 0.0001f * sample.direction;
+        return sample;
+    }
+
+    static RtMaterialSample sample_specular(const RtSurfaceHit surface, const float3 ray_dir)
+    {
+        RtMaterialSample sample = RtMaterialSample::make_default(surface, ray_dir);
+        sample_perfect_reflection(surface, ray_dir, sample.direction, sample.throughput);
+        sample.origin = surface.position + 0.0001f * sample.direction;
+        return sample;
+    }
+
+    static RtMaterialSample sample_diffuse(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface,
+        const float3 ray_dir
+    )
+    {
+        RtMaterialSample sample = RtMaterialSample::make_default(surface, ray_dir);
+        const float3 view_dir = -ray_dir;
+        const float prob_diffuse = surface.roughness;
+        const bool choose_diffuse = Random::rnd(payload.random_seed) < prob_diffuse;
+
+        if (choose_diffuse)
+        {
+            const float3 local_dir = Sample::get_cos_hemisphere_sample(payload.random_seed);
+            float3 tangent, bitangent;
+            Sample::create_local_coord(surface.forward_normal, tangent, bitangent);
+            sample.direction = normalize(local_dir.x * tangent + local_dir.y * bitangent + local_dir.z * surface.forward_normal);
+        }
+        else
+        {
+            const float reflectance = 0.8f;
+            const float3 f0 = lerp(0.16f * reflectance * reflectance, surface.base_color, surface.metallic);
+            const float real_roughness = surface.roughness * surface.roughness;
+            float3 h = SpecularBrdf::ggx_sample(payload.random_seed, real_roughness, surface.forward_normal);
+            sample.direction = reflect(-view_dir, h);
+        }
+
+        const float ndotl = dot(surface.forward_normal, sample.direction);
+        if (ndotl <= 0.0f)
+        {
+            sample.throughput = float3(0.0f);
+            sample.brdf_pdf = 1.0f;
+            sample.origin = surface.position;
+            return sample;
+        }
+
+        const float3 brdf_cos = eval_brdf(surface, view_dir, sample.direction);
+        sample.brdf_pdf = eval_brdf_pdf(surface, view_dir, sample.direction);
+        sample.throughput = brdf_cos / max(sample.brdf_pdf, 1e-7f);
+        sample.origin = surface.position + 0.0001f * sample.direction;
+        return sample;
+    }
+
+    static RtMaterialSample sample_next(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface,
+        const float3 ray_dir
+    )
+    {
+        RtMaterialSample sample = RtMaterialSample::make_default(surface, ray_dir);
+        if (surface.material_type == MaterialType::EMISSIVE)
+        {
+            sample.emission = surface.emissive;
+            sample.done = true;
+            return sample;
+        }
+
+        switch (surface.material_type)
+        {
+        case MaterialType::TRANSPARENT:
+            return sample_transparent(payload, surface, ray_dir);
+        case MaterialType::SPECULAR:
+            return sample_specular(surface, ray_dir);
+        case MaterialType::DIFFUSE:
+        default:
+            return sample_diffuse(payload, surface, ray_dir);
+        }
+    }
+
+    /// 计算给定方向的 BRDF PDF（用于 MIS）。
+    static float eval_brdf_pdf(const RtSurfaceHit surface, const float3 view_dir, const float3 light_dir)
+    {
+        if (surface.is_delta_path())
+        {
+            return 0.0f;
+        }
+
+        const float prob_diffuse = surface.roughness;
+        const float diffuse_pdf = DiffuseBrdf::pdf(surface.forward_normal, light_dir);
+
+        const float3 h = normalize(view_dir + light_dir);
+        const float reflectance = 0.8f;
+        const float3 f0 = lerp(0.16f * reflectance * reflectance, surface.base_color, surface.metallic);
+        const float real_roughness = surface.roughness * surface.roughness;
+        SpecularBrdf specular_brdf = SpecularBrdf(f0, real_roughness, surface.forward_normal, view_dir, h);
+        const float specular_pdf = specular_brdf.ggx_pdf();
+
+        return prob_diffuse * diffuse_pdf + (1.0f - prob_diffuse) * specular_pdf;
+    }
+
+    /// 评估 BRDF * cos(theta)，用于 NEE 直接光照贡献。
+    static float3 eval_brdf(const RtSurfaceHit surface, const float3 view_dir, const float3 light_dir)
+    {
+        const float ndotl = max(dot(surface.forward_normal, light_dir), 0.0f);
+        if (ndotl <= 0.0f)
+        {
+            return float3(0.0f);
+        }
+
+        const float3 diffuse_color = (1.0f - surface.metallic) * surface.base_color;
+        const float3 diffuse = diffuse_color / M_PI;
+
+        const float3 h = normalize(view_dir + light_dir);
+        const float reflectance = 0.8f;
+        const float3 f0 = lerp(0.16f * reflectance * reflectance, surface.base_color, surface.metallic);
+        const float real_roughness = surface.roughness * surface.roughness;
+        SpecularBrdf specular_brdf = SpecularBrdf(f0, real_roughness, surface.forward_normal, view_dir, h);
+        const float3 specular = specular_brdf.brdf();
+
+        return (diffuse + specular) * ndotl;
+    }
+};

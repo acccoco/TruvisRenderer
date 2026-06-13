@@ -1,0 +1,107 @@
+/// @file raygen_path_state.slangi
+/// @brief raygen path integration 的 radiance / throughput 状态。
+
+#pragma once
+
+#include "lib/realtime_rt/payload.slangi"
+#include "lib/core/random.slangi"
+#include "lib/lighting/env_map.slangi"
+#include "lib/lighting/mis.slangi"
+#include "lib/realtime_rt/raygen_material.slangi"
+
+struct RtRussianRouletteResult
+{
+    bool survived;
+    float throughput_scale;
+
+    static RtRussianRouletteResult keep()
+    {
+        RtRussianRouletteResult result;
+        result.survived = true;
+        result.throughput_scale = 1.0f;
+        return result;
+    }
+};
+
+struct RtPathState
+{
+    float3 radiance;
+    float3 throughput;
+    float prev_brdf_pdf;
+    bool prev_is_delta;
+
+    static RtPathState make()
+    {
+        RtPathState state;
+        state.radiance = float3(0.0f);
+        state.throughput = float3(1.0f);
+        state.prev_brdf_pdf = 1.0f;
+        state.prev_is_delta = true;
+        return state;
+    }
+
+    [mutating]
+    void add_radiance(float3 contribution)
+    {
+        radiance += contribution;
+    }
+
+    [mutating]
+    float3 add_sky_miss(uint depth, float3 sky_color)
+    {
+        float3 contribution;
+        if (prev_is_delta || depth == 0)
+        {
+            contribution = sky_color * throughput;
+        }
+        else
+        {
+            const float env_pdf = EnvMap::uniform_pdf();
+            const float mis_weight = Mis::power_heuristic(prev_brdf_pdf, env_pdf);
+            contribution = sky_color * throughput * mis_weight;
+        }
+        radiance += contribution;
+        return contribution;
+    }
+
+    [mutating]
+    float3 add_emissive(const RtSurfaceHit surface)
+    {
+        const float3 contribution = surface.emissive * throughput;
+        radiance += contribution;
+        return contribution;
+    }
+
+    [mutating]
+    void apply_material_sample(const RtSurfaceHit surface, const RtMaterialSample sample)
+    {
+        radiance += sample.emission * throughput;
+        throughput *= sample.throughput;
+        prev_brdf_pdf = sample.brdf_pdf;
+        prev_is_delta = surface.is_delta_path();
+    }
+
+    [mutating]
+    RtRussianRouletteResult apply_russian_roulette(inout RtTracePayload payload, uint depth)
+    {
+        if (depth < 3)
+        {
+            return RtRussianRouletteResult::keep();
+        }
+
+        RtRussianRouletteResult result;
+        float p = max(throughput.x, max(throughput.y, throughput.z));
+        p = clamp(p, 0.05f, 0.95f);
+        if (Random::rnd(payload.random_seed) > p)
+        {
+            result.survived = false;
+            result.throughput_scale = 1.0f;
+            return result;
+        }
+
+        throughput /= p;
+        result.survived = true;
+        result.throughput_scale = 1.0f / p;
+        return result;
+    }
+};

@@ -1,0 +1,129 @@
+/// @file payload.slangi
+/// @brief realtime RT shader 间传递的最小载荷契约。
+///
+/// closest-hit / miss 只负责把一次追踪事件整理成 `RtSurfaceHit`；raygen 负责基于事件推进
+/// path state。这个边界避免 hit shader 夹带 BRDF / throughput / radiance 逻辑。
+
+#pragma once
+#include "api/pass/realtime_rt.slangi"
+
+/// Push Constants 声明（所有 RT 着色器共享）
+[[vk::push_constant]]
+realtime_rt::PushConstants push_const;
+
+/// 路径追踪最大深度。递归深度仍由 raygen 手动推进，Vulkan pipeline recursion depth 只覆盖 shader 调用栈。
+const static uint max_depth = 16;
+
+/// 材质类型枚举
+enum MaterialType : uint
+{
+    DIFFUSE = 0,     ///< 漫反射材质
+    SPECULAR = 1,    ///< 镜面反射材质（delta 路径）
+    TRANSPARENT = 2, ///< 透明/折射材质（delta 路径）
+    EMISSIVE = 3,    ///< 自发光材质
+    NO_HIT = 4,      ///< 未命中任何几何体
+};
+
+/// 一次 TraceRay 返回给 raygen 的表面/环境事件。
+///
+/// 几何字段由 closest-hit 写入；miss shader 只写环境采样需要的最小虚拟事件。raygen 可基于
+/// `material_type` 判断该事件是否来自真实表面，不能反向要求 hit/miss 承担 path 积分状态。
+struct RtSurfaceHit
+{
+    /// 世界空间命中位置
+    float3 position;
+    /// 命中点的 object/local 空间位置，用于用 current/previous model 计算 motion vector。
+    float3 object_position;
+    /// TLAS custom index 对应的稳定 instance slot。
+    uint instance_id;
+    /// world-space forward/shading 法线。
+    /// 该法线已经按当前 ray `faceforward` 翻面，是 BRDF 采样和 RR NormalRoughness 输入使用的法线。
+    float3 forward_normal;
+    /// 未经过 `faceforward` 的 world-space 几何法线，用于检查模型法线方向和判断正反面。
+    float3 origin_normal;
+    /// object/local space 插值顶点法线，用于诊断 mesh 原始数据和 world transform 的差异。
+    float3 object_normal;
+    /// 纹理坐标
+    float2 uv;
+    /// 光线 t 值（线性深度）
+    float hit_t;
+
+    /// 基础颜色（漫反射颜色）
+    float3 base_color;
+    /// 金属度
+    float metallic;
+    /// 粗糙度
+    float roughness;
+    /// 不透明度（1.0 = 完全不透明）
+    float opaque;
+    /// 折射率
+    float ior;
+
+    /// 自发光颜色。miss shader 使用该字段承载 sky radiance。
+    float3 emissive;
+
+    /// 材质类型
+    MaterialType material_type;
+
+    /// 是否为 delta 路径（镜面反射或透明折射）。
+    bool is_delta_path()
+    {
+        return material_type == MaterialType::SPECULAR ||
+            material_type == MaterialType::TRANSPARENT;
+    }
+
+    /// 是否是真实几何表面事件。
+    bool is_surface()
+    {
+        return material_type != MaterialType::NO_HIT;
+    }
+};
+
+/// 主光线追踪载荷。
+///
+/// `random_seed` 由 raygen 持有并随 payload 传入 hit/miss，当前 hit/miss 不消费随机数；保留在 payload
+/// 中是为了让材质采样模块在 raygen 内以同一个状态推进，避免多份随机状态分叉。
+struct RtTracePayload
+{
+    /// 是否命中几何体
+    bool hit;
+    /// 命中表面或 miss 环境事件。
+    RtSurfaceHit surface;
+    /// 随机数种子
+    uint random_seed;
+
+    static RtTracePayload make(uint random_seed)
+    {
+        RtTracePayload payload = {};
+        payload.hit = false;
+        payload.random_seed = random_seed;
+        payload.surface.material_type = MaterialType::NO_HIT;
+        return payload;
+    }
+};
+
+/// 阴影/遮挡查询载荷：miss 表示没有遮挡物。
+struct ShadowMissPayload
+{
+    bool miss;
+};
+
+namespace realtime_rt
+{
+
+// ============================================================================
+// Irradiance Cache 阈值常量
+// ============================================================================
+
+/// Diffuse 判定阈值：metallic < 此值视为 diffuse 表面
+const static float IC_DIFFUSE_METALLIC_THRESHOLD = 0.3f;
+
+const static float IC_DIFFUSE_ROUGHNESS_THRESHOLD = 0.7f;
+
+/// IC throughput 最小值：防止除零
+const static float IC_THROUGHPUT_MIN = 0.001f;
+
+/// IC 查询启用的最小 diffuse 弹射次数
+const static uint IC_MIN_DIFFUSE_BOUNCES = 1;
+
+}
