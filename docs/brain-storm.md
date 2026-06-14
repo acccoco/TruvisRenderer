@@ -45,6 +45,8 @@
   RenderGraph 到 FrameGraph + subgraph/scope 的演进方向、handle 规则和 adapter 层改进。
 - [`dlss-streamline-integration.md`](brain-storm/dlss-streamline-integration.md)：
   DLSS Super Resolution、Streamline Vulkan interposer、C++ wrapper 与 RenderGraph 接入边界。
+- [`realtime-rt-lighting-roadmap.md`](brain-storm/realtime-rt-lighting-roadmap.md)：
+  ReSTIR DI、HDRI / 自发光 NEE 分布与 SHARC 类 world-space radiance cache 的阶段路线。
 - [`plugin-feature-evolution.md`](brain-storm/plugin-feature-evolution.md)：
   PluginGroup、pipeline feature、GUI / platform / event 分层的演进方向。
 - [`threading-model-evolution.md`](brain-storm/threading-model-evolution.md)：
