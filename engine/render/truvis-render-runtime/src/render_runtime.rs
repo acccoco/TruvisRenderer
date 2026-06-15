@@ -946,7 +946,8 @@ impl RenderRuntime {
         // per-frame uniform 放在 GPU scene 上传之后写入同一条命令缓冲，保证本帧 shader
         // 看到的相机、分辨率、时间和 scene buffer 都来自同一个 prepare 快照。
         let previous_view = self.dlss_sr_state.motion_vector_previous_view().unwrap_or(*render_view);
-        let temporal_jitter_px = self.dlss_sr_state.constants().jitter_offset;
+        // shader 只接收采样方向的 jitter；Streamline 的回正 jitterOffset 保留在 DLSS constants 中。
+        let temporal_jitter_px = self.dlss_sr_state.constants().sampling_jitter_offset;
         let per_frame_data = gpu::frame::PerFrameData {
             projection: render_view.projection.into(),
             view: render_view.view.into(),

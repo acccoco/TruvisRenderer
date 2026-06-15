@@ -54,6 +54,10 @@ pub fn image_resource(
     }
 }
 
+/// 转换为 Streamline common constants。
+///
+/// `value.jitter_offset` 已经由 runtime 预先转换成 Streamline 需要的回正偏移；
+/// adapter 只负责透传，不再根据 shader sampling jitter 做二次取反。
 pub fn to_streamline_constants(value: DlssSrFrameConstants) -> dlss::Constants {
     dlss::Constants {
         camera_view_to_clip: value.camera_view_to_clip,

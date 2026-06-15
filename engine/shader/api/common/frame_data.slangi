@@ -36,10 +36,12 @@ struct PerFrameData
 
     /// 当前 render extent，单位像素；DLSS 开启时不一定等于最终 output extent。
     float2 resolution;
-    /// DLSS temporal jitter，单位为 render target pixel。
+    /// DLSS temporal sampling jitter，单位为 render target pixel。
     ///
     /// projection / prev_projection 保持不带 jitter；raygen 只把该偏移用于当前帧主光线，
-    /// motion vector 继续按 unjittered clip 计算，并通过 Streamline jitterOffset 单独告知 DLSS。
+    /// motion vector 继续按 unjittered clip 计算。该字段只表示 shader 采样方向，不等同于
+    /// Streamline common constants 的 jitterOffset；CPU 侧会使用它的反号作为 Streamline
+    /// 回正偏移。
     float2 temporal_jitter_px;
     uint64_t frame_id;
 

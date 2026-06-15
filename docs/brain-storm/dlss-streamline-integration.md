@@ -222,8 +222,11 @@ SR 输入误按 `GENERAL` 导入 present graph。
 - current clip 和 previous clip 的变换。
 - camera position/right/up/forward、near/far/fov/aspect。
 - reset history 标记。
-- DLSS SR / DLAA / RR 启用时，按 Halton(2,3) 生成 pixel-space frame-wide
-  `jitterOffset`；DLSS Off 时写 0 且不推进序列。
+- DLSS SR / DLAA / RR 启用时，按 Halton(2,3) 生成 pixel-space frame-wide sampling jitter；
+  DLSS Off 时写 0 且不推进序列。
+- runtime 将同一个 jitter 拆成两个方向语义：`sampling_jitter_offset` 原样写给 shader
+  偏移 primary ray，Streamline `jitterOffset` 使用反号，表示当前 jittered 输入回到
+  unjittered 像素中心所需的补偿偏移。
 - `mvecScale = {1 / render_width, 1 / render_height}`。
 - `cameraMotionIncluded = true`。
 - `motionVectors3D = false`。
@@ -234,7 +237,9 @@ SR 输入误按 `GENERAL` 导入 present graph。
 在 `Instance` 写入 `prev_model`；新激活实例、resize、DLSS mode/RR 切换或 history
 reset 帧会把 previous 数据对齐到当前帧，并把 jitter sequence 重置到固定起点。
 Streamline 侧保持 `motionVectorsJittered = false`，通过 `jitterOffset` 单独接收当前帧
-pixel-space jitter。
+pixel-space jitter 的回正偏移。不要把 shader sampling jitter 原样传给 Streamline；
+同号会让 RR 把静止画面的亚像素采样偏移当作真实位移，在低 render extent 下放大成天空、
+轮廓或细节抖动。
 
 ## 4. RR 当前落地与剩余缺口
 
@@ -270,12 +275,14 @@ pub struct DlssRrRgPass<'a> {
 
 仍需继续补齐或验证：
 
-- temporal jitter 已接入 Halton(2,3) frame-wide pattern；仍需结合 Debug Viewer 和实机场景
-  验证 SR/RR 画质稳定性。
+- temporal jitter 已接入 Halton(2,3) frame-wide pattern，并固定为 shader sampling jitter 与
+  Streamline 回正 `jitterOffset` 反号的契约；仍需结合 Debug Viewer 和更多实机场景验证 SR/RR
+  画质稳定性。
 - specular motion vectors 当前采用 single reflection RayQuery，不处理透明材质、粒子或多层反射；
   后续如需要更高质量，可补 specular hit distance / 多 bounce 策略。
 - 当前 output 仍沿用 `dlss-sr-output` 资源名；功能正确但命名偏 SR，后续可以改为
   `dlss-output`，避免 debug UI 误读。
+
 ## 5. 验证记录
 
 当前代码验证过：

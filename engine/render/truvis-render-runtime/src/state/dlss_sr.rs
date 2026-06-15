@@ -97,6 +97,17 @@ pub struct DlssSrFrameConstants {
     pub camera_view_to_world: [f32; 16],
     pub clip_to_prev_clip: [f32; 16],
     pub prev_clip_to_clip: [f32; 16],
+    /// shader 侧使用的当前帧采样偏移，单位为 render target pixel。
+    ///
+    /// 方向语义是从 unjittered 像素中心偏移到本帧实际 primary ray 采样点，只允许写入
+    /// `PerFrameData::temporal_jitter_px`。它不是 Streamline common constants 的
+    /// `jitterOffset`，不要直接传给 Streamline。
+    pub sampling_jitter_offset: [f32; 2],
+    /// Streamline `sl::Constants::jitterOffset`，单位为 render target pixel。
+    ///
+    /// 方向语义是从本帧 jittered 输入回正到 unjittered 像素中心，因此必须和
+    /// `sampling_jitter_offset` 反号。该契约与 `motionVectorsJittered = false` 配套：
+    /// motion vector 按无 jitter 投影计算，jitter delta 只通过这里单独交给 Streamline。
     pub jitter_offset: [f32; 2],
     pub mvec_scale: [f32; 2],
     pub camera_pos: [f32; 3],
@@ -123,6 +134,7 @@ impl Default for DlssSrFrameConstants {
             camera_view_to_world: Self::row_major(glam::Mat4::IDENTITY),
             clip_to_prev_clip: Self::row_major(glam::Mat4::IDENTITY),
             prev_clip_to_clip: Self::row_major(glam::Mat4::IDENTITY),
+            sampling_jitter_offset: [0.0, 0.0],
             jitter_offset: [0.0, 0.0],
             mvec_scale: [1.0, 1.0],
             camera_pos: [0.0, 0.0, 0.0],
@@ -237,7 +249,12 @@ impl<'a> DlssCommonConstantsBuilder<'a> {
             camera_view_to_world: DlssSrFrameConstants::row_major(self.render_view.inv_view),
             clip_to_prev_clip: DlssSrFrameConstants::row_major(clip_to_prev_clip),
             prev_clip_to_clip: DlssSrFrameConstants::row_major(prev_clip_to_clip),
-            jitter_offset: self.jitter_offset,
+            sampling_jitter_offset: self.jitter_offset,
+            // shader 通过 pixel_center += sampling_jitter_offset 让当前帧输入产生亚像素采样；
+            // Streamline common constants 的 jitterOffset 描述的是当前输入相对 unjittered
+            // 像素中心的回正偏移。两者必须反号，否则 RR 会把静止画面的采样 jitter 当作
+            // 真实位移，低 render extent 下会被 upscale ratio 放大成天空和轮廓抖动。
+            jitter_offset: [-self.jitter_offset[0], -self.jitter_offset[1]],
             // shader 写入 pixel-space motion vector，方向为当前像素回溯到上一帧位置。
             // Streamline 通过 scale 归一化到 [-1, 1]。
             mvec_scale: [
@@ -337,6 +354,7 @@ impl DlssSrState {
         self.motion_vector_previous_view = None;
         self.jitter_sequence.reset();
         self.reset_pending = true;
+        self.constants.sampling_jitter_offset = [0.0, 0.0];
         self.constants.jitter_offset = [0.0, 0.0];
         self.constants.reset = true;
     }

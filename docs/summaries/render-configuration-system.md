@@ -57,7 +57,9 @@ RR evaluate 前会先设置 compatible DLSS SR options，再设置 RR options；
 `DlssSrMode::to_streamline_mode()` 是项目内唯一的 `DlssSrMode -> dlss::DlssMode` 映射入口。它只表达 SR/DLAA
 quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 
-`DlssSrState` 不是配置。它保存每帧 evaluate 所需的 common constants、previous view、temporal jitter sequence 和 reset 标记。DLSS SR / DLAA / RR 启用时，它按 Halton(2,3) 生成 pixel-space frame-wide jitter；DLSS Off 时 jitter 为 0 且不推进序列。窗口尺寸变化、render extent 变化、mode 切换等会调用 `request_reset`，让下一次 DLSS evaluate 丢弃旧 history，并把 jitter sequence 重置到固定起点。
+`DlssSrState` 不是配置。它保存每帧 evaluate 所需的 common constants、previous view、temporal jitter sequence 和 reset 标记。DLSS SR / DLAA / RR 启用时，它按 Halton(2,3) 生成 pixel-space frame-wide sampling jitter；DLSS Off 时 jitter 为 0 且不推进序列。
+
+同一个 jitter 在 runtime 内拆成两个字段：`sampling_jitter_offset` 原样写入 shader `PerFrameData::temporal_jitter_px`，表示 primary ray 从 unjittered 像素中心偏到本帧实际采样点；Streamline `jitterOffset` 则使用反号，表示当前 jittered 输入回到 unjittered 像素中心的回正偏移。motion vector 仍按无 jitter projection 计算，并配合 `motionVectorsJittered = false` 让 Streamline 单独消费 jitter delta。窗口尺寸变化、render extent 变化、mode 切换等会调用 `request_reset`，让下一次 DLSS evaluate 丢弃旧 history，并把 jitter sequence 重置到固定起点。
 
 ## FrameRenderState
 
