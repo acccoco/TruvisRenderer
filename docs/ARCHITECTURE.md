@@ -16,6 +16,11 @@
 5. [`docs/summaries/threading-and-resource-lifecycle.md`](summaries/threading-and-resource-lifecycle.md)：主线程 /
    渲染线程边界、GPU 同步、资源创建 / 重建 / 销毁契约。
 
+专题阅读：
+
+- [`docs/summaries/hdri-sampling.md`](summaries/hdri-sampling.md)：HDRI importance sampling、alias table、环境光 PDF
+  与 RT 直接光路径的关系。
+
 ## 全局架构约束
 
 - 项目保持无环依赖：上层可以依赖下层，下层不反向依赖上层业务；同层 crate 默认不互相依赖，除非 summaries 中明确记录。

@@ -110,6 +110,8 @@ pub struct RealtimeRtPassData {
     pub single_frame_extent: vk::Extent2D,
     /// App 层 RT pipeline 设置转换后的 shader 调试通道。
     pub debug_channel: u32,
+    /// HDRI / sky 直接光采样模式。
+    pub sky_sampling_mode: u32,
 
     // ========== GBuffer 数据 ==========
     /// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness
@@ -470,8 +472,8 @@ impl RealtimeRtPass {
         let mut push_constant = gpu::realtime_rt::PushConstants {
             spp_idx: 0,
             channel: pass_data.debug_channel,
+            sky_sampling_mode: pass_data.sky_sampling_mode,
             _padding_0: Default::default(),
-            _padding_1: Default::default(),
         };
         for spp_idx in 0..spp {
             push_constant.spp_idx = spp_idx;
@@ -531,6 +533,7 @@ pub struct RealtimeRtRgPass<'a> {
     pub single_frame_image: RgImageHandle,
     pub single_frame_extent: vk::Extent2D,
     pub debug_channel: u32,
+    pub sky_sampling_mode: u32,
 
     // ========== GBuffer 数据 ==========
     pub gbuffer_a: RgImageHandle,
@@ -590,6 +593,7 @@ impl RgPass for RealtimeRtRgPass<'_> {
                 single_frame_output_view: single_frame_view,
                 single_frame_extent: self.single_frame_extent,
                 debug_channel: self.debug_channel,
+                sky_sampling_mode: self.sky_sampling_mode,
                 gbuffer_a,
                 gbuffer_a_view,
                 gbuffer_b,

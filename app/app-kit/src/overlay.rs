@@ -4,7 +4,7 @@ use truvis_render_runtime::state::dlss_options::DlssOptions;
 use truvis_render_runtime::state::dlss_sr::DlssSrMode;
 
 use crate::camera::Camera;
-use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtPipelineSettings};
+use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtPipelineSettings, RtSkySamplingMode};
 
 #[derive(Default)]
 pub struct DebugInfoOverlay;
@@ -100,6 +100,17 @@ impl PipelineControlsOverlay {
                                 .build()
                             {
                                 rt_settings.debug_channel = channel;
+                            }
+                        }
+                    }
+                    if let Some(_combo) = ui.begin_combo("Sky sampling", rt_settings.sky_sampling_mode.label()) {
+                        for mode in RtSkySamplingMode::ALL {
+                            if ui
+                                .selectable_config(mode.label())
+                                .selected(rt_settings.sky_sampling_mode == mode)
+                                .build()
+                            {
+                                rt_settings.sky_sampling_mode = mode;
                             }
                         }
                     }

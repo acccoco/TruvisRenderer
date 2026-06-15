@@ -172,6 +172,11 @@ impl GpuScene {
 
             sky: environment_binding.sky.srv_handle.0,
             sky_sampler_type: environment_binding.sky.sampler,
+            sky_distribution: environment_binding.sky.distribution_device_address,
+            sky_distribution_width: environment_binding.sky.distribution_width,
+            sky_distribution_height: environment_binding.sky.distribution_height,
+            sky_distribution_enabled: environment_binding.sky.distribution_enabled,
+            sky_distribution_version: environment_binding.sky.distribution_version,
         };
 
         cmd.cmd_update_buffer(crt_gpu_buffers.scene_buffer.vk_buffer(), 0, BytesConvert::bytes_of(&gpu_scene_data));

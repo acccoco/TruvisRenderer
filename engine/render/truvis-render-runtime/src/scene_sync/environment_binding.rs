@@ -8,6 +8,11 @@ use truvis_shader_binding::gpu;
 pub(crate) struct EnvironmentSkyBinding {
     pub(crate) srv_handle: BindlessSrvHandle,
     pub(crate) sampler: gpu::bindless::ESamplerType,
+    pub(crate) distribution_device_address: u64,
+    pub(crate) distribution_width: u32,
+    pub(crate) distribution_height: u32,
+    pub(crate) distribution_enabled: u32,
+    pub(crate) distribution_version: u32,
 }
 
 /// 本帧 GPU scene 使用的环境资源快照。

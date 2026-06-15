@@ -34,6 +34,19 @@ struct Instance
     float4x4 prev_model;
 };
 
+/// 单个 sky importance alias table entry。
+///
+/// 表按 lat-long texel 展平保存。`alias_probability` / `alias_index` 用于 O(1)
+/// 离散 texel 采样，`solid_angle_pdf` 是该 texel 内按 solid angle 均匀采样后的 PDF；
+/// NEE 与 BRDF sky miss 必须读取同一字段，避免环境光 MIS 使用两套概率度量。
+struct SkyDistributionEntry
+{
+    float alias_probability;
+    float solid_angle_pdf;
+    uint alias_index;
+    uint _padding_0;
+};
+
 /// 当前帧 GPU scene 的根间接表。
 ///
 /// 这是 `RenderRuntime::prepare` 后的只读快照。entry shader 只能通过 `SceneAccess` 消费这些表，
@@ -64,6 +77,15 @@ struct GpuScene
     bindless::SrvHandle sky;
     /// sky 采样器类型。
     bindless::ESamplerType sky_sampler_type;
+    /// sky importance alias table。fallback sky 也提供 1x1 表，因此启用时始终可安全下标。
+    PTR(SkyDistributionEntry, sky_distribution);
+    /// sky distribution 的 lat-long 宽高；为 0 表示不可用。
+    uint sky_distribution_width;
+    uint sky_distribution_height;
+    /// 非 0 表示 shader 可使用 importance distribution；否则回退 uniform sphere。
+    uint sky_distribution_enabled;
+    /// 分布重建版本号，只用于 runtime/debug 识别历史是否仍匹配当前 sky。
+    uint sky_distribution_version;
 };
 
 }

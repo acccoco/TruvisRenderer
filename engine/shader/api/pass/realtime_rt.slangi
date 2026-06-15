@@ -5,6 +5,9 @@
 namespace realtime_rt
 {
 
+static const uint SKY_SAMPLING_MODE_UNIFORM = 0;
+static const uint SKY_SAMPLING_MODE_IMPORTANCE = 1;
+
 /// realtime RT pass-local descriptor set 编号。
 ///
 /// 全局 set 之后追加 TLAS、single-frame 输出、GBuffer 与 DLSS 输入输出 image。
@@ -64,8 +67,9 @@ struct PushConstants
     uint spp_idx;
     /// RT debug channel，由 app 层 `RtPipelineSettings` 写入。
     uint channel;
+    /// sky 直接光采样模式；Importance 不可用时 shader 内部会退回 uniform sphere。
+    uint sky_sampling_mode;
     /// 显式 padding 保持 push constant 16 字节对齐，避免 CPU/GPU ABI 对齐差异。
     uint _padding_0;
-    uint _padding_1;
 };
 };

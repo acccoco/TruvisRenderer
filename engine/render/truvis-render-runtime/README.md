@@ -30,8 +30,8 @@
   foundation 公共配置契约。
 - `GpuScene` 是 runtime 私有的 scene GPU 翻译层，持有 scene/instance/geometry/light/indirect
   buffer、TLAS 和当前 FIF 的 raster draw cache；render pass 只通过 `RenderSceneView` 读取它。
-- `SkyBridge` 请求默认 sky 通过 `AssetHub` 异步加载，并持有常驻纯色 fallback sky；
-  `GpuScene` 只消费 sky 环境绑定快照。
+- `SkyBridge` 请求默认 sky 通过 `AssetHub` 异步加载，持有常驻纯色 fallback sky，并在默认 sky
+  CPU texture bytes 到达时构建 HDRI importance distribution；`GpuScene` 只消费 sky 环境绑定快照。
 - `AssetTextureManager` 消费 `AssetHub` 的 texture CPU bytes，异步上传 GPU image，并注册
   image view 与 bindless SRV；未 ready 或失败时通过 fallback texture 保证材质仍可安全读取。
   默认 sky 的真实 texture 也复用该上传路径，但 sky fallback 由 `SkyBridge` 独立维护。
@@ -98,8 +98,9 @@
   GPU scene、per-frame data 的顺序准备渲染可见数据。
 - `MaterialBridge` 在 begin-frame 的 asset event 分发中消费 `MaterialLoaded` 事件并同步到 `MaterialManager`；
   prepare 阶段由 `MaterialManager` 通过 `TextureResolver` 把 texture fallback/ready 状态按 dirty slot 局部写入 material buffer。
-- `SkyBridge` 在 prepare 阶段通过 `TextureResolver` 查询默认 sky 是否 GPU ready；
-  未 ready 或失败时写入纯色 fallback SRV，切换到真实 sky 时重置累积帧。
+- `SkyBridge` 在 begin-frame 的 asset event 分发中观察默认 sky texture bytes 并构建 importance
+  distribution；在 prepare 阶段通过 `TextureResolver` 查询默认 sky 是否 GPU ready。未 ready 或失败时写入纯色
+  fallback SRV 与 1x1 fallback distribution，切换到真实 sky 或 distribution 版本变化时重置累积帧。
 - `InstanceBridge` 读取 `SceneManager`，并通过 `MaterialSlotResolver` 与 `MeshRenderResolver`
   做 ready gate；material resolver 由 `MaterialBridge` 身份映射和 `MaterialManager` stable slot 表组合而成，只有完整可渲染的实例才进入 `RenderData`。
 - `InstanceBridge` 在同一次 prepare 输出中同步生成 `GpuInstanceSlot -> CPU record`

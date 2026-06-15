@@ -87,11 +87,16 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 | 字段 | 含义 |
 |------|------|
 | `debug_channel: RtDebugChannel` | 主 RT shader / SDR pass 使用的调试输出通道 |
+| `sky_sampling_mode: RtSkySamplingMode` | HDRI / sky 直接光采样模式，支持 importance 与 uniform A/B 对比 |
 | `tone_mapping: SdrToneMappingSettings` | SDR 输出路径使用的手动曝光和 ACES fitted tone mapping 参数 |
 
 RT debug channel 与 tone mapping 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hello Triangle / ShaderToy 只显示 DLSS SR mode，不暴露 RT 调试或 tone mapping 参数。
 
 `RtDebugChannel` 使用 enum 表达当前主 RT 流程支持的通道：final、forward normal、world normal、object normal、base color、NEE HDRI、emission、BRDF HDRI 和 NEE bounce 0/1。forward normal 是当前 path tracing BRDF 和 DLSS RR `NormalRoughness` 输入使用的 world-space shading normal，会按 ray `faceforward`；world normal 是未翻转的 world-space 几何法线；object normal 是 mesh object/local space 的插值顶点法线。旧的 magic number “not accum” 通道不再通过 UI 暴露。
+
+`RtSkySamplingMode` 是 RT 主流程的 pass-local 调试/实验开关。默认 `Importance` 使用 `SkyBridge` 生成的 HDRI alias table；
+`Uniform` 强制 shader 走旧的 uniform sphere 采样，用于在相同场景下比较 HDRI NEE 噪声与能量稳定性。该选项不改变
+render extent、DLSS feature resource 或 runtime-owned temporal state。
 
 `SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道。当前使用实时渲染常用的 ACES fitted approximation，并提供 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display transform，也不做自动曝光或参数持久化。
 

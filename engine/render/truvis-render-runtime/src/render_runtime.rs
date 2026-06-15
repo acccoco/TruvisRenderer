@@ -816,8 +816,18 @@ impl RenderRuntime {
             // 事件分流集中在 runtime 的帧开始阶段，避免各 asset manager 直接接触完整
             // asset event 集合，也让它们可以用更窄的事件集合维护自身契约。
             match event {
-                event @ (AssetLoadedEvent::TextureLoaded { .. } | AssetLoadedEvent::TextureFailed { .. }) => {
-                    texture_events.push(event);
+                AssetLoadedEvent::TextureLoaded { handle, data } => {
+                    self.sky_bridge.observe_texture_loaded(
+                        self.gfx.resource_ctx(),
+                        self.gfx.immediate_ctx(),
+                        handle,
+                        &data,
+                    );
+                    texture_events.push(AssetLoadedEvent::TextureLoaded { handle, data });
+                }
+                AssetLoadedEvent::TextureFailed { handle, error } => {
+                    self.sky_bridge.observe_texture_failed(handle, &error);
+                    texture_events.push(AssetLoadedEvent::TextureFailed { handle, error });
                 }
                 event @ AssetLoadedEvent::MeshLoaded { .. } => {
                     mesh_events.push(event);

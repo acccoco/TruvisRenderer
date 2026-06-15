@@ -3,8 +3,10 @@
 ///
 /// 提供方向向量到球面坐标的转换，用于天空盒和环境贴图采样。
 ///
-/// 当前 NEE 仍使用均匀球面采样，没有构建 HDRI luminance CDF。`pdf`、`uniform_pdf` 与
-/// `sample_uniform` 因此必须保持一致，否则 MIS 会错误加权环境光贡献。
+/// 环境光 PDF 对外统一使用 solid angle 度量。Importance sampling 启用时，采样和
+/// 查询都读取 runtime 写入的 sky distribution；资源不可用或显式 Uniform 模式下回退
+/// `1 / (4π)`。Importance 表内的零亮度 texel 必须保持 PDF=0，避免把不可采样方向
+/// 伪装成 uniform 概率而破坏 NEE 与 BRDF sky miss 的 MIS 权重。
 
 #pragma once
 #include "lib/core/common.slangi"
@@ -34,6 +36,18 @@ struct EnvMap
         return angle_to_uv(dir_to_angle(dir));
     }
 
+    /// 将等距圆柱投影 UV 转回世界方向。
+    ///
+    /// 这是 `dir_to_uv` 的反向映射：phi 使用 `atan2(x, z)` 约定，V 方向按纬度从北极到南极。
+    static float3 uv_to_dir(const float2 uv)
+    {
+        const float phi = (uv.x - 0.5f) * 2.0f * M_PI;
+        const float theta = (0.5f - uv.y) * M_PI;
+        const float y = sin(theta);
+        const float horizontal = cos(theta);
+        return normalize(float3(horizontal * sin(phi), y, horizontal * cos(phi)));
+    }
+
 // ============================================================================
 // 环境贴图采样（用于 NEE）
 // ============================================================================
@@ -43,19 +57,71 @@ struct EnvMap
         return 1.f / (4.f * M_PI);
     }
 
+    static bool importance_enabled()
+    {
+        return push_const.sky_sampling_mode == realtime_rt::SKY_SAMPLING_MODE_IMPORTANCE &&
+            gpu_scene.sky_distribution_enabled != 0 &&
+            gpu_scene.sky_distribution_width > 0 &&
+            gpu_scene.sky_distribution_height > 0;
+    }
+
+    static uint distribution_texel_count()
+    {
+        return gpu_scene.sky_distribution_width * gpu_scene.sky_distribution_height;
+    }
+
+    static uint texel_index_from_dir(const float3 dir)
+    {
+        const uint width = gpu_scene.sky_distribution_width;
+        const uint height = gpu_scene.sky_distribution_height;
+        const float2 uv = dir_to_uv(dir);
+        const float u = frac(uv.x);
+        const float v = clamp(uv.y, 0.0f, 1.0f);
+        const uint x = min((uint)(u * (float)width), width - 1);
+        const uint y = min((uint)(v * (float)height), height - 1);
+        return y * width + x;
+    }
+
+    static void row_sin_bounds(const uint row, const uint height, out float out_sin_bottom, out float out_sin_top)
+    {
+        const float v0 = (float)row / (float)height;
+        const float v1 = (float)(row + 1) / (float)height;
+        const float theta_top = (0.5f - v0) * M_PI;
+        const float theta_bottom = (0.5f - v1) * M_PI;
+        out_sin_top = sin(theta_top);
+        out_sin_bottom = sin(theta_bottom);
+    }
+
+    static float distribution_pdf_from_index(const uint index)
+    {
+        const uint count = distribution_texel_count();
+        if (!importance_enabled() || index >= count)
+        {
+            return uniform_pdf();
+        }
+
+        const scene::SkyDistributionEntry entry = gpu_scene.sky_distribution[index];
+        // distribution 已可用时，单个零亮度 texel 的概率就是 0；只有资源不可用或
+        // 显式 Uniform 模式才回退 uniform sphere。负值按坏数据夹到 0，避免污染 MIS。
+        return max(entry.solid_angle_pdf, 0.0f);
+    }
+
     /// 查询给定 sky 方向的 solid-angle PDF。
     ///
-    /// 当前阶段仍是 uniform sphere，因此 PDF 与方向无关。后续接入 HDRI importance sampling 时，
     /// NEE 采样和 BRDF sky miss 都必须继续经过这个入口，避免不同路径各自维护 PDF。
-    static float pdf(const float3 _dir)
+    static float pdf(const float3 dir)
     {
-        return uniform_pdf();
+        if (!importance_enabled())
+        {
+            return uniform_pdf();
+        }
+
+        return distribution_pdf_from_index(texel_index_from_dir(dir));
     }
 
     /// 均匀采样整球面方向。
     ///
-    /// 该采样不考虑环境贴图亮度，只适合当前简单 HDRI NEE；未来若增加重要性采样表，
-    /// 必须同时替换返回 PDF 和 `pdf` 查询入口。
+    /// 该采样不考虑环境贴图亮度，用于显式 Uniform 模式和 importance 资源不可用时的稳定回退。
     static void sample_uniform(inout uint seed, out float3 out_dir, out float out_pdf)
     {
         const float u1 = Random::rnd(seed);
@@ -71,5 +137,63 @@ struct EnvMap
             sin_theta * sin(phi)
         );
         out_pdf = uniform_pdf();
+    }
+
+    /// 按 runtime 生成的 alias table 采样 HDRI。
+    ///
+    /// 选中 texel 后在该 texel 覆盖的 solid angle 内均匀采样，保证返回的
+    /// `solid_angle_pdf` 与 `pdf(dir)` 查询入口一致。
+    static void sample_importance(inout uint seed, out float3 out_dir, out float out_pdf)
+    {
+        if (!importance_enabled())
+        {
+            sample_uniform(seed, out_dir, out_pdf);
+            return;
+        }
+
+        const uint width = gpu_scene.sky_distribution_width;
+        const uint height = gpu_scene.sky_distribution_height;
+        const uint count = distribution_texel_count();
+        if (count == 0)
+        {
+            sample_uniform(seed, out_dir, out_pdf);
+            return;
+        }
+
+        const uint column = min((uint)(Random::rnd(seed) * (float)count), count - 1);
+        const scene::SkyDistributionEntry alias_entry = gpu_scene.sky_distribution[column];
+        const float alias_probability = clamp(alias_entry.alias_probability, 0.0f, 1.0f);
+        uint selected = Random::rnd(seed) < alias_probability ? column : alias_entry.alias_index;
+        selected = min(selected, count - 1);
+
+        const scene::SkyDistributionEntry selected_entry = gpu_scene.sky_distribution[selected];
+        const float selected_pdf = max(selected_entry.solid_angle_pdf, 0.0f);
+
+        const uint x = selected % width;
+        const uint y = selected / width;
+        const float u = ((float)x + Random::rnd(seed)) / (float)width;
+
+        float sin_bottom;
+        float sin_top;
+        row_sin_bounds(y, height, sin_bottom, sin_top);
+        const float sphere_y = lerp(sin_bottom, sin_top, Random::rnd(seed));
+        const float theta = asin(clamp(sphere_y, -1.0f, 1.0f));
+        const float v = 0.5f - theta / M_PI;
+
+        out_dir = uv_to_dir(float2(u, v));
+        // alias 表异常或零权重 texel 会让调用方按零 PDF 丢弃候选；这里不能回退
+        // uniform，否则 sample(dir) 与 pdf(dir) 会使用两套不同概率度量。
+        out_pdf = selected_pdf;
+    }
+
+    /// 按当前模式采样环境光；Importance 资源不可用时内部回退 uniform。
+    static void sample(inout uint seed, out float3 out_dir, out float out_pdf)
+    {
+        if (push_const.sky_sampling_mode == realtime_rt::SKY_SAMPLING_MODE_IMPORTANCE)
+        {
+            sample_importance(seed, out_dir, out_pdf);
+            return;
+        }
+        sample_uniform(seed, out_dir, out_pdf);
     }
 };

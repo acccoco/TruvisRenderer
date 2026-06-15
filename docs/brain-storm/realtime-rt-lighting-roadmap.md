@@ -52,8 +52,8 @@ target 值、shadow ray 和最终贡献评估。BRDF 命中 sky 或 emissive sur
 
 当前状态（2026-06-15）：契约基线已落地。realtime RT shader 已把 HDRI NEE 整理为 candidate、visibility 和 shade
 三段，light-side PDF 统一以 solid angle 表达，并通过 `EnvMap::pdf` 供 NEE 和 sky miss MIS 共用。
-HDRI 仍是 uniform sphere 采样；emissive hit 仍保持命中即累加 emission，在第三阶段生成 emissive triangle light table
-之前不伪造可竞争的 light PDF；point / directional / spot light、reservoir 和 SHARC 均未接入。
+HDRI 已在第二阶段接入 importance sampling 与 uniform fallback；emissive hit 仍保持命中即累加 emission，在第三阶段生成
+emissive triangle light table 之前不伪造可竞争的 light PDF；point / directional / spot light、reservoir 和 SHARC 均未接入。
 
 ## 第二阶段：HDRI / Sky 重要性采样
 
@@ -65,6 +65,12 @@ shader 从该分布采样方向并返回 solid-angle PDF，NEE 和 sky miss 的 
 关键约束：lat-long 贴图必须计入 texel 对应球面面积；sky 切换、fallback/真实贴图切换时必须 reset 相关 temporal / reuse 状态。
 
 完成标准：uniform sky sampling 可回退；HDRI NEE、sky miss MIS 和 debug 统计都使用一致 PDF；高亮 HDRI 场景下直接光噪声明显低于 uniform。
+
+当前状态（2026-06-15）：第二阶段已落地。`SkyBridge` 在默认 sky CPU texture bytes 到达时构建
+`luminance(texel) * solid_angle(texel)` alias table，并通过 scene root buffer 暴露 distribution device address、尺寸、
+启用状态和版本。`EnvMap` 默认按 importance distribution 采样并返回 solid-angle PDF，`RtPipelineSettings.sky_sampling_mode`
+可切换回 uniform sphere 作为 A/B 回退；fallback sky 使用 1x1 distribution，真实 sky GPU image 未 ready 前不会用真实 sky
+分布采样 fallback 贴图。
 
 ## 第三阶段：自发光三角形 NEE
 

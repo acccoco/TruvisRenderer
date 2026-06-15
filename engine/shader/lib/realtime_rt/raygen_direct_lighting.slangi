@@ -90,9 +90,8 @@ struct RtDirectLighting
 
     /// 生成 HDRI 直接光候选。
     ///
-    /// 当前 EnvMap 还没有重要性采样表，因此这里仍保持旧路径的 uniform sphere 采样。
-    /// light-side PDF 统一写入 solid-angle 度量；后续 HDRI importance sampling 只需要替换
-    /// EnvMap 的 sample/pdf 入口，不应在 raygen path state 里再维护第二套环境光 PDF。
+    /// light-side PDF 统一写入 solid-angle 度量；HDRI importance sampling 与 uniform fallback
+    /// 都必须经过 EnvMap 的 sample/pdf 入口，不应在 raygen path state 里再维护第二套环境光 PDF。
     static RtLightCandidate sample_hdri_candidate(
         inout RtTracePayload payload,
         const RtSurfaceHit surface
@@ -106,7 +105,7 @@ struct RtDirectLighting
 
         float3 light_dir;
         float solid_angle_pdf;
-        EnvMap::sample_uniform(payload.random_seed, light_dir, solid_angle_pdf);
+        EnvMap::sample(payload.random_seed, light_dir, solid_angle_pdf);
         solid_angle_pdf = EnvMap::pdf(light_dir);
         if (solid_angle_pdf <= 0.0f)
         {

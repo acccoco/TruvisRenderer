@@ -18,6 +18,8 @@ mesh/material ready 查询通过 `truvis-render-runtime` 私有 scene bridge tra
 `MaterialBridge` / `MaterialManager` 组合 resolver，这些 resolver 不属于 `truvis-world`。
 
 默认 sky 通过 `SkyBridge` 请求 `AssetHub::load_texture` 异步加载，并在真实贴图 GPU ready 前使用常驻纯色 fallback。
+`SkyBridge` 同时在默认 sky 的 CPU texture bytes 到达时构建 HDRI importance alias table；真实 sky image 仍由
+`AssetTextureManager` 上传，scene root buffer 只消费当前可用的 sky SRV、sampler 与 distribution 快照。
 
 `GpuScene` 与 `RenderData` 是 runtime 私有 scene 翻译层；render pass 只通过 `RenderSceneView` 访问 scene buffer、TLAS
 handle 和光栅化 draw。
@@ -75,8 +77,12 @@ resolve，最后调用 `GuiPlugin::contribute_passes` 叠加 GUI。
 和 shade 三段：candidate 使用 direction、radiance、distance、shadow ray 和 solid-angle PDF 描述光源侧样本；
 visibility 复用现有 inline `RayQuery` shadow path；shade 继续使用 `BRDF * cos / light_pdf * MIS` 的旧公式。
 
-环境光 PDF 统一通过 `EnvMap::pdf` 查询。当前实现仍是 uniform sphere，因此 HDRI NEE 与 BRDF sky miss
-得到的 PDF 与旧路径一致；后续 HDRI importance sampling 必须同时替换 sample 和 PDF 查询入口。
+环境光 sample 与 PDF 统一通过 `EnvMap` 查询。默认 sky 真实贴图 ready 后，`EnvMap` 使用
+`SkyBridge` 生成的 `luminance(texel) * solid_angle(texel)` alias table 做 importance sampling，并返回
+solid-angle PDF；fallback sky 使用 1x1 均匀分布，无效分布或 `RtPipelineSettings.sky_sampling_mode = Uniform`
+时回退 uniform sphere。HDRI NEE 与 BRDF sky miss MIS 读取同一 `EnvMap::pdf`，不维护第二套环境光概率。
+HDRI 采样的概念解释、alias table 原理和项目内数据路径见
+[`docs/summaries/hdri-sampling.md`](hdri-sampling.md)。
 
 自发光材质目前仍只在路径命中时累加 emission，尚未作为 emissive triangle light 进入 NEE/MIS；CPU/GPU scene
 中的 point light 数据也尚未被 realtime RT 直接光候选系统消费。DLSS SR/RR 仍只读取 RT 输出的 HDR、GBuffer、depth

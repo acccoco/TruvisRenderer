@@ -35,6 +35,11 @@ pub struct RtPipelineSettings {
     /// 这是 RT 主流程的 pass-local 配置，不影响 engine runtime 的 target 尺寸、DLSS history
     /// 或全局 per-frame UBO，因此不放入 engine runtime-owned render state。
     pub debug_channel: RtDebugChannel,
+    /// HDRI / sky 直接光采样模式。
+    ///
+    /// 这是 RT 主流程的 pass-local 采样策略开关，用于 A/B 比较 uniform 与 importance；
+    /// 它不影响 render extent、DLSS feature resource 或 runtime-owned temporal state。
+    pub sky_sampling_mode: RtSkySamplingMode,
     /// SDR 输出路径的 tone mapping 参数。
     ///
     /// 只影响 Final 通道的 `hdr-to-sdr` pass，不改变 render extent、DLSS feature resource
@@ -46,7 +51,33 @@ impl Default for RtPipelineSettings {
     fn default() -> Self {
         Self {
             debug_channel: RtDebugChannel::Final,
+            sky_sampling_mode: RtSkySamplingMode::Importance,
             tone_mapping: SdrToneMappingSettings::default(),
+        }
+    }
+}
+
+/// HDRI / sky 直接光采样模式。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RtSkySamplingMode {
+    Uniform,
+    Importance,
+}
+
+impl RtSkySamplingMode {
+    pub const ALL: [Self; 2] = [Self::Importance, Self::Uniform];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Uniform => "uniform",
+            Self::Importance => "importance",
+        }
+    }
+
+    pub fn shader_mode(self) -> u32 {
+        match self {
+            Self::Uniform => 0,
+            Self::Importance => 1,
         }
     }
 }
@@ -431,6 +462,7 @@ impl RtPipeline {
         let dlss_sr_outputs = &inner.dlss_sr_outputs;
         let main_view_targets = &inner.main_view_targets;
         let debug_channel = self.settings.debug_channel.shader_channel();
+        let sky_sampling_mode = self.settings.sky_sampling_mode.shader_mode();
         let tone_mapping = self.settings.tone_mapping;
 
         // compute graph 导入的是 app-owned 外部图像；RenderGraph 只接管本图内的状态转换，
@@ -561,6 +593,7 @@ impl RtPipeline {
                 single_frame_image,
                 single_frame_extent: record_ctx.frame_state.render_extent,
                 debug_channel,
+                sky_sampling_mode,
                 gbuffer_a,
                 gbuffer_b,
                 gbuffer_c,
