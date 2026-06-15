@@ -140,7 +140,7 @@ struct RtIrradianceCacheState
     }
 
     [mutating]
-    void record_sky_miss(uint depth, float3 sky_color, const RtPathState path)
+    void record_sky_miss(uint depth, float3 sky_color, float3 sky_dir, const RtPathState path)
     {
         if (!has_pending_write())
         {
@@ -153,7 +153,9 @@ struct RtIrradianceCacheState
         }
         else
         {
-            const float env_pdf = EnvMap::uniform_pdf();
+            // IC 当前在主流程中固定禁用，但实验路径仍复用 EnvMap::pdf，避免未来重新启用时
+            // 与主 path 的 BRDF sky miss 产生第二套环境光 PDF 语义。
+            const float env_pdf = EnvMap::pdf(sky_dir);
             const float mis_weight = Mis::power_heuristic(path.prev_brdf_pdf, env_pdf);
             radiance += sky_color * throughput * mis_weight;
         }

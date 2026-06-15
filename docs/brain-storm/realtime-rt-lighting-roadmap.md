@@ -50,6 +50,11 @@ target 值、shadow ray 和最终贡献评估。BRDF 命中 sky 或 emissive sur
 
 完成标准：旧路径可无差异运行；debug 仍能区分 NEE HDRI、BRDF HDRI 和 emission；非法候选、零 PDF 和背面光照都有明确无效返回。
 
+当前状态（2026-06-15）：契约基线已落地。realtime RT shader 已把 HDRI NEE 整理为 candidate、visibility 和 shade
+三段，light-side PDF 统一以 solid angle 表达，并通过 `EnvMap::pdf` 供 NEE、sky miss MIS 和 IC 实验记录共用。
+HDRI 仍是 uniform sphere 采样；emissive hit 仍保持命中即累加 emission，在第三阶段生成 emissive triangle light table
+之前不伪造可竞争的 light PDF；point / directional / spot light、reservoir 和 SHARC 均未接入。
+
 ## 第二阶段：HDRI / Sky 重要性采样
 
 目标：替换当前均匀球面采样，让 HDRI / sky 按亮度与球面面积采样，降低高亮环境光噪声。

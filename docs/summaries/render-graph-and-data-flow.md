@@ -69,6 +69,19 @@ Triangle / ShaderToy 使用单个 present graph。
 RT demo 使用 compute graph 与 present graph：App 先让 `RtPipeline` 贡献 compute passes，再在 present graph 中先
 resolve，最后调用 `GuiPlugin::contribute_passes` 叠加 GUI。
 
+## RT 直接光采样契约
+
+当前 realtime RT 主路径的直接光只接入 HDRI NEE。raygen shader 内部把 HDRI 采样整理为 light candidate、visibility
+和 shade 三段：candidate 使用 direction、radiance、distance、shadow ray 和 solid-angle PDF 描述光源侧样本；
+visibility 复用现有 inline `RayQuery` shadow path；shade 继续使用 `BRDF * cos / light_pdf * MIS` 的旧公式。
+
+环境光 PDF 统一通过 `EnvMap::pdf` 查询。当前实现仍是 uniform sphere，因此 HDRI NEE、BRDF sky miss 和禁用中的
+IC 实验记录得到的 PDF 与旧路径一致；后续 HDRI importance sampling 必须同时替换 sample 和 PDF 查询入口。
+
+自发光材质目前仍只在路径命中时累加 emission，尚未作为 emissive triangle light 进入 NEE/MIS；CPU/GPU scene
+中的 point light 数据也尚未被 realtime RT 直接光候选系统消费。DLSS SR/RR 仍只读取 RT 输出的 HDR、GBuffer、depth
+和 motion vectors，不参与 light candidate、reservoir 或 radiance cache 状态。
+
 ## 与生命周期的关系
 
 - update 阶段可以修改 CPU 语义状态。

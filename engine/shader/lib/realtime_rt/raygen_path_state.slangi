@@ -31,7 +31,7 @@ struct RtPathState
     float3 radiance;
     /// 下一次命中或 miss 的路径 throughput。
     float3 throughput;
-    /// 上一次非 delta BRDF 采样的 PDF，用于 miss/emissive 的 MIS 权重。
+    /// 上一次非 delta BRDF 采样的 PDF，用于 sky miss 的 MIS 权重。
     float prev_brdf_pdf;
     /// 上一次事件是否为 delta 路径；delta 路径不与环境采样做 MIS。
     bool prev_is_delta;
@@ -53,7 +53,7 @@ struct RtPathState
     }
 
     [mutating]
-    float3 add_sky_miss(uint depth, float3 sky_color)
+    float3 add_sky_miss(uint depth, float3 sky_color, float3 sky_dir)
     {
         float3 contribution;
         // camera ray 或 delta 链路命中 sky 时不存在可竞争的 NEE 策略，直接累加环境 radiance。
@@ -63,7 +63,7 @@ struct RtPathState
         }
         else
         {
-            const float env_pdf = EnvMap::uniform_pdf();
+            const float env_pdf = EnvMap::pdf(sky_dir);
             const float mis_weight = Mis::power_heuristic(prev_brdf_pdf, env_pdf);
             contribution = sky_color * throughput * mis_weight;
         }
@@ -74,6 +74,8 @@ struct RtPathState
     [mutating]
     float3 add_emissive(const RtSurfaceHit surface)
     {
+        // 第三阶段接入 emissive triangle light table 前，emissive hit 没有可查询的 light PDF。
+        // 因此这里保持旧路径的命中即累加语义，不临时制造一个无法和 NEE 竞争的伪 MIS 契约。
         const float3 contribution = surface.emissive * throughput;
         radiance += contribution;
         return contribution;

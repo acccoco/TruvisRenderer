@@ -3,8 +3,8 @@
 ///
 /// 提供方向向量到球面坐标的转换，用于天空盒和环境贴图采样。
 ///
-/// 当前 NEE 仍使用均匀球面采样，没有构建 HDRI luminance CDF。`uniform_pdf` 因此必须与
-/// `sample_uniform` 保持一致，否则 MIS 会错误加权环境光贡献。
+/// 当前 NEE 仍使用均匀球面采样，没有构建 HDRI luminance CDF。`pdf`、`uniform_pdf` 与
+/// `sample_uniform` 因此必须保持一致，否则 MIS 会错误加权环境光贡献。
 
 #pragma once
 #include "lib/core/common.slangi"
@@ -43,10 +43,19 @@ struct EnvMap
         return 1.f / (4.f * M_PI);
     }
 
+    /// 查询给定 sky 方向的 solid-angle PDF。
+    ///
+    /// 当前阶段仍是 uniform sphere，因此 PDF 与方向无关。后续接入 HDRI importance sampling 时，
+    /// NEE 采样、BRDF sky miss 和 IC 记录都必须继续经过这个入口，避免不同路径各自维护 PDF。
+    static float pdf(const float3 _dir)
+    {
+        return uniform_pdf();
+    }
+
     /// 均匀采样整球面方向。
     ///
     /// 该采样不考虑环境贴图亮度，只适合当前简单 HDRI NEE；未来若增加重要性采样表，
-    /// 必须同时替换返回 PDF 和 `RtPathState::add_sky_miss` 中的 env PDF。
+    /// 必须同时替换返回 PDF 和 `pdf` 查询入口。
     static void sample_uniform(inout uint seed, out float3 out_dir, out float out_pdf)
     {
         const float u1 = Random::rnd(seed);

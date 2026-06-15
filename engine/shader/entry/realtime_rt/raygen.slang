@@ -72,9 +72,9 @@ void main_ray_gen()
             }
 
             const float3 sky_color = payload.surface.emissive;
-            const float3 sky_contribution = path.add_sky_miss(depth, sky_color);
+            const float3 sky_contribution = path.add_sky_miss(depth, sky_color, ray.Direction);
             debug_state.record_hdri(sky_contribution);
-            ic_state.record_sky_miss(depth, sky_color, path);
+            ic_state.record_sky_miss(depth, sky_color, ray.Direction, path);
             break;
         }
 

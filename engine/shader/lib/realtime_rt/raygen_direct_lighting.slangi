@@ -9,6 +9,45 @@
 #include "lib/lighting/mis.slangi"
 #include "lib/realtime_rt/raygen_material.slangi"
 
+struct RtLightCandidate
+{
+    /// 候选来源。当前只生成 HDRI 候选，保留字段是为了后续 emissive / analytic light
+    /// 进入同一条 shade/eval 路径时不再改动调用契约。
+    uint kind;
+    /// 从 shading point 指向 light sample 的世界空间单位方向。
+    float3 direction;
+    /// 有限光源使用实际距离；HDRI 作为无限远环境光使用较大的 ray TMax。
+    float distance;
+    /// light 侧 radiance，不包含 BRDF、cos、MIS 或 path throughput。
+    float3 radiance;
+    /// light sample 的 solid-angle PDF。直接光、BRDF miss 和后续 reservoir 都必须使用同一度量。
+    float solid_angle_pdf;
+    /// 与候选方向/距离配套的 visibility ray。所有候选先生成 ray，再统一做遮挡测试。
+    RayDesc shadow_ray;
+    bool valid;
+
+    static uint kind_hdri()
+    {
+        return 1;
+    }
+
+    static RtLightCandidate empty()
+    {
+        RtLightCandidate candidate;
+        candidate.kind = 0;
+        candidate.direction = float3(0.0f);
+        candidate.distance = 0.0f;
+        candidate.radiance = float3(0.0f);
+        candidate.solid_angle_pdf = 0.0f;
+        candidate.shadow_ray.Origin = float3(0.0f);
+        candidate.shadow_ray.Direction = float3(0.0f, 1.0f, 0.0f);
+        candidate.shadow_ray.TMin = 0.0f;
+        candidate.shadow_ray.TMax = 0.0f;
+        candidate.valid = false;
+        return candidate;
+    }
+};
+
 struct RtDirectLightingSample
 {
     /// 当前 path throughput 加权后的实际贡献。
@@ -52,10 +91,101 @@ struct RtDirectLighting
         return rq.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
     }
 
+    /// 生成 HDRI 直接光候选。
+    ///
+    /// 当前 EnvMap 还没有重要性采样表，因此这里仍保持旧路径的 uniform sphere 采样。
+    /// light-side PDF 统一写入 solid-angle 度量；后续 HDRI importance sampling 只需要替换
+    /// EnvMap 的 sample/pdf 入口，不应在 raygen path state 里再维护第二套环境光 PDF。
+    static RtLightCandidate sample_hdri_candidate(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface
+    )
+    {
+        RtLightCandidate candidate = RtLightCandidate::empty();
+        if (surface.is_delta_path())
+        {
+            return candidate;
+        }
+
+        float3 light_dir;
+        float solid_angle_pdf;
+        EnvMap::sample_uniform(payload.random_seed, light_dir, solid_angle_pdf);
+        solid_angle_pdf = EnvMap::pdf(light_dir);
+        if (solid_angle_pdf <= 0.0f)
+        {
+            return candidate;
+        }
+
+        const float ndotl = dot(surface.forward_normal, light_dir);
+        if (ndotl <= 0.0f)
+        {
+            return candidate;
+        }
+
+        candidate.kind = RtLightCandidate::kind_hdri();
+        candidate.direction = light_dir;
+        candidate.distance = 10000.0f;
+        candidate.solid_angle_pdf = solid_angle_pdf;
+
+        candidate.shadow_ray.Origin = surface.position + 0.001f * light_dir;
+        candidate.shadow_ray.Direction = light_dir;
+        // TMin/TMax 是 visibility 契约的一部分：TMin 避免自交，HDRI 使用大距离表达无限远环境光。
+        candidate.shadow_ray.TMin = 0.001f;
+        candidate.shadow_ray.TMax = candidate.distance;
+
+        const float2 env_uv = EnvMap::dir_to_uv(light_dir);
+        // sky texture 仍沿用主 RT 的固定强度缩放；MIS 权重只处理采样策略概率，不负责曝光。
+        candidate.radiance = BindlessSrv::sample_level(gpu_scene.sky, env_uv, gpu_scene.sky_sampler_type, 0.0f).xyz * 8.0f;
+        candidate.valid = true;
+        return candidate;
+    }
+
+    static bool is_candidate_visible(RaytracingAccelerationStructure tlas, const RtLightCandidate candidate)
+    {
+        if (!candidate.valid)
+        {
+            return false;
+        }
+        return !is_occluded(tlas, candidate.shadow_ray);
+    }
+
+    /// 将一个已通过 visibility 的 light candidate 评估为当前 path 的直接光贡献。
+    ///
+    /// 这里保持旧 HDRI NEE 公式不变：radiance * BRDF*cos / light_pdf * MIS，再由调用方提供
+    /// path throughput。所有非法候选、零 PDF 和背面光照都返回空贡献，避免 NaN 污染路径累积。
+    static RtDirectLightingSample shade_candidate(
+        const RtLightCandidate candidate,
+        const RtSurfaceHit surface,
+        const float3 view_dir,
+        const float3 throughput
+    )
+    {
+        RtDirectLightingSample result = RtDirectLightingSample::empty();
+        if (!candidate.valid || candidate.solid_angle_pdf <= 0.0f)
+        {
+            return result;
+        }
+
+        const float ndotl = dot(surface.forward_normal, candidate.direction);
+        if (ndotl <= 0.0f)
+        {
+            return result;
+        }
+
+        const float3 brdf_cos = RtMaterialSampler::eval_brdf(surface, view_dir, candidate.direction);
+        const float brdf_pdf = RtMaterialSampler::eval_brdf_pdf(surface, view_dir, candidate.direction);
+        const float mis_weight = Mis::power_heuristic(candidate.solid_angle_pdf, brdf_pdf);
+
+        result.relative_contribution = candidate.radiance * brdf_cos / max(candidate.solid_angle_pdf, 1e-7f) * mis_weight;
+        result.contribution = throughput * result.relative_contribution;
+        result.valid = true;
+        return result;
+    }
+
     /// 对 HDRI 做一次均匀采样并返回 NEE 贡献。
     ///
-    /// 当前 EnvMap 还没有重要性采样表，因此这里保持旧路径的 uniform sphere PDF 和 power heuristic。
-    /// delta surface 跳过 NEE，因为它们的贡献由路径追踪的 deterministic reflection/refraction 继续推进。
+    /// `sample_hdri` 保留为 raygen 的稳定入口；内部已经拆成 candidate、visibility 和 shade
+    /// 三段，后续新增 light type 或 reservoir 时不需要扩大 raygen 主循环的职责。
     static RtDirectLightingSample sample_hdri(
         inout RtTracePayload payload,
         const RtSurfaceHit surface,
@@ -63,43 +193,11 @@ struct RtDirectLighting
         const float3 throughput
     )
     {
-        RtDirectLightingSample result = RtDirectLightingSample::empty();
-        if (surface.is_delta_path())
+        const RtLightCandidate candidate = sample_hdri_candidate(payload, surface);
+        if (!is_candidate_visible(realtime_rt::rt_tlas, candidate))
         {
-            return result;
+            return RtDirectLightingSample::empty();
         }
-
-        float3 light_dir;
-        float env_pdf;
-        EnvMap::sample_uniform(payload.random_seed, light_dir, env_pdf);
-
-        const float ndotl = dot(surface.forward_normal, light_dir);
-        if (ndotl <= 0.0f)
-        {
-            return result;
-        }
-
-        RayDesc shadow_ray;
-        shadow_ray.Origin = surface.position + 0.001f * light_dir;
-        shadow_ray.Direction = light_dir;
-        shadow_ray.TMin = 0.001f;
-        shadow_ray.TMax = 10000.0f;
-
-        if (is_occluded(realtime_rt::rt_tlas, shadow_ray))
-        {
-            return result;
-        }
-
-        const float2 env_uv = EnvMap::dir_to_uv(light_dir);
-        // sky texture 仍沿用主 RT 的固定强度缩放；MIS 权重只处理采样策略概率，不负责曝光。
-        const float3 li = BindlessSrv::sample_level(gpu_scene.sky, env_uv, gpu_scene.sky_sampler_type, 0.0f).xyz * 8.0f;
-        const float3 brdf_cos = RtMaterialSampler::eval_brdf(surface, view_dir, light_dir);
-        const float brdf_pdf = RtMaterialSampler::eval_brdf_pdf(surface, view_dir, light_dir);
-        const float mis_weight = Mis::power_heuristic(env_pdf, brdf_pdf);
-
-        result.relative_contribution = li * brdf_cos / max(env_pdf, 1e-7f) * mis_weight;
-        result.contribution = throughput * result.relative_contribution;
-        result.valid = true;
-        return result;
+        return shade_candidate(candidate, surface, view_dir, throughput);
     }
 };
