@@ -37,9 +37,23 @@ impl DlssRrPass {
         let mode = dlss_options.sr_mode();
 
         let output_extent = record_ctx.frame_state.output_extent;
+        let streamline_mode = mode.to_streamline_mode();
+        // RR 是 DLSS SR 的扩展。即使本帧只 evaluate `kFeatureDLSS_RR`，也要先维护
+        // compatible SR options，让 Streamline 看到同一 viewport 的基础 DLSS mode/output 契约。
+        let sr_options = dlss::DlssOptions {
+            mode: streamline_mode,
+            output_width: output_extent.width,
+            output_height: output_extent.height,
+            color_buffers_hdr: true,
+        };
+        if let Err(err) = dlss::set_options(0, sr_options) {
+            log::error!("DLSS RR compatible SR set options failed: {}", err);
+            return;
+        }
+
         let frame_constants = record_ctx.dlss_sr_state.constants();
-        let options = dlss::DlssRrOptions {
-            mode: mode.to_streamline_mode(),
+        let rr_options = dlss::DlssRrOptions {
+            mode: streamline_mode,
             output_width: output_extent.width,
             output_height: output_extent.height,
             color_buffers_hdr: true,
@@ -47,7 +61,7 @@ impl DlssRrPass {
             world_to_camera_view: frame_constants.world_to_camera_view,
             camera_view_to_world: frame_constants.camera_view_to_world,
         };
-        if let Err(err) = dlss::set_rr_options(0, options) {
+        if let Err(err) = dlss::set_rr_options(0, rr_options) {
             log::error!("DLSS RR set options failed: {}", err);
             return;
         }

@@ -1048,22 +1048,48 @@ impl RenderRuntime {
             return frame_state;
         }
 
-        // SR upscale mode 由 Streamline 决定低分辨率 render extent；app-owned RT/GBuffer/DLSS
-        // input targets 会用这个尺寸重建，output 仍保持 swapchain extent。
-        let options = dlss::DlssOptions {
-            mode: mode.to_streamline_mode(),
-            output_width: output_extent.width,
-            output_height: output_extent.height,
-            color_buffers_hdr: true,
+        // SR/RR upscale mode 都由 Streamline 决定低分辨率 render extent；app-owned
+        // RT/GBuffer/DLSS input targets 会用这个尺寸重建，output 仍保持 swapchain extent。
+        let streamline_mode = mode.to_streamline_mode();
+        let (settings_label, settings_result) = if self.dlss_options.is_rr_active() {
+            const IDENTITY_MATRIX: [f32; 16] = [
+                1.0, 0.0, 0.0, 0.0, //
+                0.0, 1.0, 0.0, 0.0, //
+                0.0, 0.0, 1.0, 0.0, //
+                0.0, 0.0, 0.0, 1.0,
+            ];
+            // `slDLSSDGetOptimalSettings` 的尺寸查询只依赖 mode/output extent；binding
+            // 复用 RR set-options 结构，因此这里用 identity 填充矩阵字段，避免在
+            // frame-state 派生阶段引入 `RenderView` 依赖。
+            let options = dlss::DlssRrOptions {
+                mode: streamline_mode,
+                output_width: output_extent.width,
+                output_height: output_extent.height,
+                color_buffers_hdr: true,
+                normal_roughness_packed: true,
+                world_to_camera_view: IDENTITY_MATRIX,
+                camera_view_to_world: IDENTITY_MATRIX,
+            };
+            ("DLSS RR", dlss::get_rr_optimal_settings(options))
+        } else {
+            let options = dlss::DlssOptions {
+                mode: streamline_mode,
+                output_width: output_extent.width,
+                output_height: output_extent.height,
+                color_buffers_hdr: true,
+            };
+            ("DLSS SR", dlss::get_optimal_settings(options))
         };
-        match dlss::get_optimal_settings(options) {
+
+        match settings_result {
             Ok(settings) if settings.optimal_render_width > 0 && settings.optimal_render_height > 0 => {
                 frame_state.render_extent = vk::Extent2D {
                     width: settings.optimal_render_width,
                     height: settings.optimal_render_height,
                 };
                 log::info!(
-                    "DLSS SR optimal settings: mode={:?}, output={}x{}, render={}x{}, sharpness={:.3}, min={}x{}, max={}x{}",
+                    "{} optimal settings: mode={:?}, output={}x{}, render={}x{}, sharpness={:.3}, min={}x{}, max={}x{}",
+                    settings_label,
                     mode,
                     output_extent.width,
                     output_extent.height,
@@ -1078,7 +1104,8 @@ impl RenderRuntime {
             }
             Ok(settings) => {
                 log::warn!(
-                    "DLSS SR returned invalid optimal render extent {}x{} for mode {:?}; falling back to Off/native.",
+                    "{} returned invalid optimal render extent {}x{} for mode {:?}; falling back to Off/native.",
+                    settings_label,
                     settings.optimal_render_width,
                     settings.optimal_render_height,
                     mode
@@ -1088,8 +1115,13 @@ impl RenderRuntime {
                 frame_state.render_extent = output_extent;
             }
             Err(err) => {
-                log::warn!("DLSS SR optimal settings failed for mode {:?}: {}; falling back to Off/native.", mode, err);
-                // capability/driver/runtime 异常都按 native fallback 处理，避免因为 SR 不可用阻塞 app 启动。
+                log::warn!(
+                    "{} optimal settings failed for mode {:?}: {}; falling back to Off/native.",
+                    settings_label,
+                    mode,
+                    err
+                );
+                // capability/driver/runtime 异常都按 native fallback 处理，避免因为 DLSS 不可用阻塞 app 启动。
                 self.dlss_options.dlss_sr_mode = DlssSrMode::Off;
                 frame_state.render_extent = output_extent;
             }

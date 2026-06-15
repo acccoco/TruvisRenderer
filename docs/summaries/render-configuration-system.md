@@ -35,6 +35,8 @@ tone mapping 和 legacy denoise 参数不再伪装成 engine 全局配置。
 `kFeatureDLSS`，非 `Off` 且 RR 开启表示 `kFeatureDLSS_RR`。runtime 用它比较旧/新 feature 并释放旧 viewport resource；
 app render graph 和 DLSS pass 也直接复用同一个 owner 选择 SR、RR 或 native 分支。
 
+RR evaluate 前会先设置 compatible DLSS SR options，再设置 RR options；这样 Streamline 在同一 viewport 上同时拥有基础 DLSS mode/output 契约与 RR 扩展契约。
+
 不放入 `DlssOptions` 的内容：
 
 - RT debug channel：只属于 RT pipeline 的 shader 调试输出。
@@ -50,7 +52,7 @@ app render graph 和 DLSS pass 也直接复用同一个 owner 选择 SR、RR 或
 |------|--------------------|----------|
 | `Off` | `render_extent == output_extent` | native 路径，不调用 DLSS SR pass |
 | `Dlaa` | `render_extent == output_extent` | 调用 DLSS feature 做抗锯齿，不做 upscale |
-| `Quality` / `Balanced` / `Performance` / `UltraPerformance` | 通过 Streamline optimal settings 派生低分辨率 `render_extent` | RT/GBuffer/DLSS input 用低分辨率渲染，DLSS output 回到 `output_extent` |
+| `Quality` / `Balanced` / `Performance` / `UltraPerformance` | 按 active feature 通过 Streamline optimal settings 派生低分辨率 `render_extent`；SR 使用 `slDLSSGetOptimalSettings`，RR 使用 `slDLSSDGetOptimalSettings` | RT/GBuffer/DLSS input 用低分辨率渲染，DLSS output 回到 `output_extent` |
 
 `DlssSrMode::to_streamline_mode()` 是项目内唯一的 `DlssSrMode -> dlss::DlssMode` 映射入口。它只表达 SR/DLAA
 quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
@@ -129,7 +131,7 @@ DLSS mode 的变化在一帧中按固定路径生效：
 ```text
 Overlay 修改 DlssOptions.dlss_sr_mode / dlss_rr_enabled
   -> RenderAppShell 调用 RenderRuntime::sync_dlss_options_frame_state
-  -> runtime 用 output extent + mode 查询 Streamline optimal settings
+  -> runtime 用 output extent + mode 按 active feature 查询 Streamline optimal settings
   -> 派生 FrameRenderState.render_extent / output_extent
   -> 如尺寸变化，返回 RenderRuntimeResizeCtx
   -> App / Plugin 重建 RT target、GBuffer、DLSS input/output、main view target

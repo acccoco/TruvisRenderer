@@ -58,8 +58,9 @@ RR-on:
 - `Performance`
 - `Ultra Performance`
 
-`Quality / Balanced / Performance / Ultra Performance` 由
-`slDLSSGetOptimalSettings` 决定 render extent；`Off / DLAA` 使用 native extent。
+`Quality / Balanced / Performance / Ultra Performance` 由当前 active feature 的
+Streamline optimal settings 决定 render extent；SR 使用 `slDLSSGetOptimalSettings`，
+RR 使用 `slDLSSDGetOptimalSettings`。`Off / DLAA` 使用 native extent。
 
 RR 以 “SR mode + RR enable flag” 表达，不要把
 `DLSSRayReconstruction` 写成和 `Quality/Balanced/Performance` 平级且互斥的质量挡位。
@@ -116,8 +117,8 @@ pub struct FrameRenderState {
 约定：
 
 - `Off / DLAA`：`render_extent == output_extent`。
-- SR upscale mode：`output_extent` 跟随 swapchain，`render_extent` 来自
-  `slDLSSGetOptimalSettings`。
+- SR/RR upscale mode：`output_extent` 跟随 swapchain，`render_extent` 来自当前
+  active feature 对应的 Streamline optimal settings。
 - RT、GBuffer、DLSS depth、motion vectors 使用 `render_extent`。
 - DLSS output、SDR、GUI、present 使用 `output_extent`。
 - mode 切换、RR enable flag 切换、render extent 变化、窗口 resize 会 request
@@ -168,8 +169,8 @@ DLSS RR:
   resolve + gui
 ```
 
-DLAA 属于 `kFeatureDLSS` 分支，只是 `render_extent == output_extent`；SR upscale mode
-则使用 `slDLSSGetOptimalSettings` 返回的低分辨率 `render_extent`。
+DLAA 属于 `kFeatureDLSS` 分支，只是 `render_extent == output_extent`；SR/RR upscale
+mode 则使用对应 Streamline optimal settings 返回的低分辨率 `render_extent`。
 
 `DlssSrRgPass` 和 `DlssRrRgPass` 都是 opaque external pass：RenderGraph 只负责
 pass 前后的 resource state 和命令录制顺序；Streamline 负责 DLSS 内部命令。RR
@@ -256,6 +257,8 @@ pub struct DlssRrRgPass<'a> {
 
 - RR runtime DLL、feature flag 和 support 查询。
 - `slDLSSDGetOptimalSettings` / `slDLSSDSetOptions` / `DLSSDOptions` FFI。
+- RR active 时 runtime 使用 `slDLSSDGetOptimalSettings` 查询 render extent；RR pass
+  每帧先设置 compatible DLSS SR options，再设置 RR options。
 - `kFeatureDLSS_RR` support 查询、resource tagging、evaluate、free resources。
 - `DlssRrPass` / `DlssRrRgPass` opaque external pass。
 - `DlssRrInputTargets` 管理 diffuse albedo、specular albedo、specular motion vectors。
@@ -273,9 +276,6 @@ pub struct DlssRrRgPass<'a> {
   后续如需要更高质量，可补 specular hit distance / 多 bounce 策略。
 - 当前 output 仍沿用 `dlss-sr-output` 资源名；功能正确但命名偏 SR，后续可以改为
   `dlss-output`，避免 debug UI 误读。
-- `slDLSSDGetOptimalSettings` FFI 已暴露，但 runtime 仍复用 SR optimal settings 计算
-  render extent。若 SDK/driver 对 RR optimal settings 有额外约束，应再切到 RR-specific query。
-
 ## 5. 验证记录
 
 当前代码验证过：
