@@ -5,7 +5,7 @@
 /// HDR -> SDR compute 入口。
 ///
 /// Final channel 会做曝光、ACES fitted 近似和轻微 dithering；debug channel 直接透传 RGB，
-/// 避免 normal/albedo/IC 等诊断值被 tone mapping 改变含义。
+/// 避免 normal/albedo 等诊断值被 tone mapping 改变含义。
 [push_constant]
 sdr::PushConstant g_params;
 

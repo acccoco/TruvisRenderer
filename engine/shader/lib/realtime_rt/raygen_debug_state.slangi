@@ -4,7 +4,6 @@
 #pragma once
 
 #include "lib/realtime_rt/payload.slangi"
-#include "lib/realtime_rt/irradiance_cache.slangi"
 
 struct RtDebugAccumulator
 {
@@ -17,10 +16,6 @@ struct RtDebugAccumulator
     float3 nee_bounce1_radiance;
     float3 nee_bounce2_radiance;
 
-    float3 first_hit_position;
-    float3 first_hit_normal;
-    bool first_hit_recorded;
-
     static RtDebugAccumulator make()
     {
         RtDebugAccumulator state;
@@ -29,9 +24,6 @@ struct RtDebugAccumulator
         state.hdri_radiance = float3(0.0f);
         state.nee_bounce1_radiance = float3(0.0f);
         state.nee_bounce2_radiance = float3(0.0f);
-        state.first_hit_position = float3(0.0f);
-        state.first_hit_normal = float3(0.0f);
-        state.first_hit_recorded = false;
         return state;
     }
 
@@ -76,18 +68,6 @@ struct RtDebugAccumulator
     }
 
     [mutating]
-    void record_first_hit(const RtSurfaceHit surface)
-    {
-        // IC debug 通道只关心 camera primary 的首次真实表面，后续反弹不能覆盖它。
-        if (!first_hit_recorded)
-        {
-            first_hit_position = surface.position;
-            first_hit_normal = surface.forward_normal;
-            first_hit_recorded = true;
-        }
-    }
-
-    [mutating]
     void record_nee(uint depth, float3 contribution)
     {
         nee_radiance += contribution;
@@ -114,8 +94,6 @@ struct RtDebugAccumulator
     }
 
     /// 根据最终 debug channel 选择输出。
-    ///
-    /// channel 9 查询的是首次命中点的 IC 结果，必须等路径完成后再执行，避免改变主路径采样状态。
     float3 resolve(uint channel, float3 path_radiance)
     {
         if (channel == 4)
@@ -137,29 +115,6 @@ struct RtDebugAccumulator
         if (channel == 8)
         {
             return nee_bounce2_radiance;
-        }
-        if (channel == 9)
-        {
-            if (!first_hit_recorded)
-            {
-                return float3(0.0f);
-            }
-
-            float3 ic_query_radiance;
-            float ic_weight;
-            uint ic_max_weight_entry_index;
-            float ic_max_weight;
-            bool ic_found = RtIrradianceCacheTrace::lookup(
-                push_const.ic_table,
-                push_const.ic_entry_pool,
-                first_hit_position,
-                first_hit_normal,
-                ic_query_radiance,
-                ic_weight,
-                ic_max_weight_entry_index,
-                ic_max_weight
-            );
-            return ic_found ? ic_query_radiance : float3(0.0f);
         }
         return path_radiance;
     }

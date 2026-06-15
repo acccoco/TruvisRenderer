@@ -46,7 +46,7 @@ struct EnvMap
     /// 查询给定 sky 方向的 solid-angle PDF。
     ///
     /// 当前阶段仍是 uniform sphere，因此 PDF 与方向无关。后续接入 HDRI importance sampling 时，
-    /// NEE 采样、BRDF sky miss 和 IC 记录都必须继续经过这个入口，避免不同路径各自维护 PDF。
+    /// NEE 采样和 BRDF sky miss 都必须继续经过这个入口，避免不同路径各自维护 PDF。
     static float pdf(const float3 _dir)
     {
         return uniform_pdf();

@@ -78,15 +78,10 @@ pub enum RtDebugChannel {
     NeeBounce0,
     /// 显示第 1 次 bounce 的 NEE 贡献。
     NeeBounce1,
-    /// 显示 shader 实验路径中的 Irradiance Cache 调试结果。
-    ///
-    /// 当前主流程固定 `ic_enabled = 0`，因此该通道只是保留 shader 侧观测入口，
-    /// 不代表 engine 提供了全局 IC 配置。
-    IrradianceCache,
 }
 
 impl RtDebugChannel {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 10] = [
         Self::Final,
         Self::ForwardNormal,
         Self::WorldNormal,
@@ -97,7 +92,6 @@ impl RtDebugChannel {
         Self::BrdfHdri,
         Self::NeeBounce0,
         Self::NeeBounce1,
-        Self::IrradianceCache,
     ];
 
     pub fn label(self) -> &'static str {
@@ -112,7 +106,6 @@ impl RtDebugChannel {
             Self::BrdfHdri => "from BRDF HDRI",
             Self::NeeBounce0 => "NEE bounce 0",
             Self::NeeBounce1 => "NEE bounce 1",
-            Self::IrradianceCache => "Irradiance Cache",
         }
     }
 
@@ -128,7 +121,6 @@ impl RtDebugChannel {
             Self::BrdfHdri => 6,
             Self::NeeBounce0 => 7,
             Self::NeeBounce1 => 8,
-            Self::IrradianceCache => 9,
         }
     }
 }
@@ -183,7 +175,6 @@ impl RtPipelineInner {
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.device_info_ctx,
-            ctx.immediate_ctx,
             ctx.shader_binding_system.global_descriptor_sets(),
         );
         let dlss_sr_pass = DlssSrPass::new();

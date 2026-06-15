@@ -52,15 +52,12 @@ struct RtDirectLightingSample
 {
     /// 当前 path throughput 加权后的实际贡献。
     float3 contribution;
-    /// 未乘 path throughput 的局部直接光照贡献，供 IC 在记录点使用自己的相对 throughput 累积。
-    float3 relative_contribution;
     bool valid;
 
     static RtDirectLightingSample empty()
     {
         RtDirectLightingSample sample;
         sample.contribution = float3(0.0f);
-        sample.relative_contribution = float3(0.0f);
         sample.valid = false;
         return sample;
     }
@@ -176,8 +173,8 @@ struct RtDirectLighting
         const float brdf_pdf = RtMaterialSampler::eval_brdf_pdf(surface, view_dir, candidate.direction);
         const float mis_weight = Mis::power_heuristic(candidate.solid_angle_pdf, brdf_pdf);
 
-        result.relative_contribution = candidate.radiance * brdf_cos / max(candidate.solid_angle_pdf, 1e-7f) * mis_weight;
-        result.contribution = throughput * result.relative_contribution;
+        result.contribution = throughput * candidate.radiance * brdf_cos /
+            max(candidate.solid_angle_pdf, 1e-7f) * mis_weight;
         result.valid = true;
         return result;
     }

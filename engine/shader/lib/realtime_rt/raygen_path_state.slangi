@@ -13,7 +13,7 @@ struct RtRussianRouletteResult
 {
     /// false 表示路径终止，raygen 不再发出下一跳光线。
     bool survived;
-    /// survivor 的 throughput 补偿系数；IC 记录路径也需要同步缩放。
+    /// survivor 的 throughput 补偿系数，供调用方保持路径概率与能量一致。
     float throughput_scale;
 
     static RtRussianRouletteResult keep()

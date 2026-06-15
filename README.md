@@ -114,12 +114,6 @@ just truvis-direct imgui
 
 ## 展示特性
 
-### Irradiance Cache
-
-使用 HashGrid 缓存 diffuse 表面的光照信息，提升全局光照阶段的复用效率。
-
-![IrradianceCache](./docs/imgs/IrradianceCache.png)
-
 ### 剖切与填充面
 
 支持剖切体与填充面的效果渲染。

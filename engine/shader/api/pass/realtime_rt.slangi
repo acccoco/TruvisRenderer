@@ -60,16 +60,12 @@ RWTexture2D<float2> dlss_rr_specular_motion_vectors;
 
 struct PushConstants
 {
-    /// Irradiance Cache hash table。IC 禁用时仍保持 ABI，但 shader 不应读取它。
-    PTR(irradiance_cache::Table, ic_table);
-    /// Irradiance Cache entry pool。与 `ic_table` 一起由实验路径使用。
-    PTR(irradiance_cache::EntryPool, ic_entry_pool);
-
     /// sample-per-pixel 序号，用于扰动随机种子。
     uint spp_idx;
     /// RT debug channel，由 app 层 `RtPipelineSettings` 写入。
     uint channel;
-    uint ic_enabled; // 0=禁用, 1=启用 Irradiance Cache
+    /// 显式 padding 保持 push constant 16 字节对齐，避免 CPU/GPU ABI 对齐差异。
     uint _padding_0;
+    uint _padding_1;
 };
 };

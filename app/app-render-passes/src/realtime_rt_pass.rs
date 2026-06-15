@@ -6,11 +6,10 @@ use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::descriptors::descriptor::GfxDescriptorSetLayout;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_gfx::{
     commands::{barrier::GfxImageBarrier, command_buffer::GfxCommandBuffer},
-    gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxResourceCtx},
+    gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxResourceCtx},
     pipelines::shader::{GfxShaderGroupInfo, GfxShaderModuleCache, GfxShaderStageInfo},
     resources::special_buffers::sbt_buffer::GfxSBTBuffer,
 };
@@ -217,16 +216,12 @@ pub struct RealtimeRtPass {
     pipeline: GfxRtPipeline,
     sbt: GfxSBTBuffer,
     _rt_descriptor_set_layout: GfxDescriptorSetLayout<RealtimeRtDescriptorBinding>,
-
-    hash_table: GfxStructuredBuffer<gpu::irradiance_cache::Table>,
-    entry_pool: GfxStructuredBuffer<gpu::irradiance_cache::EntryPool>,
 }
 impl RealtimeRtPass {
     pub fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         device_info_ctx: GfxDeviceInfoCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
         render_descriptor_sets: &GlobalDescriptorSets,
     ) -> Self {
         let mut shader_module_cache = GfxShaderModuleCache::new();
@@ -319,34 +314,10 @@ impl RealtimeRtPass {
             "simple-rt-sbt",
         );
 
-        let mut hash_table = GfxStructuredBuffer::<gpu::irradiance_cache::Table>::new(
-            resource_ctx,
-            "ic-hash-table",
-            1,
-            vk::BufferUsageFlags::STORAGE_BUFFER
-                | vk::BufferUsageFlags::TRANSFER_DST
-                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-            false,
-        );
-        hash_table.clear(immediate_ctx);
-        let mut entry_pool = GfxStructuredBuffer::<gpu::irradiance_cache::EntryPool>::new(
-            resource_ctx,
-            "ic-entry-pool",
-            1,
-            vk::BufferUsageFlags::STORAGE_BUFFER
-                | vk::BufferUsageFlags::TRANSFER_DST
-                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-            false,
-        );
-        entry_pool.clear(immediate_ctx);
-
         Self {
             pipeline: rt_pipeline,
             sbt,
             _rt_descriptor_set_layout: rt_descriptor_set_layout,
-
-            hash_table,
-            entry_pool,
         }
     }
 
@@ -355,14 +326,10 @@ impl RealtimeRtPass {
             pipeline,
             sbt,
             _rt_descriptor_set_layout,
-            mut hash_table,
-            mut entry_pool,
         } = self;
         pipeline.destroy(device_ctx);
         sbt.destroy(resource_ctx, DestroyReason::Shutdown);
         _rt_descriptor_set_layout.destroy(device_ctx);
-        hash_table.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        entry_pool.destroy_mut(resource_ctx, DestroyReason::Shutdown);
     }
     pub fn ray_trace(
         &self,
@@ -503,12 +470,8 @@ impl RealtimeRtPass {
         let mut push_constant = gpu::realtime_rt::PushConstants {
             spp_idx: 0,
             channel: pass_data.debug_channel,
-            ic_table: self.hash_table.device_address(),
-            ic_entry_pool: self.entry_pool.device_address(),
-            // Irradiance Cache 代码仍作为 shader 实验路径保留，但当前主流程没有配置入口。
-            // 固定为 0，避免一个看似全局配置的开关悄悄改变主渲染语义。
-            ic_enabled: 0,
             _padding_0: Default::default(),
+            _padding_1: Default::default(),
         };
         for spp_idx in 0..spp {
             push_constant.spp_idx = spp_idx;

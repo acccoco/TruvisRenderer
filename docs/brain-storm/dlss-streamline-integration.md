@@ -127,8 +127,8 @@ pub struct FrameRenderState {
 
 ### 3.3 RenderGraph 主流程
 
-当前 denoise/accum pass 代码仍保留，但不在 RT 主流程中运行。Irradiance Cache 代码也保留，
-但主流程 push constant 固定 `ic_enabled = 0`，让 raygen 不再依赖该路径。
+当前 denoise/accum pass 代码仍保留，但不在 RT 主流程中运行。旧间接光缓存实验路径已从
+realtime RT shader、共享 ABI 和 Rust pass 资源中移除，raygen 不再维护额外缓存状态。
 
 ```text
 DLSS Off:

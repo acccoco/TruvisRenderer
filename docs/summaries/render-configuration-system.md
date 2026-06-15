@@ -15,7 +15,7 @@
 
 这次整理后的核心原则是：`truvis-render-runtime` 持有跨 pipeline 的渲染契约和 runtime 派生状态，
 包括 `DlssOptions`、`FrameRenderState`、`ViewAccumState` 与 `DlssSrState` 等明确 owner；具体 RT pass 的 debug channel、SDR
-tone mapping、legacy denoise 参数和实验性 IC 开关不再伪装成 engine 全局配置。
+tone mapping 和 legacy denoise 参数不再伪装成 engine 全局配置。
 
 ## DlssOptions
 
@@ -40,7 +40,7 @@ app render graph 和 DLSS pass 也直接复用同一个 owner 选择 SR、RR 或
 - RT debug channel：只属于 RT pipeline 的 shader 调试输出。
 - SDR tone mapping：只属于 RT pipeline 的最终显示映射，不影响 runtime target 尺寸或 DLSS history。
 - denoise 参数：当前主 RT 流程已旁路传统 denoise/accum pass；保留 pass 时只能作为 pass-local 实验设置。
-- IC 开关：Irradiance Cache 仍是 shader 实验路径，主流程 push constant 固定为关闭。
+- 旧间接光缓存开关：相关 shader / ABI / GPU buffer 路径已从当前 realtime RT 主流程移除。
 
 ## DlssSrMode、DlssOptions 与 DlssSrState
 
@@ -91,7 +91,7 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 
 RT debug channel 与 tone mapping 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hello Triangle / ShaderToy 只显示 DLSS SR mode，不暴露 RT 调试或 tone mapping 参数。
 
-`RtDebugChannel` 使用 enum 表达当前主 RT 流程支持的通道：final、forward normal、world normal、object normal、base color、NEE HDRI、emission、BRDF HDRI、NEE bounce 0/1 和 IC debug。forward normal 是当前 path tracing BRDF 和 DLSS RR `NormalRoughness` 输入使用的 world-space shading normal，会按 ray `faceforward`；world normal 是未翻转的 world-space 几何法线；object normal 是 mesh object/local space 的插值顶点法线。旧的 magic number “not accum” 通道不再通过 UI 暴露。
+`RtDebugChannel` 使用 enum 表达当前主 RT 流程支持的通道：final、forward normal、world normal、object normal、base color、NEE HDRI、emission、BRDF HDRI 和 NEE bounce 0/1。forward normal 是当前 path tracing BRDF 和 DLSS RR `NormalRoughness` 输入使用的 world-space shading normal，会按 ray `faceforward`；world normal 是未翻转的 world-space 几何法线；object normal 是 mesh object/local space 的插值顶点法线。旧的 magic number “not accum” 通道不再通过 UI 暴露。
 
 `SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道。当前使用实时渲染常用的 ACES fitted approximation，并提供 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display transform，也不做自动曝光或参数持久化。
 

@@ -9,8 +9,8 @@
 
 /// Push Constants 声明（所有 RT 着色器共享）。
 ///
-/// raygen、hit 和 miss 使用同一个 push constant block，确保 channel / IC 参数在一次 trace
-/// 的所有 shader invocation 中一致。
+/// raygen、hit 和 miss 使用同一个 push constant block，确保 channel 参数在一次 trace 的所有 shader
+/// invocation 中一致。
 [[vk::push_constant]]
 realtime_rt::PushConstants push_const;
 
@@ -113,23 +113,3 @@ struct ShadowMissPayload
 {
     bool miss;
 };
-
-namespace realtime_rt
-{
-
-// ============================================================================
-// Irradiance Cache 阈值常量
-// ============================================================================
-
-/// Diffuse 判定阈值：metallic < 此值视为 diffuse 表面
-const static float IC_DIFFUSE_METALLIC_THRESHOLD = 0.3f;
-
-const static float IC_DIFFUSE_ROUGHNESS_THRESHOLD = 0.7f;
-
-/// IC throughput 最小值：防止除零
-const static float IC_THROUGHPUT_MIN = 0.001f;
-
-/// IC 查询启用的最小 diffuse 弹射次数
-const static uint IC_MIN_DIFFUSE_BOUNCES = 1;
-
-}
