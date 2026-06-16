@@ -2,7 +2,7 @@ use truvis_app_frame::input_event::InputEvent;
 use truvis_app_frame::plugin_api::{Plugin, PluginRenderCtx};
 use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx};
 use truvis_asset::asset_hub::AssetHub;
-use truvis_asset::handle::{AssetMaterialKey, AssetModelHandle, LoadStatus, MaterialData};
+use truvis_asset::handle::{AssetMaterialKey, AssetMeshHandle, AssetModelHandle, LoadStatus, MaterialData};
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
@@ -41,6 +41,32 @@ struct MaterialCubeSpec {
     roughness: f32,
     opaque: f32,
 }
+
+#[derive(Clone, Copy)]
+struct EmissiveCubeMatrixConfig {
+    /// 第一个 cube 的 world-space 中心点；整体平移矩阵时优先调这里。
+    start_offset: glam::Vec3,
+    /// 相邻 cube 中心点在 XYZ 三轴上的间距。
+    spacing: glam::Vec3,
+    /// 单个 cube 的等比缩放；程序化 cube 本身是边长 1 的单位模型。
+    cube_scale: f32,
+    /// XYZ 三轴实例数量；默认 20 * 1 * 10 = 200 个自发光 cube。
+    counts: glam::UVec3,
+}
+
+#[derive(Clone, Copy)]
+struct EmissiveCubePaletteSpec {
+    name: &'static str,
+    base_color: glam::Vec4,
+    emissive: glam::Vec4,
+}
+
+const EMISSIVE_CUBE_MATRIX_CONFIG: EmissiveCubeMatrixConfig = EmissiveCubeMatrixConfig {
+    start_offset: glam::Vec3::new(-800.0, 600.0, -425.0),
+    spacing: glam::Vec3::new(75.0, 60.0, 90.0),
+    cube_scale: 30.0,
+    counts: glam::UVec3::new(20, 1, 10),
+};
 
 struct ClickRayCastProbe {
     total_time_s: f32,
@@ -201,7 +227,7 @@ impl TruvisApp {
             },
         ];
 
-        // cube 为单位模型，scale=100 且中心 y=50，使所有顶点落在给定场景范围内；
+        // cube 为单位模型，scale=100 且中心 y=100，使所有顶点落在给定场景范围内；
         // 这些材质参数刻意覆盖当前 shader 的透明、镜面、光泽/粗糙 diffuse 和 emissive 分支。
         for (material_index, spec) in cube_specs.into_iter().enumerate() {
             let material = world.asset_hub.register_material_data(
@@ -230,6 +256,102 @@ impl TruvisApp {
                     spec.center,
                 ),
             });
+        }
+
+        Self::spawn_emissive_cube_matrix(
+            world,
+            cube_mesh,
+            &material_source_path,
+            cube_specs.len() as u32,
+            EMISSIVE_CUBE_MATRIX_CONFIG,
+        );
+    }
+
+    fn spawn_emissive_cube_matrix(
+        world: &mut World,
+        cube_mesh: AssetMeshHandle,
+        material_source_path: &std::path::Path,
+        first_material_index: u32,
+        config: EmissiveCubeMatrixConfig,
+    ) {
+        let palette_specs = [
+            EmissiveCubePaletteSpec {
+                name: "warm-amber",
+                base_color: glam::vec4(1.0, 0.72, 0.32, 1.0),
+                emissive: glam::vec4(4.8, 2.7, 0.8, 1.0),
+            },
+            EmissiveCubePaletteSpec {
+                name: "rose",
+                base_color: glam::vec4(1.0, 0.36, 0.54, 1.0),
+                emissive: glam::vec4(4.2, 0.9, 1.8, 1.0),
+            },
+            EmissiveCubePaletteSpec {
+                name: "cyan",
+                base_color: glam::vec4(0.42, 0.95, 1.0, 1.0),
+                emissive: glam::vec4(1.2, 3.8, 4.8, 1.0),
+            },
+            EmissiveCubePaletteSpec {
+                name: "lime",
+                base_color: glam::vec4(0.54, 1.0, 0.38, 1.0),
+                emissive: glam::vec4(1.4, 4.5, 1.0, 1.0),
+            },
+            EmissiveCubePaletteSpec {
+                name: "violet",
+                base_color: glam::vec4(0.72, 0.48, 1.0, 1.0),
+                emissive: glam::vec4(2.2, 1.2, 4.8, 1.0),
+            },
+        ];
+        let emissive_materials = palette_specs
+            .into_iter()
+            .enumerate()
+            .map(|(palette_index, spec)| {
+                world.asset_hub.register_material_data(
+                    AssetMaterialKey {
+                        source_path: material_source_path.to_path_buf(),
+                        material_index: first_material_index + palette_index as u32,
+                    },
+                    MaterialData {
+                        base_color: spec.base_color,
+                        emissive: spec.emissive,
+                        metallic: 0.0,
+                        roughness: 1.0,
+                        opaque: 1.0,
+                        diffuse_texture: None,
+                        normal_texture: None,
+                        name: format!("emissive-cube-matrix-{}", spec.name),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let mut cube_index = 0usize;
+        // 配置使用“第一个 cube 中心点 + XYZ 间距”的语义，方便在场景中手工平移和拉开矩阵。
+        // 自发光 cube 仍只是普通 material emission：当前 RT 路径只在命中 surface 时累加 emission，
+        // 不会把这些 cube 注册成 emissive triangle NEE 光源。
+        for y in 0..config.counts.y {
+            for z in 0..config.counts.z {
+                for x in 0..config.counts.x {
+                    let center = config.start_offset
+                        + glam::vec3(
+                            x as f32 * config.spacing.x,
+                            y as f32 * config.spacing.y,
+                            z as f32 * config.spacing.z,
+                        );
+                    let material = emissive_materials[cube_index % emissive_materials.len()];
+
+                    world.scene_manager.register_instance(Instance {
+                        mesh: cube_mesh,
+                        materials: vec![material],
+                        transform: glam::Mat4::from_scale_rotation_translation(
+                            glam::Vec3::splat(config.cube_scale),
+                            glam::Quat::IDENTITY,
+                            center,
+                        ),
+                    });
+
+                    cube_index += 1;
+                }
+            }
         }
     }
 
