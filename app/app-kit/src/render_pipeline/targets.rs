@@ -530,15 +530,16 @@ impl Drop for DlssRrInputTargets {
     }
 }
 
-/// DLSS SR 的高分辨率 HDR 输出图像。
+/// DLSS SR / DLAA / RR 共享的高分辨率 HDR 输出图像。
 ///
-/// SR evaluate 写入 output extent 下的 linear HDR color；后续 tone mapping pass 再把它写入
-/// main view color，保证 GUI 和 present 仍只消费最终 SDR target。
-pub struct DlssSrOutputTargets {
+/// Streamline evaluate 写入 output extent 下的 linear HDR color；后续 tone mapping pass 再把它写入
+/// main view color，保证 GUI 和 present 仍只消费最终 SDR target。SR 与 RR 只在 evaluate feature
+/// 上互斥，输出资源本身由同一个 owner 管理。
+pub struct DlssOutputTargets {
     color: PerFrameImageSet,
 }
 
-impl DlssSrOutputTargets {
+impl DlssOutputTargets {
     pub fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
@@ -556,7 +557,7 @@ impl DlssSrOutputTargets {
             immediate_ctx,
             gfx_resource_manager,
             TargetImageDesc {
-                name_prefix: "dlss-sr-output",
+                name_prefix: "dlss-output",
                 format: frame_state.hdr_color_format,
                 extent: frame_state.output_extent,
                 usage: vk::ImageUsageFlags::STORAGE
@@ -622,7 +623,7 @@ impl DlssSrOutputTargets {
     }
 }
 
-impl Drop for DlssSrOutputTargets {
+impl Drop for DlssOutputTargets {
     fn drop(&mut self) {
         debug_assert!(self.color.images.iter().all(|img| img.is_null()));
     }

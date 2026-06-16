@@ -148,8 +148,8 @@ DLSS SR / DLAA:
   DlssSrRgPass:
     single_frame_rt + dlss-depth + dlss-motion-vectors
       -> kFeatureDLSS
-      -> dlss-sr-output(output_extent)
-  hdr-to-sdr(dlss-sr-output -> main_view_color)
+      -> dlss-output(output_extent)
+  hdr-to-sdr(dlss-output -> main_view_color)
   resolve + gui
 
 DLSS RR:
@@ -164,8 +164,8 @@ DLSS RR:
       + diffuse/specular albedo + gbuffer_a(forward/shading normal+roughness)
       + specular motion vectors
       -> kFeatureDLSS_RR
-      -> dlss-sr-output(output_extent)
-  hdr-to-sdr(dlss-sr-output -> main_view_color)
+      -> dlss-output(output_extent)
+  hdr-to-sdr(dlss-output -> main_view_color)
   resolve + gui
 ```
 
@@ -183,7 +183,7 @@ pass 前后的 resource state 和命令录制顺序；Streamline 负责 DLSS 内
 | Streamline tag | 当前资源 | 格式 / 尺寸 | 说明 |
 | --- | --- | --- | --- |
 | `kBufferTypeScalingInputColor` | `single_frame_rt` | HDR color, `render_extent` | 低分辨率 RT color。 |
-| `kBufferTypeScalingOutputColor` | `dlss-sr-output` | HDR color, `output_extent` | SR 输出，后续进入 SDR。 |
+| `kBufferTypeScalingOutputColor` | `dlss-output` | HDR color, `output_extent` | SR/DLAA/RR 共享输出，后续进入 SDR。 |
 | `kBufferTypeDepth` | `dlss-depth` | `R32_SFLOAT`, `render_extent` | raygen 写入 device depth；不是 `GBufferB.w` 的 hit distance。 |
 | `kBufferTypeMotionVectors` | `dlss-motion-vectors` | `R32G32_SFLOAT`, `render_extent` | raygen 写入 pixel-space 2D motion vector，包含 camera 和 object motion；方向为 `previous_pixel - current_pixel`。 |
 
@@ -280,8 +280,6 @@ pub struct DlssRrRgPass<'a> {
   画质稳定性。
 - specular motion vectors 当前采用 single reflection RayQuery，不处理透明材质、粒子或多层反射；
   后续如需要更高质量，可补 specular hit distance / 多 bounce 策略。
-- 当前 output 仍沿用 `dlss-sr-output` 资源名；功能正确但命名偏 SR，后续可以改为
-  `dlss-output`，避免 debug UI 误读。
 
 ## 5. 验证记录
 
@@ -317,7 +315,7 @@ DLSSD
 
 - SR mode 切换后 render/output extent 日志是否符合 `slDLSSGetOptimalSettings`。
 - resize 后是否触发 DLSS history reset 和 target rebuild。
-- Debug Viewer 中 SR/RR 输入与 `dlss-sr-output` 是否能按当前 frame label 查看。
+- Debug Viewer 中 SR/RR 输入与 `dlss-output` 是否能按当前 frame label 查看。
 - camera/object/specular motion vector 静止画面应接近 0，移动方向和尺度应稳定。
 - RR 开启时日志中不应出现 `DLSS RR evaluate failed`，且不应再出现同一帧连续 SR evaluate。
 
@@ -326,7 +324,6 @@ DLSSD
 - motion vectors 已接入 full-screen 2D motion，但尚未做 runtime 可视化量纲校验和 DLSS 画质回归。
 - fallback 策略目前以 mode 切换和错误日志为主，尚未做更细的 runtime degrade UI。
 - 传统 denoise/accum pass 仍保留在代码中，但 RT 主流程已经旁路；后续可以单独清理未使用 pass。
-- RR output 资源名仍为 `dlss-sr-output`，语义上已经按当前 feature 分支区分，命名后续可清理。
 
 ## 7. 设计原则
 

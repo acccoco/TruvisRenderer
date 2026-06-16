@@ -1,6 +1,6 @@
 use crate::gui_plugin::{DebugImageEntry, DebugImageGraphEntry};
 use crate::render_pipeline::targets::{
-    DlssRrInputTargets, DlssSrInputTargets, DlssSrOutputTargets, ImageTarget, MainViewTargets, RtWorkingTargets,
+    DlssOutputTargets, DlssRrInputTargets, DlssSrInputTargets, ImageTarget, MainViewTargets, RtWorkingTargets,
 };
 use app_render_passes::dlss_rr_pass::{DlssRrPass, DlssRrRgPass};
 use app_render_passes::dlss_sr_pass::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
@@ -173,8 +173,8 @@ struct RtPipelineInner {
     dlss_sr_inputs: DlssSrInputTargets,
     /// DLSS RR 额外需要的低分辨率输入。
     dlss_rr_inputs: DlssRrInputTargets,
-    /// DLSS SR 输出的高分辨率 HDR color。
-    dlss_sr_outputs: DlssSrOutputTargets,
+    /// DLSS SR / DLAA / RR 共享输出的高分辨率 HDR color。
+    dlss_outputs: DlssOutputTargets,
     /// 主视图离屏目标。compute graph 写入 color，present graph 再 resolve 到 swapchain。
     main_view_targets: MainViewTargets,
     compute_cmds: [GfxCommandBuffer; FrameCounter::fif_count()],
@@ -258,7 +258,7 @@ impl RtPipelineInner {
             &target_frame_state,
             ctx.frame_timing.frame_counter(),
         );
-        let dlss_sr_outputs = DlssSrOutputTargets::new(
+        let dlss_outputs = DlssOutputTargets::new(
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.immediate_ctx,
@@ -295,7 +295,7 @@ impl RtPipelineInner {
             rt_targets,
             dlss_sr_inputs,
             dlss_rr_inputs,
-            dlss_sr_outputs,
+            dlss_outputs,
             main_view_targets,
             compute_cmds,
             present_cmds,
@@ -339,7 +339,7 @@ impl RtPipelineInner {
             &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
-        self.dlss_sr_outputs.destroy(
+        self.dlss_outputs.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
             &mut *ctx.shader_binding_system,
@@ -394,7 +394,7 @@ impl Plugin for RtPipeline {
                 &target_frame_state,
                 ctx.frame_timing.frame_counter(),
             );
-            inner.dlss_sr_outputs.rebuild(
+            inner.dlss_outputs.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
@@ -459,7 +459,7 @@ impl RtPipeline {
         let rt_targets = &inner.rt_targets;
         let dlss_sr_inputs = &inner.dlss_sr_inputs;
         let dlss_rr_inputs = &inner.dlss_rr_inputs;
-        let dlss_sr_outputs = &inner.dlss_sr_outputs;
+        let dlss_outputs = &inner.dlss_outputs;
         let main_view_targets = &inner.main_view_targets;
         let debug_channel = self.settings.debug_channel.shader_channel();
         let sky_sampling_mode = self.settings.sky_sampling_mode.shader_mode();
@@ -560,9 +560,9 @@ impl RtPipeline {
             None,
         );
 
-        let dlss_output_target = dlss_sr_outputs.color(frame_label);
+        let dlss_output_target = dlss_outputs.color(frame_label);
         let dlss_output = rg_builder.import_image(
-            "dlss-sr-output",
+            "dlss-output",
             dlss_output_target.image,
             Some(dlss_output_target.view),
             dlss_output_target.format,
@@ -691,7 +691,7 @@ impl RtPipeline {
         let main_view_targets = &inner.main_view_targets;
         let dlss_sr_inputs = &inner.dlss_sr_inputs;
         let dlss_rr_inputs = &inner.dlss_rr_inputs;
-        let dlss_sr_outputs = &inner.dlss_sr_outputs;
+        let dlss_outputs = &inner.dlss_outputs;
         let gbuffer = &inner.gbuffer;
 
         let single_frame = rt_targets.single_frame_rt(frame_label);
@@ -701,7 +701,7 @@ impl RtPipeline {
         let rr_diffuse_albedo = dlss_rr_inputs.diffuse_albedo(frame_label);
         let rr_specular_albedo = dlss_rr_inputs.specular_albedo(frame_label);
         let rr_specular_motion_vectors = dlss_rr_inputs.specular_motion_vectors(frame_label);
-        let dlss_output = dlss_sr_outputs.color(frame_label);
+        let dlss_output = dlss_outputs.color(frame_label);
         let (gbuffer_a_image, gbuffer_a_view) = gbuffer.a_handle(frame_label);
         let (gbuffer_b_image, gbuffer_b_view) = gbuffer.b_handle(frame_label);
         let (gbuffer_c_image, gbuffer_c_view) = gbuffer.c_handle(frame_label);
@@ -714,7 +714,7 @@ impl RtPipeline {
         vec![
             debug_entry_with_state("single-frame-rt", "Single Frame RT", single_frame, sl_input_state),
             debug_entry("main-view-color", "Main View Color", main_view_color),
-            debug_entry("dlss-sr-output", "DLSS SR Output", dlss_output),
+            debug_entry("dlss-output", "DLSS Output", dlss_output),
             debug_entry_with_state("dlss-depth", "DLSS Depth", depth, sl_input_state),
             debug_entry_with_state("dlss-motion-vectors", "DLSS Motion Vectors", motion_vectors, sl_input_state),
             debug_entry_with_state(
