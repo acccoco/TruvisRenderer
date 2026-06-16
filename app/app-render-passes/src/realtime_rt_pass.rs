@@ -114,6 +114,8 @@ pub struct RealtimeRtPassData {
     pub sky_sampling_mode: u32,
     /// sky radiance 倍率；只缩放光照能量，不改变 importance sampling 的 PDF。
     pub sky_brightness: f32,
+    /// 是否启用自发光三角形 NEE。
+    pub emissive_nee_enabled: bool,
 
     // ========== GBuffer 数据 ==========
     /// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness
@@ -476,6 +478,10 @@ impl RealtimeRtPass {
             channel: pass_data.debug_channel,
             sky_sampling_mode: pass_data.sky_sampling_mode,
             sky_brightness: pass_data.sky_brightness,
+            emissive_nee_enabled: u32::from(pass_data.emissive_nee_enabled),
+            _padding_0: 0,
+            _padding_1: 0,
+            _padding_2: 0,
         };
         for spp_idx in 0..spp {
             push_constant.spp_idx = spp_idx;
@@ -537,6 +543,7 @@ pub struct RealtimeRtRgPass<'a> {
     pub debug_channel: u32,
     pub sky_sampling_mode: u32,
     pub sky_brightness: f32,
+    pub emissive_nee_enabled: bool,
 
     // ========== GBuffer 数据 ==========
     pub gbuffer_a: RgImageHandle,
@@ -598,6 +605,7 @@ impl RgPass for RealtimeRtRgPass<'_> {
                 debug_channel: self.debug_channel,
                 sky_sampling_mode: self.sky_sampling_mode,
                 sky_brightness: self.sky_brightness,
+                emissive_nee_enabled: self.emissive_nee_enabled,
                 gbuffer_a,
                 gbuffer_a_view,
                 gbuffer_b,

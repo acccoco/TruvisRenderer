@@ -6,7 +6,7 @@ use anyhow::{Result, bail};
 use ash::vk;
 use slotmap::SecondaryMap;
 
-use crate::render_scene::geometry::RtGeometry;
+use crate::render_scene::geometry::{RtGeometry, RtTriangleMeta};
 use crate::render_scene::render_data::MeshRenderData;
 use crate::scene_sync::scene_bridge::MeshRenderResolver;
 use truvis_asset::asset_hub::AssetLoadedEvent;
@@ -37,6 +37,7 @@ struct PendingMeshUpload {
     staging_buffers: Vec<GfxBuffer>,
     scratch_buffer: GfxAccelerationScratchBuffer,
     geometry: RtGeometry,
+    triangle_metadata: Vec<RtTriangleMeta>,
     blas: GfxAcceleration,
     name: String,
 }
@@ -48,6 +49,7 @@ struct PendingMeshUpload {
 struct FinishedMeshUpload {
     handle: AssetMeshHandle,
     geometry: RtGeometry,
+    triangle_metadata: Vec<RtTriangleMeta>,
     blas: GfxAcceleration,
     name: String,
 }
@@ -103,6 +105,7 @@ impl MeshUploadQueue {
         // `RtGeometry` 从创建开始就同时服务光栅化 draw 和 BLAS 输入，避免两套 mesh GPU 表示。
         let vertex_count = data.positions.len();
         let index_count = data.indices.len();
+        let triangle_metadata = Self::build_triangle_metadata(&data);
         let name = data.name.clone();
 
         let vertex_buffer = GfxVertexBuffer::<VertexLayoutSoA3D>::new_device_local(
@@ -222,6 +225,7 @@ impl MeshUploadQueue {
             staging_buffers: vec![vertex_stage_buffer, index_stage_buffer],
             scratch_buffer,
             geometry,
+            triangle_metadata,
             blas,
             name,
         });
@@ -257,6 +261,7 @@ impl MeshUploadQueue {
             finished_uploads.push(FinishedMeshUpload {
                 handle: upload.handle,
                 geometry: upload.geometry,
+                triangle_metadata: upload.triangle_metadata,
                 blas: upload.blas,
                 name: upload.name,
             });
@@ -370,6 +375,33 @@ impl MeshUploadQueue {
         stage_buffer.transfer_data_by_mmap(resource_ctx, indices);
         stage_buffer
     }
+
+    /// 从 upload-ready CPU mesh 中保留 light table 需要的最小三角形信息。
+    ///
+    /// 该函数和 vertex/index 上传同处 `MeshUploadQueue`，保证 CPU metadata 与真正提交给
+    /// GPU 的索引顺序完全一致；后续 scene sync 只通过 mesh manager 的 ready cache 读取它，
+    /// 不回到 asset hub 重新查询或复制整份 mesh。
+    fn build_triangle_metadata(data: &MeshData) -> Vec<RtTriangleMeta> {
+        data.indices
+            .chunks_exact(3)
+            .enumerate()
+            .map(|(primitive_id, tri)| {
+                let i0 = tri[0] as usize;
+                let i1 = tri[1] as usize;
+                let i2 = tri[2] as usize;
+                let p0 = data.positions[i0];
+                let p1 = data.positions[i1];
+                let p2 = data.positions[i2];
+                let local_area = 0.5 * (p1 - p0).cross(p2 - p0).length();
+                RtTriangleMeta {
+                    positions: [p0, p1, p2],
+                    uvs: [data.uvs[i0], data.uvs[i1], data.uvs[i2]],
+                    primitive_id: primitive_id as u32,
+                    local_area,
+                }
+            })
+            .collect()
+    }
 }
 
 impl Drop for MeshUploadQueue {
@@ -384,6 +416,7 @@ impl Drop for MeshUploadQueue {
 /// vertex/index buffer，避免 mesh 在 runtime 内出现两套 GPU 表示。
 struct UploadedMesh {
     geometry: RtGeometry,
+    triangle_metadata: Vec<Vec<RtTriangleMeta>>,
     blas: GfxAcceleration,
     blas_device_address: vk::DeviceAddress,
 }
@@ -481,6 +514,7 @@ impl AssetMeshManager {
             finished.handle,
             UploadedMesh {
                 geometry: finished.geometry,
+                triangle_metadata: vec![finished.triangle_metadata],
                 blas: finished.blas,
                 blas_device_address,
             },
@@ -509,6 +543,7 @@ impl MeshRenderResolver for AssetMeshManager {
         let mesh = self.meshes.get(handle)?;
         Some(MeshRenderData {
             geometries: std::slice::from_ref(&mesh.geometry),
+            triangle_metadata: mesh.triangle_metadata.as_slice(),
             blas_device_address: Some(mesh.blas_device_address),
         })
     }

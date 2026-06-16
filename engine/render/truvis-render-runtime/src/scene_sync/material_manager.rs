@@ -142,6 +142,12 @@ pub struct MaterialManager {
     buffers: [MaterialBuffers; FrameCounter::fif_count()],
 
     frame_token: FrameToken,
+    /// 影响 CPU 材质参数语义的单调 revision。
+    ///
+    /// 自发光 light table 只关心 base color / emissive / texture 引用等 CPU 参数变化；
+    /// texture 从 fallback 切换到真实 SRV 只会触发 GPU material buffer dirty，不改变这里的
+    /// power 分布近似，因此不推进该 revision。
+    material_revision: u64,
 }
 
 // 创建与初始化
@@ -157,6 +163,7 @@ impl MaterialManager {
             pending_texture_ready: HashSet::new(),
             buffers: FrameCounter::frame_labes().map(|frame_label| MaterialBuffers::new(ctx, frame_label)),
             frame_token,
+            material_revision: 0,
         }
     }
 }
@@ -199,6 +206,7 @@ impl MaterialManager {
             // texture ready 后再通过 update 触发全 FIF 重新上传。
             self.pending_texture_ready.insert(handle);
         }
+        self.material_revision = self.material_revision.saturating_add(1);
 
         log::trace!("MaterialManager: register slot={} handle={:?}", slot, handle);
         handle
@@ -232,6 +240,7 @@ impl MaterialManager {
         } else {
             self.pending_texture_ready.remove(&handle);
         }
+        self.material_revision = self.material_revision.saturating_add(1);
     }
 
     /// 移除材质，延迟回收 slot
@@ -259,6 +268,7 @@ impl MaterialManager {
             });
 
         log::debug!("MaterialManager: unregister slot={} handle={:?}", slot, handle);
+        self.material_revision = self.material_revision.saturating_add(1);
     }
 }
 
@@ -400,6 +410,21 @@ impl MaterialManager {
     #[inline]
     pub fn get_slot_index(&self, handle: GpuMaterialHandle) -> Option<usize> {
         self.handle_to_slot.get(handle).copied()
+    }
+
+    /// 返回影响 light table 构建的 CPU 材质参数 revision。
+    #[inline]
+    pub(crate) fn revision(&self) -> u64 {
+        self.material_revision
+    }
+
+    /// 按 shader 可见 stable material slot 读取 CPU 参数。
+    ///
+    /// 该接口只服务 prepare 阶段的 render-side 派生数据构建；调用方不能持有返回引用跨过
+    /// `MaterialManager` 的下一次 update/upload，也不能据此绕过 manager 修改材质状态。
+    #[inline]
+    pub(crate) fn params_by_slot(&self, slot: u32) -> Option<&RenderMaterialParams> {
+        self.slots.get(slot as usize)?.as_ref()
     }
 
     /// 获取指定帧的 material buffer device address

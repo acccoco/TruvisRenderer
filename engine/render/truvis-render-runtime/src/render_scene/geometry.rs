@@ -8,6 +8,19 @@ use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 
+/// render-side 保留的 CPU 三角形元数据。
+///
+/// vertex/index buffer 上传完成后，`AssetHub` 不再保存可直接查询的 mesh CPU 数据；
+/// 自发光 light table 需要在 prepare 阶段按 active instance 重新展开 world-space
+/// 三角形，因此这里把最小的 local-space position/uv/primitive id 跟随 GPU-ready mesh 缓存。
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RtTriangleMeta {
+    pub(crate) positions: [glam::Vec3; 3],
+    pub(crate) uvs: [glam::Vec2; 3],
+    pub(crate) primitive_id: u32,
+    pub(crate) local_area: f32,
+}
+
 /// render-side mesh 的 GPU 几何资源。
 ///
 /// 当前统一使用 `VertexLayoutSoA3D`，同一份 vertex/index buffer 同时服务光栅化 draw、

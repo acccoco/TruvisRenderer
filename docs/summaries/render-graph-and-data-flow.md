@@ -21,8 +21,8 @@ mesh/material ready 查询通过 `truvis-render-runtime` 私有 scene bridge tra
 `SkyBridge` 同时在默认 sky 的 CPU texture bytes 到达时构建 HDRI importance alias table；真实 sky image 仍由
 `AssetTextureManager` 上传，scene root buffer 只消费当前可用的 sky SRV、sampler 与 distribution 快照。
 
-`GpuScene` 与 `RenderData` 是 runtime 私有 scene 翻译层；render pass 只通过 `RenderSceneView` 访问 scene buffer、TLAS
-handle 和光栅化 draw。
+`GpuScene`、`EmissiveLightTable` 与 `RenderData` 是 runtime 私有 scene 翻译层；render pass 只通过
+`RenderSceneView` 访问 scene buffer、TLAS handle 和光栅化 draw。
 
 `RenderRuntime::prepare` 负责把这些 bridge 按固定顺序串成 update 与 render 之间的 prepare 阶段。`after_prepare` 阶段只用于
 App 对刚同步完成的 GPU scene 发起同步查询，例如批量 raycast；普通渲染工作仍在 `render` hook 中进入 RenderGraph。
@@ -47,6 +47,9 @@ flowchart LR
     MaterialManager --> Prepare
     SkyBridge --> Prepare
     InstanceBridge --> Prepare
+    Prepare --> EmissiveTable["EmissiveLightTable<br/>emissive triangle records + alias"]
+    MaterialManager --> EmissiveTable
+    EmissiveTable --> GpuResources
     Prepare --> GpuResources["GpuScene(RenderRuntime) / BindlessManager / GlobalDescriptorSets"]
     GpuResources --> RayCast["App after_prepare<br/>sync raycast query"]
     RayCast --> BuildGraph["App render hook builds RenderGraph"]
@@ -73,9 +76,12 @@ resolve，最后调用 `GuiPlugin::contribute_passes` 叠加 GUI。
 
 ## RT 直接光采样契约
 
-当前 realtime RT 主路径的直接光只接入 HDRI NEE。raygen shader 内部把 HDRI 采样整理为 light candidate、visibility
-和 shade 三段：candidate 使用 direction、radiance、distance、shadow ray 和 solid-angle PDF 描述光源侧样本；
-visibility 复用现有 inline `RayQuery` shadow path；shade 继续使用 `BRDF * cos / light_pdf * MIS` 的旧公式。
+当前 realtime RT 主路径的直接光接入 HDRI NEE 与自发光三角形 NEE。raygen shader 内部把 light sample 整理为
+light candidate、visibility 和 shade 三段：candidate 使用 direction、radiance、distance、shadow ray 和
+solid-angle PDF 描述光源侧样本；visibility 复用现有 inline `RayQuery` shadow path；shade 使用
+`BRDF * cos / light_pdf * MIS` 的统一公式。
+完整 raygen path loop、miss / emissive hit、多 bounce、Russian roulette 和 MIS 决策顺序见
+[`docs/summaries/realtime-rt-raytracing-flow.md`](realtime-rt-raytracing-flow.md)。
 
 环境光 sample 与 PDF 统一通过 `EnvMap` 查询。默认 sky 真实贴图 ready 后，`EnvMap` 使用
 `SkyBridge` 生成的 `luminance(texel) * solid_angle(texel)` alias table 做 importance sampling，并返回
@@ -84,9 +90,26 @@ solid-angle PDF；fallback sky 使用 1x1 均匀分布，无效分布或 `RtPipe
 HDRI 采样的概念解释、alias table 原理和项目内数据路径见
 [`docs/summaries/hdri-sampling.md`](hdri-sampling.md)。
 
-自发光材质目前仍只在路径命中时累加 emission，尚未作为 emissive triangle light 进入 NEE/MIS；CPU/GPU scene
-中的 point light 数据也尚未被 realtime RT 直接光候选系统消费。DLSS SR/RR 仍只读取 RT 输出的 HDR、GBuffer、depth
-和 motion vectors，不参与 light candidate、reservoir 或 radiance cache 状态。
+自发光三角形由 `EmissiveLightTable` 在 prepare 阶段构建。`AssetMeshManager` 保留 mesh-local triangle metadata，
+`MaterialManager` 提供按 material slot 查询参数的窄接口；`EmissiveLightTable` 在
+`InstanceBridge::prepare_render_data` 之后、`GpuScene::upload_render_data` 之前读取 active instance/submesh，
+上传 `emissive_triangle_lights`、`emissive_light_alias_table` 和 `instance_emissive_triangle_base_map`。
+
+`instance_emissive_triangle_base_map` 与 `instance_geometry_map` / `instance_material_map` 使用同一 instance-local
+submesh 顺序，索引为 `instance.geometry_indirect_idx + geometry_id`；非 emissive submesh 写 `UINT_MAX`。
+emissive submesh 为所有 primitive 保留连续 `EmissiveTriangleLight` record，因此 BRDF hit emissive 时可直接用
+`emissive_triangle_lights[base + primitive_id]` 反查 light-side PDF，不需要额外 lookup entry 或二分查找。
+`emissive_light_alias_table` 只服务 NEE 抽样，内部 entry 保存 primary record index、alias record index 与
+alias probability；hit PDF 查询不经过 alias table。自发光 NEE 的面积采样 PDF 会转换到 solid-angle 度量，
+再与 BRDF PDF 做 MIS；camera ray 或上一段 delta path 直接命中 emissive 仍保持当前直视/镜面语义。
+lookup 的构建步骤、buffer 内部结构和查询伪代码见 [`docs/summaries/emissive-light-sampling.md`](emissive-light-sampling.md)。
+
+`RtPipelineSettings.emissive_nee_enabled` 默认开启；关闭或 table 为空时不生成 emissive NEE candidate。`NeeEmissive`
+debug channel 只显示 emissive triangle NEE，HDRI NEE 仍由既有 `NeeHdri` 通道观察。emissive table 的 rebuild
+revision 由 mesh ready revision、instance revision 和 material revision 组合得到；mesh ready、instance
+transform / active set、material emissive / base color 参数变化会刷新 table。CPU/GPU scene 中的 point light 数据尚未被
+realtime RT 直接光候选系统消费。DLSS SR/RR 仍只读取 RT 输出的 HDR、GBuffer、depth 和 motion vectors，不参与
+light candidate、reservoir 或 radiance cache 状态。
 
 ## 与生命周期的关系
 

@@ -2,6 +2,7 @@
 
 pub(crate) mod asset_mesh_manager;
 pub(crate) mod asset_texture_manager;
+pub(crate) mod emissive_light_table;
 pub(crate) mod environment_binding;
 pub(crate) mod instance_bridge;
 pub(crate) mod material_bridge;

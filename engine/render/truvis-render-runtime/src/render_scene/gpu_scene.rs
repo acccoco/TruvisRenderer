@@ -1,6 +1,7 @@
 use super::buffers::GpuSceneBuffers;
 use super::raster_draw_cache::{RasterDrawItem, draw_raster_cache, update_raster_draw_cache};
 use crate::render_scene::render_data::{InstanceRenderData, RenderData};
+use crate::scene_sync::emissive_light_table::EmissiveLightBinding;
 use crate::scene_sync::environment_binding::EnvironmentBinding;
 use ash::vk;
 use itertools::Itertools;
@@ -122,6 +123,7 @@ impl GpuScene {
         material_buffer_device_address: vk::DeviceAddress,
         tlas_revision: u64,
         environment_binding: EnvironmentBinding,
+        emissive_light_binding: EmissiveLightBinding,
     ) {
         let _span = tracy_client::span!("GpuScene::prepare_render_data2");
 
@@ -141,6 +143,7 @@ impl GpuScene {
             render_data,
             material_buffer_device_address,
             environment_binding,
+            emissive_light_binding,
         );
     }
 
@@ -155,6 +158,7 @@ impl GpuScene {
         scene_data: &RenderData<'_>,
         material_buffer_device_address: vk::DeviceAddress,
         environment_binding: EnvironmentBinding,
+        emissive_light_binding: EmissiveLightBinding,
     ) {
         let crt_gpu_buffers = &self.gpu_scene_buffers[*frame_counter.frame_label()];
         // scene root buffer 只存放“入口地址”和资源句柄，不复制大块 scene 数据。
@@ -167,6 +171,13 @@ impl GpuScene {
             instance_geometry_map: crt_gpu_buffers.geometry_indirect_buffer.device_address(),
             point_lights: crt_gpu_buffers.light_buffer.device_address(),
             spot_lights: 0, // TODO 暂时无用
+            emissive_triangle_lights: emissive_light_binding.triangle_lights_device_address,
+            emissive_light_alias_table: emissive_light_binding.alias_table_device_address,
+            instance_emissive_triangle_base_map: emissive_light_binding.base_map_device_address,
+            emissive_light_count: emissive_light_binding.alias_count,
+            emissive_light_enabled: emissive_light_binding.enabled,
+            emissive_light_version: emissive_light_binding.version,
+            _emissive_light_padding_0: 0,
             point_light_count: scene_data.all_point_lights.len() as u32,
             spot_light_count: 0, // TODO 暂时无用
 

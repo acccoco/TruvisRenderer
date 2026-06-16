@@ -8,11 +8,13 @@
 #include "lib/lighting/env_map.slangi"
 #include "lib/lighting/mis.slangi"
 #include "lib/realtime_rt/raygen_material.slangi"
+#include "lib/scene/material_access.slangi"
+#include "lib/scene/scene_access.slangi"
 
 struct RtLightCandidate
 {
-    /// 候选来源。当前只生成 HDRI 候选，保留字段是为了后续 emissive / analytic light
-    /// 进入同一条 shade/eval 路径时不再改动调用契约。
+    /// 候选来源。HDRI 与 emissive triangle 已共用同一条 shade/eval 路径；
+    /// 后续 analytic light 也应保持这个 light-side PDF 契约。
     uint kind;
     /// 从 shading point 指向 light sample 的世界空间单位方向。
     float3 direction;
@@ -29,6 +31,11 @@ struct RtLightCandidate
     static uint kind_hdri()
     {
         return 1;
+    }
+
+    static uint kind_emissive_triangle()
+    {
+        return 2;
     }
 
     static RtLightCandidate empty()
@@ -137,6 +144,153 @@ struct RtDirectLighting
         return candidate;
     }
 
+    static bool emissive_nee_enabled()
+    {
+        return push_const.emissive_nee_enabled != 0 &&
+            gpu_scene.emissive_light_enabled != 0 &&
+            gpu_scene.emissive_light_count > 0;
+    }
+
+    /// 自发光三角形第一版沿用当前 hit emission 的双面语义。
+    ///
+    /// light record 的 `select_pdf` 是离散选中三角形的概率；这里乘以面积均匀采样 PDF，
+    /// 再通过 `distance^2 / abs(dot(n, -wi))` 转换为 solid-angle PDF。这个函数同时服务
+    /// NEE candidate 和 BRDF 命中 emissive surface 的 MIS 查询，保证两条路径使用同一度量。
+    static float emissive_solid_angle_pdf(
+        const light::EmissiveTriangleLight light,
+        const float3 light_dir,
+        const float distance
+    )
+    {
+        if (light.select_pdf <= 0.0f || light.area <= 0.0f || distance <= 0.0f)
+        {
+            return 0.0f;
+        }
+
+        const float light_cos = abs(dot(light.normal, -light_dir));
+        if (light_cos <= 1e-6f)
+        {
+            return 0.0f;
+        }
+
+        const float area_pdf = light.select_pdf / light.area;
+        return area_pdf * distance * distance / light_cos;
+    }
+
+    static float2 interpolate_emissive_uv(const light::EmissiveTriangleLight light, const float3 bary)
+    {
+        return light.uv0 * bary.x + light.uv1 * bary.y + light.uv2 * bary.z;
+    }
+
+    static float3 sample_triangle_barycentrics(inout uint seed)
+    {
+        const float u0 = Random::rnd(seed);
+        const float u1 = Random::rnd(seed);
+        const float su0 = sqrt(u0);
+        return float3(1.0f - su0, su0 * (1.0f - u1), su0 * u1);
+    }
+
+    static RtLightCandidate sample_emissive_candidate(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface
+    )
+    {
+        RtLightCandidate candidate = RtLightCandidate::empty();
+        if (!emissive_nee_enabled() || surface.is_delta_path())
+        {
+            return candidate;
+        }
+
+        const uint alias_count = gpu_scene.emissive_light_count;
+        const uint column = min((uint)(Random::rnd(payload.random_seed) * (float)alias_count), alias_count - 1);
+        const light::EmissiveLightAliasEntry alias_entry = gpu_scene.emissive_light_alias_table[column];
+        const float alias_probability = clamp(alias_entry.alias_probability, 0.0f, 1.0f);
+        const uint light_index = Random::rnd(payload.random_seed) < alias_probability
+            ? alias_entry.light_index
+            : alias_entry.alias_light_index;
+        const light::EmissiveTriangleLight light = gpu_scene.emissive_triangle_lights[light_index];
+
+        const float3 bary = sample_triangle_barycentrics(payload.random_seed);
+        const float3 light_position = light.p0 * bary.x + light.p1 * bary.y + light.p2 * bary.z;
+        const float3 to_light = light_position - surface.position;
+        const float distance = length(to_light);
+        if (distance <= 1e-4f)
+        {
+            return candidate;
+        }
+
+        const float3 light_dir = to_light / distance;
+        const float solid_angle_pdf = emissive_solid_angle_pdf(light, light_dir, distance);
+        if (solid_angle_pdf <= 0.0f)
+        {
+            return candidate;
+        }
+
+        const float ndotl = dot(surface.forward_normal, light_dir);
+        if (ndotl <= 0.0f)
+        {
+            return candidate;
+        }
+
+        material::PbrMaterial* mat = gpu_scene.all_mats + light.material_slot;
+        const float2 uv = interpolate_emissive_uv(light, bary);
+        const float3 base_color = MaterialAccess::base_color(mat, uv);
+
+        candidate.kind = RtLightCandidate::kind_emissive_triangle();
+        candidate.direction = light_dir;
+        candidate.distance = distance;
+        candidate.radiance = mat.emissive * base_color;
+        candidate.solid_angle_pdf = solid_angle_pdf;
+
+        candidate.shadow_ray.Origin = surface.position + 0.001f * light_dir;
+        candidate.shadow_ray.Direction = light_dir;
+        candidate.shadow_ray.TMin = 0.001f;
+        candidate.shadow_ray.TMax = max(distance - 0.001f, 0.0f);
+        if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
+        {
+            return RtLightCandidate::empty();
+        }
+
+        candidate.valid = true;
+        return candidate;
+    }
+
+    /// 查询 BRDF 路径命中的 emissive surface 如果由 emissive NEE 采样器生成时的 solid-angle PDF。
+    ///
+    /// 这里不做 lookup table：`GeometryIndex()` 是 instance-local submesh，`PrimitiveIndex()`
+    /// 是 submesh-local triangle，因此直接用 base map 加 primitive id 定位 record。这个契约
+    /// 与 `instance_geometry_map` / `instance_material_map` 的索引形状保持一致。
+    static float emissive_hit_pdf(const RtSurfaceHit surface, const float3 light_dir)
+    {
+        if (surface.material_type != MaterialType::EMISSIVE)
+        {
+            return 0.0f;
+        }
+
+        scene::Instance* instance = SceneAccess::instance(surface.instance_id);
+        if (surface.geometry_id >= instance.geometry_count)
+        {
+            return 0.0f;
+        }
+
+        const uint map_index = instance.geometry_indirect_idx + surface.geometry_id;
+        const uint base_index = gpu_scene.instance_emissive_triangle_base_map[map_index];
+        if (base_index == 0xFFFFFFFFu)
+        {
+            return 0.0f;
+        }
+
+        const light::EmissiveTriangleLight light = gpu_scene.emissive_triangle_lights[base_index + surface.primitive_id];
+        if (light.instance_id != surface.instance_id ||
+            light.geometry_id != surface.geometry_id ||
+            light.primitive_id != surface.primitive_id)
+        {
+            return 0.0f;
+        }
+
+        return emissive_solid_angle_pdf(light, light_dir, surface.hit_t);
+    }
+
     static bool is_candidate_visible(RaytracingAccelerationStructure tlas, const RtLightCandidate candidate)
     {
         if (!candidate.valid)
@@ -191,6 +345,21 @@ struct RtDirectLighting
     )
     {
         const RtLightCandidate candidate = sample_hdri_candidate(payload, surface);
+        if (!is_candidate_visible(realtime_rt::rt_tlas, candidate))
+        {
+            return RtDirectLightingSample::empty();
+        }
+        return shade_candidate(candidate, surface, view_dir, throughput);
+    }
+
+    static RtDirectLightingSample sample_emissive(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface,
+        const float3 view_dir,
+        const float3 throughput
+    )
+    {
+        const RtLightCandidate candidate = sample_emissive_candidate(payload, surface);
         if (!is_candidate_visible(realtime_rt::rt_tlas, candidate))
         {
             return RtDirectLightingSample::empty();

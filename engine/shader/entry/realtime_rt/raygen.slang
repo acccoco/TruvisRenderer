@@ -83,7 +83,7 @@ void main_ray_gen()
 
         if (surface.material_type == MaterialType::EMISSIVE)
         {
-            const float3 emissive_contribution = path.add_emissive(surface);
+            const float3 emissive_contribution = path.add_emissive(depth, surface, ray.Direction);
             debug_state.record_emissive(emissive_contribution);
             break;
         }
@@ -97,7 +97,19 @@ void main_ray_gen()
         if (direct_lighting.valid)
         {
             path.add_radiance(direct_lighting.contribution);
-            debug_state.record_nee(depth, direct_lighting.contribution);
+            debug_state.record_nee_hdri(depth, direct_lighting.contribution);
+        }
+
+        const RtDirectLightingSample emissive_direct_lighting = RtDirectLighting::sample_emissive(
+            payload,
+            surface,
+            -ray.Direction,
+            path.throughput
+        );
+        if (emissive_direct_lighting.valid)
+        {
+            path.add_radiance(emissive_direct_lighting.contribution);
+            debug_state.record_nee_emissive(depth, emissive_direct_lighting.contribution);
         }
 
         const RtMaterialSample material_sample = RtMaterialSampler::sample_next(payload, surface, ray.Direction);

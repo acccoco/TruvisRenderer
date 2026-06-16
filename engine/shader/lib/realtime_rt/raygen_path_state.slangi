@@ -7,6 +7,7 @@
 #include "lib/core/random.slangi"
 #include "lib/lighting/env_map.slangi"
 #include "lib/lighting/mis.slangi"
+#include "lib/realtime_rt/raygen_direct_lighting.slangi"
 #include "lib/realtime_rt/raygen_material.slangi"
 
 struct RtRussianRouletteResult
@@ -72,11 +73,18 @@ struct RtPathState
     }
 
     [mutating]
-    float3 add_emissive(const RtSurfaceHit surface)
+    float3 add_emissive(uint depth, const RtSurfaceHit surface, const float3 light_dir)
     {
-        // 第三阶段接入 emissive triangle light table 前，emissive hit 没有可查询的 light PDF。
-        // 因此这里保持旧路径的命中即累加语义，不临时制造一个无法和 NEE 竞争的伪 MIS 契约。
-        const float3 contribution = surface.emissive * throughput;
+        float mis_weight = 1.0f;
+        // camera ray 或 delta 链路直接看到自发光面时保留旧的完整累加语义。只有非 delta
+        // BRDF 路径命中 emissive surface 时，才查询同一套 emissive light PDF 做 MIS，
+        // 避免 BRDF 命中与 emissive NEE 重复计算同一份直接光贡献。
+        if (!prev_is_delta && depth > 0)
+        {
+            const float light_pdf = RtDirectLighting::emissive_hit_pdf(surface, light_dir);
+            mis_weight = Mis::power_heuristic(prev_brdf_pdf, light_pdf);
+        }
+        const float3 contribution = surface.emissive * throughput * mis_weight;
         radiance += contribution;
         return contribution;
     }

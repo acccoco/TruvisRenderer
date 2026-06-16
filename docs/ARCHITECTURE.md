@@ -18,8 +18,12 @@
 
 专题阅读：
 
+- [`docs/summaries/realtime-rt-raytracing-flow.md`](summaries/realtime-rt-raytracing-flow.md)：realtime RT
+  path loop、NEE / MIS、多 bounce 与当前采样边界总览。
 - [`docs/summaries/hdri-sampling.md`](summaries/hdri-sampling.md)：HDRI importance sampling、alias table、环境光 PDF
   与 RT 直接光路径的关系。
+- [`docs/summaries/emissive-light-sampling.md`](summaries/emissive-light-sampling.md)：自发光三角形 NEE、直接寻址
+  PDF 查询、alias table 与 hit emission MIS 的关系。
 
 ## 全局架构约束
 

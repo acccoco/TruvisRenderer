@@ -39,6 +39,10 @@ struct RtSurfaceHit
     float3 object_position;
     /// TLAS custom index 对应的稳定 instance slot。
     uint instance_id;
+    /// Instance 内的 submesh / geometry index，和 `GeometryIndex()` 语义一致。
+    uint geometry_id;
+    /// 当前命中的 submesh-local primitive index，供 emissive light record 直接寻址。
+    uint primitive_id;
     /// world-space forward/shading 法线。
     /// 该法线已经按当前 ray `faceforward` 翻面，是 BRDF 采样和 RR NormalRoughness 输入使用的法线。
     float3 forward_normal;

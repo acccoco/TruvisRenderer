@@ -36,4 +36,48 @@ struct SpotLight
     float _dir_padding;
 };
 
+/// 可采样的自发光三角形 light record。
+///
+/// 这里保存的是 scene sync 阶段已经展开到 world space 的三角形。`select_pdf`
+/// 是按 power alias table 选中该 record 的离散概率；shader 在三角形面积上再
+/// 均匀采样，并把面积 PDF 转成 solid angle PDF 后参与 NEE / MIS。
+struct EmissiveTriangleLight
+{
+    /// world-space 三角形顶点；`area` 是 world-space 面积。
+    float3 p0;
+    float area;
+
+    float3 p1;
+    float select_pdf;
+
+    float3 p2;
+    /// 直接索引 material buffer 的稳定 slot。
+    uint material_slot;
+
+    /// 双面自发光第一版使用 abs(dot(normal, -dir))，normal 只负责面积到方向 PDF 的雅可比。
+    float3 normal;
+    uint instance_id;
+
+    /// 三个顶点 UV，用于在采样点读取与 closest-hit 一致的 base color。
+    float2 uv0;
+    float2 uv1;
+
+    float2 uv2;
+    uint geometry_id;
+    uint primitive_id;
+};
+
+/// 自发光三角形 power alias table entry。
+///
+/// alias table entry 数量等于有效可采样三角形数量；每个 entry 显式保存 primary
+/// light index 和 alias light index，因此无效/退化三角形可以继续保留在 direct
+/// indexing record 中，但不会进入采样表。
+struct EmissiveLightAliasEntry
+{
+    float alias_probability;
+    uint light_index;
+    uint alias_light_index;
+    uint _padding_0;
+};
+
 }

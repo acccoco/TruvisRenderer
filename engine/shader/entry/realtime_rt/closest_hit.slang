@@ -12,7 +12,7 @@ struct RtMaterialClassifier
 {
     static MaterialType classify(material::PbrMaterial* mat)
     {
-        if (mat.emissive.x > 0.f)
+        if (max(mat.emissive.x, max(mat.emissive.y, mat.emissive.z)) > 0.f)
         {
             return MaterialType::EMISSIVE;
         }
@@ -71,6 +71,8 @@ void main_closest_hit(inout RtTracePayload payload, in BuiltInTriangleIntersecti
     payload.surface.position = world_pos;
     payload.surface.object_position = interp_pos;
     payload.surface.instance_id = instance_id;
+    payload.surface.geometry_id = geometry_id;
+    payload.surface.primitive_id = primitive_id;
     payload.surface.forward_normal = world_normal;
     payload.surface.origin_normal = origin_world_normal;
     payload.surface.object_normal = interp_normal;

@@ -31,6 +31,7 @@ use crate::render_scene::gpu_scene::GpuScene;
 use crate::runtime_defaults::DefaultRenderRuntimeSettings;
 use crate::scene_sync::asset_mesh_manager::AssetMeshManager;
 use crate::scene_sync::asset_texture_manager::AssetTextureManager;
+use crate::scene_sync::emissive_light_table::EmissiveLightTable;
 use crate::scene_sync::environment_binding::EnvironmentBinding;
 use crate::scene_sync::instance_bridge::InstanceBridge;
 use crate::scene_sync::material_bridge::MaterialBridge;
@@ -85,6 +86,7 @@ pub struct RenderRuntime {
     dlss_sr_state: DlssSrState,
     view_accum: ViewAccumState,
     gpu_scene: GpuScene,
+    emissive_light_table: EmissiveLightTable,
     asset_texture_manager: AssetTextureManager,
     sky_bridge: SkyBridge,
     asset_mesh_manager: AssetMeshManager,
@@ -212,6 +214,10 @@ impl RenderRuntime {
             let _span = tracy_client::span!("RenderRuntime::new/gpu_scene");
             GpuScene::new(gfx.resource_ctx())
         };
+        let emissive_light_table = {
+            let _span = tracy_client::span!("RenderRuntime::new/emissive_light_table");
+            EmissiveLightTable::new(gfx.resource_ctx())
+        };
 
         let ray_cast_service = {
             let _span = tracy_client::span!("RenderRuntime::new/ray_cast_service");
@@ -262,6 +268,7 @@ impl RenderRuntime {
                 instance_bridge,
                 ray_cast_service,
                 gpu_scene,
+                emissive_light_table,
                 gfx_resource_manager,
                 shader_binding_system,
                 frame_timing,
@@ -413,6 +420,7 @@ impl RenderRuntime {
             &mut self.shader_binding_system,
         );
         self.world.asset_hub.destroy();
+        self.emissive_light_table.destroy_mut(self.gfx.resource_ctx());
         self.gpu_scene.destroy_mut(self.gfx.resource_ctx(), self.gfx.device_ctx());
         self.asset_mesh_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
         // per-frame UBO 与 command allocator 在所有使用它们的 scene/present 资源之后释放。
@@ -870,6 +878,18 @@ impl RenderRuntime {
         mesh_ready_revision.saturating_add(instance_revision)
     }
 
+    /// 合成自发光 light table 的重建 revision。
+    ///
+    /// 自发光表除了 mesh ready 和 instance transform/lifecycle 外，还依赖材质 CPU 参数；
+    /// 因此不能复用只服务 TLAS 的 scene revision，否则 emissive/base color 更新后表不会刷新。
+    fn combine_emissive_light_revision(
+        mesh_ready_revision: u64,
+        instance_revision: u64,
+        material_revision: u64,
+    ) -> u64 {
+        mesh_ready_revision.saturating_add(instance_revision).saturating_add(material_revision)
+    }
+
     /// 准备 render pass 可见的 GPU scene 与 per-frame uniform。
     ///
     /// 该函数把所有 staging copy 录到同一个 command buffer，最后一次提交到 graphics queue；
@@ -926,6 +946,20 @@ impl RenderRuntime {
             &self.asset_mesh_manager,
         );
         let material_buffer_device_address = self.material_manager.material_buffer_device_address(frame_label);
+        let emissive_light_revision = Self::combine_emissive_light_revision(
+            self.asset_mesh_manager.ready_revision(),
+            self.instance_bridge.revision(),
+            self.material_manager.revision(),
+        );
+        let emissive_light_binding = self.emissive_light_table.update_and_upload(
+            self.gfx.resource_ctx(),
+            &cmd,
+            transfer_barrier_mask,
+            self.frame_timing.frame_counter(),
+            &scene_render_data,
+            &self.material_manager,
+            emissive_light_revision,
+        );
         // mesh ready 与 instance 变化都会影响 TLAS；两个 revision 合成一条 scene revision，
         // 交给 GpuScene 判断当前 FIF 的 TLAS 是否需要重建。
         let scene_revision =
@@ -941,6 +975,7 @@ impl RenderRuntime {
             material_buffer_device_address,
             scene_revision,
             environment_binding,
+            emissive_light_binding,
         );
 
         // per-frame uniform 放在 GPU scene 上传之后写入同一条命令缓冲，保证本帧 shader

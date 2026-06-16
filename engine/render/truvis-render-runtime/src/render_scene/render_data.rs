@@ -2,7 +2,7 @@ use ash::vk;
 
 use truvis_shader_binding::gpu;
 
-use super::geometry::RtGeometry;
+use super::geometry::{RtGeometry, RtTriangleMeta};
 
 /// Instance 在 GPU scene instance buffer 中的稳定 slot。
 ///
@@ -58,6 +58,8 @@ pub(crate) struct InstanceRenderData {
 pub(crate) struct MeshRenderData<'a> {
     /// 该 mesh 包含的所有 submesh 几何体。
     pub(crate) geometries: &'a [RtGeometry],
+    /// 与 `geometries` 同顺序的 CPU 三角形元数据，只保存 light table 构建需要的最小字段。
+    pub(crate) triangle_metadata: &'a [Vec<RtTriangleMeta>],
     /// BLAS 的设备地址，用于 `GpuScene` 构建 TLAS；未 ready 的 mesh 不应出现在 active 实例中。
     pub(crate) blas_device_address: Option<vk::DeviceAddress>,
 }

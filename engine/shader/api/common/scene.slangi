@@ -67,11 +67,28 @@ struct GpuScene
     PTR(light::PointLight, point_lights);
     /// 预留的 spot light 数组。
     PTR(light::SpotLight, spot_lights);
+    /// 按 active instance-submesh 展开的自发光三角形 record。
+    ///
+    /// `instance_emissive_triangle_base_map[instance.geometry_indirect_idx + geometry_id]`
+    /// 给出该 instance-submesh 在本数组中的 base；再加 `PrimitiveIndex()` 可直接得到
+    /// 当前命中的三角形 record。非自发光 submesh 写入 `UINT_MAX`。
+    PTR(light::EmissiveTriangleLight, emissive_triangle_lights);
+    /// 只包含有效可采样 record 的 power alias table，用于 emissive NEE O(1) 抽样。
+    PTR(light::EmissiveLightAliasEntry, emissive_light_alias_table);
+    /// instance-local submesh -> emissive triangle base 的间接表，顺序与 instance_geometry_map 一致。
+    PTR(uint, instance_emissive_triangle_base_map);
 
     /// 稳定 instance slot 数组。
     PTR(Instance, all_instances);
     uint point_light_count;
     uint spot_light_count;
+    /// alias table entry 数量；record 数量通过 direct indexing 契约隐含，不用于采样。
+    uint emissive_light_count;
+    /// 非 0 表示 emissive alias table 可用于 NEE；hit MIS 仍可读取零 PDF record。
+    uint emissive_light_enabled;
+    /// 自发光表重建版本号，只用于 runtime/debug 判断历史或 UI 状态是否匹配当前 scene。
+    uint emissive_light_version;
+    uint _emissive_light_padding_0;
 
     /// 默认 sky 的 bindless SRV；真实贴图未 ready 时 runtime 写入 fallback。
     bindless::SrvHandle sky;
