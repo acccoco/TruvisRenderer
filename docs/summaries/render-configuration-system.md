@@ -92,6 +92,7 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 |------|------|
 | `debug_channel: RtDebugChannel` | 主 RT shader / SDR pass 使用的调试输出通道 |
 | `sky_sampling_mode: RtSkySamplingMode` | HDRI / sky 直接光采样模式，支持 importance 与 uniform A/B 对比 |
+| `sky_brightness: f32` | sky radiance 倍率，同时作用于可见 sky miss 和 HDRI 直接光候选 |
 | `tone_mapping: SdrToneMappingSettings` | SDR 输出路径使用的手动曝光和 ACES fitted tone mapping 参数 |
 
 RT debug channel 与 tone mapping 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hello Triangle / ShaderToy 只显示 DLSS SR mode，不暴露 RT 调试或 tone mapping 参数。
@@ -101,6 +102,10 @@ RT debug channel 与 tone mapping 只在 Truvis / Cornell 等 RT app 的 overlay
 `RtSkySamplingMode` 是 RT 主流程的 pass-local 调试/实验开关。默认 `Importance` 使用 `SkyBridge` 生成的 HDRI alias table；
 `Uniform` 强制 shader 走旧的 uniform sphere 采样，用于在相同场景下比较 HDRI NEE 噪声与能量稳定性。该选项不改变
 render extent、DLSS feature resource 或 runtime-owned temporal state。
+
+`sky_brightness` 是 RT 主流程的 pass-local radiance 倍率，默认值 `8.0` 保持旧 shader 硬编码亮度。它只在 shader 采样 sky
+贴图后统一缩放可见 sky miss 与 HDRI 直接光候选 radiance；因为这是所有方向共享的均匀倍率，不改变
+`SkyBridge` importance distribution 的相对权重，也不需要重建 alias table 或改写环境光 PDF。
 
 `SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道。当前使用实时渲染常用的 ACES fitted approximation，并提供 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display transform，也不做自动曝光或参数持久化。
 

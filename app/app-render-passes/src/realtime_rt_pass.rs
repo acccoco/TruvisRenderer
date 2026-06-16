@@ -112,6 +112,8 @@ pub struct RealtimeRtPassData {
     pub debug_channel: u32,
     /// HDRI / sky 直接光采样模式。
     pub sky_sampling_mode: u32,
+    /// sky radiance 倍率；只缩放光照能量，不改变 importance sampling 的 PDF。
+    pub sky_brightness: f32,
 
     // ========== GBuffer 数据 ==========
     /// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness
@@ -473,7 +475,7 @@ impl RealtimeRtPass {
             spp_idx: 0,
             channel: pass_data.debug_channel,
             sky_sampling_mode: pass_data.sky_sampling_mode,
-            _padding_0: Default::default(),
+            sky_brightness: pass_data.sky_brightness,
         };
         for spp_idx in 0..spp {
             push_constant.spp_idx = spp_idx;
@@ -534,6 +536,7 @@ pub struct RealtimeRtRgPass<'a> {
     pub single_frame_extent: vk::Extent2D,
     pub debug_channel: u32,
     pub sky_sampling_mode: u32,
+    pub sky_brightness: f32,
 
     // ========== GBuffer 数据 ==========
     pub gbuffer_a: RgImageHandle,
@@ -594,6 +597,7 @@ impl RgPass for RealtimeRtRgPass<'_> {
                 single_frame_extent: self.single_frame_extent,
                 debug_channel: self.debug_channel,
                 sky_sampling_mode: self.sky_sampling_mode,
+                sky_brightness: self.sky_brightness,
                 gbuffer_a,
                 gbuffer_a_view,
                 gbuffer_b,

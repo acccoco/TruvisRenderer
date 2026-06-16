@@ -130,8 +130,9 @@ struct RtDirectLighting
         candidate.shadow_ray.TMax = candidate.distance;
 
         const float2 env_uv = EnvMap::dir_to_uv(light_dir);
-        // sky texture 仍沿用主 RT 的固定强度缩放；MIS 权重只处理采样策略概率，不负责曝光。
-        candidate.radiance = BindlessSrv::sample_level(gpu_scene.sky, env_uv, gpu_scene.sky_sampler_type, 0.0f).xyz * 8.0f;
+        // sky brightness 是 app 层 radiance 倍率；MIS 权重只处理采样策略概率，不负责曝光。
+        candidate.radiance = BindlessSrv::sample_level(gpu_scene.sky, env_uv, gpu_scene.sky_sampler_type, 0.0f).xyz *
+            push_const.sky_brightness;
         candidate.valid = true;
         return candidate;
     }

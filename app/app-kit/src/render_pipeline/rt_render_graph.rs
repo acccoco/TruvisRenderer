@@ -40,6 +40,11 @@ pub struct RtPipelineSettings {
     /// 这是 RT 主流程的 pass-local 采样策略开关，用于 A/B 比较 uniform 与 importance；
     /// 它不影响 render extent、DLSS feature resource 或 runtime-owned temporal state。
     pub sky_sampling_mode: RtSkySamplingMode,
+    /// sky radiance 倍率。
+    ///
+    /// 这是 app 层 RT pipeline 的运行时调参，只统一缩放 shader 采样到的 sky radiance；
+    /// 不改变 sky 资产、bindless 绑定或 `SkyBridge` 生成的 importance distribution / PDF。
+    pub sky_brightness: f32,
     /// SDR 输出路径的 tone mapping 参数。
     ///
     /// 只影响 Final 通道的 `hdr-to-sdr` pass，不改变 render extent、DLSS feature resource
@@ -52,6 +57,7 @@ impl Default for RtPipelineSettings {
         Self {
             debug_channel: RtDebugChannel::Final,
             sky_sampling_mode: RtSkySamplingMode::Importance,
+            sky_brightness: 8.0,
             tone_mapping: SdrToneMappingSettings::default(),
         }
     }
@@ -463,6 +469,7 @@ impl RtPipeline {
         let main_view_targets = &inner.main_view_targets;
         let debug_channel = self.settings.debug_channel.shader_channel();
         let sky_sampling_mode = self.settings.sky_sampling_mode.shader_mode();
+        let sky_brightness = self.settings.sky_brightness;
         let tone_mapping = self.settings.tone_mapping;
 
         // compute graph 导入的是 app-owned 外部图像；RenderGraph 只接管本图内的状态转换，
@@ -594,6 +601,7 @@ impl RtPipeline {
                 single_frame_extent: record_ctx.frame_state.render_extent,
                 debug_channel,
                 sky_sampling_mode,
+                sky_brightness,
                 gbuffer_a,
                 gbuffer_b,
                 gbuffer_c,

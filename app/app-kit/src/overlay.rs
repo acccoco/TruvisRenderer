@@ -114,6 +114,9 @@ impl PipelineControlsOverlay {
                             }
                         }
                     }
+                    ui.slider_config("Sky Brightness", 0.0_f32, 32.0_f32)
+                        .display_format("%.2f")
+                        .build(&mut rt_settings.sky_brightness);
 
                     ui.separator();
                     ui.text("Tone Mapping");

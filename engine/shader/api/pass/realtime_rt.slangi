@@ -69,7 +69,7 @@ struct PushConstants
     uint channel;
     /// sky 直接光采样模式；Importance 不可用时 shader 内部会退回 uniform sphere。
     uint sky_sampling_mode;
-    /// 显式 padding 保持 push constant 16 字节对齐，避免 CPU/GPU ABI 对齐差异。
-    uint _padding_0;
+    /// app 层 sky radiance 倍率；只缩放采样后的 radiance，不改变 sky 资产或 importance PDF。
+    float sky_brightness;
 };
 };

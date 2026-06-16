@@ -64,7 +64,7 @@ struct EmissiveCubePaletteSpec {
 const EMISSIVE_CUBE_MATRIX_CONFIG: EmissiveCubeMatrixConfig = EmissiveCubeMatrixConfig {
     start_offset: glam::Vec3::new(-800.0, 600.0, -425.0),
     spacing: glam::Vec3::new(75.0, 60.0, 90.0),
-    cube_scale: 30.0,
+    cube_scale: 10.0,
     counts: glam::UVec3::new(20, 1, 10),
 };
 
@@ -278,27 +278,27 @@ impl TruvisApp {
             EmissiveCubePaletteSpec {
                 name: "warm-amber",
                 base_color: glam::vec4(1.0, 0.72, 0.32, 1.0),
-                emissive: glam::vec4(4.8, 2.7, 0.8, 1.0),
+                emissive: glam::vec4(4.8, 2.7, 0.8, 1.0) * 5.0,
             },
             EmissiveCubePaletteSpec {
                 name: "rose",
                 base_color: glam::vec4(1.0, 0.36, 0.54, 1.0),
-                emissive: glam::vec4(4.2, 0.9, 1.8, 1.0),
+                emissive: glam::vec4(4.2, 0.9, 1.8, 1.0) * 5.0,
             },
             EmissiveCubePaletteSpec {
                 name: "cyan",
                 base_color: glam::vec4(0.42, 0.95, 1.0, 1.0),
-                emissive: glam::vec4(1.2, 3.8, 4.8, 1.0),
+                emissive: glam::vec4(1.2, 3.8, 4.8, 1.0) * 5.0,
             },
             EmissiveCubePaletteSpec {
                 name: "lime",
                 base_color: glam::vec4(0.54, 1.0, 0.38, 1.0),
-                emissive: glam::vec4(1.4, 4.5, 1.0, 1.0),
+                emissive: glam::vec4(1.4, 4.5, 1.0, 1.0) * 5.0,
             },
             EmissiveCubePaletteSpec {
                 name: "violet",
                 base_color: glam::vec4(0.72, 0.48, 1.0, 1.0),
-                emissive: glam::vec4(2.2, 1.2, 4.8, 1.0),
+                emissive: glam::vec4(2.2, 1.2, 4.8, 1.0) * 5.0,
             },
         ];
         let emissive_materials = palette_specs

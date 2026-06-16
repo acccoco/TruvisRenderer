@@ -12,7 +12,8 @@ void sky_miss(inout RtTracePayload payload)
 {
     const float2 uv = EnvMap::dir_to_uv(WorldRayDirection());
     // sky 贴图可能是 runtime fallback；shader 不区分真实贴图和 fallback，只按 SRV 采样。
-    const float3 sky_color = float3(BindlessSrv::sample_level(gpu_scene.sky, uv, gpu_scene.sky_sampler_type, 0.0).xyz) * 8.f;
+    const float3 sky_color = float3(BindlessSrv::sample_level(gpu_scene.sky, uv, gpu_scene.sky_sampler_type, 0.0).xyz) *
+        push_const.sky_brightness;
 
     payload.hit = false;
 
