@@ -50,6 +50,11 @@ pub struct RtPipelineSettings {
     /// 这是 RT pass-local 调试开关；关闭时 shader 仍保留直接命中 emissive surface
     /// 的旧路径，不影响 DLSS、GBuffer 或 runtime-owned scene 同步。
     pub emissive_nee_enabled: bool,
+    /// 是否额外启用 analytic light NEE。
+    ///
+    /// 这是 RT pass-local 调试开关；关闭时不采样 point / spot / area analytic lights，
+    /// 但不影响 HDRI NEE、自发光三角形 NEE、GBuffer 或 DLSS 输入。
+    pub analytic_nee_enabled: bool,
     /// SDR 输出路径的 tone mapping 参数。
     ///
     /// 只影响 Final 通道的 `hdr-to-sdr` pass，不改变 render extent、DLSS feature resource
@@ -64,6 +69,7 @@ impl Default for RtPipelineSettings {
             sky_sampling_mode: RtSkySamplingMode::Importance,
             sky_brightness: 8.0,
             emissive_nee_enabled: true,
+            analytic_nee_enabled: true,
             tone_mapping: SdrToneMappingSettings::default(),
         }
     }
@@ -123,10 +129,12 @@ pub enum RtDebugChannel {
     NeeBounce1,
     /// 显示 next-event estimation 中来自自发光三角形的直接光。
     NeeEmissive,
+    /// 显示 next-event estimation 中来自 analytic light 的直接光。
+    NeeAnalytic,
 }
 
 impl RtDebugChannel {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Final,
         Self::ForwardNormal,
         Self::WorldNormal,
@@ -138,6 +146,7 @@ impl RtDebugChannel {
         Self::NeeBounce0,
         Self::NeeBounce1,
         Self::NeeEmissive,
+        Self::NeeAnalytic,
     ];
 
     pub fn label(self) -> &'static str {
@@ -153,6 +162,7 @@ impl RtDebugChannel {
             Self::NeeBounce0 => "NEE bounce 0",
             Self::NeeBounce1 => "NEE bounce 1",
             Self::NeeEmissive => "from NEE emissive",
+            Self::NeeAnalytic => "from NEE analytic",
         }
     }
 
@@ -169,6 +179,7 @@ impl RtDebugChannel {
             Self::NeeBounce0 => 7,
             Self::NeeBounce1 => 8,
             Self::NeeEmissive => 9,
+            Self::NeeAnalytic => 12,
         }
     }
 }
@@ -482,6 +493,7 @@ impl RtPipeline {
         let sky_sampling_mode = self.settings.sky_sampling_mode.shader_mode();
         let sky_brightness = self.settings.sky_brightness;
         let emissive_nee_enabled = self.settings.emissive_nee_enabled;
+        let analytic_nee_enabled = self.settings.analytic_nee_enabled;
         let tone_mapping = self.settings.tone_mapping;
 
         // compute graph 导入的是 app-owned 外部图像；RenderGraph 只接管本图内的状态转换，
@@ -615,6 +627,7 @@ impl RtPipeline {
                 sky_sampling_mode,
                 sky_brightness,
                 emissive_nee_enabled,
+                analytic_nee_enabled,
                 gbuffer_a,
                 gbuffer_b,
                 gbuffer_c,

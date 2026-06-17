@@ -112,6 +112,18 @@ void main_ray_gen()
             debug_state.record_nee_emissive(depth, emissive_direct_lighting.contribution);
         }
 
+        const RtDirectLightingSample analytic_direct_lighting = RtDirectLighting::sample_analytic(
+            payload,
+            surface,
+            -ray.Direction,
+            path.throughput
+        );
+        if (analytic_direct_lighting.valid)
+        {
+            path.add_radiance(analytic_direct_lighting.contribution);
+            debug_state.record_nee_analytic(depth, analytic_direct_lighting.contribution);
+        }
+
         const RtMaterialSample material_sample = RtMaterialSampler::sample_next(payload, surface, ray.Direction);
         path.apply_material_sample(surface, material_sample);
         if (material_sample.done)

@@ -24,6 +24,8 @@
   与 RT 直接光路径的关系。
 - [`docs/summaries/emissive-light-sampling.md`](summaries/emissive-light-sampling.md)：自发光三角形 NEE、直接寻址
   PDF 查询、alias table 与 hit emission MIS 的关系。
+- [`docs/summaries/analytic-light-sampling.md`](summaries/analytic-light-sampling.md)：point / spot sphere emitter
+  与矩形 area light 的 NEE、PDF、MIS 和 debug 边界。
 
 ## 全局架构约束
 

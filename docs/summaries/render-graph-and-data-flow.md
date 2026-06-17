@@ -107,9 +107,16 @@ lookup 的构建步骤、buffer 内部结构和查询伪代码见 [`docs/summari
 `RtPipelineSettings.emissive_nee_enabled` 默认开启；关闭或 table 为空时不生成 emissive NEE candidate。`NeeEmissive`
 debug channel 只显示 emissive triangle NEE，HDRI NEE 仍由既有 `NeeHdri` 通道观察。emissive table 的 rebuild
 revision 由 mesh ready revision、instance revision 和 material revision 组合得到；mesh ready、instance
-transform / active set、material emissive / base color 参数变化会刷新 table。CPU/GPU scene 中的 point light 数据尚未被
-realtime RT 直接光候选系统消费。DLSS SR/RR 仍只读取 RT 输出的 HDR、GBuffer、depth 和 motion vectors，不参与
-light candidate、reservoir 或 radiance cache 状态。
+transform / active set、material emissive / base color 参数变化会刷新 table。
+
+analytic point / spot / area light 由 `SceneManager` 保存 CPU 语义记录，`InstanceBridge::prepare_render_data`
+把三类 light 快照写入 `RenderData`，`GpuScene::upload_render_data` 分别上传 point / spot / area structured buffer
+并在 scene root 中写入 device address 与 count。realtime RT raygen 在 `RtPipelineSettings.analytic_nee_enabled`
+开启且 light 数量非 0 时生成 analytic light candidate；`NeeAnalytic` debug channel 只显示 analytic NEE。更细的
+sphere emitter、spot cone、area 单面 PDF 和 MIS 边界见 [`analytic-light-sampling.md`](analytic-light-sampling.md)。
+
+DLSS SR/RR 仍只读取 RT 输出的 HDR、GBuffer、depth 和 motion vectors，不参与 light candidate、reservoir 或 radiance
+cache 状态。
 
 ## 与生命周期的关系
 

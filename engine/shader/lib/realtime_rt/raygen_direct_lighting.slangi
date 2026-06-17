@@ -5,6 +5,7 @@
 
 #include "lib/realtime_rt/payload.slangi"
 #include "lib/core/bindless.slangi"
+#include "lib/core/sample.slangi"
 #include "lib/lighting/env_map.slangi"
 #include "lib/lighting/mis.slangi"
 #include "lib/realtime_rt/raygen_material.slangi"
@@ -36,6 +37,21 @@ struct RtLightCandidate
     static uint kind_emissive_triangle()
     {
         return 2;
+    }
+
+    static uint kind_analytic_point()
+    {
+        return 3;
+    }
+
+    static uint kind_analytic_spot()
+    {
+        return 4;
+    }
+
+    static uint kind_analytic_area()
+    {
+        return 5;
     }
 
     static RtLightCandidate empty()
@@ -255,6 +271,278 @@ struct RtDirectLighting
         return candidate;
     }
 
+    static uint analytic_light_count()
+    {
+        return gpu_scene.point_light_count + gpu_scene.spot_light_count + gpu_scene.area_light_count;
+    }
+
+    static bool analytic_nee_enabled()
+    {
+        return push_const.analytic_nee_enabled != 0 && analytic_light_count() > 0;
+    }
+
+    static float analytic_sphere_radius()
+    {
+        return 0.5f;
+    }
+
+    static bool ray_sphere_nearest_hit(
+        const float3 origin,
+        const float3 direction,
+        const float3 center,
+        const float radius,
+        out float distance
+    )
+    {
+        const float3 oc = origin - center;
+        const float b = dot(oc, direction);
+        const float c = dot(oc, oc) - radius * radius;
+        const float discriminant = b * b - c;
+        distance = 0.0f;
+        if (discriminant <= 0.0f)
+        {
+            return false;
+        }
+
+        const float t = -b - sqrt(discriminant);
+        if (t <= 0.001f)
+        {
+            return false;
+        }
+
+        distance = t;
+        return true;
+    }
+
+    /// 从 shading point 对半径 0.5 的 analytic sphere emitter 做可见 solid-angle cone 采样。
+    ///
+    /// 这里的 PDF 直接处在 solid angle 度量，和 HDRI / emissive triangle candidate 的 shade
+    /// 契约一致。sphere emitter v1 不写入 TLAS，也不会被 BRDF path 直接命中，因此只作为 NEE
+    /// 光源侧候选参与后续 analytic shade。
+    static RtLightCandidate sample_sphere_emitter_candidate(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface,
+        const float3 center,
+        const float3 radiance,
+        const float select_pdf,
+        const uint kind
+    )
+    {
+        RtLightCandidate candidate = RtLightCandidate::empty();
+        const float radius = analytic_sphere_radius();
+        const float3 to_center = center - surface.position;
+        const float center_distance = length(to_center);
+        if (select_pdf <= 0.0f || center_distance <= radius + 1e-4f)
+        {
+            return candidate;
+        }
+
+        const float3 center_dir = to_center / center_distance;
+        const float sin_theta_max2 = min(radius * radius / max(center_distance * center_distance, 1e-7f), 1.0f);
+        const float cos_theta_max = sqrt(max(1.0f - sin_theta_max2, 0.0f));
+        const float solid_angle = 2.0f * M_PI * (1.0f - cos_theta_max);
+        if (solid_angle <= 1e-7f)
+        {
+            return candidate;
+        }
+
+        const float u0 = Random::rnd(payload.random_seed);
+        const float u1 = Random::rnd(payload.random_seed);
+        const float cos_theta = 1.0f - u0 * (1.0f - cos_theta_max);
+        const float sin_theta = sqrt(max(1.0f - cos_theta * cos_theta, 0.0f));
+        const float phi = 2.0f * M_PI * u1;
+
+        float3 tangent;
+        float3 bitangent;
+        Sample::create_local_coord(center_dir, tangent, bitangent);
+        const float3 light_dir = normalize(
+            tangent * (cos(phi) * sin_theta) +
+            bitangent * (sin(phi) * sin_theta) +
+            center_dir * cos_theta
+        );
+
+        float distance;
+        if (!ray_sphere_nearest_hit(surface.position, light_dir, center, radius, distance))
+        {
+            return candidate;
+        }
+
+        const float ndotl = dot(surface.forward_normal, light_dir);
+        if (ndotl <= 0.0f)
+        {
+            return candidate;
+        }
+
+        candidate.kind = kind;
+        candidate.direction = light_dir;
+        candidate.distance = distance;
+        candidate.radiance = radiance;
+        candidate.solid_angle_pdf = select_pdf / solid_angle;
+
+        candidate.shadow_ray.Origin = surface.position + 0.001f * light_dir;
+        candidate.shadow_ray.Direction = light_dir;
+        candidate.shadow_ray.TMin = 0.001f;
+        candidate.shadow_ray.TMax = max(distance - 0.001f, 0.0f);
+        if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
+        {
+            return RtLightCandidate::empty();
+        }
+
+        candidate.valid = true;
+        return candidate;
+    }
+
+    static float spot_cone_falloff(const light::SpotLight spot, const float3 light_to_surface_dir)
+    {
+        const float dir_len = length(spot.dir);
+        if (dir_len <= 1e-6f)
+        {
+            return 0.0f;
+        }
+
+        const float inner_angle = min(spot.inner_angle, spot.outer_angle);
+        const float outer_angle = max(spot.inner_angle, spot.outer_angle);
+        const float cos_inner = cos(inner_angle);
+        const float cos_outer = cos(outer_angle);
+        const float denom = max(cos_inner - cos_outer, 1e-5f);
+        const float cos_theta = dot(normalize(spot.dir), light_to_surface_dir);
+        return clamp((cos_theta - cos_outer) / denom, 0.0f, 1.0f);
+    }
+
+    static RtLightCandidate sample_spot_candidate(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface,
+        const light::SpotLight spot,
+        const float select_pdf
+    )
+    {
+        RtLightCandidate candidate = sample_sphere_emitter_candidate(
+            payload,
+            surface,
+            spot.pos,
+            spot.color,
+            select_pdf,
+            RtLightCandidate::kind_analytic_spot()
+        );
+        if (!candidate.valid)
+        {
+            return candidate;
+        }
+
+        const float falloff = spot_cone_falloff(spot, -candidate.direction);
+        if (falloff <= 0.0f)
+        {
+            return RtLightCandidate::empty();
+        }
+
+        candidate.radiance *= falloff;
+        return candidate;
+    }
+
+    static RtLightCandidate sample_area_candidate(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface,
+        const light::AreaLight area_light,
+        const float select_pdf
+    )
+    {
+        RtLightCandidate candidate = RtLightCandidate::empty();
+        const float3 normal_unnormalized = cross(area_light.half_u, area_light.half_v);
+        const float half_area = length(normal_unnormalized);
+        const float area = 4.0f * half_area;
+        if (select_pdf <= 0.0f || area <= 1e-7f)
+        {
+            return candidate;
+        }
+
+        const float3 area_normal = normal_unnormalized / half_area;
+        const float u = Random::rnd(payload.random_seed) * 2.0f - 1.0f;
+        const float v = Random::rnd(payload.random_seed) * 2.0f - 1.0f;
+        const float3 light_position = area_light.center + area_light.half_u * u + area_light.half_v * v;
+        const float3 to_light = light_position - surface.position;
+        const float distance = length(to_light);
+        if (distance <= 1e-4f)
+        {
+            return candidate;
+        }
+
+        const float3 light_dir = to_light / distance;
+        const float light_cos = dot(area_normal, -light_dir);
+        if (light_cos <= 1e-6f)
+        {
+            return candidate;
+        }
+
+        const float ndotl = dot(surface.forward_normal, light_dir);
+        if (ndotl <= 0.0f)
+        {
+            return candidate;
+        }
+
+        candidate.kind = RtLightCandidate::kind_analytic_area();
+        candidate.direction = light_dir;
+        candidate.distance = distance;
+        candidate.radiance = area_light.radiance;
+        candidate.solid_angle_pdf = select_pdf * distance * distance / (area * light_cos);
+
+        candidate.shadow_ray.Origin = surface.position + 0.001f * light_dir;
+        candidate.shadow_ray.Direction = light_dir;
+        candidate.shadow_ray.TMin = 0.001f;
+        candidate.shadow_ray.TMax = max(distance - 0.001f, 0.0f);
+        if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
+        {
+            return RtLightCandidate::empty();
+        }
+
+        candidate.valid = true;
+        return candidate;
+    }
+
+    static RtLightCandidate sample_analytic_candidate(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface
+    )
+    {
+        RtLightCandidate candidate = RtLightCandidate::empty();
+        if (!analytic_nee_enabled() || surface.is_delta_path())
+        {
+            return candidate;
+        }
+
+        const uint total_count = analytic_light_count();
+        const uint selected = min((uint)(Random::rnd(payload.random_seed) * (float)total_count), total_count - 1);
+        const float select_pdf = 1.0f / (float)total_count;
+
+        if (selected < gpu_scene.point_light_count)
+        {
+            const light::PointLight point_light = gpu_scene.point_lights[selected];
+            return sample_sphere_emitter_candidate(
+                payload,
+                surface,
+                point_light.pos,
+                point_light.color,
+                select_pdf,
+                RtLightCandidate::kind_analytic_point()
+            );
+        }
+
+        const uint spot_index = selected - gpu_scene.point_light_count;
+        if (spot_index < gpu_scene.spot_light_count)
+        {
+            const light::SpotLight spot_light = gpu_scene.spot_lights[spot_index];
+            return sample_spot_candidate(payload, surface, spot_light, select_pdf);
+        }
+
+        const uint area_index = spot_index - gpu_scene.spot_light_count;
+        if (area_index < gpu_scene.area_light_count)
+        {
+            const light::AreaLight area_light = gpu_scene.area_lights[area_index];
+            return sample_area_candidate(payload, surface, area_light, select_pdf);
+        }
+
+        return candidate;
+    }
+
     /// 查询 BRDF 路径命中的 emissive surface 如果由 emissive NEE 采样器生成时的 solid-angle PDF。
     ///
     /// 这里不做 lookup table：`GeometryIndex()` 是 instance-local submesh，`PrimitiveIndex()`
@@ -302,13 +590,13 @@ struct RtDirectLighting
 
     /// 将一个已通过 visibility 的 light candidate 评估为当前 path 的直接光贡献。
     ///
-    /// 这里保持旧 HDRI NEE 公式不变：radiance * BRDF*cos / light_pdf * MIS，再由调用方提供
-    /// path throughput。所有非法候选、零 PDF 和背面光照都返回空贡献，避免 NaN 污染路径累积。
-    static RtDirectLightingSample shade_candidate(
+    /// 所有非法候选、零 PDF 和背面光照都返回空贡献，避免 NaN 污染路径累积。
+    static RtDirectLightingSample shade_candidate_with_mis_weight(
         const RtLightCandidate candidate,
         const RtSurfaceHit surface,
         const float3 view_dir,
-        const float3 throughput
+        const float3 throughput,
+        const float mis_weight
     )
     {
         RtDirectLightingSample result = RtDirectLightingSample::empty();
@@ -324,13 +612,46 @@ struct RtDirectLighting
         }
 
         const float3 brdf_cos = RtMaterialSampler::eval_brdf(surface, view_dir, candidate.direction);
-        const float brdf_pdf = RtMaterialSampler::eval_brdf_pdf(surface, view_dir, candidate.direction);
-        const float mis_weight = Mis::power_heuristic(candidate.solid_angle_pdf, brdf_pdf);
-
         result.contribution = throughput * candidate.radiance * brdf_cos /
             max(candidate.solid_angle_pdf, 1e-7f) * mis_weight;
         result.valid = true;
         return result;
+    }
+
+    /// HDRI / emissive triangle 有对应的 BRDF miss / hit 竞争估计器，因此使用 power heuristic MIS。
+    static RtDirectLightingSample shade_candidate(
+        const RtLightCandidate candidate,
+        const RtSurfaceHit surface,
+        const float3 view_dir,
+        const float3 throughput
+    )
+    {
+        if (!candidate.valid || candidate.solid_angle_pdf <= 0.0f)
+        {
+            return RtDirectLightingSample::empty();
+        }
+
+        const float ndotl = dot(surface.forward_normal, candidate.direction);
+        if (ndotl <= 0.0f)
+        {
+            return RtDirectLightingSample::empty();
+        }
+
+        const float brdf_pdf = RtMaterialSampler::eval_brdf_pdf(surface, view_dir, candidate.direction);
+        const float mis_weight = Mis::power_heuristic(candidate.solid_angle_pdf, brdf_pdf);
+        return shade_candidate_with_mis_weight(candidate, surface, view_dir, throughput, mis_weight);
+    }
+
+    /// analytic light v1 不创建 TLAS 可命中的发光几何，BRDF path 不会直接 hit 到这些 light。
+    /// 因此不存在与 light-side NEE 竞争的 BRDF-hit 估计器，MIS 权重固定为 1。
+    static RtDirectLightingSample shade_analytic_candidate(
+        const RtLightCandidate candidate,
+        const RtSurfaceHit surface,
+        const float3 view_dir,
+        const float3 throughput
+    )
+    {
+        return shade_candidate_with_mis_weight(candidate, surface, view_dir, throughput, 1.0f);
     }
 
     /// 对 HDRI 做一次均匀采样并返回 NEE 贡献。
@@ -365,5 +686,20 @@ struct RtDirectLighting
             return RtDirectLightingSample::empty();
         }
         return shade_candidate(candidate, surface, view_dir, throughput);
+    }
+
+    static RtDirectLightingSample sample_analytic(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface,
+        const float3 view_dir,
+        const float3 throughput
+    )
+    {
+        const RtLightCandidate candidate = sample_analytic_candidate(payload, surface);
+        if (!is_candidate_visible(realtime_rt::rt_tlas, candidate))
+        {
+            return RtDirectLightingSample::empty();
+        }
+        return shade_analytic_candidate(candidate, surface, view_dir, throughput);
     }
 };

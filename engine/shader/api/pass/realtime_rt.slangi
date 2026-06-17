@@ -73,8 +73,9 @@ struct PushConstants
     float sky_brightness;
     /// 非 0 表示 raygen 额外采样自发光三角形 NEE；关闭时保留 hit emission 旧路径。
     uint emissive_nee_enabled;
+    /// 非 0 表示 raygen 额外采样 analytic light NEE；关闭时不影响 HDRI / emissive NEE。
+    uint analytic_nee_enabled;
     /// 显式 padding 保持 push constant 16 字节对齐，避免 CPU/GPU ABI 对齐差异。
-    uint _padding_0;
     uint _padding_1;
     uint _padding_2;
 };

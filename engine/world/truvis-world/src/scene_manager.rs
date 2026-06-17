@@ -18,6 +18,10 @@ pub struct SceneManager {
     all_instances: SlotMap<InstanceHandle, Instance>,
     /// live point light 存储；GPU 侧打包和上传由 render runtime 处理。
     all_point_lights: SlotMap<LightHandle, gpu::light::PointLight>,
+    /// live spot light 存储；与 point light 分开保存，避免 CPU 语义层提前引入统一 light class。
+    all_spot_lights: SlotMap<LightHandle, gpu::light::SpotLight>,
+    /// live area light 存储；矩形单面发光的采样语义由 realtime RT shader 解释。
+    all_area_lights: SlotMap<LightHandle, gpu::light::AreaLight>,
 }
 // 创建与初始化
 impl SceneManager {
@@ -46,10 +50,31 @@ impl SceneManager {
         &self.all_point_lights
     }
 
+    /// 返回全部 live spot light。
+    ///
+    /// `SpotLight` 是 CPU/GPU 共享布局数据；本 manager 只保存 CPU 语义记录，具体
+    /// buffer 上传与 shader 可见 count 属于 render runtime。
+    #[inline]
+    pub fn spot_light_map(&self) -> &SlotMap<LightHandle, gpu::light::SpotLight> {
+        &self.all_spot_lights
+    }
+
+    /// 返回全部 live area light。
+    ///
+    /// area light 的矩形半轴和 radiance 在 CPU 侧保持原样，RT shader 在 NEE 阶段解释
+    /// 单面采样、PDF 和 visibility 契约。
+    #[inline]
+    pub fn area_light_map(&self) -> &SlotMap<LightHandle, gpu::light::AreaLight> {
+        &self.all_area_lights
+    }
+
     /// 判断 CPU scene 是否没有可同步的 live scene 数据。
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.all_instances.is_empty() && self.all_point_lights.is_empty()
+        self.all_instances.is_empty()
+            && self.all_point_lights.is_empty()
+            && self.all_spot_lights.is_empty()
+            && self.all_area_lights.is_empty()
     }
 }
 // 工具函数
@@ -114,6 +139,22 @@ impl SceneManager {
     pub fn register_point_light(&mut self, light: gpu::light::PointLight) -> LightHandle {
         self.all_point_lights.insert(light)
     }
+
+    /// 向 CPU scene 添加一个 live spot light。
+    ///
+    /// spot light 在 realtime RT 中表示半径固定为 0.5 的 sphere emitter，并额外带 cone
+    /// falloff；这里不做角度或方向归一化，调用方和 shader ABI 注释共同约束输入单位。
+    pub fn register_spot_light(&mut self, light: gpu::light::SpotLight) -> LightHandle {
+        self.all_spot_lights.insert(light)
+    }
+
+    /// 向 CPU scene 添加一个 live area light。
+    ///
+    /// area light 使用 world-space `center + half_u + half_v` 描述矩形；本 manager 不计算
+    /// 法线或面积，避免 CPU scene 与 shader 采样路径维护两套几何派生规则。
+    pub fn register_area_light(&mut self, light: gpu::light::AreaLight) -> LightHandle {
+        self.all_area_lights.insert(light)
+    }
 }
 impl Drop for SceneManager {
     fn drop(&mut self) {
@@ -131,5 +172,7 @@ impl SceneManager {
     pub fn destroy_mut(&mut self) {
         self.all_instances.clear();
         self.all_point_lights.clear();
+        self.all_spot_lights.clear();
+        self.all_area_lights.clear();
     }
 }

@@ -3,9 +3,10 @@
 namespace light
 {
 
-/// 单个点光源的 CPU/GPU 共享 ABI。
+/// 单个 point light 的 CPU/GPU 共享 ABI。
 ///
-/// 当前主 RT 路径主要使用 HDRI，点光源数据仍保留在 scene ABI 中，供 raster 或后续直接光照路径复用。
+/// realtime RT 中它不是数学上的 delta point，而是半径固定为 0.5 的 analytic sphere emitter。
+/// `color` 表示发光球面的 radiance；raster Phong 仍把它当作调试用点光近似，不要求与 RT 能量完全一致。
 struct PointLight
 {
     /// 世界空间位置。
@@ -19,6 +20,9 @@ struct PointLight
 };
 
 /// 单个 spot light 的 CPU/GPU 共享 ABI。
+///
+/// realtime RT 中 spot light 与 point light 一样从半径固定为 0.5 的 sphere surface 发光，
+/// 再用 `dir`、`inner_angle` 和 `outer_angle` 裁剪发射方向。角度单位固定为 radians。
 struct SpotLight
 {
     /// 世界空间位置。
@@ -34,6 +38,29 @@ struct SpotLight
     /// 世界空间照射方向。
     float3 dir;
     float _dir_padding;
+};
+
+/// 单个矩形单面 area light 的 CPU/GPU 共享 ABI。
+///
+/// `center` 是矩形中心，`half_u` / `half_v` 是从中心指向两条边中点的 world-space 半轴。
+/// shader 通过 `normalize(cross(half_u, half_v))` 得到正面法线；背面不发光。
+struct AreaLight
+{
+    /// 世界空间矩形中心。
+    float3 center;
+    float _center_padding;
+
+    /// 矩形第一条半轴，完整边长为 `2 * length(half_u)`。
+    float3 half_u;
+    float _half_u_padding;
+
+    /// 矩形第二条半轴，完整边长为 `2 * length(half_v)`。
+    float3 half_v;
+    float _half_v_padding;
+
+    /// 线性空间发光 radiance。
+    float3 radiance;
+    float _radiance_padding;
 };
 
 /// 可采样的自发光三角形 light record。

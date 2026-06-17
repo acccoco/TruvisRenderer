@@ -11,6 +11,8 @@ struct RtDebugAccumulator
     float3 nee_hdri_radiance;
     /// 累计自发光三角形 NEE 直接光照贡献。
     float3 nee_emissive_radiance;
+    /// 累计 analytic light NEE 直接光照贡献。
+    float3 nee_analytic_radiance;
     /// 累计命中 emissive surface 的贡献。
     float3 emissive_radiance;
     /// 累计 sky miss / HDRI 贡献。
@@ -23,6 +25,7 @@ struct RtDebugAccumulator
         RtDebugAccumulator state;
         state.nee_hdri_radiance = float3(0.0f);
         state.nee_emissive_radiance = float3(0.0f);
+        state.nee_analytic_radiance = float3(0.0f);
         state.emissive_radiance = float3(0.0f);
         state.hdri_radiance = float3(0.0f);
         state.nee_bounce1_radiance = float3(0.0f);
@@ -98,6 +101,13 @@ struct RtDebugAccumulator
     }
 
     [mutating]
+    void record_nee_analytic(uint depth, float3 contribution)
+    {
+        nee_analytic_radiance += contribution;
+        record_nee_bounce(depth, contribution);
+    }
+
+    [mutating]
     void record_emissive(float3 contribution)
     {
         emissive_radiance += contribution;
@@ -135,6 +145,10 @@ struct RtDebugAccumulator
         if (channel == 9)
         {
             return nee_emissive_radiance;
+        }
+        if (channel == 12)
+        {
+            return nee_analytic_radiance;
         }
         return path_radiance;
     }

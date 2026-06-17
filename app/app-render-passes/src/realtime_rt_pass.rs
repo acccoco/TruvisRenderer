@@ -116,6 +116,8 @@ pub struct RealtimeRtPassData {
     pub sky_brightness: f32,
     /// 是否启用自发光三角形 NEE。
     pub emissive_nee_enabled: bool,
+    /// 是否启用 analytic light NEE。
+    pub analytic_nee_enabled: bool,
 
     // ========== GBuffer 数据 ==========
     /// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness
@@ -479,7 +481,7 @@ impl RealtimeRtPass {
             sky_sampling_mode: pass_data.sky_sampling_mode,
             sky_brightness: pass_data.sky_brightness,
             emissive_nee_enabled: u32::from(pass_data.emissive_nee_enabled),
-            _padding_0: 0,
+            analytic_nee_enabled: u32::from(pass_data.analytic_nee_enabled),
             _padding_1: 0,
             _padding_2: 0,
         };
@@ -544,6 +546,7 @@ pub struct RealtimeRtRgPass<'a> {
     pub sky_sampling_mode: u32,
     pub sky_brightness: f32,
     pub emissive_nee_enabled: bool,
+    pub analytic_nee_enabled: bool,
 
     // ========== GBuffer 数据 ==========
     pub gbuffer_a: RgImageHandle,
@@ -606,6 +609,7 @@ impl RgPass for RealtimeRtRgPass<'_> {
                 sky_sampling_mode: self.sky_sampling_mode,
                 sky_brightness: self.sky_brightness,
                 emissive_nee_enabled: self.emissive_nee_enabled,
+                analytic_nee_enabled: self.analytic_nee_enabled,
                 gbuffer_a,
                 gbuffer_a_view,
                 gbuffer_b,

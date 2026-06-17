@@ -52,6 +52,24 @@ impl CornellApp {
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
+        world.scene_manager.register_spot_light(gpu::light::SpotLight {
+            pos: glam::vec3(0.0, 320.0, 180.0).into(),
+            inner_angle: 12.0_f32.to_radians(),
+            color: (glam::vec3(8.0, 6.0, 3.0) * 8.0).into(),
+            outer_angle: 28.0_f32.to_radians(),
+            dir: glam::vec3(0.0, -0.85, -0.35).normalize().into(),
+            _dir_padding: Default::default(),
+        });
+        world.scene_manager.register_area_light(gpu::light::AreaLight {
+            center: glam::vec3(0.0, 380.0, 0.0).into(),
+            half_u: glam::vec3(80.0, 0.0, 0.0).into(),
+            half_v: glam::vec3(0.0, 0.0, 80.0).into(),
+            radiance: (glam::vec3(1.0, 0.92, 0.75) * 2.0).into(),
+            _center_padding: Default::default(),
+            _half_u_padding: Default::default(),
+            _half_v_padding: Default::default(),
+            _radiance_padding: Default::default(),
+        });
 
         log::info!("Loading model...");
         world.asset_hub.load_model(TruvisPath::assets_path("fbx/cornell-box.fbx"))

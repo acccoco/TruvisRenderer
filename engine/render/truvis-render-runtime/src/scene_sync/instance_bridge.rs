@@ -184,11 +184,17 @@ impl InstanceBridge {
 
         let all_point_lights: Vec<gpu::light::PointLight> =
             scene_manager.point_light_map().iter().map(|(_, light)| *light).collect();
+        let all_spot_lights: Vec<gpu::light::SpotLight> =
+            scene_manager.spot_light_map().iter().map(|(_, light)| *light).collect();
+        let all_area_lights: Vec<gpu::light::AreaLight> =
+            scene_manager.area_light_map().iter().map(|(_, light)| *light).collect();
 
         RenderData {
             all_instances,
             all_meshes,
             all_point_lights,
+            all_spot_lights,
+            all_area_lights,
             mesh_geometry_start_indices,
         }
     }

@@ -94,11 +94,12 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 | `sky_sampling_mode: RtSkySamplingMode` | HDRI / sky 直接光采样模式，支持 importance 与 uniform A/B 对比 |
 | `sky_brightness: f32` | sky radiance 倍率，同时作用于可见 sky miss 和 HDRI 直接光候选 |
 | `emissive_nee_enabled: bool` | 是否额外启用自发光三角形 NEE，关闭时仍保留直接命中 emissive surface 的旧语义 |
+| `analytic_nee_enabled: bool` | 是否额外启用 point / spot / area analytic light NEE，关闭时不影响 HDRI / emissive NEE |
 | `tone_mapping: SdrToneMappingSettings` | SDR 输出路径使用的手动曝光和 ACES fitted tone mapping 参数 |
 
 RT debug channel 与 tone mapping 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hello Triangle / ShaderToy 只显示 DLSS SR mode，不暴露 RT 调试或 tone mapping 参数。
 
-`RtDebugChannel` 使用 enum 表达当前主 RT 流程支持的通道：final、forward normal、world normal、object normal、base color、NEE HDRI、emission、BRDF HDRI、NEE bounce 0/1 和 `NeeEmissive`。forward normal 是当前 path tracing BRDF 和 DLSS RR `NormalRoughness` 输入使用的 world-space shading normal，会按 ray `faceforward`；world normal 是未翻转的 world-space 几何法线；object normal 是 mesh object/local space 的插值顶点法线。旧的 magic number “not accum” 通道不再通过 UI 暴露。
+`RtDebugChannel` 使用 enum 表达当前主 RT 流程支持的通道：final、forward normal、world normal、object normal、base color、NEE HDRI、emission、BRDF HDRI、NEE bounce 0/1、`NeeEmissive` 和 `NeeAnalytic`。forward normal 是当前 path tracing BRDF 和 DLSS RR `NormalRoughness` 输入使用的 world-space shading normal，会按 ray `faceforward`；world normal 是未翻转的 world-space 几何法线；object normal 是 mesh object/local space 的插值顶点法线。旧的 magic number “not accum” 通道不再通过 UI 暴露。
 
 `RtSkySamplingMode` 是 RT 主流程的 pass-local 调试/实验开关。默认 `Importance` 使用 `SkyBridge` 生成的 HDRI alias table；
 `Uniform` 强制 shader 走旧的 uniform sphere 采样，用于在相同场景下比较 HDRI NEE 噪声与能量稳定性。该选项不改变
@@ -111,6 +112,10 @@ render extent、DLSS feature resource 或 runtime-owned temporal state。
 `emissive_nee_enabled` 是 RT 主流程的 pass-local 调试开关，默认开启。关闭时 shader 不生成 emissive triangle NEE
 candidate，但直接命中 emissive surface 的 hit emission 仍按当前 path tracing 语义累加；该选项不改变
 `EmissiveLightTable` 的 scene sync、DLSS、GBuffer 或 runtime-owned temporal state。
+
+`analytic_nee_enabled` 是 RT 主流程的 pass-local 调试开关，默认开启。关闭时 shader 不生成 point / spot / area
+analytic light candidate；该选项不改变 `SceneManager` / `GpuScene` 的 light buffer 同步，也不改变 DLSS、GBuffer
+或 runtime-owned temporal state。
 
 `SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道。当前使用实时渲染常用的 ACES fitted approximation，并提供 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display transform，也不做自动曝光或参数持久化。
 

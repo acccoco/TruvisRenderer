@@ -118,6 +118,7 @@ impl PipelineControlsOverlay {
                         .display_format("%.2f")
                         .build(&mut rt_settings.sky_brightness);
                     ui.checkbox("Emissive NEE", &mut rt_settings.emissive_nee_enabled);
+                    ui.checkbox("Analytic NEE", &mut rt_settings.analytic_nee_enabled);
 
                     ui.separator();
                     ui.text("Tone Mapping");

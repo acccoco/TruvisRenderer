@@ -169,8 +169,9 @@ impl GpuScene {
             all_geometries: crt_gpu_buffers.geometry_buffer.device_address(),
             instance_material_map: crt_gpu_buffers.material_indirect_buffer.device_address(),
             instance_geometry_map: crt_gpu_buffers.geometry_indirect_buffer.device_address(),
-            point_lights: crt_gpu_buffers.light_buffer.device_address(),
-            spot_lights: 0, // TODO 暂时无用
+            point_lights: crt_gpu_buffers.point_light_buffer.device_address(),
+            spot_lights: crt_gpu_buffers.spot_light_buffer.device_address(),
+            area_lights: crt_gpu_buffers.area_light_buffer.device_address(),
             emissive_triangle_lights: emissive_light_binding.triangle_lights_device_address,
             emissive_light_alias_table: emissive_light_binding.alias_table_device_address,
             instance_emissive_triangle_base_map: emissive_light_binding.base_map_device_address,
@@ -179,7 +180,9 @@ impl GpuScene {
             emissive_light_version: emissive_light_binding.version,
             _emissive_light_padding_0: 0,
             point_light_count: scene_data.all_point_lights.len() as u32,
-            spot_light_count: 0, // TODO 暂时无用
+            spot_light_count: scene_data.all_spot_lights.len() as u32,
+            area_light_count: scene_data.all_area_lights.len() as u32,
+            _analytic_light_padding_0: 0,
 
             sky: environment_binding.sky.srv_handle.0,
             sky_sampler_type: environment_binding.sky.sampler,
@@ -348,28 +351,73 @@ impl GpuScene {
     ) {
         let _span = tracy_client::span!("upload_light_buffer2");
         let crt_gpu_buffers = &mut self.gpu_scene_buffers[*frame_counter.frame_label()];
-        let crt_light_stage_buffer = &mut crt_gpu_buffers.light_stage_buffer;
-        let light_buffer_slices = crt_light_stage_buffer.mapped_slice();
-        // 当前实现使用固定容量 light buffer；超过容量说明 scene 规模已超出 runtime v1 约束。
-        if light_buffer_slices.len() < scene_data.all_point_lights.len() {
-            panic!("light cnt can not be larger than buffer");
-        }
+        {
+            let point_light_buffer_slices = crt_gpu_buffers.point_light_stage_buffer.mapped_slice();
+            let spot_light_buffer_slices = crt_gpu_buffers.spot_light_stage_buffer.mapped_slice();
+            let area_light_buffer_slices = crt_gpu_buffers.area_light_stage_buffer.mapped_slice();
+            // 当前实现使用固定容量 analytic light buffer；超过容量说明 scene 规模已超出 runtime v1 约束。
+            if point_light_buffer_slices.len() < scene_data.all_point_lights.len()
+                || spot_light_buffer_slices.len() < scene_data.all_spot_lights.len()
+                || area_light_buffer_slices.len() < scene_data.all_area_lights.len()
+            {
+                panic!("analytic light cnt can not be larger than buffer");
+            }
 
-        for (light_idx, point_light) in scene_data.all_point_lights.iter().enumerate() {
-            light_buffer_slices[light_idx] = gpu::light::PointLight {
-                pos: point_light.pos,
-                color: point_light.color,
+            for (light_idx, point_light) in scene_data.all_point_lights.iter().enumerate() {
+                point_light_buffer_slices[light_idx] = gpu::light::PointLight {
+                    pos: point_light.pos,
+                    color: point_light.color,
 
-                _color_padding: Default::default(),
-                _pos_padding: Default::default(),
-            };
+                    _color_padding: Default::default(),
+                    _pos_padding: Default::default(),
+                };
+            }
+
+            for (light_idx, spot_light) in scene_data.all_spot_lights.iter().enumerate() {
+                spot_light_buffer_slices[light_idx] = gpu::light::SpotLight {
+                    pos: spot_light.pos,
+                    inner_angle: spot_light.inner_angle,
+                    color: spot_light.color,
+                    outer_angle: spot_light.outer_angle,
+                    dir: spot_light.dir,
+                    _dir_padding: Default::default(),
+                };
+            }
+
+            for (light_idx, area_light) in scene_data.all_area_lights.iter().enumerate() {
+                area_light_buffer_slices[light_idx] = gpu::light::AreaLight {
+                    center: area_light.center,
+                    half_u: area_light.half_u,
+                    half_v: area_light.half_v,
+                    radiance: area_light.radiance,
+
+                    _center_padding: Default::default(),
+                    _half_u_padding: Default::default(),
+                    _half_v_padding: Default::default(),
+                    _radiance_padding: Default::default(),
+                };
+            }
         }
 
         flush_copy_and_barrier(
             resource_ctx,
             cmd,
-            crt_light_stage_buffer,
-            &mut crt_gpu_buffers.light_buffer,
+            &mut crt_gpu_buffers.point_light_stage_buffer,
+            &mut crt_gpu_buffers.point_light_buffer,
+            barrier_mask,
+        );
+        flush_copy_and_barrier(
+            resource_ctx,
+            cmd,
+            &mut crt_gpu_buffers.spot_light_stage_buffer,
+            &mut crt_gpu_buffers.spot_light_buffer,
+            barrier_mask,
+        );
+        flush_copy_and_barrier(
+            resource_ctx,
+            cmd,
+            &mut crt_gpu_buffers.area_light_stage_buffer,
+            &mut crt_gpu_buffers.area_light_buffer,
             barrier_mask,
         );
     }

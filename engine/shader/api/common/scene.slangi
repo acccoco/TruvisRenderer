@@ -67,6 +67,8 @@ struct GpuScene
     PTR(light::PointLight, point_lights);
     /// 预留的 spot light 数组。
     PTR(light::SpotLight, spot_lights);
+    /// 矩形单面 analytic area light 数组。
+    PTR(light::AreaLight, area_lights);
     /// 按 active instance-submesh 展开的自发光三角形 record。
     ///
     /// `instance_emissive_triangle_base_map[instance.geometry_indirect_idx + geometry_id]`
@@ -82,6 +84,8 @@ struct GpuScene
     PTR(Instance, all_instances);
     uint point_light_count;
     uint spot_light_count;
+    uint area_light_count;
+    uint _analytic_light_padding_0;
     /// alias table entry 数量；record 数量通过 direct indexing 契约隐含，不用于采样。
     uint emissive_light_count;
     /// 非 0 表示 emissive alias table 可用于 NEE；hit MIS 仍可读取零 PDF record。

@@ -85,6 +85,10 @@ pub(crate) struct RenderData<'a> {
     pub(crate) all_meshes: Vec<MeshRenderData<'a>>,
     /// 当前 CPU scene 中的点光源快照，按 SceneManager 迭代顺序上传。
     pub(crate) all_point_lights: Vec<gpu::light::PointLight>,
+    /// 当前 CPU scene 中的 spot light 快照，按 SceneManager 迭代顺序上传。
+    pub(crate) all_spot_lights: Vec<gpu::light::SpotLight>,
+    /// 当前 CPU scene 中的矩形单面 area light 快照，按 SceneManager 迭代顺序上传。
+    pub(crate) all_area_lights: Vec<gpu::light::AreaLight>,
 
     /// 每个 mesh 在 geometry buffer 中的起始索引，长度与 `all_meshes` 相同。
     pub(crate) mesh_geometry_start_indices: Vec<usize>,
@@ -96,6 +100,8 @@ impl<'a> RenderData<'a> {
             all_instances: Vec::new(),
             all_meshes: Vec::new(),
             all_point_lights: Vec::new(),
+            all_spot_lights: Vec::new(),
+            all_area_lights: Vec::new(),
             mesh_geometry_start_indices: Vec::new(),
         }
     }
