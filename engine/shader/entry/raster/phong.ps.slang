@@ -29,7 +29,7 @@ PsOutput main(PsInput input)
 
     frame::PerFrameData* frame_data = push_const.frame_data;
     scene::GpuScene* scene = push_const.scene;
-    material::PbrMaterial* mat = SceneAccess::material(scene, push_const.instance_idx, push_const.submesh_idx);
+    material::PbrMaterial* mat = SceneAccess::get_material(scene, push_const.instance_idx, push_const.submesh_idx);
 
     const uint light_cnt = scene.point_light_count;
 

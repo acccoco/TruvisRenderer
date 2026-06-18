@@ -13,7 +13,7 @@ void main_closest_hit(inout RayCastPayload payload, in BuiltInTriangleIntersecti
     const uint geometry_id = GeometryIndex();
     const uint primitive_id = PrimitiveIndex();
 
-    geometry::Geometry* geometry = SceneAccess::geometry(instance_id, geometry_id);
+    geometry::Geometry* geometry = SceneAccess::get_geometry(instance_id, geometry_id);
     const uint3 triangle = GeometryEval::triangle(geometry, primitive_id);
     const float3 interp_pos = GeometryEval::interp_position(geometry, triangle, attr.barycentrics);
     const float3 interp_normal = GeometryEval::interp_normal(geometry, triangle, attr.barycentrics);

@@ -21,7 +21,7 @@ struct SceneAccess
         return gpu_scene.all_instances + instance_idx;
     }
 
-    static geometry::Geometry* geometry(scene::GpuScene* scene_data, uint instance_idx, uint submesh_idx)
+    static geometry::Geometry* get_geometry(scene::GpuScene* scene_data, uint instance_idx, uint submesh_idx)
     {
         scene::Instance* inst = instance(scene_data, instance_idx);
         // submesh_idx 是 instance-local 索引，需要先经过 instance_geometry_map 才能得到全局 geometry slot。
@@ -31,7 +31,7 @@ struct SceneAccess
     }
 
     [ForceInline]
-    static geometry::Geometry* geometry(uint instance_idx, uint submesh_idx)
+    static geometry::Geometry* get_geometry(uint instance_idx, uint submesh_idx)
     {
         scene::Instance* inst = instance(instance_idx);
         const uint geometry_map_idx = inst.geometry_indirect_idx + submesh_idx;
@@ -39,7 +39,7 @@ struct SceneAccess
         return gpu_scene.all_geometries + geometry_idx;
     }
 
-    static material::PbrMaterial* material(scene::GpuScene* scene_data, uint instance_idx, uint submesh_idx)
+    static material::PbrMaterial* get_material(scene::GpuScene* scene_data, uint instance_idx, uint submesh_idx)
     {
         scene::Instance* inst = instance(scene_data, instance_idx);
         // material 与 geometry 独立映射，允许同一 mesh submesh 在不同 instance 上使用不同材质。
@@ -49,7 +49,7 @@ struct SceneAccess
     }
 
     [ForceInline]
-    static material::PbrMaterial* material(uint instance_idx, uint submesh_idx)
+    static material::PbrMaterial* get_material(uint instance_idx, uint submesh_idx)
     {
         scene::Instance* inst = instance(instance_idx);
         const uint material_map_idx = inst.material_indirect_idx + submesh_idx;

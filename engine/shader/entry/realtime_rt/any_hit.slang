@@ -14,8 +14,8 @@ void trans_any(inout RtTracePayload payload, in BuiltInTriangleIntersectionAttri
     const uint geometry_id = GeometryIndex();
     const uint primitive_id = PrimitiveIndex();
 
-    material::PbrMaterial* mat = SceneAccess::material(instance_id, geometry_id);
-    geometry::Geometry* geometry = SceneAccess::geometry(instance_id, geometry_id);
+    material::PbrMaterial* mat = SceneAccess::get_material(instance_id, geometry_id);
+    geometry::Geometry* geometry = SceneAccess::get_geometry(instance_id, geometry_id);
     const uint3 triangle = GeometryEval::triangle(geometry, primitive_id);
     const float2 interp_uv = GeometryEval::interp_uv(geometry, triangle, attr.barycentrics);
 

@@ -36,7 +36,7 @@ void main_closest_hit(inout RtTracePayload payload, in BuiltInTriangleIntersecti
     const uint primitive_id = PrimitiveIndex();
 
     // ========== 获取几何体数据 ==========
-    geometry::Geometry* geometry = SceneAccess::geometry(instance_id, geometry_id);
+    geometry::Geometry* geometry = SceneAccess::get_geometry(instance_id, geometry_id);
     const uint3 triangle = GeometryEval::triangle(geometry, primitive_id);
     const float3 interp_pos = GeometryEval::interp_position(geometry, triangle, attr.barycentrics);
     const float3 interp_normal = GeometryEval::interp_normal(geometry, triangle, attr.barycentrics);
@@ -57,7 +57,7 @@ void main_closest_hit(inout RtTracePayload payload, in BuiltInTriangleIntersecti
     const float3 world_normal = faceforward(origin_world_normal, WorldRayDirection(), origin_world_normal);
 
     // ========== 获取材质数据 ==========
-    material::PbrMaterial* mat = SceneAccess::material(instance_id, geometry_id);
+    material::PbrMaterial* mat = SceneAccess::get_material(instance_id, geometry_id);
 
     // 获取基础颜色
     float3 base_color;
