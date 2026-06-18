@@ -109,13 +109,13 @@ render extent、DLSS feature resource 或 runtime-owned temporal state。
 贴图后统一缩放可见 sky miss 与 HDRI 直接光候选 radiance；因为这是所有方向共享的均匀倍率，不改变
 `SkyBridge` importance distribution 的相对权重，也不需要重建 alias table 或改写环境光 PDF。
 
-`emissive_nee_enabled` 是 RT 主流程的 pass-local 调试开关，默认开启。关闭时 shader 不生成 emissive triangle NEE
-candidate，但直接命中 emissive surface 的 hit emission 仍按当前 path tracing 语义累加；该选项不改变
+`emissive_nee_enabled` 是 RT 主流程的 pass-local 调试开关，默认开启。关闭时统一 NEE 不会把 emissive
+class 纳入候选来源，但直接命中 emissive surface 的 hit emission 仍按当前 path tracing 语义累加；该选项不改变
 `EmissiveLightTable` 的 scene sync、DLSS、GBuffer 或 runtime-owned temporal state。
 
-`analytic_nee_enabled` 是 RT 主流程的 pass-local 调试开关，默认开启。关闭时 shader 不生成 point / spot / area
-analytic light candidate；该选项不改变 `SceneManager` / `GpuScene` 的 light buffer 同步，也不改变 DLSS、GBuffer
-或 runtime-owned temporal state。
+`analytic_nee_enabled` 是 RT 主流程的 pass-local 调试开关，默认开启。关闭时统一 NEE 不会把 point / spot / area
+analytic class 纳入候选来源；该选项不改变 `SceneManager` / `GpuScene` 的 light buffer 同步，也不改变 DLSS、
+GBuffer 或 runtime-owned temporal state。
 
 `SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道。当前使用实时渲染常用的 ACES fitted approximation，并提供 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display transform，也不做自动曝光或参数持久化。DLSS SR 的 manual exposure 由固定 1x1 `dlss-sr-exposure` 输入提供，当前不跟随这里的 `Exposure EV`。
 

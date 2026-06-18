@@ -76,9 +76,9 @@ resolve，最后调用 `GuiPlugin::contribute_passes` 叠加 GUI。
 
 ## RT 直接光采样契约
 
-当前 realtime RT 主路径的直接光接入 HDRI NEE 与自发光三角形 NEE。raygen shader 内部把 light sample 整理为
-light candidate、visibility 和 shade 三段：candidate 使用 direction、radiance、distance、shadow ray 和
-solid-angle PDF 描述光源侧样本；visibility 复用现有 inline `RayQuery` shadow path；shade 使用
+当前 realtime RT 主路径的直接光通过统一 Light Candidate System 接入 HDRI、自发光三角形和 analytic light。
+raygen shader 每个普通 surface 只生成一个 light candidate；candidate 使用 direction、radiance、distance、
+shadow ray 和 solid-angle PDF 描述光源侧样本；visibility 复用现有 inline `RayQuery` shadow path；shade 使用
 `BRDF * cos / light_pdf * MIS` 的统一公式。
 完整 raygen path loop、miss / emissive hit、多 bounce、Russian roulette 和 MIS 决策顺序见
 [`docs/summaries/realtime-rt-raytracing-flow.md`](realtime-rt-raytracing-flow.md)。
@@ -86,7 +86,8 @@ solid-angle PDF 描述光源侧样本；visibility 复用现有 inline `RayQuery
 环境光 sample 与 PDF 统一通过 `EnvMap` 查询。默认 sky 真实贴图 ready 后，`EnvMap` 使用
 `SkyBridge` 生成的 `luminance(texel) * solid_angle(texel)` alias table 做 importance sampling，并返回
 solid-angle PDF；fallback sky 使用 1x1 均匀分布，无效分布或 `RtPipelineSettings.sky_sampling_mode = Uniform`
-时回退 uniform sphere。HDRI NEE 与 BRDF sky miss MIS 读取同一 `EnvMap::pdf`，不维护第二套环境光概率。
+时回退 uniform sphere。HDRI class 内部采样与 BRDF sky miss 读取同一 `EnvMap::pdf`，统一入口再把
+light-class 选择概率乘入对外 PDF。
 HDRI 采样的概念解释、alias table 原理和项目内数据路径见
 [`docs/summaries/hdri-sampling.md`](hdri-sampling.md)。
 
@@ -101,18 +102,21 @@ emissive submesh 为所有 primitive 保留连续 `EmissiveTriangleLight` record
 `emissive_triangle_lights[base + primitive_id]` 反查 light-side PDF，不需要额外 lookup entry 或二分查找。
 `emissive_light_alias_table` 只服务 NEE 抽样，内部 entry 保存 primary record index、alias record index 与
 alias probability；hit PDF 查询不经过 alias table。自发光 NEE 的面积采样 PDF 会转换到 solid-angle 度量，
-再与 BRDF PDF 做 MIS；camera ray 或上一段 delta path 直接命中 emissive 仍保持当前直视/镜面语义。
+统一入口再把 light-class 选择概率乘入对外 PDF 后与 BRDF PDF 做 MIS；camera ray 或上一段 delta path
+直接命中 emissive 仍保持当前直视/镜面语义。
 lookup 的构建步骤、buffer 内部结构和查询伪代码见 [`docs/summaries/emissive-light-sampling.md`](emissive-light-sampling.md)。
 
-`RtPipelineSettings.emissive_nee_enabled` 默认开启；关闭或 table 为空时不生成 emissive NEE candidate。`NeeEmissive`
-debug channel 只显示 emissive triangle NEE，HDRI NEE 仍由既有 `NeeHdri` 通道观察。emissive table 的 rebuild
+`RtPipelineSettings.emissive_nee_enabled` 默认开启；关闭或 table 为空时统一入口不会把 emissive class 纳入候选来源。
+`NeeEmissive` debug channel 只显示统一 NEE 中抽到 emissive triangle class 的贡献，HDRI class 仍由既有
+`NeeHdri` 通道观察。emissive table 的 rebuild
 revision 由 mesh ready revision、instance revision 和 material revision 组合得到；mesh ready、instance
 transform / active set、material emissive / base color 参数变化会刷新 table。
 
 analytic point / spot / area light 由 `SceneManager` 保存 CPU 语义记录，`InstanceBridge::prepare_render_data`
 把三类 light 快照写入 `RenderData`，`GpuScene::upload_render_data` 分别上传 point / spot / area structured buffer
-并在 scene root 中写入 device address 与 count。realtime RT raygen 在 `RtPipelineSettings.analytic_nee_enabled`
-开启且 light 数量非 0 时生成 analytic light candidate；`NeeAnalytic` debug channel 只显示 analytic NEE。更细的
+并在 scene root 中写入 device address 与 count。`RtPipelineSettings.analytic_nee_enabled` 开启且 light 数量非 0
+时，统一入口才会把 analytic class 纳入候选来源；`NeeAnalytic` debug channel 只显示统一 NEE 中抽到 analytic
+class 的贡献。更细的
 sphere emitter、spot cone、area 单面 PDF 和 MIS 边界见 [`analytic-light-sampling.md`](analytic-light-sampling.md)。
 
 DLSS SR/RR 仍只读取 RT 输出的 HDR、GBuffer、depth、motion vectors 和固定 manual exposure，不参与 light

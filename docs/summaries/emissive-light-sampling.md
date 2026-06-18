@@ -354,6 +354,6 @@ rebuild revision 由 mesh ready revision、instance revision 与 material revisi
 transform / active set、material emissive / base color 参数变化都会刷新 table。带 diffuse texture 的 power
 分布第一版使用稳定近似，shader shade 阶段仍按真实 UV 读取 base color。
 
-`RtPipelineSettings.emissive_nee_enabled` 默认开启；关闭、表为空或 GPU scene 标记未启用时，shader 不生成
-emissive NEE candidate，退回只靠 HDRI NEE 与 hit emission 的路径。调试通道 `NeeEmissive` 只显示来自
-emissive triangle NEE 的直接光贡献。
+`RtPipelineSettings.emissive_nee_enabled` 默认开启；关闭、表为空或 GPU scene 标记未启用时，统一入口不会把
+emissive class 纳入候选来源，退回只靠 HDRI / analytic class 与 hit emission 的路径。调试通道
+`NeeEmissive` 只显示统一 NEE 中抽到 emissive triangle class 的直接光贡献。

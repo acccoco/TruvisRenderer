@@ -88,7 +88,7 @@ void main_ray_gen()
             break;
         }
 
-        const RtDirectLightingSample direct_lighting = RtDirectLighting::sample_hdri(
+        const RtDirectLightingSample direct_lighting = RtDirectLighting::sample_unified(
             payload,
             surface,
             -ray.Direction,
@@ -97,31 +97,18 @@ void main_ray_gen()
         if (direct_lighting.valid)
         {
             path.add_radiance(direct_lighting.contribution);
-            debug_state.record_nee_hdri(depth, direct_lighting.contribution);
-        }
-
-        const RtDirectLightingSample emissive_direct_lighting = RtDirectLighting::sample_emissive(
-            payload,
-            surface,
-            -ray.Direction,
-            path.throughput
-        );
-        if (emissive_direct_lighting.valid)
-        {
-            path.add_radiance(emissive_direct_lighting.contribution);
-            debug_state.record_nee_emissive(depth, emissive_direct_lighting.contribution);
-        }
-
-        const RtDirectLightingSample analytic_direct_lighting = RtDirectLighting::sample_analytic(
-            payload,
-            surface,
-            -ray.Direction,
-            path.throughput
-        );
-        if (analytic_direct_lighting.valid)
-        {
-            path.add_radiance(analytic_direct_lighting.contribution);
-            debug_state.record_nee_analytic(depth, analytic_direct_lighting.contribution);
+            if (direct_lighting.light_kind == RtLightCandidate::kind_hdri())
+            {
+                debug_state.record_nee_hdri(depth, direct_lighting.contribution);
+            }
+            else if (direct_lighting.light_kind == RtLightCandidate::kind_emissive_triangle())
+            {
+                debug_state.record_nee_emissive(depth, direct_lighting.contribution);
+            }
+            else if (RtLightCandidate::is_analytic_kind(direct_lighting.light_kind))
+            {
+                debug_state.record_nee_analytic(depth, direct_lighting.contribution);
+            }
         }
 
         const RtMaterialSample material_sample = RtMaterialSampler::sample_next(payload, surface, ray.Direction);

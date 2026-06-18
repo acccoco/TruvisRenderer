@@ -64,7 +64,7 @@ struct RtPathState
         }
         else
         {
-            const float env_pdf = EnvMap::pdf(sky_dir);
+            const float env_pdf = RtDirectLighting::unified_hdri_pdf(sky_dir);
             const float mis_weight = Mis::power_heuristic(prev_brdf_pdf, env_pdf);
             contribution = sky_color * throughput * mis_weight;
         }
@@ -81,7 +81,7 @@ struct RtPathState
         // 避免 BRDF 命中与 emissive NEE 重复计算同一份直接光贡献。
         if (!prev_is_delta && depth > 0)
         {
-            const float light_pdf = RtDirectLighting::emissive_hit_pdf(surface, light_dir);
+            const float light_pdf = RtDirectLighting::unified_emissive_hit_pdf(surface, light_dir);
             mis_weight = Mis::power_heuristic(prev_brdf_pdf, light_pdf);
         }
         const float3 contribution = surface.emissive * throughput * mis_weight;

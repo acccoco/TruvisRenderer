@@ -54,6 +54,13 @@ struct RtLightCandidate
         return 5;
     }
 
+    static bool is_analytic_kind(const uint candidate_kind)
+    {
+        return candidate_kind == kind_analytic_point() ||
+            candidate_kind == kind_analytic_spot() ||
+            candidate_kind == kind_analytic_area();
+    }
+
     static RtLightCandidate empty()
     {
         RtLightCandidate candidate;
@@ -75,12 +82,15 @@ struct RtDirectLightingSample
 {
     /// 当前 path throughput 加权后的实际贡献。
     float3 contribution;
+    /// 产生该贡献的 light candidate 类型，用于统一采样后继续保留分类型 debug 统计。
+    uint light_kind;
     bool valid;
 
     static RtDirectLightingSample empty()
     {
         RtDirectLightingSample sample;
         sample.contribution = float3(0.0f);
+        sample.light_kind = 0;
         sample.valid = false;
         return sample;
     }
@@ -543,6 +553,90 @@ struct RtDirectLighting
         return candidate;
     }
 
+    static uint unified_light_class_count()
+    {
+        uint class_count = 1;
+        if (emissive_nee_enabled())
+        {
+            class_count += 1;
+        }
+        if (analytic_nee_enabled())
+        {
+            class_count += 1;
+        }
+        return class_count;
+    }
+
+    static RtLightCandidate apply_light_class_pdf(
+        const RtLightCandidate candidate,
+        const float class_pdf
+    )
+    {
+        if (!candidate.valid || class_pdf <= 0.0f)
+        {
+            return RtLightCandidate::empty();
+        }
+
+        RtLightCandidate weighted_candidate = candidate;
+        // 统一候选系统先抽 light class，再由各 class 内部采样具体 light。
+        // 因此对外参与 shade/MIS/reservoir 的 PDF 必须是联合概率：
+        // P(class) * P(sample | class)，避免统一 NEE 变亮或 BRDF 竞争 PDF 不匹配。
+        weighted_candidate.solid_angle_pdf *= class_pdf;
+        return weighted_candidate;
+    }
+
+    /// 按启用的 light class 均匀生成一个直接光候选。
+    ///
+    /// v1 只统一候选入口，不扩展 CPU/GPU power ABI：HDRI、emissive triangle 和 analytic
+    /// light 仍由各自已有 sampler 负责 class 内部的 PDF、visibility ray 和 radiance 语义。
+    static RtLightCandidate sample_unified_candidate(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface
+    )
+    {
+        if (surface.is_delta_path())
+        {
+            return RtLightCandidate::empty();
+        }
+
+        const uint class_count = unified_light_class_count();
+        const uint selected = min((uint)(Random::rnd(payload.random_seed) * (float)class_count), class_count - 1);
+        const float class_pdf = 1.0f / (float)class_count;
+
+        uint class_index = selected;
+        if (class_index == 0)
+        {
+            return apply_light_class_pdf(sample_hdri_candidate(payload, surface), class_pdf);
+        }
+        class_index -= 1;
+
+        if (emissive_nee_enabled())
+        {
+            if (class_index == 0)
+            {
+                return apply_light_class_pdf(sample_emissive_candidate(payload, surface), class_pdf);
+            }
+            class_index -= 1;
+        }
+
+        if (analytic_nee_enabled() && class_index == 0)
+        {
+            return apply_light_class_pdf(sample_analytic_candidate(payload, surface), class_pdf);
+        }
+
+        return RtLightCandidate::empty();
+    }
+
+    static float unified_light_class_pdf()
+    {
+        return 1.0f / (float)unified_light_class_count();
+    }
+
+    static float unified_hdri_pdf(const float3 light_dir)
+    {
+        return EnvMap::pdf(light_dir) * unified_light_class_pdf();
+    }
+
     /// 查询 BRDF 路径命中的 emissive surface 如果由 emissive NEE 采样器生成时的 solid-angle PDF。
     ///
     /// 这里不做 lookup table：`GeometryIndex()` 是 instance-local submesh，`PrimitiveIndex()`
@@ -577,6 +671,18 @@ struct RtDirectLighting
         }
 
         return emissive_solid_angle_pdf(light, light_dir, surface.hit_t);
+    }
+
+    static float unified_emissive_hit_pdf(const RtSurfaceHit surface, const float3 light_dir)
+    {
+        if (!emissive_nee_enabled())
+        {
+            return 0.0f;
+        }
+
+        // BRDF 命中 emissive surface 时，需要和统一 light strategy 竞争，而不是只和
+        // emissive class 内部采样器竞争；因此这里把 class 选择概率一并乘入。
+        return emissive_hit_pdf(surface, light_dir) * unified_light_class_pdf();
     }
 
     static bool is_candidate_visible(RaytracingAccelerationStructure tlas, const RtLightCandidate candidate)
@@ -614,6 +720,7 @@ struct RtDirectLighting
         const float3 brdf_cos = RtMaterialSampler::eval_brdf(surface, view_dir, candidate.direction);
         result.contribution = throughput * candidate.radiance * brdf_cos /
             max(candidate.solid_angle_pdf, 1e-7f) * mis_weight;
+        result.light_kind = candidate.kind;
         result.valid = true;
         return result;
     }
@@ -654,7 +761,40 @@ struct RtDirectLighting
         return shade_candidate_with_mis_weight(candidate, surface, view_dir, throughput, 1.0f);
     }
 
-    /// 对 HDRI 做一次均匀采样并返回 NEE 贡献。
+    static RtDirectLightingSample shade_unified_candidate(
+        const RtLightCandidate candidate,
+        const RtSurfaceHit surface,
+        const float3 view_dir,
+        const float3 throughput
+    )
+    {
+        if (RtLightCandidate::is_analytic_kind(candidate.kind))
+        {
+            return shade_analytic_candidate(candidate, surface, view_dir, throughput);
+        }
+        return shade_candidate(candidate, surface, view_dir, throughput);
+    }
+
+    /// 统一直接光 NEE 入口：raygen 每个 surface 只生成一个 light candidate。
+    ///
+    /// 旧的 HDRI/emissive/analytic 单独入口保留为调试和回退基础；默认路径使用本函数，
+    /// 后续 ReSTIR DI 可以复用同一候选生成与 shade 契约，而不扩大 raygen 主循环职责。
+    static RtDirectLightingSample sample_unified(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface,
+        const float3 view_dir,
+        const float3 throughput
+    )
+    {
+        const RtLightCandidate candidate = sample_unified_candidate(payload, surface);
+        if (!is_candidate_visible(realtime_rt::rt_tlas, candidate))
+        {
+            return RtDirectLightingSample::empty();
+        }
+        return shade_unified_candidate(candidate, surface, view_dir, throughput);
+    }
+
+    /// 对 HDRI 做一次采样并返回 NEE 贡献。
     ///
     /// `sample_hdri` 保留为 raygen 的稳定入口；内部已经拆成 candidate、visibility 和 shade
     /// 三段，后续新增 light type 或 reservoir 时不需要扩大 raygen 主循环的职责。
