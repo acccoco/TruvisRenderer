@@ -148,22 +148,62 @@ impl TruvisApp {
         camera.euler_pitch_deg = 0.0;
 
         world.scene_manager.register_point_light(gpu::light::PointLight {
-            pos: glam::vec3(-20.0, 40.0, 0.0).into(),
-            color: (glam::vec3(5.0, 6.0, 1.0) * 2.0).into(),
+            pos: glam::vec3(-800.0, 50.0, 400.0).into(),
+            color: (glam::vec3(1.0, 0.0, 0.0) * 5000.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
         world.scene_manager.register_point_light(gpu::light::PointLight {
-            pos: glam::vec3(40.0, 40.0, -30.0).into(),
-            color: (glam::vec3(1.0, 6.0, 7.0) * 3.0).into(),
+            pos: glam::vec3(-100.0, 50.0, 400.0).into(),
+            color: (glam::vec3(0.0, 1.0, 0.0) * 5000.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
         world.scene_manager.register_point_light(gpu::light::PointLight {
-            pos: glam::vec3(40.0, 40.0, 30.0).into(),
-            color: (glam::vec3(5.0, 1.0, 8.0) * 3.0).into(),
+            pos: glam::vec3(600.0, 50.0, 400.0).into(),
+            color: (glam::vec3(0.0, 0.0, 1.0) * 5000.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
+        });
+        // RT 中 SpotLight 是半径 0.5 的 sphere emitter 再叠加 cone falloff；
+        // 主场景保留几盏显式 spot，方便观察 Analytic NEE 开关和 NeeAnalytic debug channel。
+        world.scene_manager.register_spot_light(gpu::light::SpotLight {
+            pos: glam::vec3(-450.0, 100.0, 400.0).into(),
+            inner_angle: 30.0_f32.to_radians(),
+            color: (glam::vec3(1.0, 1.0, 0.0) * 9000.0).into(),
+            outer_angle: 60.0_f32.to_radians(),
+            dir: glam::vec3(0.0, -1.0, 0.0).into(),
+            _dir_padding: Default::default(),
+        });
+        world.scene_manager.register_spot_light(gpu::light::SpotLight {
+            pos: glam::vec3(250.0, 100.0, 400.0).into(),
+            inner_angle: 30.0_f32.to_radians(),
+            color: (glam::vec3(0.0, 1.0, 1.0) * 9000.0).into(),
+            outer_angle: 60.0_f32.to_radians(),
+            dir: glam::vec3(0.0, -1.0, 0.0).into(),
+            _dir_padding: Default::default(),
+        });
+        // AreaLight 的正面法线由 cross(half_u, half_v) 决定；这里使用 X/Z 方向半轴，
+        // 让矩形灯法线朝 -Y，单面照向 Sponza 场景内部。
+        world.scene_manager.register_area_light(gpu::light::AreaLight {
+            center: glam::vec3(-100.0, 200.0, 400.0).into(),
+            half_u: glam::vec3(70.0, 0.0, 0.0).into(),
+            half_v: glam::vec3(0.0, 0.0, 18.0).into(),
+            radiance: (glam::vec3(1.0, 0.16, 0.12) * 10.0).into(),
+            _center_padding: Default::default(),
+            _half_u_padding: Default::default(),
+            _half_v_padding: Default::default(),
+            _radiance_padding: Default::default(),
+        });
+        world.scene_manager.register_area_light(gpu::light::AreaLight {
+            center: glam::vec3(600.0, 200.0, 400.0).into(),
+            half_u: glam::vec3(26.0, 0.0, 0.0).into(),
+            half_v: glam::vec3(0.0, 0.0, 26.0).into(),
+            radiance: (glam::vec3(0.12, 0.16, 1.0) * 10.0).into(),
+            _center_padding: Default::default(),
+            _half_u_padding: Default::default(),
+            _half_v_padding: Default::default(),
+            _radiance_padding: Default::default(),
         });
 
         log::info!("start load sponza model");
