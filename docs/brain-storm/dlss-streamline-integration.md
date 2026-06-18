@@ -146,7 +146,7 @@ DLSS SR / DLAA:
     -> gbuffer_a / gbuffer_b / gbuffer_c
     -> dlss-depth / dlss-motion-vectors
   DlssSrRgPass:
-    single_frame_rt + dlss-depth + dlss-motion-vectors
+    single_frame_rt + dlss-depth + dlss-motion-vectors + dlss-sr-exposure
       -> kFeatureDLSS
       -> dlss-output(output_extent)
   hdr-to-sdr(dlss-output -> main_view_color)
@@ -186,6 +186,7 @@ pass 前后的 resource state 和命令录制顺序；Streamline 负责 DLSS 内
 | `kBufferTypeScalingOutputColor` | `dlss-output` | HDR color, `output_extent` | SR/DLAA/RR 共享输出，后续进入 SDR。 |
 | `kBufferTypeDepth` | `dlss-depth` | `R32_SFLOAT`, `render_extent` | raygen 写入 device depth；不是 `GBufferB.w` 的 hit distance。 |
 | `kBufferTypeMotionVectors` | `dlss-motion-vectors` | `R32G32_SFLOAT`, `render_extent` | raygen 写入 pixel-space 2D motion vector，包含 camera 和 object motion；方向为 `previous_pixel - current_pixel`。 |
+| `kBufferTypeExposure` | `dlss-sr-exposure` | `R32_SFLOAT`, 1x1 | 固定手动 exposure scale=1.0；缺少该 tag 时 Streamline 会退回 DLSS AutoExposure。 |
 
 RR 在 SR 基础输入外额外 tag：
 
@@ -200,7 +201,9 @@ RR 在 SR 基础输入外额外 tag：
 RR 扩展参考；当前 SR/RR 都 tag `dlss-depth` 作为 device depth，不直接把 `GBufferB.w`
 交给 Streamline。
 
-SR 输入在 RenderGraph 中使用 `DLSS_SR_INPUT_READ`：
+SR 输入在 RenderGraph 中使用 `DLSS_SR_INPUT_READ`。其中 `dlss-sr-exposure` 初始化后保持
+`SHADER_READ_ONLY_OPTIMAL`，导入 graph 时也必须使用该状态，避免 `UNDEFINED` layout transition 丢弃固定
+exposure 值：
 
 ```rust
 RgImageState::new(

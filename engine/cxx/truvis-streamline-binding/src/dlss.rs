@@ -35,8 +35,8 @@ impl DlssMode {
 #[derive(Clone, Copy, Debug)]
 /// `slDLSSSetOptions` / `slDLSSGetOptimalSettings` 共用的最小 options。
 ///
-/// 这里故意只暴露当前 SR 接入需要的字段，pre-exposure、auto exposure、alpha upscaling
-/// 等策略先固定在 C ABI 转换层，避免 app 层过早承诺未验证的配置面。
+/// 这里故意只暴露当前 SR 接入需要的字段。pre/exposure scale 先固定为 1.0；
+/// AutoExposure 由 C ABI 转换层关闭，并由 evaluate desc 提供 1x1 exposure resource 配套保证。
 pub struct DlssOptions {
     pub mode: DlssMode,
     pub output_width: u32,
@@ -239,6 +239,7 @@ impl Constants {
 ///
 /// `frame_index` 用于 Streamline frame token，`viewport_id` 当前由 app 固定为 0。
 /// `use_linear_depth=false` 时 C++ wrapper 会把 depth resource tag 成 `kBufferTypeDepth`。
+/// `exposure` 是 1x1 manual exposure scale；SR 缺少它时 Streamline 会退回 AutoExposure。
 pub struct DlssEvaluateDesc {
     pub frame_index: u32,
     pub viewport_id: u32,
@@ -248,6 +249,7 @@ pub struct DlssEvaluateDesc {
     pub output_color: ImageResource,
     pub depth_or_linear_depth: ImageResource,
     pub motion_vectors: ImageResource,
+    pub exposure: ImageResource,
     pub use_linear_depth: bool,
 }
 
@@ -373,6 +375,7 @@ pub fn evaluate(desc: DlssEvaluateDesc) -> Result<(), StreamlineError> {
         output_color: desc.output_color.to_ffi(),
         depth_or_linear_depth: desc.depth_or_linear_depth.to_ffi(),
         motion_vectors: desc.motion_vectors.to_ffi(),
+        exposure: desc.exposure.to_ffi(),
         use_linear_depth: u32::from(desc.use_linear_depth),
     };
     check(unsafe { truvixx::truvixx_sl_dlss_evaluate(&ffi) }, "DLSS evaluate")

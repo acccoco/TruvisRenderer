@@ -37,6 +37,7 @@ impl VulkanFormatUtils {
         };
 
         match format {
+            vk::Format::R32_SFLOAT => 4,
             f if is_in_format_region(f, &BYTE_3_FORMAT) => 3,
             f if is_in_format_region(f, &BYTE_4_FORMAT) => 4,
             f if is_in_format_region(f, &BYTE_6_FORMAT) => 6,

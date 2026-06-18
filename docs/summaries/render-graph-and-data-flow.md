@@ -115,8 +115,9 @@ analytic point / spot / area light 由 `SceneManager` 保存 CPU 语义记录，
 开启且 light 数量非 0 时生成 analytic light candidate；`NeeAnalytic` debug channel 只显示 analytic NEE。更细的
 sphere emitter、spot cone、area 单面 PDF 和 MIS 边界见 [`analytic-light-sampling.md`](analytic-light-sampling.md)。
 
-DLSS SR/RR 仍只读取 RT 输出的 HDR、GBuffer、depth 和 motion vectors，不参与 light candidate、reservoir 或 radiance
-cache 状态。
+DLSS SR/RR 仍只读取 RT 输出的 HDR、GBuffer、depth、motion vectors 和固定 manual exposure，不参与 light
+candidate、reservoir 或 radiance cache 状态。SR 会显式 tag 1x1 `dlss-sr-exposure`，避免缺少
+`kBufferTypeExposure` 时 Streamline 退回 AutoExposure；SDR `Exposure EV` 仍只作用于 DLSS 之后的 tone mapping。
 
 ## 与生命周期的关系
 

@@ -94,6 +94,12 @@ impl DlssSrPass {
                 data.motion_vectors_view,
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             ),
+            exposure: image_resource(
+                resource_ctx,
+                data.exposure,
+                data.exposure_view,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            ),
             use_linear_depth: false,
         };
 
@@ -118,6 +124,8 @@ pub struct DlssSrPassData<'a> {
     pub depth_view: &'a GfxImageView,
     pub motion_vectors: &'a GfxImage,
     pub motion_vectors_view: &'a GfxImageView,
+    pub exposure: &'a GfxImage,
+    pub exposure_view: &'a GfxImageView,
 }
 
 /// RenderGraph 中的 DLSS SR pass 声明。
@@ -132,14 +140,17 @@ pub struct DlssSrRgPass<'a> {
     pub output_color: RgImageHandle,
     pub depth: RgImageHandle,
     pub motion_vectors: RgImageHandle,
+    pub exposure: RgImageHandle,
 }
 
 impl RgPass for DlssSrRgPass<'_> {
     fn setup(&mut self, builder: &mut RgPassBuilder) {
-        // 三个输入必须和 `evaluate()` 中传给 Streamline 的 image layout 一致。
+        // 输入必须和 `evaluate()` 中传给 Streamline 的 image layout 一致。
+        // exposure 是 1x1 manual exposure scale；缺少该 tag 会让 DLSS SR 退回 AutoExposure。
         builder.read_image(self.input_color, DLSS_SR_INPUT_READ);
         builder.read_image(self.depth, DLSS_SR_INPUT_READ);
         builder.read_image(self.motion_vectors, DLSS_SR_INPUT_READ);
+        builder.read_image(self.exposure, DLSS_SR_INPUT_READ);
         builder.write_image(self.output_color, SL_WRITE);
     }
 
@@ -151,6 +162,8 @@ impl RgPass for DlssSrRgPass<'_> {
         let (depth, depth_view) = ctx.get_image_and_view(self.depth).expect("DlssSrRgPass: depth not found");
         let (motion_vectors, motion_vectors_view) =
             ctx.get_image_and_view(self.motion_vectors).expect("DlssSrRgPass: motion_vectors not found");
+        let (exposure, exposure_view) =
+            ctx.get_image_and_view(self.exposure).expect("DlssSrRgPass: exposure not found");
 
         self.dlss_sr_pass.evaluate(
             ctx.cmd,
@@ -165,6 +178,8 @@ impl RgPass for DlssSrRgPass<'_> {
                 depth_view,
                 motion_vectors,
                 motion_vectors_view,
+                exposure,
+                exposure_view,
             },
         );
     }

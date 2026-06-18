@@ -28,8 +28,8 @@ typedef struct
     uint32_t max_num_cpu_threads;
 } TruvixxSlFeatureSupport;
 
-// DLSS SR options 的最小字段集合。pre/exposure 当前由 Rust wrapper 固定默认值，
-// 后续若接入自动曝光或 alpha upscaling，再扩展这里的明确契约。
+// DLSS SR options 的最小字段集合。pre/exposure scale 当前由 Rust wrapper 固定默认值；
+// AutoExposure 由 C++ 转换层关闭，并要求 evaluate 显式提供 kBufferTypeExposure。
 typedef struct
 {
     uint32_t mode;
@@ -109,6 +109,7 @@ typedef struct
 
 // 一次 DLSS SR evaluate 的完整输入。当前项目固定用 viewport 0，
 // depth_or_linear_depth 在 use_linear_depth=0 时 tag 为 kBufferTypeDepth。
+// exposure 必须是 1x1 手动曝光 scale；缺少 kBufferTypeExposure 时 Streamline 会退回 AutoExposure。
 typedef struct
 {
     uint32_t frame_index;
@@ -119,6 +120,7 @@ typedef struct
     TruvixxSlImageResource output_color;
     TruvixxSlImageResource depth_or_linear_depth;
     TruvixxSlImageResource motion_vectors;
+    TruvixxSlImageResource exposure;
     uint32_t use_linear_depth;
 } TruvixxSlDlssEvaluateDesc;
 

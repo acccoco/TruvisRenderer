@@ -378,6 +378,86 @@ impl Drop for DlssSrInputTargets {
     }
 }
 
+/// DLSS SR 使用的固定手动曝光纹理。
+///
+/// Streamline 的 SR 插件在缺少 `kBufferTypeExposure` 时会忽略 `useAutoExposure=false`
+/// 并自动启用 NGX AutoExposure。这里用一张常驻 1x1 R32_SFLOAT 图像提供手动 exposure
+/// scale=1.0，保持当前 RT HDR 输入、`preExposure=1.0` 与 `exposureScale=1.0` 的同一数值空间。
+pub struct DlssSrExposureTarget {
+    exposure: ImageTarget,
+}
+
+impl DlssSrExposureTarget {
+    pub const FORMAT: vk::Format = vk::Format::R32_SFLOAT;
+    const EXTENT: vk::Extent2D = vk::Extent2D { width: 1, height: 1 };
+    const VALUE: f32 = 1.0;
+
+    pub fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+        frame_counter: &FrameCounter,
+    ) -> Self {
+        let name = format!("dlss-sr-exposure-{}", frame_counter.frame_id());
+        let image = create_image(
+            resource_ctx,
+            Self::EXTENT,
+            Self::FORMAT,
+            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+            &name,
+        );
+
+        // 该图像从创建到销毁始终保存固定 exposure scale=1.0。初始化后保持
+        // SHADER_READ_ONLY_OPTIMAL，RenderGraph 导入时也必须使用同一初始状态，避免
+        // UNDEFINED layout transition 丢弃这 4 个字节的手动曝光数据。
+        let exposure_bytes = Self::VALUE.to_ne_bytes();
+        let stage_buffer = immediate_ctx
+            .one_time_exec(|cmd| image.transfer_data(resource_ctx, cmd, &exposure_bytes), "dlss-sr-exposure-upload");
+        stage_buffer.destroy(resource_ctx, DestroyReason::ScopeDrop);
+
+        let image_handle = gfx_resource_manager.register_image(image);
+        let view_handle = gfx_resource_manager.get_or_create_image_view(
+            device_ctx,
+            image_handle,
+            GfxImageViewDesc::new_2d(Self::FORMAT, vk::ImageAspectFlags::COLOR),
+            name,
+        );
+
+        Self {
+            exposure: ImageTarget {
+                image: image_handle,
+                view: view_handle,
+                format: Self::FORMAT,
+                extent: Self::EXTENT,
+            },
+        }
+    }
+
+    pub fn destroy(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+        reason: DestroyReason,
+    ) {
+        gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, self.exposure.image, reason);
+        self.exposure = ImageTarget::default();
+    }
+
+    #[inline]
+    pub fn exposure(&self) -> ImageTarget {
+        self.exposure
+    }
+}
+
+impl Drop for DlssSrExposureTarget {
+    fn drop(&mut self) {
+        debug_assert!(self.exposure.image.is_null());
+        debug_assert!(self.exposure.view.is_null());
+    }
+}
+
 /// DLSS Ray Reconstruction 额外需要的低分辨率输入图像。
 ///
 /// forward/shading normal+roughness 复用现有 GBufferA；这里补齐 RR 专用的 diffuse albedo、specular

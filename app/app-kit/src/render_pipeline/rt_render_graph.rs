@@ -1,6 +1,7 @@
 use crate::gui_plugin::{DebugImageEntry, DebugImageGraphEntry};
 use crate::render_pipeline::targets::{
-    DlssOutputTargets, DlssRrInputTargets, DlssSrInputTargets, ImageTarget, MainViewTargets, RtWorkingTargets,
+    DlssOutputTargets, DlssRrInputTargets, DlssSrExposureTarget, DlssSrInputTargets, ImageTarget, MainViewTargets,
+    RtWorkingTargets,
 };
 use app_render_passes::dlss_rr_pass::{DlssRrPass, DlssRrRgPass};
 use app_render_passes::dlss_sr_pass::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
@@ -199,6 +200,8 @@ struct RtPipelineInner {
     ///
     /// 即使 SR 关闭也会由 raygen 写入，便于 ImGui debug viewer 验证深度和 motion vector。
     dlss_sr_inputs: DlssSrInputTargets,
+    /// DLSS SR 固定手动曝光 scale=1.0；缺少 exposure tag 时 Streamline 会退回 AutoExposure。
+    dlss_sr_exposure: DlssSrExposureTarget,
     /// DLSS RR 额外需要的低分辨率输入。
     dlss_rr_inputs: DlssRrInputTargets,
     /// DLSS SR / DLAA / RR 共享输出的高分辨率 HDR color。
@@ -277,6 +280,13 @@ impl RtPipelineInner {
             &target_frame_state,
             ctx.frame_timing.frame_counter(),
         );
+        let dlss_sr_exposure = DlssSrExposureTarget::new(
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            ctx.immediate_ctx,
+            &mut *ctx.gfx_resource_manager,
+            ctx.frame_timing.frame_counter(),
+        );
         let dlss_rr_inputs = DlssRrInputTargets::new(
             ctx.resource_ctx,
             ctx.device_ctx,
@@ -322,6 +332,7 @@ impl RtPipelineInner {
             gbuffer,
             rt_targets,
             dlss_sr_inputs,
+            dlss_sr_exposure,
             dlss_rr_inputs,
             dlss_outputs,
             main_view_targets,
@@ -357,6 +368,12 @@ impl RtPipelineInner {
             ctx.resource_ctx,
             ctx.device_ctx,
             &mut *ctx.shader_binding_system,
+            &mut *ctx.gfx_resource_manager,
+            DestroyReason::Shutdown,
+        );
+        self.dlss_sr_exposure.destroy(
+            ctx.resource_ctx,
+            ctx.device_ctx,
             &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
@@ -674,6 +691,16 @@ impl RtPipeline {
         } else if dlss_options.is_sr_active() {
             // SR/DLAA 分支用 Streamline output 进入 SDR；不再运行传统 denoise/accum，
             // 也不在 SR 后追加第二个 upscale pass。
+            let dlss_sr_exposure_target = inner.dlss_sr_exposure.exposure();
+            let dlss_sr_exposure = rg_builder.import_image(
+                "dlss-sr-exposure",
+                dlss_sr_exposure_target.image,
+                Some(dlss_sr_exposure_target.view),
+                dlss_sr_exposure_target.format,
+                DLSS_SR_INPUT_READ,
+                None,
+            );
+
             rg_builder
                 .add_pass(
                     "dlss-sr",
@@ -685,6 +712,7 @@ impl RtPipeline {
                         output_color: dlss_output,
                         depth,
                         motion_vectors,
+                        exposure: dlss_sr_exposure,
                     },
                 )
                 .add_pass(

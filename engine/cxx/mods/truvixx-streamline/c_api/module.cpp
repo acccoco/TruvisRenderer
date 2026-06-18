@@ -258,8 +258,8 @@ sl::DLSSOptions make_dlss_options(const TruvixxSlDlssOptions& src)
     options.preExposure = src.pre_exposure;
     options.exposureScale = src.exposure_scale;
     options.colorBuffersHDR = to_sl_boolean(src.color_buffers_hdr);
-    // 当前 SR 接入没有单独曝光链路，也不把 alpha 当作可重建信号；先显式关闭，避免
-    // 默认值随 SDK 变化影响画面契约。
+    // SR evaluate 会显式 tag 1x1 manual exposure texture；这里仍关闭 options 侧 AutoExposure。
+    // 两者必须同时成立，否则 Streamline 在缺少 kBufferTypeExposure 时仍会退回自动曝光。
     options.useAutoExposure = sl::Boolean::eFalse;
     options.alphaUpscalingEnabled = sl::Boolean::eFalse;
     return options;
@@ -628,16 +628,20 @@ int32_t truvixx_sl_dlss_evaluate(const TruvixxSlDlssEvaluateDesc* desc)
     sl::Resource output_color = make_image_resource(desc->output_color);
     sl::Resource depth = make_image_resource(desc->depth_or_linear_depth);
     sl::Resource motion_vectors = make_image_resource(desc->motion_vectors);
+    sl::Resource exposure = make_image_resource(desc->exposure);
 
     const sl::Extent render_extent{ 0, 0, desc->input_color.width, desc->input_color.height };
     const sl::Extent output_extent{ 0, 0, desc->output_color.width, desc->output_color.height };
+    const sl::Extent exposure_extent{ 0, 0, desc->exposure.width, desc->exposure.height };
     // 输入只保证有效到 evaluate；输出至少要活到后续 SDR/GUI/present 使用完成。
+    // exposure tag 是禁用 DLSS AutoExposure 的必要条件；只设置 useAutoExposure=false 不够。
     // 当前 SR 路径使用 device depth，所以 depth tag 固定为 kBufferTypeDepth。
-    std::array<sl::ResourceTag, 4> tags{
+    std::array<sl::ResourceTag, 5> tags{
         sl::ResourceTag(&input_color, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
         sl::ResourceTag(&output_color, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent, &output_extent),
         sl::ResourceTag(&depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
         sl::ResourceTag(&motion_vectors, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
+        sl::ResourceTag(&exposure, sl::kBufferTypeExposure, sl::ResourceLifecycle::eValidUntilEvaluate, &exposure_extent),
     };
 
     auto* command_buffer = to_vk_handle<sl::CommandBuffer*>(desc->command_buffer);
