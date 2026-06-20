@@ -31,6 +31,7 @@ pub struct OfflinePipeline {
 /// 这些参数只影响离线 path tracing、累计和显示映射，不写入 runtime-owned DLSS / ReSTIR state。
 #[derive(Clone, Copy)]
 pub struct OfflinePipelineSettings {
+    pub ray_dispatch_count: u32,
     pub debug_channel: RtDebugChannel,
     pub sky_sampling_mode: RtSkySamplingMode,
     pub sky_brightness: f32,
@@ -42,6 +43,7 @@ pub struct OfflinePipelineSettings {
 impl Default for OfflinePipelineSettings {
     fn default() -> Self {
         Self {
+            ray_dispatch_count: Self::MIN_RAY_DISPATCH_COUNT,
             debug_channel: RtDebugChannel::Final,
             sky_sampling_mode: RtSkySamplingMode::Importance,
             sky_brightness: 8.0,
@@ -53,7 +55,24 @@ impl Default for OfflinePipelineSettings {
 }
 
 impl OfflinePipelineSettings {
+    pub const MIN_RAY_DISPATCH_COUNT: u32 = 1;
+    pub const MAX_RAY_DISPATCH_COUNT: u32 = 8;
+
+    pub fn clamp_ray_dispatch_count(value: u32) -> u32 {
+        value.clamp(Self::MIN_RAY_DISPATCH_COUNT, Self::MAX_RAY_DISPATCH_COUNT)
+    }
+
+    pub fn set_ray_dispatch_count(&mut self, value: u32) {
+        self.ray_dispatch_count = Self::clamp_ray_dispatch_count(value);
+    }
+
+    pub fn effective_ray_dispatch_count(self) -> u32 {
+        Self::clamp_ray_dispatch_count(self.ray_dispatch_count)
+    }
+
     fn accum_signature(self) -> OfflineSettingsAccumSignature {
+        // 每帧 dispatch 数只改变累计推进速度，不改变任一 sample 的 radiance 定义，
+        // 因此不进入历史签名，避免用户调节吞吐量时重置 accum_image。
         OfflineSettingsAccumSignature {
             debug_channel: self.debug_channel,
             sky_sampling_mode: self.sky_sampling_mode,
@@ -113,22 +132,28 @@ impl OfflineAccumState {
         self.sample_count.set(0);
     }
 
-    fn take_next_sample_state(&self) -> OfflineSampleState {
-        // 只有确定本帧会提交 RT + accum pass 后才调用本函数。sample_count 在这里推进，
+    fn take_next_sample_batch(&self, dispatch_count: u32) -> Vec<OfflineSampleState> {
+        let dispatch_count = OfflinePipelineSettings::clamp_ray_dispatch_count(dispatch_count);
+        // 只有确定本帧会提交 RT + accum pass 后才调用本函数。sample_count 在这里按 batch 推进，
         // 能避免 TLAS 暂不可用或 graph 被清理分支截断时把跳过帧计入离线累计。
         let accum_frames = self.sample_count.get();
-        let next_sample_count = accum_frames.saturating_add(1);
-        let sample_state = OfflineSampleState {
-            spp_idx: accum_frames,
-            accum_frames,
-            sample_jitter_px: Self::sample_jitter_px(next_sample_count),
-        };
+        let next_sample_count = accum_frames.saturating_add(dispatch_count);
+        let sample_states = (0..dispatch_count)
+            .map(|dispatch_idx| {
+                let sample_index = accum_frames.saturating_add(dispatch_idx);
+                OfflineSampleState {
+                    spp_idx: sample_index,
+                    accum_frames: sample_index,
+                    sample_jitter_px: Self::sample_jitter_px(sample_index.saturating_add(1)),
+                }
+            })
+            .collect();
         self.sample_count.set(next_sample_count);
         // 低频记录离线累计推进，便于没有 GUI 自动化时从运行日志确认 `accum_image` 持续融合新样本。
         if next_sample_count >= 16 && next_sample_count.is_power_of_two() {
             log::info!("Offline accumulation sample_count={next_sample_count}");
         }
-        sample_state
+        sample_states
     }
 
     pub fn sample_count(&self) -> u32 {
@@ -398,49 +423,54 @@ impl OfflinePipeline {
             return;
         }
 
-        let sample_state = self.accum_state.take_next_sample_state();
-        rg_builder
-            .add_pass(
-                "offline-ray-tracing",
-                OfflineRtRgPass {
-                    rt_pass: &inner.offline_rt_pass,
-                    record_ctx,
-                    render_scene: ctx.render_scene,
-                    single_frame_image,
-                    single_frame_extent: single_frame_target.extent,
-                    spp_idx: sample_state.spp_idx,
-                    sample_jitter_px: sample_state.sample_jitter_px,
-                    debug_channel,
-                    sky_sampling_mode,
-                    sky_brightness,
-                    emissive_nee_enabled,
-                    analytic_nee_enabled,
-                },
-            )
-            .add_pass(
-                "offline-accum",
-                AccumRgPass {
-                    accum_pass: &inner.accum_pass,
-                    record_ctx,
-                    single_frame_image,
-                    accum_image,
-                    image_extent: accum_target.extent,
-                    accum_frames: sample_state.accum_frames,
-                },
-            )
-            .add_pass(
-                "offline-hdr-to-sdr",
-                SdrRgPass {
-                    sdr_pass: &inner.sdr_pass,
-                    record_ctx,
-                    src_image: accum_image,
-                    dst_image: render_target,
-                    src_image_extent: accum_target.extent,
-                    dst_image_extent: render_target_info.extent,
-                    debug_channel,
-                    tone_mapping,
-                },
-            );
+        let sample_states = self.accum_state.take_next_sample_batch(self.settings.effective_ray_dispatch_count());
+        // 每个 dispatch 都覆盖同一张 single_frame_image，并立即累入同一张 accum_image。
+        // RenderGraph 的线性 pass 顺序负责在相邻 RT/accum pair 之间插入必要的 image 状态转换。
+        for (dispatch_idx, sample_state) in sample_states.into_iter().enumerate() {
+            let dispatch_ordinal = dispatch_idx + 1;
+            rg_builder
+                .add_pass(
+                    format!("offline-ray-tracing-{dispatch_ordinal}"),
+                    OfflineRtRgPass {
+                        rt_pass: &inner.offline_rt_pass,
+                        record_ctx,
+                        render_scene: ctx.render_scene,
+                        single_frame_image,
+                        single_frame_extent: single_frame_target.extent,
+                        spp_idx: sample_state.spp_idx,
+                        sample_jitter_px: sample_state.sample_jitter_px,
+                        debug_channel,
+                        sky_sampling_mode,
+                        sky_brightness,
+                        emissive_nee_enabled,
+                        analytic_nee_enabled,
+                    },
+                )
+                .add_pass(
+                    format!("offline-accum-{dispatch_ordinal}"),
+                    AccumRgPass {
+                        accum_pass: &inner.accum_pass,
+                        record_ctx,
+                        single_frame_image,
+                        accum_image,
+                        image_extent: accum_target.extent,
+                        accum_frames: sample_state.accum_frames,
+                    },
+                );
+        }
+        rg_builder.add_pass(
+            "offline-hdr-to-sdr",
+            SdrRgPass {
+                sdr_pass: &inner.sdr_pass,
+                record_ctx,
+                src_image: accum_image,
+                dst_image: render_target,
+                src_image_extent: accum_target.extent,
+                dst_image_extent: render_target_info.extent,
+                debug_channel,
+                tone_mapping,
+            },
+        );
     }
 
     pub fn contribute_present_passes<'a>(

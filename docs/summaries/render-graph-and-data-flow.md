@@ -79,12 +79,14 @@ resolve，最后调用 `GuiPlugin::contribute_passes` 叠加 GUI。
 Truvis 现在通过 `RenderMode { Realtime, Offline }` 在实时和离线两套 app-owned pipeline 之间选择：
 
 - `Realtime`：沿用 `RtPipeline`，执行 realtime ray tracing、可选 DLSS SR/RR、可选 ReSTIR DI，再输出 main view color。
-- `Offline`：执行 `OfflinePipeline`，数据流是 `offline ray tracing -> per-FIF single_frame_image -> FIF 唯一 accum_image -> per-FIF render_target -> present`。
+- `Offline`：执行 `OfflinePipeline`，数据流是 1-8 组 `offline ray tracing -> per-FIF single_frame_image -> FIF 唯一 accum_image`，
+  再输出到 `per-FIF render_target -> present`。
 
 离线 `accum_image` 是 pipeline-owned 单张 HDR image，不按 FIF 轮转；RenderGraph import 初始状态为
 `STORAGE_READ_WRITE_COMPUTE`。离线 present graph 只读取 per-FIF `render_target`，不导出图片，不复用 DLSS、ReSTIR、RR、denoise 或 realtime `ViewAccumState`。
 离线 sample count 和 primary ray jitter 都由 `OfflineAccumState` 按 sample index 维护，jitter 使用离线自有 Halton 2/3 序列，不读取
-`PerFrameData::temporal_jitter_px`。如果当前 frame label 没有 TLAS，`OfflinePipeline` 会 reset 离线累计状态，不调度 RT / accum pass，
+`PerFrameData::temporal_jitter_px`。`OfflinePipelineSettings.ray_dispatch_count` 只控制每帧添加多少组 RT/accum pass，
+范围固定为 1-8，改变它不会 reset `accum_image`。如果当前 frame label 没有 TLAS，`OfflinePipeline` 会 reset 离线累计状态，不调度 RT / accum pass，
 而是通过 `ImageClearPass` 把 `single_frame_image`、`accum_image` 和 `render_target` 写成确定黑色输出，避免累积未定义或过期图像。
 
 ## RT 直接光采样契约

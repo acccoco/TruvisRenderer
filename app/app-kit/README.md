@@ -15,7 +15,8 @@
   `app-render-passes` 提供具体 RT 与后处理 pass，并负责 RT working target、main view target
   等 app-owned 窗口尺寸资源的 init / resize / shutdown 生命周期。
 - `OfflinePipeline`：离线 ground truth pipeline glue，维护独立 sample count、Halton jitter、
-  FIF 唯一累计图像和无 TLAS 时的确定黑色输出，不复用 runtime `ViewAccumState`、DLSS 或 ReSTIR 状态。
+  每帧 1-8 次 RT dispatch、FIF 唯一累计图像和无 TLAS 时的确定黑色输出，不复用 runtime
+  `ViewAccumState`、DLSS 或 ReSTIR 状态。
 
 ## 边界约束
 

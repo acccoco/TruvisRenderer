@@ -192,6 +192,15 @@ impl PipelineControlsOverlay {
                 }
             }
         }
+        let mut ray_dispatch_count = offline_settings.effective_ray_dispatch_count() as i32;
+        ui.slider_config(
+            "RT Dispatches / Frame",
+            OfflinePipelineSettings::MIN_RAY_DISPATCH_COUNT as i32,
+            OfflinePipelineSettings::MAX_RAY_DISPATCH_COUNT as i32,
+        )
+        .display_format("%d")
+        .build(&mut ray_dispatch_count);
+        offline_settings.set_ray_dispatch_count(ray_dispatch_count as u32);
         Self::build_common_sampling_controls(
             ui,
             &mut offline_settings.sky_sampling_mode,

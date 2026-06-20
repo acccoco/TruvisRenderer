@@ -32,11 +32,11 @@
 ```text
 RenderSceneView / TLAS / Scene buffers / Light tables / Sky
         |
-offline ray tracing pass
+offline ray tracing pass x 1..8
         |
 per-FIF single_frame_image
         |
-accum pass
+accum pass x 1..8
         |
 FIF 唯一 accum_image
         |
@@ -62,7 +62,8 @@ swapchain
 
 算法约定：
 
-- 积分器使用 path tracing，每帧推进 1 个样本。
+- 积分器使用 path tracing，每帧按 `OfflinePipelineSettings.ray_dispatch_count` 推进 1-8 个样本；每个样本对应一次 Vulkan
+  `TraceRays` dispatch 和一次 `AccumPass` 融合。
 - primary ray jitter 由 `OfflineAccumState` 按离线 sample index 生成 Halton 2/3 序列，单位是 pixel；
   它不读取 `PerFrameData::temporal_jitter_px`，因此不受 DLSS / DLAA 开关影响。
 - raygen 只写 `single_frame_image`，不写 realtime GBuffer、motion vector、DLSS input 或 reservoir。
@@ -126,6 +127,7 @@ RenderSceneAccumSignature
 
 `OfflinePipelineSettings` 当前只包含离线已使用的设置：
 
+- 每帧 RT dispatch 数，范围固定为 1-8；它只改变累计推进速度，不进入 reset 签名。
 - debug channel（排除 ReSTIR-only channel）。
 - sky sampling mode。
 - sky brightness。
@@ -170,6 +172,8 @@ ImGui 模式切换属于 app-kit 共享能力。离线模式下，DLSS 与 ReSTI
 - 调整 `AccumPass` 的 RenderGraph adapter，让 sample count 由调用方传入。
 - 离线 compute graph 完成 `single_frame_image -> accum_image -> render_target`。
 - Truvis 按 `RenderMode` 选择 realtime/offline compute graph 与 present input。
+- `OfflinePipelineSettings.ray_dispatch_count` 控制每帧添加多少组 `offline ray tracing -> accum` pass；调节该值不重置
+  `accum_image`，只改变后续 sample 推进速度。
 
 ### 第三批：离线 RT pass
 
@@ -183,6 +187,7 @@ ImGui 模式切换属于 app-kit 共享能力。离线模式下，DLSS 与 ReSTI
 ### 第四批：UI、reset 与验证
 
 - Controls 面板增加 `Render Mode` combo。
+- Controls 离线面板增加 `RT Dispatches / Frame`，范围为 1-8，默认 1。
 - 离线模式下禁用 DLSS SR、DLSS RR 和 ReSTIR DI 控件，并显示实时专用说明。
 - 切出离线模式不销毁 `accum_image`；切回离线时签名未变则继续累计。
 - Debug image viewer 注册 offline `single_frame_image`、`accum_image` 和 `render_target`。
@@ -190,7 +195,7 @@ ImGui 模式切换属于 app-kit 共享能力。离线模式下，DLSS 与 ReSTI
 
 ## 后续扩展点
 
-- 在 `OfflinePipelineSettings` 中加入每帧 spp / batch spp、最大路径深度、Russian roulette 开关和起始深度。
+- 在 `OfflinePipelineSettings` 中加入最大路径深度、Russian roulette 开关和起始深度。
 - 如果需要更严格 ground truth 统计，可把 online mean 扩展为 sum/count、variance 或 adaptive sampling 格式。
 - 如果未来离线 debug 需要 primary surface 信息，应新增离线自有 debug target，不复用 realtime GBuffer。
 - 自动化 UI 验证需要 Windows Computer Use 工具可用；当前代码路径已经支持 ImGui 切换，但本次自动点击验证受工具连接问题限制。

@@ -125,6 +125,14 @@ GBuffer 或 runtime-owned temporal state。
 
 `SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道。当前使用实时渲染常用的 ACES fitted approximation，并提供 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display transform，也不做自动曝光或参数持久化。DLSS SR 的 manual exposure 由固定 1x1 `dlss-sr-exposure` 输入提供，当前不跟随这里的 `Exposure EV`。
 
+## OfflinePipelineSettings
+
+`OfflinePipelineSettings` 位于 app 层 `app-kit::render_pipeline::offline_render_graph`，由 `OfflinePipeline` 持有。
+它复用 RT debug、sky sampling、NEE 开关和 tone mapping 设置，并额外包含 `ray_dispatch_count`。
+
+`ray_dispatch_count` 控制离线模式每帧添加多少组 `offline ray tracing -> accum` pass，范围固定为 1-8，默认 1。
+它只改变 sample count 推进速度，不改变单个 sample 的 radiance 定义，因此不进入离线累计 reset 签名。
+
 ## Runtime Defaults
 
 `DefaultRenderRuntimeSettings` 已从 foundation 移到 `truvis-render-runtime` 内部模块。它只描述 runtime 初始化策略：
