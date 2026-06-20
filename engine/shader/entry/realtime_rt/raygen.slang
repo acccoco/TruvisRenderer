@@ -12,6 +12,7 @@
 #include "lib/realtime_rt/raygen_material.slangi"
 #include "lib/realtime_rt/raygen_path_state.slangi"
 #include "lib/realtime_rt/raygen_view.slangi"
+#include "lib/realtime_rt/restir_di.slangi"
 
 // 开启后，虽然 active threads 的 coherence 指标从 50% 上升到了 70%
 // SER 主要用于提升后续新的 shader invocation 的一致性
@@ -22,6 +23,14 @@
 void main_ray_gen()
 {
     const uint2 thread_id = DispatchRaysIndex().xy;
+    if (push_const.restir_di_phase != realtime_rt::RESTIR_DI_PHASE_PATH)
+    {
+        // temporal/spatial/final phase 是 image-space pass，不应再次发 camera ray 或推进 path state。
+        // path phase 已经写入 HDR/GBuffer/motion/surface key，后续 phase 只消费这些结果。
+        RtRestirDI::run_non_path_phase(thread_id);
+        return;
+    }
+
     const uint random_seed = Random::tea(
         thread_id.y * DispatchRaysDimensions().x + thread_id.x,
         (uint)per_frame_data.frame_id + push_const.spp_idx
@@ -55,6 +64,32 @@ void main_ray_gen()
         float3 debug_color;
         if (RtDebugAccumulator::try_surface_channel(surface, push_const.channel, debug_color))
         {
+            if (!gbuffer_written && depth == 0)
+            {
+                if (payload.hit)
+                {
+                    RtRaygenView::write_primary_hit_outputs(thread_id, surface, ray.Direction);
+                    if (RtRestirDI::enabled())
+                    {
+                        // surface-only debug 也要写 ReSTIR surface key/empty reservoir，保证后续
+                        // final/debug phase 看到的是本帧有效状态，而不是 storage image 中的旧内容。
+                        RtRestirDI::store_primary_surface_key(thread_id, surface);
+                        RtRestirDI::store_initial(thread_id, RtReservoir::empty());
+                    }
+                }
+                else
+                {
+                    RtRaygenView::write_primary_miss_outputs(thread_id);
+                    if (RtRestirDI::enabled())
+                    {
+                        // miss/debug 像素不属于 primary direct lighting，必须显式写空 key 和空 reservoir。
+                        RtRestirDI::store_surface_key(thread_id, RtPrimarySurfaceKey::empty());
+                        RtRestirDI::store_initial(thread_id, RtReservoir::empty());
+                    }
+                }
+                gbuffer_written = true;
+            }
+
             path.radiance = debug_color;
             break;
         }
@@ -65,6 +100,13 @@ void main_ray_gen()
             {
                 // sky pixel 也必须写满 GBuffer/DLSS 输入，避免 storage image 中保留上一帧几何数据。
                 RtRaygenView::write_primary_miss_outputs(thread_id);
+                if (RtRestirDI::enabled())
+                {
+                    // sky miss 没有 primary surface；清空 ReSTIR 输入，防止 temporal/final phase
+                    // 在背景像素上复用上一帧几何 reservoir。
+                    RtRestirDI::store_surface_key(thread_id, RtPrimarySurfaceKey::empty());
+                    RtRestirDI::store_initial(thread_id, RtReservoir::empty());
+                }
                 gbuffer_written = true;
             }
 
@@ -78,36 +120,63 @@ void main_ray_gen()
         {
             // 首次命中时同步写 GBuffer、DLSS depth/motion 和 RR 材质输入。
             RtRaygenView::write_primary_hit_outputs(thread_id, surface, ray.Direction);
+            if (RtRestirDI::enabled())
+            {
+                RtRestirDI::store_primary_surface_key(thread_id, surface);
+            }
             gbuffer_written = true;
         }
 
         if (surface.material_type == MaterialType::EMISSIVE)
         {
+            if (RtRestirDI::enabled() && depth == 0)
+            {
+                // 直接可见自发光 surface 仍走 hit emission 旧路径，不属于 ReSTIR DI 的 primary direct NEE。
+                // 写空 initial 能让 final phase 保持无贡献，避免 emission 被重复加入。
+                RtRestirDI::store_initial(thread_id, RtReservoir::empty());
+            }
+
             const float3 emissive_contribution = path.add_emissive(depth, surface, ray.Direction);
             debug_state.record_emissive(emissive_contribution);
             break;
         }
 
-        const RtDirectLightingSample direct_lighting = RtDirectLighting::sample_unified(
-            payload,
-            surface,
-            -ray.Direction,
-            path.throughput
-        );
-        if (direct_lighting.valid)
+        if (RtRestirDI::should_skip_primary_nee(depth, surface))
         {
-            path.add_radiance(direct_lighting.contribution);
-            if (direct_lighting.light_kind == RtLightCandidate::kind_hdri())
+            // primary 非 delta 非 emissive surface 的 direct NEE 由 ReSTIR final phase 统一追加。
+            // 这里只生成 initial reservoir，避免同一条 primary direct light 被普通 NEE 和 ReSTIR 双算。
+            RtRestirDI::store_initial(thread_id, RtRestirDI::make_initial_reservoir(payload, surface, -ray.Direction));
+        }
+        else
+        {
+            if (RtRestirDI::enabled() && depth == 0)
             {
-                debug_state.record_nee_hdri(depth, direct_lighting.contribution);
+                // ReSTIR 已开启但当前 primary 不符合替换条件时，也要写空 initial。
+                // temporal/final phase 依赖这个空值判断该像素不参与 ReSTIR。
+                RtRestirDI::store_initial(thread_id, RtReservoir::empty());
             }
-            else if (direct_lighting.light_kind == RtLightCandidate::kind_emissive_triangle())
+
+            const RtDirectLightingSample direct_lighting = RtDirectLighting::sample_unified(
+                payload,
+                surface,
+                -ray.Direction,
+                path.throughput
+            );
+            if (direct_lighting.valid)
             {
-                debug_state.record_nee_emissive(depth, direct_lighting.contribution);
-            }
-            else if (RtLightCandidate::is_analytic_kind(direct_lighting.light_kind))
-            {
-                debug_state.record_nee_analytic(depth, direct_lighting.contribution);
+                path.add_radiance(direct_lighting.contribution);
+                if (direct_lighting.light_kind == RtLightCandidate::kind_hdri())
+                {
+                    debug_state.record_nee_hdri(depth, direct_lighting.contribution);
+                }
+                else if (direct_lighting.light_kind == RtLightCandidate::kind_emissive_triangle())
+                {
+                    debug_state.record_nee_emissive(depth, direct_lighting.contribution);
+                }
+                else if (RtLightCandidate::is_analytic_kind(direct_lighting.light_kind))
+                {
+                    debug_state.record_nee_analytic(depth, direct_lighting.contribution);
+                }
             }
         }
 

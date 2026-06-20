@@ -85,14 +85,18 @@ struct GpuScene
     uint point_light_count;
     uint spot_light_count;
     uint area_light_count;
-    uint _analytic_light_padding_0;
+    /// analytic light 快照版本；point/spot/area 任一语义变化都会推进，用于 ReSTIR history 拒绝。
+    /// 该版本不参与采样概率或 radiance 计算，只判断旧 reservoir key 是否仍能安全重建。
+    uint analytic_light_version;
     /// alias table entry 数量；record 数量通过 direct indexing 契约隐含，不用于采样。
     uint emissive_light_count;
     /// 非 0 表示 emissive alias table 可用于 NEE；hit MIS 仍可读取零 PDF record。
     uint emissive_light_enabled;
     /// 自发光表重建版本号，只用于 runtime/debug 判断历史或 UI 状态是否匹配当前 scene。
     uint emissive_light_version;
-    uint _emissive_light_padding_0;
+    /// `emissive_triangle_lights` record 数量；ReSTIR key 重建前用它防止旧 index 越界。
+    /// 它不是 alias table 的采样 entry 数，不能替代 `emissive_light_count` 参与 NEE 抽样。
+    uint emissive_light_record_count;
 
     /// 默认 sky 的 bindless SRV；真实贴图未 ready 时 runtime 写入 fallback。
     bindless::SrvHandle sky;

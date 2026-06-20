@@ -178,11 +178,11 @@ impl GpuScene {
             emissive_light_count: emissive_light_binding.alias_count,
             emissive_light_enabled: emissive_light_binding.enabled,
             emissive_light_version: emissive_light_binding.version,
-            _emissive_light_padding_0: 0,
+            emissive_light_record_count: emissive_light_binding.record_count,
             point_light_count: scene_data.all_point_lights.len() as u32,
             spot_light_count: scene_data.all_spot_lights.len() as u32,
             area_light_count: scene_data.all_area_lights.len() as u32,
-            _analytic_light_padding_0: 0,
+            analytic_light_version: scene_data.analytic_light_version,
 
             sky: environment_binding.sky.srv_handle.0,
             sky_sampler_type: environment_binding.sky.sampler,

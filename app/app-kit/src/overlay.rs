@@ -4,7 +4,7 @@ use truvis_render_runtime::state::dlss_options::DlssOptions;
 use truvis_render_runtime::state::dlss_sr::DlssSrMode;
 
 use crate::camera::Camera;
-use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtPipelineSettings, RtSkySamplingMode};
+use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtPipelineSettings, RtRestirDiMode, RtSkySamplingMode};
 
 #[derive(Default)]
 pub struct DebugInfoOverlay;
@@ -111,6 +111,15 @@ impl PipelineControlsOverlay {
                                 .build()
                             {
                                 rt_settings.sky_sampling_mode = mode;
+                            }
+                        }
+                    }
+                    if let Some(_combo) = ui.begin_combo("ReSTIR DI", rt_settings.restir_di_mode.label()) {
+                        for mode in RtRestirDiMode::ALL {
+                            if ui.selectable_config(mode.label()).selected(rt_settings.restir_di_mode == mode).build() {
+                                // UI 只更新 pipeline mode；跨 mode 的 history 切断由 RenderGraph 构图时
+                                // 比较上一帧 mode 完成，避免控件层直接持有 temporal resource 状态。
+                                rt_settings.restir_di_mode = mode;
                             }
                         }
                     }

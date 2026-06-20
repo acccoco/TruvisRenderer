@@ -8,10 +8,21 @@ namespace realtime_rt
 static const uint SKY_SAMPLING_MODE_UNIFORM = 0;
 static const uint SKY_SAMPLING_MODE_IMPORTANCE = 1;
 
+static const uint RESTIR_DI_MODE_OFF = 0;
+static const uint RESTIR_DI_MODE_INITIAL_ONLY = 1;
+static const uint RESTIR_DI_MODE_TEMPORAL = 2;
+static const uint RESTIR_DI_MODE_TEMPORAL_SPATIAL = 3;
+
+static const uint RESTIR_DI_PHASE_PATH = 0;
+static const uint RESTIR_DI_PHASE_TEMPORAL = 1;
+static const uint RESTIR_DI_PHASE_SPATIAL = 2;
+static const uint RESTIR_DI_PHASE_FINAL = 3;
+
 /// realtime RT pass-local descriptor set 编号。
 ///
-/// 全局 set 之后追加 TLAS、single-frame 输出、GBuffer 与 DLSS 输入输出 image。
-/// Rust 侧 pipeline layout 必须按同一 set 编号绑定这些资源。
+/// 全局 set 之后追加 TLAS、single-frame 输出、GBuffer、DLSS 输入和 ReSTIR DI pack。
+/// Rust 侧 pipeline layout 必须按同一 set 编号和 binding 顺序绑定这些资源；A/B/C/D 的
+/// uint/float 格式顺序是 shader ABI，不允许在一侧单独调整。
 #define REALTIME_RT_SET_NUM GLOBAL_SETS_COUNT
 
 #ifdef __SLANG__
@@ -59,6 +70,64 @@ RWTexture2D<float4> dlss_rr_specular_albedo;
 [[vk::binding(9, REALTIME_RT_SET_NUM)]]
 RWTexture2D<float2> dlss_rr_specular_motion_vectors;
 
+/// ReSTIR DI initial reservoir。A/D 使用 uint4 保存身份和版本，B/C 使用 float4 保存样本参数和权重。
+/// initial 由 path phase 写入；temporal phase 和 InitialOnly final shade 读取。
+[[vk::binding(10, REALTIME_RT_SET_NUM)]]
+RWTexture2D<uint4> restir_initial_a;
+[[vk::binding(11, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_initial_b;
+[[vk::binding(12, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_initial_c;
+[[vk::binding(13, REALTIME_RT_SET_NUM)]]
+RWTexture2D<uint4> restir_initial_d;
+
+/// ReSTIR DI temporal reservoir。temporal phase 写入；Temporal 模式 final shade 读取。
+/// Rust 侧也只把上一帧 temporal reservoir 绑定为 history，避免 spatial final 跨帧反馈。
+[[vk::binding(14, REALTIME_RT_SET_NUM)]]
+RWTexture2D<uint4> restir_temporal_a;
+[[vk::binding(15, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_temporal_b;
+[[vk::binding(16, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_temporal_c;
+[[vk::binding(17, REALTIME_RT_SET_NUM)]]
+RWTexture2D<uint4> restir_temporal_d;
+
+/// ReSTIR DI final reservoir。spatial phase 写入，仅服务当前帧 final shade / debug。
+/// 它不是下一帧 temporal history；跨帧复用必须从 temporal reservoir 读取。
+[[vk::binding(18, REALTIME_RT_SET_NUM)]]
+RWTexture2D<uint4> restir_final_a;
+[[vk::binding(19, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_final_b;
+[[vk::binding(20, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_final_c;
+[[vk::binding(21, REALTIME_RT_SET_NUM)]]
+RWTexture2D<uint4> restir_final_d;
+
+/// 上一帧 temporal reservoir。由 Rust 侧绑定 previous frame label 对应的 temporal target。
+/// shader 仍通过 `restir_history_valid` 和 reservoir 内部版本判断它是否可复用。
+[[vk::binding(22, REALTIME_RT_SET_NUM)]]
+RWTexture2D<uint4> restir_history_a;
+[[vk::binding(23, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_history_b;
+[[vk::binding(24, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_history_c;
+[[vk::binding(25, REALTIME_RT_SET_NUM)]]
+RWTexture2D<uint4> restir_history_d;
+
+/// 当前 primary surface key 与上一帧 surface key。它们属于 ReSTIR history，不复用 DLSS/RR GBuffer history。
+/// A/B/C 分别保存 position/depth、normal/roughness、base_color/metallic，供 target 与 rejection 使用。
+[[vk::binding(26, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_surface_a;
+[[vk::binding(27, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_surface_b;
+[[vk::binding(28, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_surface_c;
+[[vk::binding(29, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_history_surface_a;
+[[vk::binding(30, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_history_surface_b;
+[[vk::binding(31, REALTIME_RT_SET_NUM)]]
+RWTexture2D<float4> restir_history_surface_c;
 #endif
 
 struct PushConstants
@@ -75,8 +144,13 @@ struct PushConstants
     uint emissive_nee_enabled;
     /// 非 0 表示 raygen 额外采样 analytic light NEE；关闭时不影响 HDRI / emissive NEE。
     uint analytic_nee_enabled;
+    /// ReSTIR DI 模式。Off 必须完全保持旧路径。
+    uint restir_di_mode;
+    /// 当前 TraceRays phase，用同一条 RT pipeline 分阶段处理 history 读写与 final shade。
+    uint restir_di_phase;
+    /// 非 0 表示 previous frame label 对应的 reservoir / surface key 可以参与 temporal reuse。
+    uint restir_history_valid;
     /// 显式 padding 保持 push constant 16 字节对齐，避免 CPU/GPU ABI 对齐差异。
     uint _padding_1;
-    uint _padding_2;
 };
 };

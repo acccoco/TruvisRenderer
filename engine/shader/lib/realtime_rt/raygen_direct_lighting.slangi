@@ -12,6 +12,32 @@
 #include "lib/scene/material_access.slangi"
 #include "lib/scene/scene_access.slangi"
 
+struct RtLightSampleKey
+{
+    /// 该 key 描述的是 light-side 样本身份，而不是从某个旧 shading point 出发的方向。
+    /// ReSTIR temporal/spatial reuse 必须先在当前 surface 上重建候选，再评估 target/visibility。
+    uint kind;
+    uint light_index;
+    /// 记录生成 key 时启用的 light class 集合。temporal/spatial 复用时如果开关发生变化，
+    /// 旧 key 的 proposal PDF 已经不再属于当前统一 light strategy，必须拒绝。
+    uint class_mask;
+    bool valid;
+    /// light-side 参数：HDRI 存方向，emissive 存 barycentric，sphere analytic 存 sample normal，
+    /// area light 存局部 [-1,1]x[-1,1] 参数。这里不保存旧 shading point 的 direction/distance。
+    float4 sample;
+
+    static RtLightSampleKey empty()
+    {
+        RtLightSampleKey key;
+        key.kind = 0;
+        key.light_index = 0;
+        key.class_mask = 0;
+        key.valid = false;
+        key.sample = float4(0.0f);
+        return key;
+    }
+};
+
 struct RtLightCandidate
 {
     /// 候选来源。HDRI 与 emissive triangle 已共用同一条 shade/eval 路径；
@@ -27,6 +53,7 @@ struct RtLightCandidate
     float solid_angle_pdf;
     /// 与候选方向/距离配套的 visibility ray。所有候选先生成 ray，再统一做遮挡测试。
     RayDesc shadow_ray;
+    RtLightSampleKey sample_key;
     bool valid;
 
     static uint kind_hdri()
@@ -73,6 +100,7 @@ struct RtLightCandidate
         candidate.shadow_ray.Direction = float3(0.0f, 1.0f, 0.0f);
         candidate.shadow_ray.TMin = 0.0f;
         candidate.shadow_ray.TMax = 0.0f;
+        candidate.sample_key = RtLightSampleKey::empty();
         candidate.valid = false;
         return candidate;
     }
@@ -98,6 +126,21 @@ struct RtDirectLightingSample
 
 struct RtDirectLighting
 {
+    static uint light_class_mask_hdri()
+    {
+        return 1u;
+    }
+
+    static uint light_class_mask_emissive()
+    {
+        return 2u;
+    }
+
+    static uint light_class_mask_analytic()
+    {
+        return 4u;
+    }
+
     /// shadow ray 只需要判断是否有任何可见几何遮挡，不运行 closest-hit。
     ///
     /// 这里用 RayQuery inline path，是为了把 NEE 阴影测试保持在 raygen helper 内，不增加额外
@@ -119,6 +162,30 @@ struct RtDirectLighting
             }
         }
         return rq.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+    }
+
+    static float visibility_ray_t_min()
+    {
+        return 1e-4f;
+    }
+
+    static RayDesc make_visibility_ray(const RtSurfaceHit surface, const float3 light_dir, const float distance, const bool finite_light)
+    {
+        RayDesc ray;
+        const float normal_offset = clamp(max(1e-3f, surface.hit_t * 1e-5f), 1e-3f, 2e-2f);
+        const float t_min = visibility_ray_t_min();
+        // visibility ray 的 origin 必须按当前表面法线推出，而不是按 light_dir 推出。
+        // 后者在掠射角或重建 surface 上容易仍停留在几何内部，Temporal/Spatial ReSTIR 会把这种
+        // 偶发自遮挡放大成黑色离群点；统一 helper 保证采样与重建候选使用同一可见性契约。
+        ray.Origin = surface.position + surface.forward_normal * normal_offset;
+        ray.Direction = light_dir;
+        ray.TMin = t_min;
+        const float origin_advance = max(dot(ray.Origin - surface.position, light_dir), 0.0f);
+        // finite light 的 distance 仍以未偏移的 shading point 为起点。
+        // 由于 origin 按 normal 推出而不是沿 light_dir 推出，TMax 必须扣掉该偏移在 light_dir
+        // 上的投影；否则 ray 可能越过 light sample，再命中被采样的 emissive triangle 自身。
+        ray.TMax = finite_light ? max(distance - origin_advance - t_min, 0.0f) : distance;
+        return ray;
     }
 
     /// 生成 HDRI 直接光候选。
@@ -156,11 +223,12 @@ struct RtDirectLighting
         candidate.distance = 10000.0f;
         candidate.solid_angle_pdf = solid_angle_pdf;
 
-        candidate.shadow_ray.Origin = surface.position + 0.001f * light_dir;
-        candidate.shadow_ray.Direction = light_dir;
-        // TMin/TMax 是 visibility 契约的一部分：TMin 避免自交，HDRI 使用大距离表达无限远环境光。
-        candidate.shadow_ray.TMin = 0.001f;
-        candidate.shadow_ray.TMax = candidate.distance;
+        candidate.shadow_ray = make_visibility_ray(surface, light_dir, candidate.distance, false);
+        candidate.sample_key.kind = RtLightCandidate::kind_hdri();
+        candidate.sample_key.light_index = 0;
+        candidate.sample_key.class_mask = current_light_class_mask();
+        candidate.sample_key.sample = float4(light_dir, 0.0f);
+        candidate.sample_key.valid = true;
 
         const float2 env_uv = EnvMap::dir_to_uv(light_dir);
         // sky brightness 是 app 层 radiance 倍率；MIS 权重只处理采样策略概率，不负责曝光。
@@ -268,14 +336,16 @@ struct RtDirectLighting
         candidate.radiance = mat.emissive * base_color;
         candidate.solid_angle_pdf = solid_angle_pdf;
 
-        candidate.shadow_ray.Origin = surface.position + 0.001f * light_dir;
-        candidate.shadow_ray.Direction = light_dir;
-        candidate.shadow_ray.TMin = 0.001f;
-        candidate.shadow_ray.TMax = max(distance - 0.001f, 0.0f);
+        candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
         if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
         {
             return RtLightCandidate::empty();
         }
+        candidate.sample_key.kind = RtLightCandidate::kind_emissive_triangle();
+        candidate.sample_key.light_index = light_index;
+        candidate.sample_key.class_mask = current_light_class_mask();
+        candidate.sample_key.sample = float4(bary, 0.0f);
+        candidate.sample_key.valid = true;
 
         candidate.valid = true;
         return candidate;
@@ -289,6 +359,29 @@ struct RtDirectLighting
     static bool analytic_nee_enabled()
     {
         return push_const.analytic_nee_enabled != 0 && analytic_light_count() > 0;
+    }
+
+    static uint current_light_class_mask()
+    {
+        // class mask 是统一 light strategy 的最小签名。它不表示某个候选实际来自哪些 class，
+        // 而是生成该候选时 proposal PDF 中包含的 class 集合。
+        uint mask = light_class_mask_hdri();
+        if (emissive_nee_enabled())
+        {
+            mask |= light_class_mask_emissive();
+        }
+        if (analytic_nee_enabled())
+        {
+            mask |= light_class_mask_analytic();
+        }
+        return mask;
+    }
+
+    static bool sample_key_matches_current_class_mask(const RtLightSampleKey key)
+    {
+        // ReSTIR 复用的 sample key 必须和当前 light class 开关一致，否则 weight_sum 中隐含的
+        // proposal PDF 与当前 target 不是同一个采样策略，会产生系统性偏色。
+        return key.valid && key.class_mask == current_light_class_mask();
     }
 
     static float analytic_sphere_radius()
@@ -335,7 +428,8 @@ struct RtDirectLighting
         const float3 center,
         const float3 radiance,
         const float select_pdf,
-        const uint kind
+        const uint kind,
+        const uint light_index
     )
     {
         RtLightCandidate candidate = RtLightCandidate::empty();
@@ -389,14 +483,18 @@ struct RtDirectLighting
         candidate.radiance = radiance;
         candidate.solid_angle_pdf = select_pdf / solid_angle;
 
-        candidate.shadow_ray.Origin = surface.position + 0.001f * light_dir;
-        candidate.shadow_ray.Direction = light_dir;
-        candidate.shadow_ray.TMin = 0.001f;
-        candidate.shadow_ray.TMax = max(distance - 0.001f, 0.0f);
+        candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
         if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
         {
             return RtLightCandidate::empty();
         }
+        const float3 light_position = surface.position + light_dir * distance;
+        const float3 sample_normal = normalize(light_position - center);
+        candidate.sample_key.kind = kind;
+        candidate.sample_key.light_index = light_index;
+        candidate.sample_key.class_mask = current_light_class_mask();
+        candidate.sample_key.sample = float4(sample_normal, 0.0f);
+        candidate.sample_key.valid = true;
 
         candidate.valid = true;
         return candidate;
@@ -423,7 +521,8 @@ struct RtDirectLighting
         inout RtTracePayload payload,
         const RtSurfaceHit surface,
         const light::SpotLight spot,
-        const float select_pdf
+        const float select_pdf,
+        const uint light_index
     )
     {
         RtLightCandidate candidate = sample_sphere_emitter_candidate(
@@ -432,7 +531,8 @@ struct RtDirectLighting
             spot.pos,
             spot.color,
             select_pdf,
-            RtLightCandidate::kind_analytic_spot()
+            RtLightCandidate::kind_analytic_spot(),
+            light_index
         );
         if (!candidate.valid)
         {
@@ -453,7 +553,8 @@ struct RtDirectLighting
         inout RtTracePayload payload,
         const RtSurfaceHit surface,
         const light::AreaLight area_light,
-        const float select_pdf
+        const float select_pdf,
+        const uint light_index
     )
     {
         RtLightCandidate candidate = RtLightCandidate::empty();
@@ -495,14 +596,16 @@ struct RtDirectLighting
         candidate.radiance = area_light.radiance;
         candidate.solid_angle_pdf = select_pdf * distance * distance / (area * light_cos);
 
-        candidate.shadow_ray.Origin = surface.position + 0.001f * light_dir;
-        candidate.shadow_ray.Direction = light_dir;
-        candidate.shadow_ray.TMin = 0.001f;
-        candidate.shadow_ray.TMax = max(distance - 0.001f, 0.0f);
+        candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
         if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
         {
             return RtLightCandidate::empty();
         }
+        candidate.sample_key.kind = RtLightCandidate::kind_analytic_area();
+        candidate.sample_key.light_index = light_index;
+        candidate.sample_key.class_mask = current_light_class_mask();
+        candidate.sample_key.sample = float4(u, v, 0.0f, 0.0f);
+        candidate.sample_key.valid = true;
 
         candidate.valid = true;
         return candidate;
@@ -532,7 +635,8 @@ struct RtDirectLighting
                 point_light.pos,
                 point_light.color,
                 select_pdf,
-                RtLightCandidate::kind_analytic_point()
+                RtLightCandidate::kind_analytic_point(),
+                selected
             );
         }
 
@@ -540,17 +644,314 @@ struct RtDirectLighting
         if (spot_index < gpu_scene.spot_light_count)
         {
             const light::SpotLight spot_light = gpu_scene.spot_lights[spot_index];
-            return sample_spot_candidate(payload, surface, spot_light, select_pdf);
+            return sample_spot_candidate(payload, surface, spot_light, select_pdf, spot_index);
         }
 
         const uint area_index = spot_index - gpu_scene.spot_light_count;
         if (area_index < gpu_scene.area_light_count)
         {
             const light::AreaLight area_light = gpu_scene.area_lights[area_index];
-            return sample_area_candidate(payload, surface, area_light, select_pdf);
+            return sample_area_candidate(payload, surface, area_light, select_pdf, area_index);
         }
 
         return candidate;
+    }
+
+    static RtLightCandidate reconstruct_hdri_candidate(const RtLightSampleKey key, const RtSurfaceHit surface)
+    {
+        // HDRI key 保存的是单位方向。重建时重新查询当前 EnvMap PDF 与 sky radiance，
+        // 因此 sky distribution version 不匹配的 reservoir 会在 ReSTIR 层先被拒绝。
+        RtLightCandidate candidate = RtLightCandidate::empty();
+        if (!sample_key_matches_current_class_mask(key) || key.kind != RtLightCandidate::kind_hdri())
+        {
+            return candidate;
+        }
+
+        const float dir_len2 = dot(key.sample.xyz, key.sample.xyz);
+        if (dir_len2 <= 1e-6f)
+        {
+            return candidate;
+        }
+        const float3 light_dir = normalize(key.sample.xyz);
+        const float solid_angle_pdf = EnvMap::pdf(light_dir) * unified_light_class_pdf();
+        if (solid_angle_pdf <= 0.0f || dot(surface.forward_normal, light_dir) <= 0.0f)
+        {
+            return candidate;
+        }
+
+        candidate.kind = RtLightCandidate::kind_hdri();
+        candidate.direction = light_dir;
+        candidate.distance = 10000.0f;
+        candidate.solid_angle_pdf = solid_angle_pdf;
+        candidate.shadow_ray = make_visibility_ray(surface, light_dir, candidate.distance, false);
+        const float2 env_uv = EnvMap::dir_to_uv(light_dir);
+        candidate.radiance = BindlessSrv::sample_level(gpu_scene.sky, env_uv, gpu_scene.sky_sampler_type, 0.0f).xyz *
+            push_const.sky_brightness;
+        candidate.sample_key = key;
+        candidate.valid = true;
+        return candidate;
+    }
+
+    static bool barycentric_valid(const float3 bary)
+    {
+        return bary.x >= -1e-4f && bary.y >= -1e-4f && bary.z >= -1e-4f &&
+            abs((bary.x + bary.y + bary.z) - 1.0f) <= 1e-3f;
+    }
+
+    static RtLightCandidate reconstruct_emissive_candidate(const RtLightSampleKey key, const RtSurfaceHit surface)
+    {
+        // emissive key 使用 triangle record index + barycentric。record_count 是完整
+        // triangle_lights buffer 长度，不是 alias table entry 数；旧 index 越界必须直接失效。
+        RtLightCandidate candidate = RtLightCandidate::empty();
+        if (!sample_key_matches_current_class_mask(key) || key.kind != RtLightCandidate::kind_emissive_triangle() ||
+            !emissive_nee_enabled() || key.light_index >= gpu_scene.emissive_light_record_count)
+        {
+            return candidate;
+        }
+
+        const float3 bary = key.sample.xyz;
+        if (!barycentric_valid(bary))
+        {
+            return candidate;
+        }
+
+        const light::EmissiveTriangleLight light = gpu_scene.emissive_triangle_lights[key.light_index];
+        const float3 light_position = light.p0 * bary.x + light.p1 * bary.y + light.p2 * bary.z;
+        const float3 to_light = light_position - surface.position;
+        const float distance = length(to_light);
+        if (distance <= 1e-4f)
+        {
+            return candidate;
+        }
+
+        const float3 light_dir = to_light / distance;
+        const float solid_angle_pdf = emissive_solid_angle_pdf(light, light_dir, distance) * unified_light_class_pdf();
+        if (solid_angle_pdf <= 0.0f || dot(surface.forward_normal, light_dir) <= 0.0f)
+        {
+            return candidate;
+        }
+
+        material::PbrMaterial* mat = gpu_scene.all_mats + light.material_slot;
+        const float2 uv = interpolate_emissive_uv(light, bary);
+        const float3 base_color = MaterialAccess::base_color(mat, uv);
+
+        candidate.kind = RtLightCandidate::kind_emissive_triangle();
+        candidate.direction = light_dir;
+        candidate.distance = distance;
+        candidate.radiance = mat.emissive * base_color;
+        candidate.solid_angle_pdf = solid_angle_pdf;
+        candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
+        if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
+        {
+            return RtLightCandidate::empty();
+        }
+        candidate.sample_key = key;
+        candidate.valid = true;
+        return candidate;
+    }
+
+    static RtLightCandidate reconstruct_sphere_emitter_candidate(
+        const RtLightSampleKey key,
+        const RtSurfaceHit surface,
+        const float3 center,
+        const float3 radiance,
+        const float select_pdf,
+        const uint kind
+    )
+    {
+        // analytic sphere key 保存 light-local sample normal。复用时必须确认该点仍是当前 surface
+        // 沿 light_dir 看到的最近 sphere 命中，避免从球体背面或内部样本重建出错误 PDF。
+        RtLightCandidate candidate = RtLightCandidate::empty();
+        const float radius = analytic_sphere_radius();
+        const float sample_normal_len2 = dot(key.sample.xyz, key.sample.xyz);
+        if (select_pdf <= 0.0f || sample_normal_len2 <= 1e-6f)
+        {
+            return candidate;
+        }
+        const float3 sample_normal = key.sample.xyz * rsqrt(sample_normal_len2);
+
+        const float3 to_center = center - surface.position;
+        const float center_distance = length(to_center);
+        if (center_distance <= radius + 1e-4f)
+        {
+            return candidate;
+        }
+        const float sin_theta_max2 = min(radius * radius / max(center_distance * center_distance, 1e-7f), 1.0f);
+        const float cos_theta_max = sqrt(max(1.0f - sin_theta_max2, 0.0f));
+        const float solid_angle = 2.0f * M_PI * (1.0f - cos_theta_max);
+        if (solid_angle <= 1e-7f)
+        {
+            return candidate;
+        }
+
+        const float3 light_position = center + radius * sample_normal;
+        const float3 to_light = light_position - surface.position;
+        const float distance = length(to_light);
+        if (distance <= 1e-4f)
+        {
+            return candidate;
+        }
+        const float3 light_dir = to_light / distance;
+
+        float nearest_distance;
+        if (!ray_sphere_nearest_hit(surface.position, light_dir, center, radius, nearest_distance))
+        {
+            return candidate;
+        }
+        if (abs(nearest_distance - distance) > max(1e-3f, distance * 1e-3f))
+        {
+            return candidate;
+        }
+        if (dot(surface.forward_normal, light_dir) <= 0.0f)
+        {
+            return candidate;
+        }
+
+        candidate.kind = kind;
+        candidate.direction = light_dir;
+        candidate.distance = distance;
+        candidate.radiance = radiance;
+        candidate.solid_angle_pdf = select_pdf / solid_angle * unified_light_class_pdf();
+        candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
+        if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
+        {
+            return RtLightCandidate::empty();
+        }
+        candidate.sample_key = key;
+        candidate.valid = true;
+        return candidate;
+    }
+
+    static RtLightCandidate reconstruct_point_candidate(const RtLightSampleKey key, const RtSurfaceHit surface)
+    {
+        if (key.light_index >= gpu_scene.point_light_count)
+        {
+            return RtLightCandidate::empty();
+        }
+        const float select_pdf = 1.0f / (float)analytic_light_count();
+        const light::PointLight point_light = gpu_scene.point_lights[key.light_index];
+        return reconstruct_sphere_emitter_candidate(
+            key,
+            surface,
+            point_light.pos,
+            point_light.color,
+            select_pdf,
+            RtLightCandidate::kind_analytic_point()
+        );
+    }
+
+    static RtLightCandidate reconstruct_spot_candidate(const RtLightSampleKey key, const RtSurfaceHit surface)
+    {
+        if (key.light_index >= gpu_scene.spot_light_count)
+        {
+            return RtLightCandidate::empty();
+        }
+        const float select_pdf = 1.0f / (float)analytic_light_count();
+        const light::SpotLight spot_light = gpu_scene.spot_lights[key.light_index];
+        RtLightCandidate candidate = reconstruct_sphere_emitter_candidate(
+            key,
+            surface,
+            spot_light.pos,
+            spot_light.color,
+            select_pdf,
+            RtLightCandidate::kind_analytic_spot()
+        );
+        if (!candidate.valid)
+        {
+            return candidate;
+        }
+        const float falloff = spot_cone_falloff(spot_light, -candidate.direction);
+        if (falloff <= 0.0f)
+        {
+            return RtLightCandidate::empty();
+        }
+        candidate.radiance *= falloff;
+        return candidate;
+    }
+
+    static RtLightCandidate reconstruct_area_candidate(const RtLightSampleKey key, const RtSurfaceHit surface)
+    {
+        // area key 保存矩形局部参数，而不是世界坐标。light transform/radiance 的语义变化由
+        // analytic_light_version 拒绝，版本匹配时才按当前 buffer 重建位置、法线、PDF 与 visibility ray。
+        RtLightCandidate candidate = RtLightCandidate::empty();
+        if (key.light_index >= gpu_scene.area_light_count)
+        {
+            return candidate;
+        }
+        const light::AreaLight area_light = gpu_scene.area_lights[key.light_index];
+        const float3 normal_unnormalized = cross(area_light.half_u, area_light.half_v);
+        const float half_area = length(normal_unnormalized);
+        const float area = 4.0f * half_area;
+        if (area <= 1e-7f || key.sample.x < -1.0f || key.sample.x > 1.0f || key.sample.y < -1.0f || key.sample.y > 1.0f)
+        {
+            return candidate;
+        }
+
+        const float3 area_normal = normal_unnormalized / half_area;
+        const float3 light_position = area_light.center + area_light.half_u * key.sample.x + area_light.half_v * key.sample.y;
+        const float3 to_light = light_position - surface.position;
+        const float distance = length(to_light);
+        if (distance <= 1e-4f)
+        {
+            return candidate;
+        }
+
+        const float3 light_dir = to_light / distance;
+        const float light_cos = dot(area_normal, -light_dir);
+        if (light_cos <= 1e-6f || dot(surface.forward_normal, light_dir) <= 0.0f)
+        {
+            return candidate;
+        }
+
+        const float select_pdf = 1.0f / (float)analytic_light_count();
+        candidate.kind = RtLightCandidate::kind_analytic_area();
+        candidate.direction = light_dir;
+        candidate.distance = distance;
+        candidate.radiance = area_light.radiance;
+        candidate.solid_angle_pdf = select_pdf * distance * distance / (area * light_cos) * unified_light_class_pdf();
+        candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
+        if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
+        {
+            return RtLightCandidate::empty();
+        }
+        candidate.sample_key = key;
+        candidate.valid = true;
+        return candidate;
+    }
+
+    static RtLightCandidate reconstruct_candidate_from_key(const RtLightSampleKey key, const RtSurfaceHit surface)
+    {
+        // 所有 ReSTIR history 都经过这个入口重建候选。它只接受 light-side key，不接受旧方向、
+        // 旧距离或旧 visibility，确保 temporal/spatial reuse 始终对当前 surface 重新连边。
+        if (!sample_key_matches_current_class_mask(key))
+        {
+            return RtLightCandidate::empty();
+        }
+        if (key.kind == RtLightCandidate::kind_hdri())
+        {
+            return reconstruct_hdri_candidate(key, surface);
+        }
+        if (key.kind == RtLightCandidate::kind_emissive_triangle())
+        {
+            return reconstruct_emissive_candidate(key, surface);
+        }
+        if (!analytic_nee_enabled())
+        {
+            return RtLightCandidate::empty();
+        }
+        if (key.kind == RtLightCandidate::kind_analytic_point())
+        {
+            return reconstruct_point_candidate(key, surface);
+        }
+        if (key.kind == RtLightCandidate::kind_analytic_spot())
+        {
+            return reconstruct_spot_candidate(key, surface);
+        }
+        if (key.kind == RtLightCandidate::kind_analytic_area())
+        {
+            return reconstruct_area_candidate(key, surface);
+        }
+        return RtLightCandidate::empty();
     }
 
     static uint unified_light_class_count()
@@ -582,6 +983,7 @@ struct RtDirectLighting
         // 因此对外参与 shade/MIS/reservoir 的 PDF 必须是联合概率：
         // P(class) * P(sample | class)，避免统一 NEE 变亮或 BRDF 竞争 PDF 不匹配。
         weighted_candidate.solid_angle_pdf *= class_pdf;
+        weighted_candidate.sample_key.class_mask = current_light_class_mask();
         return weighted_candidate;
     }
 
@@ -694,6 +1096,90 @@ struct RtDirectLighting
         return !is_occluded(tlas, candidate.shadow_ray);
     }
 
+    static float reservoir_rgb_importance(const float3 value)
+    {
+        // ReSTIR 的 target 只要求是与最终贡献同源的非负标量，不要求使用视觉亮度。
+        // 使用 RGB 最大通道可以让饱和红/绿/蓝光源按真实最强通道参与竞争，避免 luminance
+        // 权重低估蓝光或窄谱彩色光后在 final RGB 输出中形成高能彩色离群点。
+        return max(value.x, max(value.y, value.z));
+    }
+
+    /// 评估 reservoir target 对应的未归一化直接光。
+    ///
+    /// ReSTIR 的 target 使用 light-side radiance、BRDF*cos 和 MIS，但不除以 proposal PDF；
+    /// reservoir 的最终权重负责恢复 `1 / pdf`。这样 InitialOnly 下的单样本结果与旧 NEE 一致，
+    /// temporal / spatial reuse 也能在当前 surface 上重新计算 target。
+    static RtDirectLightingSample eval_candidate_target_contribution(
+        const RtLightCandidate candidate,
+        const RtSurfaceHit surface,
+        const float3 view_dir
+    )
+    {
+        RtDirectLightingSample result = RtDirectLightingSample::empty();
+        if (!candidate.valid || candidate.solid_angle_pdf <= 0.0f)
+        {
+            return result;
+        }
+
+        const float ndotl = dot(surface.forward_normal, candidate.direction);
+        if (ndotl <= 0.0f)
+        {
+            return result;
+        }
+
+        const float3 brdf_cos = RtMaterialSampler::eval_brdf(surface, view_dir, candidate.direction);
+        float mis_weight = 1.0f;
+        if (!RtLightCandidate::is_analytic_kind(candidate.kind))
+        {
+            const float brdf_pdf = RtMaterialSampler::eval_brdf_pdf(surface, view_dir, candidate.direction);
+            mis_weight = Mis::power_heuristic(candidate.solid_angle_pdf, brdf_pdf);
+        }
+
+        result.contribution = candidate.radiance * brdf_cos * mis_weight;
+        result.light_kind = candidate.kind;
+        result.valid = true;
+        return result;
+    }
+
+    static float candidate_target(
+        const RtLightCandidate candidate,
+        const RtSurfaceHit surface,
+        const float3 view_dir
+    )
+    {
+        // target 是 reservoir 竞争用的非负标量，不包含 proposal PDF。
+        // PDF 只在 weight_sum / final shade weight 中恢复，避免重复除以 PDF。
+        const RtDirectLightingSample sample = eval_candidate_target_contribution(candidate, surface, view_dir);
+        if (!sample.valid)
+        {
+            return 0.0f;
+        }
+        return max(reservoir_rgb_importance(sample.contribution), 0.0f);
+    }
+
+    static RtDirectLightingSample shade_reservoir_candidate(
+        const RtLightCandidate candidate,
+        const RtSurfaceHit surface,
+        const float3 view_dir,
+        const float reservoir_weight
+    )
+    {
+        // reservoir_weight 已经包含 `weight_sum / (target * M)` 的归一化结果。
+        // 这里复用 target contribution 的同源 BRDF/MIS 计算，只把最终 reservoir 权重乘回贡献。
+        if (reservoir_weight <= 0.0f)
+        {
+            return RtDirectLightingSample::empty();
+        }
+        const RtDirectLightingSample sample = eval_candidate_target_contribution(candidate, surface, view_dir);
+        if (!sample.valid)
+        {
+            return sample;
+        }
+
+        RtDirectLightingSample weighted_sample = sample;
+        weighted_sample.contribution *= reservoir_weight;
+        return weighted_sample;
+    }
     /// 将一个已通过 visibility 的 light candidate 评估为当前 path 的直接光贡献。
     ///
     /// 所有非法候选、零 PDF 和背面光照都返回空贡献，避免 NaN 污染路径累积。

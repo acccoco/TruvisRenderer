@@ -188,6 +188,9 @@ impl InstanceBridge {
             scene_manager.spot_light_map().iter().map(|(_, light)| *light).collect();
         let all_area_lights: Vec<gpu::light::AreaLight> =
             scene_manager.area_light_map().iter().map(|(_, light)| *light).collect();
+        // analytic_light_version 跟随 CPU scene 语义快照一起传递到 RenderData。
+        // InstanceBridge 不解释 ReSTIR，也不修改 light 采样概率，只保持 prepare 边界的数据一致性。
+        let analytic_light_version = scene_manager.light_revision();
 
         RenderData {
             all_instances,
@@ -195,6 +198,7 @@ impl InstanceBridge {
             all_point_lights,
             all_spot_lights,
             all_area_lights,
+            analytic_light_version,
             mesh_geometry_start_indices,
         }
     }

@@ -22,6 +22,8 @@ pub struct SceneManager {
     all_spot_lights: SlotMap<LightHandle, gpu::light::SpotLight>,
     /// live area light 存储；矩形单面发光的采样语义由 realtime RT shader 解释。
     all_area_lights: SlotMap<LightHandle, gpu::light::AreaLight>,
+    /// point/spot/area light 语义变化版本，用于渲染端拒绝不匹配的 ReSTIR history。
+    light_revision: u32,
 }
 // 创建与初始化
 impl SceneManager {
@@ -68,6 +70,12 @@ impl SceneManager {
         &self.all_area_lights
     }
 
+    /// 返回 analytic light 语义版本；只表达 point/spot/area 光源快照变化，不包含 instance/TLAS。
+    #[inline]
+    pub fn light_revision(&self) -> u32 {
+        self.light_revision
+    }
+
     /// 判断 CPU scene 是否没有可同步的 live scene 数据。
     #[inline]
     pub fn is_empty(&self) -> bool {
@@ -79,6 +87,12 @@ impl SceneManager {
 }
 // 工具函数
 impl SceneManager {
+    fn bump_light_revision(&mut self) {
+        // 0 表示“尚未有 analytic light 语义版本”。第一次变化从 1 开始，便于 shader
+        // reservoir metadata 把默认空状态和真实 scene 版本区分开；饱和后保持最大值即可触发不匹配。
+        self.light_revision = self.light_revision.saturating_add(1).max(1);
+    }
+
     /// 按 CPU runtime handle 查询 live instance。
     #[inline]
     pub fn get_instance(&self, handle: InstanceHandle) -> Option<&Instance> {
@@ -137,7 +151,9 @@ impl SceneManager {
     /// 光源使用 shader binding 中的共享布局类型，但这里仍只负责 CPU 侧生命周期；GPU buffer
     /// 更新由 render runtime 的 scene 同步流程处理。
     pub fn register_point_light(&mut self, light: gpu::light::PointLight) -> LightHandle {
-        self.all_point_lights.insert(light)
+        let handle = self.all_point_lights.insert(light);
+        self.bump_light_revision();
+        handle
     }
 
     /// 向 CPU scene 添加一个 live spot light。
@@ -145,7 +161,9 @@ impl SceneManager {
     /// spot light 在 realtime RT 中表示半径固定为 0.5 的 sphere emitter，并额外带 cone
     /// falloff；这里不做角度或方向归一化，调用方和 shader ABI 注释共同约束输入单位。
     pub fn register_spot_light(&mut self, light: gpu::light::SpotLight) -> LightHandle {
-        self.all_spot_lights.insert(light)
+        let handle = self.all_spot_lights.insert(light);
+        self.bump_light_revision();
+        handle
     }
 
     /// 向 CPU scene 添加一个 live area light。
@@ -153,7 +171,9 @@ impl SceneManager {
     /// area light 使用 world-space `center + half_u + half_v` 描述矩形；本 manager 不计算
     /// 法线或面积，避免 CPU scene 与 shader 采样路径维护两套几何派生规则。
     pub fn register_area_light(&mut self, light: gpu::light::AreaLight) -> LightHandle {
-        self.all_area_lights.insert(light)
+        let handle = self.all_area_lights.insert(light);
+        self.bump_light_revision();
+        handle
     }
 }
 impl Drop for SceneManager {
@@ -170,9 +190,16 @@ impl SceneManager {
 
     /// 清空 CPU scene 记录，供拥有者按既有 destroy 顺序显式释放。
     pub fn destroy_mut(&mut self) {
+        // destroy 只在确实存在 analytic light 时推进版本，避免空 scene 关闭路径无意义改变
+        // GPU scene signature。已有 history 在后续 frame 也会因为 light count/key 判界失败而失效。
+        let had_lights =
+            !self.all_point_lights.is_empty() || !self.all_spot_lights.is_empty() || !self.all_area_lights.is_empty();
         self.all_instances.clear();
         self.all_point_lights.clear();
         self.all_spot_lights.clear();
         self.all_area_lights.clear();
+        if had_lights {
+            self.bump_light_revision();
+        }
     }
 }

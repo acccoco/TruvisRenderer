@@ -1,6 +1,6 @@
 # 实时 RT 光照采样路线
 
-> 状态：活跃方向，更新于 2026-06-18。当前事实以
+> 状态：活跃方向，更新于 2026-06-19。当前事实以
 > [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md)、[`docs/summaries/`](../summaries/) 和代码为准。
 
 本文记录实时 RT 主流程后续光照采样与间接光缓存的阶段性路线。目标是先把直接光 NEE 的 PDF / MIS
@@ -17,6 +17,7 @@ System，但直接光与间接光复用仍有后续工作：
 - point light、spot light、单面 area light 等显式 analytic light 已纳入 realtime RT 直接光采样；directional
   light 仍暂不放进第一轮 analytic light 路线。
 - 统一 Light Candidate System v1 只做启用 light class 的均匀选择，尚未引入 power-weighted light-class PMF。
+- Primary ReSTIR DI v1 已接入 Off / InitialOnly / Temporal / TemporalSpatial 模式；secondary bounce 仍走普通统一 NEE。
 - 后续 bounce 仍主要依赖普通 BSDF 路径延伸，缺少稳定的 world-space radiance cache。
 
 因此后续路线应把“直接光采样”和“间接光复用”分开处理，避免把所有问题都压到同一个算法里。
@@ -157,7 +158,7 @@ delta surface 只生成一个直接光候选；shader 先在当前启用的 HDRI
 之间均匀选择，再调用各 class 既有 sampler。候选对外的 `solid_angle_pdf` 乘入 class 选择概率，
 BRDF sky miss 和 emissive hit 的 MIS 也查询同一套 unified light PDF。`NeeHdri`、`NeeEmissive`、
 `NeeAnalytic` debug channel 仍按 candidate kind 分别累计；关闭 emissive / analytic NEE 后可回退到
-HDRI-only 普通 NEE。power-weighted light-class PMF、ReSTIR DI reservoir 和 SHARC 均未接入。
+HDRI-only 普通 NEE。power-weighted light-class PMF 和 SHARC 均未接入；ReSTIR DI reservoir 在第六阶段接入 primary direct lighting。
 
 ## 第六阶段：Primary ReSTIR DI
 
@@ -171,6 +172,22 @@ HDRI-only 普通 NEE。power-weighted light-class PMF、ReSTIR DI reservoir 和 
 
 完成标准：支持 Off / InitialOnly / Temporal / TemporalSpatial 模式；primary 直接光噪声低于普通统一 NEE；快速相机移动和 disocclusion
 不会产生明显脏历史。
+
+当前状态（2026-06-19）：第六阶段 v1 已接入主路径，并已修正 finite light 复用语义。`RtPipelineSettings.restir_di_mode` 与 overlay 提供
+`Off / InitialOnly / Temporal / TemporalSpatial` 模式，默认 `Off`；RT pass 新增 `RestirDiTargets`，reservoir 与
+surface key 都按 `render_extent` 和 FIF frame label 轮转，不进入 DLSS state。ray-tracing pass 复用同一 RT pipeline
+分 path、temporal、spatial、final phase 执行，phase 之间用 ray-tracing shader image barrier 同步 HDR、GBuffer、motion vector
+和 ReSTIR targets。path phase 只对 primary visible non-delta surface 生成 initial reservoir，secondary bounce 继续普通统一 NEE。
+
+reservoir 保存 light sample identity，而不是旧 shading point 的方向/距离；target 使用当前可见 RGB 贡献的最大通道，避免高饱和彩色光被视觉亮度低估后形成彩色离群点。HDRI 保存方向，emissive 保存 record index 与 barycentric，
+point/spot 保存 sphere sample，area 保存矩形局部样本。temporal/spatial/final 阶段都会在当前 surface 上重建候选，重新计算有限光源的
+方向、距离、radiance、solid-angle PDF 和 shadow ray，并用当前 surface visibility 评估 target；final phase 必须用 ReSTIR RGBA32F surface key 重建当前 primary surface、再次 trace visibility，再把 primary direct contribution 合入 HDR。surface key 同时承担 eligibility 标记，delta / emissive / miss primary 不能接收历史或邻域 reservoir。
+surface key 保存 position/depth、normal/roughness 和 base color/metallic，temporal/spatial reuse 会把材质签名纳入 rejection，避免不同材质 surface 共享旧 reservoir 权重分母。
+temporal history 读取上一帧 temporal reservoir；spatial final 只服务当前帧出图，不能再喂回 temporal，否则邻域样本会跨帧反馈并放大成低频彩色噪点。history `M` 代表有效独立候选数，temporal reuse 会裁剪过大的历史 `M` 并同步缩放权重，避免相关历史无界积累。
+
+history signature 由 CPU 侧 mode/reset/frame 与 shader 侧 sky/emissive/analytic version、light class mask 共同控制；resize、DLSS reset、
+模式变化、sky/emissive/analytic light 变化或 class mask 变化都会禁用旧 reservoir。新增 debug channel 为
+`RestirInitialWeight`、`RestirTemporalValid`、`RestirFinalContribution`；既有 `NeeHdri`、`NeeEmissive`、`NeeAnalytic` 仍只观察普通 NEE。
 
 ## 第七阶段：ReSTIR DI 稳定化
 

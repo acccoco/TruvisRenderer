@@ -1,14 +1,17 @@
 use crate::gui_plugin::{DebugImageEntry, DebugImageGraphEntry};
 use crate::render_pipeline::targets::{
     DlssOutputTargets, DlssRrInputTargets, DlssSrExposureTarget, DlssSrInputTargets, ImageTarget, MainViewTargets,
-    RtWorkingTargets,
+    RestirDiTargets, RestirReservoirTarget, RestirSurfaceKeyTarget, RtWorkingTargets,
 };
 use app_render_passes::dlss_rr_pass::{DlssRrPass, DlssRrRgPass};
 use app_render_passes::dlss_sr_pass::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
 use app_render_passes::gbuffer::GBuffer;
-use app_render_passes::realtime_rt_pass::{RealtimeRtPass, RealtimeRtRgPass};
+use app_render_passes::realtime_rt_pass::{
+    RealtimeRtPass, RealtimeRtRgPass, RestirReservoirRgImages, RestirSurfaceKeyRgImages,
+};
 use app_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
 use app_render_passes::sdr_pass::{SdrPass, SdrRgPass, SdrToneMappingSettings};
+use std::{cell::Cell, env};
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
@@ -24,6 +27,8 @@ pub struct RtPipeline {
     /// 生命周期跟随 `RtPipeline`，由 Truvis / Cornell 等 RT app 在 ImGui update 阶段修改，
     /// 再在构建 render graph 时显式传给相关 pass。
     settings: RtPipelineSettings,
+    /// ReSTIR DI 的最小 CPU history signature；用于 mode/reset 变化时切断上一帧 history。
+    restir_last_mode: Cell<RtRestirDiMode>,
 }
 
 /// RT pipeline 自有配置。
@@ -56,6 +61,11 @@ pub struct RtPipelineSettings {
     /// 这是 RT pass-local 调试开关；关闭时不采样 point / spot / area analytic lights，
     /// 但不影响 HDRI NEE、自发光三角形 NEE、GBuffer 或 DLSS 输入。
     pub analytic_nee_enabled: bool,
+    /// Primary visible surface ReSTIR DI 模式。
+    ///
+    /// 这是 RT pipeline 私有 temporal lighting 开关；默认 Off，确保现有 unified NEE
+    /// 路径可直接回退。reservoir history 不进入 DLSS state，也不读取 DLSS output。
+    pub restir_di_mode: RtRestirDiMode,
     /// SDR 输出路径的 tone mapping 参数。
     ///
     /// 只影响 Final 通道的 `hdr-to-sdr` pass，不改变 render extent、DLSS feature resource
@@ -71,7 +81,77 @@ impl Default for RtPipelineSettings {
             sky_brightness: 8.0,
             emissive_nee_enabled: true,
             analytic_nee_enabled: true,
+            restir_di_mode: RtRestirDiMode::initial_mode_from_env(),
             tone_mapping: SdrToneMappingSettings::default(),
+        }
+    }
+}
+
+/// Primary visible surface ReSTIR DI 模式。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RtRestirDiMode {
+    /// 完全保留当前 unified NEE 路径。
+    #[default]
+    Off,
+    /// 只生成 initial reservoir，并在 final shade 阶段重新做 visibility。
+    InitialOnly,
+    /// 在 initial 基础上加入上一帧 reservoir temporal reuse。
+    Temporal,
+    /// temporal 后追加邻域 reservoir spatial reuse。
+    TemporalSpatial,
+}
+
+impl RtRestirDiMode {
+    pub const ALL: [Self; 4] = [Self::Off, Self::InitialOnly, Self::Temporal, Self::TemporalSpatial];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::InitialOnly => "InitialOnly",
+            Self::Temporal => "Temporal",
+            Self::TemporalSpatial => "TemporalSpatial",
+        }
+    }
+
+    pub fn shader_mode(self) -> u32 {
+        match self {
+            Self::Off => 0,
+            Self::InitialOnly => 1,
+            Self::Temporal => 2,
+            Self::TemporalSpatial => 3,
+        }
+    }
+
+    pub fn is_enabled(self) -> bool {
+        self != Self::Off
+    }
+
+    fn from_config_value(value: &str) -> Option<Self> {
+        let normalized = value.trim().to_ascii_lowercase().replace(['_', '-', ' '], "");
+        match normalized.as_str() {
+            "off" => Some(Self::Off),
+            "initialonly" | "initial" => Some(Self::InitialOnly),
+            "temporal" => Some(Self::Temporal),
+            "temporalspatial" | "spatial" => Some(Self::TemporalSpatial),
+            _ => None,
+        }
+    }
+
+    fn initial_mode_from_env() -> Self {
+        const ENV_NAME: &str = "TRUVIS_RESTIR_DI_MODE";
+        let Ok(value) = env::var(ENV_NAME) else {
+            return Self::Off;
+        };
+
+        match Self::from_config_value(&value) {
+            Some(mode) => {
+                log::info!("Initial ReSTIR DI mode from {ENV_NAME}={value}: {mode:?}");
+                mode
+            }
+            None => {
+                log::warn!("Ignoring unsupported {ENV_NAME} value: {value}");
+                Self::Off
+            }
         }
     }
 }
@@ -132,10 +212,16 @@ pub enum RtDebugChannel {
     NeeEmissive,
     /// 显示 next-event estimation 中来自 analytic light 的直接光。
     NeeAnalytic,
+    /// 显示 ReSTIR DI initial reservoir 的权重强度。
+    RestirInitialWeight,
+    /// 显示 ReSTIR DI temporal reservoir 是否有效及 history age。
+    RestirTemporalValid,
+    /// 显示 ReSTIR DI final shade contribution。
+    RestirFinalContribution,
 }
 
 impl RtDebugChannel {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 15] = [
         Self::Final,
         Self::ForwardNormal,
         Self::WorldNormal,
@@ -148,6 +234,9 @@ impl RtDebugChannel {
         Self::NeeBounce1,
         Self::NeeEmissive,
         Self::NeeAnalytic,
+        Self::RestirInitialWeight,
+        Self::RestirTemporalValid,
+        Self::RestirFinalContribution,
     ];
 
     pub fn label(self) -> &'static str {
@@ -164,6 +253,9 @@ impl RtDebugChannel {
             Self::NeeBounce1 => "NEE bounce 1",
             Self::NeeEmissive => "from NEE emissive",
             Self::NeeAnalytic => "from NEE analytic",
+            Self::RestirInitialWeight => "ReSTIR initial weight",
+            Self::RestirTemporalValid => "ReSTIR temporal valid",
+            Self::RestirFinalContribution => "ReSTIR final contribution",
         }
     }
 
@@ -181,6 +273,9 @@ impl RtDebugChannel {
             Self::NeeBounce1 => 8,
             Self::NeeEmissive => 9,
             Self::NeeAnalytic => 12,
+            Self::RestirInitialWeight => 13,
+            Self::RestirTemporalValid => 14,
+            Self::RestirFinalContribution => 15,
         }
     }
 }
@@ -196,6 +291,8 @@ struct RtPipelineInner {
     gbuffer: GBuffer,
     /// RT 私有工作图像。它们的格式/用途由 RT pipeline 决定，因此不再放在 engine runtime state。
     rt_targets: RtWorkingTargets,
+    /// Primary ReSTIR DI reservoir 与 surface-key history。
+    restir_di_targets: RestirDiTargets,
     /// DLSS SR 需要的低分辨率 depth/motion-vector 输入。
     ///
     /// 即使 SR 关闭也会由 raygen 写入，便于 ImGui debug viewer 验证深度和 motion vector。
@@ -254,6 +351,15 @@ impl RtPipelineInner {
         target_frame_state.set_native_extent(ctx.swapchain_image_info.image_extent);
 
         let rt_targets = RtWorkingTargets::new(
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            ctx.immediate_ctx,
+            &mut *ctx.gfx_resource_manager,
+            &mut *ctx.shader_binding_system,
+            &target_frame_state,
+            ctx.frame_timing.frame_counter(),
+        );
+        let restir_di_targets = RestirDiTargets::new(
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.immediate_ctx,
@@ -331,6 +437,7 @@ impl RtPipelineInner {
             resolve_pass,
             gbuffer,
             rt_targets,
+            restir_di_targets,
             dlss_sr_inputs,
             dlss_sr_exposure,
             dlss_rr_inputs,
@@ -358,6 +465,13 @@ impl RtPipelineInner {
             DestroyReason::Shutdown,
         );
         self.rt_targets.destroy(
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            &mut *ctx.shader_binding_system,
+            &mut *ctx.gfx_resource_manager,
+            DestroyReason::Shutdown,
+        );
+        self.restir_di_targets.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
             &mut *ctx.shader_binding_system,
@@ -413,6 +527,15 @@ impl Plugin for RtPipeline {
             // swapchain 在平台裁剪尺寸时出现细微不一致。
             let target_frame_state = *ctx.frame_state;
             inner.rt_targets.rebuild(
+                ctx.resource_ctx,
+                ctx.device_ctx,
+                ctx.immediate_ctx,
+                &mut *ctx.shader_binding_system,
+                &mut *ctx.gfx_resource_manager,
+                &target_frame_state,
+                ctx.frame_timing.frame_counter(),
+            );
+            inner.restir_di_targets.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
@@ -502,6 +625,7 @@ impl RtPipeline {
         let record_ctx = ctx.record_ctx;
         let frame_label = record_ctx.frame_timing.frame_label();
         let rt_targets = &inner.rt_targets;
+        let restir_di_targets = &inner.restir_di_targets;
         let dlss_sr_inputs = &inner.dlss_sr_inputs;
         let dlss_rr_inputs = &inner.dlss_rr_inputs;
         let dlss_outputs = &inner.dlss_outputs;
@@ -511,6 +635,18 @@ impl RtPipeline {
         let sky_brightness = self.settings.sky_brightness;
         let emissive_nee_enabled = self.settings.emissive_nee_enabled;
         let analytic_nee_enabled = self.settings.analytic_nee_enabled;
+        let restir_di_mode = self.settings.restir_di_mode;
+        let frame_id = record_ctx.frame_timing.frame_id();
+        let previous_frame_label =
+            FrameLabel::from_usize((frame_id as usize + FrameCounter::fif_count() - 1) % FrameCounter::fif_count());
+        // CPU 侧只负责切断明显不连续的 history：首帧、mode 变化和 DLSS reset。
+        // sky/emissive/analytic light 的版本拒绝在 shader reservoir metadata 中完成，
+        // 这样 resize/reset 语义留在 pipeline owner，scene 语义变化留在 GPU scene ABI。
+        let restir_history_valid = restir_di_mode.is_enabled()
+            && frame_id > 0
+            && self.restir_last_mode.get() == restir_di_mode
+            && !record_ctx.dlss_sr_state.constants().reset;
+        self.restir_last_mode.set(restir_di_mode);
         let tone_mapping = self.settings.tone_mapping;
 
         // compute graph 导入的是 app-owned 外部图像；RenderGraph 只接管本图内的状态转换，
@@ -608,6 +744,49 @@ impl RtPipeline {
             None,
         );
 
+        // ReSTIR DI targets 是同一个 RT pass 内多次 TraceRays phase 的私有工作集。
+        // initial/temporal/final 都绑定当前 frame label；history 只绑定 previous temporal，
+        // 防止 spatial reuse 的邻域结果跨帧回灌到 temporal reuse。
+        let restir_initial = import_restir_reservoir(
+            rg_builder,
+            "restir-di-initial",
+            restir_di_targets.initial(frame_label),
+            RgImageState::UNDEFINED_TOP,
+        );
+        let restir_temporal = import_restir_reservoir(
+            rg_builder,
+            "restir-di-temporal",
+            restir_di_targets.temporal(frame_label),
+            RgImageState::UNDEFINED_TOP,
+        );
+        let restir_final = import_restir_reservoir(
+            rg_builder,
+            "restir-di-final",
+            restir_di_targets.final_reservoir(frame_label),
+            RgImageState::UNDEFINED_TOP,
+        );
+        let restir_history = import_restir_reservoir(
+            rg_builder,
+            "restir-di-history",
+            // Temporal history 必须来自上一帧 temporal reservoir，而不是 spatial/final reservoir。
+            // spatial reuse 只服务当前帧出图；若把 spatial final 再喂回 temporal，会把邻域样本跨帧反馈，
+            // 让 reservoir M 与相关性一起膨胀，最终在 RR 输入中形成低频彩色块。
+            restir_di_targets.temporal(previous_frame_label),
+            RgImageState::GENERAL,
+        );
+        let restir_surface = import_restir_surface_key(
+            rg_builder,
+            "restir-di-surface",
+            restir_di_targets.surface_key(frame_label),
+            RgImageState::UNDEFINED_TOP,
+        );
+        let restir_history_surface = import_restir_surface_key(
+            rg_builder,
+            "restir-di-history-surface",
+            restir_di_targets.surface_key(previous_frame_label),
+            RgImageState::GENERAL,
+        );
+
         let dlss_output_target = dlss_outputs.color(frame_label);
         let dlss_output = rg_builder.import_image(
             "dlss-output",
@@ -645,6 +824,14 @@ impl RtPipeline {
                 sky_brightness,
                 emissive_nee_enabled,
                 analytic_nee_enabled,
+                restir_di_mode: restir_di_mode.shader_mode(),
+                restir_history_valid,
+                restir_initial,
+                restir_temporal,
+                restir_final,
+                restir_history,
+                restir_surface,
+                restir_history_surface,
                 gbuffer_a,
                 gbuffer_b,
                 gbuffer_c,
@@ -869,6 +1056,86 @@ impl RtPipeline {
 
     fn inner(&self) -> &RtPipelineInner {
         self.inner.as_ref().expect("RtPipeline not initialized")
+    }
+}
+
+fn import_restir_reservoir<'a>(
+    rg_builder: &mut RenderGraphBuilder<'a>,
+    name_prefix: &'static str,
+    target: RestirReservoirTarget,
+    initial_state: RgImageState,
+) -> RestirReservoirRgImages {
+    // 四张 image 的顺序必须和 Slang descriptor ABI 的 A/B/C/D 打包一致：
+    // A/D 是 uint metadata，B/C 是 float sample/weight。这里集中导入，避免调用点手写顺序出错。
+    RestirReservoirRgImages {
+        a: rg_builder.import_image(
+            format!("{name_prefix}-a"),
+            target.a.image,
+            Some(target.a.view),
+            target.a.format,
+            initial_state,
+            None,
+        ),
+        b: rg_builder.import_image(
+            format!("{name_prefix}-b"),
+            target.b.image,
+            Some(target.b.view),
+            target.b.format,
+            initial_state,
+            None,
+        ),
+        c: rg_builder.import_image(
+            format!("{name_prefix}-c"),
+            target.c.image,
+            Some(target.c.view),
+            target.c.format,
+            initial_state,
+            None,
+        ),
+        d: rg_builder.import_image(
+            format!("{name_prefix}-d"),
+            target.d.image,
+            Some(target.d.view),
+            target.d.format,
+            initial_state,
+            None,
+        ),
+    }
+}
+
+fn import_restir_surface_key<'a>(
+    rg_builder: &mut RenderGraphBuilder<'a>,
+    name_prefix: &'static str,
+    target: RestirSurfaceKeyTarget,
+    initial_state: RgImageState,
+) -> RestirSurfaceKeyRgImages {
+    // surface key 的 A/B/C 三张 RGBA32F 图像是 ReSTIR 的高精度 primary surface history。
+    // 它和 RR/SR GBuffer 不是同一契约，不能在 helper 中合并或改用压缩 GBuffer 资源。
+    RestirSurfaceKeyRgImages {
+        a: rg_builder.import_image(
+            format!("{name_prefix}-a"),
+            target.a.image,
+            Some(target.a.view),
+            target.a.format,
+            initial_state,
+            None,
+        ),
+        b: rg_builder.import_image(
+            format!("{name_prefix}-b"),
+            target.b.image,
+            Some(target.b.view),
+            target.b.format,
+            initial_state,
+            None,
+        ),
+        c: rg_builder.import_image(
+            format!("{name_prefix}-c"),
+            target.c.image,
+            Some(target.c.view),
+            target.c.format,
+            initial_state,
+            None,
+        ),
     }
 }
 

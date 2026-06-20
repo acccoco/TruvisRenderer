@@ -253,6 +253,229 @@ impl Drop for RtWorkingTargets {
     }
 }
 
+/// ReSTIR DI reservoir 的四图像打包视图。
+///
+/// A/D 使用 uint4 保存 light sample identity 与版本；B/C 使用 float4 保存样本参数与权重统计。
+/// 这种拆分让 temporal/spatial reuse 能在当前 surface 上重建有限光源候选，而不是复用旧方向。
+#[derive(Clone, Copy)]
+pub struct RestirReservoirTarget {
+    pub a: ImageTarget,
+    pub b: ImageTarget,
+    pub c: ImageTarget,
+    pub d: ImageTarget,
+}
+
+/// ReSTIR DI primary surface key 的三图像打包视图。
+///
+/// 该 history 只服务 RT pipeline 的 temporal rejection，不进入 DLSS state，
+/// 因此随 ReSTIR targets 一起按 render extent 轮转。
+#[derive(Clone, Copy)]
+pub struct RestirSurfaceKeyTarget {
+    pub a: ImageTarget,
+    pub b: ImageTarget,
+    pub c: ImageTarget,
+}
+
+/// Primary ReSTIR DI 的 temporal 资源。
+///
+/// 资源按 FIF frame label 轮转：当前 frame label 写 initial/temporal/final/surface，
+/// previous frame label 的 temporal reservoir 与 surface key 作为 history 读取。owner 不保存跨帧签名，
+/// history 是否可用由 RT pipeline 在构图时用 frame/reset/mode 信息决定。
+pub struct RestirDiTargets {
+    initial_a: PerFrameImageSet,
+    initial_b: PerFrameImageSet,
+    initial_c: PerFrameImageSet,
+    initial_d: PerFrameImageSet,
+    temporal_a: PerFrameImageSet,
+    temporal_b: PerFrameImageSet,
+    temporal_c: PerFrameImageSet,
+    temporal_d: PerFrameImageSet,
+    final_a: PerFrameImageSet,
+    final_b: PerFrameImageSet,
+    final_c: PerFrameImageSet,
+    final_d: PerFrameImageSet,
+    surface_a: PerFrameImageSet,
+    surface_b: PerFrameImageSet,
+    surface_c: PerFrameImageSet,
+}
+
+impl RestirDiTargets {
+    /// reservoir A：light kind、light index、class mask、valid。
+    pub const ID_FORMAT: vk::Format = vk::Format::R32G32B32A32_UINT;
+    /// reservoir B：light-side sample 参数，例如 HDRI direction、emissive barycentric、analytic local sample。
+    pub const PARAM_FORMAT: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
+    /// reservoir C：weight_sum、target、M、source_age；这些值参与后续 weight 归一化。
+    pub const STATS_FORMAT: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
+    /// reservoir D：sky / emissive / analytic light 版本和 sample-key valid bit。
+    pub const VERSION_FORMAT: vk::Format = vk::Format::R32G32B32A32_UINT;
+    /// surface key A/B/C：position/depth、normal/roughness、base_color/metallic。
+    pub const SURFACE_FORMAT: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
+
+    pub fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+        _shader_binding_system: &mut ShaderBindingSystem,
+        frame_state: &FrameRenderState,
+        frame_counter: &FrameCounter,
+    ) -> Self {
+        let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC;
+        let mut make_set = |name_prefix: &'static str, format: vk::Format| {
+            PerFrameImageSet::new(
+                resource_ctx,
+                device_ctx,
+                immediate_ctx,
+                gfx_resource_manager,
+                TargetImageDesc {
+                    name_prefix,
+                    format,
+                    extent: frame_state.render_extent,
+                    usage,
+                },
+                frame_counter,
+            )
+        };
+
+        let targets = Self {
+            initial_a: make_set("restir-di-initial-a", Self::ID_FORMAT),
+            initial_b: make_set("restir-di-initial-b", Self::PARAM_FORMAT),
+            initial_c: make_set("restir-di-initial-c", Self::STATS_FORMAT),
+            initial_d: make_set("restir-di-initial-d", Self::VERSION_FORMAT),
+            temporal_a: make_set("restir-di-temporal-a", Self::ID_FORMAT),
+            temporal_b: make_set("restir-di-temporal-b", Self::PARAM_FORMAT),
+            temporal_c: make_set("restir-di-temporal-c", Self::STATS_FORMAT),
+            temporal_d: make_set("restir-di-temporal-d", Self::VERSION_FORMAT),
+            final_a: make_set("restir-di-final-a", Self::ID_FORMAT),
+            final_b: make_set("restir-di-final-b", Self::PARAM_FORMAT),
+            final_c: make_set("restir-di-final-c", Self::STATS_FORMAT),
+            final_d: make_set("restir-di-final-d", Self::VERSION_FORMAT),
+            surface_a: make_set("restir-di-surface-a", Self::SURFACE_FORMAT),
+            surface_b: make_set("restir-di-surface-b", Self::SURFACE_FORMAT),
+            surface_c: make_set("restir-di-surface-c", Self::SURFACE_FORMAT),
+        };
+        // ReSTIR targets 只通过 RT pass-local push descriptor 绑定。不要注册到全局 bindless，
+        // 否则每个在飞帧的 reservoir pack 都会占用 SRV/UAV slot。
+        targets
+    }
+
+    pub fn rebuild(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        shader_binding_system: &mut ShaderBindingSystem,
+        gfx_resource_manager: &mut GfxResourceManager,
+        frame_state: &FrameRenderState,
+        frame_counter: &FrameCounter,
+    ) {
+        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            shader_binding_system,
+            frame_state,
+            frame_counter,
+        );
+    }
+
+    pub fn destroy(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        _shader_binding_system: &mut ShaderBindingSystem,
+        gfx_resource_manager: &mut GfxResourceManager,
+        reason: DestroyReason,
+    ) {
+        self.initial_a.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.initial_b.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.initial_c.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.initial_d.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.temporal_a.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.temporal_b.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.temporal_c.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.temporal_d.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.final_a.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.final_b.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.final_c.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.final_d.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.surface_a.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.surface_b.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.surface_c.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+    }
+
+    #[inline]
+    pub fn initial(&self, frame_label: FrameLabel) -> RestirReservoirTarget {
+        RestirReservoirTarget {
+            a: self.initial_a.target(frame_label),
+            b: self.initial_b.target(frame_label),
+            c: self.initial_c.target(frame_label),
+            d: self.initial_d.target(frame_label),
+        }
+    }
+
+    #[inline]
+    pub fn temporal(&self, frame_label: FrameLabel) -> RestirReservoirTarget {
+        // temporal 是唯一允许作为下一帧 history 的 reservoir。
+        // final/spatial reservoir 只服务当前帧输出，不能从这里替换成 final_reservoir。
+        RestirReservoirTarget {
+            a: self.temporal_a.target(frame_label),
+            b: self.temporal_b.target(frame_label),
+            c: self.temporal_c.target(frame_label),
+            d: self.temporal_d.target(frame_label),
+        }
+    }
+
+    #[inline]
+    pub fn final_reservoir(&self, frame_label: FrameLabel) -> RestirReservoirTarget {
+        // final reservoir 是 spatial phase 的当前帧结果；InitialOnly/Temporal 模式可能只在 final
+        // shade 阶段按模式读取 initial/temporal。它仍保留独立 target，便于 debug 和后续扩展。
+        RestirReservoirTarget {
+            a: self.final_a.target(frame_label),
+            b: self.final_b.target(frame_label),
+            c: self.final_c.target(frame_label),
+            d: self.final_d.target(frame_label),
+        }
+    }
+
+    #[inline]
+    pub fn surface_key(&self, frame_label: FrameLabel) -> RestirSurfaceKeyTarget {
+        // surface key 与 reservoir 使用同一 FIF label 轮转：current key 用于当前 frame 的
+        // temporal/spatial/final 重建，previous key 只用于 temporal history rejection。
+        RestirSurfaceKeyTarget {
+            a: self.surface_a.target(frame_label),
+            b: self.surface_b.target(frame_label),
+            c: self.surface_c.target(frame_label),
+        }
+    }
+
+    fn for_each_set(&self, mut visit: impl FnMut(&PerFrameImageSet)) {
+        visit(&self.initial_a);
+        visit(&self.initial_b);
+        visit(&self.initial_c);
+        visit(&self.initial_d);
+        visit(&self.temporal_a);
+        visit(&self.temporal_b);
+        visit(&self.temporal_c);
+        visit(&self.temporal_d);
+        visit(&self.final_a);
+        visit(&self.final_b);
+        visit(&self.final_c);
+        visit(&self.final_d);
+        visit(&self.surface_a);
+        visit(&self.surface_b);
+        visit(&self.surface_c);
+    }
+}
+
+impl Drop for RestirDiTargets {
+    fn drop(&mut self) {
+        self.for_each_set(|set| debug_assert!(set.images.iter().all(|img| img.is_null())));
+    }
+}
+
 /// DLSS SR 所需的低分辨率输入辅助图像。
 ///
 /// depth 与 motion vector 都由 raygen 在 render extent 下写入；ImGui 可通过 SRV

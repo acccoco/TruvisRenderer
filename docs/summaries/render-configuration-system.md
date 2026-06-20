@@ -95,6 +95,7 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 | `sky_brightness: f32` | sky radiance 倍率，同时作用于可见 sky miss 和 HDRI 直接光候选 |
 | `emissive_nee_enabled: bool` | 是否额外启用自发光三角形 NEE，关闭时仍保留直接命中 emissive surface 的旧语义 |
 | `analytic_nee_enabled: bool` | 是否额外启用 point / spot / area analytic light NEE，关闭时不影响 HDRI / emissive NEE |
+| `restir_di_mode: RtRestirDiMode` | primary visible surface direct lighting 的 ReSTIR DI 模式 |
 | `tone_mapping: SdrToneMappingSettings` | SDR 输出路径使用的手动曝光和 ACES fitted tone mapping 参数 |
 
 RT debug channel 与 tone mapping 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hello Triangle / ShaderToy 只显示 DLSS SR mode，不暴露 RT 调试或 tone mapping 参数。
@@ -116,6 +117,11 @@ class 纳入候选来源，但直接命中 emissive surface 的 hit emission 仍
 `analytic_nee_enabled` 是 RT 主流程的 pass-local 调试开关，默认开启。关闭时统一 NEE 不会把 point / spot / area
 analytic class 纳入候选来源；该选项不改变 `SceneManager` / `GpuScene` 的 light buffer 同步，也不改变 DLSS、
 GBuffer 或 runtime-owned temporal state。
+
+`restir_di_mode` 是 RT pipeline 自有的 primary direct lighting 模式，支持 `Off / InitialOnly / Temporal / TemporalSpatial`。
+默认值仍为 `Off`；`TRUVIS_RESTIR_DI_MODE` 只在启动时读取一次，用于复现实验配置，运行中仍由 overlay 直接修改
+`RtPipelineSettings`。该选项只管理 RT pipeline 自有的 reservoir / surface key temporal resources，不进入
+`DlssOptions`、`DlssSrState` 或 Streamline resource state。
 
 `SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道。当前使用实时渲染常用的 ACES fitted approximation，并提供 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display transform，也不做自动曝光或参数持久化。DLSS SR 的 manual exposure 由固定 1x1 `dlss-sr-exposure` 输入提供，当前不跟随这里的 `Exposure EV`。
 

@@ -102,6 +102,53 @@ enumed_map!(ShaderGroups<GfxShaderGroupInfo>: {
     },
 });
 
+/// RenderGraph 中的 ReSTIR DI reservoir image handles。
+#[derive(Clone, Copy)]
+pub struct RestirReservoirRgImages {
+    pub a: RgImageHandle,
+    pub b: RgImageHandle,
+    pub c: RgImageHandle,
+    pub d: RgImageHandle,
+}
+
+/// RenderGraph 中的 ReSTIR DI primary surface key image handles。
+#[derive(Clone, Copy)]
+pub struct RestirSurfaceKeyRgImages {
+    pub a: RgImageHandle,
+    pub b: RgImageHandle,
+    pub c: RgImageHandle,
+}
+
+/// ReSTIR DI reservoir pass image handles。
+///
+/// app-kit 负责资源生命周期；render-pass crate 只关心当前 descriptor 绑定需要的
+/// Vulkan image/view handle，避免把 app 层 target owner 类型反向暴露到 pass 实现里。
+#[derive(Clone, Copy)]
+pub struct RestirReservoirPassImages {
+    pub a: GfxImageHandle,
+    pub a_view: GfxImageViewHandle,
+    pub b: GfxImageHandle,
+    pub b_view: GfxImageViewHandle,
+    pub c: GfxImageHandle,
+    pub c_view: GfxImageViewHandle,
+    pub d: GfxImageHandle,
+    pub d_view: GfxImageViewHandle,
+}
+
+/// ReSTIR DI primary surface key pass image handles。
+///
+/// 这三张图像在 pass 内按 current/history 分别绑定。它们保存 ReSTIR 自己的 primary
+/// surface 签名，不能被 DLSS/RR GBuffer 替代。
+#[derive(Clone, Copy)]
+pub struct RestirSurfaceKeyPassImages {
+    pub a: GfxImageHandle,
+    pub a_view: GfxImageViewHandle,
+    pub b: GfxImageHandle,
+    pub b_view: GfxImageViewHandle,
+    pub c: GfxImageHandle,
+    pub c_view: GfxImageViewHandle,
+}
+
 /// 传入 pass 的数据
 pub struct RealtimeRtPassData {
     /// 单帧 RT 输出图像
@@ -118,6 +165,19 @@ pub struct RealtimeRtPassData {
     pub emissive_nee_enabled: bool,
     /// 是否启用 analytic light NEE。
     pub analytic_nee_enabled: bool,
+    /// Primary ReSTIR DI shader 模式。
+    pub restir_di_mode: u32,
+    /// 当前 previous frame label 的 temporal reservoir / surface key 是否可参与 temporal reuse。
+    /// 该标志只表达 CPU 侧 frame/reset/mode 连续性；scene light 版本仍由 shader metadata 拒绝。
+    pub restir_history_valid: bool,
+
+    // ========== ReSTIR DI 数据 ==========
+    pub restir_initial: RestirReservoirPassImages,
+    pub restir_temporal: RestirReservoirPassImages,
+    pub restir_final: RestirReservoirPassImages,
+    pub restir_history: RestirReservoirPassImages,
+    pub restir_surface: RestirSurfaceKeyPassImages,
+    pub restir_history_surface: RestirSurfaceKeyPassImages,
 
     // ========== GBuffer 数据 ==========
     /// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness
@@ -218,6 +278,132 @@ struct RealtimeRtDescriptorBinding {
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
     _dlss_rr_specular_motion_vectors: (),
+
+    /// ReSTIR DI initial reservoir。
+    #[binding = 10]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_initial_a: (),
+    #[binding = 11]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_initial_b: (),
+    #[binding = 12]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_initial_c: (),
+    #[binding = 13]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_initial_d: (),
+
+    /// ReSTIR DI temporal reservoir。
+    #[binding = 14]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_temporal_a: (),
+    #[binding = 15]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_temporal_b: (),
+    #[binding = 16]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_temporal_c: (),
+    #[binding = 17]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_temporal_d: (),
+
+    /// ReSTIR DI final reservoir。它只服务当前帧 spatial/final shade，不作为下一帧 temporal history。
+    #[binding = 18]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_final_a: (),
+    #[binding = 19]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_final_b: (),
+    #[binding = 20]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_final_c: (),
+    #[binding = 21]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_final_d: (),
+
+    /// Previous frame ReSTIR DI temporal history reservoir。
+    ///
+    /// 绑定顺序必须与 shader API 保持一致；Rust 侧故意绑定上一帧 temporal reservoir，
+    /// 避免 spatial final 的邻域样本跨帧反馈到 temporal reuse。
+    #[binding = 22]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_history_a: (),
+    #[binding = 23]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_history_b: (),
+    #[binding = 24]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_history_c: (),
+    #[binding = 25]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_history_d: (),
+
+    /// Current / previous primary surface key。
+    ///
+    /// current key 由 path phase 写入并被 temporal/spatial/final 读取；previous key
+    /// 只参与 temporal surface rejection，不参与 DLSS/RR history。
+    #[binding = 26]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_surface_a: (),
+    #[binding = 27]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_surface_b: (),
+    #[binding = 28]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_surface_c: (),
+    #[binding = 29]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_history_surface_a: (),
+    #[binding = 30]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_history_surface_b: (),
+    #[binding = 31]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_history_surface_c: (),
 }
 
 pub struct RealtimeRtPass {
@@ -346,34 +532,115 @@ impl RealtimeRtPass {
         cmd: &GfxCommandBuffer,
         pass_data: RealtimeRtPassData,
     ) {
+        const RESTIR_DI_MODE_OFF: u32 = 0;
+        const RESTIR_DI_MODE_INITIAL_ONLY: u32 = 1;
+        const RESTIR_DI_MODE_TEMPORAL_SPATIAL: u32 = 3;
+        const RESTIR_DI_PHASE_PATH: u32 = 0;
+        const RESTIR_DI_PHASE_TEMPORAL: u32 = 1;
+        const RESTIR_DI_PHASE_SPATIAL: u32 = 2;
+        const RESTIR_DI_PHASE_FINAL: u32 = 3;
+
         let frame_label = record_ctx.frame_timing.frame_label();
         let Some(tlas) = render_scene.tlas_handle(frame_label) else {
             log::trace!("RealtimeRtPass: skip ray tracing because TLAS is not ready for {}", frame_label);
             return;
         };
 
+        let image = |handle: GfxImageHandle| {
+            record_ctx.gfx_resource_manager.get_image(handle).expect("RealtimeRtPass: image handle not found").handle()
+        };
+        let image_view = |handle: GfxImageViewHandle| {
+            record_ctx
+                .gfx_resource_manager
+                .get_image_view(handle)
+                .expect("RealtimeRtPass: image view handle not found")
+                .handle()
+        };
+
         let _rt_handle = record_ctx.shader_bindings.get_shader_uav_handle(pass_data.single_frame_output_view);
-        let rt_image = record_ctx.gfx_resource_manager.get_image(pass_data.single_frame_output).unwrap().handle();
-        let rt_image_view =
-            record_ctx.gfx_resource_manager.get_image_view(pass_data.single_frame_output_view).unwrap().handle();
+        let rt_image_view = image_view(pass_data.single_frame_output_view);
 
         // 获取 GBuffer 与 DLSS input image views。它们都由 raygen 以 storage image 写入当前 render extent。
-        let gbuffer_a_view = record_ctx.gfx_resource_manager.get_image_view(pass_data.gbuffer_a_view).unwrap().handle();
-        let gbuffer_b_view = record_ctx.gfx_resource_manager.get_image_view(pass_data.gbuffer_b_view).unwrap().handle();
-        let gbuffer_c_view = record_ctx.gfx_resource_manager.get_image_view(pass_data.gbuffer_c_view).unwrap().handle();
-        let depth_view = record_ctx.gfx_resource_manager.get_image_view(pass_data.depth_view).unwrap().handle();
-        let motion_vectors_view =
-            record_ctx.gfx_resource_manager.get_image_view(pass_data.motion_vectors_view).unwrap().handle();
-        let rr_diffuse_albedo_view =
-            record_ctx.gfx_resource_manager.get_image_view(pass_data.rr_diffuse_albedo_view).unwrap().handle();
-        let rr_specular_albedo_view =
-            record_ctx.gfx_resource_manager.get_image_view(pass_data.rr_specular_albedo_view).unwrap().handle();
-        let rr_specular_motion_vectors_view =
-            record_ctx.gfx_resource_manager.get_image_view(pass_data.rr_specular_motion_vectors_view).unwrap().handle();
+        let gbuffer_a_view = image_view(pass_data.gbuffer_a_view);
+        let gbuffer_b_view = image_view(pass_data.gbuffer_b_view);
+        let gbuffer_c_view = image_view(pass_data.gbuffer_c_view);
+        let depth_view = image_view(pass_data.depth_view);
+        let motion_vectors_view = image_view(pass_data.motion_vectors_view);
+        let rr_diffuse_albedo_view = image_view(pass_data.rr_diffuse_albedo_view);
+        let rr_specular_albedo_view = image_view(pass_data.rr_specular_albedo_view);
+        let rr_specular_motion_vectors_view = image_view(pass_data.rr_specular_motion_vectors_view);
+
+        // ReSTIR DI 资源通过 pass-local push descriptor 绑定，顺序必须与
+        // `api/pass/realtime_rt.slangi` 完全一致。这里显式展开 A/B/C/D，避免把
+        // reservoir pack 的 uint/float 图像顺序藏进动态数组导致 ABI 难以审查。
+        let restir_initial_a_view = image_view(pass_data.restir_initial.a_view);
+        let restir_initial_b_view = image_view(pass_data.restir_initial.b_view);
+        let restir_initial_c_view = image_view(pass_data.restir_initial.c_view);
+        let restir_initial_d_view = image_view(pass_data.restir_initial.d_view);
+        let restir_temporal_a_view = image_view(pass_data.restir_temporal.a_view);
+        let restir_temporal_b_view = image_view(pass_data.restir_temporal.b_view);
+        let restir_temporal_c_view = image_view(pass_data.restir_temporal.c_view);
+        let restir_temporal_d_view = image_view(pass_data.restir_temporal.d_view);
+        let restir_final_a_view = image_view(pass_data.restir_final.a_view);
+        let restir_final_b_view = image_view(pass_data.restir_final.b_view);
+        let restir_final_c_view = image_view(pass_data.restir_final.c_view);
+        let restir_final_d_view = image_view(pass_data.restir_final.d_view);
+        let restir_history_a_view = image_view(pass_data.restir_history.a_view);
+        let restir_history_b_view = image_view(pass_data.restir_history.b_view);
+        let restir_history_c_view = image_view(pass_data.restir_history.c_view);
+        let restir_history_d_view = image_view(pass_data.restir_history.d_view);
+        let restir_surface_a_view = image_view(pass_data.restir_surface.a_view);
+        let restir_surface_b_view = image_view(pass_data.restir_surface.b_view);
+        let restir_surface_c_view = image_view(pass_data.restir_surface.c_view);
+        let restir_history_surface_a_view = image_view(pass_data.restir_history_surface.a_view);
+        let restir_history_surface_b_view = image_view(pass_data.restir_history_surface.b_view);
+        let restir_history_surface_c_view = image_view(pass_data.restir_history_surface.c_view);
+
+        // 同一 command buffer 中连续执行 path/temporal/spatial/final 多个 TraceRays。
+        // 这些图像可能在相邻 phase 间先写后读或读写同图，因此统一纳入 ray-tracing
+        // shader read/write barrier 集合；history 图像虽然只读，加入 barrier 可保持同步模板简单且安全。
+        let phase_images = [
+            pass_data.single_frame_output,
+            pass_data.gbuffer_a,
+            pass_data.gbuffer_b,
+            pass_data.gbuffer_c,
+            pass_data.motion_vectors,
+            pass_data.restir_initial.a,
+            pass_data.restir_initial.b,
+            pass_data.restir_initial.c,
+            pass_data.restir_initial.d,
+            pass_data.restir_temporal.a,
+            pass_data.restir_temporal.b,
+            pass_data.restir_temporal.c,
+            pass_data.restir_temporal.d,
+            pass_data.restir_final.a,
+            pass_data.restir_final.b,
+            pass_data.restir_final.c,
+            pass_data.restir_final.d,
+            pass_data.restir_history.a,
+            pass_data.restir_history.b,
+            pass_data.restir_history.c,
+            pass_data.restir_history.d,
+            pass_data.restir_surface.a,
+            pass_data.restir_surface.b,
+            pass_data.restir_surface.c,
+            pass_data.restir_history_surface.a,
+            pass_data.restir_history_surface.b,
+            pass_data.restir_history_surface.c,
+        ]
+        .into_iter()
+        .map(image)
+        .collect_vec();
 
         cmd.begin_label("Ray trace", glam::vec4(0.0, 1.0, 0.0, 1.0));
 
         cmd.cmd_bind_pipeline(vk::PipelineBindPoint::RAY_TRACING_KHR, self.pipeline.pipeline);
+
+        macro_rules! image_info {
+            ($view:expr) => {
+                vec![vk::DescriptorImageInfo::default().image_layout(vk::ImageLayout::GENERAL).image_view($view)]
+            };
+        }
 
         cmd.push_descriptor_set(
             vk::PipelineBindPoint::RAY_TRACING_KHR,
@@ -384,84 +651,157 @@ impl RealtimeRtPass {
                 RealtimeRtDescriptorBinding::rt_single_frame_output().write_image(
                     vk::DescriptorSet::null(),
                     0,
-                    vec![
-                        vk::DescriptorImageInfo::default()
-                            .image_layout(vk::ImageLayout::GENERAL)
-                            .image_view(rt_image_view),
-                    ],
+                    image_info!(rt_image_view),
                 ),
-                // GBuffer 绑定
                 RealtimeRtDescriptorBinding::gbuffer_a().write_image(
                     vk::DescriptorSet::null(),
                     0,
-                    vec![
-                        vk::DescriptorImageInfo::default()
-                            .image_layout(vk::ImageLayout::GENERAL)
-                            .image_view(gbuffer_a_view),
-                    ],
+                    image_info!(gbuffer_a_view),
                 ),
                 RealtimeRtDescriptorBinding::gbuffer_b().write_image(
                     vk::DescriptorSet::null(),
                     0,
-                    vec![
-                        vk::DescriptorImageInfo::default()
-                            .image_layout(vk::ImageLayout::GENERAL)
-                            .image_view(gbuffer_b_view),
-                    ],
+                    image_info!(gbuffer_b_view),
                 ),
                 RealtimeRtDescriptorBinding::gbuffer_c().write_image(
                     vk::DescriptorSet::null(),
                     0,
-                    vec![
-                        vk::DescriptorImageInfo::default()
-                            .image_layout(vk::ImageLayout::GENERAL)
-                            .image_view(gbuffer_c_view),
-                    ],
+                    image_info!(gbuffer_c_view),
                 ),
                 RealtimeRtDescriptorBinding::dlss_depth().write_image(
                     vk::DescriptorSet::null(),
                     0,
-                    vec![
-                        vk::DescriptorImageInfo::default()
-                            .image_layout(vk::ImageLayout::GENERAL)
-                            .image_view(depth_view),
-                    ],
+                    image_info!(depth_view),
                 ),
                 RealtimeRtDescriptorBinding::dlss_motion_vectors().write_image(
                     vk::DescriptorSet::null(),
                     0,
-                    vec![
-                        vk::DescriptorImageInfo::default()
-                            .image_layout(vk::ImageLayout::GENERAL)
-                            .image_view(motion_vectors_view),
-                    ],
+                    image_info!(motion_vectors_view),
                 ),
                 RealtimeRtDescriptorBinding::dlss_rr_diffuse_albedo().write_image(
                     vk::DescriptorSet::null(),
                     0,
-                    vec![
-                        vk::DescriptorImageInfo::default()
-                            .image_layout(vk::ImageLayout::GENERAL)
-                            .image_view(rr_diffuse_albedo_view),
-                    ],
+                    image_info!(rr_diffuse_albedo_view),
                 ),
                 RealtimeRtDescriptorBinding::dlss_rr_specular_albedo().write_image(
                     vk::DescriptorSet::null(),
                     0,
-                    vec![
-                        vk::DescriptorImageInfo::default()
-                            .image_layout(vk::ImageLayout::GENERAL)
-                            .image_view(rr_specular_albedo_view),
-                    ],
+                    image_info!(rr_specular_albedo_view),
                 ),
                 RealtimeRtDescriptorBinding::dlss_rr_specular_motion_vectors().write_image(
                     vk::DescriptorSet::null(),
                     0,
-                    vec![
-                        vk::DescriptorImageInfo::default()
-                            .image_layout(vk::ImageLayout::GENERAL)
-                            .image_view(rr_specular_motion_vectors_view),
-                    ],
+                    image_info!(rr_specular_motion_vectors_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_initial_a().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_initial_a_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_initial_b().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_initial_b_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_initial_c().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_initial_c_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_initial_d().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_initial_d_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_temporal_a().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_temporal_a_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_temporal_b().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_temporal_b_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_temporal_c().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_temporal_c_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_temporal_d().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_temporal_d_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_final_a().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_final_a_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_final_b().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_final_b_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_final_c().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_final_c_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_final_d().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_final_d_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_history_a().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_history_a_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_history_b().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_history_b_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_history_c().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_history_c_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_history_d().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_history_d_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_surface_a().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_surface_a_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_surface_b().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_surface_b_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_surface_c().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_surface_c_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_history_surface_a().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_history_surface_a_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_history_surface_b().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_history_surface_b_view),
+                ),
+                RealtimeRtDescriptorBinding::restir_history_surface_c().write_image(
+                    vk::DescriptorSet::null(),
+                    0,
+                    image_info!(restir_history_surface_c_view),
                 ),
             ],
         );
@@ -482,18 +822,45 @@ impl RealtimeRtPass {
             sky_brightness: pass_data.sky_brightness,
             emissive_nee_enabled: u32::from(pass_data.emissive_nee_enabled),
             analytic_nee_enabled: u32::from(pass_data.analytic_nee_enabled),
+            restir_di_mode: pass_data.restir_di_mode,
+            restir_di_phase: RESTIR_DI_PHASE_PATH,
+            restir_history_valid: u32::from(pass_data.restir_history_valid),
             _padding_1: 0,
-            _padding_2: 0,
         };
-        for spp_idx in 0..spp {
-            push_constant.spp_idx = spp_idx;
 
-            // 在 spp 之间，需要插入一个 image barrier，确保上一次的写入被下一次读取到
-            if spp_idx != 0 {
-                cmd.image_memory_barrier(
-                    vk::DependencyFlags::empty(),
-                    &[GfxImageBarrier::new()
-                        .image(rt_image)
+        let trace_extent = [
+            pass_data.single_frame_extent.width,
+            pass_data.single_frame_extent.height,
+            1,
+        ];
+        let shader_stages = vk::ShaderStageFlags::RAYGEN_KHR
+            | vk::ShaderStageFlags::MISS_KHR
+            | vk::ShaderStageFlags::ANY_HIT_KHR
+            | vk::ShaderStageFlags::CLOSEST_HIT_KHR;
+
+        let push_and_trace = |push_constant: &gpu::realtime_rt::PushConstants| {
+            cmd.cmd_push_constants(
+                self.pipeline.pipeline_layout,
+                shader_stages,
+                0,
+                BytesConvert::bytes_of(push_constant),
+            );
+
+            cmd.trace_rays(
+                self.sbt.raygen_region(),
+                self.sbt.miss_region(),
+                self.sbt.hit_region(),
+                self.sbt.callable_region(),
+                trace_extent,
+            );
+        };
+
+        let barrier_phase_images = || {
+            let image_barriers = phase_images
+                .iter()
+                .map(|image| {
+                    GfxImageBarrier::new()
+                        .image(*image)
                         .image_aspect_flag(vk::ImageAspectFlags::COLOR)
                         .src_mask(
                             vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR,
@@ -502,31 +869,45 @@ impl RealtimeRtPass {
                         .dst_mask(
                             vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR,
                             vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
-                        )],
-                );
+                        )
+                })
+                .collect_vec();
+
+            cmd.image_memory_barrier(vk::DependencyFlags::empty(), &image_barriers);
+        };
+
+        for spp_idx in 0..spp {
+            push_constant.spp_idx = spp_idx;
+            push_constant.restir_di_phase = RESTIR_DI_PHASE_PATH;
+
+            // 在 spp 之间，需要插入一个 image barrier，确保上一次的写入被下一次读取到。
+            if spp_idx != 0 {
+                barrier_phase_images();
             }
 
-            cmd.cmd_push_constants(
-                self.pipeline.pipeline_layout,
-                vk::ShaderStageFlags::RAYGEN_KHR
-                    | vk::ShaderStageFlags::MISS_KHR
-                    | vk::ShaderStageFlags::ANY_HIT_KHR
-                    | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
-                0,
-                BytesConvert::bytes_of(&push_constant),
-            );
+            push_and_trace(&push_constant);
 
-            cmd.trace_rays(
-                self.sbt.raygen_region(),
-                self.sbt.miss_region(),
-                self.sbt.hit_region(),
-                self.sbt.callable_region(),
-                [
-                    pass_data.single_frame_extent.width,
-                    pass_data.single_frame_extent.height,
-                    1,
-                ],
-            );
+            if pass_data.restir_di_mode == RESTIR_DI_MODE_OFF {
+                continue;
+            }
+
+            // ReSTIR DI 的 path phase 只生成 initial reservoir 和 surface key；temporal/spatial/final
+            // 都依赖这些 storage image 的结果，因此每个 phase 之间必须显式插入 shader barrier。
+            barrier_phase_images();
+            if pass_data.restir_di_mode != RESTIR_DI_MODE_INITIAL_ONLY {
+                push_constant.restir_di_phase = RESTIR_DI_PHASE_TEMPORAL;
+                push_and_trace(&push_constant);
+                barrier_phase_images();
+
+                if pass_data.restir_di_mode == RESTIR_DI_MODE_TEMPORAL_SPATIAL {
+                    push_constant.restir_di_phase = RESTIR_DI_PHASE_SPATIAL;
+                    push_and_trace(&push_constant);
+                    barrier_phase_images();
+                }
+            }
+
+            push_constant.restir_di_phase = RESTIR_DI_PHASE_FINAL;
+            push_and_trace(&push_constant);
         }
 
         cmd.end_label();
@@ -547,6 +928,16 @@ pub struct RealtimeRtRgPass<'a> {
     pub sky_brightness: f32,
     pub emissive_nee_enabled: bool,
     pub analytic_nee_enabled: bool,
+    pub restir_di_mode: u32,
+    pub restir_history_valid: bool,
+
+    // ========== ReSTIR DI 数据 ==========
+    pub restir_initial: RestirReservoirRgImages,
+    pub restir_temporal: RestirReservoirRgImages,
+    pub restir_final: RestirReservoirRgImages,
+    pub restir_history: RestirReservoirRgImages,
+    pub restir_surface: RestirSurfaceKeyRgImages,
+    pub restir_history_surface: RestirSurfaceKeyRgImages,
 
     // ========== GBuffer 数据 ==========
     pub gbuffer_a: RgImageHandle,
@@ -561,16 +952,24 @@ pub struct RealtimeRtRgPass<'a> {
 impl RgPass for RealtimeRtRgPass<'_> {
     fn setup(&mut self, builder: &mut RgPassBuilder) {
         // RT pass 写入单帧输出、GBuffer 和 DLSS SR per-pixel inputs；
-        // 后续 SR/native 分支只读取这些 image，不再接传统 denoise/accum pass。
-        builder.write_image(self.single_frame_image, RgImageState::STORAGE_WRITE_RAY_TRACING);
-        builder.write_image(self.gbuffer_a, RgImageState::STORAGE_WRITE_RAY_TRACING);
-        builder.write_image(self.gbuffer_b, RgImageState::STORAGE_WRITE_RAY_TRACING);
-        builder.write_image(self.gbuffer_c, RgImageState::STORAGE_WRITE_RAY_TRACING);
+        // ReSTIR DI 开启时同一 pass 内的后续 TraceRays phase 会读取 GBuffer/mvec/HDR，
+        // 因此这些图像在 RenderGraph 视角声明为 ray tracing storage read/write。
+        builder.read_write_image(self.single_frame_image, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
+        builder.read_write_image(self.gbuffer_a, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
+        builder.read_write_image(self.gbuffer_b, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
+        builder.read_write_image(self.gbuffer_c, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
         builder.write_image(self.depth, RgImageState::STORAGE_WRITE_RAY_TRACING);
-        builder.write_image(self.motion_vectors, RgImageState::STORAGE_WRITE_RAY_TRACING);
+        builder.read_write_image(self.motion_vectors, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
         builder.write_image(self.rr_diffuse_albedo, RgImageState::STORAGE_WRITE_RAY_TRACING);
         builder.write_image(self.rr_specular_albedo, RgImageState::STORAGE_WRITE_RAY_TRACING);
         builder.write_image(self.rr_specular_motion_vectors, RgImageState::STORAGE_WRITE_RAY_TRACING);
+
+        setup_reservoir_images(builder, self.restir_initial);
+        setup_reservoir_images(builder, self.restir_temporal);
+        setup_reservoir_images(builder, self.restir_final);
+        setup_reservoir_images(builder, self.restir_history);
+        setup_surface_key_images(builder, self.restir_surface);
+        setup_surface_key_images(builder, self.restir_history_surface);
     }
 
     fn execute(&self, ctx: &RgPassContext<'_>) {
@@ -597,6 +996,14 @@ impl RgPass for RealtimeRtRgPass<'_> {
             .get_image_and_view_handle(self.rr_specular_motion_vectors)
             .expect("RealtimeRtRgPass: rr_specular_motion_vectors not found");
 
+        let restir_initial = reservoir_pass_images(ctx, self.restir_initial, "restir_initial");
+        let restir_temporal = reservoir_pass_images(ctx, self.restir_temporal, "restir_temporal");
+        let restir_final = reservoir_pass_images(ctx, self.restir_final, "restir_final");
+        let restir_history = reservoir_pass_images(ctx, self.restir_history, "restir_history");
+        let restir_surface = surface_key_pass_images(ctx, self.restir_surface, "restir_surface");
+        let restir_history_surface =
+            surface_key_pass_images(ctx, self.restir_history_surface, "restir_history_surface");
+
         self.rt_pass.ray_trace(
             &self.record_ctx,
             self.render_scene,
@@ -610,6 +1017,14 @@ impl RgPass for RealtimeRtRgPass<'_> {
                 sky_brightness: self.sky_brightness,
                 emissive_nee_enabled: self.emissive_nee_enabled,
                 analytic_nee_enabled: self.analytic_nee_enabled,
+                restir_di_mode: self.restir_di_mode,
+                restir_history_valid: self.restir_history_valid,
+                restir_initial,
+                restir_temporal,
+                restir_final,
+                restir_history,
+                restir_surface,
+                restir_history_surface,
                 gbuffer_a,
                 gbuffer_a_view,
                 gbuffer_b,
@@ -628,5 +1043,66 @@ impl RgPass for RealtimeRtRgPass<'_> {
                 rr_specular_motion_vectors_view,
             },
         );
+    }
+}
+
+fn setup_reservoir_images(builder: &mut RgPassBuilder, images: RestirReservoirRgImages) {
+    builder.read_write_image(images.a, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
+    builder.read_write_image(images.b, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
+    builder.read_write_image(images.c, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
+    builder.read_write_image(images.d, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
+}
+
+fn setup_surface_key_images(builder: &mut RgPassBuilder, images: RestirSurfaceKeyRgImages) {
+    builder.read_write_image(images.a, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
+    builder.read_write_image(images.b, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
+    builder.read_write_image(images.c, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
+}
+
+fn reservoir_pass_images(
+    ctx: &RgPassContext<'_>,
+    images: RestirReservoirRgImages,
+    label: &str,
+) -> RestirReservoirPassImages {
+    let (a, a_view) =
+        ctx.get_image_and_view_handle(images.a).unwrap_or_else(|| panic!("RealtimeRtRgPass: {label}.a not found"));
+    let (b, b_view) =
+        ctx.get_image_and_view_handle(images.b).unwrap_or_else(|| panic!("RealtimeRtRgPass: {label}.b not found"));
+    let (c, c_view) =
+        ctx.get_image_and_view_handle(images.c).unwrap_or_else(|| panic!("RealtimeRtRgPass: {label}.c not found"));
+    let (d, d_view) =
+        ctx.get_image_and_view_handle(images.d).unwrap_or_else(|| panic!("RealtimeRtRgPass: {label}.d not found"));
+
+    RestirReservoirPassImages {
+        a,
+        a_view,
+        b,
+        b_view,
+        c,
+        c_view,
+        d,
+        d_view,
+    }
+}
+
+fn surface_key_pass_images(
+    ctx: &RgPassContext<'_>,
+    images: RestirSurfaceKeyRgImages,
+    label: &str,
+) -> RestirSurfaceKeyPassImages {
+    let (a, a_view) =
+        ctx.get_image_and_view_handle(images.a).unwrap_or_else(|| panic!("RealtimeRtRgPass: {label}.a not found"));
+    let (b, b_view) =
+        ctx.get_image_and_view_handle(images.b).unwrap_or_else(|| panic!("RealtimeRtRgPass: {label}.b not found"));
+    let (c, c_view) =
+        ctx.get_image_and_view_handle(images.c).unwrap_or_else(|| panic!("RealtimeRtRgPass: {label}.c not found"));
+
+    RestirSurfaceKeyPassImages {
+        a,
+        a_view,
+        b,
+        b_view,
+        c,
+        c_view,
     }
 }

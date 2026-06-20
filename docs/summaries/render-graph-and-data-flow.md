@@ -114,13 +114,25 @@ transform / active set、material emissive / base color 参数变化会刷新 ta
 
 analytic point / spot / area light 由 `SceneManager` 保存 CPU 语义记录，`InstanceBridge::prepare_render_data`
 把三类 light 快照写入 `RenderData`，`GpuScene::upload_render_data` 分别上传 point / spot / area structured buffer
-并在 scene root 中写入 device address 与 count。`RtPipelineSettings.analytic_nee_enabled` 开启且 light 数量非 0
+并在 scene root 中写入 device address、count 与 `analytic_light_version`。`RtPipelineSettings.analytic_nee_enabled` 开启且 light 数量非 0
 时，统一入口才会把 analytic class 纳入候选来源；`NeeAnalytic` debug channel 只显示统一 NEE 中抽到 analytic
 class 的贡献。更细的
 sphere emitter、spot cone、area 单面 PDF 和 MIS 边界见 [`analytic-light-sampling.md`](analytic-light-sampling.md)。
 
+Primary ReSTIR DI 是 RT pipeline 自有的 temporal lighting 资源，不属于 DLSS state，也不注册到全局 bindless SRV/UAV 表。`RestirDiTargets` 按
+`render_extent` 创建 initial、temporal、final reservoir 和 primary surface key 图像，每个 target 都按 FIF frame label
+轮转。RenderGraph 在 ray-tracing pass 中同时导入当前 frame label 的 ReSTIR targets，以及 previous frame label 的
+temporal reservoir / surface key 作为 history；首帧、DLSS reset 或 ReSTIR mode 变化时 CPU 侧传入 `restir_history_valid=false`，
+shader 仍会绑定 history image，但不会参与 temporal reuse。
+
+ray-tracing pass 复用同一条 RT pipeline 连续执行多次 `TraceRays` phase：path phase 写 HDR/GBuffer/DLSS 输入和 initial
+reservoir；temporal phase 读 previous temporal history 与 motion vectors 后写 temporal reservoir；spatial phase 只在
+`TemporalSpatial` 模式写 final reservoir，且 spatial final 不回灌下一帧 temporal history；temporal/spatial/final 都会把 reservoir 中的 light sample identity 在当前 primary
+surface 上重建为候选，并用当前 surface visibility 重新计算 target；final shade 仍再次 trace visibility。current surface 来自 ReSTIR 自有 RGBA32F surface key，三张图像分别保存 position/depth、normal/roughness 和 base color/metallic；只有会被 ReSTIR 替换 primary direct NEE 的非 emissive、非 delta primary surface 才写有效 key；GBufferA/B/C 仍服务 RR/SR，不作为 ReSTIR shadow ray 的高精度起点或 target 材质签名。pass 内部在 phase 之间插入 ray-tracing shader image barrier，覆盖 HDR、GBuffer、
+motion vectors 和 ReSTIR targets，避免单个 raygen dispatch 内跨像素读写。
+
 DLSS SR/RR 仍只读取 RT 输出的 HDR、GBuffer、depth、motion vectors 和固定 manual exposure，不参与 light
-candidate、reservoir 或 radiance cache 状态。SR 会显式 tag 1x1 `dlss-sr-exposure`，避免缺少
+candidate、ReSTIR reservoir 或 radiance cache 状态。SR 会显式 tag 1x1 `dlss-sr-exposure`，避免缺少
 `kBufferTypeExposure` 时 Streamline 退回 AutoExposure；SDR `Exposure EV` 仍只作用于 DLSS 之后的 tone mapping。
 
 ## 与生命周期的关系

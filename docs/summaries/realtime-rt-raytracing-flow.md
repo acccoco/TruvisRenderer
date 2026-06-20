@@ -1,7 +1,7 @@
 # Realtime RT Ray Tracing 采样流程
 
 > 状态：当前实现事实总结。本文说明 realtime RT 主路径中 raygen / path tracing 的运行顺序、NEE、
-> HDRI、自发光三角形、analytic light、MIS、多 bounce 和当前未接入的 reservoir / cache 边界。
+> HDRI、自发光三角形、analytic light、MIS、多 bounce、primary ReSTIR DI 和当前未接入的 cache 边界。
 
 ## 职责边界
 
@@ -12,6 +12,7 @@ realtime RT 的 path 积分状态集中在 raygen 侧推进。closest-hit 和 mi
 
 - `engine/shader/entry/realtime_rt/raygen.slang`：每像素初始化、path loop、`TraceRay` 顺序和最终输出。
 - `engine/shader/lib/realtime_rt/raygen_direct_lighting.slangi`：统一 Light Candidate System、visibility 和 shade。
+- `engine/shader/lib/realtime_rt/restir_di.slangi`：primary ReSTIR DI reservoir 打包、temporal/spatial reuse 和 final shade。
 - `engine/shader/lib/realtime_rt/raygen_material.slangi`：BRDF / delta 材质采样和 BRDF PDF。
 - `engine/shader/lib/realtime_rt/raygen_path_state.slangi`：radiance、throughput、上一段 BRDF PDF、Russian roulette。
 
@@ -44,8 +45,7 @@ surface-only debug channel 会在每次 `TraceRay` 返回后先尝试早退。no
    `add_sky_miss` 累加贡献并终止路径。
 2. **Primary output**：如果这是第一次 hit/miss，写出 GBuffer / DLSS 输入。
 3. **Hit emissive surface**：调用 `add_emissive` 累加 hit emission 并终止路径。
-4. **普通 surface 的统一 NEE**：非 delta surface 先在启用的 light class 中均匀选择 HDRI、emissive triangle
-   或 analytic light，再生成一个 `RtLightCandidate`，trace shadow ray，通过后 shade。
+4. **普通 surface 的直接光**：Off 模式下所有非 delta surface 继续走统一 NEE；ReSTIR DI 开启时，只有 primary visible surface 生成 initial reservoir 并跳过普通 primary NEE，secondary bounce 仍走统一 NEE。
 5. **BRDF / 材质采样**：采样下一跳方向和 throughput，记录本次 `brdf_pdf` 供后续 sky/emissive hit MIS 使用。
 6. **Russian roulette**：depth 小于 3 时保留完整路径；depth >= 3 时按 throughput 最大通道决定是否继续。
 7. **继续下一跳**：用材质采样返回的 origin / direction 更新 ray。
@@ -93,6 +93,33 @@ contribution =
 candidate 的 `solid_angle_pdf`，因此对外使用的是 `P(class) * P(sample | class)`。BRDF sky miss 和 emissive
 hit 的反向 MIS 查询也使用同一套统一策略 PDF，避免 NEE 侧与 BRDF 侧概率不闭合。
 
+## Primary ReSTIR DI
+
+Primary ReSTIR DI 只服务 camera primary 第一次可见 surface 的直接光；secondary bounce 继续走普通统一 NEE。
+CPU 侧 `RtPipelineSettings.restir_di_mode` 暴露 `Off / InitialOnly / Temporal / TemporalSpatial` 四档，默认 `Off`。
+shader 侧通过 `push_const.restir_di_mode` 和 `push_const.restir_di_phase` 复用同一条 RT pipeline 分阶段执行：
+
+1. **Path phase**：raygen 写 primary GBuffer、DLSS motion vectors、ReSTIR surface key 和 initial reservoir；initial reservoir 从统一 Light Candidate System 抽取 8 个独立 proposal 后压缩成单个 reservoir，非 primary path 仍照常积分。surface key 只在 primary hit 是非 emissive、非 delta、且会由 ReSTIR 替换 direct NEE 的表面上有效。
+2. **Temporal phase**：读取 current initial、current surface key、motion vectors、previous temporal reservoir 和 previous surface key，做版本、depth、position、normal、roughness、base color 与 metallic rejection 后合并；current surface key 无效时直接输出 empty reservoir。history 的 `M` 按有效候选上限裁剪，并同步缩放候选权重，避免相关历史把 reservoir 计数无界放大。
+3. **Spatial phase**：`TemporalSpatial` 模式读取 3x3 邻域 temporal reservoir，按 current surface 重新计算 target 并合并；非 spatial 模式不运行该 phase。
+4. **Final phase**：读取最终 reservoir，用 ReSTIR surface key 的 RGBA32F position/normal/roughness/base color/metallic 重建 primary surface，重新 trace visibility 和当前 target，再把 primary direct contribution 合入 HDR。spatial final 只服务当前帧出图，不作为下一帧 temporal history，避免空间邻域跨帧反馈。
+
+reservoir 使用四张 image 打包 light sample identity、样本参数、target、weight sum、M、source age、valid 和版本元数据。
+A/D 为 `R32G32B32A32_UINT`，保存 candidate kind、light index、class mask、valid 以及 sky/emissive/analytic version；B/C 为
+`R32G32B32A32_SFLOAT`，保存 HDRI 方向、emissive barycentric、analytic light 局部样本参数和权重统计。
+current/previous primary surface key 使用三张 RGBA32F image 保存 position/depth、normal/roughness 与 base color/metallic，同时作为 ReSTIR eligibility 标记；miss、emissive primary、specular/transparent delta primary 都写 invalid key。temporal/spatial/final 的 surface 重建使用该高精度 key，避免把 RR/SR 输入用的压缩 GBuffer 当作 ReSTIR visibility 起点或 target 材质签名。所有这些资源属于
+RT pipeline 自有 target，按 `render_extent` 和 FIF frame label 轮转，不进入 DLSS state，也不读取 DLSS output。
+
+initial reservoir 复用统一 Light Candidate System 的 solid-angle PDF 契约。当前 path phase 抽取 8 个 proposal；`M` 记录 proposal 总数，被遮挡或背面的零 target 候选也计入同一次 RIS 估计。ReSTIR target 评估使用当前 surface 可见的 light radiance、BRDF*cos 和 MIS 的 RGB 最大通道，
+不除以 proposal PDF；reservoir shade weight 负责恢复 `1/pdf`，因此 `InitialOnly` 的单样本估计与旧 unified NEE 的能量契约一致。temporal/spatial 在合并历史或邻域 reservoir 前也会对重建候选做当前 surface visibility，避免不可见高能候选占据 reservoir；final shade 仍重新 trace shadow ray，不复用历史 visibility。
+temporal/spatial reuse 不再复用旧 shading point 的 direction/distance；shader 会把 reservoir key 在当前 surface 上重建为新的
+`RtLightCandidate`，重新计算有限光源的方向、距离、radiance、solid-angle PDF 和 shadow ray。analytic light v1 仍使用 `MIS = 1`。
+
+history 可用性由 CPU 侧 mode/reset/frame 与 shader 侧版本共同控制；reservoir 内保存 sky distribution、emissive table 和 analytic light
+version。resize、DLSS reset、mode 变化、sky/emissive/analytic light 变化或 light class mask 变化都会让旧 reservoir 无法参与复用。
+
+新增 ReSTIR debug channel：`RestirInitialWeight`、`RestirTemporalValid`、`RestirFinalContribution`。既有 `NeeHdri`、`NeeEmissive`、
+`NeeAnalytic` 仍表示普通统一 NEE 的观测语义，不把 ReSTIR final shade 反向计入这些通道。
 ## HDRI / Sky 采样
 
 HDRI 和 sky 的采样与 PDF 查询统一走 `EnvMap::sample` / `EnvMap::pdf`。
@@ -201,8 +228,8 @@ analytic light v1 不创建可命中的发光几何，因此 analytic NEE 固定
 
 ## Debug 与当前边界
 
-当前 RT debug channel 中，`NeeHdri` 只显示统一 NEE 中抽到 HDRI class 的直接光，`NeeEmissive` 只显示抽到
-emissive triangle class 的直接光，`NeeAnalytic` 只显示抽到 point / spot / area analytic class 的直接光。
+当前 RT debug channel 中，`NeeHdri` 只显示普通统一 NEE 中抽到 HDRI class 的直接光，`NeeEmissive` 只显示普通统一 NEE 抽到
+emissive triangle class 的直接光，`NeeAnalytic` 只显示普通统一 NEE 抽到 point / spot / area analytic class 的直接光。
 `Emission` 显示 hit emissive contribution，`BrdfHdri` 显示 sky miss / HDRI contribution，`NeeBounce0` 和
 `NeeBounce1` 分别累加 depth 0 与 depth 1 的所有 NEE 贡献。
 
@@ -210,6 +237,6 @@ emissive triangle class 的直接光，`NeeAnalytic` 只显示抽到 point / spo
 
 - 统一 Light Candidate System v1 使用启用 class 均匀选择，尚未引入 power-weighted light-class PMF。
 - analytic light v1 仍没有 BRDF-hit 竞争估计器，因此 analytic NEE 使用固定 `MIS = 1`。
-- ReSTIR DI、reservoir、SHARC / world-space radiance cache 尚未接入主路径。
+- ReSTIR DI v1 只覆盖 primary direct lighting；secondary ReSTIR DI、ReSTIR GI/PT 和 SHARC / world-space radiance cache 尚未接入主路径。
 - DLSS SR/RR 只消费 raygen 输出的 HDR、GBuffer、depth、motion vectors 和 RR 输入，不参与 light sampling、MIS、
-  reservoir 或 radiance cache 状态。
+  ReSTIR reservoir 或 radiance cache 状态。

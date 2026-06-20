@@ -22,6 +22,9 @@ pub(crate) struct EmissiveLightBinding {
     pub(crate) alias_count: u32,
     pub(crate) enabled: u32,
     pub(crate) version: u32,
+    /// triangle_lights 的实际 record 数量。alias_count 只描述可被 NEE 抽样的 entry 数；
+    /// ReSTIR history 重建旧 emissive key 时需要用 record_count 做直接索引越界保护。
+    pub(crate) record_count: u32,
 }
 
 /// 单个 FIF frame label 使用的一组自发光 light table buffer。
@@ -149,7 +152,7 @@ impl EmissiveLightFrameBuffers {
         );
     }
 
-    fn binding(&self, alias_count: u32, enabled: u32, version: u32) -> EmissiveLightBinding {
+    fn binding(&self, alias_count: u32, enabled: u32, version: u32, record_count: u32) -> EmissiveLightBinding {
         EmissiveLightBinding {
             triangle_lights_device_address: self.triangle_lights.device_address(),
             alias_table_device_address: self.alias_table.device_address(),
@@ -157,6 +160,7 @@ impl EmissiveLightFrameBuffers {
             alias_count,
             enabled,
             version,
+            record_count,
         }
     }
 
@@ -248,7 +252,11 @@ impl EmissiveLightTable {
         frame.upload(resource_ctx, cmd, barrier_mask, &self.triangle_lights, &self.alias_table, &self.base_map);
 
         let alias_count = u32::try_from(self.alias_table.len()).expect("emissive alias table exceeds u32 range");
-        frame.binding(alias_count, u32::from(alias_count > 0), self.version)
+        // record_count 与 alias_count 语义不同：alias table 可能只包含正 power 的可采样记录，
+        // 但 ReSTIR key 保存的是 triangle_lights record index，重建时必须按完整 record buffer 判界。
+        let record_count =
+            u32::try_from(self.triangle_lights.len()).expect("emissive triangle record count exceeds u32 range");
+        frame.binding(alias_count, u32::from(alias_count > 0), self.version, record_count)
     }
 
     pub(crate) fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>) {

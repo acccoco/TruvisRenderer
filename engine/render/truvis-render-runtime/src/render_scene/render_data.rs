@@ -89,6 +89,11 @@ pub(crate) struct RenderData<'a> {
     pub(crate) all_spot_lights: Vec<gpu::light::SpotLight>,
     /// 当前 CPU scene 中的矩形单面 area light 快照，按 SceneManager 迭代顺序上传。
     pub(crate) all_area_lights: Vec<gpu::light::AreaLight>,
+    /// point/spot/area light 快照的语义版本，写入 GPU scene 供 ReSTIR history 拒绝。
+    ///
+    /// 它不参与 light PDF、power 或采样概率计算；只表示 reservoir 中保存的 analytic
+    /// light identity 是否仍能在当前 GPU buffer 中按相同语义重建。
+    pub(crate) analytic_light_version: u32,
 
     /// 每个 mesh 在 geometry buffer 中的起始索引，长度与 `all_meshes` 相同。
     pub(crate) mesh_geometry_start_indices: Vec<usize>,
@@ -102,6 +107,7 @@ impl<'a> RenderData<'a> {
             all_point_lights: Vec::new(),
             all_spot_lights: Vec::new(),
             all_area_lights: Vec::new(),
+            analytic_light_version: 0,
             mesh_geometry_start_indices: Vec::new(),
         }
     }
