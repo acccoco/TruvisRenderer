@@ -17,6 +17,7 @@ use app_kit::gui_plugin::GuiPlugin;
 use app_kit::input_state::InputManager;
 use app_kit::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
 use app_kit::render_pipeline::RenderMode;
+use app_kit::render_pipeline::common_settings::PathTracingCommonSettings;
 use app_kit::render_pipeline::offline_render_graph::OfflinePipeline;
 use app_kit::render_pipeline::rt_render_graph::RtPipeline;
 
@@ -25,6 +26,7 @@ pub struct TruvisApp {
     gui: GuiPlugin,
     rt_pipeline: RtPipeline,
     offline_pipeline: OfflinePipeline,
+    path_tracing_common_settings: PathTracingCommonSettings,
     render_mode: RenderMode,
     camera_controller: CameraController,
     input: InputManager,
@@ -578,6 +580,7 @@ impl RenderAppHooks for TruvisApp {
                 ui,
                 &mut self.render_mode,
                 ctx.dlss_options,
+                Some(&mut self.path_tracing_common_settings),
                 Some(self.rt_pipeline.settings_mut()),
                 Some(self.offline_pipeline.settings_mut()),
                 Some(offline_sample_count),
@@ -629,6 +632,7 @@ impl RenderAppHooks for TruvisApp {
         self.offline_pipeline.update_accum_signature(
             self.camera_controller.camera().render_view().accum_signature(),
             ctx.render_scene.accum_signature(frame_label),
+            &self.path_tracing_common_settings,
         );
 
         self.gui.begin_debug_image_frame();
@@ -648,7 +652,7 @@ impl RenderAppHooks for TruvisApp {
         let compute_submit = match self.render_mode {
             RenderMode::Realtime => {
                 let mut graph = RenderGraphBuilder::new();
-                self.rt_pipeline.contribute_compute_passes(&mut graph, &plugin_ctx);
+                self.rt_pipeline.contribute_compute_passes(&mut graph, &plugin_ctx, &self.path_tracing_common_settings);
                 let compiled_graph = graph.compile();
                 if log::log_enabled!(log::Level::Debug) {
                     static PRINT_RT_COMPUTE_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
@@ -665,7 +669,11 @@ impl RenderAppHooks for TruvisApp {
             }
             RenderMode::Offline => {
                 let mut graph = RenderGraphBuilder::new();
-                self.offline_pipeline.contribute_compute_passes(&mut graph, &plugin_ctx);
+                self.offline_pipeline.contribute_compute_passes(
+                    &mut graph,
+                    &plugin_ctx,
+                    &self.path_tracing_common_settings,
+                );
                 let compiled_graph = graph.compile();
                 if log::log_enabled!(log::Level::Debug) {
                     static PRINT_OFFLINE_COMPUTE_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
@@ -692,7 +700,11 @@ impl RenderAppHooks for TruvisApp {
                     ash::vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
                     frame_id,
                 ));
-                let present_targets = self.rt_pipeline.contribute_present_passes(&mut graph, &plugin_ctx);
+                let present_targets = self.rt_pipeline.contribute_present_passes(
+                    &mut graph,
+                    &plugin_ctx,
+                    &self.path_tracing_common_settings,
+                );
                 let debug_graph_entries = present_targets.debug_graph_entries();
                 self.gui.contribute_passes(
                     &mut graph,
@@ -723,7 +735,11 @@ impl RenderAppHooks for TruvisApp {
                     ash::vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
                     frame_id,
                 ));
-                let present_targets = self.offline_pipeline.contribute_present_passes(&mut graph, &plugin_ctx);
+                let present_targets = self.offline_pipeline.contribute_present_passes(
+                    &mut graph,
+                    &plugin_ctx,
+                    &self.path_tracing_common_settings,
+                );
                 let debug_graph_entries = present_targets.debug_graph_entries();
                 self.gui.contribute_passes(
                     &mut graph,

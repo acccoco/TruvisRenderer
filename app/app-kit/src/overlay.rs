@@ -5,8 +5,9 @@ use truvis_render_runtime::state::dlss_sr::DlssSrMode;
 
 use crate::camera::Camera;
 use crate::render_pipeline::RenderMode;
+use crate::render_pipeline::common_settings::{PathTracingCommonSettings, RtSkySamplingMode};
 use crate::render_pipeline::offline_render_graph::OfflinePipelineSettings;
-use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtPipelineSettings, RtRestirDiMode, RtSkySamplingMode};
+use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtPipelineSettings, RtRestirDiMode};
 
 #[derive(Default)]
 pub struct DebugInfoOverlay;
@@ -77,6 +78,7 @@ impl PipelineControlsOverlay {
         ui: &imgui::Ui,
         render_mode: &mut RenderMode,
         dlss_options: &mut DlssOptions,
+        mut common_settings: Option<&mut PathTracingCommonSettings>,
         mut rt_settings: Option<&mut RtPipelineSettings>,
         mut offline_settings: Option<&mut OfflinePipelineSettings>,
         offline_sample_count: Option<u32>,
@@ -121,12 +123,12 @@ impl PipelineControlsOverlay {
                 match *render_mode {
                     RenderMode::Realtime => {
                         if let Some(rt_settings) = rt_settings.as_deref_mut() {
-                            Self::build_realtime_controls(ui, rt_settings, false);
+                            Self::build_realtime_controls(ui, rt_settings, common_settings.as_deref_mut(), false);
                         }
                     }
                     RenderMode::Offline => {
                         if let Some(offline_settings) = offline_settings.as_deref_mut() {
-                            Self::build_offline_controls(ui, offline_settings);
+                            Self::build_offline_controls(ui, offline_settings, common_settings.as_deref_mut());
                         }
                         if let Some(rt_settings) = rt_settings.as_deref_mut() {
                             ui.disabled(true, || {
@@ -151,7 +153,12 @@ impl PipelineControlsOverlay {
         ui.checkbox("DLSS RR", &mut dlss_options.dlss_rr_enabled);
     }
 
-    fn build_realtime_controls(ui: &imgui::Ui, rt_settings: &mut RtPipelineSettings, restir_disabled: bool) {
+    fn build_realtime_controls(
+        ui: &imgui::Ui,
+        rt_settings: &mut RtPipelineSettings,
+        mut common_settings: Option<&mut PathTracingCommonSettings>,
+        restir_disabled: bool,
+    ) {
         if let Some(_combo) = ui.begin_combo("RT debug", rt_settings.debug_channel.label()) {
             for channel in RtDebugChannel::ALL {
                 if ui.selectable_config(channel.label()).selected(rt_settings.debug_channel == channel).build() {
@@ -159,25 +166,33 @@ impl PipelineControlsOverlay {
                 }
             }
         }
-        Self::build_common_sampling_controls(
-            ui,
-            &mut rt_settings.sky_sampling_mode,
-            &mut rt_settings.sky_brightness,
-            &mut rt_settings.emissive_nee_enabled,
-            &mut rt_settings.analytic_nee_enabled,
-        );
+        if let Some(common_settings) = common_settings.as_deref_mut() {
+            Self::build_common_sampling_controls(
+                ui,
+                &mut common_settings.sky_sampling_mode,
+                &mut common_settings.sky_brightness,
+                &mut common_settings.emissive_nee_enabled,
+                &mut common_settings.analytic_nee_enabled,
+            );
+        }
         ui.disabled(restir_disabled, || {
             Self::build_restir_control(ui, &mut rt_settings.restir_di_mode);
         });
         if restir_disabled {
             ui.text_disabled("ReSTIR DI is realtime only");
         }
-        Self::build_tone_mapping_controls(ui, &mut rt_settings.tone_mapping);
+        if let Some(common_settings) = common_settings.as_deref_mut() {
+            Self::build_tone_mapping_controls(ui, &mut common_settings.tone_mapping);
+        }
     }
 
-    fn build_offline_controls(ui: &imgui::Ui, offline_settings: &mut OfflinePipelineSettings) {
-        // 离线 raygen 不维护 ReSTIR reservoir，也不执行 realtime ReSTIR phase。若用户从实时模式
-        // 切换过来时还停在 ReSTIR-only debug channel，这里先收敛到 Final，避免展示无来源图像。
+    fn build_offline_controls(
+        ui: &imgui::Ui,
+        offline_settings: &mut OfflinePipelineSettings,
+        mut common_settings: Option<&mut PathTracingCommonSettings>,
+    ) {
+        // 离线 raygen 不维护 ReSTIR reservoir，也不执行 realtime ReSTIR phase。若离线设置来自旧配置
+        // 或未来入口而落在 ReSTIR-only debug channel，这里先收敛到 Final，避免展示无来源图像。
         if !Self::offline_supports_debug_channel(offline_settings.debug_channel) {
             offline_settings.debug_channel = RtDebugChannel::Final;
         }
@@ -201,14 +216,18 @@ impl PipelineControlsOverlay {
         .display_format("%d")
         .build(&mut ray_dispatch_count);
         offline_settings.set_ray_dispatch_count(ray_dispatch_count as u32);
-        Self::build_common_sampling_controls(
-            ui,
-            &mut offline_settings.sky_sampling_mode,
-            &mut offline_settings.sky_brightness,
-            &mut offline_settings.emissive_nee_enabled,
-            &mut offline_settings.analytic_nee_enabled,
-        );
-        Self::build_tone_mapping_controls(ui, &mut offline_settings.tone_mapping);
+        if let Some(common_settings) = common_settings.as_deref_mut() {
+            Self::build_common_sampling_controls(
+                ui,
+                &mut common_settings.sky_sampling_mode,
+                &mut common_settings.sky_brightness,
+                &mut common_settings.emissive_nee_enabled,
+                &mut common_settings.analytic_nee_enabled,
+            );
+        }
+        if let Some(common_settings) = common_settings.as_deref_mut() {
+            Self::build_tone_mapping_controls(ui, &mut common_settings.tone_mapping);
+        }
     }
 
     fn build_common_sampling_controls(

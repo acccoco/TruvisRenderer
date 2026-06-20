@@ -11,11 +11,11 @@
 | runtime DLSS 选项 | `DlssOptions` | `truvis-render-runtime` | 是 | 保存 DLSS SR mode 与 RR 开关，并提供统一 active feature 决策 |
 | runtime 派生帧状态 | `FrameRenderState` | `truvis-render-runtime` | 否 | 保存当前 main view 的格式、render extent 与 output extent |
 | main view temporal 状态 | `ViewAccumState`、`DlssSrState` | `truvis-render-runtime` | 否 | 追踪历史是否可复用，以及 DLSS common constants / reset |
-| app / pipeline 局部设置 | `RtPipelineSettings`、`DenoiseAccumSettings` | app 层 | 取决于 app | 保存具体 pipeline 自己理解的调试或实验参数 |
+| app / pipeline 局部设置 | `PathTracingCommonSettings`、`RtPipelineSettings`、`OfflinePipelineSettings` | app 层 | 取决于 app | 保存具体 app / pipeline 自己理解的调试或实验参数 |
 
 这次整理后的核心原则是：`truvis-render-runtime` 持有跨 pipeline 的渲染契约和 runtime 派生状态，
-包括 `DlssOptions`、`FrameRenderState`、`ViewAccumState` 与 `DlssSrState` 等明确 owner；具体 RT pass 的 debug channel、SDR
-tone mapping 和 legacy denoise 参数不再伪装成 engine 全局配置。
+包括 `DlssOptions`、`FrameRenderState`、`ViewAccumState` 与 `DlssSrState` 等明确 owner；path tracing 公共采样参数、
+SDR tone mapping、具体 RT pass 的 debug channel 和 legacy denoise 参数不再伪装成 engine 全局配置。
 
 ## DlssOptions
 
@@ -40,7 +40,7 @@ RR evaluate 前会先设置 compatible DLSS SR options，再设置 RR options；
 不放入 `DlssOptions` 的内容：
 
 - RT debug channel：只属于 RT pipeline 的 shader 调试输出。
-- SDR tone mapping：只属于 RT pipeline 的最终显示映射，不影响 runtime target 尺寸或 DLSS history。
+- SDR tone mapping：只属于 app-owned path tracing 显示映射，不影响 runtime target 尺寸或 DLSS history。
 - denoise 参数：当前主 RT 流程已旁路传统 denoise/accum pass；保留 pass 时只能作为 pass-local 实验设置。
 - 旧间接光缓存开关：相关 shader / ABI / GPU buffer 路径已从当前 realtime RT 主流程移除。
 
@@ -82,53 +82,74 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 
 它不是配置，也不决定 pass 是否启用累积。当前 RT 主流程不再做 progressive accumulation，但该状态仍作为 main view temporal state 保留，供保留的传统 pass 或调试信息读取。
 
+## PathTracingCommonSettings
+
+`PathTracingCommonSettings` 位于 app 层 `app-kit::render_pipeline::common_settings`，由需要 path tracing
+调试控件的具体 App 持有。Truvis 同时把同一份设置传给 realtime `RtPipeline` 和 `OfflinePipeline`，因此在 ImGui
+里切换 `Realtime / Offline` 时公共参数不会因为两套 pipeline-local state 而回退或分叉。
+
+当前包含：
+
+| 字段 | 含义 |
+|------|------|
+| `sky_sampling_mode: RtSkySamplingMode` | HDRI / sky 直接光采样模式，支持 importance 与 uniform A/B 对比 |
+| `sky_brightness: f32` | sky radiance 倍率，同时作用于可见 sky miss 和 HDRI 直接光候选 |
+| `emissive_nee_enabled: bool` | 是否额外启用自发光三角形 NEE，关闭时仍保留直接命中 emissive surface 的旧语义 |
+| `analytic_nee_enabled: bool` | 是否额外启用 point / spot / area analytic light NEE，关闭时不影响 HDRI / emissive NEE |
+| `tone_mapping: SdrToneMappingSettings` | SDR 输出路径使用的手动曝光和 ACES fitted tone mapping 参数 |
+
+`RtSkySamplingMode` 是 path tracing 共享的 pass-local 调试/实验开关。默认 `Importance` 使用 `SkyBridge`
+生成的 HDRI alias table；`Uniform` 强制 shader 走旧的 uniform sphere 采样，用于在相同场景下比较 HDRI NEE
+噪声与能量稳定性。该选项不改变 render extent、DLSS feature resource 或 runtime-owned temporal state。
+
+`sky_brightness` 是 app 层 path tracing 运行时调参，默认值 `8.0` 保持旧 shader 硬编码亮度。它只在 shader
+采样 sky 贴图后统一缩放可见 sky miss 与 HDRI 直接光候选 radiance；因为这是所有方向共享的均匀倍率，不改变
+`SkyBridge` importance distribution 的相对权重，也不需要重建 alias table 或改写环境光 PDF。
+
+`emissive_nee_enabled` 是 path tracing pass-local 调试开关，默认开启。关闭时统一 NEE 不会把 emissive
+class 纳入候选来源，但直接命中 emissive surface 的 hit emission 仍按当前 path tracing 语义累加；该选项不改变
+`EmissiveLightTable` 的 scene sync、DLSS、GBuffer 或 runtime-owned temporal state。
+
+`analytic_nee_enabled` 是 path tracing pass-local 调试开关，默认开启。关闭时统一 NEE 不会把 point / spot / area
+analytic class 纳入候选来源；该选项不改变 `SceneManager` / `GpuScene` 的 light buffer 同步，也不改变 DLSS、
+GBuffer 或 runtime-owned temporal state。
+
+`SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道。当前使用实时渲染常用的 ACES fitted approximation，并提供 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display transform，也不做自动曝光或参数持久化。DLSS SR 的 manual exposure 由固定 1x1 `dlss-sr-exposure` 输入提供，当前不跟随这里的 `Exposure EV`。
+
 ## RtPipelineSettings
 
 `RtPipelineSettings` 位于 app 层 `app-kit::render_pipeline::rt_render_graph`，由 `RtPipeline` 持有。
+它只保存 realtime RT 自有状态；和 offline 语义相同的 sky / NEE / tone mapping 参数由 App 持有的
+`PathTracingCommonSettings` 提供。
 
 当前包含：
 
 | 字段 | 含义 |
 |------|------|
 | `debug_channel: RtDebugChannel` | 主 RT shader / SDR pass 使用的调试输出通道 |
-| `sky_sampling_mode: RtSkySamplingMode` | HDRI / sky 直接光采样模式，支持 importance 与 uniform A/B 对比 |
-| `sky_brightness: f32` | sky radiance 倍率，同时作用于可见 sky miss 和 HDRI 直接光候选 |
-| `emissive_nee_enabled: bool` | 是否额外启用自发光三角形 NEE，关闭时仍保留直接命中 emissive surface 的旧语义 |
-| `analytic_nee_enabled: bool` | 是否额外启用 point / spot / area analytic light NEE，关闭时不影响 HDRI / emissive NEE |
 | `restir_di_mode: RtRestirDiMode` | primary visible surface direct lighting 的 ReSTIR DI 模式 |
-| `tone_mapping: SdrToneMappingSettings` | SDR 输出路径使用的手动曝光和 ACES fitted tone mapping 参数 |
 
-RT debug channel 与 tone mapping 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hello Triangle / ShaderToy 只显示 DLSS SR mode，不暴露 RT 调试或 tone mapping 参数。
+RT debug channel 与 ReSTIR DI 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hello Triangle / ShaderToy 只显示 DLSS SR mode，不暴露 RT 调试、path tracing 公共参数或 tone mapping 参数。
 
 `RtDebugChannel` 使用 enum 表达当前主 RT 流程支持的通道：final、forward normal、world normal、object normal、base color、NEE HDRI、emission、BRDF HDRI、NEE bounce 0/1、`NeeEmissive` 和 `NeeAnalytic`。forward normal 是当前 path tracing BRDF 和 DLSS RR `NormalRoughness` 输入使用的 world-space shading normal，会按 ray `faceforward`；world normal 是未翻转的 world-space 几何法线；object normal 是 mesh object/local space 的插值顶点法线。旧的 magic number “not accum” 通道不再通过 UI 暴露。
-
-`RtSkySamplingMode` 是 RT 主流程的 pass-local 调试/实验开关。默认 `Importance` 使用 `SkyBridge` 生成的 HDRI alias table；
-`Uniform` 强制 shader 走旧的 uniform sphere 采样，用于在相同场景下比较 HDRI NEE 噪声与能量稳定性。该选项不改变
-render extent、DLSS feature resource 或 runtime-owned temporal state。
-
-`sky_brightness` 是 RT 主流程的 pass-local radiance 倍率，默认值 `8.0` 保持旧 shader 硬编码亮度。它只在 shader 采样 sky
-贴图后统一缩放可见 sky miss 与 HDRI 直接光候选 radiance；因为这是所有方向共享的均匀倍率，不改变
-`SkyBridge` importance distribution 的相对权重，也不需要重建 alias table 或改写环境光 PDF。
-
-`emissive_nee_enabled` 是 RT 主流程的 pass-local 调试开关，默认开启。关闭时统一 NEE 不会把 emissive
-class 纳入候选来源，但直接命中 emissive surface 的 hit emission 仍按当前 path tracing 语义累加；该选项不改变
-`EmissiveLightTable` 的 scene sync、DLSS、GBuffer 或 runtime-owned temporal state。
-
-`analytic_nee_enabled` 是 RT 主流程的 pass-local 调试开关，默认开启。关闭时统一 NEE 不会把 point / spot / area
-analytic class 纳入候选来源；该选项不改变 `SceneManager` / `GpuScene` 的 light buffer 同步，也不改变 DLSS、
-GBuffer 或 runtime-owned temporal state。
 
 `restir_di_mode` 是 RT pipeline 自有的 primary direct lighting 模式，支持 `Off / InitialOnly / Temporal / TemporalSpatial`。
 默认值仍为 `Off`；`TRUVIS_RESTIR_DI_MODE` 只在启动时读取一次，用于复现实验配置，运行中仍由 overlay 直接修改
 `RtPipelineSettings`。该选项只管理 RT pipeline 自有的 reservoir / surface key temporal resources，不进入
 `DlssOptions`、`DlssSrState` 或 Streamline resource state。
 
-`SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道。当前使用实时渲染常用的 ACES fitted approximation，并提供 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display transform，也不做自动曝光或参数持久化。DLSS SR 的 manual exposure 由固定 1x1 `dlss-sr-exposure` 输入提供，当前不跟随这里的 `Exposure EV`。
-
 ## OfflinePipelineSettings
 
 `OfflinePipelineSettings` 位于 app 层 `app-kit::render_pipeline::offline_render_graph`，由 `OfflinePipeline` 持有。
-它复用 RT debug、sky sampling、NEE 开关和 tone mapping 设置，并额外包含 `ray_dispatch_count`。
+它只保存 offline pipeline 自有状态；和 realtime 语义相同的 sky / NEE / tone mapping 参数由 App 持有的
+`PathTracingCommonSettings` 提供。
+
+当前包含：
+
+| 字段 | 含义 |
+|------|------|
+| `debug_channel: RtDebugChannel` | 离线 shader / SDR pass 使用的调试输出通道；不包含 realtime ReSTIR-only debug 通道 |
+| `ray_dispatch_count: u32` | 每帧添加多少组 `offline ray tracing -> accum` pass |
 
 `ray_dispatch_count` 控制离线模式每帧添加多少组 `offline ray tracing -> accum` pass，范围固定为 1-8，默认 1。
 它只改变 sample count 推进速度，不改变单个 sample 的 radiance 定义，因此不进入离线累计 reset 签名。

@@ -1,5 +1,6 @@
 use std::env;
 
+pub mod common_settings;
 pub mod offline_render_graph;
 pub mod rt_render_graph;
 pub mod targets;

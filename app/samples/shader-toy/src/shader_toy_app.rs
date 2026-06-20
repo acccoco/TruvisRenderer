@@ -122,7 +122,7 @@ impl RenderAppHooks for ShaderToy {
             );
             // Sample app 不持有 OfflinePipeline；临时 Realtime 只用于复用共享 Controls overlay 的签名。
             let mut render_mode = RenderMode::Realtime;
-            self.pipeline_overlay.build_overlay_ui(ui, &mut render_mode, ctx.dlss_options, None, None, None);
+            self.pipeline_overlay.build_overlay_ui(ui, &mut render_mode, ctx.dlss_options, None, None, None, None);
         }
         self.gui.end_frame();
 

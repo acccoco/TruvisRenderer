@@ -15,12 +15,14 @@ use app_kit::gui_plugin::GuiPlugin;
 use app_kit::input_state::InputManager;
 use app_kit::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
 use app_kit::render_pipeline::RenderMode;
+use app_kit::render_pipeline::common_settings::PathTracingCommonSettings;
 use app_kit::render_pipeline::rt_render_graph::RtPipeline;
 
 #[derive(Default)]
 pub struct CornellApp {
     gui: GuiPlugin,
     rt_pipeline: RtPipeline,
+    path_tracing_common_settings: PathTracingCommonSettings,
     camera_controller: CameraController,
     input: InputManager,
     debug_overlay: DebugInfoOverlay,
@@ -153,6 +155,7 @@ impl RenderAppHooks for CornellApp {
                 ui,
                 &mut render_mode,
                 ctx.dlss_options,
+                Some(&mut self.path_tracing_common_settings),
                 Some(self.rt_pipeline.settings_mut()),
                 None,
                 None,
@@ -191,7 +194,7 @@ impl RenderAppHooks for CornellApp {
 
         let compute_submit = {
             let mut graph = RenderGraphBuilder::new();
-            self.rt_pipeline.contribute_compute_passes(&mut graph, &plugin_ctx);
+            self.rt_pipeline.contribute_compute_passes(&mut graph, &plugin_ctx, &self.path_tracing_common_settings);
             let compiled_graph = graph.compile();
             if log::log_enabled!(log::Level::Debug) {
                 static PRINT_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
@@ -214,7 +217,8 @@ impl RenderAppHooks for CornellApp {
                 ash::vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
                 frame_id,
             ));
-            let present_targets = self.rt_pipeline.contribute_present_passes(&mut graph, &plugin_ctx);
+            let present_targets =
+                self.rt_pipeline.contribute_present_passes(&mut graph, &plugin_ctx, &self.path_tracing_common_settings);
             let debug_graph_entries = present_targets.debug_graph_entries();
             self.gui.contribute_passes(
                 &mut graph,

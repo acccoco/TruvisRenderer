@@ -11,6 +11,8 @@
   WASD/QE 移动、左键点击边沿输入、中键拾取 pivot 后的环视控制状态、Shift+中键拖拽场景，
   以及主应用启用的滚轮锚点移动。
 - `DebugInfoOverlay` / `PipelineControlsOverlay`：UI-only overlay plugin。
+- `PathTracingCommonSettings`：realtime / offline path tracing 共享的 app-owned 调试参数，
+  由具体 App 持有并显式传给对应 pipeline，避免 ImGui 模式切换时公共参数分叉。
 - `RtPipeline`：光追示例与 Truvis 主体 app 共用的 RT pipeline glue，依赖
   `app-render-passes` 提供具体 RT 与后处理 pass，并负责 RT working target、main view target
   等 app-owned 窗口尺寸资源的 init / resize / shutdown 生命周期。

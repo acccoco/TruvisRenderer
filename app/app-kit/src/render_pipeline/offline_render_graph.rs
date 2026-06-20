@@ -1,11 +1,12 @@
 use crate::gui_plugin::{DebugImageEntry, DebugImageGraphEntry};
-use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtSkySamplingMode};
+use crate::render_pipeline::common_settings::{PathTracingCommonSettings, RtSkySamplingMode};
+use crate::render_pipeline::rt_render_graph::RtDebugChannel;
 use crate::render_pipeline::targets::{ImageTarget, OfflineTargets};
 use app_render_passes::accum_pass::{AccumPass, AccumRgPass};
 use app_render_passes::image_clear_pass::{ImageClearPass, ImageClearRgPass};
 use app_render_passes::offline_rt_pass::{OfflineRtPass, OfflineRtRgPass};
 use app_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
-use app_render_passes::sdr_pass::{SdrPass, SdrRgPass, SdrToneMappingSettings};
+use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
 use std::cell::Cell;
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -33,11 +34,6 @@ pub struct OfflinePipeline {
 pub struct OfflinePipelineSettings {
     pub ray_dispatch_count: u32,
     pub debug_channel: RtDebugChannel,
-    pub sky_sampling_mode: RtSkySamplingMode,
-    pub sky_brightness: f32,
-    pub emissive_nee_enabled: bool,
-    pub analytic_nee_enabled: bool,
-    pub tone_mapping: SdrToneMappingSettings,
 }
 
 impl Default for OfflinePipelineSettings {
@@ -45,11 +41,6 @@ impl Default for OfflinePipelineSettings {
         Self {
             ray_dispatch_count: Self::MIN_RAY_DISPATCH_COUNT,
             debug_channel: RtDebugChannel::Final,
-            sky_sampling_mode: RtSkySamplingMode::Importance,
-            sky_brightness: 8.0,
-            emissive_nee_enabled: true,
-            analytic_nee_enabled: true,
-            tone_mapping: SdrToneMappingSettings::default(),
         }
     }
 }
@@ -70,15 +61,16 @@ impl OfflinePipelineSettings {
         Self::clamp_ray_dispatch_count(self.ray_dispatch_count)
     }
 
-    fn accum_signature(self) -> OfflineSettingsAccumSignature {
+    fn accum_signature(self, common_settings: &PathTracingCommonSettings) -> OfflineSettingsAccumSignature {
         // 每帧 dispatch 数只改变累计推进速度，不改变任一 sample 的 radiance 定义，
         // 因此不进入历史签名，避免用户调节吞吐量时重置 accum_image。
+        // tone mapping 只影响 HDR -> SDR 显示映射，不改变 accum_image 中累计的 radiance。
         OfflineSettingsAccumSignature {
             debug_channel: self.debug_channel,
-            sky_sampling_mode: self.sky_sampling_mode,
-            sky_brightness_bits: self.sky_brightness.to_bits(),
-            emissive_nee_enabled: self.emissive_nee_enabled,
-            analytic_nee_enabled: self.analytic_nee_enabled,
+            sky_sampling_mode: common_settings.sky_sampling_mode,
+            sky_brightness_bits: common_settings.sky_brightness.to_bits(),
+            emissive_nee_enabled: common_settings.emissive_nee_enabled,
+            analytic_nee_enabled: common_settings.analytic_nee_enabled,
         }
     }
 }
@@ -315,13 +307,14 @@ impl OfflinePipeline {
         &mut self,
         view_signature: RenderViewAccumSignature,
         scene_signature: RenderSceneAccumSignature,
+        common_settings: &PathTracingCommonSettings,
     ) {
         // 调用方必须在本帧相机、scene root、TLAS、light 和 sky 数据确定后更新签名。
         // 这里仅比较“是否还能复用 accum_image 历史”，不主动读取 runtime 的 ViewAccumState。
         self.accum_state.update_signature(OfflineAccumSignature {
             view: view_signature,
             scene: scene_signature,
-            settings: self.settings.accum_signature(),
+            settings: self.settings.accum_signature(common_settings),
         });
     }
 
@@ -337,6 +330,7 @@ impl OfflinePipeline {
         &'a self,
         rg_builder: &mut RenderGraphBuilder<'a>,
         ctx: &'a PluginRenderCtx<'a>,
+        common_settings: &PathTracingCommonSettings,
     ) {
         let inner = self.inner();
         let record_ctx = ctx.record_ctx;
@@ -346,11 +340,11 @@ impl OfflinePipeline {
         let has_tlas = ctx.render_scene.tlas_handle(frame_label).is_some();
         let targets = &inner.targets;
         let debug_channel = self.settings.debug_channel.shader_channel();
-        let sky_sampling_mode = self.settings.sky_sampling_mode.shader_mode();
-        let sky_brightness = self.settings.sky_brightness;
-        let emissive_nee_enabled = self.settings.emissive_nee_enabled;
-        let analytic_nee_enabled = self.settings.analytic_nee_enabled;
-        let tone_mapping = self.settings.tone_mapping;
+        let sky_sampling_mode = common_settings.sky_sampling_mode.shader_mode();
+        let sky_brightness = common_settings.sky_brightness;
+        let emissive_nee_enabled = common_settings.emissive_nee_enabled;
+        let analytic_nee_enabled = common_settings.analytic_nee_enabled;
+        let tone_mapping = common_settings.tone_mapping;
 
         let single_frame_target = targets.single_frame_image(frame_label);
         let single_frame_image = rg_builder.import_image(
@@ -477,6 +471,7 @@ impl OfflinePipeline {
         &'a self,
         rg_builder: &mut RenderGraphBuilder<'a>,
         ctx: &'a PluginRenderCtx<'a>,
+        _common_settings: &PathTracingCommonSettings,
     ) -> OfflinePresentGraphTargets {
         let inner = self.inner();
         let record_ctx = ctx.record_ctx;

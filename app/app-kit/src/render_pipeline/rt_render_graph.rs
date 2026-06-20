@@ -1,4 +1,5 @@
 use crate::gui_plugin::{DebugImageEntry, DebugImageGraphEntry};
+use crate::render_pipeline::common_settings::PathTracingCommonSettings;
 use crate::render_pipeline::targets::{
     DlssOutputTargets, DlssRrInputTargets, DlssSrExposureTarget, DlssSrInputTargets, ImageTarget, MainViewTargets,
     RestirDiTargets, RestirReservoirTarget, RestirSurfaceKeyTarget, RtWorkingTargets,
@@ -10,7 +11,7 @@ use app_render_passes::realtime_rt_pass::{
     RealtimeRtPass, RealtimeRtRgPass, RestirReservoirRgImages, RestirSurfaceKeyRgImages,
 };
 use app_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
-use app_render_passes::sdr_pass::{SdrPass, SdrRgPass, SdrToneMappingSettings};
+use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
 use std::{cell::Cell, env};
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -18,6 +19,8 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 use truvis_render_runtime::state::dlss_options::DlssOptions;
+
+pub use crate::render_pipeline::common_settings::RtSkySamplingMode;
 
 #[derive(Default)]
 pub struct RtPipeline {
@@ -41,48 +44,18 @@ pub struct RtPipelineSettings {
     /// 这是 RT 主流程的 pass-local 配置，不影响 engine runtime 的 target 尺寸、DLSS history
     /// 或全局 per-frame UBO，因此不放入 engine runtime-owned render state。
     pub debug_channel: RtDebugChannel,
-    /// HDRI / sky 直接光采样模式。
-    ///
-    /// 这是 RT 主流程的 pass-local 采样策略开关，用于 A/B 比较 uniform 与 importance；
-    /// 它不影响 render extent、DLSS feature resource 或 runtime-owned temporal state。
-    pub sky_sampling_mode: RtSkySamplingMode,
-    /// sky radiance 倍率。
-    ///
-    /// 这是 app 层 RT pipeline 的运行时调参，只统一缩放 shader 采样到的 sky radiance；
-    /// 不改变 sky 资产、bindless 绑定或 `SkyBridge` 生成的 importance distribution / PDF。
-    pub sky_brightness: f32,
-    /// 是否额外启用自发光三角形 NEE。
-    ///
-    /// 这是 RT pass-local 调试开关；关闭时 shader 仍保留直接命中 emissive surface
-    /// 的旧路径，不影响 DLSS、GBuffer 或 runtime-owned scene 同步。
-    pub emissive_nee_enabled: bool,
-    /// 是否额外启用 analytic light NEE。
-    ///
-    /// 这是 RT pass-local 调试开关；关闭时不采样 point / spot / area analytic lights，
-    /// 但不影响 HDRI NEE、自发光三角形 NEE、GBuffer 或 DLSS 输入。
-    pub analytic_nee_enabled: bool,
     /// Primary visible surface ReSTIR DI 模式。
     ///
     /// 这是 RT pipeline 私有 temporal lighting 开关；默认 Off，确保现有 unified NEE
     /// 路径可直接回退。reservoir history 不进入 DLSS state，也不读取 DLSS output。
     pub restir_di_mode: RtRestirDiMode,
-    /// SDR 输出路径的 tone mapping 参数。
-    ///
-    /// 只影响 Final 通道的 `hdr-to-sdr` pass，不改变 render extent、DLSS feature resource
-    /// 或 runtime-owned temporal state。
-    pub tone_mapping: SdrToneMappingSettings,
 }
 
 impl Default for RtPipelineSettings {
     fn default() -> Self {
         Self {
             debug_channel: RtDebugChannel::Final,
-            sky_sampling_mode: RtSkySamplingMode::Importance,
-            sky_brightness: 8.0,
-            emissive_nee_enabled: true,
-            analytic_nee_enabled: true,
             restir_di_mode: RtRestirDiMode::initial_mode_from_env(),
-            tone_mapping: SdrToneMappingSettings::default(),
         }
     }
 }
@@ -152,31 +125,6 @@ impl RtRestirDiMode {
                 log::warn!("Ignoring unsupported {ENV_NAME} value: {value}");
                 Self::Off
             }
-        }
-    }
-}
-
-/// HDRI / sky 直接光采样模式。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RtSkySamplingMode {
-    Uniform,
-    Importance,
-}
-
-impl RtSkySamplingMode {
-    pub const ALL: [Self; 2] = [Self::Importance, Self::Uniform];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Uniform => "uniform",
-            Self::Importance => "importance",
-        }
-    }
-
-    pub fn shader_mode(self) -> u32 {
-        match self {
-            Self::Uniform => 0,
-            Self::Importance => 1,
         }
     }
 }
@@ -620,6 +568,7 @@ impl RtPipeline {
         &'a self,
         rg_builder: &mut RenderGraphBuilder<'a>,
         ctx: &'a PluginRenderCtx<'a>,
+        common_settings: &PathTracingCommonSettings,
     ) {
         let inner = self.inner();
         let record_ctx = ctx.record_ctx;
@@ -631,10 +580,10 @@ impl RtPipeline {
         let dlss_outputs = &inner.dlss_outputs;
         let main_view_targets = &inner.main_view_targets;
         let debug_channel = self.settings.debug_channel.shader_channel();
-        let sky_sampling_mode = self.settings.sky_sampling_mode.shader_mode();
-        let sky_brightness = self.settings.sky_brightness;
-        let emissive_nee_enabled = self.settings.emissive_nee_enabled;
-        let analytic_nee_enabled = self.settings.analytic_nee_enabled;
+        let sky_sampling_mode = common_settings.sky_sampling_mode.shader_mode();
+        let sky_brightness = common_settings.sky_brightness;
+        let emissive_nee_enabled = common_settings.emissive_nee_enabled;
+        let analytic_nee_enabled = common_settings.analytic_nee_enabled;
         let restir_di_mode = self.settings.restir_di_mode;
         let frame_id = record_ctx.frame_timing.frame_id();
         let previous_frame_label =
@@ -647,7 +596,7 @@ impl RtPipeline {
             && self.restir_last_mode.get() == restir_di_mode
             && !record_ctx.dlss_sr_state.constants().reset;
         self.restir_last_mode.set(restir_di_mode);
-        let tone_mapping = self.settings.tone_mapping;
+        let tone_mapping = common_settings.tone_mapping;
 
         // compute graph 导入的是 app-owned 外部图像；RenderGraph 只接管本图内的状态转换，
         // 不拥有图像生命周期。owner 必须活到 graph 录制与提交完成之后。
@@ -1016,6 +965,7 @@ impl RtPipeline {
         &'a self,
         rg_builder: &mut RenderGraphBuilder<'a>,
         ctx: &'a PluginRenderCtx<'a>,
+        _common_settings: &PathTracingCommonSettings,
     ) -> RtPresentGraphTargets {
         let inner = self.inner();
         let record_ctx = ctx.record_ctx;
