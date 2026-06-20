@@ -15,7 +15,7 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::frame_counter::FrameLabel;
-use truvis_render_foundation::render_scene_view::RenderSceneView;
+use truvis_render_foundation::render_scene_view::{RenderSceneAccumSignature, RenderSceneView};
 use truvis_shader_binding::gpu;
 
 /// runtime 私有的 GPU scene 翻译层。
@@ -90,6 +90,10 @@ impl RenderSceneView for GpuScene {
     /// 暴露当前 frame label 的 TLAS handle；空场景没有 TLAS。
     fn tlas_handle(&self, frame_label: FrameLabel) -> Option<vk::AccelerationStructureKHR> {
         self.tlas(frame_label).map(|tlas| tlas.handle())
+    }
+
+    fn accum_signature(&self, frame_label: FrameLabel) -> RenderSceneAccumSignature {
+        self.gpu_scene_buffers[*frame_label].accum_signature
     }
 
     /// 遍历 prepare 阶段展开好的 raster draw cache 并录制 draw。
@@ -202,6 +206,16 @@ impl GpuScene {
                 vk::WHOLE_SIZE,
             )],
         );
+
+        // 累计签名必须在本帧 scene root buffer、TLAS、light 与 sky binding 都确定后写入。
+        // 它只描述会让离线 reference 历史失效的语义版本，不暴露具体 GPU buffer 所有权。
+        let accum_signature = RenderSceneAccumSignature {
+            tlas_revision: crt_gpu_buffers.tlas_revision,
+            emissive_light_version: emissive_light_binding.version,
+            analytic_light_version: scene_data.analytic_light_version,
+            sky_distribution_version: environment_binding.sky.distribution_version,
+        };
+        self.gpu_scene_buffers[*frame_counter.frame_label()].accum_signature = accum_signature;
     }
 
     /// 将 mesh 数据以 geometry 表的形式上传到 GPU。

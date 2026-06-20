@@ -151,6 +151,100 @@ impl Drop for PerFrameImageSet {
         debug_assert!(self.images.iter().all(|img| img.is_null()));
     }
 }
+/// 单张窗口尺寸图像。
+///
+/// 这类 target 不随 frame label 轮转，适合保存跨帧持续累积的 pipeline 私有历史。
+/// 调用方必须通过 RenderGraph 为每次读写声明状态；本类型只负责 image/view 生命周期和
+/// bindless 注册，不表达任何跨帧同步语义。
+struct SingleImageTarget {
+    image: GfxImageHandle,
+    view: GfxImageViewHandle,
+    format: vk::Format,
+    extent: vk::Extent2D,
+}
+
+impl SingleImageTarget {
+    fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+        desc: TargetImageDesc<'_>,
+        frame_counter: &FrameCounter,
+    ) -> Self {
+        let image = create_image(
+            resource_ctx,
+            desc.extent,
+            desc.format,
+            desc.usage,
+            format!("{}-{}", desc.name_prefix, frame_counter.frame_id()),
+        );
+        transition_images_to_general(
+            immediate_ctx,
+            std::slice::from_ref(&image),
+            &format!("transfer-{}-layout", desc.name_prefix),
+        );
+
+        let image_handle = gfx_resource_manager.register_image(image);
+        let view_handle = gfx_resource_manager.get_or_create_image_view(
+            device_ctx,
+            image_handle,
+            GfxImageViewDesc::new_2d(desc.format, vk::ImageAspectFlags::COLOR),
+            format!("{}-{}", desc.name_prefix, frame_counter.frame_id()),
+        );
+
+        Self {
+            image: image_handle,
+            view: view_handle,
+            format: desc.format,
+            extent: desc.extent,
+        }
+    }
+
+    fn target(&self) -> ImageTarget {
+        ImageTarget {
+            image: self.image,
+            view: self.view,
+            format: self.format,
+            extent: self.extent,
+        }
+    }
+
+    fn register_uav(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        shader_binding_system.register_uav(self.view);
+    }
+
+    fn register_srv(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        shader_binding_system.register_srv(self.view);
+    }
+
+    fn unregister_uav(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        shader_binding_system.unregister_uav(self.view);
+    }
+
+    fn unregister_srv(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        shader_binding_system.unregister_srv(self.view);
+    }
+
+    fn destroy(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+        reason: DestroyReason,
+    ) {
+        gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, self.image, reason);
+        self.image = GfxImageHandle::default();
+        self.view = GfxImageViewHandle::default();
+    }
+}
+
+impl Drop for SingleImageTarget {
+    fn drop(&mut self) {
+        debug_assert!(self.image.is_null());
+        debug_assert!(self.view.is_null());
+    }
+}
 
 /// RT 管线工作图像：单帧 ray tracing 输出。
 ///
@@ -250,6 +344,165 @@ impl RtWorkingTargets {
 impl Drop for RtWorkingTargets {
     fn drop(&mut self) {
         debug_assert!(self.single_frame_rt.images.iter().all(|img| img.is_null()));
+    }
+}
+/// 离线 ground truth 管线的窗口尺寸图像。
+///
+/// `accum_image` 是唯一跨帧历史，不能按 frame label 轮转；`single_frame_image` 和
+/// `render_target` 仍是 per-FIF 图像，分别服务当前采样输出和 present graph 输入。
+pub struct OfflineTargets {
+    single_frame_image: PerFrameImageSet,
+    accum_image: SingleImageTarget,
+    render_target: PerFrameImageSet,
+}
+
+impl OfflineTargets {
+    pub fn new(
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+        shader_binding_system: &mut ShaderBindingSystem,
+        frame_state: &FrameRenderState,
+        frame_counter: &FrameCounter,
+    ) -> Self {
+        // 三张离线图像都必须可被 compute/RT 作为 storage image 写入，并可作为 SRV
+        // 暴露给 debug viewer / present path。render_target 额外带 COLOR_ATTACHMENT，是为了兼容
+        // 后续可能复用的色彩/resolve 路径；当前 ownership 仍由 RenderGraph import/export 表达。
+        let storage_usage =
+            vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::SAMPLED;
+        let present_usage = storage_usage | vk::ImageUsageFlags::COLOR_ATTACHMENT;
+
+        let single_frame_image = PerFrameImageSet::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            TargetImageDesc {
+                name_prefix: "offline-single-frame",
+                format: frame_state.hdr_color_format,
+                extent: frame_state.render_extent,
+                usage: storage_usage,
+            },
+            frame_counter,
+        );
+        let accum_image = SingleImageTarget::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            TargetImageDesc {
+                name_prefix: "offline-accum",
+                format: frame_state.hdr_color_format,
+                extent: frame_state.render_extent,
+                usage: storage_usage,
+            },
+            frame_counter,
+        );
+        let render_target = PerFrameImageSet::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            TargetImageDesc {
+                name_prefix: "offline-render-target",
+                format: frame_state.hdr_color_format,
+                extent: frame_state.output_extent,
+                usage: present_usage,
+            },
+            frame_counter,
+        );
+
+        let targets = Self {
+            single_frame_image,
+            accum_image,
+            render_target,
+        };
+        targets.register_bindless(shader_binding_system);
+        targets
+    }
+
+    pub fn rebuild(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        shader_binding_system: &mut ShaderBindingSystem,
+        gfx_resource_manager: &mut GfxResourceManager,
+        frame_state: &FrameRenderState,
+        frame_counter: &FrameCounter,
+    ) {
+        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            gfx_resource_manager,
+            shader_binding_system,
+            frame_state,
+            frame_counter,
+        );
+    }
+
+    pub fn destroy(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        shader_binding_system: &mut ShaderBindingSystem,
+        gfx_resource_manager: &mut GfxResourceManager,
+        reason: DestroyReason,
+    ) {
+        // bindless 表项必须先撤销再释放 manager image；否则 GUI/debug 或后续 pass 可能保留
+        // 指向已销毁 view 的 UAV/SRV handle。具体 image/view 释放顺序交给 manager 处理。
+        self.unregister_bindless(shader_binding_system);
+        self.single_frame_image.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.accum_image.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.render_target.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+    }
+
+    #[inline]
+    pub fn single_frame_image(&self, frame_label: FrameLabel) -> ImageTarget {
+        self.single_frame_image.target(frame_label)
+    }
+
+    #[inline]
+    pub fn accum_image(&self) -> ImageTarget {
+        self.accum_image.target()
+    }
+
+    #[inline]
+    pub fn render_target(&self, frame_label: FrameLabel) -> ImageTarget {
+        self.render_target.target(frame_label)
+    }
+
+    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        // 离线 target 同时注册 UAV/SRV：RT/compute clear/accum 走 UAV 写入，GUI/debug/present
+        // 相关路径以 SRV 读取。注册集中在 owner 内，避免 pass 层临时改动全局 bindless 表。
+        self.single_frame_image.register_uav(shader_binding_system);
+        self.single_frame_image.register_srv(shader_binding_system);
+        self.accum_image.register_uav(shader_binding_system);
+        self.accum_image.register_srv(shader_binding_system);
+        self.render_target.register_uav(shader_binding_system);
+        self.render_target.register_srv(shader_binding_system);
+    }
+
+    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
+        // 注销顺序与注册顺序不承担同步语义；关键不变量是所有 shader-visible view
+        // 在 image 释放前都已从 bindless 系统移除。
+        self.single_frame_image.unregister_srv(shader_binding_system);
+        self.single_frame_image.unregister_uav(shader_binding_system);
+        self.accum_image.unregister_srv(shader_binding_system);
+        self.accum_image.unregister_uav(shader_binding_system);
+        self.render_target.unregister_srv(shader_binding_system);
+        self.render_target.unregister_uav(shader_binding_system);
+    }
+}
+
+impl Drop for OfflineTargets {
+    fn drop(&mut self) {
+        debug_assert!(self.single_frame_image.images.iter().all(|img| img.is_null()));
+        debug_assert!(self.accum_image.image.is_null());
+        debug_assert!(self.render_target.images.iter().all(|img| img.is_null()));
     }
 }
 

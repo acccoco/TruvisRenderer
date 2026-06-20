@@ -29,4 +29,6 @@
 - 共享结构变更会影响 Rust 绑定，需要重新执行 `just shader`。
 - `api/mod.slangi` 是共享结构与 pass API 的聚合入口；新增 CPU/GPU 共享类型或 pass 契约时应放入 `api/common/`
   或 `api/pass/` 的明确归属文件，再由该入口统一暴露给 bindgen。
+- 离线 RT 的 TLAS / single-frame output descriptor set 和 push constants 属于 `api/pass/offline_rt.slangi`；
+  Rust 侧必须使用生成的 `gpu::offline_rt::*` ABI，不再手写镜像结构。
 - 新 pass 建议复用已有全局描述符布局约定，避免新增碎片化绑定模型。

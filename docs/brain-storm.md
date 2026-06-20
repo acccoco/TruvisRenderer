@@ -47,6 +47,8 @@
   DLSS Super Resolution、Streamline Vulkan interposer、C++ wrapper 与 RenderGraph 接入边界。
 - [`realtime-rt-lighting-roadmap.md`](brain-storm/realtime-rt-lighting-roadmap.md)：
   ReSTIR DI、HDRI / 自发光 NEE 分布与 SHARC 类 world-space radiance cache 的阶段路线。
+- [`offline-ground-truth-rendering.md`](brain-storm/offline-ground-truth-rendering.md)：
+  离线 ground truth 渲染管线、FIF 唯一累计图像、实时/离线模式切换和分批实现步骤。
 - [`restir-di-algorithm-intuition.md`](brain-storm/restir-di-algorithm-intuition.md)：
   ReSTIR DI 的算法直觉、reservoir 权重、temporal / spatial reuse 和 light sample identity 正确性规则。
 - [`plugin-feature-evolution.md`](brain-storm/plugin-feature-evolution.md)：

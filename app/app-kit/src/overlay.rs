@@ -4,6 +4,8 @@ use truvis_render_runtime::state::dlss_options::DlssOptions;
 use truvis_render_runtime::state::dlss_sr::DlssSrMode;
 
 use crate::camera::Camera;
+use crate::render_pipeline::RenderMode;
+use crate::render_pipeline::offline_render_graph::OfflinePipelineSettings;
 use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtPipelineSettings, RtRestirDiMode, RtSkySamplingMode};
 
 #[derive(Default)]
@@ -73,74 +75,185 @@ impl PipelineControlsOverlay {
     pub fn build_overlay_ui(
         &mut self,
         ui: &imgui::Ui,
+        render_mode: &mut RenderMode,
         dlss_options: &mut DlssOptions,
-        rt_settings: Option<&mut RtPipelineSettings>,
+        mut rt_settings: Option<&mut RtPipelineSettings>,
+        mut offline_settings: Option<&mut OfflinePipelineSettings>,
+        offline_sample_count: Option<u32>,
     ) {
+        let offline_mode_supported = offline_settings.is_some();
+        // 部分 sample app 只复用 Controls overlay，并不创建 OfflinePipeline。这里把外部传入
+        // 的 mode 收敛回 Realtime，避免 UI 暴露一个当前 app 无法实际调度的离线分支。
+        if !offline_mode_supported {
+            *render_mode = RenderMode::Realtime;
+        }
+
         ui.window("Controls")
             .position([10.0, 200.0], imgui::Condition::FirstUseEver)
-            .size([320.0, 300.0], imgui::Condition::FirstUseEver)
+            .size([340.0, 360.0], imgui::Condition::FirstUseEver)
             .build(|| {
-                // RR 作为独立开关接入，不放进 SR/DLAA 质量挡位下拉框。
-                if let Some(_combo) = ui.begin_combo("DLSS SR", dlss_options.dlss_sr_mode.label()) {
-                    for mode in DlssSrMode::ALL {
-                        if ui.selectable_config(mode.label()).selected(dlss_options.dlss_sr_mode == mode).build() {
-                            dlss_options.dlss_sr_mode = mode;
+                if offline_mode_supported {
+                    if let Some(_combo) = ui.begin_combo("Render Mode", render_mode.label()) {
+                        for mode in RenderMode::ALL {
+                            if ui.selectable_config(mode.label()).selected(*render_mode == mode).build() {
+                                *render_mode = mode;
+                            }
                         }
                     }
                 }
-                ui.checkbox("DLSS RR", &mut dlss_options.dlss_rr_enabled);
 
-                if let Some(rt_settings) = rt_settings {
-                    ui.separator();
-                    if let Some(_combo) = ui.begin_combo("RT debug", rt_settings.debug_channel.label()) {
-                        for channel in RtDebugChannel::ALL {
-                            if ui
-                                .selectable_config(channel.label())
-                                .selected(rt_settings.debug_channel == channel)
-                                .build()
-                            {
-                                rt_settings.debug_channel = channel;
-                            }
-                        }
-                    }
-                    if let Some(_combo) = ui.begin_combo("Sky sampling", rt_settings.sky_sampling_mode.label()) {
-                        for mode in RtSkySamplingMode::ALL {
-                            if ui
-                                .selectable_config(mode.label())
-                                .selected(rt_settings.sky_sampling_mode == mode)
-                                .build()
-                            {
-                                rt_settings.sky_sampling_mode = mode;
-                            }
-                        }
-                    }
-                    if let Some(_combo) = ui.begin_combo("ReSTIR DI", rt_settings.restir_di_mode.label()) {
-                        for mode in RtRestirDiMode::ALL {
-                            if ui.selectable_config(mode.label()).selected(rt_settings.restir_di_mode == mode).build() {
-                                // UI 只更新 pipeline mode；跨 mode 的 history 切断由 RenderGraph 构图时
-                                // 比较上一帧 mode 完成，避免控件层直接持有 temporal resource 状态。
-                                rt_settings.restir_di_mode = mode;
-                            }
-                        }
-                    }
-                    ui.slider_config("Sky Brightness", 0.0_f32, 32.0_f32)
-                        .display_format("%.2f")
-                        .build(&mut rt_settings.sky_brightness);
-                    ui.checkbox("Emissive NEE", &mut rt_settings.emissive_nee_enabled);
-                    ui.checkbox("Analytic NEE", &mut rt_settings.analytic_nee_enabled);
+                if *render_mode == RenderMode::Offline {
+                    ui.text(format!("Offline Samples: {}", offline_sample_count.unwrap_or(0)));
+                }
 
-                    ui.separator();
-                    ui.text("Tone Mapping");
-                    ui.slider_config("Exposure EV", -8.0_f32, 8.0_f32)
-                        .display_format("%.2f")
-                        .build(&mut rt_settings.tone_mapping.exposure_ev);
-                    ui.slider_config("ACES Strength", 0.0_f32, 1.0_f32)
-                        .display_format("%.2f")
-                        .build(&mut rt_settings.tone_mapping.aces_strength);
-                    ui.slider_config("White Point", 1.0_f32, 32.0_f32)
-                        .display_format("%.2f")
-                        .build(&mut rt_settings.tone_mapping.aces_white_point);
+                ui.separator();
+                // DLSS SR/RR 依赖 realtime RT 管线产出的 GBuffer、motion vector 和历史资源；
+                // 离线模式保留控件位置但禁用，明确它们不会影响 reference 累计采样状态。
+                let realtime_mode = *render_mode == RenderMode::Realtime;
+                ui.disabled(!realtime_mode, || {
+                    Self::build_dlss_controls(ui, dlss_options);
+                });
+                if !realtime_mode {
+                    ui.text_disabled("DLSS controls are realtime only");
+                }
+
+                ui.separator();
+                match *render_mode {
+                    RenderMode::Realtime => {
+                        if let Some(rt_settings) = rt_settings.as_deref_mut() {
+                            Self::build_realtime_controls(ui, rt_settings, false);
+                        }
+                    }
+                    RenderMode::Offline => {
+                        if let Some(offline_settings) = offline_settings.as_deref_mut() {
+                            Self::build_offline_controls(ui, offline_settings);
+                        }
+                        if let Some(rt_settings) = rt_settings.as_deref_mut() {
+                            ui.disabled(true, || {
+                                Self::build_restir_control(ui, &mut rt_settings.restir_di_mode);
+                            });
+                            ui.text_disabled("ReSTIR DI is realtime only");
+                        }
+                    }
                 }
             });
+    }
+
+    fn build_dlss_controls(ui: &imgui::Ui, dlss_options: &mut DlssOptions) {
+        // RR 作为独立开关接入，不放进 SR/DLAA 质量挡位下拉框。
+        if let Some(_combo) = ui.begin_combo("DLSS SR", dlss_options.dlss_sr_mode.label()) {
+            for mode in DlssSrMode::ALL {
+                if ui.selectable_config(mode.label()).selected(dlss_options.dlss_sr_mode == mode).build() {
+                    dlss_options.dlss_sr_mode = mode;
+                }
+            }
+        }
+        ui.checkbox("DLSS RR", &mut dlss_options.dlss_rr_enabled);
+    }
+
+    fn build_realtime_controls(ui: &imgui::Ui, rt_settings: &mut RtPipelineSettings, restir_disabled: bool) {
+        if let Some(_combo) = ui.begin_combo("RT debug", rt_settings.debug_channel.label()) {
+            for channel in RtDebugChannel::ALL {
+                if ui.selectable_config(channel.label()).selected(rt_settings.debug_channel == channel).build() {
+                    rt_settings.debug_channel = channel;
+                }
+            }
+        }
+        Self::build_common_sampling_controls(
+            ui,
+            &mut rt_settings.sky_sampling_mode,
+            &mut rt_settings.sky_brightness,
+            &mut rt_settings.emissive_nee_enabled,
+            &mut rt_settings.analytic_nee_enabled,
+        );
+        ui.disabled(restir_disabled, || {
+            Self::build_restir_control(ui, &mut rt_settings.restir_di_mode);
+        });
+        if restir_disabled {
+            ui.text_disabled("ReSTIR DI is realtime only");
+        }
+        Self::build_tone_mapping_controls(ui, &mut rt_settings.tone_mapping);
+    }
+
+    fn build_offline_controls(ui: &imgui::Ui, offline_settings: &mut OfflinePipelineSettings) {
+        // 离线 raygen 不维护 ReSTIR reservoir，也不执行 realtime ReSTIR phase。若用户从实时模式
+        // 切换过来时还停在 ReSTIR-only debug channel，这里先收敛到 Final，避免展示无来源图像。
+        if !Self::offline_supports_debug_channel(offline_settings.debug_channel) {
+            offline_settings.debug_channel = RtDebugChannel::Final;
+        }
+
+        if let Some(_combo) = ui.begin_combo("RT debug", offline_settings.debug_channel.label()) {
+            for channel in RtDebugChannel::ALL {
+                if !Self::offline_supports_debug_channel(channel) {
+                    continue;
+                }
+                if ui.selectable_config(channel.label()).selected(offline_settings.debug_channel == channel).build() {
+                    offline_settings.debug_channel = channel;
+                }
+            }
+        }
+        Self::build_common_sampling_controls(
+            ui,
+            &mut offline_settings.sky_sampling_mode,
+            &mut offline_settings.sky_brightness,
+            &mut offline_settings.emissive_nee_enabled,
+            &mut offline_settings.analytic_nee_enabled,
+        );
+        Self::build_tone_mapping_controls(ui, &mut offline_settings.tone_mapping);
+    }
+
+    fn build_common_sampling_controls(
+        ui: &imgui::Ui,
+        sky_sampling_mode: &mut RtSkySamplingMode,
+        sky_brightness: &mut f32,
+        emissive_nee_enabled: &mut bool,
+        analytic_nee_enabled: &mut bool,
+    ) {
+        if let Some(_combo) = ui.begin_combo("Sky sampling", sky_sampling_mode.label()) {
+            for mode in RtSkySamplingMode::ALL {
+                if ui.selectable_config(mode.label()).selected(*sky_sampling_mode == mode).build() {
+                    *sky_sampling_mode = mode;
+                }
+            }
+        }
+        ui.slider_config("Sky Brightness", 0.0_f32, 32.0_f32).display_format("%.2f").build(sky_brightness);
+        ui.checkbox("Emissive NEE", emissive_nee_enabled);
+        ui.checkbox("Analytic NEE", analytic_nee_enabled);
+    }
+
+    fn build_restir_control(ui: &imgui::Ui, restir_di_mode: &mut RtRestirDiMode) {
+        if let Some(_combo) = ui.begin_combo("ReSTIR DI", restir_di_mode.label()) {
+            for mode in RtRestirDiMode::ALL {
+                if ui.selectable_config(mode.label()).selected(*restir_di_mode == mode).build() {
+                    // UI 只更新 pipeline mode；跨 mode 的 history 切断由 RenderGraph 构图时
+                    // 比较上一帧 mode 完成，避免控件层直接持有 temporal resource 状态。
+                    *restir_di_mode = mode;
+                }
+            }
+        }
+    }
+
+    fn build_tone_mapping_controls(
+        ui: &imgui::Ui,
+        tone_mapping: &mut app_render_passes::sdr_pass::SdrToneMappingSettings,
+    ) {
+        ui.separator();
+        ui.text("Tone Mapping");
+        ui.slider_config("Exposure EV", -8.0_f32, 8.0_f32).display_format("%.2f").build(&mut tone_mapping.exposure_ev);
+        ui.slider_config("ACES Strength", 0.0_f32, 1.0_f32)
+            .display_format("%.2f")
+            .build(&mut tone_mapping.aces_strength);
+        ui.slider_config("White Point", 1.0_f32, 32.0_f32)
+            .display_format("%.2f")
+            .build(&mut tone_mapping.aces_white_point);
+    }
+
+    fn offline_supports_debug_channel(channel: RtDebugChannel) -> bool {
+        !matches!(
+            channel,
+            RtDebugChannel::RestirInitialWeight
+                | RtDebugChannel::RestirTemporalValid
+                | RtDebugChannel::RestirFinalContribution
+        )
     }
 }

@@ -14,6 +14,8 @@
 - `RtPipeline`：光追示例与 Truvis 主体 app 共用的 RT pipeline glue，依赖
   `app-render-passes` 提供具体 RT 与后处理 pass，并负责 RT working target、main view target
   等 app-owned 窗口尺寸资源的 init / resize / shutdown 生命周期。
+- `OfflinePipeline`：离线 ground truth pipeline glue，维护独立 sample count、Halton jitter、
+  FIF 唯一累计图像和无 TLAS 时的确定黑色输出，不复用 runtime `ViewAccumState`、DLSS 或 ReSTIR 状态。
 
 ## 边界约束
 
@@ -26,6 +28,8 @@
 - RT working target、main view target、GBuffer 等窗口尺寸资源属于具体 pipeline/plugin owner，
   不进入 engine runtime-owned render state。resize 时先注销 bindless view，再通过 `GfxResourceManager` 释放
   manager-owned image，image view 由 manager 跟随 image 按顺序释放。
+- 离线 `single_frame_image`、`accum_image`、`render_target` 同样属于 `OfflinePipeline` owner；
+  `accum_image` 是跨帧历史，只有离线累计签名仍有效且 TLAS 存在时才推进 sample。
 - 相机状态属于 app 层；runtime 只消费 `truvis-render-foundation` 中的 `RenderView`，不依赖
   `Camera` 或具体相机控制策略。
 - GUI debug image viewer 只保存 app/pipeline 每帧注册的 image/view handle 快照和 ImGui

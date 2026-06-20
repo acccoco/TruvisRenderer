@@ -1,0 +1,25 @@
+#include "api/common/mod.slangi"
+
+namespace image_clear
+{
+
+/// storage image 清理 compute pass 的线程组尺寸。Rust 侧 dispatch 会按该尺寸向上取整。
+static const int SHADER_X = 8;
+static const int SHADER_Y = 8;
+
+/// 单张 storage image 的清理参数。
+///
+/// 调用方必须在 RenderGraph 中把目标图像声明为 storage write；本 pass 只负责写入确定颜色，
+/// 不承担 layout transition 或跨 pass 同步。
+struct PushConstant
+{
+    /// 写入目标颜色，保持 linear/HDR 数值空间，由调用方决定语义。
+    float4 clear_color;
+    /// 目标 storage image。
+    bindless::UavHandle dst_image;
+    /// 当前 dispatch 有效图像尺寸；多余线程必须跳过写入。
+    uint2 image_size;
+    /// 显式 padding 保持生成的 Rust push constant 与 Slang std430 风格布局一致。
+    uint _padding_0;
+};
+};

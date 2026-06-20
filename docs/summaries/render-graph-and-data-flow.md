@@ -22,7 +22,9 @@ mesh/material ready 查询通过 `truvis-render-runtime` 私有 scene bridge tra
 `AssetTextureManager` 上传，scene root buffer 只消费当前可用的 sky SRV、sampler 与 distribution 快照。
 
 `GpuScene`、`EmissiveLightTable` 与 `RenderData` 是 runtime 私有 scene 翻译层；render pass 只通过
-`RenderSceneView` 访问 scene buffer、TLAS handle 和光栅化 draw。
+`RenderSceneView` 访问 scene buffer、TLAS handle 和光栅化 draw。`RenderSceneView::accum_signature` 只暴露
+TLAS / emissive light / analytic light / sky distribution 的版本号快照，供 app-owned 离线累计判断 scene 语义是否变化；
+它不暴露 `GpuScene` owner 或具体 GPU buffer 布局。
 
 `RenderRuntime::prepare` 负责把这些 bridge 按固定顺序串成 update 与 render 之间的 prepare 阶段。`after_prepare` 阶段只用于
 App 对刚同步完成的 GPU scene 发起同步查询，例如批量 raycast；普通渲染工作仍在 `render` hook 中进入 RenderGraph。
@@ -73,6 +75,17 @@ Triangle / ShaderToy 使用单个 present graph。
 
 RT demo 使用 compute graph 与 present graph：App 先让 `RtPipeline` 贡献 compute passes，再在 present graph 中先
 resolve，最后调用 `GuiPlugin::contribute_passes` 叠加 GUI。
+
+Truvis 现在通过 `RenderMode { Realtime, Offline }` 在实时和离线两套 app-owned pipeline 之间选择：
+
+- `Realtime`：沿用 `RtPipeline`，执行 realtime ray tracing、可选 DLSS SR/RR、可选 ReSTIR DI，再输出 main view color。
+- `Offline`：执行 `OfflinePipeline`，数据流是 `offline ray tracing -> per-FIF single_frame_image -> FIF 唯一 accum_image -> per-FIF render_target -> present`。
+
+离线 `accum_image` 是 pipeline-owned 单张 HDR image，不按 FIF 轮转；RenderGraph import 初始状态为
+`STORAGE_READ_WRITE_COMPUTE`。离线 present graph 只读取 per-FIF `render_target`，不导出图片，不复用 DLSS、ReSTIR、RR、denoise 或 realtime `ViewAccumState`。
+离线 sample count 和 primary ray jitter 都由 `OfflineAccumState` 按 sample index 维护，jitter 使用离线自有 Halton 2/3 序列，不读取
+`PerFrameData::temporal_jitter_px`。如果当前 frame label 没有 TLAS，`OfflinePipeline` 会 reset 离线累计状态，不调度 RT / accum pass，
+而是通过 `ImageClearPass` 把 `single_frame_image`、`accum_image` 和 `render_target` 写成确定黑色输出，避免累积未定义或过期图像。
 
 ## RT 直接光采样契约
 

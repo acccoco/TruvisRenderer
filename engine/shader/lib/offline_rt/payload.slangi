@@ -1,23 +1,26 @@
 /// @file payload.slangi
-/// @brief realtime RT shader 间传递的最小载荷契约。
+/// @brief offline RT shader 间传递的最小载荷契约。
 ///
 /// closest-hit / miss 只负责把一次追踪事件整理成 `RtSurfaceHit`；raygen 负责基于事件推进
 /// path state。这个边界避免 hit shader 夹带 BRDF / throughput / radiance 逻辑。
 
 #pragma once
-// realtime/offline payload 复用同一个 include guard 名称是有意的：离线 payload 会先定义自己的
-// push constant / descriptor ABI，再包含 realtime helper。这样 helper 可以复用类型与 path logic，
-// 但不会把 realtime_rt 的 push constant 声明注入离线 translation unit。
 #ifndef TRUVIS_RT_PAYLOAD_SLANGI
 #define TRUVIS_RT_PAYLOAD_SLANGI
-#include "api/pass/realtime_rt.slangi"
+#include "api/pass/offline_rt.slangi"
+
+// 离线 shader 复用 realtime RT 的 path tracing helper。那些 helper 内部仍以
+// `realtime_rt::...` 访问 TLAS、sky 常量和单帧输出；在离线 translation unit 中将该 namespace
+// token 重定向到 `offline_rt`，避免为同一套积分逻辑复制一份 helper。这个 remap 只允许发生在
+// offline 入口的编译单元内：descriptor set、push constant 和单帧输出 ABI 仍归属 offline_rt。
+#define realtime_rt offline_rt
 
 /// Push Constants 声明（所有 RT 着色器共享）。
 ///
 /// raygen、hit 和 miss 使用同一个 push constant block，确保 channel 参数在一次 trace 的所有 shader
 /// invocation 中一致。
 [[vk::push_constant]]
-realtime_rt::PushConstants push_const;
+offline_rt::PushConstants push_const;
 
 /// 路径追踪最大深度。递归深度仍由 raygen 手动推进，Vulkan pipeline recursion depth 只覆盖 shader 调用栈。
 const static uint max_depth = 16;

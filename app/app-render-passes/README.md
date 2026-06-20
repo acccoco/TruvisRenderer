@@ -1,7 +1,7 @@
 # app-render-passes
 
 `app-render-passes` 存放 Truvis 主体 app 与 samples 共享的具体 render pass 实现，
-例如 real-time ray tracing、accumulation、denoise、SDR、blit、resolve 和 Phong shading。
+例如 real-time / offline ray tracing、accumulation、denoise、SDR、image clear、blit、resolve 和 Phong shading。
 
 ## 主要职责
 
@@ -9,6 +9,8 @@
 - 提供可接入 `truvis-render-graph` 的 pass adapter。
 - 使用 `RenderPassRecordCtx` 读取 GPU frame state、shader-visible bindings 和资源 manager。
 - 在需要场景数据的 pass 中通过 `RenderSceneView` 读取 scene buffer / TLAS / raster draw 能力，不在 render phase 访问 `World` 或重新 prepare scene。
+- `ImageClearPass` 只负责把 bindless UAV storage image 写成确定颜色；具体 pipeline 必须通过 RenderGraph
+  声明目标图像写状态，并决定何时清理历史。
 
 ## 边界约束
 

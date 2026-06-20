@@ -3,6 +3,7 @@ use truvis_gfx::raytracing::acceleration::GfxAcceleration;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_foundation::frame_counter::FrameLabel;
+use truvis_render_foundation::render_scene_view::RenderSceneAccumSignature;
 use truvis_shader_binding::gpu;
 
 /// 构建 GPU scene 所需的 per-FIF buffer 集。
@@ -37,6 +38,8 @@ pub(super) struct GpuSceneBuffers {
     // TODO 使用 frame id 来标记是否过期，scene manager 里面也需要有相应的标记
     pub(super) tlas: Option<GfxAcceleration>,
     pub(super) tlas_revision: u64,
+    /// 当前 FIF 的 scene 语义版本快照，供离线累计判断历史图像是否仍可复用。
+    pub(super) accum_signature: RenderSceneAccumSignature,
 }
 
 impl GpuSceneBuffers {
@@ -123,6 +126,7 @@ impl GpuSceneBuffers {
             ),
             tlas: None,
             tlas_revision: 0,
+            accum_signature: RenderSceneAccumSignature::default(),
         }
     }
 

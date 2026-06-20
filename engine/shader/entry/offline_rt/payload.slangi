@@ -1,0 +1,4 @@
+/// @file payload.slangi
+/// @brief offline RT entry shader 的兼容 include 入口。
+
+#include "lib/offline_rt/payload.slangi"

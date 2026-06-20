@@ -1,0 +1,43 @@
+#pragma once
+
+#include "api/common/mod.slangi"
+
+namespace offline_rt
+{
+
+static const uint SKY_SAMPLING_MODE_UNIFORM = 0;
+static const uint SKY_SAMPLING_MODE_IMPORTANCE = 1;
+
+/// 离线 RT pass-local descriptor set 编号。
+///
+/// 离线 shader 复用 realtime RT 的 path tracing helper，但 descriptor ABI 只暴露
+/// TLAS 与单帧 HDR 输出，不绑定 GBuffer、DLSS input 或 ReSTIR reservoir。
+#define OFFLINE_RT_SET_NUM GLOBAL_SETS_COUNT
+
+#ifdef __SLANG__
+[[vk::binding(0, OFFLINE_RT_SET_NUM)]]
+RaytracingAccelerationStructure rt_tlas;
+
+[[vk::binding(1, OFFLINE_RT_SET_NUM)]]
+RWTexture2D<float4> rt_single_frame_output;
+#endif
+
+struct PushConstants
+{
+    /// sample-per-pixel 序号，用于扰动随机种子。
+    uint spp_idx;
+    /// 复用 realtime debug channel 编号；离线 v1 默认使用 Final。
+    uint channel;
+    /// sky 直接光采样模式；Importance 不可用时 shader 内部会退回 uniform sphere。
+    uint sky_sampling_mode;
+    /// app 层 sky radiance 倍率；只缩放采样后的 radiance，不改变 sky 资产或 importance PDF。
+    float sky_brightness;
+    /// 非 0 表示 raygen 额外采样自发光三角形 NEE；关闭时保留 hit emission 旧路径。
+    uint emissive_nee_enabled;
+    /// 非 0 表示 raygen 额外采样 analytic light NEE；关闭时不影响 HDRI / emissive NEE。
+    uint analytic_nee_enabled;
+    /// 离线管线自有的 primary ray sub-pixel jitter，单位为 pixel。
+    /// 它不读取 runtime DLSS jitter，保证 reference 采样序列只由离线 sample index 决定。
+    float2 sample_jitter_px;
+};
+};

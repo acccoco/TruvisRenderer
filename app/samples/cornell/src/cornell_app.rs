@@ -14,6 +14,7 @@ use app_kit::camera_controller::CameraController;
 use app_kit::gui_plugin::GuiPlugin;
 use app_kit::input_state::InputManager;
 use app_kit::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
+use app_kit::render_pipeline::RenderMode;
 use app_kit::render_pipeline::rt_render_graph::RtPipeline;
 
 #[derive(Default)]
@@ -146,7 +147,16 @@ impl RenderAppHooks for CornellApp {
                 ctx.view_accum.accum_frames_num(),
                 ctx.delta_time_s,
             );
-            self.pipeline_overlay.build_overlay_ui(ui, ctx.dlss_options, Some(self.rt_pipeline.settings_mut()));
+            // Sample app 不持有 OfflinePipeline；临时 Realtime 只用于复用共享 Controls overlay 的签名。
+            let mut render_mode = RenderMode::Realtime;
+            self.pipeline_overlay.build_overlay_ui(
+                ui,
+                &mut render_mode,
+                ctx.dlss_options,
+                Some(self.rt_pipeline.settings_mut()),
+                None,
+                None,
+            );
             self.gui.build_debug_image_viewer_ui(ui);
         }
         self.gui.end_frame();

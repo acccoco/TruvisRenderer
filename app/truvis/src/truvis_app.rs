@@ -16,12 +16,16 @@ use app_kit::camera_controller::CameraController;
 use app_kit::gui_plugin::GuiPlugin;
 use app_kit::input_state::InputManager;
 use app_kit::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
+use app_kit::render_pipeline::RenderMode;
+use app_kit::render_pipeline::offline_render_graph::OfflinePipeline;
 use app_kit::render_pipeline::rt_render_graph::RtPipeline;
 
 #[derive(Default)]
 pub struct TruvisApp {
     gui: GuiPlugin,
     rt_pipeline: RtPipeline,
+    offline_pipeline: OfflinePipeline,
+    render_mode: RenderMode,
     camera_controller: CameraController,
     input: InputManager,
     debug_overlay: DebugInfoOverlay,
@@ -511,6 +515,7 @@ impl TruvisApp {
 
 impl RenderAppHooks for TruvisApp {
     fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
+        self.render_mode = RenderMode::initial_from_env();
         self.gui.set_hidpi_factor(ctx.scale_factor);
         self.gui.set_display_size(ctx.window_size);
 
@@ -520,6 +525,7 @@ impl RenderAppHooks for TruvisApp {
 
     fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
         visit(&mut self.rt_pipeline);
+        visit(&mut self.offline_pipeline);
         visit(&mut self.gui);
         visit(&mut self.debug_overlay);
         visit(&mut self.pipeline_overlay);
@@ -528,8 +534,9 @@ impl RenderAppHooks for TruvisApp {
     fn visit_plugins_mut_rev(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
         visit(&mut self.pipeline_overlay);
         visit(&mut self.debug_overlay);
-        visit(&mut self.rt_pipeline);
         visit(&mut self.gui);
+        visit(&mut self.offline_pipeline);
+        visit(&mut self.rt_pipeline);
     }
 
     fn on_input(&mut self, events: &[InputEvent]) {
@@ -566,7 +573,15 @@ impl RenderAppHooks for TruvisApp {
                 ctx.view_accum.accum_frames_num(),
                 ctx.delta_time_s,
             );
-            self.pipeline_overlay.build_overlay_ui(ui, ctx.dlss_options, Some(self.rt_pipeline.settings_mut()));
+            let offline_sample_count = self.offline_pipeline.sample_count();
+            self.pipeline_overlay.build_overlay_ui(
+                ui,
+                &mut self.render_mode,
+                ctx.dlss_options,
+                Some(self.rt_pipeline.settings_mut()),
+                Some(self.offline_pipeline.settings_mut()),
+                Some(offline_sample_count),
+            );
             self.build_raycast_overlay_ui(ui, &ctx.world.asset_hub);
             self.gui.build_debug_image_viewer_ui(ui);
         }
@@ -609,63 +624,133 @@ impl RenderAppHooks for TruvisApp {
         let frame_label = ctx.record_ctx.frame_timing.frame_label();
         let frame_id = ctx.record_ctx.frame_timing.frame_id();
 
+        // 离线累计失效由 App 在每帧 render 前统一判断：相机、场景和离线设置都已经进入
+        // 本帧确定状态，pipeline 只保存历史签名并在变化时清空自己的 accum_image。
+        self.offline_pipeline.update_accum_signature(
+            self.camera_controller.camera().render_view().accum_signature(),
+            ctx.render_scene.accum_signature(frame_label),
+        );
+
         self.gui.begin_debug_image_frame();
-        // debug image import state 取决于当前 SR/RR mode；Streamline 输入在 evaluate 后会停在 read-only layout。
-        for debug_image in self.rt_pipeline.collect_debug_images(frame_label, *ctx.record_ctx.dlss_options) {
+        // debug image 的来源跟随当前模式选择。App 只把所选 pipeline 的图像交给 GUI，
+        // 图像生命周期、layout 导出和 bindless 注册仍由各 pipeline 自己维护。
+        let debug_images = match self.render_mode {
+            RenderMode::Realtime => self.rt_pipeline.collect_debug_images(frame_label, *ctx.record_ctx.dlss_options),
+            RenderMode::Offline => self.offline_pipeline.collect_debug_images(frame_label),
+        };
+        for debug_image in debug_images {
             self.gui.register_debug_image(debug_image);
         }
         self.gui.prepare_render_data(&plugin_ctx);
 
-        let compute_submit = {
-            let mut graph = RenderGraphBuilder::new();
-            self.rt_pipeline.contribute_compute_passes(&mut graph, &plugin_ctx);
-            let compiled_graph = graph.compile();
-            if log::log_enabled!(log::Level::Debug) {
-                static PRINT_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
-                PRINT_DEBUG_INFO.call_once(|| {
-                    compiled_graph.print_execution_plan();
-                });
-            }
+        // App 持有实时/离线模式选择；具体 pipeline 只负责向 RenderGraph 贡献自己的 compute subgraph。
+        // 两条分支都生成同一队列上的第一段 submit，保证后续 present graph 可按统一顺序消费结果。
+        let compute_submit = match self.render_mode {
+            RenderMode::Realtime => {
+                let mut graph = RenderGraphBuilder::new();
+                self.rt_pipeline.contribute_compute_passes(&mut graph, &plugin_ctx);
+                let compiled_graph = graph.compile();
+                if log::log_enabled!(log::Level::Debug) {
+                    static PRINT_RT_COMPUTE_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
+                    PRINT_RT_COMPUTE_DEBUG_INFO.call_once(|| {
+                        compiled_graph.print_execution_plan();
+                    });
+                }
 
-            let cmd = self.rt_pipeline.compute_cmd(frame_label);
-            cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-compute-graph");
-            compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
-            cmd.end();
-            compiled_graph.build_submit_info(std::slice::from_ref(cmd))
+                let cmd = self.rt_pipeline.compute_cmd(frame_label);
+                cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-compute-graph");
+                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
+                cmd.end();
+                compiled_graph.build_submit_info(std::slice::from_ref(cmd))
+            }
+            RenderMode::Offline => {
+                let mut graph = RenderGraphBuilder::new();
+                self.offline_pipeline.contribute_compute_passes(&mut graph, &plugin_ctx);
+                let compiled_graph = graph.compile();
+                if log::log_enabled!(log::Level::Debug) {
+                    static PRINT_OFFLINE_COMPUTE_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
+                    PRINT_OFFLINE_COMPUTE_DEBUG_INFO.call_once(|| {
+                        compiled_graph.print_execution_plan();
+                    });
+                }
+
+                let cmd = self.offline_pipeline.compute_cmd(frame_label);
+                cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "offline-compute-graph");
+                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
+                cmd.end();
+                compiled_graph.build_submit_info(std::slice::from_ref(cmd))
+            }
         };
 
-        let present_submit = {
-            let mut graph = RenderGraphBuilder::new();
-            graph.signal_semaphore(RgSemaphoreInfo::timeline(
-                ctx.timeline.handle(),
-                ash::vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
-                frame_id,
-            ));
-            let present_targets = self.rt_pipeline.contribute_present_passes(&mut graph, &plugin_ctx);
-            let debug_graph_entries = present_targets.debug_graph_entries();
-            self.gui.contribute_passes(
-                &mut graph,
-                &plugin_ctx,
-                present_targets.present_image,
-                ctx.present.swapchain_image_info().image_extent,
-                &debug_graph_entries,
-            );
+        // present subgraph 同样按模式委派给对应 pipeline；GUI 与 debug viewer 只读取该分支导出的
+        // render target，避免 realtime/offline 两套资源在同一帧互相暴露状态。
+        let present_submit = match self.render_mode {
+            RenderMode::Realtime => {
+                let mut graph = RenderGraphBuilder::new();
+                graph.signal_semaphore(RgSemaphoreInfo::timeline(
+                    ctx.timeline.handle(),
+                    ash::vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
+                    frame_id,
+                ));
+                let present_targets = self.rt_pipeline.contribute_present_passes(&mut graph, &plugin_ctx);
+                let debug_graph_entries = present_targets.debug_graph_entries();
+                self.gui.contribute_passes(
+                    &mut graph,
+                    &plugin_ctx,
+                    present_targets.present_image,
+                    ctx.present.swapchain_image_info().image_extent,
+                    &debug_graph_entries,
+                );
 
-            let compiled_graph = graph.compile();
-            if log::log_enabled!(log::Level::Debug) {
-                static PRINT_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
-                PRINT_DEBUG_INFO.call_once(|| {
-                    compiled_graph.print_execution_plan();
-                });
+                let compiled_graph = graph.compile();
+                if log::log_enabled!(log::Level::Debug) {
+                    static PRINT_RT_PRESENT_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
+                    PRINT_RT_PRESENT_DEBUG_INFO.call_once(|| {
+                        compiled_graph.print_execution_plan();
+                    });
+                }
+
+                let cmd = self.rt_pipeline.present_cmd(frame_label);
+                cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-present-graph");
+                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
+                cmd.end();
+                compiled_graph.build_submit_info(std::slice::from_ref(cmd))
             }
+            RenderMode::Offline => {
+                let mut graph = RenderGraphBuilder::new();
+                graph.signal_semaphore(RgSemaphoreInfo::timeline(
+                    ctx.timeline.handle(),
+                    ash::vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
+                    frame_id,
+                ));
+                let present_targets = self.offline_pipeline.contribute_present_passes(&mut graph, &plugin_ctx);
+                let debug_graph_entries = present_targets.debug_graph_entries();
+                self.gui.contribute_passes(
+                    &mut graph,
+                    &plugin_ctx,
+                    present_targets.present_image,
+                    ctx.present.swapchain_image_info().image_extent,
+                    &debug_graph_entries,
+                );
 
-            let cmd = self.rt_pipeline.present_cmd(frame_label);
-            cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-present-graph");
-            compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
-            cmd.end();
-            compiled_graph.build_submit_info(std::slice::from_ref(cmd))
+                let compiled_graph = graph.compile();
+                if log::log_enabled!(log::Level::Debug) {
+                    static PRINT_OFFLINE_PRESENT_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
+                    PRINT_OFFLINE_PRESENT_DEBUG_INFO.call_once(|| {
+                        compiled_graph.print_execution_plan();
+                    });
+                }
+
+                let cmd = self.offline_pipeline.present_cmd(frame_label);
+                cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "offline-present-graph");
+                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
+                cmd.end();
+                compiled_graph.build_submit_info(std::slice::from_ref(cmd))
+            }
         };
 
+        // 两种模式都保持 compute -> present 的提交顺序。timeline signal 放在 present graph，
+        // 因此上层 runtime 只需要等待同一个 frame_id 即可观察最终 swapchain 写入完成。
         ctx.queue_ctx.gfx_queue().submit(vec![compute_submit, present_submit], None);
     }
 

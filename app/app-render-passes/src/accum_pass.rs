@@ -16,6 +16,8 @@ pub struct AccumPassData {
     pub single_frame_bindless_uav_handle: BindlessUavHandle,
     pub accum_bindless_uav_handle: BindlessUavHandle,
     pub image_size: vk::Extent2D,
+    /// 调用方维护的离线历史样本数。pass 只按这个数做 running average，
+    /// 不能回读 runtime `ViewAccumState`，否则会把 realtime temporal reset 语义混入离线 reference。
     pub accum_frames: u32,
 }
 
@@ -74,6 +76,9 @@ pub struct AccumRgPass<'a> {
     pub accum_image: RgImageHandle,
 
     pub image_extent: vk::Extent2D,
+    /// 调用方维护的累计样本数；0 表示本次直接覆盖历史图像。这个契约让同一个 shader
+    /// 可以服务 realtime 或 offline 调度，但历史有效性必须由各 pipeline 自己判断。
+    pub accum_frames: u32,
 }
 
 impl<'a> RgPass for AccumRgPass<'a> {
@@ -98,7 +103,7 @@ impl<'a> RgPass for AccumRgPass<'a> {
                 single_frame_bindless_uav_handle,
                 accum_bindless_uav_handle,
                 image_size: self.image_extent,
-                accum_frames: self.record_ctx.view_accum.accum_frames_num() as u32,
+                accum_frames: self.accum_frames,
             },
             &self.record_ctx,
         );
