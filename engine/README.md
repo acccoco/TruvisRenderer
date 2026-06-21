@@ -38,8 +38,8 @@ workspace 顶层 `app/`。
 
 - `truvis-path/`：基于根目录 `map.toml` 的统一路径入口，提供 workspace、assets、resources、shader build、CXX、
   运行时路径编码和词法路径归一化等 helper；不负责下载或加载资源内容。
-- `truvis-fetch-res/`：`fetch_res` 工具 crate，读取 `resources.toml` 并下载模型资产或外部工具资源；不参与渲染线程的 asset
-  loading。
+- `truvis-fetch-res/`：`fetch_res` 工具 crate，读取 `resources.toml` 并下载模型资产、外部工具、SDK 或参考源码资源；不参与渲染线程的
+  asset loading。
 
 ### `gfx/`
 

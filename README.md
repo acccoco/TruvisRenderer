@@ -55,7 +55,8 @@ just cxx-build vs2026 debug
 
 资源路径由根目录 `map.toml` 统一映射。`assets/fbx/` 保存 Sponza、Cornell 等模型资源，
 `assets/resources/` 保存窗口图标、字体和默认天空图等运行时资源；
-`tools/` 保存 Slang、Tracy 和 Vulkan validation layer 配置等外部工具资源。
+`tools/` 保存 Slang、Tracy、Streamline、RTXGI / RTXDI 参考源码和 Vulkan validation layer 配置等外部工具资源；
+下载产物不作为项目源码跟踪，可通过 `just fetch-res` 重新获取。
 
 启动 Tracy Profiler：
 

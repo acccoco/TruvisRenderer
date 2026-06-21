@@ -19,7 +19,6 @@ resource_type = "file"
 target_dir = "assets/fbx"
 rename_to = "cornell-box.fbx"
 
-
 [[resources]]
 name = "cornell-box"
 url = "https://github.com/acccoco/assets/releases/download/fbx/cornell-box_0.0.1.zip"
@@ -36,7 +35,7 @@ rename_to = "sponza-1"
 
 [[resources]]
 name = "slang"
-url = "https://github.com/shader-slang/slang/releases/download/v2025.24.3/slang-2025.24.3-windows-x86_64.zip"
+url = "https://github.com/shader-slang/slang/releases/download/v2026.11/slang-2026.11-windows-x86_64.zip"
 resource_type = "zip"
 target_dir = "tools"
 rename_to = "slang"
@@ -50,7 +49,21 @@ rename_to = "tracy"
 
 [[resources]]
 name = "streamline"
-url = "https://github.com/acccoco/assets/releases/download/sdk/streamline-sdk-v2.11.1.zip"
+url = "https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.11.1/streamline-sdk-v2.11.1.zip"
 resource_type = "zip"
 target_dir = "tools"
 rename_to = "streamline-sdk"
+
+[[resources]]
+name = "nvidia-rtx-gi-repo"
+url = "https://github.com/NVIDIA-RTX/RTXGI/archive/refs/tags/v2.7.0.zip"
+resource_type = "zip"
+target_dir = "tools"
+rename_to = "rtx-gi"
+
+[[resources]]
+name = "nvidia-rtx-di-repo"
+url = "https://github.com/NVIDIA-RTX/RTXDI/archive/refs/tags/v3.0.0.zip"
+resource_type = "zip"
+target_dir = "tools"
+rename_to = "rtx-di"

@@ -8,6 +8,8 @@
 - `tracy/`：Tracy profiler / capture / export 工具。
 - `streamline/`：项目维护的 Streamline runtime JSON 模板，由 `truvis-cxx-build` 复制到运行目录。
 - `streamline-sdk/`：Streamline SDK 下载产物，提供头文件、链接库和 runtime DLL；该目录不进入 git。
+- `rtx-gi/`：RTXGI / SHARC 参考源码下载产物，仅作为对照实现和文档参考；该目录不进入 git。
+- `rtx-di/`：RTXDI 参考源码下载产物，仅作为对照实现和文档参考；该目录不进入 git。
 - `vulkan/khronos_validation_settings.txt`：validation layer 配置，供 `just cornell-validation` 和 `just truvis-validation` 使用。
 
 这些资源由根目录 `resources.toml` 描述，推荐通过 `just fetch-res` 下载或刷新。

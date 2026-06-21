@@ -24,7 +24,8 @@ System，但直接光与间接光复用仍有后续工作：
 
 ## 路线总览
 
-本路线采用项目原生实现，不直接引入 RTXDI / SHARC SDK 作为运行时依赖。阶段顺序固定为：
+本路线采用项目原生实现，不直接引入 RTXDI / SHARC SDK 作为运行时依赖。`resources.toml` 下载到
+`tools/rtx-di/` 和 `tools/rtx-gi/` 的内容只作为参考源码和文档材料，不表示 runtime 依赖这些 SDK。阶段顺序固定为：
 
 1. 光照采样契约基线。
 2. HDRI / sky 重要性采样。
