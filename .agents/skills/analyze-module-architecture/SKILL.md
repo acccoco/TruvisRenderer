@@ -8,11 +8,18 @@ description: Analyze a code module, package, directory, subsystem, service, page
 ## Core Workflow
 
 1. Scope the target module first. If the module path or boundary is ambiguous, infer the smallest reasonable scope from the user request and state the assumption.
-2. Read the nearest project guidance before analyzing code: architecture docs, module README files, manifests/build files, public entry points, tests, examples, and callers.
-3. Map the module from the outside in: responsibilities and boundaries, public API surface, inbound callers, outbound dependencies, then internal components and flows.
+2. Read project guidance before analyzing code. In this repository, read `AGENTS.md`, `docs/ARCHITECTURE.md`, relevant `docs/summaries/`, and the module README first; then inspect manifests/build files, public entry points, tests, examples, and callers.
+3. 从外到内映射模块：职责与边界、对外 API、入口调用方、外部依赖、集成点、已有本地模式、隐藏耦合，然后分析内部组件和运行流程。
 4. Separate facts from inference. Cite concrete files and symbols for observed behavior; mark uncertain items as "推断" or "未确认".
 5. Use diagrams only where they clarify structure or behavior. Prefer 2-4 diagrams for a normal report; add more only when the user asks for exhaustive documentation.
-6. End with gaps, risks, and follow-up checks instead of silently filling unknowns.
+6. 以风险、未知项和后续核查收尾：指出所有权不清、边界歧义、未文档化不变量、隐藏顺序依赖、职责重复，以及需要继续源码核查的位置。
+
+## 分析姿态
+
+- 结论必须基于源码和当前文档，不把命名猜测当作事实。
+- 当模块边界不清时，列出多个可能边界并说明取舍，不强行给唯一答案。
+- 主动暴露隐藏复杂度：集成点、隐式顺序、共享状态、生命周期耦合和跨模块假设。
+- 不实现代码或编辑文档，除非用户明确要求。
 
 ## Evidence Rules
 
@@ -35,18 +42,18 @@ For a comprehensive request, read `references/architecture-analysis-guide.md` an
 - 生命周期与状态: startup/shutdown, object lifetime, states, resources.
 - 并发与性能: thread safety, async model, locks/queues, bottlenecks, resource use.
 
-## Diagram Rules
+## 图表选择
 
-Use Mermaid syntax in Markdown.
+图表只在能澄清模块理解时使用，不作为装饰。
 
-- Class diagram: explain static types, traits/interfaces, inheritance/implementation, or object responsibility.
-- Component diagram: explain internal pieces and module boundaries.
-- Dependency graph: explain inbound/outbound module relationships and dependency direction.
-- Sequence diagram: explain one representative call, request, or task flow.
-- Data-flow graph: explain where data comes from, where it goes, and where it is transformed or stored.
-- State diagram: explain lifecycle, state machine, resource states, or error/retry transitions.
+- 组件图（Component diagram）：展示模块边界、内部组成和职责拆分。
+- 依赖图（Dependency graph）：展示入站 / 出站依赖和依赖方向。
+- 时序图（Sequence diagram）：展示初始化、帧流程、请求路径或资源更新路径。
+- 数据流图（Data-flow graph）：展示数据从哪里来、如何转换、在哪里被消费。
+- 状态图（State diagram）：展示生命周期、资源所有权、重建 / 销毁状态或同步状态。
+- 对比表（Comparison table）：当存在多个可能模块边界或重构方向时使用。
 
-Keep diagrams readable: use meaningful node names, avoid dumping every helper, and split large diagrams by concern.
+持久文档优先使用 Mermaid；ASCII 草图只接受用于快速探索对话。每个图必须有源码引用支撑，或明确标注为推断。
 
 ## Output Shape
 
