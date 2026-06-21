@@ -34,6 +34,8 @@ RenderRuntime
 - `CameraController` / `InputManager`
 - App 自有 overlay 编排器，或 app-kit 提供的 `DebugInfoOverlay` / `PipelineControlsOverlay`
   兼容整窗 wrapper；Truvis 使用 `TruvisOverlayUi` 统一决定 tag、窗口布局、section 可见性和绘制顺序。
+  默认布局保留透明 diagnostics HUD，将 Rendering controls 与 Picking 结果上下拼接到左侧主面板，
+  Debug Images 由 `GuiPlugin` 继续持有状态，并作为独立小窗口锚定到 swapchain 右侧。
 - `TrianglePlugin`、`ShaderToyPlugin`、`RtPipeline`、`OfflinePipeline` 等具体渲染能力
 
 ## Ctx 裁剪契约

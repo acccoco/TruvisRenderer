@@ -19,6 +19,8 @@ use truvis_render_runtime::state::dlss_options::DlssOptions;
 
 use crate::truvis_app::ClickRayCastProbe;
 
+const DEFAULT_WINDOW_MARGIN: f32 = 10.0;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverlayLayoutMode {
     SeparateWindows,
@@ -121,8 +123,8 @@ impl Default for OverlayWindowSet {
             },
             stack: OverlayWindowOptions {
                 title: "Truvis Overlay",
-                position: [10.0, 10.0],
-                size: [460.0, 760.0],
+                position: [10.0, 200.0],
+                size: [430.0, 650.0],
                 condition: imgui::Condition::FirstUseEver,
                 flags: imgui::WindowFlags::empty(),
                 visible: true,
@@ -216,13 +218,25 @@ impl TruvisOverlayUi {
 
         let upscaling_is_separate =
             self.section_visible(OverlayTag::Upscaling) && self.window(OverlayTag::Upscaling).visible;
-        if self.section_visible(OverlayTag::Rendering) {
-            self.build_window(ui, OverlayTag::Rendering, || {
-                Self::draw_controls_contents(
-                    ui,
-                    &mut pipeline,
-                    self.section_visible(OverlayTag::Upscaling) && !upscaling_is_separate,
-                );
+        if self.options.windows.stack.visible
+            && (self.section_visible(OverlayTag::Rendering) || self.section_visible(OverlayTag::Picking))
+        {
+            Self::build_window_with_options(ui, self.options.windows.stack, || {
+                if self.section_visible(OverlayTag::Rendering) {
+                    Self::draw_stack_section_header(ui, OverlayTag::Rendering);
+                    // 默认 separate-style 布局把渲染选项与点选结果放进同一个 App 级主面板；
+                    // 控件本身仍复用 app-kit section，避免把 pipeline owner 状态迁入布局层。
+                    Self::draw_controls_contents(
+                        ui,
+                        &mut pipeline,
+                        self.section_visible(OverlayTag::Upscaling) && !upscaling_is_separate,
+                    );
+                }
+
+                if self.section_visible(OverlayTag::Picking) {
+                    Self::draw_stack_section_header(ui, OverlayTag::Picking);
+                    Self::draw_raycast_contents(ui, &raycast);
+                }
             });
         }
         if upscaling_is_separate {
@@ -230,13 +244,8 @@ impl TruvisOverlayUi {
                 PipelineControlsOverlay::build_dlss_section_for_mode(ui, *pipeline.render_mode, pipeline.dlss_options);
             });
         }
-        if self.section_visible(OverlayTag::Picking) {
-            self.build_window(ui, OverlayTag::Picking, || {
-                Self::draw_raycast_contents(ui, &raycast);
-            });
-        }
         if self.section_visible(OverlayTag::Images) {
-            self.build_window(ui, OverlayTag::Images, || {
+            self.build_right_aligned_image_window(ui, &stats, || {
                 debug_images.gui.build_debug_image_viewer_contents(ui);
             });
         }
@@ -290,6 +299,26 @@ impl TruvisOverlayUi {
             return;
         }
         Self::build_window_with_options(ui, options, build);
+    }
+
+    fn build_right_aligned_image_window(
+        &self,
+        ui: &imgui::Ui,
+        stats: &FrameStatsOverlayData<'_>,
+        build: impl FnOnce(),
+    ) {
+        let options = self.window(OverlayTag::Images);
+        if !options.visible {
+            return;
+        }
+
+        let right_aligned_x =
+            (stats.swapchain_extent.width as f32 - options.size[0] - DEFAULT_WINDOW_MARGIN).max(DEFAULT_WINDOW_MARGIN);
+        ui.window(options.title)
+            .position([right_aligned_x, options.position[1]], imgui::Condition::Always)
+            .size(options.size, options.condition)
+            .flags(options.flags)
+            .build(build);
     }
 
     fn build_window_with_options(ui: &imgui::Ui, options: OverlayWindowOptions, build: impl FnOnce()) {
