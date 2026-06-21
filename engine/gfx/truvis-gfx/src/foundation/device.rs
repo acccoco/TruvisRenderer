@@ -135,6 +135,10 @@ impl GfxDevice {
             Box::new(vk::PhysicalDeviceTimelineSemaphoreFeatures::default().timeline_semaphore(true)),
             Box::new(
                 vk::PhysicalDeviceDescriptorIndexingFeatures::default()
+                    // shader 中的 bindless image 表通过 NonUniformResourceIndex 做动态下标，
+                    // logical device 必须显式启用 SPIR-V capability 对应的非一致数组索引能力。
+                    .shader_sampled_image_array_non_uniform_indexing(true)
+                    .shader_storage_image_array_non_uniform_indexing(true)
                     .descriptor_binding_partially_bound(true) // 即使一些 descriptor 是 invalid
                     .runtime_descriptor_array(true)
                     .descriptor_binding_sampled_image_update_after_bind(true)
