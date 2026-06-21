@@ -5,6 +5,7 @@
 
 #include "lib/realtime_rt/payload.slangi"
 #include "lib/realtime_rt/gbuffer.slangi"
+#include "lib/realtime_rt/raygen_material.slangi"
 #include "lib/scene/geometry_eval.slangi"
 #include "lib/scene/scene_access.slangi"
 
@@ -93,16 +94,47 @@ struct RtRaygenView
         return motion_vector_pixels(current_world_position, previous_world_position);
     }
 
-    /// 为 RR specular motion vectors 追踪一次镜面方向上的虚拟几何。
+    static float3 reflection_motion_direction(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
+    {
+        return normalize(reflect(normalize(primary_ray_dir), primary_hit.forward_normal));
+    }
+
+    static float3 transparent_motion_direction(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
+    {
+        float3 refraction_dir;
+        float3 refraction_throughput;
+        // RR 的 motion 输入必须帧间确定，不能复用 transparent path 的随机反射/折射分支。
+        // 这里优先使用与材质采样相同 eta/normal 约定的折射方向；全内反射或数值失败时回退镜面方向。
+        if (RtMaterialSampler::sample_refraction(
+                primary_hit,
+                normalize(primary_ray_dir),
+                refraction_dir,
+                refraction_throughput
+            ))
+        {
+            return normalize(refraction_dir);
+        }
+        return reflection_motion_direction(primary_hit, primary_ray_dir);
+    }
+
+    static float3 primary_specular_motion_direction(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
+    {
+        if (primary_hit.material_type == MaterialType::TRANSPARENT)
+        {
+            return transparent_motion_direction(primary_hit, primary_ray_dir);
+        }
+        return reflection_motion_direction(primary_hit, primary_ray_dir);
+    }
+
+    /// 为 RR specular motion vectors 追踪一次 delta 主路径方向上的虚拟几何。
     ///
     /// 未命中时返回零向量；这是 RR 可接受的保守 fallback，比复用 primary motion 更不容易把
-    /// 错误历史强行拖到反射区域。
-    static float2 specular_motion_vector_pixels(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
+    /// 错误历史强行拖到反射/折射区域。
+    static float2 specular_motion_vector_pixels_for_direction(const RtSurfaceHit primary_hit, float3 motion_dir)
     {
-        const float3 reflection_dir = normalize(reflect(normalize(primary_ray_dir), primary_hit.forward_normal));
         RayDesc specular_ray;
-        specular_ray.Origin = primary_hit.position + 0.001f * reflection_dir;
-        specular_ray.Direction = reflection_dir;
+        specular_ray.Origin = primary_hit.position + 0.001f * motion_dir;
+        specular_ray.Direction = motion_dir;
         specular_ray.TMin = 0.001f;
         specular_ray.TMax = 10000.0f;
 
@@ -138,6 +170,14 @@ struct RtRaygenView
         return instance_motion_vector_pixels(instance_id, object_position);
     }
 
+    static float2 primary_specular_motion_vector_pixels(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
+    {
+        return specular_motion_vector_pixels_for_direction(
+            primary_hit,
+            primary_specular_motion_direction(primary_hit, primary_ray_dir)
+        );
+    }
+
     /// 写入首次命中的 GBuffer 与 DLSS 输入。
     static void write_primary_hit_outputs(uint2 thread_id, const RtSurfaceHit surface, float3 primary_ray_dir)
     {
@@ -147,11 +187,12 @@ struct RtRaygenView
             surface.hit_t,
             surface.base_color,
             surface.metallic,
-            surface.roughness
+            surface.roughness,
+            surface.material_type
         );
         RtGBufferWriter::write_gbuffer_hit(thread_id, gbuffer_data);
         const float2 primary_motion_vector = instance_motion_vector_pixels(surface.instance_id, surface.object_position);
-        const float2 specular_motion_vector = specular_motion_vector_pixels(surface, primary_ray_dir);
+        const float2 specular_motion_vector = primary_specular_motion_vector_pixels(surface, primary_ray_dir);
         RtGBufferWriter::write_dlss_sr_hit(thread_id, device_depth(surface.position), primary_motion_vector);
         RtGBufferWriter::write_dlss_rr_hit(thread_id, gbuffer_data, specular_motion_vector);
     }

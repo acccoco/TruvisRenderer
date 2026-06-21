@@ -160,6 +160,12 @@ pub enum RtDebugChannel {
     NeeEmissive,
     /// 显示 next-event estimation 中来自 analytic light 的直接光。
     NeeAnalytic,
+    /// 显示 primary surface 的粗粒度材质分类。
+    MaterialType,
+    /// 显示 primary surface 是否属于 specular / transparent delta path。
+    DeltaMask,
+    /// 显示 DLSS RR 使用的 primary specular motion vector 长度。
+    SpecularMotionMagnitude,
     /// 显示 ReSTIR DI initial reservoir 的权重强度。
     RestirInitialWeight,
     /// 显示 ReSTIR DI temporal reservoir 是否有效及 history age。
@@ -169,7 +175,7 @@ pub enum RtDebugChannel {
 }
 
 impl RtDebugChannel {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 18] = [
         Self::Final,
         Self::ForwardNormal,
         Self::WorldNormal,
@@ -182,6 +188,9 @@ impl RtDebugChannel {
         Self::NeeBounce1,
         Self::NeeEmissive,
         Self::NeeAnalytic,
+        Self::MaterialType,
+        Self::DeltaMask,
+        Self::SpecularMotionMagnitude,
         Self::RestirInitialWeight,
         Self::RestirTemporalValid,
         Self::RestirFinalContribution,
@@ -201,6 +210,9 @@ impl RtDebugChannel {
             Self::NeeBounce1 => "NEE bounce 1",
             Self::NeeEmissive => "from NEE emissive",
             Self::NeeAnalytic => "from NEE analytic",
+            Self::MaterialType => "material type",
+            Self::DeltaMask => "delta mask",
+            Self::SpecularMotionMagnitude => "specular motion magnitude",
             Self::RestirInitialWeight => "ReSTIR initial weight",
             Self::RestirTemporalValid => "ReSTIR temporal valid",
             Self::RestirFinalContribution => "ReSTIR final contribution",
@@ -221,6 +233,9 @@ impl RtDebugChannel {
             Self::NeeBounce1 => 8,
             Self::NeeEmissive => 9,
             Self::NeeAnalytic => 12,
+            Self::MaterialType => 16,
+            Self::DeltaMask => 17,
+            Self::SpecularMotionMagnitude => 18,
             Self::RestirInitialWeight => 13,
             Self::RestirTemporalValid => 14,
             Self::RestirFinalContribution => 15,

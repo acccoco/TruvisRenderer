@@ -62,7 +62,17 @@ void main_ray_gen()
 
         // surface-only debug 通道沿用旧语义：miss shader 填入的虚拟 surface 也参与可视化。
         float3 debug_color;
-        if (RtDebugAccumulator::try_surface_channel(surface, push_const.channel, debug_color))
+        bool surface_debug_done = RtDebugAccumulator::try_surface_channel(surface, push_const.channel, debug_color);
+        if (!surface_debug_done && push_const.channel == RT_DEBUG_SPECULAR_MOTION_MAGNITUDE)
+        {
+            const float2 specular_motion = payload.hit
+                ? RtRaygenView::primary_specular_motion_vector_pixels(surface, ray.Direction)
+                : float2(0.0f);
+            // 64px 以上的虚拟 specular motion 映射为白色，方便快速定位异常拖影区域。
+            debug_color = float3(saturate(length(specular_motion) / 64.0f));
+            surface_debug_done = true;
+        }
+        if (surface_debug_done)
         {
             if (!gbuffer_written && depth == 0)
             {

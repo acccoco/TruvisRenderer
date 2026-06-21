@@ -12,6 +12,7 @@
 #pragma once
 
 #include "api/pass/realtime_rt.slangi"
+#include "lib/realtime_rt/payload.slangi"
 
 // ============================================================================
 // 常量定义
@@ -35,6 +36,7 @@ struct RtGBufferData
 
     float3 albedo;      ///< 基础颜色（漫反射颜色）
     float metallic;     ///< 金属度
+    MaterialType material_type; ///< primary surface 的粗粒度材质类型
 };
 
 // ============================================================================
@@ -57,7 +59,8 @@ static RtGBufferData make_data(
     float linear_depth,
     float3 albedo,
     float metallic,
-    float roughness
+    float roughness,
+    MaterialType material_type
 )
 {
     RtGBufferData data;
@@ -66,7 +69,10 @@ static RtGBufferData make_data(
     data.linear_depth = linear_depth;
     data.albedo = albedo;
     data.metallic = metallic;
-    data.roughness = roughness;
+    // 当前 transparent 分支按理想 delta 折射/反射积分；RR NormalRoughness 若看到高 roughness，
+    // 会把透射内容当作粗糙表面历史来复用。这里仅收敛 primary RR/GBuffer 输入语义，不改变材质采样。
+    data.roughness = material_type == MaterialType::TRANSPARENT ? min(roughness, 0.02f) : roughness;
+    data.material_type = material_type;
     return data;
 }
 
@@ -78,11 +84,24 @@ static RtGBufferData make_data(
 /// @param metallic 金属度
 /// @param out_diffuse_albedo 输出 diffuse albedo
 /// @param out_specular_albedo 输出 specular albedo / f0
-static void compute_rr_albedo(float3 base_color, float metallic, out float3 out_diffuse_albedo, out float3 out_specular_albedo)
+static void compute_rr_albedo(
+    float3 base_color,
+    float metallic,
+    MaterialType material_type,
+    out float3 out_diffuse_albedo,
+    out float3 out_specular_albedo
+)
 {
     const float reflectance = 0.8f;
-    out_diffuse_albedo = (1.0f - metallic) * base_color;
     out_specular_albedo = lerp(0.16f * reflectance * reflectance, base_color, metallic);
+    if (material_type == MaterialType::SPECULAR || material_type == MaterialType::TRANSPARENT)
+    {
+        // delta primary 的 single_frame_rt 颜色来自后续反射/折射链路；给 RR diffuse albedo
+        // 会把它误解释成第一层表面的漫反射历史。
+        out_diffuse_albedo = float3(0.0f);
+        return;
+    }
+    out_diffuse_albedo = (1.0f - metallic) * base_color;
 }
 
 /// 写入 GBuffer（命中情况）
@@ -120,7 +139,7 @@ static void write_dlss_rr_hit(uint2 thread_id, RtGBufferData data, float2 specul
 {
     float3 diffuse_albedo;
     float3 specular_albedo;
-    compute_rr_albedo(data.albedo, data.metallic, diffuse_albedo, specular_albedo);
+    compute_rr_albedo(data.albedo, data.metallic, data.material_type, diffuse_albedo, specular_albedo);
     realtime_rt::dlss_rr_diffuse_albedo.Store(thread_id, float4(diffuse_albedo, 1.0f));
     realtime_rt::dlss_rr_specular_albedo.Store(thread_id, float4(specular_albedo, 1.0f));
     realtime_rt::dlss_rr_specular_motion_vectors.Store(thread_id, specular_motion_vector_pixels);

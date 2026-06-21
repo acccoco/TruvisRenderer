@@ -192,10 +192,10 @@ RR 在 SR 基础输入外额外 tag：
 
 | Streamline tag | 当前资源 | 格式 / 尺寸 | 说明 |
 | --- | --- | --- | --- |
-| `kBufferTypeAlbedo` | `dlss-rr-diffuse-albedo` | `R16G16B16A16_SFLOAT`, `render_extent` | shader 从 base color / metallic 拆出的 diffuse albedo。 |
-| `kBufferTypeSpecularAlbedo` | `dlss-rr-specular-albedo` | `R16G16B16A16_SFLOAT`, `render_extent` | shader 按项目 PBR 约定拆出的 specular albedo。 |
-| `kBufferTypeNormalRoughness` | `gbuffer-a` | `R16G16B16A16_SFLOAT`, `render_extent` | `forward/shading normal.xyz + roughness`，`DLSSDOptions.normalRoughnessMode = Packed`。 |
-| `kBufferTypeSpecularMotionVectors` | `dlss-rr-specular-motion-vectors` | `R32G32_SFLOAT`, `render_extent` | raygen 沿 primary hit 的镜面反射方向追踪虚拟几何后写入 pixel-space 2D motion；未命中时写 0。 |
+| `kBufferTypeAlbedo` | `dlss-rr-diffuse-albedo` | `R16G16B16A16_SFLOAT`, `render_extent` | shader 从 base color / metallic 拆出的 diffuse albedo；收窄分类后的 smooth mirror / glass delta primary 写 0。 |
+| `kBufferTypeSpecularAlbedo` | `dlss-rr-specular-albedo` | `R16G16B16A16_SFLOAT`, `render_extent` | shader 按项目 PBR 约定拆出的 specular albedo / F0。 |
+| `kBufferTypeNormalRoughness` | `gbuffer-a` | `R16G16B16A16_SFLOAT`, `render_extent` | `forward/shading normal.xyz + roughness`，`DLSSDOptions.normalRoughnessMode = Packed`；smooth glass delta primary 的 roughness 收敛到接近 delta 的小值。 |
+| `kBufferTypeSpecularMotionVectors` | `dlss-rr-specular-motion-vectors` | `R32G32_SFLOAT`, `render_extent` | raygen 为 primary hit 追踪确定性的 specular 虚拟几何：smooth mirror 走反射，smooth glass 优先折射、失败回退反射；未命中时写 0。 |
 
 `GBufferB.w` 仍保留 primary-ray hit distance / linear depth 语义，供项目自身 debug 或后续
 RR 扩展参考；当前 SR/RR 都 tag `dlss-depth` 作为 device depth，不直接把 `GBufferB.w`
@@ -270,9 +270,10 @@ pub struct DlssRrRgPass<'a> {
 - `kFeatureDLSS_RR` support 查询、resource tagging、evaluate、free resources。
 - `DlssRrPass` / `DlssRrRgPass` opaque external pass。
 - `DlssRrInputTargets` 管理 diffuse albedo、specular albedo、specular motion vectors。
-- raygen 写出 RR 所需 diffuse/specular albedo；forward/shading normal + roughness 复用 GBufferA。
-- raygen 写出 primary full-screen motion vectors，并用一次反射 `RayQuery` 写出
-  RR specular motion vectors；反射未命中时使用零向量作为保守 fallback。
+- raygen 写出 RR 所需 diffuse/specular albedo；收窄分类后的 delta primary diffuse albedo 写 0，transparent
+  roughness 在 GBufferA 中收敛到接近 delta 的小值。
+- raygen 写出 primary full-screen motion vectors，并按 primary material type 用一次 `RayQuery` 写出
+  RR specular motion vectors：smooth mirror 反射，smooth glass 优先折射、失败回退反射；未命中时使用零向量作为保守 fallback。
 - SR/RR feature 切换时释放旧 feature resources，避免 Streamline viewport resource
   跨 feature 残留。
 
@@ -281,7 +282,7 @@ pub struct DlssRrRgPass<'a> {
 - temporal jitter 已接入 Halton(2,3) frame-wide pattern，并固定为 shader sampling jitter 与
   Streamline 回正 `jitterOffset` 反号的契约；仍需结合 Debug Viewer 和更多实机场景验证 SR/RR
   画质稳定性。
-- specular motion vectors 当前采用 single reflection RayQuery，不处理透明材质、粒子或多层反射；
+- specular motion vectors 当前仍只追踪 single specular/transmission RayQuery，不处理粒子或多层反射；
   后续如需要更高质量，可补 specular hit distance / 多 bounce 策略。
 
 ## 5. 验证记录

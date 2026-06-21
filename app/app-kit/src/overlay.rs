@@ -339,6 +339,7 @@ impl PipelineControlsOverlay {
             RtDebugChannel::RestirInitialWeight
                 | RtDebugChannel::RestirTemporalValid
                 | RtDebugChannel::RestirFinalContribution
+                | RtDebugChannel::SpecularMotionMagnitude
         )
     }
 }

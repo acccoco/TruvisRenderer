@@ -5,6 +5,10 @@
 
 #include "lib/realtime_rt/payload.slangi"
 
+static const uint RT_DEBUG_MATERIAL_TYPE = 16;
+static const uint RT_DEBUG_DELTA_MASK = 17;
+static const uint RT_DEBUG_SPECULAR_MOTION_MAGNITUDE = 18;
+
 struct RtDebugAccumulator
 {
     /// 累计 HDRI NEE 直接光照贡献。
@@ -39,6 +43,27 @@ struct RtDebugAccumulator
         return normal * 0.5f + 0.5f;
     }
 
+    static float3 encode_material_type(MaterialType material_type)
+    {
+        if (material_type == MaterialType::DIFFUSE)
+        {
+            return float3(0.20f, 0.80f, 0.25f);
+        }
+        if (material_type == MaterialType::SPECULAR)
+        {
+            return float3(0.20f, 0.45f, 1.00f);
+        }
+        if (material_type == MaterialType::TRANSPARENT)
+        {
+            return float3(0.05f, 0.90f, 1.00f);
+        }
+        if (material_type == MaterialType::EMISSIVE)
+        {
+            return float3(1.00f, 0.65f, 0.10f);
+        }
+        return float3(0.0f);
+    }
+
     /// 处理只依赖首次命中表面数据的 debug channel。
     ///
     /// 这些通道可以在 path loop 早退，减少 debug 模式下的额外噪声和成本。miss shader 会写一个
@@ -68,6 +93,16 @@ struct RtDebugAccumulator
         if (channel == 2)
         {
             out_color = surface.base_color;
+            return true;
+        }
+        if (channel == RT_DEBUG_MATERIAL_TYPE)
+        {
+            out_color = encode_material_type(surface.material_type);
+            return true;
+        }
+        if (channel == RT_DEBUG_DELTA_MASK)
+        {
+            out_color = surface.is_delta_path() ? float3(1.0f) : float3(0.0f);
             return true;
         }
         return false;

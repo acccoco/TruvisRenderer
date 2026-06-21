@@ -12,15 +12,21 @@ struct RtMaterialClassifier
 {
     static MaterialType classify(material::PbrMaterial* mat)
     {
+        const float transparent_delta_opaque_threshold = 0.99f;
+        const float smooth_delta_roughness_threshold = 0.02f;
+
         if (max(mat.emissive.x, max(mat.emissive.y, mat.emissive.z)) > 0.f)
         {
             return MaterialType::EMISSIVE;
         }
-        if (mat.opaque < 1.f)
+        // 当前材质 ABI 尚未提供显式 material domain / transmission flag，因此 delta 判定
+        // 只覆盖足够光滑的 glass / mirror。普通 alpha blend/cutout 不能仅凭 opaque < 1
+        // 进入折射 delta，否则会把半透明贴图误送到 RR specular/transmission 路径。
+        if (mat.opaque < transparent_delta_opaque_threshold && mat.roughness <= smooth_delta_roughness_threshold)
         {
             return MaterialType::TRANSPARENT;
         }
-        if (mat.roughness < 0.05f)
+        if (mat.opaque >= transparent_delta_opaque_threshold && mat.roughness <= smooth_delta_roughness_threshold)
         {
             return MaterialType::SPECULAR;
         }

@@ -102,6 +102,14 @@ struct RtPathState
     [mutating]
     RtRussianRouletteResult apply_russian_roulette(inout RtTracePayload payload, uint depth)
     {
+        // 连续 delta 链路没有 NEE 可提前补足直接光；在镜面/透明链路仍未落到
+        // non-delta surface 前执行 Russian roulette 会把 RR 输入区域放大成高方差黑样本。
+        // 硬上限仍由 raygen 的 max_depth 负责，避免镜面/玻璃循环无限追踪。
+        if (prev_is_delta)
+        {
+            return RtRussianRouletteResult::keep();
+        }
+
         // 前几跳保留完整路径，避免近处直接/一次反弹贡献被 Russian roulette 引入高方差。
         if (depth < 3)
         {

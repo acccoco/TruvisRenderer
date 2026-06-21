@@ -47,7 +47,8 @@ surface-only debug channel 会在每次 `TraceRay` 返回后先尝试早退。no
 3. **Hit emissive surface**：调用 `add_emissive` 累加 hit emission 并终止路径。
 4. **普通 surface 的直接光**：Off 模式下所有非 delta surface 继续走统一 NEE；ReSTIR DI 开启时，只有 primary visible surface 生成 initial reservoir 并跳过普通 primary NEE，secondary bounce 仍走统一 NEE。
 5. **BRDF / 材质采样**：采样下一跳方向和 throughput，记录本次 `brdf_pdf` 供后续 sky/emissive hit MIS 使用。
-6. **Russian roulette**：depth 小于 3 时保留完整路径；depth >= 3 时按 throughput 最大通道决定是否继续。
+6. **Russian roulette**：连续 delta 链路保留完整路径；离开 delta 链路后，depth 小于 3 时保留完整路径，
+   depth >= 3 时按 throughput 最大通道决定是否继续。
 7. **继续下一跳**：用材质采样返回的 origin / direction 更新 ray。
 
 ```mermaid
@@ -59,7 +60,7 @@ flowchart TD
     Emissive -- yes --> HitLight["add_emissive<br/>累加 hit emission 并结束"]
     Emissive -- no --> UnifiedNee["统一 NEE<br/>选择 light class + candidate"]
     UnifiedNee --> Brdf["BRDF / delta 材质采样"]
-    Brdf --> RR{"Russian roulette<br/>depth >= 3"}
+    Brdf --> RR{"Russian roulette<br/>non-delta and depth >= 3"}
     RR -- survive --> Next["下一 bounce"]
     RR -- terminate --> Output["输出累计 radiance"]
 ```
@@ -191,9 +192,14 @@ analytic light v1 没有 BRDF-hit 竞争估计器，因此 NEE shade 固定 `MIS
 当前材质分类由 closest-hit 根据常量材质参数粗分：
 
 - `EMISSIVE`：直接累加 `mat.emissive * base_color`，路径终止。
-- `TRANSPARENT`：按 opaque 概率在折射和镜面反射之间选择，属于 delta path。
-- `SPECULAR`：镜面反射，属于 delta path。
+- `TRANSPARENT`：`opaque < 0.99` 且 `roughness <= 0.02` 时进入 smooth glass delta path，
+  按 opaque 概率在折射和镜面反射之间选择。
+- `SPECULAR`：`opaque >= 0.99` 且 `roughness <= 0.02` 时进入 smooth mirror delta path。
 - `DIFFUSE`：按 roughness 在 cosine diffuse 与 GGX glossy 之间混合采样。
+
+当前材质 ABI 尚未提供显式 material domain / transmission flag，因此 delta 判定刻意保持保守：
+粗糙透明、普通 alpha blend/cutout 和非理想 glossy surface 仍走非 delta BRDF 路径，避免被误送到
+DLSS RR 的 specular/transmission 输入语义中。
 
 普通非 delta 材质采样后，throughput 使用完整混合 BRDF PDF：
 
@@ -205,8 +211,11 @@ raygen 同时保存 `prev_brdf_pdf` 和 `prev_is_delta`。下一次如果 miss s
 与对应 light PDF 做 MIS。delta path 不做 NEE，也不与 sky/emissive direct sampling 竞争；camera ray 或 delta 链路
 直接看到 sky/emissive 时，保持完整直视/镜面语义。
 
-Russian roulette 从 depth 3 开始启用。存活概率使用当前 throughput 的最大 RGB 通道，并 clamp 到 `[0.05, 0.95]`；
-存活路径会除以该概率补偿 throughput，保持估计无偏。
+Russian roulette 对连续 delta 链路延后启用：`SPECULAR` / `TRANSPARENT` 事件后会继续保留路径，直到后续命中
+第一个 non-delta surface 后才回到普通 depth 规则。这样镜面/透明链路仍由 `max_depth = 16` 提供硬上限，
+不会在尚未到达 sky、emissive 或 diffuse 事件前被 depth 3 的轮盘赌放大为高方差黑样本。离开 delta 链路后，
+存活概率使用当前 throughput 的最大 RGB 通道，并 clamp 到 `[0.05, 0.95]`；存活路径会除以该概率补偿
+throughput，保持估计无偏。
 
 ## MIS 规则
 
@@ -231,7 +240,9 @@ analytic light v1 不创建可命中的发光几何，因此 analytic NEE 固定
 当前 RT debug channel 中，`NeeHdri` 只显示普通统一 NEE 中抽到 HDRI class 的直接光，`NeeEmissive` 只显示普通统一 NEE 抽到
 emissive triangle class 的直接光，`NeeAnalytic` 只显示普通统一 NEE 抽到 point / spot / area analytic class 的直接光。
 `Emission` 显示 hit emissive contribution，`BrdfHdri` 显示 sky miss / HDRI contribution，`NeeBounce0` 和
-`NeeBounce1` 分别累加 depth 0 与 depth 1 的所有 NEE 贡献。
+`NeeBounce1` 分别累加 depth 0 与 depth 1 的所有 NEE 贡献。`MaterialType` 显示 closest-hit 的粗粒度材质分类，
+`DeltaMask` 显示 primary surface 是否为 specular / transparent delta path；realtime-only 的
+`SpecularMotionMagnitude` 显示 DLSS RR primary specular motion vector 的像素长度。
 
 当前未接入 realtime RT raygen 的内容：
 
