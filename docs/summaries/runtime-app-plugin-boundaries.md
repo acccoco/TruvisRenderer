@@ -32,7 +32,8 @@ RenderRuntime
 
 - `app_kit::GuiPlugin`
 - `CameraController` / `InputManager`
-- `DebugInfoOverlay` / `PipelineControlsOverlay`
+- App 自有 overlay 编排器，或 app-kit 提供的 `DebugInfoOverlay` / `PipelineControlsOverlay`
+  兼容整窗 wrapper；Truvis 使用 `TruvisOverlayUi` 统一决定 tag、窗口布局、section 可见性和绘制顺序。
 - `TrianglePlugin`、`ShaderToyPlugin`、`RtPipeline`、`OfflinePipeline` 等具体渲染能力
 
 ## Ctx 裁剪契约
@@ -62,8 +63,9 @@ present owner 不直接暴露给 app/plugin；render/init/resize Ctx 只提供 `
 RenderGraph 内的当前 present image 与 image info，acquire/render-complete semaphore 由
 `PresentView::import_current_target` 固定接入 RenderGraph。
 
-GUI draw data 不进入通用 Ctx。`GuiPlugin` 自行持有 imgui context、draw data、GUI mesh buffer、font texture map，并通过
-`prepare_render_data` 和 `contribute_passes` 接入 render hook。
+GUI draw data 不进入通用 Ctx。`GuiPlugin` 自行持有 imgui context、draw data、GUI mesh buffer、font texture map，
+并通过 `prepare_render_data` 和 `contribute_passes` 接入 render hook。Debug Images 的窗口外壳可由具体 App
+重新编排，但选择状态、texture id 映射和每帧 image/view handle 快照仍归 `GuiPlugin`。
 
 ## RenderApp 外部契约
 

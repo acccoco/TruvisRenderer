@@ -9,6 +9,13 @@ use crate::render_pipeline::common_settings::{PathTracingCommonSettings, RtSkySa
 use crate::render_pipeline::offline_render_graph::OfflinePipelineSettings;
 use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtPipelineSettings, RtRestirDiMode};
 
+pub struct FrameStatsOverlayData<'a> {
+    pub camera: &'a Camera,
+    pub swapchain_extent: vk::Extent2D,
+    pub accum_frames_num: usize,
+    pub delta_time_s: f32,
+}
+
 #[derive(Default)]
 pub struct DebugInfoOverlay;
 
@@ -23,9 +30,25 @@ impl DebugInfoOverlay {
         accum_frames_num: usize,
         delta_time_s: f32,
     ) {
+        let stats = FrameStatsOverlayData {
+            camera,
+            swapchain_extent,
+            accum_frames_num,
+            delta_time_s,
+        };
+        Self::build_frame_stats_hud(ui, &stats);
+    }
+
+    pub fn build_frame_stats_hud(ui: &imgui::Ui, stats: &FrameStatsOverlayData<'_>) {
         ui.window("##overlay")
             .position([0.0, 0.0], imgui::Condition::Always)
-            .size([swapchain_extent.width as f32, swapchain_extent.height as f32], imgui::Condition::Always)
+            .size(
+                [
+                    stats.swapchain_extent.width as f32,
+                    stats.swapchain_extent.height as f32,
+                ],
+                imgui::Condition::Always,
+            )
             .flags(
                 imgui::WindowFlags::NO_TITLE_BAR
                     | imgui::WindowFlags::NO_RESIZE
@@ -43,27 +66,29 @@ impl DebugInfoOverlay {
             )
             .build(|| {
                 ui.set_cursor_pos([5.0, 5.0]);
-                ui.text(format!("FPS: {:.2}", 1.0 / delta_time_s));
-                ui.text(format!("swapchain: {:.0}x{:.0}", swapchain_extent.width, swapchain_extent.height));
-                ui.text(format!(
-                    "CameraPos: ({:.2}, {:.2}, {:.2})",
-                    camera.position.x, camera.position.y, camera.position.z
-                ));
-                ui.text(format!(
-                    "CameraEuler: ({:.2}, {:.2}, {:.2})",
-                    camera.euler_yaw_deg, camera.euler_pitch_deg, camera.euler_roll_deg
-                ));
-                ui.text(format!(
-                    "CameraForward: ({:.2}, {:.2}, {:.2})",
-                    camera.camera_forward().x,
-                    camera.camera_forward().y,
-                    camera.camera_forward().z
-                ));
-                ui.text(format!("CameraAspect: {:.2}", camera.asp));
-                ui.text(format!("CameraFov(Vertical): {:.2}\u{00b0}", camera.fov_deg_vertical));
-                ui.text(format!("Accum Frames: {}", accum_frames_num));
-                ui.new_line();
+                Self::build_frame_stats_section(ui, stats);
             });
+    }
+
+    pub fn build_frame_stats_section(ui: &imgui::Ui, stats: &FrameStatsOverlayData<'_>) {
+        let camera = stats.camera;
+        ui.text(format!("FPS: {:.2}", 1.0 / stats.delta_time_s));
+        ui.text(format!("swapchain: {:.0}x{:.0}", stats.swapchain_extent.width, stats.swapchain_extent.height));
+        ui.text(format!("CameraPos: ({:.2}, {:.2}, {:.2})", camera.position.x, camera.position.y, camera.position.z));
+        ui.text(format!(
+            "CameraEuler: ({:.2}, {:.2}, {:.2})",
+            camera.euler_yaw_deg, camera.euler_pitch_deg, camera.euler_roll_deg
+        ));
+        ui.text(format!(
+            "CameraForward: ({:.2}, {:.2}, {:.2})",
+            camera.camera_forward().x,
+            camera.camera_forward().y,
+            camera.camera_forward().z
+        ));
+        ui.text(format!("CameraAspect: {:.2}", camera.asp));
+        ui.text(format!("CameraFov(Vertical): {:.2}\u{00b0}", camera.fov_deg_vertical));
+        ui.text(format!("Accum Frames: {}", stats.accum_frames_num));
+        ui.new_line();
     }
 }
 
@@ -94,54 +119,56 @@ impl PipelineControlsOverlay {
             .position([10.0, 200.0], imgui::Condition::FirstUseEver)
             .size([340.0, 360.0], imgui::Condition::FirstUseEver)
             .build(|| {
-                if offline_mode_supported {
-                    if let Some(_combo) = ui.begin_combo("Render Mode", render_mode.label()) {
-                        for mode in RenderMode::ALL {
-                            if ui.selectable_config(mode.label()).selected(*render_mode == mode).build() {
-                                *render_mode = mode;
-                            }
-                        }
-                    }
-                }
-
-                if *render_mode == RenderMode::Offline {
-                    ui.text(format!("Offline Samples: {}", offline_sample_count.unwrap_or(0)));
-                }
+                Self::build_render_mode_section(ui, render_mode, offline_mode_supported, offline_sample_count);
 
                 ui.separator();
-                // DLSS SR/RR 依赖 realtime RT 管线产出的 GBuffer、motion vector 和历史资源；
-                // 离线模式保留控件位置但禁用，明确它们不会影响 reference 累计采样状态。
-                let realtime_mode = *render_mode == RenderMode::Realtime;
-                ui.disabled(!realtime_mode, || {
-                    Self::build_dlss_controls(ui, dlss_options);
-                });
-                if !realtime_mode {
-                    ui.text_disabled("DLSS controls are realtime only");
-                }
+                Self::build_dlss_section_for_mode(ui, *render_mode, dlss_options);
 
                 ui.separator();
-                match *render_mode {
-                    RenderMode::Realtime => {
-                        if let Some(rt_settings) = rt_settings.as_deref_mut() {
-                            Self::build_realtime_controls(ui, rt_settings, common_settings.as_deref_mut(), false);
-                        }
-                    }
-                    RenderMode::Offline => {
-                        if let Some(offline_settings) = offline_settings.as_deref_mut() {
-                            Self::build_offline_controls(ui, offline_settings, common_settings.as_deref_mut());
-                        }
-                        if let Some(rt_settings) = rt_settings.as_deref_mut() {
-                            ui.disabled(true, || {
-                                Self::build_restir_control(ui, &mut rt_settings.restir_di_mode);
-                            });
-                            ui.text_disabled("ReSTIR DI is realtime only");
-                        }
-                    }
-                }
+                Self::build_mode_specific_sections(
+                    ui,
+                    *render_mode,
+                    common_settings.as_deref_mut(),
+                    rt_settings.as_deref_mut(),
+                    offline_settings.as_deref_mut(),
+                );
             });
     }
 
-    fn build_dlss_controls(ui: &imgui::Ui, dlss_options: &mut DlssOptions) {
+    pub fn build_render_mode_section(
+        ui: &imgui::Ui,
+        render_mode: &mut RenderMode,
+        offline_mode_supported: bool,
+        offline_sample_count: Option<u32>,
+    ) {
+        if offline_mode_supported {
+            if let Some(_combo) = ui.begin_combo("Render Mode", render_mode.label()) {
+                for mode in RenderMode::ALL {
+                    if ui.selectable_config(mode.label()).selected(*render_mode == mode).build() {
+                        *render_mode = mode;
+                    }
+                }
+            }
+        }
+
+        if *render_mode == RenderMode::Offline {
+            ui.text(format!("Offline Samples: {}", offline_sample_count.unwrap_or(0)));
+        }
+    }
+
+    pub fn build_dlss_section_for_mode(ui: &imgui::Ui, render_mode: RenderMode, dlss_options: &mut DlssOptions) {
+        // DLSS SR/RR 依赖 realtime RT 管线产出的 GBuffer、motion vector 和历史资源；
+        // 离线模式保留控件位置但禁用，明确它们不会影响 reference 累计采样状态。
+        let realtime_mode = render_mode == RenderMode::Realtime;
+        ui.disabled(!realtime_mode, || {
+            Self::build_dlss_section(ui, dlss_options);
+        });
+        if !realtime_mode {
+            ui.text_disabled("DLSS controls are realtime only");
+        }
+    }
+
+    pub fn build_dlss_section(ui: &imgui::Ui, dlss_options: &mut DlssOptions) {
         // RR 作为独立开关接入，不放进 SR/DLAA 质量挡位下拉框。
         if let Some(_combo) = ui.begin_combo("DLSS SR", dlss_options.dlss_sr_mode.label()) {
             for mode in DlssSrMode::ALL {
@@ -153,7 +180,37 @@ impl PipelineControlsOverlay {
         ui.checkbox("DLSS RR", &mut dlss_options.dlss_rr_enabled);
     }
 
-    fn build_realtime_controls(
+    pub fn build_mode_specific_sections(
+        ui: &imgui::Ui,
+        render_mode: RenderMode,
+        common_settings: Option<&mut PathTracingCommonSettings>,
+        rt_settings: Option<&mut RtPipelineSettings>,
+        offline_settings: Option<&mut OfflinePipelineSettings>,
+    ) {
+        let mut common_settings = common_settings;
+        let mut rt_settings = rt_settings;
+        let mut offline_settings = offline_settings;
+        match render_mode {
+            RenderMode::Realtime => {
+                if let Some(rt_settings) = rt_settings.as_deref_mut() {
+                    Self::build_realtime_rt_section(ui, rt_settings, common_settings.as_deref_mut(), false);
+                }
+            }
+            RenderMode::Offline => {
+                if let Some(offline_settings) = offline_settings.as_deref_mut() {
+                    Self::build_offline_rt_section(ui, offline_settings, common_settings.as_deref_mut());
+                }
+                if let Some(rt_settings) = rt_settings.as_deref_mut() {
+                    ui.disabled(true, || {
+                        Self::build_restir_section(ui, &mut rt_settings.restir_di_mode);
+                    });
+                    ui.text_disabled("ReSTIR DI is realtime only");
+                }
+            }
+        }
+    }
+
+    pub fn build_realtime_rt_section(
         ui: &imgui::Ui,
         rt_settings: &mut RtPipelineSettings,
         mut common_settings: Option<&mut PathTracingCommonSettings>,
@@ -167,7 +224,7 @@ impl PipelineControlsOverlay {
             }
         }
         if let Some(common_settings) = common_settings.as_deref_mut() {
-            Self::build_common_sampling_controls(
+            Self::build_common_sampling_section(
                 ui,
                 &mut common_settings.sky_sampling_mode,
                 &mut common_settings.sky_brightness,
@@ -176,17 +233,17 @@ impl PipelineControlsOverlay {
             );
         }
         ui.disabled(restir_disabled, || {
-            Self::build_restir_control(ui, &mut rt_settings.restir_di_mode);
+            Self::build_restir_section(ui, &mut rt_settings.restir_di_mode);
         });
         if restir_disabled {
             ui.text_disabled("ReSTIR DI is realtime only");
         }
         if let Some(common_settings) = common_settings.as_deref_mut() {
-            Self::build_tone_mapping_controls(ui, &mut common_settings.tone_mapping);
+            Self::build_tone_mapping_section(ui, &mut common_settings.tone_mapping);
         }
     }
 
-    fn build_offline_controls(
+    pub fn build_offline_rt_section(
         ui: &imgui::Ui,
         offline_settings: &mut OfflinePipelineSettings,
         mut common_settings: Option<&mut PathTracingCommonSettings>,
@@ -217,7 +274,7 @@ impl PipelineControlsOverlay {
         .build(&mut ray_dispatch_count);
         offline_settings.set_ray_dispatch_count(ray_dispatch_count as u32);
         if let Some(common_settings) = common_settings.as_deref_mut() {
-            Self::build_common_sampling_controls(
+            Self::build_common_sampling_section(
                 ui,
                 &mut common_settings.sky_sampling_mode,
                 &mut common_settings.sky_brightness,
@@ -226,11 +283,11 @@ impl PipelineControlsOverlay {
             );
         }
         if let Some(common_settings) = common_settings.as_deref_mut() {
-            Self::build_tone_mapping_controls(ui, &mut common_settings.tone_mapping);
+            Self::build_tone_mapping_section(ui, &mut common_settings.tone_mapping);
         }
     }
 
-    fn build_common_sampling_controls(
+    pub fn build_common_sampling_section(
         ui: &imgui::Ui,
         sky_sampling_mode: &mut RtSkySamplingMode,
         sky_brightness: &mut f32,
@@ -249,7 +306,7 @@ impl PipelineControlsOverlay {
         ui.checkbox("Analytic NEE", analytic_nee_enabled);
     }
 
-    fn build_restir_control(ui: &imgui::Ui, restir_di_mode: &mut RtRestirDiMode) {
+    pub fn build_restir_section(ui: &imgui::Ui, restir_di_mode: &mut RtRestirDiMode) {
         if let Some(_combo) = ui.begin_combo("ReSTIR DI", restir_di_mode.label()) {
             for mode in RtRestirDiMode::ALL {
                 if ui.selectable_config(mode.label()).selected(*restir_di_mode == mode).build() {
@@ -261,7 +318,7 @@ impl PipelineControlsOverlay {
         }
     }
 
-    fn build_tone_mapping_controls(
+    pub fn build_tone_mapping_section(
         ui: &imgui::Ui,
         tone_mapping: &mut app_render_passes::sdr_pass::SdrToneMappingSettings,
     ) {

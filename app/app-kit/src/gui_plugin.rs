@@ -202,42 +202,45 @@ impl GuiPlugin {
             .position([370.0, 10.0], imgui::Condition::FirstUseEver)
             .size([420.0, 360.0], imgui::Condition::FirstUseEver)
             .build(|| {
-                if self.debug_images.is_empty() {
-                    ui.text("No debug image");
-                    return;
-                }
-
-                self.ensure_selected_debug_image();
-                let selected_id = self.selected_debug_image_id.get();
-                let preview = selected_id
-                    .and_then(|id| self.debug_images.iter().find(|entry| entry.id == id))
-                    .map(|entry| entry.label)
-                    .unwrap_or("None");
-
-                if let Some(_combo) = ui.begin_combo("Image", preview) {
-                    for entry in &self.debug_images {
-                        let selected = Some(entry.id) == self.selected_debug_image_id.get();
-                        if ui.selectable_config(entry.label).selected(selected).build() {
-                            self.selected_debug_image_id.set(Some(entry.id));
-                        }
-                        if selected {
-                            ui.set_item_default_focus();
-                        }
-                    }
-                }
-
-                let Some(entry) = self.selected_debug_entry() else {
-                    ui.text("No selection");
-                    return;
-                };
-                let texture_id = self.debug_texture_ids.get(entry.id).copied().expect("debug texture id missing");
-                ui.text(format!(
-                    "{} | {:?} | {}x{}",
-                    entry.label, entry.format, entry.extent.width, entry.extent.height
-                ));
-                let size = Self::debug_image_preview_size(entry.extent, ui.content_region_avail()[0]);
-                imgui::Image::new(texture_id, size).uv0([0.0, 0.0]).uv1([1.0, 1.0]).build(ui);
+                self.build_debug_image_viewer_contents(ui);
             });
+    }
+
+    pub fn build_debug_image_viewer_contents(&self, ui: &Ui) {
+        // 这里仅拆分窗口外壳；选中项、TextureId 与每帧 image/view handle 快照仍由
+        // GuiPlugin 持有，避免 App 层布局代码接管 GUI GPU 资源映射不变量。
+        if self.debug_images.is_empty() {
+            ui.text("No debug image");
+            return;
+        }
+
+        self.ensure_selected_debug_image();
+        let selected_id = self.selected_debug_image_id.get();
+        let preview = selected_id
+            .and_then(|id| self.debug_images.iter().find(|entry| entry.id == id))
+            .map(|entry| entry.label)
+            .unwrap_or("None");
+
+        if let Some(_combo) = ui.begin_combo("Image", preview) {
+            for entry in &self.debug_images {
+                let selected = Some(entry.id) == self.selected_debug_image_id.get();
+                if ui.selectable_config(entry.label).selected(selected).build() {
+                    self.selected_debug_image_id.set(Some(entry.id));
+                }
+                if selected {
+                    ui.set_item_default_focus();
+                }
+            }
+        }
+
+        let Some(entry) = self.selected_debug_entry() else {
+            ui.text("No selection");
+            return;
+        };
+        let texture_id = self.debug_texture_ids.get(entry.id).copied().expect("debug texture id missing");
+        ui.text(format!("{} | {:?} | {}x{}", entry.label, entry.format, entry.extent.width, entry.extent.height));
+        let size = Self::debug_image_preview_size(entry.extent, ui.content_region_avail()[0]);
+        imgui::Image::new(texture_id, size).uv0([0.0, 0.0]).uv1([1.0, 1.0]).build(ui);
     }
 
     pub fn end_frame(&mut self) {

@@ -1,7 +1,6 @@
 use truvis_app_frame::input_event::InputEvent;
 use truvis_app_frame::plugin_api::{Plugin, PluginRenderCtx};
 use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx};
-use truvis_asset::asset_hub::AssetHub;
 use truvis_asset::handle::{AssetMaterialKey, AssetMeshHandle, AssetModelHandle, LoadStatus, MaterialData};
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
@@ -15,11 +14,16 @@ use app_kit::camera::Camera;
 use app_kit::camera_controller::CameraController;
 use app_kit::gui_plugin::GuiPlugin;
 use app_kit::input_state::InputManager;
-use app_kit::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
+use app_kit::overlay::FrameStatsOverlayData;
 use app_kit::render_pipeline::RenderMode;
 use app_kit::render_pipeline::common_settings::PathTracingCommonSettings;
 use app_kit::render_pipeline::offline_render_graph::OfflinePipeline;
 use app_kit::render_pipeline::rt_render_graph::RtPipeline;
+
+use crate::overlay_ui::{
+    DebugImageViewerData, PipelineControlsData, RaycastOverlayData, TruvisOverlayFrame, TruvisOverlayOptions,
+    TruvisOverlayUi,
+};
 
 #[derive(Default)]
 pub struct TruvisApp {
@@ -30,8 +34,7 @@ pub struct TruvisApp {
     render_mode: RenderMode,
     camera_controller: CameraController,
     input: InputManager,
-    debug_overlay: DebugInfoOverlay,
-    pipeline_overlay: PipelineControlsOverlay,
+    overlay_ui: TruvisOverlayUi,
     click_ray_cast_probe: ClickRayCastProbe,
     model_asset: Option<AssetModelHandle>,
     model_spawned: bool,
@@ -74,7 +77,7 @@ const EMISSIVE_CUBE_MATRIX_CONFIG: EmissiveCubeMatrixConfig = EmissiveCubeMatrix
     counts: glam::UVec3::new(20, 1, 10),
 };
 
-struct ClickRayCastProbe {
+pub(crate) struct ClickRayCastProbe {
     total_time_s: f32,
     pending_ray: Option<RayCastRay>,
     pending_screen_pos: Option<glam::Vec2>,
@@ -142,12 +145,36 @@ impl ClickRayCastProbe {
         self.last_cast_time_s = Some(self.total_time_s);
     }
 
-    fn has_pending_cast(&self) -> bool {
+    pub(crate) fn has_pending_cast(&self) -> bool {
         self.pending_ray.is_some()
+    }
+
+    pub(crate) fn last_screen_pos(&self) -> Option<glam::Vec2> {
+        self.last_screen_pos
+    }
+
+    pub(crate) fn last_cast_time_s(&self) -> Option<f32> {
+        self.last_cast_time_s
+    }
+
+    pub(crate) fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+
+    pub(crate) fn last_result(&self) -> Option<&RayCastResult> {
+        self.last_result.as_ref()
     }
 }
 
 impl TruvisApp {
+    pub fn overlay_options(&self) -> &TruvisOverlayOptions {
+        self.overlay_ui.options()
+    }
+
+    pub fn overlay_options_mut(&mut self) -> &mut TruvisOverlayOptions {
+        self.overlay_ui.options_mut()
+    }
+
     fn request_model(world: &mut World, camera: &mut Camera) -> AssetModelHandle {
         camera.position = glam::vec3(270.0, 194.0, -64.0);
         camera.euler_yaw_deg = 90.0;
@@ -426,88 +453,6 @@ impl TruvisApp {
         }
     }
 
-    fn build_raycast_overlay_ui(&self, ui: &imgui::Ui, asset_hub: &AssetHub) {
-        ui.window("Raycast")
-            .position([10.0, 420.0], imgui::Condition::FirstUseEver)
-            .size([430.0, 430.0], imgui::Condition::FirstUseEver)
-            .build(|| {
-                ui.text("Trigger: left mouse click");
-                if self.click_ray_cast_probe.has_pending_cast() {
-                    ui.text("Status: pending");
-                } else {
-                    ui.text("Status: idle");
-                }
-
-                if let Some(screen_pos) = self.click_ray_cast_probe.last_screen_pos {
-                    ui.text(format!("Last click: ({:.0}, {:.0})", screen_pos.x, screen_pos.y));
-                } else {
-                    ui.text("Last click: never");
-                }
-
-                if let Some(last_cast_time_s) = self.click_ray_cast_probe.last_cast_time_s {
-                    ui.text(format!("Last cast at: {:.2}s", last_cast_time_s));
-                } else {
-                    ui.text("Last cast: never");
-                }
-                ui.separator();
-
-                if let Some(error) = &self.click_ray_cast_probe.last_error {
-                    ui.text(format!("Error: {error}"));
-                    return;
-                }
-
-                match &self.click_ray_cast_probe.last_result {
-                    Some(RayCastResult::Miss) => {
-                        ui.text("Result: Miss");
-                    }
-                    Some(RayCastResult::Hit(hit)) => {
-                        ui.text("Result: Hit");
-                        ui.text(format!("Instance: {:?}", hit.instance));
-                        ui.text(format!("Mesh: {:?}", hit.mesh));
-                        ui.text(format!("Material: {:?}", hit.material));
-                        ui.text(format!("Submesh: {}", hit.submesh_index));
-                        ui.text(format!("Primitive: {}", hit.primitive_index));
-                        Self::build_material_info_ui(ui, asset_hub.get_material_data(hit.material));
-                        ui.text(format!("Hit T: {:.3}", hit.hit_t));
-                        ui.text(format!(
-                            "Position: ({:.2}, {:.2}, {:.2})",
-                            hit.position_ws.x, hit.position_ws.y, hit.position_ws.z
-                        ));
-                        ui.text(format!(
-                            "Normal: ({:.2}, {:.2}, {:.2})",
-                            hit.normal_ws.x, hit.normal_ws.y, hit.normal_ws.z
-                        ));
-                        ui.text(format!("UV: ({:.3}, {:.3})", hit.uv.x, hit.uv.y));
-                    }
-                    None => {
-                        ui.text("Result: waiting");
-                    }
-                }
-            });
-    }
-
-    fn build_material_info_ui(ui: &imgui::Ui, material: Option<&MaterialData>) {
-        let Some(material) = material else {
-            ui.text("Material data: unavailable");
-            return;
-        };
-
-        ui.text(format!("Material name: {}", material.name));
-        ui.text(format!(
-            "Base color: ({:.3}, {:.3}, {:.3}, {:.3})",
-            material.base_color.x, material.base_color.y, material.base_color.z, material.base_color.w
-        ));
-        ui.text(format!(
-            "Emissive: ({:.3}, {:.3}, {:.3}, {:.3})",
-            material.emissive.x, material.emissive.y, material.emissive.z, material.emissive.w
-        ));
-        ui.text(format!("Metallic: {:.3}", material.metallic));
-        ui.text(format!("Roughness: {:.3}", material.roughness));
-        ui.text(format!("Opaque: {:.3}", material.opaque));
-        ui.text(format!("Diffuse texture: {:?}", material.diffuse_texture));
-        ui.text(format!("Normal texture: {:?}", material.normal_texture));
-    }
-
     fn cast_single_ray(ctx: &mut RenderRuntimeRayCastCtx<'_>, ray: RayCastRay) -> Result<RayCastResult, String> {
         ctx.cast_sync(std::slice::from_ref(&ray))
             .map_err(|err| err.to_string())
@@ -529,13 +474,9 @@ impl RenderAppHooks for TruvisApp {
         visit(&mut self.rt_pipeline);
         visit(&mut self.offline_pipeline);
         visit(&mut self.gui);
-        visit(&mut self.debug_overlay);
-        visit(&mut self.pipeline_overlay);
     }
 
     fn visit_plugins_mut_rev(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
-        visit(&mut self.pipeline_overlay);
-        visit(&mut self.debug_overlay);
         visit(&mut self.gui);
         visit(&mut self.offline_pipeline);
         visit(&mut self.rt_pipeline);
@@ -568,25 +509,30 @@ impl RenderAppHooks for TruvisApp {
         self.gui.begin_frame(delta);
         {
             let ui = self.gui.ui();
-            self.debug_overlay.build_overlay_ui(
-                ui,
-                self.camera_controller.camera(),
-                ctx.swapchain_extent,
-                ctx.view_accum.accum_frames_num(),
-                ctx.delta_time_s,
-            );
             let offline_sample_count = self.offline_pipeline.sample_count();
-            self.pipeline_overlay.build_overlay_ui(
+            let frame = TruvisOverlayFrame {
                 ui,
-                &mut self.render_mode,
-                ctx.dlss_options,
-                Some(&mut self.path_tracing_common_settings),
-                Some(self.rt_pipeline.settings_mut()),
-                Some(self.offline_pipeline.settings_mut()),
-                Some(offline_sample_count),
-            );
-            self.build_raycast_overlay_ui(ui, &ctx.world.asset_hub);
-            self.gui.build_debug_image_viewer_ui(ui);
+                stats: FrameStatsOverlayData {
+                    camera: self.camera_controller.camera(),
+                    swapchain_extent: ctx.swapchain_extent,
+                    accum_frames_num: ctx.view_accum.accum_frames_num(),
+                    delta_time_s: ctx.delta_time_s,
+                },
+                pipeline: PipelineControlsData {
+                    render_mode: &mut self.render_mode,
+                    dlss_options: ctx.dlss_options,
+                    common_settings: Some(&mut self.path_tracing_common_settings),
+                    rt_settings: Some(self.rt_pipeline.settings_mut()),
+                    offline_settings: Some(self.offline_pipeline.settings_mut()),
+                    offline_sample_count: Some(offline_sample_count),
+                },
+                raycast: RaycastOverlayData {
+                    probe: &self.click_ray_cast_probe,
+                    asset_hub: &ctx.world.asset_hub,
+                },
+                debug_images: DebugImageViewerData { gui: &self.gui },
+            };
+            self.overlay_ui.build(frame);
         }
         self.gui.end_frame();
     }

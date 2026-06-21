@@ -10,7 +10,9 @@
   runtime prepare 使用的 `RenderView` 快照；控制器包含右键视角、
   WASD/QE 移动、左键点击边沿输入、中键拾取 pivot 后的环视控制状态、Shift+中键拖拽场景，
   以及主应用启用的滚轮锚点移动。
-- `DebugInfoOverlay` / `PipelineControlsOverlay`：UI-only overlay plugin。
+- `DebugInfoOverlay` / `PipelineControlsOverlay`：UI-only overlay 复用组件；除兼容的整窗
+  wrapper 外，也提供 frame stats、DLSS、render mode、RT/offline sampling、ReSTIR、
+  tone mapping 等 section 级 associated methods，供具体 App 在自己的 overlay 编排器中组合。
 - `PathTracingCommonSettings`：realtime / offline path tracing 共享的 app-owned 调试参数，
   由具体 App 持有并显式传给对应 pipeline，避免 ImGui 模式切换时公共参数分叉。
 - `RtPipeline`：光追示例与 Truvis 主体 app 共用的 RT pipeline glue，依赖
@@ -35,9 +37,10 @@
   `accum_image` 是跨帧历史，只有离线累计签名仍有效且 TLAS 存在时才推进 sample。
 - 相机状态属于 app 层；runtime 只消费 `truvis-render-foundation` 中的 `RenderView`，不依赖
   `Camera` 或具体相机控制策略。
-- GUI debug image viewer 只保存 app/pipeline 每帧注册的 image/view handle 快照和 ImGui
-  texture id 映射；被选中的中间图像仍必须通过 RenderGraph 声明 fragment sampled 读取，
-  由具体 pipeline owner 负责 image 生命周期、resize 和 bindless SRV/UAV 注册。
+- GUI debug image viewer 只保存 app/pipeline 每帧注册的 image/view handle 快照、当前选择项和
+  ImGui texture id 映射；`GuiPlugin::build_debug_image_viewer_contents` 只拆出窗口内容，状态
+  owner 仍是 `GuiPlugin`。被选中的中间图像仍必须通过 RenderGraph 声明 fragment sampled
+  读取，由具体 pipeline owner 负责 image 生命周期、resize 和 bindless SRV/UAV 注册。
 - 中键 pivot orbit、Shift+中键拖拽与滚轮锚点移动只在本层保存输入和相机控制状态；同步 raycast
   仍由具体 app 在 `after_prepare` 阶段调用 runtime 查询。左键点击 raycast 复用本层的屏幕射线生成逻辑，
   查询结果仍保存在具体 app state。未接入拖拽/滚轮 raycast 回填的 app/sample 继续使用默认
