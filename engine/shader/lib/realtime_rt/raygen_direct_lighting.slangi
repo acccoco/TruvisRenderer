@@ -1164,7 +1164,7 @@ struct RtDirectLighting
         const float reservoir_weight
     )
     {
-        // reservoir_weight 已经包含 `weight_sum / (target * M)` 的归一化结果。
+        // reservoir_weight 是 ReSTIR phase 写出的 finalized inverse PDF。
         // 这里复用 target contribution 的同源 BRDF/MIS 计算，只把最终 reservoir 权重乘回贡献。
         if (reservoir_weight <= 0.0f)
         {

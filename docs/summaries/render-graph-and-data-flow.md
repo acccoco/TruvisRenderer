@@ -140,12 +140,12 @@ sphere emitter、spot cone、area 单面 PDF 和 MIS 边界见 [`analytic-light-
 
 Primary ReSTIR DI 是 RT pipeline 自有的 temporal lighting 资源，不属于 DLSS state，也不注册到全局 bindless SRV/UAV 表。`RestirDiTargets` 按
 `render_extent` 创建 initial、temporal、final reservoir 和 primary surface key 图像，每个 target 都按 FIF frame label
-轮转。RenderGraph 在 ray-tracing pass 中同时导入当前 frame label 的 ReSTIR targets，以及 previous frame label 的
+轮转，image 数量、格式和 RenderGraph target 契约保持不变。reservoir C target 仍保存 weight/target/`M`/age 四个 float，但 shader 内部把写回的 weight 解释为 RTXDI finalized inverse PDF。RenderGraph 在 ray-tracing pass 中同时导入当前 frame label 的 ReSTIR targets，以及 previous frame label 的
 temporal reservoir / surface key 作为 history；首帧、DLSS reset 或 ReSTIR mode 变化时 CPU 侧传入 `restir_history_valid=false`，
 shader 仍会绑定 history image，但不会参与 temporal reuse。
 
 ray-tracing pass 复用同一条 RT pipeline 连续执行多次 `TraceRays` phase：path phase 写 HDR/GBuffer/DLSS 输入和 initial
-reservoir；temporal phase 读 previous temporal history 与 motion vectors 后写 temporal reservoir；spatial phase 只在
+reservoir；temporal phase 读 previous temporal history、previous surface key 与 motion vectors 后写 temporal reservoir；spatial phase 只在
 `TemporalSpatial` 模式写 final reservoir，且 spatial final 不回灌下一帧 temporal history；temporal/spatial/final 都会把 reservoir 中的 light sample identity 在当前 primary
 surface 上重建为候选，并用当前 surface visibility 重新计算 target；final shade 仍再次 trace visibility。current surface 来自 ReSTIR 自有 RGBA32F surface key，三张图像分别保存 position/depth、normal/roughness 和 base color/metallic；只有会被 ReSTIR 替换 primary direct NEE 的非 emissive、非 delta primary surface 才写有效 key；GBufferA/B/C 仍服务 RR/SR，不作为 ReSTIR shadow ray 的高精度起点或 target 材质签名。pass 内部在 phase 之间插入 ray-tracing shader image barrier，覆盖 HDR、GBuffer、
 motion vectors 和 ReSTIR targets，避免单个 raygen dispatch 内跨像素读写。
