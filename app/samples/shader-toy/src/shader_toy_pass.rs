@@ -1,7 +1,9 @@
 use std::rc::Rc;
+use std::sync::LazyLock;
 
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
+use enum_map::{Enum, EnumMap, enum_map};
 use itertools::Itertools;
 
 use truvis_gfx::resources::image_view::GfxImageView;
@@ -16,20 +18,26 @@ use truvis_gfx::{
 };
 use truvis_path::TruvisPath;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
-use truvis_utils::count_indexed_array;
-use truvis_utils::enumed_map;
 
-enumed_map!(ShaderStage<GfxShaderStageInfo>:{
-    Vertex: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::VERTEX,
-        entry_point: c"main",
-        path: TruvisPath::shader_build_path_str("samples/shadertoy/main.vert"),
-    },
-    Fragment: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::FRAGMENT,
-        entry_point: c"main",
-        path: TruvisPath::shader_build_path_str("samples/shadertoy/main.frag"),
-    },
+#[derive(Debug, Clone, Copy, Enum)]
+enum ShaderStage {
+    Vertex,
+    Fragment,
+}
+
+static SHADER_STAGES: LazyLock<EnumMap<ShaderStage, GfxShaderStageInfo>> = LazyLock::new(|| {
+    enum_map! {
+        ShaderStage::Vertex => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::VERTEX,
+            entry_point: c"main",
+            path: TruvisPath::shader_build_path_str("samples/shadertoy/main.vert"),
+        },
+        ShaderStage::Fragment => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::FRAGMENT,
+            entry_point: c"main",
+            path: TruvisPath::shader_build_path_str("samples/shadertoy/main.frag"),
+        },
+    }
 });
 
 #[repr(C)]
@@ -58,7 +66,7 @@ pub struct ShaderToyPass {
 impl ShaderToyPass {
     pub fn new(ctx: GfxDeviceCtx<'_>, color_format: vk::Format) -> Self {
         let mut pipeline_ci = GfxGraphicsPipelineCreateInfo::default();
-        pipeline_ci.shader_stages(ShaderStage::iter().map(|stage| stage.value().clone()).collect_vec());
+        pipeline_ci.shader_stages(SHADER_STAGES.values().cloned().collect_vec());
         pipeline_ci.attach_info(vec![color_format], None, Some(vk::Format::UNDEFINED));
         // 不再需要 vertex binding 和 attribute，因为顶点数据在 shader 中定义
         pipeline_ci.color_blend(

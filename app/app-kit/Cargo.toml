@@ -13,12 +13,12 @@ app-render-passes = { workspace = true }
 truvis-render-runtime = { workspace = true }
 truvis-path = { workspace = true }
 truvis-shader-binding = { workspace = true }
-truvis-utils = { workspace = true }
 
 ash = { workspace = true }
 glam = { workspace = true }
 imgui = { workspace = true }
 itertools = { workspace = true }
+enum-map = { workspace = true }
 log = { workspace = true }
 slotmap = { workspace = true }
 vk-mem = { workspace = true }

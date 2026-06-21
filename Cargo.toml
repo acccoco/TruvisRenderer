@@ -147,6 +147,7 @@ bindgen = "0.72.1"
 ###########################################################
 bytemuck = { version = "1.16.0", features = ["derive"] }
 itertools = "0.10.5"
+enum-map = "2.7.3"
 array-init = "2.1.0"
 include_dir = "0.7.3"
 lazy_static = "1.4.0"

@@ -1,6 +1,8 @@
 use ash::vk;
+use enum_map::{Enum, EnumMap, enum_map};
 use itertools::Itertools;
 use std::mem::size_of;
+use std::sync::LazyLock;
 
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
@@ -20,64 +22,100 @@ use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgP
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_shader_binding::gpu;
-use truvis_utils::{count_indexed_array, enumed_map};
 
 use crate::realtime_rt_pass::GfxRtPipeline;
 
 // Offline RT stage 列表必须和 `engine/shader/entry/offline_rt/*` 入口保持一致。
 // 这些 shader 共享 offline payload，并通过 `api/pass/offline_rt.slangi` 定义 push constant ABI。
-enumed_map!(OfflineShaderStages<GfxShaderStageInfo>: {
-    RayGen: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::RAYGEN_KHR,
-        entry_point: c"main_ray_gen",
-        path: TruvisPath::shader_build_path_str("offline_rt/raygen.slang"),
-    },
-    SkyMiss: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::MISS_KHR,
-        entry_point: c"sky_miss",
-        path: TruvisPath::shader_build_path_str("offline_rt/miss_sky.slang"),
-    },
-    ShadowMiss: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::MISS_KHR,
-        entry_point: c"shadow_miss",
-        path: TruvisPath::shader_build_path_str("offline_rt/miss_shadow.slang"),
-    },
-    ClosestHit: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::CLOSEST_HIT_KHR,
-        entry_point: c"main_closest_hit",
-        path: TruvisPath::shader_build_path_str("offline_rt/closest_hit.slang"),
-    },
-    TransAny: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::ANY_HIT_KHR,
-        entry_point: c"trans_any",
-        path: TruvisPath::shader_build_path_str("offline_rt/any_hit.slang"),
-    },
+// enum variant 声明顺序就是 VkPipelineShaderStageCreateInfo 数组顺序；
+// shader group 表通过这个顺序写入 stage index。
+#[derive(Debug, Clone, Copy, Enum)]
+enum OfflineShaderStages {
+    RayGen,
+    SkyMiss,
+    ShadowMiss,
+    ClosestHit,
+    TransAny,
+}
+
+impl OfflineShaderStages {
+    fn index(self) -> usize {
+        self.into_usize()
+    }
+}
+
+static OFFLINE_SHADER_STAGES: LazyLock<EnumMap<OfflineShaderStages, GfxShaderStageInfo>> = LazyLock::new(|| {
+    enum_map! {
+        OfflineShaderStages::RayGen => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::RAYGEN_KHR,
+            entry_point: c"main_ray_gen",
+            path: TruvisPath::shader_build_path_str("offline_rt/raygen.slang"),
+        },
+        OfflineShaderStages::SkyMiss => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::MISS_KHR,
+            entry_point: c"sky_miss",
+            path: TruvisPath::shader_build_path_str("offline_rt/miss_sky.slang"),
+        },
+        OfflineShaderStages::ShadowMiss => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::MISS_KHR,
+            entry_point: c"shadow_miss",
+            path: TruvisPath::shader_build_path_str("offline_rt/miss_shadow.slang"),
+        },
+        OfflineShaderStages::ClosestHit => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::CLOSEST_HIT_KHR,
+            entry_point: c"main_closest_hit",
+            path: TruvisPath::shader_build_path_str("offline_rt/closest_hit.slang"),
+        },
+        OfflineShaderStages::TransAny => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::ANY_HIT_KHR,
+            entry_point: c"trans_any",
+            path: TruvisPath::shader_build_path_str("offline_rt/any_hit.slang"),
+        },
+    }
 });
 
 // Shader group 顺序同时决定 SBT region 索引；新增/移动 stage 时必须同步检查
 // `GfxSBTBuffer::from_shader_groups` 的 raygen/miss/hit 分组参数。
-enumed_map!(OfflineShaderGroups<GfxShaderGroupInfo>: {
-    RayGen: GfxShaderGroupInfo {
-        ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
-        general: OfflineShaderStages::RayGen.index() as u32,
-        ..GfxShaderGroupInfo::unused()
-    },
-    SkyMiss: GfxShaderGroupInfo {
-        ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
-        general: OfflineShaderStages::SkyMiss.index() as u32,
-        ..GfxShaderGroupInfo::unused()
-    },
-    ShadowMiss: GfxShaderGroupInfo {
-        ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
-        general: OfflineShaderStages::ShadowMiss.index() as u32,
-        ..GfxShaderGroupInfo::unused()
-    },
-    Hit: GfxShaderGroupInfo {
-        ty: vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP,
-        closest_hit: OfflineShaderStages::ClosestHit.index() as u32,
-        any_hit: OfflineShaderStages::TransAny.index() as u32,
-        ..GfxShaderGroupInfo::unused()
-    },
+#[derive(Debug, Clone, Copy, Enum)]
+enum OfflineShaderGroups {
+    RayGen,
+    SkyMiss,
+    ShadowMiss,
+    Hit,
+}
+
+impl OfflineShaderGroups {
+    const COUNT: usize = <Self as Enum>::LENGTH;
+
+    fn index(self) -> usize {
+        self.into_usize()
+    }
+}
+
+static OFFLINE_SHADER_GROUPS: LazyLock<EnumMap<OfflineShaderGroups, GfxShaderGroupInfo>> = LazyLock::new(|| {
+    enum_map! {
+        OfflineShaderGroups::RayGen => GfxShaderGroupInfo {
+            ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
+            general: OfflineShaderStages::RayGen.index() as u32,
+            ..GfxShaderGroupInfo::unused()
+        },
+        OfflineShaderGroups::SkyMiss => GfxShaderGroupInfo {
+            ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
+            general: OfflineShaderStages::SkyMiss.index() as u32,
+            ..GfxShaderGroupInfo::unused()
+        },
+        OfflineShaderGroups::ShadowMiss => GfxShaderGroupInfo {
+            ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
+            general: OfflineShaderStages::ShadowMiss.index() as u32,
+            ..GfxShaderGroupInfo::unused()
+        },
+        OfflineShaderGroups::Hit => GfxShaderGroupInfo {
+            ty: vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP,
+            closest_hit: OfflineShaderStages::ClosestHit.index() as u32,
+            any_hit: OfflineShaderStages::TransAny.index() as u32,
+            ..GfxShaderGroupInfo::unused()
+        },
+    }
 });
 
 /// Offline RT pass 的 render-graph 执行参数。
@@ -130,8 +168,8 @@ impl OfflineRtPass {
         render_descriptor_sets: &GlobalDescriptorSets,
     ) -> Self {
         let mut shader_module_cache = GfxShaderModuleCache::new();
-        let stage_infos = OfflineShaderStages::iter()
-            .map(|stage| stage.value())
+        let stage_infos = OFFLINE_SHADER_STAGES
+            .values()
             .map(|stage| {
                 vk::PipelineShaderStageCreateInfo::default()
                     .module(shader_module_cache.get_or_load(device_ctx, stage.path()).handle())
@@ -140,8 +178,8 @@ impl OfflineRtPass {
             })
             .collect_vec();
 
-        let shader_groups = OfflineShaderGroups::iter()
-            .map(|group| group.value())
+        let shader_groups = OFFLINE_SHADER_GROUPS
+            .values()
             .map(|group| vk::RayTracingShaderGroupCreateInfoKHR {
                 ty: group.ty,
                 general_shader: group.general,

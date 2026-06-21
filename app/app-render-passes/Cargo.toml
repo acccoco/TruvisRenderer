@@ -11,7 +11,6 @@ truvis-render-graph = { workspace = true }
 truvis-render-runtime = { workspace = true }
 truvis-shader-binding = { workspace = true }
 truvis-path = { workspace = true }
-truvis-utils = { workspace = true }
 truvis-descriptor-layout-macro = { workspace = true }
 truvis-descriptor-layout-trait = { workspace = true }
 truvis-streamline-binding = { workspace = true }
@@ -20,6 +19,7 @@ ash = { workspace = true }
 glam = { workspace = true }
 log = { workspace = true }
 itertools = { workspace = true }
+enum-map = { workspace = true }
 bytemuck = { workspace = true }
 vk-mem = { workspace = true }
 slotmap = { workspace = true }

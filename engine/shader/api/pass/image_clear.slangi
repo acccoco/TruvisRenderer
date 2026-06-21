@@ -17,9 +17,10 @@ struct PushConstant
     float4 clear_color;
     /// 目标 storage image。
     bindless::UavHandle dst_image;
+    /// `uint2` 在 push constant ABI 中按 8 字节边界读取；padding 必须放在字段前。
+    uint _padding_0;
+
     /// 当前 dispatch 有效图像尺寸；多余线程必须跳过写入。
     uint2 image_size;
-    /// 显式 padding 保持生成的 Rust push constant 与 Slang std430 风格布局一致。
-    uint _padding_0;
 };
 };

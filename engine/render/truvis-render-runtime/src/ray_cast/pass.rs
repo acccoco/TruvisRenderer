@@ -1,6 +1,8 @@
 use ash::vk;
 use ash::vk::Handle;
+use enum_map::{Enum, EnumMap, enum_map};
 use itertools::Itertools;
+use std::sync::LazyLock;
 
 use crate::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use crate::bindings::shader_binding_system::ShaderBindingView;
@@ -15,8 +17,6 @@ use truvis_gfx::resources::special_buffers::sbt_buffer::GfxSBTBuffer;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_path::TruvisPath;
 use truvis_shader_binding::gpu;
-use truvis_utils::count_indexed_array;
-use truvis_utils::enumed_map;
 
 use crate::state::frame_timing::FrameTiming;
 
@@ -49,46 +49,83 @@ impl Drop for RayCastRtPipeline {
     }
 }
 
-enumed_map!(RayCastShaderStages<GfxShaderStageInfo>: {
-    RayGen: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::RAYGEN_KHR,
-        entry_point: c"main_ray_gen",
-        path: TruvisPath::shader_build_path_str("raycast/raygen.slang"),
-    },
-    Miss: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::MISS_KHR,
-        entry_point: c"main_miss",
-        path: TruvisPath::shader_build_path_str("raycast/miss.slang"),
-    },
-    ClosestHit: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::CLOSEST_HIT_KHR,
-        entry_point: c"main_closest_hit",
-        path: TruvisPath::shader_build_path_str("raycast/closest_hit.slang"),
-    },
-    AnyHit: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::ANY_HIT_KHR,
-        entry_point: c"main_any_hit",
-        path: TruvisPath::shader_build_path_str("raycast/any_hit.slang"),
-    },
+// RayCast stage 的 enum 声明顺序就是 pipeline stage 数组顺序；
+// shader group 通过这个顺序写入 stage index。
+#[derive(Debug, Clone, Copy, Enum)]
+enum RayCastShaderStages {
+    RayGen,
+    Miss,
+    ClosestHit,
+    AnyHit,
+}
+
+impl RayCastShaderStages {
+    fn index(self) -> usize {
+        self.into_usize()
+    }
+}
+
+static RAYCAST_SHADER_STAGES: LazyLock<EnumMap<RayCastShaderStages, GfxShaderStageInfo>> = LazyLock::new(|| {
+    enum_map! {
+        RayCastShaderStages::RayGen => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::RAYGEN_KHR,
+            entry_point: c"main_ray_gen",
+            path: TruvisPath::shader_build_path_str("raycast/raygen.slang"),
+        },
+        RayCastShaderStages::Miss => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::MISS_KHR,
+            entry_point: c"main_miss",
+            path: TruvisPath::shader_build_path_str("raycast/miss.slang"),
+        },
+        RayCastShaderStages::ClosestHit => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::CLOSEST_HIT_KHR,
+            entry_point: c"main_closest_hit",
+            path: TruvisPath::shader_build_path_str("raycast/closest_hit.slang"),
+        },
+        RayCastShaderStages::AnyHit => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::ANY_HIT_KHR,
+            entry_point: c"main_any_hit",
+            path: TruvisPath::shader_build_path_str("raycast/any_hit.slang"),
+        },
+    }
 });
 
-enumed_map!(RayCastShaderGroups<GfxShaderGroupInfo>: {
-    RayGen: GfxShaderGroupInfo {
-        ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
-        general: RayCastShaderStages::RayGen.index() as u32,
-        ..GfxShaderGroupInfo::unused()
-    },
-    Miss: GfxShaderGroupInfo {
-        ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
-        general: RayCastShaderStages::Miss.index() as u32,
-        ..GfxShaderGroupInfo::unused()
-    },
-    Hit: GfxShaderGroupInfo {
-        ty: vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP,
-        closest_hit: RayCastShaderStages::ClosestHit.index() as u32,
-        any_hit: RayCastShaderStages::AnyHit.index() as u32,
-        ..GfxShaderGroupInfo::unused()
-    },
+// RayCast shader group 的 enum 声明顺序同时决定 SBT region 索引；
+// `GfxSBTBuffer::from_shader_groups` 的分组参数必须和这里保持一致。
+#[derive(Debug, Clone, Copy, Enum)]
+enum RayCastShaderGroups {
+    RayGen,
+    Miss,
+    Hit,
+}
+
+impl RayCastShaderGroups {
+    const COUNT: usize = <Self as Enum>::LENGTH;
+
+    fn index(self) -> usize {
+        self.into_usize()
+    }
+}
+
+static RAYCAST_SHADER_GROUPS: LazyLock<EnumMap<RayCastShaderGroups, GfxShaderGroupInfo>> = LazyLock::new(|| {
+    enum_map! {
+        RayCastShaderGroups::RayGen => GfxShaderGroupInfo {
+            ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
+            general: RayCastShaderStages::RayGen.index() as u32,
+            ..GfxShaderGroupInfo::unused()
+        },
+        RayCastShaderGroups::Miss => GfxShaderGroupInfo {
+            ty: vk::RayTracingShaderGroupTypeKHR::GENERAL,
+            general: RayCastShaderStages::Miss.index() as u32,
+            ..GfxShaderGroupInfo::unused()
+        },
+        RayCastShaderGroups::Hit => GfxShaderGroupInfo {
+            ty: vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP,
+            closest_hit: RayCastShaderStages::ClosestHit.index() as u32,
+            any_hit: RayCastShaderStages::AnyHit.index() as u32,
+            ..GfxShaderGroupInfo::unused()
+        },
+    }
 });
 
 #[derive(DescriptorBinding)]
@@ -126,8 +163,8 @@ impl RayCastPass {
         global_descriptor_sets: &GlobalDescriptorSets,
     ) -> Self {
         let mut shader_module_cache = GfxShaderModuleCache::new();
-        let stage_infos = RayCastShaderStages::iter()
-            .map(|stage| stage.value())
+        let stage_infos = RAYCAST_SHADER_STAGES
+            .values()
             .map(|stage| {
                 vk::PipelineShaderStageCreateInfo::default()
                     .module(shader_module_cache.get_or_load(device_ctx, stage.path()).handle())
@@ -136,8 +173,8 @@ impl RayCastPass {
             })
             .collect_vec();
 
-        let shader_groups = RayCastShaderGroups::iter()
-            .map(|group| group.value())
+        let shader_groups = RAYCAST_SHADER_GROUPS
+            .values()
             .map(|group| vk::RayTracingShaderGroupCreateInfoKHR {
                 ty: group.ty,
                 general_shader: group.general,

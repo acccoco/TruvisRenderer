@@ -55,8 +55,8 @@ impl ImageClearPass {
             &gpu::image_clear::PushConstant {
                 clear_color: data.clear_color.into(),
                 dst_image: dst_image_bindless_handle.0,
-                image_size: glam::uvec2(data.image_extent.width, data.image_extent.height).into(),
                 _padding_0: 0,
+                image_size: glam::uvec2(data.image_extent.width, data.image_extent.height).into(),
             },
             glam::uvec3(
                 data.image_extent.width.div_ceil(gpu::image_clear::SHADER_X as u32),

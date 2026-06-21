@@ -24,6 +24,17 @@
 `api/`、`lib/` 或 entry 下的 include 文件变化时保守重编全部入口。需要绕过 manifest 时执行
 `just shader-force`。
 
+## ABI 布局约束
+
+`api/common/` 和 `api/pass/` 中的共享结构同时服务 Slang/SPIR-V、C++ bindgen 和 Rust `repr(C)`，
+不能只用 C 侧自然布局判断 push constant 或 shader-visible buffer 的字段位置。`uint2` / `float2`
+等 2 分量向量字段按 8 字节边界安排；如果前一个字段结束位置不是 8 字节对齐，必须在该向量字段前
+插入显式 4 字节 padding，不能把 padding 放在向量字段后面补救。
+
+新增或调整共享 ABI 时，优先参考 `api/pass/denoise_accum.slangi` 中先 padding、再放 `uint2 image_size`
+的模式。修改后执行 `just shader` 或 `just shader-force`，必要时用 `spirv-dis` 检查 SPIR-V 中的
+`OpMemberDecorate ... Offset` 是否与生成的 Rust binding 一致。
+
 ## 注意事项
 
 - 共享结构变更会影响 Rust 绑定，需要重新执行 `just shader`。

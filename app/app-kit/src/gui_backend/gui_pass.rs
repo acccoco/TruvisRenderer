@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::LazyLock;
 
 use ash::vk;
+use enum_map::{Enum, EnumMap, enum_map};
 use imgui::TextureId;
 use itertools::Itertools;
 
@@ -22,23 +24,29 @@ use truvis_render_runtime::bindings::bindless_manager::BindlessManager;
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_shader_binding::gpu;
 use truvis_shader_binding::gpu::bindless::SrvHandle;
-use truvis_utils::count_indexed_array;
-use truvis_utils::enumed_map;
 
 use super::gui_mesh::GuiMesh;
 use super::gui_vertex_layout::ImGuiVertexLayoutAoS;
 
-enumed_map!(ShaderStage<GfxShaderStageInfo>: {
-    Vertex: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::VERTEX,
-        entry_point: c"vsmain",
-        path: TruvisPath::shader_build_path_str("ui/imgui.slang"),
-    },
-    Fragment: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::FRAGMENT,
-        entry_point: c"psmain",
-        path: TruvisPath::shader_build_path_str("ui/imgui.slang"),
-    },
+#[derive(Debug, Clone, Copy, Enum)]
+enum ShaderStage {
+    Vertex,
+    Fragment,
+}
+
+static SHADER_STAGES: LazyLock<EnumMap<ShaderStage, GfxShaderStageInfo>> = LazyLock::new(|| {
+    enum_map! {
+        ShaderStage::Vertex => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::VERTEX,
+            entry_point: c"vsmain",
+            path: TruvisPath::shader_build_path_str("ui/imgui.slang"),
+        },
+        ShaderStage::Fragment => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::FRAGMENT,
+            entry_point: c"psmain",
+            path: TruvisPath::shader_build_path_str("ui/imgui.slang"),
+        },
+    }
 });
 
 pub struct GuiPass {
@@ -78,7 +86,7 @@ impl GuiPass {
 
         let mut create_info = GfxGraphicsPipelineCreateInfo::default();
         create_info
-            .shader_stages(ShaderStage::iter().map(|stage| stage.value().clone()).collect_vec())
+            .shader_stages(SHADER_STAGES.values().cloned().collect_vec())
             .vertex_attribute(ImGuiVertexLayoutAoS::vertex_input_attributes())
             .vertex_binding(ImGuiVertexLayoutAoS::vertex_input_bindings())
             .cull_mode(vk::CullModeFlags::NONE, vk::FrontFace::CLOCKWISE)

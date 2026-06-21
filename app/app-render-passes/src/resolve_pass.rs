@@ -1,6 +1,8 @@
 use std::rc::Rc;
+use std::sync::LazyLock;
 
 use ash::vk;
+use enum_map::{Enum, EnumMap, enum_map};
 use itertools::Itertools;
 
 use truvis_gfx::basic::bytes::BytesConvert;
@@ -15,20 +17,26 @@ use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgP
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_shader_binding::gpu;
-use truvis_utils::count_indexed_array;
-use truvis_utils::enumed_map;
 
-enumed_map!(ShaderStage<GfxShaderStageInfo>: {
-    Vertex: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::VERTEX,
-        entry_point: c"vsmain",
-        path: TruvisPath::shader_build_path_str("post/resolve.slang"),
-    },
-    Fragment: GfxShaderStageInfo {
-        stage: vk::ShaderStageFlags::FRAGMENT,
-        entry_point: c"psmain",
-        path: TruvisPath::shader_build_path_str("post/resolve.slang"),
-    },
+#[derive(Debug, Clone, Copy, Enum)]
+enum ShaderStage {
+    Vertex,
+    Fragment,
+}
+
+static SHADER_STAGES: LazyLock<EnumMap<ShaderStage, GfxShaderStageInfo>> = LazyLock::new(|| {
+    enum_map! {
+        ShaderStage::Vertex => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::VERTEX,
+            entry_point: c"vsmain",
+            path: TruvisPath::shader_build_path_str("post/resolve.slang"),
+        },
+        ShaderStage::Fragment => GfxShaderStageInfo {
+            stage: vk::ShaderStageFlags::FRAGMENT,
+            entry_point: c"psmain",
+            path: TruvisPath::shader_build_path_str("post/resolve.slang"),
+        },
+    }
 });
 
 /// 用于绘制的参数
@@ -63,7 +71,7 @@ impl ResolvePass {
         let mut pipeline_ci = GfxGraphicsPipelineCreateInfo::default();
 
         // 着色器阶段
-        pipeline_ci.shader_stages(ShaderStage::iter().map(|stage| stage.value().clone()).collect_vec());
+        pipeline_ci.shader_stages(SHADER_STAGES.values().cloned().collect_vec());
 
         // Attachment 配置：只有 color，没有 depth
         pipeline_ci.attach_info(vec![color_format], None, Some(vk::Format::UNDEFINED));
