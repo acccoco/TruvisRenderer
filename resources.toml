@@ -56,14 +56,18 @@ rename_to = "streamline-sdk"
 
 [[resources]]
 name = "nvidia-rtx-gi-repo"
-url = "https://github.com/NVIDIA-RTX/RTXGI/archive/refs/tags/v2.7.0.zip"
-resource_type = "zip"
+url = "https://github.com/NVIDIA-RTX/RTXGI.git"
+resource_type = "git"
 target_dir = "tools"
 rename_to = "rtx-gi"
+git_ref = "v2.7.0"
+recursive_submodules = true
 
 [[resources]]
 name = "nvidia-rtx-di-repo"
-url = "https://github.com/NVIDIA-RTX/RTXDI/archive/refs/tags/v3.0.0.zip"
-resource_type = "zip"
+url = "https://github.com/NVIDIA-RTX/RTXDI.git"
+resource_type = "git"
 target_dir = "tools"
 rename_to = "rtx-di"
+git_ref = "v3.0.0"
+recursive_submodules = true

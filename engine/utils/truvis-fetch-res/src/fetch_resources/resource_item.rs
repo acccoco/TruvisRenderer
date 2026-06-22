@@ -12,6 +12,8 @@ pub enum ResourceType {
     File,
     /// Zip 压缩包
     Zip,
+    /// Git 仓库
+    Git,
 }
 
 /// TOML 配置文件中的资源配置
@@ -30,7 +32,7 @@ pub struct ResourceItem {
     /// 完整的下载 URL
     pub url: String,
 
-    /// 资源类型（file 或 zip）
+    /// 资源类型（file、zip 或 git）
     pub resource_type: ResourceType,
 
     /// 本地目标目录
@@ -39,7 +41,18 @@ pub struct ResourceItem {
     /// 重命名
     /// - 如果 resource_type = File，则重命名文件
     /// - 如果 resource_type = Zip，则重命名解压后的顶级目录
+    /// - 如果 resource_type = Git，则作为 checkout 目录名
     pub rename_to: String,
+
+    /// Git resource 要 checkout 的 tag、branch 或 commit。
+    /// 非 git resource 忽略该字段。
+    #[serde(default)]
+    pub git_ref: Option<String>,
+
+    /// Git resource 是否初始化并更新 submodule。
+    /// 非 git resource 忽略该字段。
+    #[serde(default)]
+    pub recursive_submodules: bool,
 
     /// 可选：是否强制重新下载，默认 false
     #[serde(default)]
