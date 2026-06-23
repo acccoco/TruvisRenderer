@@ -13,6 +13,7 @@
 #include "lib/realtime_rt/raygen_path_state.slangi"
 #include "lib/realtime_rt/raygen_view.slangi"
 #include "lib/realtime_rt/restir_di.slangi"
+#include "lib/realtime_rt/sharc_integration.slangi"
 
 // 开启后，虽然 active threads 的 coherence 指标从 50% 上升到了 70%
 // SER 主要用于提升后续新的 shader invocation 的一致性
@@ -23,6 +24,20 @@
 void main_ray_gen()
 {
     const uint2 thread_id = DispatchRaysIndex().xy;
+
+    // SHARC 维护 sub-pass：在正常 path / ReSTIR 之前，用同一条 RT pipeline 维护世界空间 radiance cache。
+    // stage 8b 只做 Update / Resolve，不查询缓存，因此主 path loop 行为保持不变，画面应与 SHARC Off 一致。
+    if (push_const.sharc_phase == realtime_rt::SHARC_PHASE_UPDATE)
+    {
+        RtSharc::run_update(thread_id);
+        return;
+    }
+    if (push_const.sharc_phase == realtime_rt::SHARC_PHASE_RESOLVE)
+    {
+        RtSharc::run_resolve(thread_id);
+        return;
+    }
+
     if (push_const.restir_di_phase != realtime_rt::RESTIR_DI_PHASE_PATH)
     {
         // temporal/spatial/final phase 是 image-space pass，不应再次发 camera ray 或推进 path state。
@@ -135,6 +150,22 @@ void main_ray_gen()
                 RtRestirDI::store_primary_surface_key(thread_id, surface);
             }
             gbuffer_written = true;
+        }
+
+        // SHARC 调试通道：在 primary hit 处可视化 hash grid 结构或 resolved 缓存 radiance，然后早退。
+        // 这是只读观测，不影响正常渲染路径，也不属于路径查询（query 在第九阶段接入）。
+        if (depth == 0)
+        {
+            if (push_const.channel == RT_DEBUG_SHARC_HASH_GRID)
+            {
+                path.radiance = RtSharc::debug_hash_grid_color(surface);
+                break;
+            }
+            if (push_const.channel == RT_DEBUG_SHARC_CACHE)
+            {
+                path.radiance = RtSharc::debug_cache_radiance(surface);
+                break;
+            }
         }
 
         if (surface.material_type == MaterialType::EMISSIVE)

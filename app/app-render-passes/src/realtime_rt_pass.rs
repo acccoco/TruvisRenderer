@@ -4,9 +4,12 @@ use enum_map::{Enum, EnumMap, enum_map};
 use itertools::Itertools;
 use std::sync::LazyLock;
 
+use std::rc::Rc;
+
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
-use truvis_gfx::descriptors::descriptor::GfxDescriptorSetLayout;
+use truvis_gfx::descriptors::descriptor::{GfxDescriptorSet, GfxDescriptorSetLayout};
+use truvis_gfx::descriptors::descriptor_pool::{GfxDescriptorPool, GfxDescriptorPoolCreateInfo};
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_gfx::{
@@ -209,6 +212,16 @@ pub struct RealtimeRtPassData {
     /// 当前 previous frame label 的 temporal reservoir / surface key 是否可参与 temporal reuse。
     /// 该标志只表达 CPU 侧 frame/reset/mode 连续性；scene light 版本仍由 shader metadata 拒绝。
     pub restir_history_valid: bool,
+
+    // ========== SHARC world-space radiance cache ==========
+    // buffer 句柄不在这里传：它们是持久资源，已在 pass 创建时写入 SHARC regular descriptor set。
+    // 这里只传每帧可调的 push constant 参数。
+    /// SHARC 模式（0=Off / 1=Update / 2=On）。Off 时不发 Update/Resolve sub-pass。
+    pub sharc_mode: u32,
+    /// SHARC hash map 容量（voxel 数），同时决定 Resolve dispatch 规模。
+    pub sharc_capacity: u32,
+    /// SHARC scene scale，控制 voxel 物理尺寸。
+    pub sharc_scene_scale: f32,
 
     // ========== ReSTIR DI 数据 ==========
     pub restir_initial: RestirReservoirPassImages,
@@ -445,10 +458,44 @@ struct RealtimeRtDescriptorBinding {
     _restir_history_surface_c: (),
 }
 
+/// SHARC 世界空间缓存 buffer 的独立 push descriptor set。
+///
+/// 单独成 set 而不是塞进 `RealtimeRtDescriptorBinding`：后者已有 32 个 binding，正好等于多数
+/// 设备的 `maxPushDescriptors`，再加会超限。SHARC 三个 buffer 即使 Off 也绑定（raygen 静态引用）。
+#[derive(DescriptorBinding)]
+struct SharcDescriptorBinding {
+    /// hash entry buffer（uint64 hash key）。
+    #[binding = 0]
+    #[descriptor_type = "STORAGE_BUFFER"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _sharc_hash_entries: (),
+    /// accumulation buffer（本帧原子累积）。
+    #[binding = 1]
+    #[descriptor_type = "STORAGE_BUFFER"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _sharc_accumulation: (),
+    /// resolved buffer（跨帧累积结果）。
+    #[binding = 2]
+    #[descriptor_type = "STORAGE_BUFFER"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _sharc_resolved: (),
+}
+
 pub struct RealtimeRtPass {
     pipeline: GfxRtPipeline,
     sbt: GfxSBTBuffer,
     _rt_descriptor_set_layout: GfxDescriptorSetLayout<RealtimeRtDescriptorBinding>,
+    /// SHARC buffer 的独立 **regular**（非 push）descriptor set layout（set = REALTIME_RT_SET_NUM + 1）。
+    ///
+    /// 一个 pipeline layout 只允许一个 push descriptor set（realtime set 已占用），因此 SHARC 走普通
+    /// allocated set。SHARC buffer 是持久资源（不随帧/resize 变化），所以这个 set 在 pass 创建时分配并
+    /// 一次性写入，之后每帧只 bind，不再更新。
+    sharc_descriptor_set_layout: GfxDescriptorSetLayout<SharcDescriptorBinding>,
+    sharc_descriptor_pool: GfxDescriptorPool,
+    sharc_descriptor_set: GfxDescriptorSet<SharcDescriptorBinding>,
 }
 impl RealtimeRtPass {
     pub fn new(
@@ -456,6 +503,9 @@ impl RealtimeRtPass {
         device_ctx: GfxDeviceCtx<'_>,
         device_info_ctx: GfxDeviceInfoCtx<'_>,
         render_descriptor_sets: &GlobalDescriptorSets,
+        sharc_hash_entries: vk::Buffer,
+        sharc_accumulation: vk::Buffer,
+        sharc_resolved: vk::Buffer,
     ) -> Self {
         let mut shader_module_cache = GfxShaderModuleCache::new();
         let stage_infos = SHADER_STAGES
@@ -495,10 +545,19 @@ impl RealtimeRtPass {
             vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR,
             "simple-rt-descriptor-set-layout",
         );
+        // SHARC buffer 独立成 set：避免 realtime push set 超过 maxPushDescriptors，也避免一个 pipeline layout
+        // 出现两个 push set（Vulkan 不允许）。因此这里用 **regular** set（无 PUSH_DESCRIPTOR flag）。
+        let sharc_descriptor_set_layout = GfxDescriptorSetLayout::<SharcDescriptorBinding>::new(
+            device_ctx,
+            vk::DescriptorSetLayoutCreateFlags::empty(),
+            "sharc-descriptor-set-layout",
+        );
 
         let pipeline_layout = {
+            // set 顺序必须与 shader 一致：global sets..., REALTIME_RT_SET_NUM(push), SHARC_SET_NUM(regular)。
             let mut descriptor_set_layouts = render_descriptor_sets.global_set_layouts();
             descriptor_set_layouts.push(rt_descriptor_set_layout.handle());
+            descriptor_set_layouts.push(sharc_descriptor_set_layout.handle());
             let pipeline_layout_ci = vk::PipelineLayoutCreateInfo::default()
                 .set_layouts(&descriptor_set_layouts)
                 .push_constant_ranges(std::slice::from_ref(&push_constant_range));
@@ -547,10 +606,54 @@ impl RealtimeRtPass {
             "simple-rt-sbt",
         );
 
+        // SHARC regular descriptor set：分配一次并写入持久 buffer，之后每帧只 bind 不再更新。
+        // SHARC buffer 由 app 层 SharcTargets 拥有，不随帧/resize 变化，所以这种「一次写入」是安全的。
+        let sharc_descriptor_pool = GfxDescriptorPool::new(
+            device_ctx,
+            Rc::new(GfxDescriptorPoolCreateInfo::new(
+                vk::DescriptorPoolCreateFlags::empty(),
+                1,
+                vec![vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    descriptor_count: 3,
+                }],
+            )),
+            "sharc-descriptor-pool",
+        );
+        let sharc_descriptor_set = GfxDescriptorSet::<SharcDescriptorBinding>::new(
+            device_ctx,
+            &sharc_descriptor_pool,
+            &sharc_descriptor_set_layout,
+            "sharc-descriptor-set",
+        );
+        let sharc_buffer_info = |buffer: vk::Buffer| {
+            vec![vk::DescriptorBufferInfo::default().buffer(buffer).offset(0).range(vk::WHOLE_SIZE)]
+        };
+        device_ctx.device().write_descriptor_sets(&[
+            SharcDescriptorBinding::sharc_hash_entries().write_buffer(
+                sharc_descriptor_set.handle(),
+                0,
+                sharc_buffer_info(sharc_hash_entries),
+            ),
+            SharcDescriptorBinding::sharc_accumulation().write_buffer(
+                sharc_descriptor_set.handle(),
+                0,
+                sharc_buffer_info(sharc_accumulation),
+            ),
+            SharcDescriptorBinding::sharc_resolved().write_buffer(
+                sharc_descriptor_set.handle(),
+                0,
+                sharc_buffer_info(sharc_resolved),
+            ),
+        ]);
+
         Self {
             pipeline: rt_pipeline,
             sbt,
             _rt_descriptor_set_layout: rt_descriptor_set_layout,
+            sharc_descriptor_set_layout,
+            sharc_descriptor_pool,
+            sharc_descriptor_set,
         }
     }
 
@@ -559,10 +662,16 @@ impl RealtimeRtPass {
             pipeline,
             sbt,
             _rt_descriptor_set_layout,
+            sharc_descriptor_set_layout,
+            sharc_descriptor_pool,
+            sharc_descriptor_set: _sharc_descriptor_set,
         } = self;
         pipeline.destroy(device_ctx);
         sbt.destroy(resource_ctx, DestroyReason::Shutdown);
         _rt_descriptor_set_layout.destroy(device_ctx);
+        // descriptor set 跟随 pool 释放；显式释放 pool 与 layout。
+        sharc_descriptor_pool.destroy(device_ctx);
+        sharc_descriptor_set_layout.destroy(device_ctx);
     }
     pub fn ray_trace(
         &self,
@@ -578,6 +687,14 @@ impl RealtimeRtPass {
         const RESTIR_DI_PHASE_TEMPORAL: u32 = 1;
         const RESTIR_DI_PHASE_SPATIAL: u32 = 2;
         const RESTIR_DI_PHASE_FINAL: u32 = 3;
+
+        // SHARC sub-pass 常量，必须与 `api/pass/realtime_rt.slangi` 的 SHARC_PHASE_* 保持一致。
+        const SHARC_MODE_OFF: u32 = 0;
+        const SHARC_PHASE_NONE: u32 = 0;
+        const SHARC_PHASE_UPDATE: u32 = 1;
+        const SHARC_PHASE_RESOLVE: u32 = 2;
+        // Resolve dispatch 的 2D 网格宽度；entry index = y * width + x。height 按 capacity 上取整。
+        const SHARC_RESOLVE_DISPATCH_WIDTH: u32 = 2048;
 
         let frame_label = record_ctx.frame_timing.frame_label();
         let Some(tlas) = render_scene.tlas_handle(frame_label) else {
@@ -852,6 +969,16 @@ impl RealtimeRtPass {
             &record_ctx.shader_bindings.global_sets(frame_label),
             None,
         );
+
+        // SHARC regular descriptor set 在 pass 创建时已一次性写入持久 buffer，这里每帧只 bind 到
+        // SHARC_SET_NUM（= REALTIME_RT_SET_NUM + 1）。即使 SHARC Off 也要 bind：raygen 静态引用了这些 buffer。
+        cmd.bind_descriptor_sets(
+            vk::PipelineBindPoint::RAY_TRACING_KHR,
+            self.pipeline.pipeline_layout,
+            gpu::REALTIME_RT_SET_NUM + 1,
+            &[self.sharc_descriptor_set.handle()],
+            None,
+        );
         // FIXME 这个变量废除了，现在只有 spp 1
         let spp = 1;
         let mut push_constant = gpu::realtime_rt::PushConstants {
@@ -864,7 +991,13 @@ impl RealtimeRtPass {
             restir_di_mode: pass_data.restir_di_mode,
             restir_di_phase: RESTIR_DI_PHASE_PATH,
             restir_history_valid: u32::from(pass_data.restir_history_valid),
+            sharc_mode: pass_data.sharc_mode,
+            sharc_phase: SHARC_PHASE_NONE,
+            sharc_capacity: pass_data.sharc_capacity,
+            sharc_scene_scale: pass_data.sharc_scene_scale,
+            _padding_0: 0,
             _padding_1: 0,
+            _padding_2: 0,
         };
 
         let trace_extent = [
@@ -877,7 +1010,7 @@ impl RealtimeRtPass {
             | vk::ShaderStageFlags::ANY_HIT_KHR
             | vk::ShaderStageFlags::CLOSEST_HIT_KHR;
 
-        let push_and_trace = |push_constant: &gpu::realtime_rt::PushConstants| {
+        let push_and_trace = |push_constant: &gpu::realtime_rt::PushConstants, extent: [u32; 3]| {
             cmd.cmd_push_constants(
                 self.pipeline.pipeline_layout,
                 shader_stages,
@@ -890,8 +1023,19 @@ impl RealtimeRtPass {
                 self.sbt.miss_region(),
                 self.sbt.hit_region(),
                 self.sbt.callable_region(),
-                trace_extent,
+                extent,
             );
+        };
+
+        // SHARC buffer 同步：Update 写 hash/accumulation，Resolve 读 accumulation + 读写 resolved，
+        // 两者之间用 RT shader 读写 global memory barrier 串联。跨帧的持久 buffer 复用依赖 SHARC
+        // 自身对原子竞争的容忍以及帧间提交顺序，这里只保证 pass 内 Update→Resolve 的可见性。
+        let barrier_sharc_buffers = || {
+            cmd.memory_barrier(&[vk::MemoryBarrier2::default()
+                .src_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
+                .src_access_mask(vk::AccessFlags2::SHADER_WRITE | vk::AccessFlags2::SHADER_READ)
+                .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
+                .dst_access_mask(vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE)]);
         };
 
         let barrier_phase_images = || {
@@ -915,6 +1059,27 @@ impl RealtimeRtPass {
             cmd.image_memory_barrier(vk::DependencyFlags::empty(), &image_barriers);
         };
 
+        // SHARC 维护 sub-pass：在正常 path / ReSTIR 之前 Update→Resolve 维护世界空间缓存。
+        // stage 8b 不查询缓存，因此这一步不改变主渲染结果，只填充 / 合并 / 淘汰缓存。
+        if pass_data.sharc_mode != SHARC_MODE_OFF {
+            // Resolve 用 2D 网格覆盖 capacity：width 固定、height 上取整；多余线程在 shader 内按 entry index 越界返回。
+            let resolve_width = SHARC_RESOLVE_DISPATCH_WIDTH.min(pass_data.sharc_capacity.max(1));
+            let resolve_height = pass_data.sharc_capacity.div_ceil(resolve_width);
+            let sharc_resolve_extent = [resolve_width, resolve_height, 1];
+
+            // Update：在 render extent 上稀疏选像素跑独立 path，写 hash / accumulation。
+            push_constant.sharc_phase = SHARC_PHASE_UPDATE;
+            push_and_trace(&push_constant, trace_extent);
+            barrier_sharc_buffers();
+
+            // Resolve：按 entry 合并本帧 accumulation 到 resolved，并淘汰 stale entry、清空 accumulation。
+            push_constant.sharc_phase = SHARC_PHASE_RESOLVE;
+            push_and_trace(&push_constant, sharc_resolve_extent);
+            barrier_sharc_buffers();
+
+            push_constant.sharc_phase = SHARC_PHASE_NONE;
+        }
+
         for spp_idx in 0..spp {
             push_constant.spp_idx = spp_idx;
             push_constant.restir_di_phase = RESTIR_DI_PHASE_PATH;
@@ -924,7 +1089,7 @@ impl RealtimeRtPass {
                 barrier_phase_images();
             }
 
-            push_and_trace(&push_constant);
+            push_and_trace(&push_constant, trace_extent);
 
             if pass_data.restir_di_mode == RESTIR_DI_MODE_OFF {
                 continue;
@@ -935,18 +1100,18 @@ impl RealtimeRtPass {
             barrier_phase_images();
             if pass_data.restir_di_mode != RESTIR_DI_MODE_INITIAL_ONLY {
                 push_constant.restir_di_phase = RESTIR_DI_PHASE_TEMPORAL;
-                push_and_trace(&push_constant);
+                push_and_trace(&push_constant, trace_extent);
                 barrier_phase_images();
 
                 if pass_data.restir_di_mode == RESTIR_DI_MODE_TEMPORAL_SPATIAL {
                     push_constant.restir_di_phase = RESTIR_DI_PHASE_SPATIAL;
-                    push_and_trace(&push_constant);
+                    push_and_trace(&push_constant, trace_extent);
                     barrier_phase_images();
                 }
             }
 
             push_constant.restir_di_phase = RESTIR_DI_PHASE_FINAL;
-            push_and_trace(&push_constant);
+            push_and_trace(&push_constant, trace_extent);
         }
 
         cmd.end_label();
@@ -969,6 +1134,13 @@ pub struct RealtimeRtRgPass<'a> {
     pub analytic_nee_enabled: bool,
     pub restir_di_mode: u32,
     pub restir_history_valid: bool,
+
+    // ========== SHARC world-space radiance cache ==========
+    // SHARC buffer 不进入 RenderGraph（它只跟踪 image），也不在这里传句柄：buffer 是持久资源，
+    // 已在 pass 创建时写入 SHARC regular descriptor set。这里只传每帧可调的 push constant 参数。
+    pub sharc_mode: u32,
+    pub sharc_capacity: u32,
+    pub sharc_scene_scale: f32,
 
     // ========== ReSTIR DI 数据 ==========
     pub restir_initial: RestirReservoirRgImages,
@@ -1058,6 +1230,9 @@ impl RgPass for RealtimeRtRgPass<'_> {
                 analytic_nee_enabled: self.analytic_nee_enabled,
                 restir_di_mode: self.restir_di_mode,
                 restir_history_valid: self.restir_history_valid,
+                sharc_mode: self.sharc_mode,
+                sharc_capacity: self.sharc_capacity,
+                sharc_scene_scale: self.sharc_scene_scale,
                 restir_initial,
                 restir_temporal,
                 restir_final,

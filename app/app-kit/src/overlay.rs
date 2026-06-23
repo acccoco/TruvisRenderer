@@ -7,7 +7,7 @@ use crate::camera::Camera;
 use crate::render_pipeline::RenderMode;
 use crate::render_pipeline::common_settings::{PathTracingCommonSettings, RtSkySamplingMode};
 use crate::render_pipeline::offline_render_graph::OfflinePipelineSettings;
-use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtPipelineSettings, RtRestirDiMode};
+use crate::render_pipeline::rt_render_graph::{RtDebugChannel, RtPipelineSettings, RtRestirDiMode, RtSharcMode};
 
 pub struct FrameStatsOverlayData<'a> {
     pub camera: &'a Camera,
@@ -238,6 +238,10 @@ impl PipelineControlsOverlay {
         if restir_disabled {
             ui.text_disabled("ReSTIR DI is realtime only");
         }
+        // SHARC 也是 realtime-only 能力，沿用同一 disabled 语义。
+        ui.disabled(restir_disabled, || {
+            Self::build_sharc_section(ui, &mut rt_settings.sharc_mode, &mut rt_settings.sharc_scene_scale);
+        });
         if let Some(common_settings) = common_settings.as_deref_mut() {
             Self::build_tone_mapping_section(ui, &mut common_settings.tone_mapping);
         }
@@ -306,6 +310,19 @@ impl PipelineControlsOverlay {
         ui.checkbox("Analytic NEE", analytic_nee_enabled);
     }
 
+    pub fn build_sharc_section(ui: &imgui::Ui, sharc_mode: &mut RtSharcMode, sharc_scene_scale: &mut f32) {
+        if let Some(_combo) = ui.begin_combo("SHARC", sharc_mode.label()) {
+            for mode in RtSharcMode::ALL {
+                if ui.selectable_config(mode.label()).selected(*sharc_mode == mode).build() {
+                    // UI 只更新 mode；缓存 buffer 的生命周期与清零由 pipeline owner 负责。
+                    *sharc_mode = mode;
+                }
+            }
+        }
+        // scene scale 控制 voxel 物理尺寸，需按场景单位调；第八阶段不查询，只影响缓存粒度与 debug 可视化。
+        ui.slider_config("SHARC scene scale", 1.0_f32, 500.0_f32).display_format("%.1f").build(sharc_scene_scale);
+    }
+
     pub fn build_restir_section(ui: &imgui::Ui, restir_di_mode: &mut RtRestirDiMode) {
         if let Some(_combo) = ui.begin_combo("ReSTIR DI", restir_di_mode.label()) {
             for mode in RtRestirDiMode::ALL {
@@ -340,6 +357,9 @@ impl PipelineControlsOverlay {
                 | RtDebugChannel::RestirTemporalValid
                 | RtDebugChannel::RestirFinalContribution
                 | RtDebugChannel::SpecularMotionMagnitude
+                // SHARC 只在 realtime 主流程维护，离线 raygen 不绑定 / 不维护缓存。
+                | RtDebugChannel::SharcHashGrid
+                | RtDebugChannel::SharcCache
         )
     }
 }

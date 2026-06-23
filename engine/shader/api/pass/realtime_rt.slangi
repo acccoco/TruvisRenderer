@@ -2,6 +2,26 @@
 
 #include "api/common/mod.slangi"
 
+#ifdef __SLANG__
+// SHARC voxel 元素类型（buffer ABI）。定义在**全局作用域**，便于算法头 `lib/realtime_rt/sharc_*.slangi`
+// 直接引用，不必带 `realtime_rt::` 限定。fp16 / uint64 只在 shader 侧有意义，置于 `#ifdef __SLANG__` 内，
+// bindgen（C++ 解析）不会看到，不污染 Rust `gpu::` 绑定。
+
+/// accumulation buffer 元素：本帧原子累积 radiance(xyz, 按 radianceScale 量化为 u32) + sample 数(w)。
+struct SharcAccumulationData
+{
+    uint4 data;
+};
+
+/// resolved buffer 元素：跨帧累积 radiance(fp16: rgb + accumulatedSampleNum) + 帧/stale 元数据(2x u32)。
+struct SharcPackedData
+{
+    float16_t4 radianceData;
+    uint sampleData;
+    uint sampleDataExt;
+};
+#endif
+
 namespace realtime_rt
 {
 
@@ -18,12 +38,34 @@ static const uint RESTIR_DI_PHASE_TEMPORAL = 1;
 static const uint RESTIR_DI_PHASE_SPATIAL = 2;
 static const uint RESTIR_DI_PHASE_FINAL = 3;
 
+/// SHARC world-space radiance cache 模式。
+///
+/// `Off` 完全保持旧路径；`Update` 只做 Update+Resolve 维护缓存、不查询（路线图第八阶段，
+/// 画面应与 Off 一致）；`On` 在此基础上让后续 bounce 查询缓存（路线图第九阶段）。
+static const uint SHARC_MODE_OFF = 0;
+static const uint SHARC_MODE_UPDATE = 1;
+static const uint SHARC_MODE_ON = 2;
+
+/// SHARC sub-pass。raygen 用同一条 RT pipeline 分阶段执行：`None` 走正常 path/ReSTIR；
+/// `Update` 跑稀疏 path 写缓存；`Resolve` 按 entry 1D dispatch 合并/淘汰。
+static const uint SHARC_PHASE_NONE = 0;
+static const uint SHARC_PHASE_UPDATE = 1;
+static const uint SHARC_PHASE_RESOLVE = 2;
+
 /// realtime RT pass-local descriptor set 编号。
 ///
 /// 全局 set 之后追加 TLAS、single-frame 输出、GBuffer、DLSS 输入和 ReSTIR DI pack。
 /// Rust 侧 pipeline layout 必须按同一 set 编号和 binding 顺序绑定这些资源；A/B/C/D 的
 /// uint/float 格式顺序是 shader ABI，不允许在一侧单独调整。
 #define REALTIME_RT_SET_NUM GLOBAL_SETS_COUNT
+
+/// SHARC buffer 专用 descriptor set 编号。
+///
+/// SHARC 的三个 buffer 放在独立 push descriptor set，而不是塞进 `REALTIME_RT_SET_NUM`：后者已有 32 个
+/// binding（ReSTIR/GBuffer），而 `maxPushDescriptors` 在 NVIDIA/AMD 上通常正好是 32，再加 3 个会超限。
+/// 拆成独立 set 后每个 push set 都 ≤ 32，且 SHARC 资源边界更清晰。Rust 侧 pipeline layout 必须按
+/// `REALTIME_RT_SET_NUM, SHARC_SET_NUM` 的顺序追加这两个 set。
+#define SHARC_SET_NUM (GLOBAL_SETS_COUNT + 1)
 
 #ifdef __SLANG__
 
@@ -128,6 +170,21 @@ RWTexture2D<float4> restir_history_surface_a;
 RWTexture2D<float4> restir_history_surface_b;
 [[vk::binding(31, REALTIME_RT_SET_NUM)]]
 RWTexture2D<float4> restir_history_surface_c;
+
+// ========== SHARC world-space radiance cache buffers ==========
+// 这三个 buffer 是 SHARC 的世界空间持久缓存，由 app 层 `SharcTargets` 创建并清零，放在独立的
+// `SHARC_SET_NUM` push descriptor set（见上方说明）。binding 顺序是 shader ABI：Rust 侧
+// `SharcDescriptorBinding` 必须按同一 set / binding 绑定。元素类型定义在本文件顶部全局作用域。
+
+/// hash entry buffer：每 entry 一个 uint64 spatial hash key（0 表示空槽）。slot 抢占用 64-bit atomic。
+[[vk::binding(0, SHARC_SET_NUM)]]
+RWStructuredBuffer<uint64_t> sharc_hash_entries;
+/// accumulation buffer：Update pass 原子累积、Resolve pass 读后清零。
+[[vk::binding(1, SHARC_SET_NUM)]]
+RWStructuredBuffer<SharcAccumulationData> sharc_accumulation;
+/// resolved buffer：跨帧累积结果，Resolve pass 读写、Query pass 只读。
+[[vk::binding(2, SHARC_SET_NUM)]]
+RWStructuredBuffer<SharcPackedData> sharc_resolved;
 #endif
 
 struct PushConstants
@@ -150,7 +207,19 @@ struct PushConstants
     uint restir_di_phase;
     /// 非 0 表示 previous frame label 对应的 reservoir / surface key 可以参与 temporal reuse。
     uint restir_history_valid;
-    /// 显式 padding 保持 push constant 16 字节对齐，避免 CPU/GPU ABI 对齐差异。
+
+    /// SHARC 模式（SHARC_MODE_*）。Off 时完全不触碰 SHARC buffer。
+    uint sharc_mode;
+    /// SHARC sub-pass（SHARC_PHASE_*）。None 走正常 path/ReSTIR；Update/Resolve 维护缓存。
+    uint sharc_phase;
+    /// SHARC hash map 容量（voxel 数）。Resolve dispatch 与 hash 取模都使用它。
+    uint sharc_capacity;
+    /// SHARC scene scale，控制 voxel 物理尺寸：voxel 越大缓存越粗、命中率越高但越模糊。
+    float sharc_scene_scale;
+
+    /// 显式 padding 把 push constant 对齐到 16 字节边界，避免 CPU/GPU ABI 对齐差异。
+    uint _padding_0;
     uint _padding_1;
+    uint _padding_2;
 };
 };

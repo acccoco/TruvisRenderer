@@ -14,6 +14,7 @@ use itertools::Itertools;
 use slotmap::Key;
 use truvis_gfx::commands::barrier::GfxImageBarrier;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
+use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
@@ -726,6 +727,109 @@ impl RestirDiTargets {
 impl Drop for RestirDiTargets {
     fn drop(&mut self) {
         self.for_each_set(|set| debug_assert!(set.images.iter().all(|img| img.is_null())));
+    }
+}
+
+/// SHARC world-space radiance cache 的持久 GPU buffer 集合。
+///
+/// SHARC 缓存是世界空间持久结构，**不随 FIF frame label 或 render extent 轮转**：三个 buffer 单实例存在、
+/// 跨帧累积，时间稳定性与淘汰由 SHARC 内部的 `accumulatedFrameNum` / `staleFrameNum` 控制。owner 只负责
+/// 创建、整表清零（初始化 / 场景重载 reset）与销毁；Update→Resolve→Query 之间的 buffer 同步由 RT pass 用
+/// buffer barrier 显式保证，不进入只跟踪 image 的 RenderGraph。
+///
+/// 这些 buffer 的元素布局（uint64 hash key、fp16 voxel radiance）只在 shader 侧有意义，CPU 不读写单个元素，
+/// 因此用裸 `GfxBuffer` 按字节大小创建，不引入 Rust 镜像结构体。
+pub struct SharcTargets {
+    /// hash entry buffer：每 entry 一个 uint64 spatial hash key（`HASH_GRID_INVALID_HASH_KEY = 0`）。
+    hash_entries: GfxBuffer,
+    /// accumulation buffer：每 entry 一个 `SharcAccumulationData`(uint4)，存本帧原子累积 radiance + sample 数。
+    accumulation: GfxBuffer,
+    /// resolved buffer：每 entry 一个 `SharcPackedData`(16B)，存跨帧累积 radiance(fp16) + 帧/stale 元数据。
+    resolved: GfxBuffer,
+    /// voxel 数量（hash map 容量）。push constant 会把它传给 shader 做取模与 resolve 边界判断。
+    capacity: u32,
+    destroyed: bool,
+}
+
+impl SharcTargets {
+    /// 缓存 voxel 数量。SHARC 推荐 `2^22` 作为多数场景基线；2 的幂可降低 hash 取模成本。
+    pub const CAPACITY: u32 = 1 << 22;
+    /// hash entry 字节数（uint64），与 shader `hashEntriesBuffer` 元素一致。
+    const HASH_ENTRY_SIZE: vk::DeviceSize = 8;
+    /// accumulation / resolved 元素字节数（均 16B），与 shader voxel data 元素一致。
+    const VOXEL_DATA_SIZE: vk::DeviceSize = 16;
+
+    pub fn new(resource_ctx: GfxResourceCtx<'_>, immediate_ctx: GfxImmediateCtx<'_>) -> Self {
+        let capacity = Self::CAPACITY;
+        // STORAGE_BUFFER 供 RT/Resolve 读写，TRANSFER_DST 供 `cmd_fill_buffer` 清零；
+        // 通过 pass-local push descriptor 绑定，不需要 SHADER_DEVICE_ADDRESS。
+        let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+        let make = |size: vk::DeviceSize, name: &str| {
+            GfxBuffer::new(resource_ctx, size, usage, None, false, name)
+        };
+        let hash_entries = make(capacity as vk::DeviceSize * Self::HASH_ENTRY_SIZE, "sharc-hash-entries");
+        let accumulation = make(capacity as vk::DeviceSize * Self::VOXEL_DATA_SIZE, "sharc-accumulation");
+        let resolved = make(capacity as vk::DeviceSize * Self::VOXEL_DATA_SIZE, "sharc-resolved");
+
+        let mut targets = Self {
+            hash_entries,
+            accumulation,
+            resolved,
+            capacity,
+            destroyed: false,
+        };
+        // SHARC 要求三个 buffer 初始全部清 0：hash key 0 表示空槽，voxel 数据 0 表示无样本。
+        targets.clear_all(immediate_ctx);
+        targets
+    }
+
+    /// 整表清零。用于初始化以及未来的场景重载 / 缓存 reset；不在 resize 时调用，
+    /// 因为缓存是世界空间结构，与 render extent 无关。
+    pub fn clear_all(&mut self, immediate_ctx: GfxImmediateCtx<'_>) {
+        immediate_ctx.one_time_exec(
+            |cmd| {
+                cmd.cmd_fill_buffer(self.hash_entries.vk_buffer(), 0, vk::WHOLE_SIZE, 0);
+                cmd.cmd_fill_buffer(self.accumulation.vk_buffer(), 0, vk::WHOLE_SIZE, 0);
+                cmd.cmd_fill_buffer(self.resolved.vk_buffer(), 0, vk::WHOLE_SIZE, 0);
+            },
+            "sharc-clear-buffers",
+        );
+    }
+
+    pub fn destroy(&mut self, resource_ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
+        if self.destroyed {
+            return;
+        }
+        self.hash_entries.destroy_mut(resource_ctx, reason);
+        self.accumulation.destroy_mut(resource_ctx, reason);
+        self.resolved.destroy_mut(resource_ctx, reason);
+        self.destroyed = true;
+    }
+
+    #[inline]
+    pub fn capacity(&self) -> u32 {
+        self.capacity
+    }
+
+    #[inline]
+    pub fn hash_entries_buffer(&self) -> vk::Buffer {
+        self.hash_entries.vk_buffer()
+    }
+
+    #[inline]
+    pub fn accumulation_buffer(&self) -> vk::Buffer {
+        self.accumulation.vk_buffer()
+    }
+
+    #[inline]
+    pub fn resolved_buffer(&self) -> vk::Buffer {
+        self.resolved.vk_buffer()
+    }
+}
+
+impl Drop for SharcTargets {
+    fn drop(&mut self) {
+        debug_assert!(self.destroyed, "SharcTargets dropped without explicit destroy");
     }
 }
 

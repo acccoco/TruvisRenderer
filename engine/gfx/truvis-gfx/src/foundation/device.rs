@@ -151,6 +151,19 @@ impl GfxDevice {
             Box::new(
                 vk::PhysicalDeviceUniformBufferStandardLayoutFeatures::default().uniform_buffer_standard_layout(true),
             ),
+            // SHARC world-space radiance cache 需要的能力（VK 1.2 core，已提升）：
+            // - shader_buffer_int64_atomics：hash grid 用 64-bit InterlockedCompareExchange 抢占 hash entry slot。
+            // - shader_float16：resolved voxel buffer 以 fp16 存储 radiance。
+            // - storage_buffer16_bit_access + uniform_and_storage_buffer16_bit_access：fp16 存进 storage buffer 时，
+            //   Slang 生成的 SPIR-V 声明的是 UniformAndStorageBuffer16BitAccess capability，必须同时开启对应 feature。
+            // 这些 feature 只有 realtime RT 的 SHARC pass 使用；其它 pass 不依赖，关闭 SHARC 时也不读这些 buffer。
+            Box::new(vk::PhysicalDeviceShaderAtomicInt64Features::default().shader_buffer_int64_atomics(true)),
+            Box::new(vk::PhysicalDeviceShaderFloat16Int8Features::default().shader_float16(true)),
+            Box::new(
+                vk::PhysicalDevice16BitStorageFeatures::default()
+                    .storage_buffer16_bit_access(true)
+                    .uniform_and_storage_buffer16_bit_access(true),
+            ),
         ]
     }
 

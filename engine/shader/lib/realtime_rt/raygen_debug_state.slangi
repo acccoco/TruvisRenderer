@@ -8,6 +8,9 @@
 static const uint RT_DEBUG_MATERIAL_TYPE = 16;
 static const uint RT_DEBUG_DELTA_MASK = 17;
 static const uint RT_DEBUG_SPECULAR_MOTION_MAGNITUDE = 18;
+// SHARC 调试通道在 primary hit 处早退（由 raygen 直接处理，因为需要 SHARC buffer/params）。
+static const uint RT_DEBUG_SHARC_HASH_GRID = 19;
+static const uint RT_DEBUG_SHARC_CACHE = 20;
 
 struct RtDebugAccumulator
 {

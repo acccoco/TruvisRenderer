@@ -128,8 +128,12 @@ GBuffer 或 runtime-owned temporal state。
 |------|------|
 | `debug_channel: RtDebugChannel` | 主 RT shader / SDR pass 使用的调试输出通道 |
 | `restir_di_mode: RtRestirDiMode` | primary visible surface direct lighting 的 ReSTIR DI 模式 |
+| `sharc_mode: RtSharcMode` | SHARC world-space radiance cache 模式（`Off` / `Update`） |
+| `sharc_scene_scale: f32` | SHARC voxel 物理尺寸控制参数，按场景单位调；只影响缓存粒度 |
 
-RT debug channel 与 ReSTIR DI 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hello Triangle / ShaderToy 只显示 DLSS SR mode，不暴露 RT 调试、path tracing 公共参数或 tone mapping 参数。
+RT debug channel、ReSTIR DI 与 SHARC 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hello Triangle / ShaderToy 只显示 DLSS SR mode，不暴露 RT 调试、path tracing 公共参数或 tone mapping 参数。
+
+`sharc_mode` 是 RT pipeline 自有的 world-space radiance cache 开关，默认 `Off`；`TRUVIS_SHARC_MODE` 只在启动时读取一次用于复现实验配置。当前 `Update` 只维护缓存（Update + Resolve）不查询，因此画面与 `Off` 一致（路线图第八阶段）。SHARC 缓存 buffer 由 app 层 `SharcTargets` 拥有，是世界空间持久资源，不随 render extent / FIF 轮转，也不进入 `DlssOptions`、`DlssSrState` 或 RenderGraph image 状态。`sharc_scene_scale` 只改变缓存 voxel 粒度，不改变正常渲染结果。
 
 `RtDebugChannel` 使用 enum 表达当前主 RT 流程支持的通道：final、forward normal、world normal、object normal、base color、NEE HDRI、emission、BRDF HDRI、NEE bounce 0/1、`NeeEmissive`、`NeeAnalytic`、`MaterialType`、`DeltaMask` 和 realtime-only 的 `SpecularMotionMagnitude`。forward normal 是当前 path tracing BRDF 和 DLSS RR `NormalRoughness` 输入使用的 world-space shading normal，会按 ray `faceforward`；world normal 是未翻转的 world-space 几何法线；object normal 是 mesh object/local space 的插值顶点法线。旧的 magic number “not accum” 通道不再通过 UI 暴露。
 

@@ -1,0 +1,231 @@
+/// @file sharc_integration.slangi
+/// @brief SHARC 在 truvis realtime RT raygen 中的接入层（Update / Resolve）。
+///
+/// 职责边界：本文件把 SHARC 核心算法（`sharc_common.slangi`）接到 truvis 的 path tracing helper 上，
+/// 负责构造 `SharcParameters`、稀疏像素选择，以及 Update / Resolve 两个 sub-pass 的循环编排。
+/// 它**不查询**缓存（query 属于路线图第九阶段），因此开启 SHARC 后画面应与 Off 完全一致。
+///
+/// 关键不变量：
+/// - Update path 每段独立：用统一 NEE（throughput=1）求当前顶点直接光，BSDF 续路后用
+///   `SharcSetThroughput` 反向回填历史顶点权重；sky/emissive 续命中沿用主路径的 power-heuristic MIS，
+///   避免与 NEE 双计能量。
+/// - Update 只写 hashEntries / accumulation（并按 cache resampling 读 resolved）；Resolve 读
+///   accumulation + 写 resolved 并清空 accumulation。两者与主渲染之间由 CPU 侧 buffer barrier 串联。
+/// - 相机位置取自 `per_frame_data.camera_pos`；v1 把 resolve 的 cameraPositionPrev 设为当前相机位置，
+///   等价于关闭 adjacent-level blend（避免额外跨帧相机历史）。
+#pragma once
+
+#include "lib/realtime_rt/payload.slangi"
+#include "lib/realtime_rt/sharc_common.slangi"
+#include "lib/realtime_rt/raygen_view.slangi"
+#include "lib/realtime_rt/raygen_direct_lighting.slangi"
+#include "lib/realtime_rt/raygen_material.slangi"
+#include "lib/core/random.slangi"
+#include "lib/lighting/mis.slangi"
+
+struct RtSharc
+{
+    /// radiance 原子累积的量化系数（u32/通道）。1e3 是 SHARC 推荐起点，radiance 很大时需调小防溢出。
+    static float radiance_scale()
+    {
+        return 1.0e3f;
+    }
+
+    /// temporal accumulation 窗口帧数：越大越稳、响应越慢。
+    static uint accumulation_frame_num()
+    {
+        return 32u;
+    }
+
+    /// 多少帧无新样本后淘汰 entry，用于控制占用率。
+    static uint stale_frame_num_max()
+    {
+        return 64u;
+    }
+
+    /// Update path 的最大段数。cache 变暖后多数 path 会因 cache resampling 提前终止。
+    static uint update_max_depth()
+    {
+        return 8u;
+    }
+
+    /// 是否启用 SHARC（任何非 Off 模式都需要维护缓存）。
+    static bool maintain_enabled()
+    {
+        return push_const.sharc_mode != realtime_rt::SHARC_MODE_OFF;
+    }
+
+    /// 从 push constant + per-frame 相机构造 SharcParameters。
+    static SharcParameters make_params()
+    {
+        SharcParameters params;
+        params.gridParameters.cameraPosition = per_frame_data.camera_pos;
+        params.gridParameters.logarithmBase = SHARC_GRID_LOGARITHM_BASE;
+        params.gridParameters.sceneScale = push_const.sharc_scene_scale;
+        params.gridParameters.levelBias = SHARC_GRID_LEVEL_BIAS;
+
+        params.hashMapData.capacity = push_const.sharc_capacity;
+        params.hashMapData.hashEntriesBuffer = realtime_rt::sharc_hash_entries;
+
+        params.radianceScale = radiance_scale();
+        params.enableAntiFireflyFilter = true;
+        params.accumulationBuffer = realtime_rt::sharc_accumulation;
+        params.resolvedBuffer = realtime_rt::sharc_resolved;
+        return params;
+    }
+
+    /// debug：把 primary hit 所在 voxel 的 hash 着色，用于观察 hash grid 结构与 scene scale 是否合理。
+    /// 与缓存内容无关，关闭 SHARC 时也能显示。
+    static float3 debug_hash_grid_color(const RtSurfaceHit surface)
+    {
+        const SharcParameters params = make_params();
+        return HashGridDebugColoredHash(surface.position, surface.origin_normal, params.gridParameters);
+    }
+
+    /// debug：查询 primary hit 处 resolved 缓存的 radiance（debug=true 忽略 sample 阈值）。
+    /// 用于确认 Update / Resolve 是否真的把数据写入了缓存；冷缓存 / 关闭时为黑。
+    static float3 debug_cache_radiance(const RtSurfaceHit surface)
+    {
+        SharcParameters params = make_params();
+        const SharcHitData hit_data = make_hit_data(surface);
+        float3 radiance = float3(0.0f);
+        SharcGetCachedRadiance(params, hit_data, radiance, true);
+        return radiance;
+    }
+
+    static SharcHitData make_hit_data(const RtSurfaceHit surface)
+    {
+        SharcHitData hit_data;
+        hit_data.positionWorld = surface.position;
+        // 世界空间几何法线（未 faceforward），与上游推荐一致；hash key 用它区分 voxel 正反面。
+        hit_data.normalWorld = surface.origin_normal;
+        return hit_data;
+    }
+
+    /// 稀疏像素选择：每 5x5 block 每帧选 1 个像素（≈4%），逐帧轮换覆盖全屏。
+    static bool is_update_pixel(const uint2 pixel)
+    {
+        const uint block_size = 5u;
+        const uint2 block = pixel / block_size;
+        const uint2 in_block = pixel % block_size;
+        const uint cell_count = block_size * block_size;
+        uint seed = Random::tea(block.y * 73856093u + block.x * 19349663u, (uint)per_frame_data.frame_id);
+        const uint cell = min((uint)(Random::rnd(seed) * (float)cell_count), cell_count - 1u);
+        const uint2 selected_cell = uint2(cell % block_size, cell / block_size);
+        return in_block.x == selected_cell.x && in_block.y == selected_cell.y;
+    }
+
+    /// SHARC Update sub-pass：对选中的稀疏像素跑一条独立 path，把直接光写入世界空间缓存。
+    static void run_update(const uint2 thread_id)
+    {
+        if (!maintain_enabled() || !is_update_pixel(thread_id))
+        {
+            return;
+        }
+
+        SharcParameters params = make_params();
+        SharcState state;
+        SharcInit(state);
+
+        // Update path 用独立随机种子，避免与主渲染 path 相关。
+        const uint random_seed = Random::tea(
+            thread_id.y * DispatchRaysDimensions().x + thread_id.x,
+            (uint)per_frame_data.frame_id * 2654435761u + 0x5EED0001u
+        );
+        RayDesc ray = RtRaygenView::camera_ray(thread_id);
+        RtTracePayload payload = RtTracePayload::make(random_seed);
+
+        // 主路径 sky/emissive MIS 需要的上一段 BSDF 状态；camera ray 视为 delta，避免首段误用 MIS。
+        float prev_brdf_pdf = 1.0f;
+        bool prev_is_delta = true;
+
+        const uint max_update_depth = update_max_depth();
+        for (uint depth = 0; depth < max_update_depth; ++depth)
+        {
+            TraceRay(realtime_rt::rt_tlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
+            const RtSurfaceHit surface = payload.surface;
+
+            if (!payload.hit)
+            {
+                // sky miss：用与主路径一致的 power-heuristic MIS 调制，再传播给历史顶点。
+                float3 sky_radiance = surface.emissive;
+                if (!(prev_is_delta || depth == 0))
+                {
+                    const float env_pdf = RtDirectLighting::unified_hdri_pdf(ray.Direction);
+                    sky_radiance *= Mis::power_heuristic(prev_brdf_pdf, env_pdf);
+                }
+                SharcUpdateMiss(params, state, sky_radiance);
+                break;
+            }
+
+            if (surface.material_type == MaterialType::EMISSIVE)
+            {
+                // 命中自发光面：emission 作为该顶点 radiance，并按 emissive-hit MIS 调制后写入缓存，路径终止。
+                float mis_weight = 1.0f;
+                if (!prev_is_delta && depth > 0)
+                {
+                    const float light_pdf = RtDirectLighting::unified_emissive_hit_pdf(surface, ray.Direction);
+                    mis_weight = Mis::power_heuristic(prev_brdf_pdf, light_pdf);
+                }
+                const SharcHitData hit_data = make_hit_data(surface);
+                SharcUpdateHit(params, state, hit_data, surface.emissive * mis_weight, Random::rnd(payload.random_seed));
+                break;
+            }
+
+            // 当前顶点直接光：统一 NEE 已内含 MIS，throughput 传 1 得到该顶点的反射 radiance。
+            float3 direct_lighting = float3(0.0f);
+            const RtDirectLightingSample dl = RtDirectLighting::sample_unified(payload, surface, -ray.Direction, float3(1.0f));
+            if (dl.valid)
+            {
+                direct_lighting = dl.contribution;
+            }
+
+            const SharcHitData hit_data = make_hit_data(surface);
+            const bool continue_tracing = SharcUpdateHit(params, state, hit_data, direct_lighting, Random::rnd(payload.random_seed));
+            if (!continue_tracing)
+            {
+                break;
+            }
+
+            // BSDF 续路：用本段 throughput 反向缩放历史顶点权重，再把 throughput 视为重置为 1。
+            const RtMaterialSample material_sample = RtMaterialSampler::sample_next(payload, surface, ray.Direction);
+            if (material_sample.done)
+            {
+                break;
+            }
+            SharcSetThroughput(state, material_sample.throughput);
+            prev_brdf_pdf = material_sample.brdf_pdf;
+            prev_is_delta = surface.is_delta_path();
+
+            ray.Origin = material_sample.origin;
+            ray.Direction = material_sample.direction;
+        }
+    }
+
+    /// SHARC Resolve sub-pass：按 entry 1D/2D dispatch，合并本帧 accumulation 到 resolved 并淘汰 stale entry。
+    static void run_resolve(const uint2 thread_id)
+    {
+        if (!maintain_enabled())
+        {
+            return;
+        }
+
+        // dispatch 以 2D 网格覆盖 capacity；entry index 由 (y * width + x) 还原。
+        const uint width = DispatchRaysDimensions().x;
+        const uint entry_index = thread_id.y * width + thread_id.x;
+        if (entry_index >= push_const.sharc_capacity)
+        {
+            return;
+        }
+
+        SharcParameters params = make_params();
+        SharcResolveParameters resolve_params;
+        // v1：prev 相机位置取当前帧，等价关闭 adjacent-level blend（无需额外跨帧相机历史）。
+        resolve_params.cameraPositionPrev = per_frame_data.camera_pos;
+        resolve_params.accumulationFrameNum = accumulation_frame_num();
+        resolve_params.staleFrameNumMax = stale_frame_num_max();
+        resolve_params.frameIndex = (uint)per_frame_data.frame_id;
+
+        SharcResolveEntry(entry_index, params, resolve_params);
+    }
+};

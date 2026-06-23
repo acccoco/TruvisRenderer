@@ -2,7 +2,7 @@ use crate::gui_plugin::{DebugImageEntry, DebugImageGraphEntry};
 use crate::render_pipeline::common_settings::PathTracingCommonSettings;
 use crate::render_pipeline::targets::{
     DlssOutputTargets, DlssRrInputTargets, DlssSrExposureTarget, DlssSrInputTargets, ImageTarget, MainViewTargets,
-    RestirDiTargets, RestirReservoirTarget, RestirSurfaceKeyTarget, RtWorkingTargets,
+    RestirDiTargets, RestirReservoirTarget, RestirSurfaceKeyTarget, RtWorkingTargets, SharcTargets,
 };
 use app_render_passes::dlss_rr_pass::{DlssRrPass, DlssRrRgPass};
 use app_render_passes::dlss_sr_pass::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
@@ -49,6 +49,14 @@ pub struct RtPipelineSettings {
     /// 这是 RT pipeline 私有 temporal lighting 开关；默认 Off，确保现有 unified NEE
     /// 路径可直接回退。reservoir history 不进入 DLSS state，也不读取 DLSS output。
     pub restir_di_mode: RtRestirDiMode,
+    /// SHARC world-space radiance cache 模式。
+    ///
+    /// 默认 Off；`Update` 只维护缓存不查询（路线图第八阶段，画面与 Off 一致）。query 接入留到第九阶段。
+    pub sharc_mode: RtSharcMode,
+    /// SHARC scene scale，控制 voxel 物理尺寸。值越大 voxel 越小、越精细但命中率越低。
+    ///
+    /// 合理值取决于场景单位，需按场景调；只影响缓存粒度，不改变正常渲染（第八阶段不查询）。
+    pub sharc_scene_scale: f32,
 }
 
 impl Default for RtPipelineSettings {
@@ -56,6 +64,64 @@ impl Default for RtPipelineSettings {
         Self {
             debug_channel: RtDebugChannel::Final,
             restir_di_mode: RtRestirDiMode::initial_mode_from_env(),
+            sharc_mode: RtSharcMode::initial_mode_from_env(),
+            sharc_scene_scale: 50.0,
+        }
+    }
+}
+
+/// SHARC world-space radiance cache 模式。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RtSharcMode {
+    /// 完全不维护缓存，与现有路径一致。
+    #[default]
+    Off,
+    /// 维护缓存（Update + Resolve），但不查询：画面应与 Off 完全一致（路线图第八阶段）。
+    Update,
+}
+
+impl RtSharcMode {
+    pub const ALL: [Self; 2] = [Self::Off, Self::Update];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Update => "Update (no query)",
+        }
+    }
+
+    /// 必须与 `api/pass/realtime_rt.slangi` 的 SHARC_MODE_* 保持一致。
+    pub fn shader_mode(self) -> u32 {
+        match self {
+            Self::Off => 0,
+            Self::Update => 1,
+        }
+    }
+
+    fn from_config_value(value: &str) -> Option<Self> {
+        let normalized = value.trim().to_ascii_lowercase().replace(['_', '-', ' '], "");
+        match normalized.as_str() {
+            "off" => Some(Self::Off),
+            "update" | "updateonly" => Some(Self::Update),
+            _ => None,
+        }
+    }
+
+    fn initial_mode_from_env() -> Self {
+        const ENV_NAME: &str = "TRUVIS_SHARC_MODE";
+        let Ok(value) = env::var(ENV_NAME) else {
+            return Self::Off;
+        };
+
+        match Self::from_config_value(&value) {
+            Some(mode) => {
+                log::info!("Initial SHARC mode from {ENV_NAME}={value}: {mode:?}");
+                mode
+            }
+            None => {
+                log::warn!("Ignoring unsupported {ENV_NAME} value: {value}");
+                Self::Off
+            }
         }
     }
 }
@@ -172,10 +238,14 @@ pub enum RtDebugChannel {
     RestirTemporalValid,
     /// 显示 ReSTIR DI final shade contribution。
     RestirFinalContribution,
+    /// 显示 SHARC hash grid 在 primary hit 处的 voxel 着色，用于观察 grid 结构与 scene scale。
+    SharcHashGrid,
+    /// 显示 SHARC resolved 缓存在 primary hit 处的 radiance，用于确认 Update/Resolve 是否写入缓存。
+    SharcCache,
 }
 
 impl RtDebugChannel {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 20] = [
         Self::Final,
         Self::ForwardNormal,
         Self::WorldNormal,
@@ -194,6 +264,8 @@ impl RtDebugChannel {
         Self::RestirInitialWeight,
         Self::RestirTemporalValid,
         Self::RestirFinalContribution,
+        Self::SharcHashGrid,
+        Self::SharcCache,
     ];
 
     pub fn label(self) -> &'static str {
@@ -216,6 +288,8 @@ impl RtDebugChannel {
             Self::RestirInitialWeight => "ReSTIR initial weight",
             Self::RestirTemporalValid => "ReSTIR temporal valid",
             Self::RestirFinalContribution => "ReSTIR final contribution",
+            Self::SharcHashGrid => "SHARC hash grid",
+            Self::SharcCache => "SHARC cache radiance",
         }
     }
 
@@ -239,6 +313,8 @@ impl RtDebugChannel {
             Self::RestirInitialWeight => 13,
             Self::RestirTemporalValid => 14,
             Self::RestirFinalContribution => 15,
+            Self::SharcHashGrid => 19,
+            Self::SharcCache => 20,
         }
     }
 }
@@ -256,6 +332,8 @@ struct RtPipelineInner {
     rt_targets: RtWorkingTargets,
     /// Primary ReSTIR DI reservoir 与 surface-key history。
     restir_di_targets: RestirDiTargets,
+    /// SHARC world-space radiance cache 的持久 buffer（不随 resize / FIF 轮转）。
+    sharc_targets: SharcTargets,
     /// DLSS SR 需要的低分辨率 depth/motion-vector 输入。
     ///
     /// 即使 SR 关闭也会由 raygen 写入，便于 ImGui debug viewer 验证深度和 motion vector。
@@ -293,11 +371,17 @@ impl RtPresentGraphTargets {
 
 impl RtPipelineInner {
     fn new(ctx: &mut PluginInitCtx) -> Self {
+        // SHARC 缓存 buffer 必须先于 RT pass 创建：pass 在 `new` 时把这些持久 buffer 一次性写入
+        // 自己的 SHARC regular descriptor set。SharcTargets 不随 resize 重建，因此 set 始终有效。
+        let sharc_targets = SharcTargets::new(ctx.resource_ctx, ctx.immediate_ctx);
         let realtime_rt_pass = RealtimeRtPass::new(
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.device_info_ctx,
             ctx.shader_binding_system.global_descriptor_sets(),
+            sharc_targets.hash_entries_buffer(),
+            sharc_targets.accumulation_buffer(),
+            sharc_targets.resolved_buffer(),
         );
         let dlss_sr_pass = DlssSrPass::new();
         let dlss_rr_pass = DlssRrPass::new();
@@ -401,6 +485,7 @@ impl RtPipelineInner {
             gbuffer,
             rt_targets,
             restir_di_targets,
+            sharc_targets,
             dlss_sr_inputs,
             dlss_sr_exposure,
             dlss_rr_inputs,
@@ -441,6 +526,7 @@ impl RtPipelineInner {
             &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
+        self.sharc_targets.destroy(ctx.resource_ctx, DestroyReason::Shutdown);
         self.dlss_sr_inputs.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
@@ -590,6 +676,7 @@ impl RtPipeline {
         let frame_label = record_ctx.frame_timing.frame_label();
         let rt_targets = &inner.rt_targets;
         let restir_di_targets = &inner.restir_di_targets;
+        let sharc_targets = &inner.sharc_targets;
         let dlss_sr_inputs = &inner.dlss_sr_inputs;
         let dlss_rr_inputs = &inner.dlss_rr_inputs;
         let dlss_outputs = &inner.dlss_outputs;
@@ -600,6 +687,8 @@ impl RtPipeline {
         let emissive_nee_enabled = common_settings.emissive_nee_enabled;
         let analytic_nee_enabled = common_settings.analytic_nee_enabled;
         let restir_di_mode = self.settings.restir_di_mode;
+        let sharc_mode = self.settings.sharc_mode;
+        let sharc_scene_scale = self.settings.sharc_scene_scale;
         let frame_id = record_ctx.frame_timing.frame_id();
         let previous_frame_label =
             FrameLabel::from_usize((frame_id as usize + FrameCounter::fif_count() - 1) % FrameCounter::fif_count());
@@ -790,6 +879,9 @@ impl RtPipeline {
                 analytic_nee_enabled,
                 restir_di_mode: restir_di_mode.shader_mode(),
                 restir_history_valid,
+                sharc_mode: sharc_mode.shader_mode(),
+                sharc_capacity: sharc_targets.capacity(),
+                sharc_scene_scale,
                 restir_initial,
                 restir_temporal,
                 restir_final,
