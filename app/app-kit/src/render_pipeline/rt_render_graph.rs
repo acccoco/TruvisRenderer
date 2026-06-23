@@ -78,15 +78,18 @@ pub enum RtSharcMode {
     Off,
     /// 维护缓存（Update + Resolve），但不查询：画面应与 Off 完全一致（路线图第八阶段）。
     Update,
+    /// 维护并查询：后续 bounce 命中缓存时提前终止路径（路线图第九阶段）。
+    On,
 }
 
 impl RtSharcMode {
-    pub const ALL: [Self; 2] = [Self::Off, Self::Update];
+    pub const ALL: [Self; 3] = [Self::Off, Self::Update, Self::On];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Off => "Off",
             Self::Update => "Update (no query)",
+            Self::On => "On (query)",
         }
     }
 
@@ -95,6 +98,7 @@ impl RtSharcMode {
         match self {
             Self::Off => 0,
             Self::Update => 1,
+            Self::On => 2,
         }
     }
 
@@ -103,6 +107,7 @@ impl RtSharcMode {
         match normalized.as_str() {
             "off" => Some(Self::Off),
             "update" | "updateonly" => Some(Self::Update),
+            "on" | "query" => Some(Self::On),
             _ => None,
         }
     }
@@ -242,10 +247,12 @@ pub enum RtDebugChannel {
     SharcHashGrid,
     /// 显示 SHARC resolved 缓存在 primary hit 处的 radiance，用于确认 Update/Resolve 是否写入缓存。
     SharcCache,
+    /// SHARC query 命中深度 heatmap（绿=depth1，黄=depth2，红=3+，黑=未命中），观察缓存使用与路径成本。
+    SharcQueryDepth,
 }
 
 impl RtDebugChannel {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Final,
         Self::ForwardNormal,
         Self::WorldNormal,
@@ -266,6 +273,7 @@ impl RtDebugChannel {
         Self::RestirFinalContribution,
         Self::SharcHashGrid,
         Self::SharcCache,
+        Self::SharcQueryDepth,
     ];
 
     pub fn label(self) -> &'static str {
@@ -290,6 +298,7 @@ impl RtDebugChannel {
             Self::RestirFinalContribution => "ReSTIR final contribution",
             Self::SharcHashGrid => "SHARC hash grid",
             Self::SharcCache => "SHARC cache radiance",
+            Self::SharcQueryDepth => "SHARC query depth",
         }
     }
 
@@ -315,6 +324,7 @@ impl RtDebugChannel {
             Self::RestirFinalContribution => 15,
             Self::SharcHashGrid => 19,
             Self::SharcCache => 20,
+            Self::SharcQueryDepth => 21,
         }
     }
 }

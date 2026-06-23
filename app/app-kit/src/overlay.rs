@@ -360,6 +360,7 @@ impl PipelineControlsOverlay {
                 // SHARC 只在 realtime 主流程维护，离线 raygen 不绑定 / 不维护缓存。
                 | RtDebugChannel::SharcHashGrid
                 | RtDebugChannel::SharcCache
+                | RtDebugChannel::SharcQueryDepth
         )
     }
 }

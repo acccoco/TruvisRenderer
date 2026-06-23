@@ -182,6 +182,22 @@ void main_ray_gen()
             break;
         }
 
+        // SHARC query（第九阶段）：非 primary 的合适 surface 命中世界空间缓存时，用 cached radiance
+        // 估计该顶点之后的全部出射光并提前终止路径。primary / delta / 段长不足 / 锥角过窄都不查询，
+        // 因此 primary 细节、接触阴影和 sharp specular 不会被缓存抹平。cached radiance 已包含该顶点的
+        // 直接光，所以命中后不再做 NEE / BSDF 续路，避免双计能量。
+        if (RtSharc::should_query(surface, depth))
+        {
+            float3 cached_radiance;
+            if (RtSharc::query_radiance(surface, cached_radiance))
+            {
+                const float3 sharc_contribution = cached_radiance * path.throughput;
+                path.add_radiance(sharc_contribution);
+                debug_state.record_sharc_query(depth, sharc_contribution);
+                break;
+            }
+        }
+
         if (RtRestirDI::should_skip_primary_nee(depth, surface))
         {
             // primary 非 delta 非 emissive surface 的 direct NEE 由 ReSTIR final phase 统一追加。

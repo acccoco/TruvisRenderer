@@ -55,6 +55,53 @@ struct RtSharc
         return push_const.sharc_mode != realtime_rt::SHARC_MODE_OFF;
     }
 
+    /// 是否启用缓存查询（仅 On 模式）。Update 模式只维护、不查询。
+    static bool query_enabled()
+    {
+        return push_const.sharc_mode == realtime_rt::SHARC_MODE_ON;
+    }
+
+    /// 判断当前 hit 是否适合查询世界空间缓存（第九阶段守卫）。
+    ///
+    /// 不查询的情况：
+    /// - primary hit（depth 0）：保留 primary 细节与 primary ReSTIR 直接光。
+    /// - delta（sharp specular / 透明）：缓存是漫反射式出射 radiance，会抹平镜面。
+    /// - 到达该顶点的段长 < voxel 尺寸：缓存空间分辨率不足，会抹平接触阴影，应继续追踪。
+    /// - glossy 锥角扩散 < voxel 分辨率：低粗糙度 lobe 需要更长段才安全，否则反射会被缓存模糊。
+    static bool should_query(const RtSurfaceHit surface, uint depth)
+    {
+        if (!query_enabled() || depth == 0 || surface.is_delta_path())
+        {
+            return false;
+        }
+
+        const SharcParameters params = make_params();
+        const uint level = HashGridGetLevel(surface.position, params.gridParameters);
+        const float voxel_size = HashGridGetVoxelSize(level, params.gridParameters);
+
+        // 段长用到达该顶点的 ray t 近似。
+        const float segment_length = surface.hit_t;
+        if (segment_length < voxel_size)
+        {
+            return false;
+        }
+
+        // glossy 锥角扩散：a = roughness^2，cone = 2 * len * sqrt(0.5 a^2 / (1 - a^2))。
+        // 高粗糙度（接近漫反射）cone 很大几乎总通过；低粗糙度需要很长的段才通过。
+        const float a = saturate(surface.roughness * surface.roughness);
+        const float cone_spread = 2.0f * segment_length * sqrt(0.5f * a * a / max(1.0f - a * a, 1e-4f));
+        return cone_spread >= voxel_size;
+    }
+
+    /// 查询 resolved 缓存在该 hit 处的出射 radiance；命中（样本数足够）返回 true。
+    static bool query_radiance(const RtSurfaceHit surface, out float3 radiance)
+    {
+        SharcParameters params = make_params();
+        const SharcHitData hit_data = make_hit_data(surface);
+        radiance = float3(0.0f);
+        return SharcGetCachedRadiance(params, hit_data, radiance, false);
+    }
+
     /// 从 push constant + per-frame 相机构造 SharcParameters。
     static SharcParameters make_params()
     {

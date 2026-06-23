@@ -238,6 +238,16 @@ tracing，并让 update pass 后续学习该区域。
 
 完成标准：SHARC On/Off 可独立对比；primary 细节、接触阴影和 sharp specular 不被缓存抹平；间接光噪声或路径成本相对普通路径下降。
 
+当前状态（2026-06-23）：第九阶段（Query 接入后续 bounce）已落地。`RtSharcMode` 新增 `On`（维护 + 查询），
+shader 复用第八阶段已绑定的 resolved buffer 与 resolve→主渲染 barrier，不新增资源 / binding / push constant ABI。
+主 path loop 在每个非 primary hit 处通过 `RtSharc::should_query` 守卫后调用 `SharcGetCachedRadiance`，命中即
+`cached_radiance * throughput` 累加并提前终止路径；cached radiance 含该顶点直接光，命中后不再做该顶点 NEE / BSDF，
+避免双计。守卫：primary 不查、delta/sharp specular 不查、段长 `hit_t < voxel_size` 不查（保接触阴影）、glossy
+锥角小于 voxel 尺寸不查。新增 `SharcQueryDepth` 命中深度 heatmap 调试通道。已在 Truvis 真机（validation 开启）
+验证 `On` 模式稳定渲染、无 validation 错误。仍待完善：adjacent-level blend、场景 reset 触发、与 ReSTIR / 动态光
+交互下的 stale 与去噪控制。更细的守卫与 query 契约见
+[`docs/summaries/realtime-rt-raytracing-flow.md`](../summaries/realtime-rt-raytracing-flow.md)。
+
 ## 第十阶段：文档与调试收尾
 
 目标：把最终实现的职责边界、资源 owner、reset 条件和调试方法沉淀到活跃文档。

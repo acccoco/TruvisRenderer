@@ -11,6 +11,8 @@ static const uint RT_DEBUG_SPECULAR_MOTION_MAGNITUDE = 18;
 // SHARC 调试通道在 primary hit 处早退（由 raygen 直接处理，因为需要 SHARC buffer/params）。
 static const uint RT_DEBUG_SHARC_HASH_GRID = 19;
 static const uint RT_DEBUG_SHARC_CACHE = 20;
+// SHARC query 命中深度 heatmap：观察缓存在第几次 bounce 被命中、终止路径（越早命中=路径越短=成本越低）。
+static const uint RT_DEBUG_SHARC_QUERY_DEPTH = 21;
 
 struct RtDebugAccumulator
 {
@@ -26,6 +28,8 @@ struct RtDebugAccumulator
     float3 hdri_radiance;
     float3 nee_bounce1_radiance;
     float3 nee_bounce2_radiance;
+    /// SHARC query 命中并终止路径时的 bounce 深度（0 = 本帧未命中缓存）。
+    uint sharc_query_depth;
 
     static RtDebugAccumulator make()
     {
@@ -37,6 +41,7 @@ struct RtDebugAccumulator
         state.hdri_radiance = float3(0.0f);
         state.nee_bounce1_radiance = float3(0.0f);
         state.nee_bounce2_radiance = float3(0.0f);
+        state.sharc_query_depth = 0;
         return state;
     }
 
@@ -157,6 +162,13 @@ struct RtDebugAccumulator
         hdri_radiance += contribution;
     }
 
+    [mutating]
+    void record_sharc_query(uint depth, float3 contribution)
+    {
+        // 只记录首次命中深度（路径在命中处即终止，因此每条路径最多记录一次）。
+        sharc_query_depth = depth;
+    }
+
     /// 根据最终 debug channel 选择输出。
     float3 resolve(uint channel, float3 path_radiance)
     {
@@ -187,6 +199,23 @@ struct RtDebugAccumulator
         if (channel == 12)
         {
             return nee_analytic_radiance;
+        }
+        if (channel == RT_DEBUG_SHARC_QUERY_DEPTH)
+        {
+            // bounce heatmap：黑=未命中缓存，绿=depth1，黄=depth2，红=depth3+。越偏绿表示路径越短、成本越低。
+            if (sharc_query_depth == 0)
+            {
+                return float3(0.0f);
+            }
+            if (sharc_query_depth == 1)
+            {
+                return float3(0.0f, 1.0f, 0.0f);
+            }
+            if (sharc_query_depth == 2)
+            {
+                return float3(1.0f, 1.0f, 0.0f);
+            }
+            return float3(1.0f, 0.0f, 0.0f);
         }
         return path_radiance;
     }
