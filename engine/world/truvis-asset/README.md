@@ -25,7 +25,8 @@ runtime instance。
 
 - `asset_loader`：crate 内部后台调度层，只持有 Rayon 线程池、结果 channel 和任务等待逻辑。
 - `texture_loader`：crate 内部纹理任务实现，只负责 image 文件读取、CPU 解码和 RGBA8 bytes 输出。
-- `truvixx_scene_loader`：crate 内部 scene 导入任务实现，通过 `truvis-assimp-binding` 调用 Assimp C API，只负责 C++ importer 生命周期和 owned CPU scene 数据复制。
+- `truvixx_scene_loader`：crate 内部 Assimp scene 导入任务实现，通过 `truvis-assimp-binding` 调用 Assimp C API，只负责 C++ importer 生命周期和 owned CPU scene 数据复制。
+- `gltf_scene_loader`：crate 内部 glTF / GLB scene 导入任务实现，通过 Rust `gltf` crate 读取 material / mesh / instance，并复制成与 Assimp 路径相同的 owned CPU scene 数据。
 - 外部调用方不直接使用 loader 模块；加载请求、状态查询和完成事件都通过 `AssetHub` 进入或离开 asset 层。
 
 ## 设计目标
@@ -37,6 +38,7 @@ runtime instance。
 - `AssetMaterialHandle` 表示内容材质身份，不表示 GPU material slot
 - `AssetModelHandle` 表示 model asset / prefab，不表示 live runtime instance
 - Assimp 导入任务只在后台复制 owned CPU 数据，完成后释放 C++ scene handle，不把 C++ handle/raw pointer 传出任务
-- Assimp 导入失败会读取 C++ importer 的详细错误，写入 model 状态和 `get_model_error` 查询结果
-- model material 引用的相对纹理路径按 model 文件所在目录解析，绝对路径保持不变；路径只做词法归一化，不访问文件系统
+- glTF 导入任务只在后台复制 owned CPU 数据；`.gltf` / `.glb` 由 asset loader 按扩展名分派，其它格式继续走 Assimp 路径
+- Assimp / glTF 导入失败会写入 model 状态和 `get_model_error` 查询结果
+- model material 引用的相对纹理路径按 model 文件所在目录解析，绝对路径保持不变；路径只做词法归一化，不访问文件系统。glTF v1 只把外部 image URI 注册为 texture path，GLB/data URI 嵌入贴图暂不改变 texture path 身份模型。
 - 保持 asset 层不依赖 GPU 资源缓存或 bindless 绑定策略

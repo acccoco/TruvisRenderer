@@ -28,11 +28,12 @@
 //!
 //! - [`AssetHub`](asset_hub::AssetHub) — 统一入口、内容去重、CPU 状态管理和上传事件汇聚
 //! - [`LoadStatus`](handle::LoadStatus) — CPU 侧资源状态机（Loading → Ready / Failed）
-//! - 内部 loader 模块 — 后台调度、纹理解码与 Assimp model 导入，不作为 crate 对外 API
+//! - 内部 loader 模块 — 后台调度、纹理解码与 Assimp / glTF model 导入，不作为 crate 对外 API
 
 pub mod asset_hub;
 pub mod handle;
 
 pub(crate) mod asset_loader;
+pub(crate) mod gltf_scene_loader;
 pub(crate) mod texture_loader;
 pub(crate) mod truvixx_scene_loader;

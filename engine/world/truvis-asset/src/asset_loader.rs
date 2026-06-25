@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crossbeam_channel::{Receiver, Sender};
 use crossbeam_utils::sync::WaitGroup;
 
+use crate::gltf_scene_loader::load_gltf_scene_task;
 use crate::handle::{AssetModelHandle, AssetTextureHandle, RawSceneData, TextureBytes};
 use crate::texture_loader::load_texture_task;
 use crate::truvixx_scene_loader::load_scene_task;
@@ -96,16 +97,27 @@ impl AssetLoader {
 
     /// 排队一个 model 导入任务。
     ///
-    /// 导入任务会在后台持有 C++ scene handle，并在返回前复制出 owned Rust 数据。
-    /// handle/key 分配和事件生成仍由 `AssetHub` 在 `update()` 中完成。
+    /// 导入任务会在后台按文件格式选择 Assimp 或 glTF loader，并在返回前复制出 owned
+    /// Rust 数据。handle/key 分配和事件生成仍由 `AssetHub` 在 `update()` 中完成。
     pub(crate) fn request_load_model(&self, req: ModelLoadRequest) {
         let result_sender = self.result_sender.clone();
         let wg_task = self.wait_group.as_ref().expect("AssetLoader used after drop").clone();
         self.pool.spawn(move || {
-            let result = load_scene_task(req);
+            let result = if Self::is_gltf_path(&req.path) { load_gltf_scene_task(req) } else { load_scene_task(req) };
             let _ = result_sender.send(result);
             drop(wg_task);
         });
+    }
+
+    /// 判断 model 导入请求是否应走 Rust glTF loader。
+    ///
+    /// 这里只按扩展名做大小写无关分派，避免改变 `AssetHub::load_model` 的公共入口和
+    /// model key 语义；非 glTF 格式继续保持原有 Assimp 兼容路径。
+    fn is_gltf_path(path: &std::path::Path) -> bool {
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("gltf") || ext.eq_ignore_ascii_case("glb"))
+            .unwrap_or(false)
     }
 
     /// 非阻塞读取一个后台任务结果。

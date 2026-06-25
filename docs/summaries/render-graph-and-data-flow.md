@@ -10,7 +10,7 @@ CPU 语义数据从 `World` 进入 RenderRuntime。资产加载先由 `AssetHub`
 material 参数由 `AssetHub` 通过 `MaterialLoaded` 事件交给 render-side `MaterialBridge`，再由 runtime 显式传入
 `MaterialManager` 完成注册或更新。mesh CPU 数据由 `AssetMeshManager` 在 graphics queue 上上传 vertex/index buffer 并构建 BLAS。
 
-Assimp model 读取由 `AssetHub::load_model` 在后台完成，只保存 `ModelData` / prefab CPU 数据；App 根据 ready 的 model data
+Assimp / glTF model 读取由 `AssetHub::load_model` 在后台完成，只保存 `ModelData` / prefab CPU 数据；App 根据 ready 的 model data
 显式调用 `SceneManager::spawn_model`。`SceneManager` 保存运行时语义，`InstanceBridge` 负责稳定 GPU instance slot、ready
 gate 和 active render list。
 
