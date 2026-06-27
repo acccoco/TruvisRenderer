@@ -183,10 +183,11 @@ void main_ray_gen()
         }
 
         // SHARC query（第九阶段）：非 primary 的合适 surface 命中世界空间缓存时，用 cached radiance
-        // 估计该顶点之后的全部出射光并提前终止路径。primary / delta / 段长不足 / 锥角过窄都不查询，
-        // 因此 primary 细节、接触阴影和 sharp specular 不会被缓存抹平。cached radiance 已包含该顶点的
-        // 直接光，所以命中后不再做 NEE / BSDF 续路，避免双计能量。
-        if (RtSharc::should_query(surface, depth))
+        // 估计该顶点之后的全部出射光并提前终止路径。primary / 当前 delta / 上一段 delta /
+        // 段长不足 / 锥角过窄都不查询；其中上一段 delta 守卫用于保护镜面反射和玻璃透射后
+        // 第一层可见 surface，避免 sharp specular/transmission view 被低频 voxel cache 替代。
+        // cached radiance 已包含该顶点的直接光，所以命中后不再做 NEE / BSDF 续路，避免双计能量。
+        if (RtSharc::should_query(surface, depth, path.prev_is_delta))
         {
             float3 cached_radiance;
             if (RtSharc::query_radiance(surface, cached_radiance))

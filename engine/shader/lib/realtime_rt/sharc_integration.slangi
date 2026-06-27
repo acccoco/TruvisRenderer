@@ -1,9 +1,9 @@
 /// @file sharc_integration.slangi
-/// @brief SHARC 在 truvis realtime RT raygen 中的接入层（Update / Resolve）。
+/// @brief SHARC 在 truvis realtime RT raygen 中的接入层（Update / Resolve / Query）。
 ///
 /// 职责边界：本文件把 SHARC 核心算法（`sharc_common.slangi`）接到 truvis 的 path tracing helper 上，
-/// 负责构造 `SharcParameters`、稀疏像素选择，以及 Update / Resolve 两个 sub-pass 的循环编排。
-/// 它**不查询**缓存（query 属于路线图第九阶段），因此开启 SHARC 后画面应与 Off 完全一致。
+/// 负责构造 `SharcParameters`、稀疏像素选择、Update / Resolve 两个 sub-pass 的循环编排，以及
+/// 主路径 Query 的守卫判断。缓存资源、descriptor 和 pass 顺序仍由 RT pass / app-owned targets 管理。
 ///
 /// 关键不变量：
 /// - Update path 每段独立：用统一 NEE（throughput=1）求当前顶点直接光，BSDF 续路后用
@@ -65,12 +65,12 @@ struct RtSharc
     ///
     /// 不查询的情况：
     /// - primary hit（depth 0）：保留 primary 细节与 primary ReSTIR 直接光。
-    /// - delta（sharp specular / 透明）：缓存是漫反射式出射 radiance，会抹平镜面。
+    /// - 当前 surface 为 delta，或上一段 ray 来自 delta：缓存是低频出射 radiance，会抹平镜面/透射视图。
     /// - 到达该顶点的段长 < voxel 尺寸：缓存空间分辨率不足，会抹平接触阴影，应继续追踪。
     /// - glossy 锥角扩散 < voxel 分辨率：低粗糙度 lobe 需要更长段才安全，否则反射会被缓存模糊。
-    static bool should_query(const RtSurfaceHit surface, uint depth)
+    static bool should_query(const RtSurfaceHit surface, uint depth, bool arrived_via_delta)
     {
-        if (!query_enabled() || depth == 0 || surface.is_delta_path())
+        if (!query_enabled() || depth == 0 || surface.is_delta_path() || arrived_via_delta)
         {
             return false;
         }

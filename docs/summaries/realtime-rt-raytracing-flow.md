@@ -267,9 +267,10 @@ RenderGraph，Update→Resolve→主渲染查询 的可见性由 pass 内 RT-sha
 **Query（`On` 模式，第九阶段）**：主 path loop 在每个**非 primary** hit 处用 `RtSharc::should_query` 判断后调用
 `SharcGetCachedRadiance`，命中则把 `cached_radiance * path.throughput` 加入 radiance 并**立即终止路径**。cached radiance
 已是该顶点的完整出射光（含直接光），因此命中后不再做该顶点的 NEE / BSDF 续路，避免双计能量。`should_query` 守卫：
-primary（depth 0）不查；delta / sharp specular 不查；到达该顶点的段长 `hit_t < voxel_size` 不查（保住接触阴影）；glossy
+primary（depth 0）不查；当前 surface 为 delta / sharp specular 不查；上一段 ray 来自 delta path 时也不查，保护镜面反射和
+玻璃透射后第一层可见 surface 不被低频 voxel cache 替代；到达该顶点的段长 `hit_t < voxel_size` 不查（保住接触阴影）；glossy
 锥角扩散 `2·len·sqrt(0.5a²/(1-a²))`（`a = roughness²`）小于 voxel 尺寸不查（低粗糙度反射不被缓存模糊）。因此 primary 细节、
-接触阴影和 sharp specular 不会被缓存抹平。
+接触阴影和 sharp specular / transmission view 不会被缓存抹平。
 
 调试通道：`SharcHashGrid`（primary hit voxel hash 着色）与 `SharcCache`（primary hit 处 resolved 缓存 radiance）在 primary
 hit 处早退、不改变积分；`SharcQueryDepth` 是 query 命中深度 heatmap（黑=未命中，绿=depth1，黄=depth2，红=3+），用于观察
