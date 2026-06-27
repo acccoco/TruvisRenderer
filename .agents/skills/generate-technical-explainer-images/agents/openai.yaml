@@ -1,4 +1,0 @@
-interface:
-  display_name: "Technical Explainer Images"
-  short_description: "Generate clear technical diagram images"
-  default_prompt: "Use $generate-technical-explainer-images to create clear PNG diagrams explaining this technical concept."
