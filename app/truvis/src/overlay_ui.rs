@@ -12,10 +12,10 @@ use app_kit::render_pipeline::RenderMode;
 use app_kit::render_pipeline::common_settings::PathTracingCommonSettings;
 use app_kit::render_pipeline::offline_render_graph::OfflinePipelineSettings;
 use app_kit::render_pipeline::rt_render_graph::RtPipelineSettings;
-use truvis_asset::asset_hub::AssetHub;
-use truvis_asset::handle::MaterialData;
 use truvis_render_runtime::ray_cast::RayCastResult;
 use truvis_render_runtime::state::dlss_options::DlssOptions;
+use truvis_world::World;
+use truvis_world::components::material::SceneMaterialData;
 
 use crate::truvis_app::ClickRayCastProbe;
 
@@ -426,7 +426,7 @@ impl TruvisOverlayUi {
                 ui.text(format!("Material: {:?}", hit.material));
                 ui.text(format!("Submesh: {}", hit.submesh_index));
                 ui.text(format!("Primitive: {}", hit.primitive_index));
-                Self::draw_material_info(ui, raycast.asset_hub.get_material_data(hit.material));
+                Self::draw_material_info(ui, raycast.world.material_data(hit.material));
                 ui.text(format!("Hit T: {:.3}", hit.hit_t));
                 ui.text(format!(
                     "Position: ({:.2}, {:.2}, {:.2})",
@@ -441,7 +441,7 @@ impl TruvisOverlayUi {
         }
     }
 
-    fn draw_material_info(ui: &imgui::Ui, material: Option<&MaterialData>) {
+    fn draw_material_info(ui: &imgui::Ui, material: Option<&SceneMaterialData>) {
         let Some(material) = material else {
             ui.text("Material data: unavailable");
             return;
@@ -489,7 +489,7 @@ impl PipelineControlsData<'_> {
 
 pub(crate) struct RaycastOverlayData<'a> {
     pub(crate) probe: &'a ClickRayCastProbe,
-    pub(crate) asset_hub: &'a AssetHub,
+    pub(crate) world: &'a World,
 }
 
 pub(crate) struct DebugImageViewerData<'a> {

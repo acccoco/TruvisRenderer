@@ -14,7 +14,7 @@
 
 - `FrameCounter` / `FrameLabel` / `FrameToken` 只表达 FIF slot、帧序号 token 和延迟回收窗口；当前帧时间快照由 `truvis-render-runtime::FrameTiming` 持有。
 - `RenderView` 是 app 相机状态到 runtime prepare 阶段的纯数据快照；runtime 不依赖 app camera 的具体存储和输入控制方式。
-- `RenderSceneView` 是 render pass 访问 runtime 私有 GPU scene 的窄只读契约；concrete `GpuScene`、`RenderData`、稳定 instance slot 与 raster draw cache 属于 `truvis-render-runtime`。
+- `RenderSceneView` 是 render pass 访问 runtime 私有 GPU scene 的窄只读契约；concrete `RenderWorld`、`RenderData`、稳定 instance slot 与 raster draw cache 属于 `truvis-render-runtime`。
 - `GfxResourceAccess` 是 RenderGraph 解析 imported image/image view 句柄的只读查询契约；具体 `GfxResourceManager` 实现在 `truvis-render-runtime`。
 
 ## 非职责

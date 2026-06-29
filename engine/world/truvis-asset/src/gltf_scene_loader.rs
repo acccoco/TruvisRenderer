@@ -3,7 +3,7 @@
 //! 本模块运行在 asset 后台线程中，职责只到“从 glTF 文件复制出 owned CPU 数据”。
 //! 它不分配 asset handle、不创建 GPU resource，也不把 glTF crate 的借用对象传出任务。
 //! 返回给 `AssetHub` 的数据必须保持为 `RawSceneData` 这套现有边界格式，后续 texture
-//! 路径解析、mesh/material handle 分配和加载事件生成仍统一收敛在 `AssetHub::update()`。
+//! 路径解析、scene handle 分配和 render upload event 生成统一收敛在 `SceneAssetIngestor`。
 
 use std::path::{Path, PathBuf};
 
@@ -18,9 +18,9 @@ use crate::handle::{MeshData, RawMaterialData, RawSceneData, RawSceneInstanceDat
 /// `req.handle` 只用于把结果关联回 `AssetHub` 已经分配的 model asset，不参与文件读取。
 pub(crate) fn load_gltf_scene_task(req: ModelLoadRequest) -> LoadResult {
     let _span = tracy_client::span!("load_gltf_scene_task");
-    log::info!("Loading glTF scene: {:?}", req.path);
+    log::info!("Loading glTF scene: {:?}", req.desc.path);
 
-    let result = std::panic::catch_unwind(|| GltfSceneReader::load_path(&req.path))
+    let result = std::panic::catch_unwind(|| GltfSceneReader::load_path(&req.desc.path))
         .map_err(|_| "glTF scene import task panicked".to_string())
         .and_then(|result| result);
 
@@ -30,7 +30,7 @@ pub(crate) fn load_gltf_scene_task(req: ModelLoadRequest) -> LoadResult {
             data,
         },
         Err(error) => {
-            log::error!("Failed to load glTF scene {:?}: {}", req.path, error);
+            log::error!("Failed to load glTF scene {:?}: {}", req.desc.path, error);
             LoadResult::ModelFailure(req.handle, error)
         }
     }
@@ -52,8 +52,8 @@ impl GltfSceneReader {
     /// 加载一个 glTF / GLB 文件并复制成 `RawSceneData`。
     ///
     /// `gltf::import` 可以读取外部 buffer 和 GLB 内嵌 buffer；本 v1 仅把外部 image URI
-    /// 转成 texture path，GLB/data URI 贴图暂不注册 texture handle，避免改变 AssetHub
-    /// 当前以 path 为 texture 内容身份的状态机。
+    /// 转成 texture path，GLB/data URI 贴图暂不注册 texture handle，避免改变当前
+    /// scene texture path identity 策略。
     fn load_path(path: &Path) -> Result<RawSceneData, String> {
         if !path.exists() {
             return Err(format!("glTF scene file does not exist: {:?}", path));
@@ -77,8 +77,8 @@ impl GltfSceneReader {
 
     /// 复制完整 glTF scene 数据。
     ///
-    /// glTF material 绑定在 primitive 上，而当前 AssetHub 的 `ModelInstanceData` 是
-    /// mesh + material handle 组合；因此这里把每个 primitive 扁平化为一个 `MeshData`，
+    /// glTF material 绑定在 primitive 上，而当前 scene ingest 边界使用
+    /// mesh + material index 组合；因此这里把每个 primitive 扁平化为一个 `MeshData`，
     /// 再让引用它的 node 生成对应的 prefab instance。
     fn copy_scene(&self) -> Result<RawSceneData, String> {
         let mut materials = Vec::new();
@@ -130,8 +130,8 @@ impl GltfSceneReader {
 
     /// 将 glTF material 复制到 AssetHub 的 raw material 边界格式。
     ///
-    /// v1 只读取现有 `MaterialData` 能表达的 PBR metallic-roughness 参数和两类贴图。
-    /// 外部 URI 保留为 importer 原始表达，稍后仍由 `AssetHub` 根据 scene 路径统一解析。
+    /// v1 只读取当前 `SceneMaterialData` 能表达的 PBR metallic-roughness 参数和两类贴图。
+    /// 外部 URI 保留为 importer 原始表达，稍后由 `SceneAssetIngestor` 根据 scene 路径统一解析。
     fn copy_material(&self, material: gltf::Material<'_>) -> RawMaterialData {
         let pbr = material.pbr_metallic_roughness();
         let base_color = pbr.base_color_factor();

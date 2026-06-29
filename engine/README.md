@@ -14,7 +14,7 @@ workspace 顶层 `app/`。
 - L2 渲染契约：`render/truvis-render-foundation` 提供 `FrameCounter` / `FrameLabel`、资源句柄、`RenderView` /
   `RenderSceneView` 和 `GfxResourceAccess`。
 - L3 语义与编排辅助：`world/` 保存 CPU asset/scene 语义，`render/truvis-render-graph` 负责按 App 指定顺序推导 pass 同步。
-- L4 Runtime 集成层：`render/truvis-render-runtime` 持有 `Gfx`、`World`、GPU resource/binding/timing owners、runtime render state、GPU scene、present、`RenderPassRecordCtx` 和 asset-to-GPU bridge。
+- L4 Runtime 集成层：`render/truvis-render-runtime` 持有 `Gfx`、`World`、GPU resource/binding/timing owners、runtime render state、`RenderWorld`、present、`RenderPassRecordCtx` 和 asset-to-GPU bridge。
 - L5 App 框架层：`app-frame/truvis-app-frame` 定义 `RenderApp`、`RenderAppShell`、`RenderAppHooks`、`Plugin` 和 render loop
   契约。
 - L6 平台与应用层：`app-frame/truvis-winit-app` 负责 winit 平台入口；具体应用和 samples 位于 `../app/`。
@@ -58,7 +58,7 @@ CPU 侧语义层，负责 asset 身份、加载状态、scene runtime 身份与 
 
 - `truvis-asset/`：纹理、mesh、material、model 等内容资产的 CPU 身份、去重、加载状态和完成事件；不创建 GPU
   image/buffer、BLAS、bindless index 或 material slot。
-- `truvis-world/`：`World`、`SceneManager` 和 `AssetHub` 聚合入口；不持有 `Gfx`、GPU resource/binding owner、swapchain 或 frame state。
+- `truvis-world/`：`World`、`SceneStore` 和 `AssetHub` 聚合入口；不持有 `Gfx`、GPU resource/binding owner、swapchain 或 frame state。
 
 ### `render/`
 
@@ -68,7 +68,7 @@ CPU 侧语义层，负责 asset 身份、加载状态、scene runtime 身份与 
   `RenderView`、`RenderSceneView` 和 `GfxResourceAccess`；不包含 GPU owner、CPU scene、窗口平台或 runtime render state 语义。
 - `truvis-render-graph/`：按 App 添加 pass 的线性顺序推导 image barrier、layout transition 和 semaphore submit
   信息；不做自动调度、资源 aliasing 或业务 pass 逻辑。
-- `truvis-render-runtime/`：渲染运行时集成层，拥有 `Gfx`、`World`、`GfxResourceManager`、`ShaderBindingSystem`、`CmdAllocator`、`PerFrameGpuData`、runtime render state、runtime 私有 `GpuScene`、present、同步资源、`RenderPassRecordCtx` 和 CPU-to-GPU bridge；不负责窗口事件循环、GUI 适配或具体 App pass 顺序。
+- `truvis-render-runtime/`：渲染运行时集成层，拥有 `Gfx`、`World`、`GfxResourceManager`、`ShaderBindingSystem`、`CmdAllocator`、`PerFrameGpuData`、runtime render state、runtime 私有 `RenderWorld`、present、同步资源、`RenderPassRecordCtx` 和 CPU-to-GPU bridge；不负责窗口事件循环、GUI 适配或具体 App pass 顺序。
 
 ### `app-frame/`
 

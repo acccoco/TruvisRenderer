@@ -1,12 +1,13 @@
 //! 材质准备阶段使用的纹理绑定解析接口。
 //!
 //! 本模块只定义 runtime 内部的窄契约：材质管理器通过 `TextureResolver`
-//! 查询 asset texture 是否 ready，并取得 shader 可读取的 bindless binding。
+//! 查询 scene texture 是否 ready，并取得 shader 可读取的 bindless binding。
 //! 纹理上传、fallback 资源所有权和 bindless 注册仍由纹理管理器等实现方负责。
 
-use crate::bindings::bindless_manager::BindlessSrvHandle;
-use truvis_asset::handle::AssetTextureHandle;
 use truvis_shader_binding::gpu;
+use truvis_world::guid_new_type::SceneTextureHandle;
+
+use crate::bindings::bindless_manager::BindlessSrvHandle;
 
 #[derive(Clone, Copy)]
 pub struct TextureBinding {
@@ -32,8 +33,8 @@ impl TextureBinding {
 /// 由渲染侧纹理上传/绑定缓存实现，避免 scene 直接耦合 AssetHub 或 BindlessManager。
 pub trait TextureResolver {
     /// texture 是否已经拥有真实 GPU image/view/bindless binding。
-    fn is_texture_ready(&self, handle: AssetTextureHandle) -> bool;
+    fn is_texture_ready(&self, handle: SceneTextureHandle) -> bool;
 
     /// 获取可渲染的 texture binding；未就绪时由实现返回 fallback。
-    fn resolve_texture(&self, handle: AssetTextureHandle) -> TextureBinding;
+    fn resolve_texture(&self, handle: SceneTextureHandle) -> TextureBinding;
 }

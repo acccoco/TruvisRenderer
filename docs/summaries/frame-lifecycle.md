@@ -6,7 +6,7 @@
 本文把一帧理解成三层协作：
 
 - `RenderRuntime` 提供底层阶段化能力，拥有 `World`、GPU resource/binding/timing owners、runtime-owned render state、
-  `GpuScene`、present、cmd 和同步资源。
+  `RenderWorld`、present、cmd 和同步资源。
 - `RenderAppShell` 固定一帧顺序，把 runtime phase 裁剪成 App / Plugin 可用的上下文。
 - 具体 App 持有 camera、input、GUI、overlay 和具体渲染 Plugin，并决定这些能力如何组合。
 
@@ -27,7 +27,7 @@ After Render  = present + end_frame
 
 ```mermaid
 flowchart TB
-    Runtime["RenderRuntime<br/>资源与 GPU 快照 owner<br/>World / Resource+Binding+Timing / GpuScene / Present / Sync"]
+    Runtime["RenderRuntime<br/>资源与 GPU 快照 owner<br/>World / Resource+Binding+Timing / RenderWorld / Present / Sync"]
     Shell["RenderAppShell<br/>一帧顺序编排者<br/>把 runtime phase 裁剪成 hook ctx"]
     App["Concrete App<br/>业务状态 owner<br/>camera / input / GUI / overlay / pipeline plugin"]
     Plugin["Plugin<br/>App 持有的能力单元<br/>标准生命周期 + 具体特有能力"]
@@ -83,7 +83,7 @@ Plugin。
 ```mermaid
 flowchart LR
     subgraph R["RenderRuntime"]
-        R0["begin_frame<br/>FIF 等待 / 命令池重置 / 延迟释放 / asset 事件分发"]
+        R0["begin_frame<br/>FIF 等待 / 命令池重置 / 延迟释放 / frame token 推进"]
         R1["update_phase<br/>同步 FrameRenderState<br/>acquire present target"]
         R2["sync_dlss_options_frame_state<br/>必要时同步 render/output extent"]
         R3{"has present target?"}
@@ -162,7 +162,7 @@ pass，再叠加 GUI；如果把所有 render 能力都放进统一 trait，App 
 | Phase                          | 调用点                          | 主要职责                                                                                         | 对上层暴露                            |
 |--------------------------------|------------------------------|----------------------------------------------------------------------------------------------|----------------------------------|
 | `init_after_window`            | 窗口 raw handle 就绪后            | 创建 surface、swapchain、present owner                                                           | `RenderRuntimeInitCtx`           |
-| `begin_frame`                  | 每帧开始                         | 等待 FIF timeline、重置 frame command pool、清理延迟释放、推进 bindless/material/instance token、分发 asset 事件 | 不直接暴露 ctx                        |
+| `begin_frame`                  | 每帧开始                         | 等待 FIF timeline、重置 frame command pool、清理延迟释放、推进 bindless/material/instance token | 不直接暴露 ctx                        |
 | `update_phase`                 | input 后、App update 前         | 同步 present extent 到 `FrameRenderState`，acquire 当前 present target，提供 CPU 更新能力                   | `RenderRuntimeUpdateCtx`         |
 | `sync_dlss_options_frame_state` | App / Plugin update 后        | 当 `DlssOptions` 改变 DLSS SR mode 或 render extent 时同步 `FrameRenderState`，并触发上层 resize          | `Option<RenderRuntimeResizeCtx>` |
 | `prepare(render_view)`         | update / resize 后、render 前   | 读取 App 的 `RenderView` 快照，把 `World`、asset、material、instance 同步成 GPU scene 与 descriptor 数据     | 不直接暴露 ctx                        |
@@ -212,7 +212,8 @@ App 是业务编排层。它既不拥有 runtime，也不把具体 Plugin 交给
 - `App` 是业务组合 owner；它持有具体 Plugin，并在 render 阶段决定 RenderGraph pass 顺序。
 - `Plugin` 是可复用能力单元；标准生命周期可以批量驱动，特有能力由 App 显式调用。
 - `World` 只应在 init / update / resize / shutdown 等允许可变借用的阶段修改；render 阶段不再修改 CPU scene。
-- `prepare` 是 update 与 render 之间的语义翻译边界；它生成本帧 GPU scene、TLAS、per-frame data 和 descriptor 状态。
+- `prepare` 是 update 与 render 之间的语义翻译边界；它生成本帧 GPU scene、通过 runtime 私有
+  `RenderTlasManager` 更新 TLAS、刷新 per-frame data 和 descriptor 状态。
 - `after_prepare` 是显式例外窗口；它可以同步查询刚准备好的 GPU scene，但普通渲染工作仍应进入 `render` hook 和 RenderGraph。
 - App / Plugin 持有的 GPU 资源必须在 resize 或 shutdown ctx 中显式重建 / 释放，不能依赖 runtime destroy 后的 `Drop` 再访问
   Vulkan/VMA/WSI。

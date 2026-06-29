@@ -10,7 +10,7 @@ namespace scene
 
 /// 单个 runtime instance 的 shader-visible 间接索引。
 ///
-/// `InstanceBridge` 保证 instance slot 稳定；shader 使用该 slot 访问 geometry/material 间接表。
+/// `RenderInstanceManager` 保证 instance slot 稳定；shader 使用该 slot 访问 geometry/material 间接表。
 /// 这里不保存 CPU handle，raycast readback 会在 runtime 侧把 slot 转回应用可理解的 handle。
 struct Instance
 {

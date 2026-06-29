@@ -1,5 +1,6 @@
-use crate::bindings::bindless_manager::BindlessSrvHandle;
 use truvis_shader_binding::gpu;
+
+use crate::bindings::bindless_manager::BindlessSrvHandle;
 
 /// scene root buffer 写入的 sky 绑定。
 ///
@@ -17,7 +18,7 @@ pub(crate) struct EnvironmentSkyBinding {
 
 /// 本帧 GPU scene 使用的环境资源快照。
 ///
-/// `GpuScene` 只消费该快照并写入 scene root buffer，不关心 sky 是否来自真实贴图、
+/// `RenderWorld` 只消费该快照并写入 scene root buffer，不关心 sky 是否来自真实贴图、
 /// fallback 贴图，或后续的 sky PDF 生成流程。
 #[derive(Clone, Copy)]
 pub(crate) struct EnvironmentBinding {

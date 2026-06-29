@@ -1,14 +1,16 @@
 use truvis_app_frame::input_event::InputEvent;
 use truvis_app_frame::plugin_api::{Plugin, PluginRenderCtx};
 use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx};
-use truvis_asset::handle::{AssetMaterialKey, AssetMeshHandle, AssetModelHandle, LoadStatus, MaterialData};
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
 use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
 use truvis_render_runtime::render_runtime::{RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 use truvis_shader_binding::gpu;
-use truvis_world::{World, components::instance::Instance, procedural_mesh::ProceduralMeshKind};
+use truvis_world::{
+    World, components::instance::Instance, components::material::SceneMaterialData, guid_new_type::SceneMeshHandle,
+    procedural_mesh::ProceduralMeshKind,
+};
 
 use app_kit::camera::Camera;
 use app_kit::camera_controller::CameraController;
@@ -36,8 +38,6 @@ pub struct TruvisApp {
     input: InputManager,
     overlay_ui: TruvisOverlayUi,
     click_ray_cast_probe: ClickRayCastProbe,
-    model_asset: Option<AssetModelHandle>,
-    model_spawned: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -175,24 +175,24 @@ impl TruvisApp {
         self.overlay_ui.options_mut()
     }
 
-    fn request_model(world: &mut World, camera: &mut Camera) -> AssetModelHandle {
+    fn request_model(world: &mut World, camera: &mut Camera) {
         camera.position = glam::vec3(270.0, 194.0, -64.0);
         camera.euler_yaw_deg = 90.0;
         camera.euler_pitch_deg = 0.0;
 
-        world.scene_manager.register_point_light(gpu::light::PointLight {
+        world.register_point_light(gpu::light::PointLight {
             pos: glam::vec3(-800.0, 50.0, 400.0).into(),
             color: (glam::vec3(1.0, 0.0, 0.0) * 5000.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
-        world.scene_manager.register_point_light(gpu::light::PointLight {
+        world.register_point_light(gpu::light::PointLight {
             pos: glam::vec3(-100.0, 50.0, 400.0).into(),
             color: (glam::vec3(0.0, 1.0, 0.0) * 5000.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
-        world.scene_manager.register_point_light(gpu::light::PointLight {
+        world.register_point_light(gpu::light::PointLight {
             pos: glam::vec3(600.0, 50.0, 400.0).into(),
             color: (glam::vec3(0.0, 0.0, 1.0) * 5000.0).into(),
             _pos_padding: Default::default(),
@@ -200,7 +200,7 @@ impl TruvisApp {
         });
         // RT 中 SpotLight 是半径 0.5 的 sphere emitter 再叠加 cone falloff；
         // 主场景保留几盏显式 spot，方便观察 Analytic NEE 开关和 NeeAnalytic debug channel。
-        world.scene_manager.register_spot_light(gpu::light::SpotLight {
+        world.register_spot_light(gpu::light::SpotLight {
             pos: glam::vec3(-450.0, 100.0, 400.0).into(),
             inner_angle: 30.0_f32.to_radians(),
             color: (glam::vec3(1.0, 1.0, 0.0) * 9000.0).into(),
@@ -208,7 +208,7 @@ impl TruvisApp {
             dir: glam::vec3(0.0, -1.0, 0.0).into(),
             _dir_padding: Default::default(),
         });
-        world.scene_manager.register_spot_light(gpu::light::SpotLight {
+        world.register_spot_light(gpu::light::SpotLight {
             pos: glam::vec3(250.0, 100.0, 400.0).into(),
             inner_angle: 30.0_f32.to_radians(),
             color: (glam::vec3(0.0, 1.0, 1.0) * 9000.0).into(),
@@ -218,7 +218,7 @@ impl TruvisApp {
         });
         // AreaLight 的正面法线由 cross(half_u, half_v) 决定；这里使用 X/Z 方向半轴，
         // 让矩形灯法线朝 -Y，单面照向 Sponza 场景内部。
-        world.scene_manager.register_area_light(gpu::light::AreaLight {
+        world.register_area_light(gpu::light::AreaLight {
             center: glam::vec3(-100.0, 200.0, 400.0).into(),
             half_u: glam::vec3(70.0, 0.0, 0.0).into(),
             half_v: glam::vec3(0.0, 0.0, 18.0).into(),
@@ -228,7 +228,7 @@ impl TruvisApp {
             _half_v_padding: Default::default(),
             _radiance_padding: Default::default(),
         });
-        world.scene_manager.register_area_light(gpu::light::AreaLight {
+        world.register_area_light(gpu::light::AreaLight {
             center: glam::vec3(600.0, 200.0, 400.0).into(),
             half_u: glam::vec3(26.0, 0.0, 0.0).into(),
             half_v: glam::vec3(0.0, 0.0, 26.0).into(),
@@ -240,7 +240,7 @@ impl TruvisApp {
         });
 
         log::info!("start load sponza model");
-        world.asset_hub.load_model(TruvisPath::assets_path("fbx/sponza/sponza.fbx"))
+        world.request_model_import(TruvisPath::assets_path("fbx/sponza/sponza.fbx"));
     }
 
     fn spawn_material_test_cubes(world: &mut World) {
@@ -248,8 +248,7 @@ impl TruvisApp {
         const CUBE_SCALE: f32 = 100.0;
 
         let cube_kind = ProceduralMeshKind::Cube;
-        let cube_mesh = world.asset_hub.register_mesh_data(cube_kind.asset_key(), cube_kind.mesh_data());
-        let material_source_path = std::path::PathBuf::from(MATERIAL_SOURCE);
+        let cube_mesh = world.register_mesh(cube_kind.mesh_data()).expect("failed to register procedural cube mesh");
         let cube_y = 100.0;
         let cube_z = -25.0;
         let cube_specs = [
@@ -302,13 +301,9 @@ impl TruvisApp {
 
         // cube 为单位模型，scale=100 且中心 y=100，使所有顶点落在给定场景范围内；
         // 这些材质参数刻意覆盖当前 shader 的透明、镜面、光泽/粗糙 diffuse 和 emissive 分支。
-        for (material_index, spec) in cube_specs.into_iter().enumerate() {
-            let material = world.asset_hub.register_material_data(
-                AssetMaterialKey {
-                    source_path: material_source_path.clone(),
-                    material_index: material_index as u32,
-                },
-                MaterialData {
+        for spec in cube_specs {
+            let material = world
+                .register_material(SceneMaterialData {
                     base_color: spec.base_color,
                     emissive: spec.emissive,
                     metallic: spec.metallic,
@@ -316,37 +311,27 @@ impl TruvisApp {
                     opaque: spec.opaque,
                     diffuse_texture: None,
                     normal_texture: None,
-                    name: format!("material-test-cube-{}", spec.name),
-                },
-            );
+                    name: format!("material-test-cube-{}-{}", MATERIAL_SOURCE, spec.name),
+                })
+                .expect("failed to register material test cube material");
 
-            world.scene_manager.register_instance(Instance {
-                mesh: cube_mesh,
-                materials: vec![material],
-                transform: glam::Mat4::from_scale_rotation_translation(
-                    glam::Vec3::splat(CUBE_SCALE),
-                    glam::Quat::IDENTITY,
-                    spec.center,
-                ),
-            });
+            world
+                .register_instance(Instance {
+                    mesh: cube_mesh,
+                    materials: vec![material],
+                    transform: glam::Mat4::from_scale_rotation_translation(
+                        glam::Vec3::splat(CUBE_SCALE),
+                        glam::Quat::IDENTITY,
+                        spec.center,
+                    ),
+                })
+                .expect("failed to register material test cube instance");
         }
 
-        Self::spawn_emissive_cube_matrix(
-            world,
-            cube_mesh,
-            &material_source_path,
-            cube_specs.len() as u32,
-            EMISSIVE_CUBE_MATRIX_CONFIG,
-        );
+        Self::spawn_emissive_cube_matrix(world, cube_mesh, EMISSIVE_CUBE_MATRIX_CONFIG);
     }
 
-    fn spawn_emissive_cube_matrix(
-        world: &mut World,
-        cube_mesh: AssetMeshHandle,
-        material_source_path: &std::path::Path,
-        first_material_index: u32,
-        config: EmissiveCubeMatrixConfig,
-    ) {
+    fn spawn_emissive_cube_matrix(world: &mut World, cube_mesh: SceneMeshHandle, config: EmissiveCubeMatrixConfig) {
         let palette_specs = [
             EmissiveCubePaletteSpec {
                 name: "warm-amber",
@@ -376,14 +361,9 @@ impl TruvisApp {
         ];
         let emissive_materials = palette_specs
             .into_iter()
-            .enumerate()
-            .map(|(palette_index, spec)| {
-                world.asset_hub.register_material_data(
-                    AssetMaterialKey {
-                        source_path: material_source_path.to_path_buf(),
-                        material_index: first_material_index + palette_index as u32,
-                    },
-                    MaterialData {
+            .map(|spec| {
+                world
+                    .register_material(SceneMaterialData {
                         base_color: spec.base_color,
                         emissive: spec.emissive,
                         metallic: 0.0,
@@ -392,8 +372,8 @@ impl TruvisApp {
                         diffuse_texture: None,
                         normal_texture: None,
                         name: format!("emissive-cube-matrix-{}", spec.name),
-                    },
-                )
+                    })
+                    .expect("failed to register emissive cube material")
             })
             .collect::<Vec<_>>();
 
@@ -412,44 +392,21 @@ impl TruvisApp {
                         );
                     let material = emissive_materials[cube_index % emissive_materials.len()];
 
-                    world.scene_manager.register_instance(Instance {
-                        mesh: cube_mesh,
-                        materials: vec![material],
-                        transform: glam::Mat4::from_scale_rotation_translation(
-                            glam::Vec3::splat(config.cube_scale),
-                            glam::Quat::IDENTITY,
-                            center,
-                        ),
-                    });
+                    world
+                        .register_instance(Instance {
+                            mesh: cube_mesh,
+                            materials: vec![material],
+                            transform: glam::Mat4::from_scale_rotation_translation(
+                                glam::Vec3::splat(config.cube_scale),
+                                glam::Quat::IDENTITY,
+                                center,
+                            ),
+                        })
+                        .expect("failed to register emissive cube instance");
 
                     cube_index += 1;
                 }
             }
-        }
-    }
-
-    fn spawn_model_if_ready(&mut self, world: &mut World) {
-        if self.model_spawned {
-            return;
-        }
-
-        let Some(model_asset) = self.model_asset else {
-            return;
-        };
-
-        match world.asset_hub.get_model_status(model_asset) {
-            LoadStatus::Ready => {
-                let model_data = world.asset_hub.get_model_data(model_asset).expect("ready model asset missing data");
-                let instances = world.scene_manager.spawn_model(model_data);
-                self.model_spawned = true;
-                log::info!("Sponza model spawned {} runtime instances.", instances.len());
-            }
-            LoadStatus::Failed => {
-                self.model_spawned = true;
-                let error = world.asset_hub.get_model_error(model_asset).unwrap_or("unknown error");
-                log::error!("Sponza model failed to load: {}", error);
-            }
-            LoadStatus::Unloaded | LoadStatus::Loading => {}
         }
     }
 
@@ -467,7 +424,7 @@ impl RenderAppHooks for TruvisApp {
         self.gui.set_display_size(ctx.window_size);
 
         Self::spawn_material_test_cubes(&mut *ctx.runtime.world);
-        self.model_asset = Some(Self::request_model(&mut *ctx.runtime.world, self.camera_controller.camera_mut()));
+        Self::request_model(&mut *ctx.runtime.world, self.camera_controller.camera_mut());
     }
 
     fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
@@ -492,7 +449,6 @@ impl RenderAppHooks for TruvisApp {
     }
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
-        self.spawn_model_if_ready(ctx.world);
         self.click_ray_cast_probe.update_time(ctx.delta_time_s);
 
         let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
@@ -528,7 +484,7 @@ impl RenderAppHooks for TruvisApp {
                 },
                 raycast: RaycastOverlayData {
                     probe: &self.click_ray_cast_probe,
-                    asset_hub: &ctx.world.asset_hub,
+                    world: ctx.world,
                 },
                 debug_images: DebugImageViewerData { gui: &self.gui },
             };

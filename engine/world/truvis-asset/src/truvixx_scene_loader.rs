@@ -20,9 +20,9 @@ use crate::handle::{MeshData, RawMaterialData, RawSceneData, RawSceneInstanceDat
 /// `req.handle` 只用于把结果关联回 `AssetHub` 已经分配的 model asset，不参与 FFI 调用。
 pub(crate) fn load_scene_task(req: ModelLoadRequest) -> LoadResult {
     let _span = tracy_client::span!("load_scene_task");
-    log::info!("Loading scene: {:?}", req.path);
+    log::info!("Loading scene: {:?}", req.desc.path);
 
-    let result = std::panic::catch_unwind(|| TruvixxSceneReader::load_path(&req.path))
+    let result = std::panic::catch_unwind(|| TruvixxSceneReader::load_path(&req.desc.path))
         .map_err(|_| "scene import task panicked".to_string())
         .and_then(|result| result);
 
@@ -32,7 +32,7 @@ pub(crate) fn load_scene_task(req: ModelLoadRequest) -> LoadResult {
             data,
         },
         Err(error) => {
-            log::error!("Failed to load scene {:?}: {}", req.path, error);
+            log::error!("Failed to load scene {:?}: {}", req.desc.path, error);
             LoadResult::ModelFailure(req.handle, error)
         }
     }
@@ -74,8 +74,8 @@ struct TruvixxSceneReader<'a> {
     scene: &'a TruvixxSceneGuard,
     /// 原始 scene 路径。
     ///
-    /// 该路径会原样写入 `RawSceneData::source_path`，后续由 `AssetHub` 使用它生成
-    /// model / mesh / material key，并解析 material 中的相对 texture path。
+    /// 该路径会原样写入 `RawSceneData::source_path`，后续由 `SceneAssetIngestor`
+    /// 使用它解析 material 中的相对 texture path。
     source_path: &'a Path,
     /// 当前导入源的显示名。
     ///
@@ -123,7 +123,7 @@ impl TruvixxSceneReader<'_> {
 
     /// 生成 scene 级默认名称。
     ///
-    /// 只使用文件名部分，不访问文件系统做 canonicalize，保持与 `AssetHub` 当前路径策略一致。
+    /// 只使用文件名部分，不访问文件系统做 canonicalize，保持 loader 任务只复制 CPU 数据的职责。
     fn model_name(source_path: &Path) -> String {
         source_path.file_name().and_then(|name| name.to_str()).unwrap_or("scene").to_string()
     }
@@ -162,7 +162,7 @@ impl TruvixxSceneReader<'_> {
     ///
     /// 该函数定义 FFI 数据离开 C++ importer 的总边界：mesh/material/instance 会在这里
     /// 逐项复制成 Rust owned 数据；scene 内部索引仍保持 importer 返回的原始编号，
-    /// 稍后由 `AssetHub` 转换成稳定 asset handle。
+    /// 稍后由 `SceneAssetIngestor` 转换成稳定 scene handle。
     fn copy_scene(&self) -> Result<RawSceneData, String> {
         // 这里是 FFI 生命周期边界：所有 mesh/material/instance 数据都必须复制进
         // Rust owned buffer，返回后 `TruvixxSceneGuard` 会释放 C++ scene。
@@ -259,7 +259,7 @@ impl TruvixxSceneReader<'_> {
     /// 复制一个 material 的 CPU 参数。
     ///
     /// material 中的 texture path 保留 importer 原始表达，不在后台线程解析相对路径。
-    /// 这样路径归一化、texture handle 分配和状态表更新仍统一收敛在 `AssetHub`。
+    /// 这样路径解析、texture handle 分配和 scene 依赖更新仍统一收敛在 `SceneAssetIngestor`。
     fn copy_material(&self, material_index: u32) -> Result<RawMaterialData, String> {
         let mut mat = truvixx::TruvixxMat::default();
         let res = unsafe { truvixx::truvixx_material_get(self.handle(), material_index, &mut mat as *mut _) };
@@ -271,7 +271,7 @@ impl TruvixxSceneReader<'_> {
         let normal_map = Self::read_fixed_c_string(&mat.normal_map);
         let name = Self::read_fixed_c_string(&mat.name);
 
-        // texture 路径保持为导入器原始表达，稍后由 AssetHub 根据 scene 路径统一解析。
+        // texture 路径保持为导入器原始表达，稍后由 SceneAssetIngestor 根据 scene 路径统一解析。
         Ok(RawMaterialData {
             base_color: Self::truvixx_float4_to_vec4(mat.base_color),
             emissive: Self::truvixx_float4_to_vec4(mat.emissive),
@@ -288,7 +288,7 @@ impl TruvixxSceneReader<'_> {
     ///
     /// 一个 node 可能引用多个 mesh，因此这里会拆成多条 `RawSceneInstanceData`。
     /// 返回值仍使用导入源内部的 mesh/material index，避免后台 FFI 任务直接分配
-    /// `AssetMeshHandle` 或 `AssetMaterialHandle`。
+    /// scene handle 或 render-side GPU slot。
     fn copy_instance(&self, instance_index: u32) -> Result<Vec<RawSceneInstanceData>, String> {
         let mut instance = truvixx::TruvixxInstance::default();
         let res = unsafe { truvixx::truvixx_instance_get(self.handle(), instance_index, &mut instance as *mut _) };

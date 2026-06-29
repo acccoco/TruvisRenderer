@@ -764,9 +764,7 @@ impl SharcTargets {
         // STORAGE_BUFFER 供 RT/Resolve 读写，TRANSFER_DST 供 `cmd_fill_buffer` 清零；
         // 通过 pass-local push descriptor 绑定，不需要 SHADER_DEVICE_ADDRESS。
         let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
-        let make = |size: vk::DeviceSize, name: &str| {
-            GfxBuffer::new(resource_ctx, size, usage, None, false, name)
-        };
+        let make = |size: vk::DeviceSize, name: &str| GfxBuffer::new(resource_ctx, size, usage, None, false, name);
         let hash_entries = make(capacity as vk::DeviceSize * Self::HASH_ENTRY_SIZE, "sharc-hash-entries");
         let accumulation = make(capacity as vk::DeviceSize * Self::VOXEL_DATA_SIZE, "sharc-accumulation");
         let resolved = make(capacity as vk::DeviceSize * Self::VOXEL_DATA_SIZE, "sharc-resolved");

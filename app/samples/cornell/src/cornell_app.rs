@@ -1,7 +1,6 @@
 use truvis_app_frame::input_event::InputEvent;
 use truvis_app_frame::plugin_api::{Plugin, PluginRenderCtx};
 use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx};
-use truvis_asset::handle::{AssetModelHandle, LoadStatus};
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
@@ -27,35 +26,33 @@ pub struct CornellApp {
     input: InputManager,
     debug_overlay: DebugInfoOverlay,
     pipeline_overlay: PipelineControlsOverlay,
-    model_asset: Option<AssetModelHandle>,
-    model_spawned: bool,
 }
 
 impl CornellApp {
-    fn request_model(world: &mut World, camera: &mut Camera) -> AssetModelHandle {
+    fn request_model(world: &mut World, camera: &mut Camera) {
         camera.position = glam::vec3(-400.0, 1000.0, 1000.0);
         camera.euler_yaw_deg = 330.0;
         camera.euler_pitch_deg = -27.0;
 
-        world.scene_manager.register_point_light(gpu::light::PointLight {
+        world.register_point_light(gpu::light::PointLight {
             pos: glam::vec3(-20.0, 40.0, 0.0).into(),
             color: (glam::vec3(5.0, 6.0, 1.0) * 2.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
-        world.scene_manager.register_point_light(gpu::light::PointLight {
+        world.register_point_light(gpu::light::PointLight {
             pos: glam::vec3(40.0, 40.0, -30.0).into(),
             color: (glam::vec3(1.0, 6.0, 7.0) * 3.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
-        world.scene_manager.register_point_light(gpu::light::PointLight {
+        world.register_point_light(gpu::light::PointLight {
             pos: glam::vec3(40.0, 40.0, 30.0).into(),
             color: (glam::vec3(5.0, 1.0, 8.0) * 3.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
-        world.scene_manager.register_spot_light(gpu::light::SpotLight {
+        world.register_spot_light(gpu::light::SpotLight {
             pos: glam::vec3(0.0, 320.0, 180.0).into(),
             inner_angle: 12.0_f32.to_radians(),
             color: (glam::vec3(8.0, 6.0, 3.0) * 8.0).into(),
@@ -63,7 +60,7 @@ impl CornellApp {
             dir: glam::vec3(0.0, -0.85, -0.35).normalize().into(),
             _dir_padding: Default::default(),
         });
-        world.scene_manager.register_area_light(gpu::light::AreaLight {
+        world.register_area_light(gpu::light::AreaLight {
             center: glam::vec3(0.0, 380.0, 0.0).into(),
             half_u: glam::vec3(80.0, 0.0, 0.0).into(),
             half_v: glam::vec3(0.0, 0.0, 80.0).into(),
@@ -75,32 +72,7 @@ impl CornellApp {
         });
 
         log::info!("Loading model...");
-        world.asset_hub.load_model(TruvisPath::assets_path("fbx/cornell-box.fbx"))
-    }
-
-    fn spawn_model_if_ready(&mut self, world: &mut World) {
-        if self.model_spawned {
-            return;
-        }
-
-        let Some(model_asset) = self.model_asset else {
-            return;
-        };
-
-        match world.asset_hub.get_model_status(model_asset) {
-            LoadStatus::Ready => {
-                let model_data = world.asset_hub.get_model_data(model_asset).expect("ready model asset missing data");
-                let instances = world.scene_manager.spawn_model(model_data);
-                self.model_spawned = true;
-                log::info!("Cornell model spawned {} runtime instances.", instances.len());
-            }
-            LoadStatus::Failed => {
-                self.model_spawned = true;
-                let error = world.asset_hub.get_model_error(model_asset).unwrap_or("unknown error");
-                log::error!("Cornell model failed to load: {}", error);
-            }
-            LoadStatus::Unloaded | LoadStatus::Loading => {}
-        }
+        world.request_model_import(TruvisPath::assets_path("fbx/cornell-box.fbx"));
     }
 }
 
@@ -109,7 +81,7 @@ impl RenderAppHooks for CornellApp {
         self.gui.set_hidpi_factor(ctx.scale_factor);
         self.gui.set_display_size(ctx.window_size);
 
-        self.model_asset = Some(Self::request_model(&mut *ctx.runtime.world, self.camera_controller.camera_mut()));
+        Self::request_model(&mut *ctx.runtime.world, self.camera_controller.camera_mut());
     }
 
     fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
@@ -136,8 +108,6 @@ impl RenderAppHooks for CornellApp {
     }
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
-        self.spawn_model_if_ready(ctx.world);
-
         let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
         self.gui.begin_frame(delta);
         {

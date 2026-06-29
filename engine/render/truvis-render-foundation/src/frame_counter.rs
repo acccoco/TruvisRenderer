@@ -52,7 +52,7 @@ impl FrameLabel {
 ///
 /// # 设计决策
 ///
-/// `BindlessManager`、`MaterialManager` 等模块需要根据 frame ID 进行 dirty 标记和 slot 回收。
+/// `BindlessManager`、`RenderMaterialManager` 等模块需要根据 frame ID 进行 dirty 标记和 slot 回收。
 /// 曾考虑过四种方案：
 /// 1. 全局变量 `FrameCounter` — 隐式依赖
 /// 2. 模块内部维护 `frame_id: u64` 字段 — 语义不明确（看起来像模块自身状态）

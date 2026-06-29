@@ -1,6 +1,7 @@
 use ash::vk;
 
 use truvis_shader_binding::gpu;
+use truvis_world::guid_new_type::SceneMaterialHandle;
 
 use super::geometry::{RtGeometry, RtTriangleMeta};
 
@@ -32,8 +33,8 @@ impl GpuInstanceSlot {
 
 /// 用于渲染的单个实例快照。
 ///
-/// 它已经把 CPU scene 中的 asset handle 解析为稳定 instance slot、mesh 索引和
-/// material slot；`GpuScene` 只消费这些 render-side 索引，不再访问 `SceneManager`。
+/// 它已经把 CPU scene 中的 scene handle 解析为稳定 instance slot、mesh 索引和
+/// material slot；`RenderWorld` 只消费这些 render-side 索引，不再访问 `SceneStore`。
 #[derive(Clone)]
 pub(crate) struct InstanceRenderData {
     /// 该实例在 GPU instance buffer 与 TLAS custom index 中共用的稳定 slot。
@@ -42,33 +43,35 @@ pub(crate) struct InstanceRenderData {
     pub(crate) mesh_index: usize,
     /// 该实例每个 submesh 对应的稳定 GPU material slot。
     pub(crate) material_slots: Vec<u32>,
+    /// 该实例每个 submesh 对应的 CPU scene material handle，与 `material_slots` 顺序一致。
+    pub(crate) material_handles: Vec<SceneMaterialHandle>,
     /// 由 CPU scene 提供的模型矩阵，prepare 阶段会写入 instance buffer 并参与 TLAS 构建。
     pub(crate) transform: glam::Mat4,
     /// 上一帧用于 DLSS motion vector 回溯的模型矩阵。
     ///
-    /// 新激活实例或 history reset 帧会由 `InstanceBridge` 写为当前 transform，
+    /// 新激活实例或 history reset 帧会由 `RenderInstanceManager` 写为当前 transform，
     /// 避免旧 slot 历史污染当前帧 temporal 输入。
     pub(crate) previous_transform: glam::Mat4,
 }
 
 /// 用于渲染的 mesh GPU 数据引用。
 ///
-/// `RtGeometry` 与 BLAS 生命周期由 `AssetMeshManager` 持有，这里只借用已完成上传的
+/// `RtGeometry` 与 BLAS 生命周期由 `RenderMeshManager` 持有，这里只借用已完成上传的
 /// render-side 数据，保证 `RenderData` 构建期间不会复制 GPU 资源 owner。
 pub(crate) struct MeshRenderData<'a> {
     /// 该 mesh 包含的所有 submesh 几何体。
     pub(crate) geometries: &'a [RtGeometry],
     /// 与 `geometries` 同顺序的 CPU 三角形元数据，只保存 light table 构建需要的最小字段。
     pub(crate) triangle_metadata: &'a [Vec<RtTriangleMeta>],
-    /// BLAS 的设备地址，用于 `GpuScene` 构建 TLAS；未 ready 的 mesh 不应出现在 active 实例中。
+    /// BLAS 的设备地址，用于 `RenderWorld` 构建 TLAS；未 ready 的 mesh 不应出现在 active 实例中。
     pub(crate) blas_device_address: Option<vk::DeviceAddress>,
 }
 
 /// 由 render-side scene bridge 构建的场景数据快照。
 ///
-/// 这是 `InstanceBridge` 交给 `GpuScene` 的 prepare 输入。它只包含依赖已 ready 的实例，
+/// 这是 `RenderInstanceManager` 交给 `RenderWorld` 的 prepare 输入。它只包含依赖已 ready 的实例，
 /// 并用稳定 slot 与紧凑索引连接 instance、mesh、geometry、material，避免 GPU 上传阶段
-/// 再回到 CPU scene/asset handle 做解析。
+/// 再回到 CPU scene handle 做解析。
 ///
 /// # 设计原则
 /// - 所有数据都是只读的，由 render-side bridge 负责构建
@@ -83,11 +86,11 @@ pub(crate) struct RenderData<'a> {
     pub(crate) all_instances: Vec<InstanceRenderData>,
     /// 本帧 active 实例引用到的去重 mesh GPU 数据。
     pub(crate) all_meshes: Vec<MeshRenderData<'a>>,
-    /// 当前 CPU scene 中的点光源快照，按 SceneManager 迭代顺序上传。
+    /// 当前 CPU scene 中的点光源快照，按 SceneStore 迭代顺序上传。
     pub(crate) all_point_lights: Vec<gpu::light::PointLight>,
-    /// 当前 CPU scene 中的 spot light 快照，按 SceneManager 迭代顺序上传。
+    /// 当前 CPU scene 中的 spot light 快照，按 SceneStore 迭代顺序上传。
     pub(crate) all_spot_lights: Vec<gpu::light::SpotLight>,
-    /// 当前 CPU scene 中的矩形单面 area light 快照，按 SceneManager 迭代顺序上传。
+    /// 当前 CPU scene 中的矩形单面 area light 快照，按 SceneStore 迭代顺序上传。
     pub(crate) all_area_lights: Vec<gpu::light::AreaLight>,
     /// point/spot/area light 快照的语义版本，写入 GPU scene 供 ReSTIR history 拒绝。
     ///

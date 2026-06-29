@@ -10,9 +10,9 @@ use crate::handle::TextureBytes;
 /// 这里不创建 Vulkan image，返回的 `TextureBytes` 只用于后续 render-side 上传。
 pub(crate) fn load_texture_task(req: TextureLoadRequest) -> LoadResult {
     let _span = tracy_client::span!("load_texture_task");
-    log::info!("Loading texture: {:?}", req.path);
+    log::info!("Loading texture: {:?}", req.desc.path);
 
-    let img_result = image::open(&req.path);
+    let img_result = image::open(&req.desc.path);
 
     match img_result {
         Ok(img) => {
@@ -37,7 +37,7 @@ pub(crate) fn load_texture_task(req: TextureLoadRequest) -> LoadResult {
             }
         }
         Err(e) => {
-            log::error!("Failed to load texture {:?}: {}", req.path, e);
+            log::error!("Failed to load texture {:?}: {}", req.desc.path, e);
             LoadResult::TextureFailure(req.handle, e.to_string())
         }
     }

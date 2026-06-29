@@ -35,7 +35,7 @@ raycast::RawHit make_miss()
 /// 将 closest-hit payload 压平成 readback ABI。
 ///
 /// 这里不做 instance slot -> CPU handle 转换；runtime 在 fence 等待后读取 raw hit，再结合
-/// `InstanceBridge` 做还原。
+/// `RenderInstanceManager` 的 raycast 反查快照做还原。
 raycast::RawHit make_hit(const RayCastPayload payload)
 {
     raycast::RawHit raw = {};

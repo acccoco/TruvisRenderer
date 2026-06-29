@@ -15,7 +15,7 @@ RenderRuntime
   -> FrameTiming frame counter + delta/total time
   -> PerFrameGpuData per-FIF PerFrameData UBO
   -> FrameRenderState / DlssOptions / ViewAccumState / DlssSrState runtime render state
-  -> GpuScene    runtime 私有 GPU scene buffer / TLAS / raster draw cache
+  -> RenderWorld runtime 私有 render managers / GPU scene buffer / raster draw cache / RenderTlasManager
   -> RayCastService prepare 后同步 raycast 的 runtime-owned pipeline / buffer / fence
   -> SwapchainPresenter swapchain/present resources
 ```

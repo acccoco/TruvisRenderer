@@ -3,7 +3,6 @@ use ash::vk;
 
 use crate::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use crate::bindings::shader_binding_system::ShaderBindingView;
-use truvis_asset::handle::{AssetMaterialHandle, AssetMeshHandle};
 use truvis_gfx::commands::barrier::GfxBufferBarrier;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::command_pool::GfxCommandPool;
@@ -14,9 +13,9 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_shader_binding::gpu;
-use truvis_world::guid_new_type::InstanceHandle;
+use truvis_world::guid_new_type::{InstanceHandle, SceneMaterialHandle, SceneMeshHandle};
 
-use crate::scene_sync::instance_bridge::InstanceBridge;
+use crate::render_world::render_instance_manager::RenderInstanceManager;
 use crate::state::frame_timing::FrameTiming;
 
 mod pass;
@@ -39,12 +38,12 @@ pub enum RayCastResult {
     Hit(RayCastHit),
 }
 
-/// 已从 GPU scene slot 转回 CPU scene/asset handle 的 closest hit。
+/// 已从 GPU scene slot 转回 CPU scene handle 的 closest hit。
 #[derive(Clone, Debug)]
 pub struct RayCastHit {
     pub instance: InstanceHandle,
-    pub mesh: AssetMeshHandle,
-    pub material: AssetMaterialHandle,
+    pub mesh: SceneMeshHandle,
+    pub material: SceneMaterialHandle,
     pub submesh_index: u32,
     pub primitive_index: u32,
     pub position_ws: glam::Vec3,
@@ -107,7 +106,7 @@ impl RayCastService {
         frame_timing: &FrameTiming,
         shader_bindings: ShaderBindingView<'_>,
         render_scene: &dyn RenderSceneView,
-        instance_bridge: &InstanceBridge,
+        render_instance_manager: &RenderInstanceManager,
         rays: &[RayCastRay],
     ) -> Result<Vec<RayCastResult>> {
         let _span = tracy_client::span!("RayCastService::cast_sync");
@@ -181,7 +180,7 @@ impl RayCastService {
         command_pool.free_command_buffers(device_ctx, vec![cmd]);
 
         readback_buffer.invalidate(resource_ctx, 0, raw_hit_bytes);
-        self.convert_raw_hits(instance_bridge, &readback_buffer.mapped_slice_ref()[..rays.len()])
+        self.convert_raw_hits(render_instance_manager, &readback_buffer.mapped_slice_ref()[..rays.len()])
     }
 
     pub(crate) fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
@@ -278,7 +277,7 @@ impl RayCastService {
 
     fn convert_raw_hits(
         &self,
-        instance_bridge: &InstanceBridge,
+        render_instance_manager: &RenderInstanceManager,
         raw_hits: &[gpu::raycast::RawHit],
     ) -> Result<Vec<RayCastResult>> {
         raw_hits
@@ -288,7 +287,7 @@ impl RayCastService {
                     return Ok(RayCastResult::Miss);
                 }
 
-                let record = instance_bridge
+                let record = render_instance_manager
                     .ray_cast_record(raw.instance_slot)
                     .ok_or_else(|| anyhow::anyhow!("raycast hit unknown instance slot {}", raw.instance_slot))?;
                 let material = record.materials.get(raw.submesh_index as usize).copied().ok_or_else(|| {

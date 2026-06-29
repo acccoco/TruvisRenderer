@@ -1,8 +1,5 @@
 use ash::vk;
 
-use crate::render_scene::geometry::RtTriangleMeta;
-use crate::render_scene::render_data::{InstanceRenderData, MeshRenderData, RenderData};
-use crate::scene_sync::material_manager::{MaterialManager, RenderMaterialParams};
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
@@ -10,6 +7,10 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
 use truvis_shader_binding::gpu;
+use truvis_world::{SceneMaterialEmissiveView, SceneReadView};
+
+use crate::render_world::geometry::RtTriangleMeta;
+use crate::render_world::render_data::{InstanceRenderData, MeshRenderData, RenderData};
 
 const INVALID_EMISSIVE_TRIANGLE_BASE: u32 = u32::MAX;
 
@@ -205,10 +206,10 @@ impl EmissiveLightFrameBuffers {
 
 /// runtime 私有的自发光三角形 light table owner。
 ///
-/// 它只读取 prepare 阶段已经解析好的 `RenderData` 和 `MaterialManager` CPU 参数，
+/// 它只读取 prepare 阶段已经解析好的 `RenderData` 和 `SceneReadView` 的材质 emissive view，
 /// 不访问 `World` 或 pass 资源。GPU buffer 按 FIF 拆分，避免 CPU 更新当前帧表时覆盖
 /// 上一帧仍可能被 raygen 读取的 table。
-pub(crate) struct EmissiveLightTable {
+pub(crate) struct RenderEmissiveLightTable {
     frames: [EmissiveLightFrameBuffers; FrameCounter::fif_count()],
     triangle_lights: Vec<gpu::light::EmissiveTriangleLight>,
     alias_table: Vec<gpu::light::EmissiveLightAliasEntry>,
@@ -217,7 +218,7 @@ pub(crate) struct EmissiveLightTable {
     version: u32,
 }
 
-impl EmissiveLightTable {
+impl RenderEmissiveLightTable {
     pub(crate) fn new(resource_ctx: GfxResourceCtx<'_>) -> Self {
         Self {
             frames: FrameCounter::frame_labes()
@@ -237,11 +238,11 @@ impl EmissiveLightTable {
         barrier_mask: GfxBarrierMask,
         frame_counter: &FrameCounter,
         render_data: &RenderData<'_>,
-        material_manager: &MaterialManager,
+        scene: SceneReadView<'_>,
         revision: u64,
     ) -> EmissiveLightBinding {
         if self.last_revision != Some(revision) {
-            self.rebuild(render_data, material_manager);
+            self.rebuild(render_data, scene);
             self.last_revision = Some(revision);
             self.version = self.version.saturating_add(1).max(1);
         }
@@ -265,14 +266,14 @@ impl EmissiveLightTable {
         }
     }
 
-    fn rebuild(&mut self, render_data: &RenderData<'_>, material_manager: &MaterialManager) {
+    fn rebuild(&mut self, render_data: &RenderData<'_>, scene: SceneReadView<'_>) {
         self.triangle_lights.clear();
         self.alias_table.clear();
         self.base_map.clear();
 
         let mut weighted_records = Vec::new();
         for instance in &render_data.all_instances {
-            self.append_instance(render_data, material_manager, instance, &mut weighted_records);
+            self.append_instance(render_data, scene, instance, &mut weighted_records);
         }
 
         let total_weight = weighted_records.iter().map(|(_, weight)| *weight).sum::<f64>();
@@ -289,13 +290,20 @@ impl EmissiveLightTable {
     fn append_instance(
         &mut self,
         render_data: &RenderData<'_>,
-        material_manager: &MaterialManager,
+        scene: SceneReadView<'_>,
         instance: &InstanceRenderData,
         weighted_records: &mut Vec<(usize, f64)>,
     ) {
         let mesh = &render_data.all_meshes[instance.mesh_index];
-        for (submesh_idx, &material_slot) in instance.material_slots.iter().enumerate() {
-            let Some(material) = material_manager.params_by_slot(material_slot) else {
+        debug_assert_eq!(
+            instance.material_slots.len(),
+            instance.material_handles.len(),
+            "material slots and scene material handles must stay aligned"
+        );
+        for (submesh_idx, (&material_slot, &material_handle)) in
+            instance.material_slots.iter().zip(instance.material_handles.iter()).enumerate()
+        {
+            let Some(material) = scene.material_emissive_view(material_handle) else {
                 self.base_map.push(INVALID_EMISSIVE_TRIANGLE_BASE);
                 continue;
             };
@@ -328,14 +336,14 @@ impl EmissiveLightTable {
         instance: &InstanceRenderData,
         submesh_idx: usize,
         material_slot: u32,
-        material: &RenderMaterialParams,
+        material: SceneMaterialEmissiveView<'_>,
         _mesh: &MeshRenderData<'_>,
         triangles: &[RtTriangleMeta],
         weighted_records: &mut Vec<(usize, f64)>,
     ) {
         let estimated_base_color =
-            if material.diffuse_texture.is_some() { glam::Vec3::ONE } else { material.base_color.truncate() };
-        let estimated_radiance = material.emissive.truncate() * estimated_base_color;
+            if material.diffuse_texture().is_some() { glam::Vec3::ONE } else { material.base_color().truncate() };
+        let estimated_radiance = material.emissive().truncate() * estimated_base_color;
         let luminance = Self::luminance(estimated_radiance).max(0.0);
 
         for triangle in triangles {
@@ -369,8 +377,8 @@ impl EmissiveLightTable {
         }
     }
 
-    fn is_emissive_material(material: &RenderMaterialParams) -> bool {
-        let emissive = material.emissive.truncate();
+    fn is_emissive_material(material: SceneMaterialEmissiveView<'_>) -> bool {
+        let emissive = material.emissive().truncate();
         emissive.max_element() > 0.0
     }
 

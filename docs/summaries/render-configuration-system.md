@@ -73,6 +73,7 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 | `output_extent` | swapchain / present extent | GUI、present、main-view output 与 DLSS output 尺寸 |
 
 `FrameRenderState` 不由用户直接改。App / Plugin 在 init、resize 或 `sync_dlss_options_frame_state` 返回 resize ctx 时读取它，用来重建自己持有的窗口尺寸 target。
+`RenderRuntime::init_after_window` 会在 Plugin init 前根据真实 swapchain extent 和启动时的 `DlssOptions` 解析一次 `FrameRenderState`。因此 RT / offline pipeline 初始化窗口尺寸 target 时应直接使用 `ctx.frame_state`，不得再把 `render_extent` 覆盖为 native extent；否则启动时通过 `TRUVIS_DLSS_SR_MODE` / `TRUVIS_DLSS_RR` 进入 SR/RR 会导致 RT、GBuffer、DLSS input 尺寸与 Streamline options 失配。
 
 ## ViewAccumState
 
@@ -98,20 +99,20 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 | `analytic_nee_enabled: bool` | 是否额外启用 point / spot / area analytic light NEE，关闭时不影响 HDRI / emissive NEE |
 | `tone_mapping: SdrToneMappingSettings` | SDR 输出路径使用的手动曝光和 ACES fitted tone mapping 参数 |
 
-`RtSkySamplingMode` 是 path tracing 共享的 pass-local 调试/实验开关。默认 `Importance` 使用 `SkyBridge`
+`RtSkySamplingMode` 是 path tracing 共享的 pass-local 调试/实验开关。默认 `Importance` 使用 `RenderSkyManager`
 生成的 HDRI alias table；`Uniform` 强制 shader 走旧的 uniform sphere 采样，用于在相同场景下比较 HDRI NEE
 噪声与能量稳定性。该选项不改变 render extent、DLSS feature resource 或 runtime-owned temporal state。
 
 `sky_brightness` 是 app 层 path tracing 运行时调参，默认值 `8.0` 保持旧 shader 硬编码亮度。它只在 shader
 采样 sky 贴图后统一缩放可见 sky miss 与 HDRI 直接光候选 radiance；因为这是所有方向共享的均匀倍率，不改变
-`SkyBridge` importance distribution 的相对权重，也不需要重建 alias table 或改写环境光 PDF。
+`RenderSkyManager` importance distribution 的相对权重，也不需要重建 alias table 或改写环境光 PDF。
 
 `emissive_nee_enabled` 是 path tracing pass-local 调试开关，默认开启。关闭时统一 NEE 不会把 emissive
 class 纳入候选来源，但直接命中 emissive surface 的 hit emission 仍按当前 path tracing 语义累加；该选项不改变
-`EmissiveLightTable` 的 scene sync、DLSS、GBuffer 或 runtime-owned temporal state。
+`RenderEmissiveLightTable` 的 scene sync、DLSS、GBuffer 或 runtime-owned temporal state。
 
 `analytic_nee_enabled` 是 path tracing pass-local 调试开关，默认开启。关闭时统一 NEE 不会把 point / spot / area
-analytic class 纳入候选来源；该选项不改变 `SceneManager` / `GpuScene` 的 light buffer 同步，也不改变 DLSS、
+analytic class 纳入候选来源；该选项不改变 `SceneStore` / `RenderWorld` 的 light buffer 同步，也不改变 DLSS、
 GBuffer 或 runtime-owned temporal state。
 
 `SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道。当前使用实时渲染常用的 ACES fitted approximation，并提供 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display transform，也不做自动曝光或参数持久化。DLSS SR 的 manual exposure 由固定 1x1 `dlss-sr-exposure` 输入提供，当前不跟随这里的 `Exposure EV`。

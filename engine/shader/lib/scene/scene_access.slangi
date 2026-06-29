@@ -5,7 +5,7 @@
 /// SceneAccess 是 shader 侧访问 scene::GpuScene 间接表的唯一入口。
 /// 全局 `gpu_scene` 来自 set 2；raster pass 也可显式传入 scene 指针复用同一套索引规则。
 ///
-/// 所有函数都假设 `InstanceBridge` 已经过 ready gate，只把 mesh/material 都 ready 的实例放入
+/// 所有函数都假设 `RenderInstanceManager` 已经过 ready gate，只把 mesh/material 都 ready 的实例放入
 /// active render list。shader 侧因此不做空指针或 slot 越界恢复；相关错误应在 prepare 阶段暴露。
 struct SceneAccess
 {

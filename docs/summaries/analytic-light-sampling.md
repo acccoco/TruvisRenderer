@@ -15,8 +15,8 @@ emitter。`AreaLight` 是由 `center + half_u + half_v` 描述的矩形单面 em
 
 ## Scene 数据流
 
-CPU scene 由 `SceneManager` 分别保存 point / spot / area 三类 light；`InstanceBridge::prepare_render_data`
-在 prepare 阶段读取这些只读快照并写入 `RenderData`。`GpuScene` 为三类 light 各自维护独立 structured buffer，
+CPU scene 由 `SceneStore` 分别保存 point / spot / area 三类 light；`RenderInstanceManager::prepare_render_data`
+在 prepare 阶段读取这些只读快照并写入 `RenderData`。`RenderWorld` 为三类 light 各自维护独立 structured buffer，
 scene root buffer 写入对应 device address 与 count。
 
 三类 light 使用独立 buffer，而不是混入一个通用 light 数组。这样 shared ABI、上传容量、shader 下标和调试语义都保持

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::mem::size_of_val;
 use std::ptr;
 
@@ -6,11 +6,7 @@ use anyhow::{Result, bail};
 use ash::vk;
 use slotmap::SecondaryMap;
 
-use crate::render_scene::geometry::{RtGeometry, RtTriangleMeta};
-use crate::render_scene::render_data::MeshRenderData;
-use crate::scene_sync::scene_bridge::MeshRenderResolver;
-use truvis_asset::asset_hub::AssetLoadedEvent;
-use truvis_asset::handle::{AssetMeshHandle, MeshData};
+use truvis_asset::handle::MeshData;
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::command_pool::GfxCommandPool;
@@ -25,14 +21,19 @@ use truvis_gfx::resources::special_buffers::acceleration_buffer::GfxAcceleration
 use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
+use truvis_world::PendingMeshUpload;
+use truvis_world::guid_new_type::SceneMeshHandle;
 
+use crate::render_world::geometry::{RtGeometry, RtTriangleMeta};
+use crate::render_world::render_data::MeshRenderData;
+use crate::render_world::render_resolver::MeshRenderResolver;
 /// 已提交到 graphics queue、但尚未确认完成的 mesh 上传任务。
 ///
 /// 这里同时持有 staging/scratch/geometry/BLAS owner，是因为 timeline 到达前这些资源
 /// 都仍可能被 copy 或 acceleration build 命令引用，不能交给 resolver 或提前释放。
-struct PendingMeshUpload {
+struct SubmittedMeshUpload {
     semaphore_value: u64,
-    handle: AssetMeshHandle,
+    handle: SceneMeshHandle,
     command_buffer: GfxCommandBuffer,
     staging_buffers: Vec<GfxBuffer>,
     scratch_buffer: GfxAccelerationScratchBuffer,
@@ -44,10 +45,10 @@ struct PendingMeshUpload {
 
 /// 已通过 timeline 检测确认完成的 mesh GPU 资源。
 ///
-/// `AssetMeshManager` 接管该结构后，mesh 才会进入 `meshes` map，供 instance bridge
+/// `RenderMeshManager` 接管该结构后，mesh 才会进入 `meshes` map，供 instance bridge
 /// 解析为 render-side 几何数据。
 struct FinishedMeshUpload {
-    handle: AssetMeshHandle,
+    handle: SceneMeshHandle,
     geometry: RtGeometry,
     triangle_metadata: Vec<RtTriangleMeta>,
     blas: GfxAcceleration,
@@ -63,7 +64,7 @@ struct MeshUploadQueue {
     command_pool: Option<GfxCommandPool>,
     timeline_semaphore: Option<GfxSemaphore>,
     next_timeline_value: u64,
-    pending_uploads: VecDeque<PendingMeshUpload>,
+    pending_uploads: VecDeque<SubmittedMeshUpload>,
     destroyed: bool,
 }
 
@@ -95,7 +96,7 @@ impl MeshUploadQueue {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-        handle: AssetMeshHandle,
+        handle: SceneMeshHandle,
         data: MeshData,
     ) -> Result<()> {
         let _span = tracy_client::span!("MeshUploadQueue::submit_mesh_upload");
@@ -217,8 +218,8 @@ impl MeshUploadQueue {
         );
         queue_ctx.gfx_queue().submit(vec![submit_info], None);
 
-        log::trace!("AssetMeshManager: submitted mesh {:?} '{}' timeline={}", handle, name, target_value);
-        self.pending_uploads.push_back(PendingMeshUpload {
+        log::trace!("RenderMeshManager: submitted mesh {:?} '{}' timeline={}", handle, name, target_value);
+        self.pending_uploads.push_back(SubmittedMeshUpload {
             semaphore_value: target_value,
             handle,
             command_buffer,
@@ -251,7 +252,7 @@ impl MeshUploadQueue {
             }
 
             // staging 和 scratch 只服务本次上传/build，timeline 到达后即可释放；
-            // geometry 与 BLAS 则转交给 AssetMeshManager，成为 render pass 可解析的数据。
+            // geometry 与 BLAS 则转交给 RenderMeshManager，成为 render pass 可解析的数据。
             let upload = self.pending_uploads.pop_front().unwrap();
             command_pool.free_command_buffers(device_ctx, vec![upload.command_buffer]);
             for staging_buffer in upload.staging_buffers {
@@ -270,7 +271,7 @@ impl MeshUploadQueue {
         finished_uploads
     }
 
-    /// 关闭上传队列并释放仍未交给 `AssetMeshManager` 的 pending 资源。
+    /// 关闭上传队列并释放仍未交给 `RenderMeshManager` 的 pending 资源。
     ///
     /// shutdown 路径允许等待 timeline，因为此时帧循环已经停止；等待完成后才能销毁
     /// command buffer、staging、scratch、geometry 和 BLAS。
@@ -423,65 +424,93 @@ struct UploadedMesh {
 
 /// 渲染侧 mesh 资产上传与 BLAS 缓存。
 ///
-/// 它把 `AssetMeshHandle` 解析为光栅化和 ray tracing 共用的 GPU 几何数据。
-/// `ready_revision` 在 mesh 首次 ready 或替换时递增，供 `GpuScene` 判断 TLAS 是否需要重建。
-pub struct AssetMeshManager {
-    meshes: SecondaryMap<AssetMeshHandle, UploadedMesh>,
+/// 它把 `SceneMeshHandle` 解析为光栅化和 ray tracing 共用的 GPU 几何数据。
+/// `ready_revision` 在 mesh 首次 ready 或替换时递增，供 `RenderWorld` 判断 TLAS 是否需要重建。
+pub struct RenderMeshManager {
+    meshes: SecondaryMap<SceneMeshHandle, UploadedMesh>,
+    retired_meshes: HashSet<SceneMeshHandle>,
     upload_queue: MeshUploadQueue,
     ready_revision: u64,
 }
 
-impl AssetMeshManager {
+impl RenderMeshManager {
     /// 创建 mesh 管理器。
     ///
     /// 内部 command pool 绑定 graphics queue family，因为 BLAS build 不能假设 transfer queue 支持。
     pub fn new(device_ctx: GfxDeviceCtx<'_>, queue_ctx: GfxQueueCtx<'_>) -> Self {
         Self {
             meshes: SecondaryMap::new(),
+            retired_meshes: HashSet::new(),
             upload_queue: MeshUploadQueue::new(device_ctx, queue_ctx),
             ready_revision: 0,
         }
     }
 
-    /// 消费 AssetHub 的 mesh loaded 事件，并推进 GPU 上传/BLAS build 完成检测。
+    /// 消费 mesh upload payload，并推进 GPU 上传/BLAS build 完成检测。
     ///
     /// 该方法只查询 graphics queue timeline semaphore，不等待 GPU；完成前 mesh 不会进入 resolver
     /// 可见的 `meshes` map，因此 instance bridge 会继续把依赖它的实例保持为 pending。
     pub fn update(
         &mut self,
-        events: Vec<AssetLoadedEvent>,
+        pending_uploads: Vec<PendingMeshUpload>,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
     ) {
-        let _span = tracy_client::span!("AssetMeshManager::update");
+        let _span = tracy_client::span!("RenderMeshManager::update");
 
-        for event in events {
-            if let AssetLoadedEvent::MeshLoaded { handle, data } = event {
-                // RenderRuntime 已经把事件按类型分流；这里仍保持宽松匹配，便于调用侧
-                // 未来传入空列表或过滤后的列表时不需要额外包装。
-                if let Err(err) =
-                    self.upload_queue.submit_mesh_upload(resource_ctx, device_ctx, queue_ctx, handle, data)
-                {
-                    log::error!("Failed to submit mesh upload {:?}: {}", handle, err);
-                }
+        for upload in pending_uploads {
+            if self.retired_meshes.contains(&upload.handle) {
+                continue;
+            }
+            if let Err(err) =
+                self.upload_queue.submit_mesh_upload(resource_ctx, device_ctx, queue_ctx, upload.handle, upload.data)
+            {
+                log::error!("Failed to submit mesh upload {:?}: {}", upload.handle, err);
             }
         }
 
         for finished in self.upload_queue.update(resource_ctx, device_ctx) {
+            if self.retired_meshes.remove(&finished.handle) {
+                finished.geometry.destroy(resource_ctx, DestroyReason::DeferredCleanup);
+                finished.blas.destroy(resource_ctx, device_ctx, DestroyReason::DeferredCleanup);
+                self.ready_revision = self.ready_revision.saturating_add(1);
+                continue;
+            }
             self.replace_uploaded_mesh(resource_ctx, device_ctx, finished);
             self.ready_revision = self.ready_revision.saturating_add(1);
         }
     }
 
+    /// 移除 scene mesh 对应的 GPU-ready cache。
+    ///
+    /// 已提交的上传/BLAS build 只能等待 timeline 自然完成；retired set 保证完成回调不会把已删除
+    /// mesh 重新发布给 instance/TLAS resolver。
+    pub fn remove_meshes(
+        &mut self,
+        handles: &[SceneMeshHandle],
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+    ) {
+        for &handle in handles {
+            self.retired_meshes.insert(handle);
+            let Some(mesh) = self.meshes.remove(handle) else {
+                continue;
+            };
+            mesh.geometry.destroy(resource_ctx, DestroyReason::ImmediateRelease);
+            mesh.blas.destroy(resource_ctx, device_ctx, DestroyReason::ImmediateRelease);
+            self.ready_revision = self.ready_revision.saturating_add(1);
+        }
+    }
+
     /// 查询指定 mesh 是否已经完成 vertex/index 上传和 BLAS build。
-    pub fn is_mesh_ready(&self, handle: AssetMeshHandle) -> bool {
+    pub fn is_mesh_ready(&self, handle: SceneMeshHandle) -> bool {
         self.meshes.contains_key(handle)
     }
 
     /// 返回 mesh ready 状态的单调递增 revision。
     ///
-    /// `RenderRuntime` 会把它与 instance revision 合成 scene revision，供 `GpuScene` 判断
+    /// `RenderRuntime` 会把它与 instance revision 合成 scene revision，供 `RenderWorld` 判断
     /// 当前 FIF 的 TLAS 是否需要重建。
     pub fn ready_revision(&self) -> u64 {
         self.ready_revision
@@ -493,7 +522,7 @@ impl AssetMeshManager {
         device_ctx: GfxDeviceCtx<'_>,
         finished: FinishedMeshUpload,
     ) {
-        // 替换同一 asset handle 时必须先让旧资源离开 resolver map；后续 instance bridge
+        // 替换同一 scene mesh handle 时必须先让旧资源离开 resolver map；后续 instance bridge
         // 会通过 ready revision 触发 scene/TLAS 更新，而不会继续拿到旧 BLAS。
         if let Some(old_mesh) = self.meshes.remove(finished.handle) {
             // 同一 handle 的 mesh 重新上传时，旧 geometry/BLAS 不能继续被 resolver 返回。
@@ -505,7 +534,7 @@ impl AssetMeshManager {
         let blas_device_address = finished.blas.device_address(device_ctx);
         // 缓存 BLAS device address，后续构建 TLAS 时无需重新查询 Vulkan handle。
         log::trace!(
-            "AssetMeshManager: mesh {:?} '{}' is GPU ready, blas_address={:#x}",
+            "RenderMeshManager: mesh {:?} '{}' is GPU ready, blas_address={:#x}",
             finished.handle,
             finished.name,
             blas_device_address
@@ -534,12 +563,12 @@ impl AssetMeshManager {
     }
 }
 
-impl MeshRenderResolver for AssetMeshManager {
-    fn is_mesh_ready(&self, handle: AssetMeshHandle) -> bool {
+impl MeshRenderResolver for RenderMeshManager {
+    fn is_mesh_ready(&self, handle: SceneMeshHandle) -> bool {
         self.is_mesh_ready(handle)
     }
 
-    fn resolve_mesh(&self, handle: AssetMeshHandle) -> Option<MeshRenderData<'_>> {
+    fn resolve_mesh(&self, handle: SceneMeshHandle) -> Option<MeshRenderData<'_>> {
         let mesh = self.meshes.get(handle)?;
         Some(MeshRenderData {
             geometries: std::slice::from_ref(&mesh.geometry),

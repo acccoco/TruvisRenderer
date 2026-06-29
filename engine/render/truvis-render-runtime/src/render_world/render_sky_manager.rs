@@ -1,22 +1,22 @@
 use ash::vk;
 use slotmap::Key;
 
-use crate::bindings::bindless_manager::BindlessSrvHandle;
-use crate::bindings::shader_binding_system::ShaderBindingSystem;
-use crate::resources::gfx_resource_manager::GfxResourceManager;
-use truvis_asset::asset_hub::AssetHub;
-use truvis_asset::handle::{AssetTextureHandle, TextureBytes};
+use truvis_asset::handle::TextureBytes;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_path::TruvisPath;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_shader_binding::gpu;
+use truvis_world::SceneSkyState;
+use truvis_world::guid_new_type::SceneTextureHandle;
 
-use crate::scene_sync::environment_binding::EnvironmentSkyBinding;
-use crate::scene_sync::texture_resolver::TextureResolver;
+use crate::bindings::bindless_manager::BindlessSrvHandle;
+use crate::bindings::shader_binding_system::ShaderBindingSystem;
+use crate::render_world::environment_binding::EnvironmentSkyBinding;
+use crate::render_world::texture_resolver::TextureResolver;
+use crate::resources::gfx_resource_manager::GfxResourceManager;
 
 #[derive(Clone, Copy, Default)]
 struct FallbackSkyTexture {
@@ -28,7 +28,7 @@ struct FallbackSkyTexture {
 /// 默认 sky 采样分布的 GPU 资源。
 ///
 /// 该 buffer 通过 device address 写入 scene root buffer，shader 在 render 阶段只读访问。
-/// 资源由 `SkyBridge` 拥有并在 shutdown 显式释放，不通过 bindless 表管理。
+/// 资源由 `RenderSkyManager` 拥有并在 shutdown 显式释放，不通过 bindless 表管理。
 struct SkyDistributionResource {
     entries: GfxStructuredBuffer<gpu::scene::SkyDistributionEntry>,
     width: u32,
@@ -89,20 +89,23 @@ struct SkyDistributionBinding {
     version: u32,
 }
 
-/// `SkyBridge::update_sky_binding` 的本帧解析结果。
+/// `RenderSkyManager::update_sky_binding` 的本帧解析结果。
 pub(crate) struct SkyBindingUpdate {
     pub(crate) binding: EnvironmentSkyBinding,
     /// sky 绑定或 active distribution 是否变化；变化后当前 view temporal history 不再匹配。
     pub(crate) changed: bool,
 }
 
-/// 默认 sky 的 runtime 私有桥接层。
+/// scene sky 的 runtime 私有桥接层。
 ///
-/// `AssetHub` 只负责 sky 图片的 CPU 异步加载；真实 GPU texture 由 `AssetTextureManager`
-/// 管理。`SkyBridge` 保存 sky 的内容 handle 和一个常驻纯色 fallback，保证 shader 侧
+/// `SceneStore` 只负责 sky 语义状态；真实 GPU texture 由 `RenderTextureManager`
+/// 管理。`RenderSkyManager` 缓存本帧 sky state 并持有一个常驻纯色 fallback，保证 shader 侧
 /// scene root buffer 始终写入合法 SRV 和与之匹配的 sky importance distribution。
-pub(crate) struct SkyBridge {
-    sky_texture: AssetTextureHandle,
+pub(crate) struct RenderSkyManager {
+    sky_texture: Option<SceneTextureHandle>,
+    sky_enabled: bool,
+    sky_intensity: f32,
+    sky_revision: u64,
     fallback: FallbackSkyTexture,
     fallback_distribution: SkyDistributionResource,
     sky_distribution: Option<SkyDistributionResource>,
@@ -112,18 +115,16 @@ pub(crate) struct SkyBridge {
     using_real_sky: bool,
 }
 
-impl SkyBridge {
-    /// 请求默认 sky 异步加载，并创建立即可用的纯色 fallback sky。
+impl RenderSkyManager {
+    /// 创建立即可用的纯色 fallback sky。
     pub(crate) fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        asset_hub: &mut AssetHub,
         gfx_resource_manager: &mut GfxResourceManager,
         shader_binding_system: &mut ShaderBindingSystem,
     ) -> Self {
-        let _span = tracy_client::span!("SkyBridge::new");
-        let sky_texture = asset_hub.load_texture(TruvisPath::resources_path("sky.jpg"));
+        let _span = tracy_client::span!("RenderSkyManager::new");
         let fallback = Self::create_fallback_sky(
             resource_ctx,
             device_ctx,
@@ -140,7 +141,10 @@ impl SkyBridge {
         );
 
         Self {
-            sky_texture,
+            sky_texture: None,
+            sky_enabled: true,
+            sky_intensity: 1.0,
+            sky_revision: 0,
             fallback,
             fallback_distribution,
             sky_distribution: None,
@@ -151,24 +155,46 @@ impl SkyBridge {
         }
     }
 
-    /// 观察默认 sky 的 CPU texture bytes，并在 texture manager 上传真实 sky image 前构建采样分布。
+    /// 同步 CPU scene 中的 sky 语义状态。
     ///
-    /// `AssetHub::update` 的 texture event 只会被消费一次，因此分布构建必须发生在 runtime
-    /// 事件分流点。真实 sky image 仍由 `AssetTextureManager` 上传；本 bridge 只拥有与默认 sky
+    /// `SceneStore` 是 enabled/intensity/texture 的权威 owner；这里仅缓存当前 prepare
+    /// 已应用的值，用于选择本帧 sky binding 和决定旧 distribution 是否需要退休。
+    pub(crate) fn apply_scene_sky_state(&mut self, state: &SceneSkyState) -> bool {
+        let state_changed = self.sky_revision != state.revision;
+        if self.sky_texture != state.texture {
+            if let Some(old_distribution) = self.sky_distribution.take() {
+                // distribution device address 可能仍被上一轮 scene root buffer 引用，延迟到
+                // shutdown 统一释放，保持当前 RenderSkyManager 的资源生命周期策略。
+                self.retired_distributions.push(old_distribution);
+            }
+            self.sky_texture = state.texture;
+        }
+        self.sky_enabled = state.enabled;
+        self.sky_intensity = state.intensity;
+        self.sky_revision = state.revision;
+        state_changed
+    }
+
+    /// 观察当前 scene sky 的 CPU texture bytes，并在 texture manager 上传真实 sky image 前构建采样分布。
+    ///
+    /// `World::sync_for_render` 的 texture upload payload 只会被消费一次，因此分布构建必须发生在
+    /// `RenderWorld::prepare_asset_sync`。真实 sky image 仍由 `RenderTextureManager` 上传；本 bridge 只拥有与默认 sky
     /// 采样语义绑定的 alias table。
     pub(crate) fn observe_texture_loaded(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        handle: AssetTextureHandle,
+        handle: SceneTextureHandle,
         data: &TextureBytes,
     ) {
-        if handle != self.sky_texture {
+        if Some(handle) != self.sky_texture {
             return;
         }
 
         let Some(build) = Self::build_distribution_from_texture(data) else {
-            log::warn!("SkyBridge: default sky distribution fell back to uniform because texture data is invalid");
+            log::warn!(
+                "RenderSkyManager: default sky distribution fell back to uniform because texture data is invalid"
+            );
             return;
         };
 
@@ -182,12 +208,12 @@ impl SkyBridge {
         self.next_distribution_version = self.next_distribution_version.saturating_add(1).max(2);
         self.sky_distribution =
             Some(SkyDistributionResource::new(resource_ctx, immediate_ctx, build, version, "DefaultSkyDistribution"));
-        log::info!("SkyBridge: default sky importance distribution is ready, version={version}");
+        log::info!("RenderSkyManager: scene sky importance distribution is ready, version={version}");
     }
 
-    pub(crate) fn observe_texture_failed(&mut self, handle: AssetTextureHandle, error: &str) {
-        if handle == self.sky_texture {
-            log::warn!("SkyBridge: default sky texture failed; keep fallback sky distribution: {error}");
+    pub(crate) fn observe_texture_failed(&mut self, handle: SceneTextureHandle, error: &str) {
+        if Some(handle) == self.sky_texture {
+            log::warn!("RenderSkyManager: scene sky texture failed; keep fallback sky distribution: {error}");
         }
     }
 
@@ -195,25 +221,36 @@ impl SkyBridge {
     ///
     /// 这里故意先检查 `is_texture_ready`，避免 `TextureResolver::resolve_texture` 在未就绪时
     /// 返回材质专用的洋红 fallback。sky 的降级策略由本 bridge 独立定义。
-    pub(crate) fn update_sky_binding(&mut self, texture_resolver: &dyn TextureResolver) -> SkyBindingUpdate {
-        let real_ready = texture_resolver.is_texture_ready(self.sky_texture);
+    pub(crate) fn update_sky_binding(
+        &mut self,
+        scene_sky: &SceneSkyState,
+        texture_resolver: &dyn TextureResolver,
+    ) -> SkyBindingUpdate {
+        let scene_changed = self.apply_scene_sky_state(scene_sky);
+        let real_ready =
+            self.sky_texture.is_some_and(|texture| self.sky_enabled && texture_resolver.is_texture_ready(texture));
         let sky_source_changed = self.using_real_sky != real_ready;
         self.using_real_sky = real_ready;
 
         if sky_source_changed {
             if real_ready {
-                log::info!("SkyBridge: default sky is GPU ready; switch from fallback sky");
+                log::info!("RenderSkyManager: scene sky is GPU ready; switch from fallback sky");
             } else {
-                log::warn!("SkyBridge: default sky is not GPU ready; switch to fallback sky");
+                log::warn!("RenderSkyManager: scene sky is not GPU ready; switch to fallback sky");
             }
         }
 
-        let distribution = self.active_distribution(real_ready).to_binding();
+        let mut distribution = self.active_distribution(real_ready).to_binding();
+        if !self.sky_enabled {
+            distribution.enabled = 0;
+        }
         let distribution_changed = self.last_active_distribution_version != distribution.version;
         self.last_active_distribution_version = distribution.version;
 
         let binding = if real_ready {
-            let texture = texture_resolver.resolve_texture(self.sky_texture);
+            let texture = texture_resolver.resolve_texture(
+                self.sky_texture.expect("RenderSkyManager: real_ready requires a scene texture handle"),
+            );
             EnvironmentSkyBinding {
                 srv_handle: texture.srv_handle,
                 sampler: gpu::bindless::ESamplerType_LinearClamp,
@@ -229,11 +266,11 @@ impl SkyBridge {
 
         SkyBindingUpdate {
             binding,
-            changed: sky_source_changed || distribution_changed,
+            changed: scene_changed || sky_source_changed || distribution_changed,
         }
     }
 
-    /// 释放 fallback sky。真实 sky texture 由 `AssetTextureManager` 释放。
+    /// 释放 fallback sky。真实 sky texture 由 `RenderTextureManager` 释放。
     pub(crate) fn destroy_mut(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -438,7 +475,7 @@ impl SkyBridge {
     }
 }
 
-impl Drop for SkyBridge {
+impl Drop for RenderSkyManager {
     fn drop(&mut self) {
         debug_assert!(self.fallback.image_handle.is_null());
         debug_assert!(self.fallback.view_handle.is_null());

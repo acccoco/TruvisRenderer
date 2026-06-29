@@ -24,8 +24,8 @@ pub(crate) struct RtTriangleMeta {
 /// render-side mesh 的 GPU 几何资源。
 ///
 /// 当前统一使用 `VertexLayoutSoA3D`，同一份 vertex/index buffer 同时服务光栅化 draw、
-/// BLAS build 和 shader device address 读取。资源所有权由 `AssetMeshManager` 持有，
-/// `GpuScene` 只借用它生成 geometry table、TLAS instance 和 raster draw cache。
+/// BLAS build 和 shader device address 读取。资源所有权由 `RenderMeshManager` 持有，
+/// `RenderWorld` 只借用它生成 geometry table、TLAS instance 和 raster draw cache。
 pub struct RtGeometry {
     /// SoA 顶点 buffer，按 position/normal/tangent/uv 四段提供 device address。
     pub vertex_buffer: GfxVertexBuffer<VertexLayoutSoA3D>,

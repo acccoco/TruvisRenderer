@@ -3,40 +3,30 @@ use std::{env, ffi::CStr};
 use ash::vk::{self, Handle};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::bindings::global_descriptor_sets::PerFrameDescriptorBinding;
-use crate::bindings::per_frame_gpu_data::PerFrameGpuData;
-use crate::bindings::shader_binding_system::ShaderBindingSystem;
-use crate::resources::cmd_allocator::CmdAllocator;
-use crate::resources::gfx_resource_manager::GfxResourceManager;
-use truvis_asset::asset_hub::{AssetHub, AssetLoadedEvent};
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::commands::submit_info::GfxSubmitInfo;
 use truvis_gfx::gfx::{Gfx, GfxDeviceInfoCtx};
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
+use truvis_path::TruvisPath;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_shader_binding::gpu;
-use truvis_utils::ConfigUtils;
-use truvis_world::scene_manager::SceneManager;
-
 use truvis_streamline_binding::dlss;
+use truvis_utils::ConfigUtils;
 use truvis_world::World;
 
+use crate::bindings::global_descriptor_sets::PerFrameDescriptorBinding;
+use crate::bindings::per_frame_gpu_data::PerFrameGpuData;
+use crate::bindings::shader_binding_system::ShaderBindingSystem;
 use crate::present::swapchain_presenter::SwapchainPresenter;
 use crate::ray_cast::RayCastService;
 use crate::render_runtime_ctx::RenderPassRecordCtx;
-use crate::render_scene::gpu_scene::GpuScene;
+use crate::render_world::render_world::RenderWorld;
+use crate::resources::cmd_allocator::CmdAllocator;
+use crate::resources::gfx_resource_manager::GfxResourceManager;
 use crate::runtime_defaults::DefaultRenderRuntimeSettings;
-use crate::scene_sync::asset_mesh_manager::AssetMeshManager;
-use crate::scene_sync::asset_texture_manager::AssetTextureManager;
-use crate::scene_sync::emissive_light_table::EmissiveLightTable;
-use crate::scene_sync::environment_binding::EnvironmentBinding;
-use crate::scene_sync::instance_bridge::InstanceBridge;
-use crate::scene_sync::material_bridge::MaterialBridge;
-use crate::scene_sync::material_manager::MaterialManager;
-use crate::scene_sync::sky_bridge::SkyBridge;
 use crate::state::dlss_options::{DlssFeature, DlssOptions};
 use crate::state::dlss_sr::{DlssSrMode, DlssSrState};
 use crate::state::frame_state::FrameRenderState;
@@ -85,14 +75,7 @@ pub struct RenderRuntime {
     dlss_options: DlssOptions,
     dlss_sr_state: DlssSrState,
     view_accum: ViewAccumState,
-    gpu_scene: GpuScene,
-    emissive_light_table: EmissiveLightTable,
-    asset_texture_manager: AssetTextureManager,
-    sky_bridge: SkyBridge,
-    asset_mesh_manager: AssetMeshManager,
-    material_manager: MaterialManager,
-    material_bridge: MaterialBridge,
-    instance_bridge: InstanceBridge,
+    render_world: RenderWorld,
     ray_cast_service: RayCastService,
 
     cmd_allocator: CmdAllocator,
@@ -100,7 +83,7 @@ pub struct RenderRuntime {
     timer: FrameTimer,
     fif_timeline_semaphore: GfxSemaphore,
 
-    gpu_scene_update_cmds: Vec<GfxCommandBuffer>,
+    render_world_update_cmds: Vec<GfxCommandBuffer>,
 
     swapchain_presenter: Option<SwapchainPresenter>,
     last_applied_dlss_options: DlssOptions,
@@ -110,8 +93,9 @@ pub struct RenderRuntime {
 impl RenderRuntime {
     /// 创建不依赖窗口系统的 runtime root state。
     ///
-    /// 这里会初始化 `Gfx`、CPU `World`、GPU resource/binding/timing owner、资产管理器、SkyBridge、
-    /// material/instance bridge、私有 `GpuScene` 和全局描述符，但不会创建 surface/swapchain。窗口相关资源必须等
+    /// 这里会初始化 `Gfx`、CPU `World`、GPU resource/binding/timing owner、私有 `RenderWorld`
+    /// 和全局描述符；texture/mesh/material/instance/sky/emissive managers 在 `RenderWorld` 内部创建。
+    /// 这里不会创建 surface/swapchain。窗口相关资源必须等
     /// `init_after_window` 收到平台层 raw handle 后再创建。
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
         let _span = tracy_client::span!("RenderRuntime::new");
@@ -164,59 +148,28 @@ impl RenderRuntime {
             (gfx_resource_manager, cmd_allocator, frame_timing, shader_binding_system)
         };
 
-        let asset_texture_manager = {
-            let _span = tracy_client::span!("RenderRuntime::new/asset_texture_manager");
-            AssetTextureManager::new(
+        let mut world = {
+            let _span = tracy_client::span!("RenderRuntime::new/world");
+            World::new()
+        };
+        let default_sky_texture = {
+            let _span = tracy_client::span!("RenderRuntime::new/default_sky_texture");
+            world
+                .register_texture(TruvisPath::resources_path("sky.jpg"))
+                .expect("failed to register default sky texture")
+        };
+        world.update_sky_texture(Some(default_sky_texture)).expect("failed to assign default sky texture");
+        let render_world = {
+            let _span = tracy_client::span!("RenderRuntime::new/render_world");
+            RenderWorld::new(
                 gfx.resource_ctx(),
                 gfx.device_ctx(),
                 gfx.immediate_ctx(),
                 gfx.queue_ctx(),
                 &mut gfx_resource_manager,
                 &mut shader_binding_system,
+                frame_timing.frame_token(),
             )
-        };
-        let asset_mesh_manager = {
-            let _span = tracy_client::span!("RenderRuntime::new/asset_mesh_manager");
-            AssetMeshManager::new(gfx.device_ctx(), gfx.queue_ctx())
-        };
-        let material_manager = {
-            let _span = tracy_client::span!("RenderRuntime::new/material_manager");
-            MaterialManager::new(gfx.resource_ctx(), frame_timing.frame_token())
-        };
-        let material_bridge = {
-            let _span = tracy_client::span!("RenderRuntime::new/material_bridge");
-            MaterialBridge::new()
-        };
-        let instance_bridge = {
-            let _span = tracy_client::span!("RenderRuntime::new/instance_bridge");
-            InstanceBridge::new(frame_timing.frame_token())
-        };
-        let scene_manager = {
-            let _span = tracy_client::span!("RenderRuntime::new/scene_manager");
-            SceneManager::new()
-        };
-        let mut asset_hub = {
-            let _span = tracy_client::span!("RenderRuntime::new/asset_hub");
-            AssetHub::new()
-        };
-        let sky_bridge = {
-            let _span = tracy_client::span!("RenderRuntime::new/sky_bridge");
-            SkyBridge::new(
-                gfx.resource_ctx(),
-                gfx.device_ctx(),
-                gfx.immediate_ctx(),
-                &mut asset_hub,
-                &mut gfx_resource_manager,
-                &mut shader_binding_system,
-            )
-        };
-        let gpu_scene = {
-            let _span = tracy_client::span!("RenderRuntime::new/gpu_scene");
-            GpuScene::new(gfx.resource_ctx())
-        };
-        let emissive_light_table = {
-            let _span = tracy_client::span!("RenderRuntime::new/emissive_light_table");
-            EmissiveLightTable::new(gfx.resource_ctx())
         };
 
         let ray_cast_service = {
@@ -236,11 +189,11 @@ impl RenderRuntime {
         };
 
         let cmds = {
-            let _span = tracy_client::span!("RenderRuntime::new/gpu_scene_update_cmds");
+            let _span = tracy_client::span!("RenderRuntime::new/render_world_update_cmds");
             FrameCounter::frame_labes()
                 .into_iter()
                 .map(|frame_label| {
-                    cmd_allocator.alloc_command_buffer(gfx.device_ctx(), frame_label, "gpu-scene-update")
+                    cmd_allocator.alloc_command_buffer(gfx.device_ctx(), frame_label, "render-world-update")
                 })
                 .collect()
         };
@@ -252,23 +205,13 @@ impl RenderRuntime {
                 cmd_allocator,
                 timer,
                 fif_timeline_semaphore,
-                gpu_scene_update_cmds: cmds,
+                render_world_update_cmds: cmds,
                 swapchain_presenter: None,
                 last_applied_dlss_options: DlssOptions::NATIVE,
 
-                world: World {
-                    scene_manager,
-                    asset_hub,
-                },
-                asset_texture_manager,
-                sky_bridge,
-                asset_mesh_manager,
-                material_manager,
-                material_bridge,
-                instance_bridge,
+                world,
                 ray_cast_service,
-                gpu_scene,
-                emissive_light_table,
+                render_world,
                 gfx_resource_manager,
                 shader_binding_system,
                 frame_timing,
@@ -385,7 +328,7 @@ impl RenderRuntime {
     /// 销毁 runtime 拥有的所有 GPU/CPU 子资源，并最后销毁 `Gfx` root owner。
     ///
     /// 调用前应已经完成 app/plugin shutdown。销毁顺序刻意从依赖 `Gfx` 的子资源开始，
-    /// 先释放 present/asset/GpuScene/command/descriptor 等对象，最后销毁 `Gfx`，
+    /// 先释放 present/asset/RenderWorld/command/descriptor 等对象，最后销毁 `Gfx`，
     /// 这样所有 Vulkan wrapper 都能通过有效的 typed Ctx 显式释放。
     pub fn destroy(mut self) {
         self.gfx.wait_idel();
@@ -403,29 +346,18 @@ impl RenderRuntime {
 
         self.ray_cast_service.destroy_mut(self.gfx.resource_ctx(), self.gfx.device_ctx());
         // CPU scene/asset 与 render-side bridge 按依赖方向释放：先停止 scene runtime，
-        // 再释放 material/texture/mesh/GpuScene 等 GPU 翻译缓存。
-        self.world.scene_manager.destroy();
-        self.material_bridge.destroy();
-        self.material_manager.destroy(self.gfx.resource_ctx());
-        self.sky_bridge.destroy_mut(
+        // 再释放 RenderWorld 内部的 texture/material/mesh/instance/TLAS 等 GPU 翻译缓存。
+        self.world.destroy_scene_mut();
+        self.world.destroy();
+        self.render_world.destroy(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             &mut self.shader_binding_system,
             &mut self.gfx_resource_manager,
         );
-        self.asset_texture_manager.destroy(
-            self.gfx.resource_ctx(),
-            self.gfx.device_ctx(),
-            &mut self.gfx_resource_manager,
-            &mut self.shader_binding_system,
-        );
-        self.world.asset_hub.destroy();
-        self.emissive_light_table.destroy_mut(self.gfx.resource_ctx());
-        self.gpu_scene.destroy_mut(self.gfx.resource_ctx(), self.gfx.device_ctx());
-        self.asset_mesh_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
         // per-frame UBO 与 command allocator 在所有使用它们的 scene/present 资源之后释放。
         self.per_frame_gpu_data.destroy(self.gfx.resource_ctx());
-        self.gpu_scene_update_cmds.clear();
+        self.render_world_update_cmds.clear();
         self.cmd_allocator.destroy(self.gfx.device_ctx());
         self.gfx_resource_manager.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
         self.fif_timeline_semaphore.destroy(self.gfx.device_ctx());
@@ -438,10 +370,10 @@ impl RenderRuntime {
 // 生命周期方法（public API）
 // ---------------------------------------------------------------------------
 impl RenderRuntime {
-    /// 自包含的帧开始流程：帧计时器推进、FIF 等待、资源清理、bindless 推进和资产更新。
+    /// 自包含的帧开始流程：帧计时器推进、FIF 等待、资源清理和 bindless / RenderWorld frame token 推进。
     ///
     /// 这里是 runtime 每帧唯一的资源回收入口。先等待当前 FIF 槽位不再被 GPU 使用，
-    /// 再重置命令池和延迟释放队列，最后消费 `AssetHub` 的异步事件并推进上传队列。
+    /// 再重置命令池和延迟释放队列；`World::sync_for_render` 在 update 之后的 prepare 边界执行。
     pub fn begin_frame(&mut self) {
         let _span = tracy_client::span!("RenderRuntime::begin_frame");
         self.timer.tick();
@@ -471,13 +403,10 @@ impl RenderRuntime {
         self.frame_timing.update_time(self.timer.delta_time_s(), self.timer.total_time_s());
 
         let frame_token = self.frame_timing.frame_token();
-        // bindless/material/instance 都使用同一个 frame token 推进延迟回收窗口，
+        // bindless 与 RenderWorld 内部 managers 都使用同一个 frame token 推进延迟回收窗口，
         // 保持 shader-visible slot 与 handle 的复用节奏一致。
         self.shader_binding_system.begin_frame(frame_token);
-        self.material_manager.begin_frame(frame_token);
-        self.instance_bridge.begin_frame(frame_token);
-
-        self.dispatch_loaded_asset_events();
+        self.render_world.begin_frame(frame_token);
     }
 
     /// 执行内部 frame state 同步并获取 swapchain image，
@@ -514,7 +443,7 @@ impl RenderRuntime {
         // DLSS constants 与本帧相机快照绑定，必须在 render graph 录制 evaluate 前更新。
         let dlss_active = self.dlss_options.is_dlss_active();
         self.dlss_sr_state.update(render_view, &self.frame_state, dlss_active);
-        self.prepare_gpu_scene(render_view);
+        self.prepare_render_world(render_view);
         self.update_perframe_descriptor_set();
     }
 
@@ -529,8 +458,8 @@ impl RenderRuntime {
             queue_ctx: self.gfx.queue_ctx(),
             frame_timing: &self.frame_timing,
             shader_bindings: self.shader_binding_system.view(),
-            render_scene: &self.gpu_scene,
-            instance_bridge: &self.instance_bridge,
+            render_scene: &self.render_world,
+            render_instance_manager: self.render_world.render_instance_manager(),
             ray_cast_service: &mut self.ray_cast_service,
         }
     }
@@ -559,7 +488,7 @@ impl RenderRuntime {
                 gfx_resource_manager: &self.gfx_resource_manager,
                 per_frame_gpu_data: &self.per_frame_gpu_data,
             },
-            render_scene: &self.gpu_scene,
+            render_scene: &self.render_world,
             present: self.swapchain_presenter.as_ref().unwrap().view(),
             timeline: &self.fif_timeline_semaphore,
         }
@@ -616,7 +545,7 @@ impl RenderRuntime {
                 new_options.rr_enabled()
             );
             self.dlss_sr_state.request_reset();
-            self.instance_bridge.request_motion_history_reset();
+            self.render_world.request_motion_history_reset();
             if old_feature != new_feature {
                 if let Some(feature) = old_feature {
                     // slFreeResources 会销毁 Streamline 内部 Vulkan image/buffer；必须先等待上一帧
@@ -655,7 +584,7 @@ impl RenderRuntime {
         self.view_accum.reset();
         // render extent 变化会让 DLSS history 的 sample grid 失效，即使相机没有变化也必须 reset。
         self.dlss_sr_state.request_reset();
-        self.instance_bridge.request_motion_history_reset();
+        self.render_world.request_motion_history_reset();
 
         Some(RenderRuntimeResizeCtx {
             device_ctx: self.gfx.device_ctx(),
@@ -807,62 +736,9 @@ impl RenderRuntime {
 }
 
 // ---------------------------------------------------------------------------
-// 资产事件与 prepare 数据上传
+// Prepare 数据上传
 // ---------------------------------------------------------------------------
 impl RenderRuntime {
-    /// 消费 `AssetHub::update` 产出的加载事件，并转发给对应 render-side owner。
-    ///
-    /// texture 与 mesh 事件会进入 GPU 上传队列；material 事件会进入稳定 slot 映射。
-    /// model ready/failed 状态由 app 通过 `AssetHub` 查询，不通过 runtime 事件分发。
-    fn dispatch_loaded_asset_events(&mut self) {
-        let _span = tracy_client::span!("RenderRuntime::dispatch_loaded_asset_events");
-        let loaded_asset_events = self.world.asset_hub.update();
-        let mut texture_events = Vec::new();
-        let mut mesh_events = Vec::new();
-        let mut material_events = Vec::new();
-        for event in loaded_asset_events {
-            // 事件分流集中在 runtime 的帧开始阶段，避免各 asset manager 直接接触完整
-            // asset event 集合，也让它们可以用更窄的事件集合维护自身契约。
-            match event {
-                AssetLoadedEvent::TextureLoaded { handle, data } => {
-                    self.sky_bridge.observe_texture_loaded(
-                        self.gfx.resource_ctx(),
-                        self.gfx.immediate_ctx(),
-                        handle,
-                        &data,
-                    );
-                    texture_events.push(AssetLoadedEvent::TextureLoaded { handle, data });
-                }
-                AssetLoadedEvent::TextureFailed { handle, error } => {
-                    self.sky_bridge.observe_texture_failed(handle, &error);
-                    texture_events.push(AssetLoadedEvent::TextureFailed { handle, error });
-                }
-                event @ AssetLoadedEvent::MeshLoaded { .. } => {
-                    mesh_events.push(event);
-                }
-                event @ AssetLoadedEvent::MaterialLoaded { .. } => {
-                    material_events.push(event);
-                }
-            }
-        }
-
-        self.asset_texture_manager.update(
-            texture_events,
-            self.gfx.resource_ctx(),
-            self.gfx.device_ctx(),
-            self.gfx.queue_ctx(),
-            &mut self.gfx_resource_manager,
-            &mut self.shader_binding_system,
-        );
-        self.asset_mesh_manager.update(
-            mesh_events,
-            self.gfx.resource_ctx(),
-            self.gfx.device_ctx(),
-            self.gfx.queue_ctx(),
-        );
-        self.material_bridge.apply_material_events(material_events, &mut self.material_manager);
-    }
-
     /// 根据 app render view 快照更新 main view 累积帧计数。
     ///
     /// 累积渲染关心最终视图/投影是否变化；后续 pass 根据这里的计数决定是否复用上一帧结果。
@@ -870,37 +746,35 @@ impl RenderRuntime {
         self.view_accum.update_accum_frames(render_view.accum_signature());
     }
 
-    /// 合成 `GpuScene` 用于判断 TLAS 是否过期的 scene revision。
-    ///
-    /// mesh ready revision 覆盖 BLAS 新增/替换，instance revision 覆盖实例增删、ready 状态
-    /// 和 transform 变化；使用 saturating add 保证长时间运行时不会回绕成旧 revision。
-    fn combine_scene_revision(mesh_ready_revision: u64, instance_revision: u64) -> u64 {
-        mesh_ready_revision.saturating_add(instance_revision)
-    }
-
-    /// 合成自发光 light table 的重建 revision。
-    ///
-    /// 自发光表除了 mesh ready 和 instance transform/lifecycle 外，还依赖材质 CPU 参数；
-    /// 因此不能复用只服务 TLAS 的 scene revision，否则 emissive/base color 更新后表不会刷新。
-    fn combine_emissive_light_revision(
-        mesh_ready_revision: u64,
-        instance_revision: u64,
-        material_revision: u64,
-    ) -> u64 {
-        mesh_ready_revision.saturating_add(instance_revision).saturating_add(material_revision)
-    }
-
     /// 准备 render pass 可见的 GPU scene 与 per-frame uniform。
     ///
     /// 该函数把所有 staging copy 录到同一个 command buffer，最后一次提交到 graphics queue；
     /// render graph 在后续命令提交中通过常规 queue 顺序看到这些写入。
-    fn prepare_gpu_scene(&mut self, render_view: &RenderView) {
-        let _span = tracy_client::span!("RenderRuntime::prepare_gpu_scene");
+    fn prepare_render_world(&mut self, render_view: &RenderView) {
+        let _span = tracy_client::span!("RenderRuntime::prepare_render_world");
         let frame_extent = self.frame_state.render_extent;
         let frame_label = self.frame_timing.frame_label();
-        let cmd = self.gpu_scene_update_cmds[*frame_label].clone();
+        let cmd = self.render_world_update_cmds[*frame_label].clone();
 
-        // GPU scene 更新使用独立命令缓冲，把 material/instance/geometry/light/scene buffer
+        // World 同步必须发生在 App update 之后、RenderWorld buffer 上传之前。
+        // 这里会 drain AssetHub 完成事件并产出 typed asset payload；RenderWorld 随后注册
+        // texture SRV / mesh BLAS / material slot，再由 bindless prepare 写入本帧 descriptor。
+        let world_sync = self.world.sync_for_render();
+        let scene_changes = world_sync.scene_changes;
+        let scene_view = self.world.scene_view();
+        self.render_world.prepare_asset_sync(
+            world_sync.asset_uploads,
+            &scene_changes,
+            scene_view,
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            self.gfx.immediate_ctx(),
+            self.gfx.queue_ctx(),
+            &mut self.gfx_resource_manager,
+            &mut self.shader_binding_system,
+        );
+
+        // RenderWorld 更新使用独立命令缓冲，把 material/instance/geometry/light/scene buffer
         // 的 staging copy 和 barrier 串在一起，作为 render graph 录制前的固定准备阶段。
         cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "[update-draw-buffer]stage-to-ubo");
 
@@ -917,66 +791,20 @@ impl RenderRuntime {
         // bindless 表先更新，因为 material upload 和环境绑定都可能立即解析 texture SRV handle；
         // 后续 scene root buffer 会写入这些 shader-visible handle。
         self.shader_binding_system.prepare_render_data(self.gfx.device_ctx(), &self.gfx_resource_manager);
-        let sky_update = self.sky_bridge.update_sky_binding(&self.asset_texture_manager);
-        if sky_update.changed {
-            // sky 从 fallback 切换到真实贴图时，历史累积帧已经不再对应当前环境光。
-            self.view_accum.reset();
-        }
-        let environment_binding = EnvironmentBinding {
-            sky: sky_update.binding,
-        };
-
-        // material loaded 事件已在 begin_frame 进入稳定 slot；这里只根据 texture ready/fallback
-        // 状态写当前 FIF 的 material buffer。
-        self.material_manager.update(&self.asset_texture_manager);
-        self.material_manager.upload(
-            self.gfx.resource_ctx(),
-            &cmd,
-            transfer_barrier_mask,
-            frame_label,
-            &self.asset_texture_manager,
-        );
-
-        // instance 阶段是 CPU scene 到 render-side `RenderData` 的边界；只有 mesh 与 material
-        // 都解析成功的实例会进入 active 列表。
-        let material_slot_resolver = self.material_bridge.slot_resolver(&self.material_manager);
-        let scene_render_data = self.instance_bridge.prepare_render_data(
-            &self.world.scene_manager,
-            &material_slot_resolver,
-            &self.asset_mesh_manager,
-        );
-        let material_buffer_device_address = self.material_manager.material_buffer_device_address(frame_label);
-        let emissive_light_revision = Self::combine_emissive_light_revision(
-            self.asset_mesh_manager.ready_revision(),
-            self.instance_bridge.revision(),
-            self.material_manager.revision(),
-        );
-        let emissive_light_binding = self.emissive_light_table.update_and_upload(
-            self.gfx.resource_ctx(),
-            &cmd,
-            transfer_barrier_mask,
-            self.frame_timing.frame_counter(),
-            &scene_render_data,
-            &self.material_manager,
-            emissive_light_revision,
-        );
-        // mesh ready 与 instance 变化都会影响 TLAS；两个 revision 合成一条 scene revision，
-        // 交给 GpuScene 判断当前 FIF 的 TLAS 是否需要重建。
-        let scene_revision =
-            Self::combine_scene_revision(self.asset_mesh_manager.ready_revision(), self.instance_bridge.revision());
-        self.gpu_scene.upload_render_data(
+        let render_world_result = self.render_world.prepare_render_data(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.immediate_ctx(),
             &cmd,
             transfer_barrier_mask,
             self.frame_timing.frame_counter(),
-            &scene_render_data,
-            material_buffer_device_address,
-            scene_revision,
-            environment_binding,
-            emissive_light_binding,
+            scene_view,
+            &scene_changes,
         );
+        if render_world_result.sky_changed {
+            // sky 从 fallback 切换到真实贴图时，历史累积帧已经不再对应当前环境光。
+            self.view_accum.reset();
+        }
 
         // per-frame uniform 放在 GPU scene 上传之后写入同一条命令缓冲，保证本帧 shader
         // 看到的相机、分辨率、时间和 scene buffer 都来自同一个 prepare 快照。
@@ -1070,7 +898,7 @@ impl RenderRuntime {
         self.last_applied_dlss_options = new_options;
         self.view_accum.reset();
         self.dlss_sr_state.request_reset();
-        self.instance_bridge.request_motion_history_reset();
+        self.render_world.request_motion_history_reset();
     }
 
     fn resolve_frame_state_for_output(&mut self, output_extent: vk::Extent2D) -> FrameRenderState {
@@ -1168,12 +996,12 @@ impl RenderRuntime {
 
     /// 刷新当前 FIF per-frame descriptor set。
     ///
-    /// descriptor 指向刚写入的 per-frame UBO 和 `GpuScene` scene root buffer；render pass
+    /// descriptor 指向刚写入的 per-frame UBO 和 shader ABI `gpu::scene::GpuScene` root buffer；render pass
     /// 通过全局 descriptor set 读取本帧相机、时间与 scene device address。
     fn update_perframe_descriptor_set(&mut self) {
         let frame_label = self.frame_timing.frame_label();
         let per_frame_data_buffer = self.per_frame_gpu_data.buffer(frame_label);
-        let gpu_scene_buffer = self.gpu_scene.scene_buffer(frame_label);
+        let gpu_scene_buffer = self.render_world.scene_buffer(frame_label);
         let perframe_set =
             self.shader_binding_system.global_descriptor_sets().current_perframe_set(frame_label).handle();
 

@@ -1,16 +1,15 @@
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
-use truvis_gfx::raytracing::acceleration::GfxAcceleration;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::render_scene_view::RenderSceneAccumSignature;
 use truvis_shader_binding::gpu;
 
-/// 构建 GPU scene 所需的 per-FIF buffer 集。
+/// 构建 render-side scene 所需的 per-FIF buffer 集。
 ///
 /// 每个 frame label 拥有独立的 scene/instance/geometry/light/material-indirect buffer，
 /// 避免 CPU 准备下一帧数据时覆盖 GPU 仍在读取的上一帧 buffer。
-pub(super) struct GpuSceneBuffers {
+pub(super) struct RenderWorldBuffers {
     /// scene root UBO，保存 shader 访问其它 scene buffer 的 device address 与 bindless handle。
     pub(super) scene_buffer: GfxStructuredBuffer<gpu::scene::GpuScene>,
     /// point light device buffer，与 `point_light_stage_buffer` 成对使用。
@@ -35,24 +34,21 @@ pub(super) struct GpuSceneBuffers {
     pub(super) geometry_indirect_buffer: GfxStructuredBuffer<u32>,
     pub(super) geometry_indirect_stage_buffer: GfxStructuredBuffer<u32>,
 
-    // TODO 使用 frame id 来标记是否过期，scene manager 里面也需要有相应的标记
-    pub(super) tlas: Option<GfxAcceleration>,
-    pub(super) tlas_revision: u64,
     /// 当前 FIF 的 scene 语义版本快照，供离线累计判断历史图像是否仍可复用。
     pub(super) accum_signature: RenderSceneAccumSignature,
 }
 
-impl GpuSceneBuffers {
+impl RenderWorldBuffers {
     /// 创建一个 FIF frame label 独占的 scene buffer 集。
     ///
-    /// 固定容量与 `InstanceBridge` 等上游桥接层的 slot 上限保持一致；容量不足时上传阶段
+    /// 固定容量与 `RenderInstanceManager` 等上游桥接层的 slot 上限保持一致；容量不足时上传阶段
     /// 会显式 panic，便于暴露当前后端还没有动态扩容的限制。
     pub(super) fn new(ctx: GfxResourceCtx<'_>, frame_label: FrameLabel) -> Self {
         let max_light_cnt = 512;
         let max_geometry_cnt = 1024 * 8;
         let max_instance_cnt = 1024;
 
-        GpuSceneBuffers {
+        RenderWorldBuffers {
             scene_buffer: GfxStructuredBuffer::new_ubo(ctx, 1, format!("scene buffer-{}", frame_label)),
             point_light_buffer: GfxStructuredBuffer::new_ssbo(
                 ctx,
@@ -124,17 +120,12 @@ impl GpuSceneBuffers {
                 max_instance_cnt * 8,
                 format!("instance geometry stage buffer-{}", frame_label),
             ),
-            tlas: None,
-            tlas_revision: 0,
             accum_signature: RenderSceneAccumSignature::default(),
         }
     }
 
-    /// 销毁该 FIF 的全部 scene buffer 与 TLAS。
-    pub(super) fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
-        if let Some(tlas) = self.tlas.take() {
-            tlas.destroy(resource_ctx, device_ctx, DestroyReason::Shutdown);
-        }
+    /// 销毁该 FIF 的全部 scene buffer。
+    pub(super) fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, _device_ctx: GfxDeviceCtx<'_>) {
         self.scene_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
         self.point_light_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
         self.point_light_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);

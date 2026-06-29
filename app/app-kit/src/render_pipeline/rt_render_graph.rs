@@ -401,11 +401,11 @@ impl RtPipelineInner {
             ctx.shader_binding_system.global_descriptor_sets(),
             ctx.present.swapchain_image_info().image_format,
         );
-        // `RenderRuntime::new` 早于窗口创建，只能给 `FrameRenderState` 一个占位 extent；
-        // app-owned target 必须使用 init 阶段已经创建好的 swapchain extent，避免首帧按 400x400
-        // 创建中间图像。runtime 会在 `init_after_window` 同步该值，这里仍显式覆盖，保证契约局部可见。
-        let mut target_frame_state = *ctx.frame_state;
-        target_frame_state.set_native_extent(ctx.swapchain_image_info.image_extent);
+        // runtime 在 Plugin init 前已经根据 swapchain extent 和当前 DLSS options 解析好
+        // `FrameRenderState`。这里不能再把 render extent 覆盖为 native extent，否则
+        // SR/RR 的低分辨率 RT/GBuffer/DLSS 输入会和 Streamline options 失配。
+        debug_assert_eq!(ctx.frame_state.output_extent, ctx.swapchain_image_info.image_extent);
+        let target_frame_state = *ctx.frame_state;
 
         let rt_targets = RtWorkingTargets::new(
             ctx.resource_ctx,

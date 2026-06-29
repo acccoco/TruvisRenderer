@@ -1,11 +1,9 @@
-use std::path::PathBuf;
-
-use truvis_asset::handle::{AssetMeshKey, MeshData};
+use truvis_asset::handle::MeshData;
 
 /// 内置程序化 mesh 类型。
 ///
 /// 这些数据只描述 CPU 侧顶点属性和索引，不创建 GPU buffer 或 BLAS。调用方应通过
-/// `AssetHub::register_mesh_data` 注册后进入标准 `AssetMeshManager` 路径。
+/// `World::register_mesh` 注册后进入标准 `RenderMeshManager` 路径。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProceduralMeshKind {
     Triangle,
@@ -21,14 +19,6 @@ impl ProceduralMeshKind {
             Self::Rect => "procedural-rect",
             Self::Floor => "procedural-floor",
             Self::Cube => "procedural-cube",
-        }
-    }
-
-    /// 用于注册到 `AssetHub` 的稳定 key。
-    pub fn asset_key(self) -> AssetMeshKey {
-        AssetMeshKey {
-            source_path: PathBuf::from(format!("procedural://{}", self.name())),
-            mesh_index: 0,
         }
     }
 

@@ -8,7 +8,7 @@ use super::render_data::RenderData;
 
 /// 光栅化 pass 的轻量 draw cache。
 ///
-/// `GpuScene` 在 prepare 阶段从 `RenderData` 展开出每个 submesh 的 buffer 绑定信息，
+/// `RenderWorld` 在 prepare 阶段从 `RenderData` 展开出每个 submesh 的 buffer 绑定信息，
 /// render pass 只遍历这个 cache，不再接触 scene/asset bridge。
 #[derive(Clone, Copy)]
 pub(super) struct RasterDrawItem {
@@ -52,7 +52,7 @@ pub(super) fn draw_raster_cache(
     before_draw: &mut dyn FnMut(u32, u32),
 ) {
     // render pass 只获得只读 view。每次 draw 前回调 instance slot/submesh index，
-    // 让具体 pass 能绑定 push constants 或 descriptor，而不暴露 GpuScene 内部缓存结构。
+    // 让具体 pass 能绑定 push constants 或 descriptor，而不暴露 RenderWorld 内部缓存结构。
     for draw in draw_cache {
         cmd.cmd_bind_index_buffer_raw(draw.index_buffer, 0, super::geometry::RtGeometry::index_type());
         cmd.cmd_bind_vertex_buffers(0, &draw.vertex_buffers, &draw.vertex_offsets);

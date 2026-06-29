@@ -1,17 +1,18 @@
-use crate::bindings::per_frame_gpu_data::PerFrameGpuData;
-use crate::bindings::shader_binding_system::{ShaderBindingSystem, ShaderBindingView};
-use crate::resources::cmd_allocator::CmdAllocator;
-use crate::resources::gfx_resource_manager::GfxResourceManager;
 use ash::vk;
+
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_world::World;
 
+use crate::bindings::per_frame_gpu_data::PerFrameGpuData;
+use crate::bindings::shader_binding_system::{ShaderBindingSystem, ShaderBindingView};
 use crate::present::swapchain_presenter::PresentView;
 use crate::ray_cast::{RayCastRay, RayCastResult, RayCastService};
-use crate::scene_sync::instance_bridge::InstanceBridge;
+use crate::render_world::render_instance_manager::RenderInstanceManager;
+use crate::resources::cmd_allocator::CmdAllocator;
+use crate::resources::gfx_resource_manager::GfxResourceManager;
 use crate::state::dlss_options::DlssOptions;
 use crate::state::dlss_sr::DlssSrState;
 use crate::state::frame_state::FrameRenderState;
@@ -70,7 +71,7 @@ pub struct RenderRuntimeRenderCtx<'a> {
     pub device_info_ctx: GfxDeviceInfoCtx<'a>,
     /// pass 录制需要的只读 GPU-facing 状态。
     pub record_ctx: RenderPassRecordCtx<'a>,
-    /// runtime 私有 `GpuScene` 的只读视图；pass 不能访问 concrete scene owner。
+    /// runtime 私有 `RenderWorld` 的只读视图；pass 不能访问 concrete scene owner。
     pub render_scene: &'a dyn RenderSceneView,
     /// 当前窗口 present 边界，只暴露 swapchain 信息和 RenderGraph 导入 helper。
     pub present: PresentView<'a>,
@@ -89,7 +90,7 @@ pub struct RenderRuntimeRayCastCtx<'a> {
     pub(crate) frame_timing: &'a FrameTiming,
     pub(crate) shader_bindings: ShaderBindingView<'a>,
     pub(crate) render_scene: &'a dyn RenderSceneView,
-    pub(crate) instance_bridge: &'a InstanceBridge,
+    pub(crate) render_instance_manager: &'a RenderInstanceManager,
     pub(crate) ray_cast_service: &'a mut RayCastService,
 }
 
@@ -106,7 +107,7 @@ impl RenderRuntimeRayCastCtx<'_> {
             self.frame_timing,
             self.shader_bindings,
             self.render_scene,
-            self.instance_bridge,
+            self.render_instance_manager,
             rays,
         )
     }

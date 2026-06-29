@@ -59,14 +59,19 @@ flowchart LR
 - Swapchain：swapchain image/view、present semaphore。
 - App / Pipeline targets：RT working target、main view target、GBuffer 等窗口尺寸资源由具体 app/plugin 持有，并在 init /
   resize / shutdown 阶段通过 ctx 中的 `GfxResourceManager` 与 `ShaderBindingSystem` 显式创建、注册或释放。
-- Asset：`AssetHub` 持有 texture / mesh / material / model 内容资产 handle 与 CPU 加载状态，并负责 Assimp model 到 owned
-  CPU 数据的导入；`AssetTextureManager` 持有 texture 的 GPU image/view/bindless 绑定；`AssetMeshManager` 持有 mesh
-  vertex/index buffer、BLAS 和 GPU ready 状态；runtime 直接持有私有 `MaterialManager`，它管理 material GPU buffer
-  与稳定 slot；`MaterialBridge` 只维护 asset material 到 runtime material handle 的桥接；App 将 ready `ModelData` 通过 `SceneManager::spawn_model` 变为 runtime instances；`InstanceBridge`
-  持有 runtime instance 到稳定 GPU instance slot 的映射。
-- Scene GPU：runtime 私有 `GpuScene` 持有 instance / geometry / light / indirect buffer、TLAS 和当前 FIF 的 raster draw
-  cache，并通过 `RenderSceneView` 向 render pass 暴露只读能力；默认 sky 由 runtime 私有 `SkyBridge` 通过 `AssetHub` /
-  `AssetTextureManager` 异步加载并提供 fallback。
+- Asset：`AssetHub` 只持有 texture / model loader task handle、后台任务状态和完成事件队列，并负责 Assimp / glTF model 到 owned
+  CPU payload 的导入；`SceneAssetIngestor` 把 loader 结果翻译为 `Scene*Handle` 事件；`RenderWorld` 内部的 `RenderTextureManager` 持有 texture 的 GPU image/view/bindless 绑定；
+  `RenderMeshManager` 持有 mesh vertex/index buffer、BLAS 和 GPU ready 状态；`RenderMaterialManager` 管理 material
+  GPU buffer、稳定 slot 以及 `SceneMaterialHandle -> stable slot` 映射；App 通过
+  `World::request_model_import` 拿到 `SceneModelImportHandle`，ready model CPU payload 在 `World::sync_for_render`
+  内部由 `SceneAssetIngestor` 自动变为 runtime instances；facade 内部通过 `SceneAssetIngestor` 把 prefab 引用解析为 scene handle；`RenderInstanceManager`
+  持有 runtime instance 到稳定 GPU instance slot 的映射。CPU scene 删除 texture/mesh/material 后，对应 render manager
+  负责移除 ready cache 或延迟回收 slot；已经提交但尚未完成的 texture/mesh upload 在 timeline 到达后只销毁资源，不重新发布 stale handle。
+- Scene GPU：runtime 私有 `RenderWorld` 持有 render-side texture / mesh / material / instance / sky / emissive managers、
+  instance / geometry / light / indirect buffer 和当前 FIF 的 raster draw cache，并通过内部 `RenderTlasManager`
+  持有 per-FIF TLAS；`RenderSceneView` 只向 render pass 暴露只读 scene 快照。默认 sky 由 `World` 注册为
+  `SceneTextureHandle` 并写入 `SceneStore::SceneSkyState`，通过 `RenderTextureManager` 异步上传，并由
+  `RenderSkyManager` 根据 scene sky state 提供 fallback、真实 sky binding 和 distribution。
 - GUI：imgui font texture、per-frame GUI mesh buffer、texture map。
 - RenderGraph：按帧导入的 image 状态引用与同步计划；图内 transient image/buffer 是未来能力，不作为当前资源生命周期类别。
 
