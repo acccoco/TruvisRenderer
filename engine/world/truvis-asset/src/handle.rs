@@ -24,7 +24,7 @@ new_key_type! {
 /// 一次 texture CPU decode task 的输入描述。
 ///
 /// 这是一次性 loader 请求的参数，不是长期 identity key。同一路径是否复用为同一个
-/// `SceneTextureHandle` 由 `SceneAssetIngestor` / `SceneStore` 决定。
+/// `TextureHandle` 由 `SceneAssetIngestor` / `SceneStore` 决定。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextureLoadDesc {
     pub path: std::path::PathBuf,
@@ -74,7 +74,7 @@ pub struct MeshData {
 /// 后台 Assimp task 产出的 owned material CPU 数据。
 ///
 /// texture 仍以导入器返回的路径表达，避免后台 task 直接修改 `SceneStore`。
-/// `SceneAssetIngestor` 在 asset sync 阶段解析相对路径、分配 `SceneTextureHandle`
+/// `SceneAssetIngestor` 在 asset sync 阶段解析相对路径、分配 `TextureHandle`
 /// 并提交必要的 texture load task。
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawMaterialData {

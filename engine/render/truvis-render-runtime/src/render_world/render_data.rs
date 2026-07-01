@@ -1,7 +1,7 @@
 use ash::vk;
 
 use truvis_shader_binding::gpu;
-use truvis_world::guid_new_type::SceneMaterialHandle;
+use truvis_world::guid_new_type::MaterialHandle;
 
 use super::geometry::{RtGeometry, RtTriangleMeta};
 
@@ -33,7 +33,7 @@ impl GpuInstanceSlot {
 
 /// 用于渲染的单个实例快照。
 ///
-/// 它已经把 CPU scene 中的 scene handle 解析为稳定 instance slot、mesh 索引和
+/// 它已经把 CPU scene 中的 resource handle 解析为稳定 instance slot、mesh 索引和
 /// material slot；`RenderWorld` 只消费这些 render-side 索引，不再访问 `SceneStore`。
 #[derive(Clone)]
 pub(crate) struct InstanceRenderData {
@@ -43,8 +43,8 @@ pub(crate) struct InstanceRenderData {
     pub(crate) mesh_index: usize,
     /// 该实例每个 submesh 对应的稳定 GPU material slot。
     pub(crate) material_slots: Vec<u32>,
-    /// 该实例每个 submesh 对应的 CPU scene material handle，与 `material_slots` 顺序一致。
-    pub(crate) material_handles: Vec<SceneMaterialHandle>,
+    /// 该实例每个 submesh 对应的 CPU `MaterialHandle`，与 `material_slots` 顺序一致。
+    pub(crate) material_handles: Vec<MaterialHandle>,
     /// 由 CPU scene 提供的模型矩阵，prepare 阶段会写入 instance buffer 并参与 TLAS 构建。
     pub(crate) transform: glam::Mat4,
     /// 上一帧用于 DLSS motion vector 回溯的模型矩阵。
@@ -71,7 +71,7 @@ pub(crate) struct MeshRenderData<'a> {
 ///
 /// 这是 `RenderInstanceManager` 交给 `RenderWorld` 的 prepare 输入。它只包含依赖已 ready 的实例，
 /// 并用稳定 slot 与紧凑索引连接 instance、mesh、geometry、material，避免 GPU 上传阶段
-/// 再回到 CPU scene handle 做解析。
+/// 再回到 CPU resource handle 做解析。
 ///
 /// # 设计原则
 /// - 所有数据都是只读的，由 render-side bridge 负责构建

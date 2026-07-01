@@ -130,7 +130,7 @@ impl GltfSceneReader {
 
     /// 将 glTF material 复制到 AssetHub 的 raw material 边界格式。
     ///
-    /// v1 只读取当前 `SceneMaterialData` 能表达的 PBR metallic-roughness 参数和两类贴图。
+    /// v1 只读取当前 `MaterialData` 能表达的 PBR metallic-roughness 参数和两类贴图。
     /// 外部 URI 保留为 importer 原始表达，稍后由 `SceneAssetIngestor` 根据 scene 路径统一解析。
     fn copy_material(&self, material: gltf::Material<'_>) -> RawMaterialData {
         let pbr = material.pbr_metallic_roughness();

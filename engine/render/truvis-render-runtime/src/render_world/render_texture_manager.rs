@@ -15,7 +15,7 @@ use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_shader_binding::gpu;
-use truvis_world::guid_new_type::SceneTextureHandle;
+use truvis_world::guid_new_type::TextureHandle;
 use truvis_world::{FailedTextureLoad, PendingTextureUpload};
 
 use crate::bindings::bindless_manager::BindlessSrvHandle;
@@ -31,7 +31,7 @@ struct PendingUpload {
     semaphore_value: u64,
     staging_buffer: GfxBuffer,
     command_buffer: GfxCommandBuffer,
-    handle: SceneTextureHandle,
+    handle: TextureHandle,
     image: GfxImage,
 }
 
@@ -80,7 +80,7 @@ impl TextureUploadQueue {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-        handle: SceneTextureHandle,
+        handle: TextureHandle,
         data: TextureBytes,
     ) -> anyhow::Result<()> {
         let _span = tracy_client::span!("TextureUploadQueue::upload_texture");
@@ -144,7 +144,7 @@ impl TextureUploadQueue {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-    ) -> Vec<(SceneTextureHandle, GfxImage)> {
+    ) -> Vec<(TextureHandle, GfxImage)> {
         let _span = tracy_client::span!("TextureUploadQueue::update");
         let device = device_ctx.device();
         let timeline_semaphore = self.timeline_semaphore.as_ref().expect("TextureUploadQueue used after shutdown");
@@ -225,11 +225,11 @@ pub struct UploadedAssetTexture {
 
 /// 渲染侧纹理资产上传与绑定缓存。
 ///
-/// 它是 `SceneTextureHandle -> shader texture binding` 的唯一转换点。加载失败或尚未完成上传时，
+/// 它是 `TextureHandle -> shader texture binding` 的唯一转换点。加载失败或尚未完成上传时，
 /// `TextureResolver` 会返回 fallback 纹理，使材质 GPU 数据始终可被 shader 安全读取。
 pub struct RenderTextureManager {
-    textures: SecondaryMap<SceneTextureHandle, UploadedAssetTexture>,
-    retired_textures: HashSet<SceneTextureHandle>,
+    textures: SecondaryMap<TextureHandle, UploadedAssetTexture>,
+    retired_textures: HashSet<TextureHandle>,
     upload_queue: TextureUploadQueue,
     fallback: UploadedAssetTexture,
 }
@@ -357,7 +357,7 @@ impl RenderTextureManager {
     /// image，不会重新 publish 到 bindless resolver。
     pub fn remove_textures(
         &mut self,
-        handles: &[SceneTextureHandle],
+        handles: &[TextureHandle],
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
@@ -384,7 +384,7 @@ impl RenderTextureManager {
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         shader_binding_system: &mut ShaderBindingSystem,
-        handle: SceneTextureHandle,
+        handle: TextureHandle,
         image: GfxImage,
     ) {
         // 真实 texture 完成上传后才进入这个函数；从这里开始 resolver 会把 scene texture handle
@@ -403,7 +403,7 @@ impl RenderTextureManager {
 
         let image_format = image.format();
         // 只有上传完成的 image 才进入全局资源管理器和 bindless 表。
-        // 从这一步开始，材质桥接层解析同一个 SceneTextureHandle 时会拿到真实 SRV。
+        // 从这一步开始，材质桥接层解析同一个 TextureHandle 时会拿到真实 SRV。
         let image_handle = gfx_resource_manager.register_image(image);
         let view_handle = gfx_resource_manager.get_or_create_image_view(
             device_ctx,
@@ -457,11 +457,11 @@ impl RenderTextureManager {
 }
 
 impl TextureResolver for RenderTextureManager {
-    fn is_texture_ready(&self, handle: SceneTextureHandle) -> bool {
+    fn is_texture_ready(&self, handle: TextureHandle) -> bool {
         self.textures.contains_key(handle)
     }
 
-    fn resolve_texture(&self, handle: SceneTextureHandle) -> TextureBinding {
+    fn resolve_texture(&self, handle: TextureHandle) -> TextureBinding {
         // 解析接口永远返回可写入 material buffer 的 binding。未 ready 或失败的 texture
         // 走 fallback，避免 shader 读取空 bindless 句柄。
         let texture = self.textures.get(handle).unwrap_or(&self.fallback);

@@ -9,25 +9,23 @@ use truvis_asset::handle::{
 };
 
 use crate::components::instance::Instance;
-use crate::components::material::SceneMaterialData;
+use crate::components::material::MaterialData;
 use crate::edit_error::SceneEditError;
-use crate::guid_new_type::{
-    InstanceHandle, SceneMaterialHandle, SceneMeshHandle, SceneModelImportHandle, SceneTextureHandle,
-};
+use crate::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle, ModelImportHandle, TextureHandle};
 use crate::scene_store::SceneStore;
 use crate::{FailedTextureLoad, PendingMeshUpload, PendingTextureUpload, SceneAssetSyncOutput};
 
 /// `World` 内部的 scene asset ingest 协调器。
 ///
-/// 它是 loader handle 和 scene handle 的唯一翻译边界。`AssetHub` 只交付一次性 CPU
+/// 它是 loader handle 和 CPU world resource handle 的唯一翻译边界。`AssetHub` 只交付一次性 CPU
 /// payload；本对象负责把 model / texture ingest 到 `SceneStore`，并产出 render-side
 /// manager 消费的短期 upload event。
 #[derive(Default)]
 pub struct SceneAssetIngestor {
-    model_imports: SlotMap<SceneModelImportHandle, SceneModelImportRecord>,
-    model_loads: SecondaryMap<ModelLoadHandle, SceneModelImportHandle>,
-    texture_loads: SecondaryMap<TextureLoadHandle, SceneTextureHandle>,
-    texture_paths: HashMap<PathBuf, SceneTextureHandle>,
+    model_imports: SlotMap<ModelImportHandle, SceneModelImportRecord>,
+    model_loads: SecondaryMap<ModelLoadHandle, ModelImportHandle>,
+    texture_loads: SecondaryMap<TextureLoadHandle, TextureHandle>,
+    texture_paths: HashMap<PathBuf, TextureHandle>,
     pending_asset_sync: SceneAssetSyncOutput,
 }
 
@@ -44,7 +42,7 @@ impl SceneAssetIngestor {
     }
 
     /// 提交一次 model import 请求。
-    pub fn request_model_import(&mut self, assets: &mut AssetHub, path: PathBuf) -> SceneModelImportHandle {
+    pub fn request_model_import(&mut self, assets: &mut AssetHub, path: PathBuf) -> ModelImportHandle {
         let scene_import = self.model_imports.insert(SceneModelImportRecord {
             status: LoadStatus::Loading,
             error: None,
@@ -69,7 +67,7 @@ impl SceneAssetIngestor {
         assets: &mut AssetHub,
         scene: &mut SceneStore,
         path: PathBuf,
-    ) -> SceneTextureHandle {
+    ) -> TextureHandle {
         if let Some(&scene_texture) = self.texture_paths.get(&path) {
             if scene.contains_texture(scene_texture) {
                 return scene_texture;
@@ -83,8 +81,8 @@ impl SceneAssetIngestor {
         scene_texture
     }
 
-    /// 注册 CPU mesh payload，并返回 scene-facing mesh handle。
-    pub fn register_mesh(&mut self, scene: &mut SceneStore, data: MeshData) -> SceneMeshHandle {
+    /// 注册 CPU mesh payload，并返回 CPU world mesh handle。
+    pub fn register_mesh(&mut self, scene: &mut SceneStore, data: MeshData) -> MeshHandle {
         let scene_mesh = scene.register_mesh();
         self.pending_asset_sync.pending_mesh_uploads.push(PendingMeshUpload {
             handle: scene_mesh,
@@ -93,17 +91,17 @@ impl SceneAssetIngestor {
         scene_mesh
     }
 
-    /// 注册 CPU material 参数，并返回 scene-facing material handle。
+    /// 注册 CPU material 参数，并返回 CPU world material handle。
     pub fn register_material(
         &mut self,
         scene: &mut SceneStore,
-        data: SceneMaterialData,
-    ) -> Result<SceneMaterialHandle, SceneEditError> {
+        data: MaterialData,
+    ) -> Result<MaterialHandle, SceneEditError> {
         scene.register_material(data)
     }
 
     /// 查询 model import 的当前 CPU 加载状态。
-    pub fn model_import_status(&self, handle: SceneModelImportHandle) -> LoadStatus {
+    pub fn model_import_status(&self, handle: ModelImportHandle) -> LoadStatus {
         let Some(record) = self.model_imports.get(handle) else {
             return LoadStatus::Failed;
         };
@@ -111,12 +109,12 @@ impl SceneAssetIngestor {
     }
 
     /// 查询 model import 的失败文本。
-    pub fn model_import_error(&self, handle: SceneModelImportHandle) -> Option<&str> {
+    pub fn model_import_error(&self, handle: ModelImportHandle) -> Option<&str> {
         let record = self.model_imports.get(handle)?;
         record.error.as_deref()
     }
 
-    /// 消费 `AssetHub` 完成事件，并转换为 render-side 只看得见 `Scene*Handle` 的事件。
+    /// 消费 `AssetHub` 完成事件，并转换为 render-side 只看得见 CPU resource handle 的事件。
     pub fn ingest_asset_events(
         &mut self,
         assets: &mut AssetHub,
@@ -199,7 +197,7 @@ impl SceneAssetIngestor {
 
         let mut scene_materials = Vec::with_capacity(raw.materials.len());
         for material in raw.materials {
-            let scene_data = SceneMaterialData {
+            let scene_data = MaterialData {
                 base_color: material.base_color,
                 emissive: material.emissive,
                 metallic: material.metallic,
@@ -322,7 +320,7 @@ impl SceneAssetIngestor {
         self.fail_scene_import(scene_import, error);
     }
 
-    fn fail_scene_import(&mut self, scene_import: SceneModelImportHandle, error: String) {
+    fn fail_scene_import(&mut self, scene_import: ModelImportHandle, error: String) {
         let record = self
             .model_imports
             .get_mut(scene_import)
@@ -332,11 +330,11 @@ impl SceneAssetIngestor {
         record.error = Some(error);
     }
 
-    fn take_scene_import_for_load(&mut self, model_load: ModelLoadHandle) -> SceneModelImportHandle {
+    fn take_scene_import_for_load(&mut self, model_load: ModelLoadHandle) -> ModelImportHandle {
         self.model_loads.remove(model_load).expect("SceneAssetIngestor: received event for unknown model load handle")
     }
 
-    fn take_scene_texture_for_load(&mut self, texture_load: TextureLoadHandle) -> SceneTextureHandle {
+    fn take_scene_texture_for_load(&mut self, texture_load: TextureLoadHandle) -> TextureHandle {
         self.texture_loads
             .remove(texture_load)
             .expect("SceneAssetIngestor: received event for unknown texture load handle")
@@ -359,7 +357,7 @@ impl SceneAssetIngestor {
         source_path: &Path,
         texture_path: Option<PathBuf>,
         label: &'static str,
-    ) -> Result<Option<SceneTextureHandle>, String> {
+    ) -> Result<Option<TextureHandle>, String> {
         let Some(texture_path) = texture_path else {
             return Ok(None);
         };

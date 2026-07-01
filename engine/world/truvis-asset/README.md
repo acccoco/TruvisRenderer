@@ -8,12 +8,12 @@ bindless descriptor 或 material slot。GPU 上传和 shader 可见绑定由
 `truvis-render-runtime` 的 `RenderTextureManager`、`RenderMeshManager`、
 `RenderMaterialManager` 负责；model import 由 `World` 内部的
 `SceneAssetIngestor` 在 asset sync 阶段实例化成 runtime instance。App 层不直接持有
-`ModelLoadHandle`，而是通过 `World` 的 `SceneModelImportHandle` facade 查询 model import。
+`ModelLoadHandle`，而是通过 `World` 的 `ModelImportHandle` facade 查询 model import。
 
 ## 主要组件
 
 - `AssetHub`：对外统一入口，负责 loader handle 分配和完成事件汇聚
-- `AssetLoadEvent`：CPU 数据完成事件，交给 `SceneAssetIngestor` 翻译成 scene handle 和 render upload event
+- `AssetLoadEvent`：CPU 数据完成事件，交给 `SceneAssetIngestor` 翻译成 CPU resource handle 和 render upload event
 - `TextureLoadDesc` / `ModelLoadDesc`：一次性 loader task 输入描述，不承担长期去重 identity
 - `TextureBytes`：从图片文件解码出的 owned CPU 纹理 bytes，只通过事件交给 texture manager
 - `MeshData`：从导入器复制出来的 owned CPU mesh 数据，只通过事件交给 mesh manager

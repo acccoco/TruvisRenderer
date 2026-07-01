@@ -22,7 +22,7 @@ use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 use truvis_world::PendingMeshUpload;
-use truvis_world::guid_new_type::SceneMeshHandle;
+use truvis_world::guid_new_type::MeshHandle;
 
 use crate::render_world::geometry::{RtGeometry, RtTriangleMeta};
 use crate::render_world::render_data::MeshRenderData;
@@ -33,7 +33,7 @@ use crate::render_world::render_resolver::MeshRenderResolver;
 /// 都仍可能被 copy 或 acceleration build 命令引用，不能交给 resolver 或提前释放。
 struct SubmittedMeshUpload {
     semaphore_value: u64,
-    handle: SceneMeshHandle,
+    handle: MeshHandle,
     command_buffer: GfxCommandBuffer,
     staging_buffers: Vec<GfxBuffer>,
     scratch_buffer: GfxAccelerationScratchBuffer,
@@ -48,7 +48,7 @@ struct SubmittedMeshUpload {
 /// `RenderMeshManager` 接管该结构后，mesh 才会进入 `meshes` map，供 instance bridge
 /// 解析为 render-side 几何数据。
 struct FinishedMeshUpload {
-    handle: SceneMeshHandle,
+    handle: MeshHandle,
     geometry: RtGeometry,
     triangle_metadata: Vec<RtTriangleMeta>,
     blas: GfxAcceleration,
@@ -96,7 +96,7 @@ impl MeshUploadQueue {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-        handle: SceneMeshHandle,
+        handle: MeshHandle,
         data: MeshData,
     ) -> Result<()> {
         let _span = tracy_client::span!("MeshUploadQueue::submit_mesh_upload");
@@ -424,11 +424,11 @@ struct UploadedMesh {
 
 /// 渲染侧 mesh 资产上传与 BLAS 缓存。
 ///
-/// 它把 `SceneMeshHandle` 解析为光栅化和 ray tracing 共用的 GPU 几何数据。
+/// 它把 `MeshHandle` 解析为光栅化和 ray tracing 共用的 GPU 几何数据。
 /// `ready_revision` 在 mesh 首次 ready 或替换时递增，供 `RenderWorld` 判断 TLAS 是否需要重建。
 pub struct RenderMeshManager {
-    meshes: SecondaryMap<SceneMeshHandle, UploadedMesh>,
-    retired_meshes: HashSet<SceneMeshHandle>,
+    meshes: SecondaryMap<MeshHandle, UploadedMesh>,
+    retired_meshes: HashSet<MeshHandle>,
     upload_queue: MeshUploadQueue,
     ready_revision: u64,
 }
@@ -488,7 +488,7 @@ impl RenderMeshManager {
     /// mesh 重新发布给 instance/TLAS resolver。
     pub fn remove_meshes(
         &mut self,
-        handles: &[SceneMeshHandle],
+        handles: &[MeshHandle],
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
     ) {
@@ -504,7 +504,7 @@ impl RenderMeshManager {
     }
 
     /// 查询指定 mesh 是否已经完成 vertex/index 上传和 BLAS build。
-    pub fn is_mesh_ready(&self, handle: SceneMeshHandle) -> bool {
+    pub fn is_mesh_ready(&self, handle: MeshHandle) -> bool {
         self.meshes.contains_key(handle)
     }
 
@@ -564,11 +564,11 @@ impl RenderMeshManager {
 }
 
 impl MeshRenderResolver for RenderMeshManager {
-    fn is_mesh_ready(&self, handle: SceneMeshHandle) -> bool {
+    fn is_mesh_ready(&self, handle: MeshHandle) -> bool {
         self.is_mesh_ready(handle)
     }
 
-    fn resolve_mesh(&self, handle: SceneMeshHandle) -> Option<MeshRenderData<'_>> {
+    fn resolve_mesh(&self, handle: MeshHandle) -> Option<MeshRenderData<'_>> {
         let mesh = self.meshes.get(handle)?;
         Some(MeshRenderData {
             geometries: std::slice::from_ref(&mesh.geometry),

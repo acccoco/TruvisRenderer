@@ -10,7 +10,7 @@ use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuff
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_shader_binding::gpu;
 use truvis_world::SceneSkyState;
-use truvis_world::guid_new_type::SceneTextureHandle;
+use truvis_world::guid_new_type::TextureHandle;
 
 use crate::bindings::bindless_manager::BindlessSrvHandle;
 use crate::bindings::shader_binding_system::ShaderBindingSystem;
@@ -102,7 +102,7 @@ pub(crate) struct SkyBindingUpdate {
 /// 管理。`RenderSkyManager` 缓存本帧 sky state 并持有一个常驻纯色 fallback，保证 shader 侧
 /// scene root buffer 始终写入合法 SRV 和与之匹配的 sky importance distribution。
 pub(crate) struct RenderSkyManager {
-    sky_texture: Option<SceneTextureHandle>,
+    sky_texture: Option<TextureHandle>,
     sky_enabled: bool,
     sky_intensity: f32,
     sky_revision: u64,
@@ -184,7 +184,7 @@ impl RenderSkyManager {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        handle: SceneTextureHandle,
+        handle: TextureHandle,
         data: &TextureBytes,
     ) {
         if Some(handle) != self.sky_texture {
@@ -211,7 +211,7 @@ impl RenderSkyManager {
         log::info!("RenderSkyManager: scene sky importance distribution is ready, version={version}");
     }
 
-    pub(crate) fn observe_texture_failed(&mut self, handle: SceneTextureHandle, error: &str) {
+    pub(crate) fn observe_texture_failed(&mut self, handle: TextureHandle, error: &str) {
         if Some(handle) == self.sky_texture {
             log::warn!("RenderSkyManager: scene sky texture failed; keep fallback sky distribution: {error}");
         }

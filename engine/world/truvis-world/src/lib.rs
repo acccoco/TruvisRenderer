@@ -19,11 +19,9 @@ mod scene_asset_ingestor;
 mod scene_store;
 
 use crate::components::instance::Instance;
-use crate::components::material::SceneMaterialData;
+use crate::components::material::MaterialData;
 pub use crate::edit_error::{SceneEditError, SceneHandleKind, WorldEditError};
-use crate::guid_new_type::{
-    InstanceHandle, LightHandle, SceneMaterialHandle, SceneMeshHandle, SceneModelImportHandle, SceneTextureHandle,
-};
+use crate::guid_new_type::{InstanceHandle, LightHandle, MaterialHandle, MeshHandle, ModelImportHandle, TextureHandle};
 pub use crate::render_sync::{
     FailedTextureLoad, PendingMeshUpload, PendingTextureUpload, SceneAssetSyncOutput, WorldRenderSync,
 };
@@ -49,7 +47,7 @@ pub struct World {
     /// `AssetHub` 负责 loader task 和 CPU ready 数据汇聚；它的内部 handle 不作为
     /// scene 或 render-world 的长期身份暴露。
     assets: AssetHub,
-    /// scene-facing asset ingest 状态。
+    /// CPU resource-facing asset ingest 状态。
     ///
     /// 该对象负责把 App 看到的 scene import 请求映射到内部 asset loader 状态，避免
     /// `ModelLoadHandle` 等 loader 细节扩散到 App 层。
@@ -89,7 +87,7 @@ impl World {
     /// 同步 CPU scene / asset 状态，生成 render prepare 消费的本帧同步包。
     ///
     /// 这是 render runtime 在 update 之后、prepare 之初接触 asset event 的唯一入口。
-    /// `World` 只负责把后台 loader 结果收敛回调用线程并翻译成 scene handle；texture /
+    /// `World` 只负责把后台 loader 结果收敛回调用线程并翻译成 CPU resource handle；texture /
     /// mesh / material 的 GPU 上传仍由 render-side manager 负责。
     pub fn sync_for_render(&mut self) -> WorldRenderSync {
         let events = self.assets.update();
@@ -114,13 +112,13 @@ impl World {
 impl World {
     /// 请求导入 model / prefab。
     ///
-    /// 返回值是 scene-facing import handle；调用方不需要知道 `AssetHub` 的内部 load handle。
-    pub fn request_model_import(&mut self, path: PathBuf) -> SceneModelImportHandle {
+    /// 返回值是 CPU world import handle；调用方不需要知道 `AssetHub` 的内部 load handle。
+    pub fn request_model_import(&mut self, path: PathBuf) -> ModelImportHandle {
         self.scene_assets.request_model_import(&mut self.assets, path)
     }
 
-    /// 注册一个 file texture 并返回 scene-facing texture handle。
-    pub fn register_texture(&mut self, path: PathBuf) -> Result<SceneTextureHandle, WorldEditError> {
+    /// 注册一个 file texture 并返回 CPU world texture handle。
+    pub fn register_texture(&mut self, path: PathBuf) -> Result<TextureHandle, WorldEditError> {
         let canonical_path =
             std::fs::canonicalize(&path).map_err(|err| WorldEditError::FilesystemCanonicalizeFailed {
                 path: path.clone(),
@@ -132,58 +130,54 @@ impl World {
     /// 查询 model import 的 CPU 加载状态。
     ///
     /// App 只用它显示或驱动 UI，不直接读取 `AssetHub` 的 loader state。
-    pub fn model_import_status(&self, handle: SceneModelImportHandle) -> LoadStatus {
+    pub fn model_import_status(&self, handle: ModelImportHandle) -> LoadStatus {
         self.scene_assets.model_import_status(handle)
     }
 
     /// 查询 model import 的失败文本。
-    pub fn model_import_error(&self, handle: SceneModelImportHandle) -> Option<&str> {
+    pub fn model_import_error(&self, handle: ModelImportHandle) -> Option<&str> {
         self.scene_assets.model_import_error(handle)
     }
 
     /// 注册已经在 CPU 内存中的 mesh 数据。
     ///
-    /// `SceneAssetIngestor` 会把内部 loader 事件转换为 `SceneMeshHandle` 标记的短期
+    /// `SceneAssetIngestor` 会把内部 loader 事件转换为 `MeshHandle` 标记的短期
     /// mesh upload payload，render-side manager 不接触 asset mesh handle。
-    pub fn register_mesh(&mut self, data: MeshData) -> Result<SceneMeshHandle, WorldEditError> {
+    pub fn register_mesh(&mut self, data: MeshData) -> Result<MeshHandle, WorldEditError> {
         Ok(self.scene_assets.register_mesh(&mut self.scene, data))
     }
 
     /// 注册已经在 CPU 内存中的 material 参数。
     ///
-    /// `SceneMaterialData` 内部使用 scene texture handle；render-side material manager
+    /// `MaterialData` 内部使用 `TextureHandle`；render-side material manager
     /// 后续通过 `SceneChanges.changed_materials` 从 `SceneStore` 读取权威参数。
-    pub fn register_material(&mut self, data: SceneMaterialData) -> Result<SceneMaterialHandle, WorldEditError> {
+    pub fn register_material(&mut self, data: MaterialData) -> Result<MaterialHandle, WorldEditError> {
         self.scene_assets.register_material(&mut self.scene, data).map_err(Into::into)
     }
 
     /// 更新 CPU material 参数，并记录 scene change。
-    pub fn update_material(
-        &mut self,
-        handle: SceneMaterialHandle,
-        data: SceneMaterialData,
-    ) -> Result<(), WorldEditError> {
+    pub fn update_material(&mut self, handle: MaterialHandle, data: MaterialData) -> Result<(), WorldEditError> {
         self.scene.update_material(handle, data)?;
         Ok(())
     }
 
     /// 移除未被 instance 引用的 CPU material。
-    pub fn remove_material(&mut self, handle: SceneMaterialHandle) -> Result<(), WorldEditError> {
+    pub fn remove_material(&mut self, handle: MaterialHandle) -> Result<(), WorldEditError> {
         self.scene.remove_material(handle).map_err(Into::into)
     }
 
     /// 移除未被 material 引用的 CPU texture。
-    pub fn remove_texture(&mut self, handle: SceneTextureHandle) -> Result<(), WorldEditError> {
+    pub fn remove_texture(&mut self, handle: TextureHandle) -> Result<(), WorldEditError> {
         self.scene.remove_texture(handle).map_err(Into::into)
     }
 
     /// 移除未被 instance 引用的 CPU mesh。
-    pub fn remove_mesh(&mut self, handle: SceneMeshHandle) -> Result<(), WorldEditError> {
+    pub fn remove_mesh(&mut self, handle: MeshHandle) -> Result<(), WorldEditError> {
         self.scene.remove_mesh(handle).map_err(Into::into)
     }
 
     /// 更新 CPU sky 引用的 scene texture。
-    pub fn update_sky_texture(&mut self, texture: Option<SceneTextureHandle>) -> Result<(), WorldEditError> {
+    pub fn update_sky_texture(&mut self, texture: Option<TextureHandle>) -> Result<(), WorldEditError> {
         self.scene.update_sky_texture(texture).map_err(Into::into)
     }
 
@@ -201,7 +195,7 @@ impl World {
     ///
     /// 这是 App/debug UI 的只读 facade；返回数据属于 CPU scene 参数，不表示 GPU material slot
     /// 已经 ready，也不暴露 loader owner 给调用方。
-    pub fn material_data(&self, handle: SceneMaterialHandle) -> Option<&SceneMaterialData> {
+    pub fn material_data(&self, handle: MaterialHandle) -> Option<&MaterialData> {
         self.scene.material_data(handle)
     }
 
@@ -214,7 +208,7 @@ impl World {
     pub fn update_instance_materials(
         &mut self,
         handle: InstanceHandle,
-        materials: Vec<SceneMaterialHandle>,
+        materials: Vec<MaterialHandle>,
     ) -> Result<(), WorldEditError> {
         self.scene.update_instance_materials(handle, materials).map_err(Into::into)
     }

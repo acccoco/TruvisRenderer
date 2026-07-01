@@ -15,7 +15,7 @@ use app_kit::render_pipeline::rt_render_graph::RtPipelineSettings;
 use truvis_render_runtime::ray_cast::RayCastResult;
 use truvis_render_runtime::state::dlss_options::DlssOptions;
 use truvis_world::World;
-use truvis_world::components::material::SceneMaterialData;
+use truvis_world::components::material::MaterialData;
 
 use crate::truvis_app::ClickRayCastProbe;
 
@@ -441,7 +441,7 @@ impl TruvisOverlayUi {
         }
     }
 
-    fn draw_material_info(ui: &imgui::Ui, material: Option<&SceneMaterialData>) {
+    fn draw_material_info(ui: &imgui::Ui, material: Option<&MaterialData>) {
         let Some(material) = material else {
             ui.text("Material data: unavailable");
             return;

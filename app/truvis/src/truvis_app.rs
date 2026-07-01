@@ -8,7 +8,7 @@ use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
 use truvis_render_runtime::render_runtime::{RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 use truvis_shader_binding::gpu;
 use truvis_world::{
-    World, components::instance::Instance, components::material::SceneMaterialData, guid_new_type::SceneMeshHandle,
+    World, components::instance::Instance, components::material::MaterialData, guid_new_type::MeshHandle,
     procedural_mesh::ProceduralMeshKind,
 };
 
@@ -303,7 +303,7 @@ impl TruvisApp {
         // 这些材质参数刻意覆盖当前 shader 的透明、镜面、光泽/粗糙 diffuse 和 emissive 分支。
         for spec in cube_specs {
             let material = world
-                .register_material(SceneMaterialData {
+                .register_material(MaterialData {
                     base_color: spec.base_color,
                     emissive: spec.emissive,
                     metallic: spec.metallic,
@@ -331,7 +331,7 @@ impl TruvisApp {
         Self::spawn_emissive_cube_matrix(world, cube_mesh, EMISSIVE_CUBE_MATRIX_CONFIG);
     }
 
-    fn spawn_emissive_cube_matrix(world: &mut World, cube_mesh: SceneMeshHandle, config: EmissiveCubeMatrixConfig) {
+    fn spawn_emissive_cube_matrix(world: &mut World, cube_mesh: MeshHandle, config: EmissiveCubeMatrixConfig) {
         let palette_specs = [
             EmissiveCubePaletteSpec {
                 name: "warm-amber",
@@ -363,7 +363,7 @@ impl TruvisApp {
             .into_iter()
             .map(|spec| {
                 world
-                    .register_material(SceneMaterialData {
+                    .register_material(MaterialData {
                         base_color: spec.base_color,
                         emissive: spec.emissive,
                         metallic: 0.0,

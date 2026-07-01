@@ -14,7 +14,7 @@
 - 负责 CPU scene/assets 到 render-side GPU 表示的桥接，包括 texture upload、mesh upload、
   material slot、instance slot、GPU scene buffer、BLAS/TLAS 和 raster draw cache。
 - 在 `prepare` 完成后提供 runtime-owned 同步 raycast 服务，把 GPU hit 的 instance slot
-  与 submesh index 转回 CPU `InstanceHandle` / `SceneMeshHandle` / `SceneMaterialHandle`。
+  与 submesh index 转回 CPU `InstanceHandle` / `MeshHandle` / `MaterialHandle`。
 - 负责 surface/swapchain/present image wrapper、acquire/present semaphore 与窗口 resize 重建。
 - 不负责窗口事件循环、具体 app/plugin 编排、GUI RenderGraph 适配、Assimp 文件导入或具体 pass 逻辑。
 
@@ -35,7 +35,7 @@
   `RenderMaterialManager`、`RenderInstanceManager`、`RenderSkyManager`、`RenderEmissiveLightTable`、
   scene/instance/geometry/light/indirect buffer、raster draw cache 和 `RenderTlasManager`；render pass
   只通过 `RenderSceneView` 读取它。
-- 默认 sky 通过 `World` facade 注册为普通 `SceneTextureHandle`，再写入 `SceneStore::SceneSkyState`；
+- 默认 sky 通过 `World` facade 注册为普通 `TextureHandle`，再写入 `SceneStore::SceneSkyState`；
   `RenderSkyManager` 从 `World::scene_view()` 读取 sky state，持有常驻纯色 fallback sky，并在当前 sky CPU texture
   bytes 到达时构建 HDRI importance distribution；`RenderWorld` 只消费 sky 环境绑定快照。
 - `RenderTextureManager` 消费 `WorldRenderSync.asset_uploads.pending_texture_uploads` 的 texture CPU bytes，异步上传 GPU image，并注册
@@ -46,7 +46,7 @@
   buffer copy 和 BLAS build；mesh 完成前不会被 `RenderInstanceManager` 激活。`SceneChanges.removed_meshes`
   会移除 ready cache，并阻止 late BLAS/geometry completion 重新进入 resolver。
 - `RenderMaterialManager` 消费 `WorldRenderSync.scene_changes` 中的 material add/update/remove，维护
-  `SceneMaterialHandle -> stable material slot` 映射、FIF material buffer、dirty region 上传、texture ready 检查和延迟
+  `MaterialHandle -> stable material slot` 映射、FIF material buffer、dirty region 上传、texture ready 检查和延迟
   slot 回收；写 GPU material buffer 时通过 `SceneReadView` 读取 `SceneStore` 的 CPU 权威材质参数。
 - `RenderInstanceManager` 消费 `WorldRenderSync.scene_changes` 中的 instance lifecycle / transform 变化，
   同步 `InstanceHandle -> GpuInstanceSlot`，在 mesh/material 都 GPU ready 前保持 pending，并按稳定 slot 输出

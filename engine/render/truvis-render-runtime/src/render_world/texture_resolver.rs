@@ -5,7 +5,7 @@
 //! 纹理上传、fallback 资源所有权和 bindless 注册仍由纹理管理器等实现方负责。
 
 use truvis_shader_binding::gpu;
-use truvis_world::guid_new_type::SceneTextureHandle;
+use truvis_world::guid_new_type::TextureHandle;
 
 use crate::bindings::bindless_manager::BindlessSrvHandle;
 
@@ -33,8 +33,8 @@ impl TextureBinding {
 /// 由渲染侧纹理上传/绑定缓存实现，避免 scene 直接耦合 AssetHub 或 BindlessManager。
 pub trait TextureResolver {
     /// texture 是否已经拥有真实 GPU image/view/bindless binding。
-    fn is_texture_ready(&self, handle: SceneTextureHandle) -> bool;
+    fn is_texture_ready(&self, handle: TextureHandle) -> bool;
 
     /// 获取可渲染的 texture binding；未就绪时由实现返回 fallback。
-    fn resolve_texture(&self, handle: SceneTextureHandle) -> TextureBinding;
+    fn resolve_texture(&self, handle: TextureHandle) -> TextureBinding;
 }

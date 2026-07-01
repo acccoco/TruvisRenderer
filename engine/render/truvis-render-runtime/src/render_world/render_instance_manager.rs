@@ -5,7 +5,7 @@ use slotmap::SecondaryMap;
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
 use truvis_shader_binding::gpu;
 use truvis_world::components::instance::Instance;
-use truvis_world::guid_new_type::{InstanceHandle, SceneMaterialHandle, SceneMeshHandle};
+use truvis_world::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle};
 use truvis_world::{SceneChanges, SceneInstanceChangeKind, SceneReadView};
 
 use crate::render_world::render_data::{GpuInstanceSlot, InstanceRenderData, MeshRenderData, RenderData};
@@ -42,12 +42,12 @@ struct RetiredSlot {
 /// 同步 raycast 使用的 CPU 反查记录。
 ///
 /// GPU hit 只返回稳定 instance slot 与 submesh index；该快照在 prepare 阶段生成，
-/// 保证 after_prepare 中的同步查询能把 GPU world 结果还原成 CPU scene handle。
+/// 保证 after_prepare 中的同步查询能把 GPU world 结果还原成 CPU world handle。
 #[derive(Clone)]
 pub(crate) struct RayCastInstanceRecord {
     pub(crate) instance: InstanceHandle,
-    pub(crate) mesh: SceneMeshHandle,
-    pub(crate) materials: Vec<SceneMaterialHandle>,
+    pub(crate) mesh: MeshHandle,
+    pub(crate) materials: Vec<MaterialHandle>,
 }
 
 /// Render-side runtime instance manager.

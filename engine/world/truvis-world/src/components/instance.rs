@@ -1,4 +1,4 @@
-use crate::guid_new_type::{SceneMaterialHandle, SceneMeshHandle};
+use crate::guid_new_type::{MaterialHandle, MeshHandle};
 
 /// CPU 侧的 live instance 语义数据。
 ///
@@ -8,9 +8,9 @@ use crate::guid_new_type::{SceneMaterialHandle, SceneMeshHandle};
 #[derive(Clone)]
 pub struct Instance {
     /// instance 使用的 CPU scene mesh。
-    pub mesh: SceneMeshHandle,
+    pub mesh: MeshHandle,
     /// instance 使用的 CPU scene material 列表，顺序与 mesh submesh/material slot 对应。
-    pub materials: Vec<SceneMaterialHandle>,
+    pub materials: Vec<MaterialHandle>,
     /// CPU 侧 world transform；渲染运行时同步时会把它拷贝到 GPU scene 数据。
     pub transform: glam::Mat4,
 }

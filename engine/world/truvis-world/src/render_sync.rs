@@ -6,7 +6,7 @@
 
 use truvis_asset::handle::{MeshData, TextureBytes};
 
-use crate::guid_new_type::{SceneMeshHandle, SceneTextureHandle};
+use crate::guid_new_type::{MeshHandle, TextureHandle};
 use crate::scene_store::SceneChanges;
 
 /// `World::sync_for_render` 交给 `RenderWorld` 的本帧同步包。
@@ -21,7 +21,7 @@ pub struct WorldRenderSync {
 
 /// `SceneAssetIngestor` 输出给 render-side manager 的分组 asset payload。
 ///
-/// 它已经完成 `TextureLoadHandle` / `ModelLoadHandle` 到 `Scene*Handle` 的翻译。各
+/// 它已经完成 `TextureLoadHandle` / `ModelLoadHandle` 到 CPU resource handle 的翻译。各
 /// render manager 只消费自己需要的窄 payload，不再接收宽 enum 后用 `unreachable!`
 /// 防御错误事件类型。
 #[derive(Debug, Default)]
@@ -34,22 +34,22 @@ pub struct SceneAssetSyncOutput {
 /// 已完成 CPU decode、等待 render-side texture manager 提交 GPU upload 的短期 payload。
 #[derive(Debug)]
 pub struct PendingTextureUpload {
-    pub handle: SceneTextureHandle,
+    pub handle: TextureHandle,
     pub data: TextureBytes,
 }
 
 /// texture CPU load 失败事件。
 ///
-/// 失败仍按 scene texture handle 汇报；render-side texture resolver 继续提供 fallback binding。
+/// 失败仍按 CPU `TextureHandle` 汇报；render-side texture resolver 继续提供 fallback binding。
 #[derive(Debug)]
 pub struct FailedTextureLoad {
-    pub handle: SceneTextureHandle,
+    pub handle: TextureHandle,
     pub error: String,
 }
 
 /// 已完成 CPU import、等待 render-side mesh manager 提交 vertex/index/BLAS upload 的短期 payload。
 #[derive(Debug)]
 pub struct PendingMeshUpload {
-    pub handle: SceneMeshHandle,
+    pub handle: MeshHandle,
     pub data: MeshData,
 }

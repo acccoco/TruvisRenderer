@@ -14,8 +14,8 @@ use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuff
 use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
 use truvis_shader_binding::gpu;
-use truvis_world::components::material::SceneMaterialData;
-use truvis_world::guid_new_type::SceneMaterialHandle;
+use truvis_world::components::material::MaterialData;
+use truvis_world::guid_new_type::MaterialHandle;
 use truvis_world::{SceneChanges, SceneReadView};
 
 use crate::render_world::render_resolver::MaterialSlotResolver;
@@ -89,16 +89,16 @@ impl MaterialBuffers {
 /// texture 异步加载过程中使用占位数据（null texture），就绪后自动标记 dirty 并更新到 GPU。
 /// GPU 端始终有合法数据可用。
 pub struct RenderMaterialManager {
-    /// 核心映射：SceneMaterialHandle -> shader 可见 material buffer slot。
+    /// 核心映射：MaterialHandle -> shader 可见 material buffer slot。
     ///
-    /// render-side material identity 直接使用 scene handle，不再额外引入第二套 GPU material handle。
-    handle_to_slot: SecondaryMap<SceneMaterialHandle, usize>,
+    /// render-side bridge 直接以 CPU `MaterialHandle` 作为 key，不再额外引入第二套 GPU material handle。
+    handle_to_slot: SecondaryMap<MaterialHandle, usize>,
 
     /// slot 数据：index = GPU buffer 中的位置；None 表示已 unregister、等待延迟回收。
     ///
-    /// 这里只保存 scene material handle，不缓存材质参数。dirty upload 时从 `SceneReadView`
+    /// 这里只保存 CPU material handle，不缓存材质参数。dirty upload 时从 `SceneReadView`
     /// 读取 `SceneStore` 的 CPU 权威参数。
-    slot_to_handle: Vec<Option<SceneMaterialHandle>>,
+    slot_to_handle: Vec<Option<MaterialHandle>>,
 
     /// 可立即分配的 slot。被删除的 slot 必须跨过 FIF 窗口后才能回到这里。
     free_slots: Vec<usize>,
@@ -107,7 +107,7 @@ pub struct RenderMaterialManager {
     dirty_slots: HashMap<usize, SlotDirtyInfo>,
 
     /// 等待 texture 就绪的材质 handle；ready 后会重新 dirty 所有 FIF buffer。
-    pending_texture_ready: HashSet<SceneMaterialHandle>,
+    pending_texture_ready: HashSet<MaterialHandle>,
 
     /// FIF 套 GPU buffer，避免 CPU 覆盖 GPU 仍在读取的 material buffer。
     buffers: [MaterialBuffers; FrameCounter::fif_count()],
@@ -178,9 +178,9 @@ impl RenderMaterialManager {
 
     /// 注册新材质，分配稳定的 GPU slot。
     ///
-    /// `SceneMaterialHandle` 是 render-side material identity；GPU 侧只额外维护稳定 slot，
-    /// 不再引入第二套长期 handle。
-    fn register(&mut self, handle: SceneMaterialHandle, data: &SceneMaterialData) {
+    /// `MaterialHandle` 是 CPU material identity；GPU 侧只额外维护稳定 slot，
+    /// 不再引入第二套长期 material handle。
+    fn register(&mut self, handle: MaterialHandle, data: &MaterialData) {
         let slot = self.free_slots.pop().expect("RenderMaterialManager: slots exhausted");
 
         let has_textures = data.diffuse_texture.is_some() || data.normal_texture.is_some();
@@ -206,7 +206,7 @@ impl RenderMaterialManager {
     /// 更新已注册材质的 dirty 状态。
     ///
     /// 会标记所有 FIF buffer 为 dirty，后续帧会逐个从 `SceneStore` 读取参数并上传。
-    fn update_material(&mut self, handle: SceneMaterialHandle, data: &SceneMaterialData) {
+    fn update_material(&mut self, handle: MaterialHandle, data: &MaterialData) {
         let &slot = self.handle_to_slot.get(handle).expect("RenderMaterialManager: invalid handle");
 
         let has_textures = data.diffuse_texture.is_some() || data.normal_texture.is_some();
@@ -241,7 +241,7 @@ impl RenderMaterialManager {
     }
 
     /// 批量移除材质，延迟回收 slot。
-    pub fn remove_materials(&mut self, handles: &[SceneMaterialHandle]) {
+    pub fn remove_materials(&mut self, handles: &[MaterialHandle]) {
         for &handle in handles {
             self.unregister(handle);
         }
@@ -251,7 +251,7 @@ impl RenderMaterialManager {
     ///
     /// slot 内容不再上传，但 slot index 会继续保留至少 `FIF_COUNT` 帧，避免在飞命令仍用旧 index
     /// 访问 material buffer 时被新材质复用。
-    fn unregister(&mut self, handle: SceneMaterialHandle) {
+    fn unregister(&mut self, handle: MaterialHandle) {
         let Some(slot) = self.handle_to_slot.remove(handle) else {
             log::debug!("RenderMaterialManager: ignore unregister for unknown handle={:?}", handle);
             return;
@@ -292,7 +292,7 @@ impl RenderMaterialManager {
     pub fn update(&mut self, scene: SceneReadView<'_>, texture_resolver: &dyn TextureResolver) {
         let frame_id = self.frame_token.frame_id();
 
-        let now_ready: Vec<SceneMaterialHandle> = self
+        let now_ready: Vec<MaterialHandle> = self
             .pending_texture_ready
             .iter()
             .copied()
@@ -429,7 +429,7 @@ impl RenderMaterialManager {
 impl RenderMaterialManager {
     /// 获取材质在 GPU buffer 中的 slot index
     #[inline]
-    pub fn get_slot_index(&self, handle: SceneMaterialHandle) -> Option<usize> {
+    pub fn get_slot_index(&self, handle: MaterialHandle) -> Option<usize> {
         self.handle_to_slot.get(handle).copied()
     }
 
@@ -447,7 +447,7 @@ impl RenderMaterialManager {
 }
 
 impl MaterialSlotResolver for RenderMaterialManager {
-    fn resolve_material_slot(&self, handle: SceneMaterialHandle) -> Option<u32> {
+    fn resolve_material_slot(&self, handle: MaterialHandle) -> Option<u32> {
         // resolver 是 RenderInstanceManager 能看到的唯一 material 接口；找不到 binding 表示
         // CPU scene 仍引用了未加载或已删除的 material，实例应保持 pending。
         let slot = self.get_slot_index(handle)?;
@@ -458,7 +458,7 @@ impl MaterialSlotResolver for RenderMaterialManager {
 // 内部工具方法
 impl RenderMaterialManager {
     /// 判断材质引用的所有 texture 是否已经能解析为真实 shader binding。
-    fn check_textures_ready(data: &SceneMaterialData, resolver: &dyn TextureResolver) -> bool {
+    fn check_textures_ready(data: &MaterialData, resolver: &dyn TextureResolver) -> bool {
         if let Some(h) = data.diffuse_texture {
             if !resolver.is_texture_ready(h) {
                 return false;
@@ -477,7 +477,7 @@ impl RenderMaterialManager {
     ///
     /// texture handle 在这里通过 resolver 转成 bindless SRV index；resolver 保证未 ready
     /// 的 texture 也会返回 fallback，因此 GPU 数据不会包含悬空句柄。
-    fn build_gpu_material(data: &SceneMaterialData, resolver: &dyn TextureResolver) -> gpu::material::PbrMaterial {
+    fn build_gpu_material(data: &MaterialData, resolver: &dyn TextureResolver) -> gpu::material::PbrMaterial {
         let diffuse_binding =
             data.diffuse_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
         let normal_binding = data.normal_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
