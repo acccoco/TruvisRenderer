@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use slotmap::SlotMap;
 
+use truvis_asset::handle::MeshData;
 use truvis_shader_binding::gpu;
 
 use crate::components::instance::Instance;
@@ -164,11 +165,52 @@ impl SceneChangeLog {
 /// 短期流向 render-side texture manager，不进入这里的长期状态。
 struct SceneTextureRecord;
 
+/// CPU scene 内的单个 submesh 语义记录。
+///
+/// SceneStore 只长期保存 submesh 的语义 metadata，不保存顶点/索引 CPU 数据。
+/// 顶点数据通过 `WorldRenderSync` 短期流向 render-side mesh manager；这里的顺序
+/// 是 instance material binding、GPU geometry map 和 ray tracing `GeometryIndex()` 的共同契约。
+struct SceneSubmeshRecord {
+    #[allow(dead_code)]
+    name: String,
+}
+
 /// CPU scene 内的 mesh 语义记录。
 ///
-/// v1 只需要 runtime 身份与生命周期；vertex/index CPU data 通过 `WorldRenderSync`
-/// 短期流向 render-side mesh manager，不进入这里的长期状态。
-struct SceneMeshRecord;
+/// mesh 是 instance 可引用的最小资源身份，对应 render side 的一个 BLAS；内部 submesh
+/// 列表对应 BLAS 中的多条 geometry。SceneStore 持有该 metadata，是为了在 CPU edit
+/// 边界强制 `instance.materials.len() == mesh.submeshes.len()`，避免错误延迟到 GPU scene 上传。
+struct SceneMeshRecord {
+    #[allow(dead_code)]
+    name: String,
+    submeshes: Vec<SceneSubmeshRecord>,
+}
+
+impl SceneMeshRecord {
+    fn from_mesh_data(data: &MeshData) -> Result<Self, SceneEditError> {
+        if data.submeshes.is_empty() {
+            return Err(SceneEditError::InvalidMeshData {
+                reason: format!("mesh '{}' has no submeshes", data.name),
+            });
+        }
+
+        Ok(Self {
+            name: data.name.clone(),
+            submeshes: data
+                .submeshes
+                .iter()
+                .map(|submesh| SceneSubmeshRecord {
+                    name: submesh.name.clone(),
+                })
+                .collect(),
+        })
+    }
+
+    #[inline]
+    fn submesh_count(&self) -> usize {
+        self.submeshes.len()
+    }
+}
 
 /// CPU scene 内的 material 语义记录。
 ///
@@ -308,6 +350,33 @@ impl<'a> SceneReadView<'a> {
     pub fn get_instance(&self, handle: InstanceHandle) -> Option<&'a Instance> {
         self.scene.all_instances.get(handle)
     }
+
+    /// 查询直接引用指定 texture 的 material。
+    ///
+    /// 这是 render-side dirty routing 使用的只读依赖视图。调用方只能拿到当前
+    /// CPU scene 语义下的 handle 列表，不能接触 `SceneStore` 内部反向索引 owner。
+    pub fn materials_using_texture(&self, texture: TextureHandle) -> impl Iterator<Item = MaterialHandle> + 'a {
+        self.scene.texture_to_materials.get(&texture).into_iter().flat_map(|materials| materials.iter().copied())
+    }
+
+    /// 查询直接引用指定 material 的 instance。
+    ///
+    /// 结果只表达 CPU scene 语义依赖；instance 是否已经 GPU-ready 仍由 render-side
+    /// `RenderInstanceManager` 和 resolver 在 prepare 阶段判断。
+    pub fn instances_using_material(&self, material: MaterialHandle) -> impl Iterator<Item = InstanceHandle> + 'a {
+        self.scene.material_to_instances.get(&material).into_iter().flat_map(|instances| instances.iter().copied())
+    }
+
+    /// 查询直接引用指定 mesh 的 instance。
+    pub fn instances_using_mesh(&self, mesh: MeshHandle) -> impl Iterator<Item = InstanceHandle> + 'a {
+        self.scene.mesh_to_instances.get(&mesh).into_iter().flat_map(|instances| instances.iter().copied())
+    }
+
+    /// 判断当前 sky / environment 是否引用指定 texture。
+    #[inline]
+    pub fn sky_uses_texture(&self, texture: TextureHandle) -> bool {
+        self.scene.sky_state.texture == Some(texture)
+    }
 }
 
 /// CPU 侧 runtime scene 的所有者。
@@ -390,8 +459,13 @@ impl SceneStore {
     }
 
     /// 注册一个 scene mesh 语义记录。
-    pub fn register_mesh(&mut self) -> MeshHandle {
-        self.all_meshes.insert(SceneMeshRecord)
+    ///
+    /// 顶点/index CPU 数据不会进入 `SceneStore`，但 submesh 顺序必须在这里保存下来，
+    /// 因为 instance material 列表、GPU geometry indirect map 和 ray tracing geometry index
+    /// 都依赖同一个 instance-local submesh 顺序。
+    pub fn register_mesh(&mut self, data: &MeshData) -> Result<MeshHandle, SceneEditError> {
+        let record = SceneMeshRecord::from_mesh_data(data)?;
+        Ok(self.all_meshes.insert(record))
     }
 
     /// 删除一个 scene texture 语义记录。
@@ -592,12 +666,13 @@ impl SceneStore {
         handle: InstanceHandle,
         materials: Vec<MaterialHandle>,
     ) -> Result<(), SceneEditError> {
-        self.validate_material_handles(&materials)?;
         let Some(old_instance) = self.all_instances.get(handle).cloned() else {
             return Err(SceneEditError::StaleHandle {
                 kind: SceneHandleKind::Instance,
             });
         };
+        self.validate_material_handles(&materials)?;
+        self.validate_instance_material_count(old_instance.mesh, materials.len())?;
         if old_instance.materials == materials {
             return Ok(());
         }
@@ -683,7 +758,24 @@ impl SceneStore {
                 kind: SceneHandleKind::Mesh,
             });
         }
-        self.validate_material_handles(&instance.materials)
+        self.validate_material_handles(&instance.materials)?;
+        self.validate_instance_material_count(instance.mesh, instance.materials.len())
+    }
+
+    fn validate_instance_material_count(&self, mesh: MeshHandle, material_count: usize) -> Result<(), SceneEditError> {
+        let Some(mesh_record) = self.all_meshes.get(mesh) else {
+            return Err(SceneEditError::MissingDependency {
+                kind: SceneHandleKind::Mesh,
+            });
+        };
+        let expected = mesh_record.submesh_count();
+        if expected != material_count {
+            return Err(SceneEditError::MaterialCountMismatch {
+                expected,
+                actual: material_count,
+            });
+        }
+        Ok(())
     }
 
     fn material_texture_handles(data: &MaterialData) -> impl Iterator<Item = TextureHandle> {
@@ -738,6 +830,84 @@ impl SceneStore {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use truvis_asset::handle::{MeshData, SubmeshData};
+
+    use super::*;
+
+    fn test_submesh(name: &str) -> SubmeshData {
+        SubmeshData {
+            positions: vec![
+                glam::vec3(0.0, 0.0, 0.0),
+                glam::vec3(1.0, 0.0, 0.0),
+                glam::vec3(0.0, 1.0, 0.0),
+            ],
+            normals: vec![glam::Vec3::Z; 3],
+            tangents: vec![glam::Vec3::X; 3],
+            uvs: vec![glam::Vec2::ZERO; 3],
+            indices: vec![0, 1, 2],
+            name: name.to_string(),
+        }
+    }
+
+    fn test_mesh(submesh_count: usize) -> MeshData {
+        MeshData {
+            name: "test-mesh".to_string(),
+            submeshes: (0..submesh_count).map(|index| test_submesh(&format!("submesh-{index}"))).collect(),
+        }
+    }
+
+    fn test_material(name: &str) -> MaterialData {
+        MaterialData {
+            base_color: glam::Vec4::ONE,
+            emissive: glam::Vec4::ZERO,
+            metallic: 0.0,
+            roughness: 0.5,
+            opaque: 1.0,
+            diffuse_texture: None,
+            normal_texture: None,
+            name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn rejects_mesh_without_submeshes() {
+        let mut scene = SceneStore::new();
+        let err = scene.register_mesh(&test_mesh(0)).unwrap_err();
+        assert!(matches!(err, SceneEditError::InvalidMeshData { .. }));
+    }
+
+    #[test]
+    fn validates_instance_material_count_against_mesh_submeshes() {
+        let mut scene = SceneStore::new();
+        let mesh = scene.register_mesh(&test_mesh(2)).unwrap();
+        let material_a = scene.register_material(test_material("a")).unwrap();
+        let material_b = scene.register_material(test_material("b")).unwrap();
+
+        let err = scene
+            .register_instance(Instance {
+                mesh,
+                materials: vec![material_a],
+                transform: glam::Mat4::IDENTITY,
+            })
+            .unwrap_err();
+        assert_eq!(err, SceneEditError::MaterialCountMismatch { expected: 2, actual: 1 });
+
+        let instance = scene
+            .register_instance(Instance {
+                mesh,
+                materials: vec![material_a, material_b],
+                transform: glam::Mat4::IDENTITY,
+            })
+            .unwrap();
+
+        let err = scene.update_instance_materials(instance, vec![material_a]).unwrap_err();
+        assert_eq!(err, SceneEditError::MaterialCountMismatch { expected: 2, actual: 1 });
+    }
+}
+
 impl Drop for SceneStore {
     fn drop(&mut self) {
         log::info!("SceneStore dropped.");

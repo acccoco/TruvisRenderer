@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    mem::size_of,
-};
+use std::{collections::HashMap, mem::size_of};
 
 use ash::vk;
 use slotmap::SecondaryMap;
@@ -14,10 +11,11 @@ use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuff
 use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
 use truvis_shader_binding::gpu;
+use truvis_world::SceneReadView;
 use truvis_world::components::material::MaterialData;
 use truvis_world::guid_new_type::MaterialHandle;
-use truvis_world::{SceneChanges, SceneReadView};
 
+use crate::render_world::dirty_router::{DirtyMaterialFlags, MaterialDispatch};
 use crate::render_world::render_resolver::MaterialSlotResolver;
 use crate::render_world::texture_resolver::{TextureBinding, TextureResolver};
 
@@ -106,9 +104,6 @@ pub struct RenderMaterialManager {
     /// dirty 列表：slot index -> SlotDirtyInfo，记录每个 FIF buffer 是否还需要补写该 slot。
     dirty_slots: HashMap<usize, SlotDirtyInfo>,
 
-    /// 等待 texture 就绪的材质 handle；ready 后会重新 dirty 所有 FIF buffer。
-    pending_texture_ready: HashSet<MaterialHandle>,
-
     /// FIF 套 GPU buffer，避免 CPU 覆盖 GPU 仍在读取的 material buffer。
     buffers: [MaterialBuffers; FrameCounter::fif_count()],
 
@@ -131,12 +126,18 @@ impl RenderMaterialManager {
             slot_to_handle: (0..MAX_MATERIAL_COUNT).map(|_| None).collect(),
             free_slots,
             dirty_slots: HashMap::new(),
-            pending_texture_ready: HashSet::new(),
             buffers: FrameCounter::frame_labes().map(|frame_label| MaterialBuffers::new(ctx, frame_label)),
             frame_token,
             material_revision: 0,
         }
     }
+}
+
+/// material 阶段对 dirty routing 暴露的结构化结果。
+#[derive(Default)]
+pub(crate) struct RenderMaterialUpdateResult {
+    /// 本帧创建或失效了 stable material slot 的 material。
+    pub(crate) slot_changed_materials: Vec<MaterialHandle>,
 }
 
 // 销毁
@@ -156,34 +157,45 @@ impl Drop for RenderMaterialManager {
 
 // 事件同步 / 注册 / 修改 / 移除
 impl RenderMaterialManager {
-    /// 消费 CPU scene material change，分配或更新稳定 GPU material slot。
+    /// 消费 dirty router 分发的 material dispatch，分配或更新稳定 GPU material slot。
     ///
     /// `SceneStore` 是材质参数权威 owner；本 manager 只保存 handle -> stable slot 映射和
     /// per-FIF dirty 状态。实际打包 GPU material 时再从 `SceneReadView` 读取当前参数。
-    pub fn apply_scene_changes(&mut self, scene: SceneReadView<'_>, changes: &SceneChanges) {
-        self.remove_materials(&changes.removed_materials);
-
-        for &handle in &changes.changed_materials {
-            let Some(data) = scene.material_data(handle) else {
-                log::debug!("RenderMaterialManager: ignore changed stale material handle={:?}", handle);
-                continue;
-            };
-            if self.handle_to_slot.contains_key(handle) {
-                self.update_material(handle, data);
-            } else {
-                self.register(handle, data);
+    pub(crate) fn apply_material_dispatch(
+        &mut self,
+        scene: SceneReadView<'_>,
+        dispatch: MaterialDispatch,
+    ) -> RenderMaterialUpdateResult {
+        let mut result = RenderMaterialUpdateResult::default();
+        for handle in dispatch.removed_materials {
+            if self.unregister(handle) {
+                result.slot_changed_materials.push(handle);
             }
         }
+
+        for (handle, flags) in dispatch.dirty_materials {
+            if scene.material_data(handle).is_none() {
+                log::debug!("RenderMaterialManager: ignore changed stale material handle={:?}", handle);
+                continue;
+            }
+            if self.handle_to_slot.contains_key(handle) {
+                self.update_material(handle, flags);
+            } else {
+                self.register(handle);
+                result.slot_changed_materials.push(handle);
+            }
+        }
+
+        result
     }
 
     /// 注册新材质，分配稳定的 GPU slot。
     ///
     /// `MaterialHandle` 是 CPU material identity；GPU 侧只额外维护稳定 slot，
     /// 不再引入第二套长期 material handle。
-    fn register(&mut self, handle: MaterialHandle, data: &MaterialData) {
+    fn register(&mut self, handle: MaterialHandle) {
         let slot = self.free_slots.pop().expect("RenderMaterialManager: slots exhausted");
 
-        let has_textures = data.diffuse_texture.is_some() || data.normal_texture.is_some();
         self.handle_to_slot.insert(handle, slot);
         self.slot_to_handle[slot] = Some(handle);
         self.dirty_slots.insert(
@@ -193,11 +205,6 @@ impl RenderMaterialManager {
                 dirty_frame_id: self.frame_token.frame_id(),
             },
         );
-        if has_textures {
-            // 注册时可能 texture 尚未上传完成。材质 slot 先用 fallback/null 可见，
-            // texture ready 后再通过 update 触发全 FIF 重新上传。
-            self.pending_texture_ready.insert(handle);
-        }
         self.material_revision = self.material_revision.saturating_add(1);
 
         log::trace!("RenderMaterialManager: register scene_handle={:?} stable_slot={}", handle, slot);
@@ -206,10 +213,9 @@ impl RenderMaterialManager {
     /// 更新已注册材质的 dirty 状态。
     ///
     /// 会标记所有 FIF buffer 为 dirty，后续帧会逐个从 `SceneStore` 读取参数并上传。
-    fn update_material(&mut self, handle: MaterialHandle, data: &MaterialData) {
+    fn update_material(&mut self, handle: MaterialHandle, flags: DirtyMaterialFlags) {
         let &slot = self.handle_to_slot.get(handle).expect("RenderMaterialManager: invalid handle");
 
-        let has_textures = data.diffuse_texture.is_some() || data.normal_texture.is_some();
         self.slot_to_handle[slot] = Some(handle);
 
         let frame_id = self.frame_token.frame_id();
@@ -224,14 +230,9 @@ impl RenderMaterialManager {
                 dirty_frame_id: frame_id,
             });
 
-        // texture 就绪状态需要重新检测
-        if has_textures {
-            // 参数变化可能换成新的 texture handle，因此需要重新进入 ready 检测集合。
-            self.pending_texture_ready.insert(handle);
-        } else {
-            self.pending_texture_ready.remove(&handle);
+        if flags.scene_changed {
+            self.material_revision = self.material_revision.saturating_add(1);
         }
-        self.material_revision = self.material_revision.saturating_add(1);
 
         log::debug!(
             "RenderMaterialManager: update scene_handle={:?} stable_slot={}; dirty all FIF buffers",
@@ -240,25 +241,17 @@ impl RenderMaterialManager {
         );
     }
 
-    /// 批量移除材质，延迟回收 slot。
-    pub fn remove_materials(&mut self, handles: &[MaterialHandle]) {
-        for &handle in handles {
-            self.unregister(handle);
-        }
-    }
-
     /// 移除材质，延迟回收 slot
     ///
     /// slot 内容不再上传，但 slot index 会继续保留至少 `FIF_COUNT` 帧，避免在飞命令仍用旧 index
     /// 访问 material buffer 时被新材质复用。
-    fn unregister(&mut self, handle: MaterialHandle) {
+    fn unregister(&mut self, handle: MaterialHandle) -> bool {
         let Some(slot) = self.handle_to_slot.remove(handle) else {
             log::debug!("RenderMaterialManager: ignore unregister for unknown handle={:?}", handle);
-            return;
+            return false;
         };
 
         self.slot_to_handle[slot] = None;
-        self.pending_texture_ready.remove(&handle);
         // fif_dirty 全设为 false：不再需要上传，仅保留 dirty_frame_id 用于回收计时
         let frame_id = self.frame_token.frame_id();
         self.dirty_slots
@@ -274,6 +267,7 @@ impl RenderMaterialManager {
 
         log::debug!("RenderMaterialManager: unregister slot={} handle={:?}", slot, handle);
         self.material_revision = self.material_revision.saturating_add(1);
+        true
     }
 }
 
@@ -283,55 +277,6 @@ impl RenderMaterialManager {
     pub fn begin_frame(&mut self, frame_token: FrameToken) {
         // 实际回收发生在 upload 中，因为回收判断需要和当前 FIF dirty 状态处理保持同一处。
         self.frame_token = frame_token;
-    }
-
-    /// 检查 texture 异步加载状态，尝试新增 dirty 标记
-    ///
-    /// 材质可以先用 fallback/null texture 上传；当 resolver 报告真实 texture ready 时，
-    /// 再把所有 FIF buffer 标记为 dirty，让 shader 在后续帧看到真实绑定。
-    pub fn update(&mut self, scene: SceneReadView<'_>, texture_resolver: &dyn TextureResolver) {
-        let frame_id = self.frame_token.frame_id();
-
-        let now_ready: Vec<MaterialHandle> = self
-            .pending_texture_ready
-            .iter()
-            .copied()
-            .filter(|&handle| {
-                let Some(&slot) = self.handle_to_slot.get(handle) else {
-                    return false;
-                };
-                if self.slot_to_handle[slot].is_none() {
-                    return false;
-                }
-                let Some(data) = scene.material_data(handle) else {
-                    return false;
-                };
-                Self::check_textures_ready(data, texture_resolver)
-            })
-            .collect();
-
-        for handle in now_ready {
-            self.pending_texture_ready.remove(&handle);
-            let Some(&slot) = self.handle_to_slot.get(handle) else {
-                continue;
-            };
-            // texture 刚变为就绪，需要重新上传到所有 FIF buffer，把 fallback/null 绑定替换为真实 SRV。
-            self.dirty_slots
-                .entry(slot)
-                .and_modify(|info| {
-                    info.fif_dirty = [true; FrameCounter::fif_count()];
-                    info.dirty_frame_id = frame_id;
-                })
-                .or_insert(SlotDirtyInfo {
-                    fif_dirty: [true; FrameCounter::fif_count()],
-                    dirty_frame_id: frame_id,
-                });
-            log::trace!(
-                "RenderMaterialManager: textures ready handle={:?} slot={}; dirty all FIF buffers",
-                handle,
-                slot
-            );
-        }
     }
 
     /// 将 dirty slot 写入当前帧对应的 GPU buffer，或者回收 slot 到 free list 中
@@ -433,12 +378,6 @@ impl RenderMaterialManager {
         self.handle_to_slot.get(handle).copied()
     }
 
-    /// 返回影响 light table 构建的 CPU 材质参数 revision。
-    #[inline]
-    pub(crate) fn revision(&self) -> u64 {
-        self.material_revision
-    }
-
     /// 获取指定帧的 material buffer device address
     #[inline]
     pub fn material_buffer_device_address(&self, frame_label: FrameLabel) -> vk::DeviceAddress {
@@ -457,21 +396,6 @@ impl MaterialSlotResolver for RenderMaterialManager {
 
 // 内部工具方法
 impl RenderMaterialManager {
-    /// 判断材质引用的所有 texture 是否已经能解析为真实 shader binding。
-    fn check_textures_ready(data: &MaterialData, resolver: &dyn TextureResolver) -> bool {
-        if let Some(h) = data.diffuse_texture {
-            if !resolver.is_texture_ready(h) {
-                return false;
-            }
-        }
-        if let Some(h) = data.normal_texture {
-            if !resolver.is_texture_ready(h) {
-                return false;
-            }
-        }
-        true
-    }
-
     // TODO 是否可以改成 Default texture，而不是 null
     /// 将 CPU 材质参数转换为 shader 读取的 packed GPU 数据。
     ///

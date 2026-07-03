@@ -762,7 +762,7 @@ impl RenderRuntime {
         let world_sync = self.world.sync_for_render();
         let scene_changes = world_sync.scene_changes;
         let scene_view = self.world.scene_view();
-        self.render_world.prepare_asset_sync(
+        let asset_sync_result = self.render_world.prepare_asset_sync(
             world_sync.asset_uploads,
             &scene_changes,
             scene_view,
@@ -799,7 +799,7 @@ impl RenderRuntime {
             transfer_barrier_mask,
             self.frame_timing.frame_counter(),
             scene_view,
-            &scene_changes,
+            asset_sync_result.dirty_dispatch_plan,
         );
         if render_world_result.sky_changed {
             // sky 从 fallback 切换到真实贴图时，历史累积帧已经不再对应当前环境光。

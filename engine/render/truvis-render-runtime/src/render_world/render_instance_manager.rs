@@ -3,11 +3,11 @@ use std::collections::{HashMap, HashSet};
 use slotmap::SecondaryMap;
 
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
-use truvis_shader_binding::gpu;
+use truvis_world::SceneReadView;
 use truvis_world::components::instance::Instance;
 use truvis_world::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle};
-use truvis_world::{SceneChanges, SceneInstanceChangeKind, SceneReadView};
 
+use crate::render_world::dirty_router::InstanceDispatch;
 use crate::render_world::render_data::{GpuInstanceSlot, InstanceRenderData, MeshRenderData, RenderData};
 use crate::render_world::render_resolver::{MaterialSlotResolver, MeshRenderResolver};
 
@@ -66,6 +66,15 @@ pub struct RenderInstanceManager {
     motion_history_reset_pending: bool,
 }
 
+/// instance 阶段对 dirty routing 暴露的结构化结果。
+#[derive(Default)]
+pub(crate) struct RenderInstanceUpdateResult {
+    pub(crate) active_set_changed: bool,
+    pub(crate) transform_changed: bool,
+    pub(crate) material_binding_changed: bool,
+    pub(crate) mesh_binding_changed: bool,
+}
+
 impl RenderInstanceManager {
     /// 创建 instance manager，并预分配稳定 GPU instance slot 池。
     ///
@@ -91,13 +100,6 @@ impl RenderInstanceManager {
         self.reclaim_retired_slots();
     }
 
-    /// 返回影响 TLAS/instance buffer 的 instance-side revision。
-    ///
-    /// 实例增删、ready 状态变化和 active transform 变化都会推进该值。
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
-
     /// 请求下一次 prepare 把所有 active instance 的 motion history 对齐到当前 transform。
     ///
     /// DLSS history reset 后，上一帧输出已不可复用；即使 CPU transform 没变，也不能继续把
@@ -119,11 +121,11 @@ impl RenderInstanceManager {
     pub fn prepare_render_data<'a>(
         &mut self,
         scene: SceneReadView<'_>,
-        scene_changes: &SceneChanges,
+        dispatch: InstanceDispatch,
         material_slot_resolver: &dyn MaterialSlotResolver,
         mesh_resolver: &'a dyn MeshRenderResolver,
-    ) -> RenderData<'a> {
-        self.sync_scene_instances(scene, scene_changes, material_slot_resolver, mesh_resolver);
+    ) -> (RenderData<'a>, RenderInstanceUpdateResult) {
+        let update_result = self.sync_scene_instances(scene, dispatch, material_slot_resolver, mesh_resolver);
 
         // RenderData 是提交给 RenderWorld 的只读快照。这里按稳定 slot 排序，保证 raster draw、
         // TLAS custom index 和 GPU instance buffer 使用同一套 instance slot 语义。
@@ -159,6 +161,17 @@ impl RenderInstanceManager {
                 all_meshes.push(mesh_render_data);
                 index
             };
+            let mesh_geometry_count = all_meshes[mesh_index].geometries.len();
+            if mesh_geometry_count != instance.materials.len() {
+                log::error!(
+                    "RenderInstanceManager: skip instance {:?}; material count {} does not match mesh {:?} geometry count {}",
+                    handle,
+                    instance.materials.len(),
+                    instance.mesh,
+                    mesh_geometry_count
+                );
+                continue;
+            }
 
             let mut material_slots = Vec::with_capacity(instance.materials.len());
             for &material in &instance.materials {
@@ -183,78 +196,63 @@ impl RenderInstanceManager {
             });
         }
 
-        let all_point_lights: Vec<gpu::light::PointLight> =
-            scene.point_light_map().iter().map(|(_, light)| *light).collect();
-        let all_spot_lights: Vec<gpu::light::SpotLight> =
-            scene.spot_light_map().iter().map(|(_, light)| *light).collect();
-        let all_area_lights: Vec<gpu::light::AreaLight> =
-            scene.area_light_map().iter().map(|(_, light)| *light).collect();
-        // analytic_light_version 跟随 CPU scene 语义快照一起传递到 RenderData。
-        // RenderInstanceManager 不解释 ReSTIR，也不修改 light 采样概率，只保持 prepare 边界的数据一致性。
-        let analytic_light_version = scene.light_revision();
-
-        RenderData {
+        let render_data = RenderData {
             all_instances,
             all_meshes,
-            all_point_lights,
-            all_spot_lights,
-            all_area_lights,
-            analytic_light_version,
             mesh_geometry_start_indices,
-        }
+        };
+        (render_data, update_result)
     }
 
     fn sync_scene_instances(
         &mut self,
         scene: SceneReadView<'_>,
-        scene_changes: &SceneChanges,
+        dispatch: InstanceDispatch,
         material_slot_resolver: &dyn MaterialSlotResolver,
         mesh_resolver: &dyn MeshRenderResolver,
-    ) {
+    ) -> RenderInstanceUpdateResult {
+        let mut result = RenderInstanceUpdateResult::default();
         let reset_motion_history = self.motion_history_reset_pending;
-        // 先处理 CPU scene 显式删除的实例，避免后续 active 列表继续输出 stale slot。
-        for &handle in &scene_changes.removed_instances {
-            self.retire_instance_binding(handle);
-        }
+        let InstanceDispatch {
+            dirty_instances,
+            removed_instances,
+        } = dispatch;
 
-        let changed_instances = scene_changes
-            .changed_instances
-            .iter()
-            .map(|change| (change.handle, change.kind))
-            .collect::<HashMap<_, _>>();
-        let transform_changed_instances = changed_instances
-            .iter()
-            .filter_map(|(&handle, &kind)| {
-                matches!(kind, SceneInstanceChangeKind::Lifecycle | SceneInstanceChangeKind::Transform)
-                    .then_some(handle)
-            })
-            .collect::<HashSet<_>>();
-
-        for change in &scene_changes.changed_instances {
-            let Some(instance) = scene.get_instance(change.handle) else {
-                continue;
-            };
-            if !self.bindings.contains_key(change.handle) {
-                self.register_instance(change.handle, instance);
+        // 先处理 router 显式分发的删除，避免后续 active 列表继续输出 stale slot。
+        for handle in removed_instances {
+            if self.retire_instance_binding(handle) {
+                result.active_set_changed = true;
             }
         }
 
+        for (&handle, _) in &dirty_instances {
+            let Some(instance) = scene.get_instance(handle) else {
+                continue;
+            };
+            if !self.bindings.contains_key(handle) {
+                self.register_instance(handle, instance);
+            }
+        }
+
+        // stale 扫描是 manager 自身状态的防御性清理，不作为 dirty 传播来源；
+        // 正常路径仍应由 `SceneInstanceRemoved` rule 显式分发删除。
         let stale_handles = self
             .bindings
             .iter()
             .filter_map(|(handle, _)| scene.get_instance(handle).is_none().then_some(handle))
             .collect::<Vec<_>>();
         for handle in stale_handles {
-            self.retire_instance_binding(handle);
+            if self.retire_instance_binding(handle) {
+                result.active_set_changed = true;
+            }
         }
 
+        let dirty_handles = dirty_instances.keys().copied().collect::<HashSet<_>>();
         for (handle, binding) in self.bindings.iter_mut() {
             let Some(instance) = scene.get_instance(handle) else {
                 continue;
             };
-            // ready gate 由 material/mesh resolver 共同决定。instance manager 不直接访问 material/mesh manager
-            // 内部缓存，只依赖窄接口判断这个实例是否可以进入本帧 render data。
-            let ready = Self::dependencies_ready(instance, material_slot_resolver, mesh_resolver);
+            let flags = dirty_instances.get(&handle).copied().unwrap_or_default();
 
             if reset_motion_history {
                 // 历史重置只影响 previous transform，不表示 CPU scene 语义变化；这里不推进
@@ -264,8 +262,9 @@ impl RenderInstanceManager {
                 binding.last_transform = instance.transform;
                 if transform_changed && binding.state == InstanceState::Active {
                     self.revision = self.revision.saturating_add(1);
+                    result.transform_changed = true;
                 }
-            } else if transform_changed_instances.contains(&handle) || binding.last_transform != instance.transform {
+            } else if flags.transform {
                 binding.previous_transform = binding.last_transform;
                 binding.last_transform = instance.transform;
                 if binding.state == InstanceState::Active {
@@ -277,25 +276,41 @@ impl RenderInstanceManager {
                         handle,
                         binding.slot.as_u32()
                     );
+                    result.transform_changed = true;
                 }
             } else {
+                // motion vector 需要逐帧推进 previous_transform。这个维护不是 dirty 传播，
+                // 而是 temporal history 的帧生命周期不变量。
                 binding.previous_transform = binding.last_transform;
             }
 
-            if matches!(changed_instances.get(&handle), Some(SceneInstanceChangeKind::MaterialBinding))
-                && binding.state == InstanceState::Active
-            {
+            if flags.material_binding && binding.state == InstanceState::Active {
                 // material list 变化不会影响 TLAS，但会改变 instance material indirect map 和
                 // emissive table。当前 scene buffer 每帧上传，revision 用于驱动依赖该语义的派生表。
                 self.revision = self.revision.saturating_add(1);
+                result.material_binding_changed = true;
+            }
+            if flags.mesh_binding && binding.state == InstanceState::Active {
+                // mesh ready 或替换会改变 instance -> BLAS/geometry 的关系，需要让 TLAS 和
+                // emissive table 重新读取 active instance 快照。
+                self.revision = self.revision.saturating_add(1);
+                result.mesh_binding_changed = true;
             }
 
+            if !flags.needs_ready_check() && !dirty_handles.contains(&handle) {
+                continue;
+            }
+
+            // ready gate 由 material/mesh resolver 共同决定。instance manager 不直接访问 material/mesh manager
+            // 内部缓存，只依赖窄接口判断这个实例是否可以进入本帧 render data。
+            let ready = Self::dependencies_ready(instance, material_slot_resolver, mesh_resolver);
             match (binding.state, ready) {
                 (InstanceState::Pending, true) => {
                     // mesh/material 都 ready 后才激活，避免 draw/TLAS 使用空 BLAS 或无效 material slot。
                     binding.state = InstanceState::Active;
                     binding.previous_transform = instance.transform;
                     self.revision = self.revision.saturating_add(1);
+                    result.active_set_changed = true;
                     log::trace!(
                         "RenderInstanceManager: activate handle={:?} stable_slot={}",
                         handle,
@@ -307,6 +322,7 @@ impl RenderInstanceManager {
                     // 直到 resolver 再次提供完整 GPU 数据。
                     binding.state = InstanceState::Pending;
                     self.revision = self.revision.saturating_add(1);
+                    result.active_set_changed = true;
                     log::trace!(
                         "RenderInstanceManager: deactivate handle={:?} stable_slot={}",
                         handle,
@@ -318,6 +334,7 @@ impl RenderInstanceManager {
         }
 
         self.motion_history_reset_pending = false;
+        result
     }
 
     fn register_instance(&mut self, handle: InstanceHandle, instance: &Instance) {
@@ -335,8 +352,9 @@ impl RenderInstanceManager {
         log::trace!("RenderInstanceManager: register handle={:?} stable_slot={}", handle, slot.as_u32());
     }
 
-    fn retire_instance_binding(&mut self, handle: InstanceHandle) {
+    fn retire_instance_binding(&mut self, handle: InstanceHandle) -> bool {
         if let Some(binding) = self.bindings.remove(handle) {
+            let was_active = binding.state == InstanceState::Active;
             if binding.state == InstanceState::Active {
                 self.revision = self.revision.saturating_add(1);
             }
@@ -349,7 +367,9 @@ impl RenderInstanceManager {
                 handle,
                 binding.slot.as_u32()
             );
+            return was_active;
         }
+        false
     }
 
     fn reclaim_retired_slots(&mut self) {
@@ -378,7 +398,10 @@ impl RenderInstanceManager {
     ) -> bool {
         // mesh 必须已经拥有 vertex/index buffer 与 BLAS；material 必须已有稳定 slot。
         // texture 未 ready 不会阻止 material ready，因为 material manager 会使用 fallback binding。
-        mesh_resolver.is_mesh_ready(instance.mesh)
+        let Some(mesh) = mesh_resolver.resolve_mesh(instance.mesh) else {
+            return false;
+        };
+        mesh.geometries.len() == instance.materials.len()
             && instance.materials.iter().all(|&material| material_slot_resolver.is_material_ready(material))
     }
 }

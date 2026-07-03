@@ -16,15 +16,16 @@ bindless descriptor 或 material slot。GPU 上传和 shader 可见绑定由
 - `AssetLoadEvent`：CPU 数据完成事件，交给 `SceneAssetIngestor` 翻译成 CPU resource handle 和 render upload event
 - `TextureLoadDesc` / `ModelLoadDesc`：一次性 loader task 输入描述，不承担长期去重 identity
 - `TextureBytes`：从图片文件解码出的 owned CPU 纹理 bytes，只通过事件交给 texture manager
-- `MeshData`：从导入器复制出来的 owned CPU mesh 数据，只通过事件交给 mesh manager
+- `SubmeshData`：从导入器复制出来的 owned CPU 几何数据，是 scene / GPU scene / RT 中的最小几何单元
+- `MeshData`：由一个或多个 `SubmeshData` 组成的 owned CPU mesh payload，只通过事件交给 mesh manager；mesh 对应一个 BLAS，submesh 对应 BLAS 内一条 geometry
 - `RawSceneData`：model 导入后的 owned CPU scene payload，通过 `ModelLoaded` 事件交给 `SceneAssetIngestor`
 
 ## 内部结构
 
 - `asset_loader`：crate 内部后台调度层，只持有 Rayon 线程池、结果 channel 和任务等待逻辑。
 - `texture_loader`：crate 内部纹理任务实现，只负责 image 文件读取、CPU 解码和 RGBA8 bytes 输出。
-- `truvixx_scene_loader`：crate 内部 Assimp scene 导入任务实现，通过 `truvis-assimp-binding` 调用 Assimp C API，只负责 C++ importer 生命周期和 owned CPU scene 数据复制。
-- `gltf_scene_loader`：crate 内部 glTF / GLB scene 导入任务实现，通过 Rust `gltf` crate 读取 material / mesh / instance，并复制成与 Assimp 路径相同的 owned CPU scene 数据。
+- `truvixx_scene_loader`：crate 内部 Assimp scene 导入任务实现，通过 `truvis-assimp-binding` 调用 Assimp C API，只负责 C++ importer 生命周期和 owned CPU scene 数据复制；当前每份导入几何显式包装为单 submesh mesh。
+- `gltf_scene_loader`：crate 内部 glTF / GLB scene 导入任务实现，通过 Rust `gltf` crate 读取 material / mesh / instance，并复制成与 Assimp 路径相同的 owned CPU scene 数据；当前每个 glTF primitive 仍包装为单 submesh mesh。
 - 外部调用方不直接使用 loader 模块；加载请求、状态查询和完成事件都通过 `AssetHub` 进入或离开 asset 层。
 
 ## 设计目标

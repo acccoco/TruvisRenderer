@@ -1,4 +1,4 @@
-use truvis_asset::handle::MeshData;
+use truvis_asset::handle::{MeshData, SubmeshData};
 
 /// 内置程序化 mesh 类型。
 ///
@@ -34,7 +34,7 @@ impl ProceduralMeshKind {
 
 /// 位于 XY 平面、法线 +Z 的正立三角形。
 pub fn triangle() -> MeshData {
-    MeshData {
+    MeshData::from_single_submesh(SubmeshData {
         positions: vec![
             glam::vec3(-1.0, -1.0, 0.0),
             glam::vec3(1.0, -1.0, 0.0),
@@ -45,12 +45,12 @@ pub fn triangle() -> MeshData {
         uvs: vec![glam::vec2(0.0, 1.0), glam::vec2(1.0, 1.0), glam::vec2(0.5, 0.0)],
         indices: vec![0, 1, 2],
         name: ProceduralMeshKind::Triangle.name().to_string(),
-    }
+    })
 }
 
 /// 位于 XY 平面、法线 +Z 的矩形。
 pub fn rect() -> MeshData {
-    MeshData {
+    MeshData::from_single_submesh(SubmeshData {
         positions: vec![
             glam::vec3(-1.0, 1.0, 0.0),
             glam::vec3(1.0, 1.0, 0.0),
@@ -67,12 +67,12 @@ pub fn rect() -> MeshData {
         ],
         indices: vec![0, 1, 2, 0, 2, 3],
         name: ProceduralMeshKind::Rect.name().to_string(),
-    }
+    })
 }
 
 /// 位于 XZ 平面、朝向 +Y 的地面面片。
 pub fn floor() -> MeshData {
-    MeshData {
+    MeshData::from_single_submesh(SubmeshData {
         positions: vec![
             glam::vec3(1.0, 0.0, 1.0),
             glam::vec3(1.0, 0.0, -1.0),
@@ -89,12 +89,12 @@ pub fn floor() -> MeshData {
         ],
         indices: vec![0, 1, 2, 0, 2, 3],
         name: ProceduralMeshKind::Floor.name().to_string(),
-    }
+    })
 }
 
 /// 单位 cube，右手系，X 向右，Y 向上。
 pub fn cube() -> MeshData {
-    MeshData {
+    MeshData::from_single_submesh(SubmeshData {
         positions: vec![
             glam::vec3(0.5, 0.5, -0.5),
             glam::vec3(-0.5, 0.5, -0.5),
@@ -129,7 +129,7 @@ pub fn cube() -> MeshData {
             20, 22, 21, 20, 23, 22,
         ],
         name: ProceduralMeshKind::Cube.name().to_string(),
-    }
+    })
 }
 
 fn cube_normals() -> Vec<glam::Vec3> {

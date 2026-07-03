@@ -14,7 +14,9 @@ use truvis_world::SceneReadView;
 use truvis_world::{SceneAssetSyncOutput, SceneChanges};
 
 use crate::bindings::shader_binding_system::ShaderBindingSystem;
+use crate::render_world::dirty_router::{DirtyDispatchPlan, DirtyRouterHelper, DirtyStageKind};
 use crate::render_world::environment_binding::EnvironmentBinding;
+use crate::render_world::render_analytic_light_manager::{AnalyticLightBinding, RenderAnalyticLightManager};
 use crate::render_world::render_data::RenderData;
 use crate::render_world::render_emissive_light_table::EmissiveLightBinding;
 use crate::render_world::render_emissive_light_table::RenderEmissiveLightTable;
@@ -43,6 +45,7 @@ pub struct RenderWorld {
     pub(super) render_mesh_manager: RenderMeshManager,
     pub(super) render_material_manager: RenderMaterialManager,
     pub(super) render_instance_manager: RenderInstanceManager,
+    pub(super) render_analytic_light_manager: RenderAnalyticLightManager,
     pub(super) render_emissive_light_table: RenderEmissiveLightTable,
     /// 每个 FIF frame label 独占一套 scene buffer，避免覆盖 GPU 仍在读取的数据。
     pub(super) render_world_buffers: [RenderWorldBuffers; FrameCounter::fif_count()],
@@ -54,6 +57,10 @@ pub struct RenderWorld {
 
 pub(crate) struct RenderWorldPrepareResult {
     pub(crate) sky_changed: bool,
+}
+
+pub(crate) struct RenderWorldAssetSyncResult {
+    pub(crate) dirty_dispatch_plan: DirtyDispatchPlan,
 }
 
 // 生命周期：创建和销毁 `RenderWorld` 拥有的长期 GPU 资源。
@@ -103,6 +110,10 @@ impl RenderWorld {
             let _span = tracy_client::span!("RenderWorld::new/render_emissive_light_table");
             RenderEmissiveLightTable::new(resource_ctx)
         };
+        let render_analytic_light_manager = {
+            let _span = tracy_client::span!("RenderWorld::new/render_analytic_light_manager");
+            RenderAnalyticLightManager::new(resource_ctx)
+        };
 
         let render_world_buffers = {
             let _span = tracy_client::span!("RenderWorld::new/per_frame_buffers");
@@ -115,6 +126,7 @@ impl RenderWorld {
             render_mesh_manager,
             render_material_manager,
             render_instance_manager,
+            render_analytic_light_manager,
             render_emissive_light_table,
             render_world_buffers,
             render_tlas_manager: RenderTlasManager::new(),
@@ -136,6 +148,7 @@ impl RenderWorld {
         self.render_material_manager.destroy(resource_ctx);
         self.render_sky_manager.destroy_mut(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager);
         self.render_texture_manager.destroy(resource_ctx, device_ctx, gfx_resource_manager, shader_binding_system);
+        self.render_analytic_light_manager.destroy_mut(resource_ctx);
         self.render_emissive_light_table.destroy_mut(resource_ctx);
         self.render_tlas_manager.destroy_mut(resource_ctx, device_ctx);
         for buffers in &mut self.render_world_buffers {
@@ -176,19 +189,45 @@ impl RenderWorld {
         queue_ctx: GfxQueueCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         shader_binding_system: &mut ShaderBindingSystem,
-    ) {
+    ) -> RenderWorldAssetSyncResult {
         let _span = tracy_client::span!("RenderWorld::prepare_asset_sync");
-        self.render_sky_manager.apply_scene_sky_state(scene.sky_state());
+        let scene_events = DirtyRouterHelper::events_from_scene_changes(scene_changes);
+        let mut dirty_dispatch_plan = DirtyDispatchPlan::default();
+        for stage in [
+            DirtyStageKind::Texture,
+            DirtyStageKind::Sky,
+            DirtyStageKind::Material,
+            DirtyStageKind::Mesh,
+            DirtyStageKind::Instance,
+            DirtyStageKind::Analytic,
+        ] {
+            DirtyRouterHelper::route_stage(stage, &scene_events, scene, &mut dirty_dispatch_plan);
+        }
 
-        self.render_material_manager.apply_scene_changes(scene, scene_changes);
+        let texture_removals = dirty_dispatch_plan.take_texture_removals();
         self.render_texture_manager.remove_textures(
-            &scene_changes.removed_textures,
+            &texture_removals,
             resource_ctx,
             device_ctx,
             gfx_resource_manager,
             shader_binding_system,
         );
-        self.render_mesh_manager.remove_meshes(&scene_changes.removed_meshes, resource_ctx, device_ctx);
+        let mesh_removals = dirty_dispatch_plan.take_mesh_removals();
+        self.render_mesh_manager.remove_meshes(&mesh_removals, resource_ctx, device_ctx);
+
+        if dirty_dispatch_plan.take_sky_dirty() {
+            self.render_sky_manager.apply_scene_sky_state(scene.sky_state());
+        }
+
+        let material_result =
+            self.render_material_manager.apply_material_dispatch(scene, dirty_dispatch_plan.take_material_dispatch());
+        let material_events = DirtyRouterHelper::events_from_material_update_result(material_result);
+        DirtyRouterHelper::route_stage(
+            DirtyStageKind::AfterMaterial,
+            &material_events,
+            scene,
+            &mut dirty_dispatch_plan,
+        );
 
         for upload in &asset_uploads.pending_texture_uploads {
             self.render_sky_manager.observe_texture_loaded(resource_ctx, immediate_ctx, upload.handle, &upload.data);
@@ -197,7 +236,7 @@ impl RenderWorld {
             self.render_sky_manager.observe_texture_failed(failed.handle, &failed.error);
         }
 
-        self.render_texture_manager.update(
+        let texture_result = self.render_texture_manager.update(
             asset_uploads.pending_texture_uploads,
             asset_uploads.failed_textures,
             resource_ctx,
@@ -206,7 +245,24 @@ impl RenderWorld {
             gfx_resource_manager,
             shader_binding_system,
         );
-        self.render_mesh_manager.update(asset_uploads.pending_mesh_uploads, resource_ctx, device_ctx, queue_ctx);
+        let texture_events = DirtyRouterHelper::events_from_texture_update_result(texture_result);
+        DirtyRouterHelper::route_stage(DirtyStageKind::AfterTexture, &texture_events, scene, &mut dirty_dispatch_plan);
+        let material_result =
+            self.render_material_manager.apply_material_dispatch(scene, dirty_dispatch_plan.take_material_dispatch());
+        let material_events = DirtyRouterHelper::events_from_material_update_result(material_result);
+        DirtyRouterHelper::route_stage(
+            DirtyStageKind::AfterMaterial,
+            &material_events,
+            scene,
+            &mut dirty_dispatch_plan,
+        );
+
+        let mesh_result =
+            self.render_mesh_manager.update(asset_uploads.pending_mesh_uploads, resource_ctx, device_ctx, queue_ctx);
+        let mesh_events = DirtyRouterHelper::events_from_mesh_update_result(mesh_result);
+        DirtyRouterHelper::route_stage(DirtyStageKind::AfterMesh, &mesh_events, scene, &mut dirty_dispatch_plan);
+
+        RenderWorldAssetSyncResult { dirty_dispatch_plan }
     }
 
     /// 准备 render pass 可见的 GPU scene。
@@ -222,17 +278,25 @@ impl RenderWorld {
         transfer_barrier_mask: GfxBarrierMask,
         frame_counter: &FrameCounter,
         scene: SceneReadView<'_>,
-        scene_changes: &SceneChanges,
+        dirty_dispatch_plan: DirtyDispatchPlan,
     ) -> RenderWorldPrepareResult {
+        let mut dirty_dispatch_plan = dirty_dispatch_plan;
         let frame_label = frame_counter.frame_label();
-        let sky_update = self.render_sky_manager.update_sky_binding(scene.sky_state(), &self.render_texture_manager);
+        let _sky_dirty = dirty_dispatch_plan.take_sky_dirty();
+        let sky_update = self.render_sky_manager.update_sky_binding(&self.render_texture_manager);
         let environment_binding = EnvironmentBinding {
             sky: sky_update.binding,
         };
 
-        // material slot 已在 prepare asset sync 中根据 SceneChanges 建立；这里只根据 texture
-        // ready/fallback 状态，从 SceneStore 权威参数写当前 FIF 的 material buffer。
-        self.render_material_manager.update(scene, &self.render_texture_manager);
+        let material_result =
+            self.render_material_manager.apply_material_dispatch(scene, dirty_dispatch_plan.take_material_dispatch());
+        let material_events = DirtyRouterHelper::events_from_material_update_result(material_result);
+        DirtyRouterHelper::route_stage(
+            DirtyStageKind::AfterMaterial,
+            &material_events,
+            scene,
+            &mut dirty_dispatch_plan,
+        );
         self.render_material_manager.upload(
             resource_ctx,
             cmd,
@@ -242,20 +306,42 @@ impl RenderWorld {
             &self.render_texture_manager,
         );
 
-        // instance 阶段是 CPU scene 到 render-side `RenderData` 的边界；只有 mesh 与 material
-        // 都解析成功的实例会进入 active 列表。
-        let scene_render_data = self.render_instance_manager.prepare_render_data(
+        // instance 阶段消费 dirty dispatch，而不是直接解释 `SceneChanges`。只有 mesh 与
+        // material 都解析成功的实例会进入 active 列表。
+        let (scene_render_data, instance_result) = self.render_instance_manager.prepare_render_data(
             scene,
-            scene_changes,
+            dirty_dispatch_plan.take_instance_dispatch(),
             &self.render_material_manager,
             &self.render_mesh_manager,
         );
-        let material_buffer_device_address = self.render_material_manager.material_buffer_device_address(frame_label);
-        let emissive_light_revision = Self::combine_emissive_light_revision(
-            self.render_mesh_manager.ready_revision(),
-            self.render_instance_manager.revision(),
-            self.render_material_manager.revision(),
+        let instance_events = DirtyRouterHelper::events_from_instance_update_result(instance_result);
+        DirtyRouterHelper::route_stage(
+            DirtyStageKind::AfterInstance,
+            &instance_events,
+            scene,
+            &mut dirty_dispatch_plan,
         );
+
+        if dirty_dispatch_plan.take_analytic_dirty() {
+            self.render_analytic_light_manager.mark_dirty();
+        }
+        let analytic_light_update = self.render_analytic_light_manager.update_and_upload(
+            resource_ctx,
+            cmd,
+            transfer_barrier_mask,
+            frame_label,
+            scene,
+        );
+        let _analytic_light_changed = analytic_light_update.changed;
+
+        if dirty_dispatch_plan.take_emissive_dirty() {
+            self.render_emissive_light_table.mark_dirty();
+        }
+        if dirty_dispatch_plan.take_tlas_dirty() {
+            self.render_tlas_manager.mark_dirty();
+        }
+
+        let material_buffer_device_address = self.render_material_manager.material_buffer_device_address(frame_label);
         let emissive_light_binding = self.render_emissive_light_table.update_and_upload(
             resource_ctx,
             cmd,
@@ -263,13 +349,6 @@ impl RenderWorld {
             frame_counter,
             &scene_render_data,
             scene,
-            emissive_light_revision,
-        );
-        // mesh ready 与 instance 变化都会影响 TLAS；两个 revision 合成一条 scene revision，
-        // 交给 TLAS manager 判断当前 FIF 的 TLAS 是否需要重建。
-        let scene_revision = Self::combine_scene_revision(
-            self.render_mesh_manager.ready_revision(),
-            self.render_instance_manager.revision(),
         );
         Self::upload_render_data(
             &mut self.render_world_buffers,
@@ -283,34 +362,14 @@ impl RenderWorld {
             frame_counter,
             &scene_render_data,
             material_buffer_device_address,
-            scene_revision,
             environment_binding,
+            analytic_light_update.binding,
             emissive_light_binding,
         );
 
         RenderWorldPrepareResult {
             sky_changed: sky_update.changed,
         }
-    }
-
-    /// 合成 `RenderTlasManager` 用于判断 TLAS 是否过期的 scene revision。
-    ///
-    /// mesh ready revision 覆盖 BLAS 新增/替换，instance revision 覆盖实例增删、ready 状态
-    /// 和 transform 变化；使用 saturating add 保证长时间运行时不会回绕成旧 revision。
-    fn combine_scene_revision(mesh_ready_revision: u64, instance_revision: u64) -> u64 {
-        mesh_ready_revision.saturating_add(instance_revision)
-    }
-
-    /// 合成自发光 light table 的重建 revision。
-    ///
-    /// 自发光表除了 mesh ready 和 instance transform/lifecycle 外，还依赖材质 CPU 参数；
-    /// 因此不能复用只服务 TLAS 的 scene revision，否则 emissive/base color 更新后表不会刷新。
-    fn combine_emissive_light_revision(
-        mesh_ready_revision: u64,
-        instance_revision: u64,
-        material_revision: u64,
-    ) -> u64 {
-        mesh_ready_revision.saturating_add(instance_revision).saturating_add(material_revision)
     }
 }
 
@@ -380,8 +439,8 @@ impl RenderWorld {
         frame_counter: &FrameCounter,
         render_data: &RenderData<'_>,
         material_buffer_device_address: vk::DeviceAddress,
-        tlas_revision: u64,
         environment_binding: EnvironmentBinding,
+        analytic_light_binding: AnalyticLightBinding,
         emissive_light_binding: EmissiveLightBinding,
     ) {
         let _span = tracy_client::span!("RenderWorld::prepare_render_data");
@@ -389,18 +448,10 @@ impl RenderWorld {
         update_raster_draw_cache(&mut raster_draws[*frame_counter.frame_label()], render_data);
         Self::upload_mesh_buffer(render_world_buffers, resource_ctx, cmd, barrier_mask, render_data, frame_counter);
         Self::upload_instance_buffer(render_world_buffers, resource_ctx, cmd, barrier_mask, render_data, frame_counter);
-        Self::upload_light_buffer(render_world_buffers, resource_ctx, cmd, barrier_mask, render_data, frame_counter);
 
         // TLAS instance 描述使用稳定 instance slot 与 transform，因此必须在 instance buffer
         // 写入逻辑之后构建，保证 GPU scene buffer、TLAS custom index 和 raster draw cache 对齐。
-        render_tlas_manager.build_or_update(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            render_data,
-            frame_counter,
-            tlas_revision,
-        );
+        render_tlas_manager.build_or_update(resource_ctx, device_ctx, immediate_ctx, render_data, frame_counter);
         let current_tlas_revision = render_tlas_manager.tlas_revision(frame_counter.frame_label());
 
         Self::upload_scene_buffer(
@@ -408,10 +459,10 @@ impl RenderWorld {
             cmd,
             frame_counter,
             barrier_mask,
-            render_data,
             material_buffer_device_address,
             current_tlas_revision,
             environment_binding,
+            analytic_light_binding,
             emissive_light_binding,
         );
     }
@@ -424,10 +475,10 @@ impl RenderWorld {
         cmd: &GfxCommandBuffer,
         frame_counter: &FrameCounter,
         barrier_mask: GfxBarrierMask,
-        scene_data: &RenderData<'_>,
         material_buffer_device_address: vk::DeviceAddress,
         tlas_revision: u64,
         environment_binding: EnvironmentBinding,
+        analytic_light_binding: AnalyticLightBinding,
         emissive_light_binding: EmissiveLightBinding,
     ) {
         let frame_index = *frame_counter.frame_label();
@@ -440,9 +491,9 @@ impl RenderWorld {
             all_geometries: crt_gpu_buffers.geometry_buffer.device_address(),
             instance_material_map: crt_gpu_buffers.material_indirect_buffer.device_address(),
             instance_geometry_map: crt_gpu_buffers.geometry_indirect_buffer.device_address(),
-            point_lights: crt_gpu_buffers.point_light_buffer.device_address(),
-            spot_lights: crt_gpu_buffers.spot_light_buffer.device_address(),
-            area_lights: crt_gpu_buffers.area_light_buffer.device_address(),
+            point_lights: analytic_light_binding.point_lights,
+            spot_lights: analytic_light_binding.spot_lights,
+            area_lights: analytic_light_binding.area_lights,
             emissive_triangle_lights: emissive_light_binding.triangle_lights_device_address,
             emissive_light_alias_table: emissive_light_binding.alias_table_device_address,
             instance_emissive_triangle_base_map: emissive_light_binding.base_map_device_address,
@@ -450,10 +501,10 @@ impl RenderWorld {
             emissive_light_enabled: emissive_light_binding.enabled,
             emissive_light_version: emissive_light_binding.version,
             emissive_light_record_count: emissive_light_binding.record_count,
-            point_light_count: scene_data.all_point_lights.len() as u32,
-            spot_light_count: scene_data.all_spot_lights.len() as u32,
-            area_light_count: scene_data.all_area_lights.len() as u32,
-            analytic_light_version: scene_data.analytic_light_version,
+            point_light_count: analytic_light_binding.point_light_count,
+            spot_light_count: analytic_light_binding.spot_light_count,
+            area_light_count: analytic_light_binding.area_light_count,
+            analytic_light_version: analytic_light_binding.version,
 
             sky: environment_binding.sky.srv_handle.0,
             sky_sampler_type: environment_binding.sky.sampler,
@@ -479,7 +530,7 @@ impl RenderWorld {
         let accum_signature = RenderSceneAccumSignature {
             tlas_revision,
             emissive_light_version: emissive_light_binding.version,
-            analytic_light_version: scene_data.analytic_light_version,
+            analytic_light_version: analytic_light_binding.version,
             sky_distribution_version: environment_binding.sky.distribution_version,
         };
         render_world_buffers[frame_index].accum_signature = accum_signature;
@@ -563,7 +614,13 @@ impl RenderWorld {
                 panic!("instance slot can not be larger than buffer");
             }
 
+            let mesh = &scene_data.all_meshes[instance.mesh_index];
             let submesh_cnt = instance.material_slots.len();
+            debug_assert_eq!(
+                mesh.geometries.len(),
+                submesh_cnt,
+                "instance material slots must stay aligned with mesh geometry count"
+            );
             if geometry_indirect_buffer_slices.len() < crt_geometry_indirect_idx + submesh_cnt {
                 panic!("instance geometry cnt can not be larger than buffer");
             }
@@ -617,88 +674,6 @@ impl RenderWorld {
             cmd,
             crt_material_indirect_stage_buffer,
             &mut crt_gpu_buffers.material_indirect_buffer,
-            barrier_mask,
-        );
-    }
-
-    /// 将 light 快照上传到当前 FIF 的 GPU buffer。
-    fn upload_light_buffer(
-        render_world_buffers: &mut [RenderWorldBuffers; FrameCounter::fif_count()],
-        resource_ctx: GfxResourceCtx<'_>,
-        cmd: &GfxCommandBuffer,
-        barrier_mask: GfxBarrierMask,
-        scene_data: &RenderData<'_>,
-        frame_counter: &FrameCounter,
-    ) {
-        let _span = tracy_client::span!("upload_light_buffer2");
-        let crt_gpu_buffers = &mut render_world_buffers[*frame_counter.frame_label()];
-        {
-            let point_light_buffer_slices = crt_gpu_buffers.point_light_stage_buffer.mapped_slice();
-            let spot_light_buffer_slices = crt_gpu_buffers.spot_light_stage_buffer.mapped_slice();
-            let area_light_buffer_slices = crt_gpu_buffers.area_light_stage_buffer.mapped_slice();
-            // 当前实现使用固定容量 analytic light buffer；超过容量说明 scene 规模已超出 runtime v1 约束。
-            if point_light_buffer_slices.len() < scene_data.all_point_lights.len()
-                || spot_light_buffer_slices.len() < scene_data.all_spot_lights.len()
-                || area_light_buffer_slices.len() < scene_data.all_area_lights.len()
-            {
-                panic!("analytic light cnt can not be larger than buffer");
-            }
-
-            for (light_idx, point_light) in scene_data.all_point_lights.iter().enumerate() {
-                point_light_buffer_slices[light_idx] = gpu::light::PointLight {
-                    pos: point_light.pos,
-                    color: point_light.color,
-
-                    _color_padding: Default::default(),
-                    _pos_padding: Default::default(),
-                };
-            }
-
-            for (light_idx, spot_light) in scene_data.all_spot_lights.iter().enumerate() {
-                spot_light_buffer_slices[light_idx] = gpu::light::SpotLight {
-                    pos: spot_light.pos,
-                    inner_angle: spot_light.inner_angle,
-                    color: spot_light.color,
-                    outer_angle: spot_light.outer_angle,
-                    dir: spot_light.dir,
-                    _dir_padding: Default::default(),
-                };
-            }
-
-            for (light_idx, area_light) in scene_data.all_area_lights.iter().enumerate() {
-                area_light_buffer_slices[light_idx] = gpu::light::AreaLight {
-                    center: area_light.center,
-                    half_u: area_light.half_u,
-                    half_v: area_light.half_v,
-                    radiance: area_light.radiance,
-
-                    _center_padding: Default::default(),
-                    _half_u_padding: Default::default(),
-                    _half_v_padding: Default::default(),
-                    _radiance_padding: Default::default(),
-                };
-            }
-        }
-
-        flush_copy_and_barrier(
-            resource_ctx,
-            cmd,
-            &mut crt_gpu_buffers.point_light_stage_buffer,
-            &mut crt_gpu_buffers.point_light_buffer,
-            barrier_mask,
-        );
-        flush_copy_and_barrier(
-            resource_ctx,
-            cmd,
-            &mut crt_gpu_buffers.spot_light_stage_buffer,
-            &mut crt_gpu_buffers.spot_light_buffer,
-            barrier_mask,
-        );
-        flush_copy_and_barrier(
-            resource_ctx,
-            cmd,
-            &mut crt_gpu_buffers.area_light_stage_buffer,
-            &mut crt_gpu_buffers.area_light_buffer,
             barrier_mask,
         );
     }

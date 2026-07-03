@@ -15,6 +15,7 @@ use crate::render_world::render_data::{InstanceRenderData, RenderData};
 /// active 的 instance，不重新判断 instance 是否可见。
 pub(crate) struct RenderTlasManager {
     frames: [RenderTlasFrame; FrameCounter::fif_count()],
+    scene_revision: u64,
 }
 
 struct RenderTlasFrame {
@@ -29,7 +30,12 @@ impl RenderTlasManager {
                 tlas: None,
                 tlas_revision: 0,
             }),
+            scene_revision: 0,
         }
+    }
+
+    pub(crate) fn mark_dirty(&mut self) {
+        self.scene_revision = self.scene_revision.saturating_add(1).max(1);
     }
 
     pub(crate) fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
@@ -55,8 +61,8 @@ impl RenderTlasManager {
 
     /// 构建或复用当前 FIF 的 TLAS。
     ///
-    /// `tlas_revision` 由 mesh ready revision 与 instance manager revision 组成；当 mesh BLAS ready、
-    /// instance 增删、激活状态或 transform 改变时才重建，避免每帧无意义重建 TLAS。
+    /// `scene_revision` 由 dirty router 显式推进；当 mesh BLAS ready、instance 增删、
+    /// 激活状态或 transform 改变时才重建，避免每帧无意义重建 TLAS。
     pub(crate) fn build_or_update(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -64,11 +70,11 @@ impl RenderTlasManager {
         immediate_ctx: GfxImmediateCtx<'_>,
         scene_data: &RenderData<'_>,
         frame_counter: &FrameCounter,
-        tlas_revision: u64,
     ) {
         let _span = tracy_client::span!("RenderTlasManager::build_or_update");
         let frame_index = *frame_counter.frame_label();
         let frame = &mut self.frames[frame_index];
+        let tlas_revision = self.scene_revision;
         if scene_data.all_instances.is_empty() {
             // 空场景不保留旧 TLAS。这样 render pass 通过 `tlas_handle == None`
             // 可以明确知道当前 frame label 没有可追踪实例。

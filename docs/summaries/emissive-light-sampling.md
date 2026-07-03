@@ -262,8 +262,9 @@ base map + record array 更简单，也能避免为 hit path 维护额外查找�
 构建发生在 `RenderEmissiveLightTable`，位置是 `RenderInstanceManager::prepare_render_data` 之后、
 `RenderWorld::prepare_render_data` 内部 scene buffer upload 之前。流程是：
 
-1. `RenderMeshManager` 在 mesh 上传时从 upload-ready `MeshData.indices` 按三角形顺序生成 `RtTriangleMeta`：
-   local positions、UV、`primitive_id` 和 local area。这个顺序与 BLAS / closest-hit 的 `PrimitiveIndex()` 对齐。
+1. `RenderMeshManager` 在 mesh 上传时按 `MeshData.submeshes` 展开，每个 submesh 生成一条 `RtGeometry` 和一组
+   `RtTriangleMeta`：local positions、UV、`primitive_id` 和 local area。这个顺序与 BLAS geometry /
+   closest-hit 的 `GeometryIndex()`、`PrimitiveIndex()` 对齐。
 2. `RenderMaterialManager` 只提供 `MaterialHandle -> stable material slot` resolver；`SceneStore`
    通过 `SceneReadView::material_emissive_view` 提供 borrowed `SceneMaterialEmissiveView`，作为 emissive/base color
    等 CPU 权威参数来源。

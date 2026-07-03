@@ -214,7 +214,7 @@ pub(crate) struct RenderEmissiveLightTable {
     triangle_lights: Vec<gpu::light::EmissiveTriangleLight>,
     alias_table: Vec<gpu::light::EmissiveLightAliasEntry>,
     base_map: Vec<u32>,
-    last_revision: Option<u64>,
+    dirty: bool,
     version: u32,
 }
 
@@ -226,9 +226,13 @@ impl RenderEmissiveLightTable {
             triangle_lights: Vec::new(),
             alias_table: Vec::new(),
             base_map: Vec::new(),
-            last_revision: None,
+            dirty: true,
             version: 1,
         }
+    }
+
+    pub(crate) fn mark_dirty(&mut self) {
+        self.dirty = true;
     }
 
     pub(crate) fn update_and_upload(
@@ -239,11 +243,10 @@ impl RenderEmissiveLightTable {
         frame_counter: &FrameCounter,
         render_data: &RenderData<'_>,
         scene: SceneReadView<'_>,
-        revision: u64,
     ) -> EmissiveLightBinding {
-        if self.last_revision != Some(revision) {
+        if self.dirty {
             self.rebuild(render_data, scene);
-            self.last_revision = Some(revision);
+            self.dirty = false;
             self.version = self.version.saturating_add(1).max(1);
         }
 

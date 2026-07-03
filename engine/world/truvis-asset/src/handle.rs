@@ -53,22 +53,52 @@ pub struct TextureBytes {
     pub format: vk::Format,
 }
 
-/// upload-ready 的 CPU mesh 数据。
+/// upload-ready 的 CPU submesh 数据。
 ///
 /// 数据已经从导入库的临时内存复制到 Rust owned buffer。asset 层在这里停止，
-/// 后续的 vertex/index buffer 创建、BLAS 构建和 GPU ready 状态由
-/// `RenderMeshManager` 维护。
+/// 后续的 vertex/index buffer 创建、BLAS geometry 构建和 GPU ready 状态由
+/// `RenderMeshManager` 维护。一个 submesh 是 scene / GPU scene / ray tracing 中
+/// 最小的完整几何单元，对应 BLAS 内的一条 geometry。
 ///
 /// 调用方应保持顶点属性数组长度一致，`indices` 使用 `u32` 索引。asset 层不在
 /// 注册时重建或修复几何拓扑。
 #[derive(Debug, Clone, PartialEq)]
-pub struct MeshData {
+pub struct SubmeshData {
     pub positions: Vec<glam::Vec3>,
     pub normals: Vec<glam::Vec3>,
     pub tangents: Vec<glam::Vec3>,
     pub uvs: Vec<glam::Vec2>,
     pub indices: Vec<u32>,
     pub name: String,
+}
+
+/// upload-ready 的 CPU mesh 数据。
+///
+/// `MeshData` 是 `SceneStore` 与 render-side mesh manager 之间的 mesh 边界格式：
+/// mesh 本身对应一个 BLAS，内部每个 `SubmeshData` 对应 BLAS 中的一条 geometry。
+/// instance 只能引用一个 mesh，并且它的 material 列表必须与这里的 submesh 顺序一一对齐。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeshData {
+    pub name: String,
+    pub submeshes: Vec<SubmeshData>,
+}
+
+impl MeshData {
+    /// 把现有单几何导入路径显式包装成单 submesh mesh。
+    ///
+    /// 该 helper 只用于保持 importer / procedural mesh 当前“一份几何就是一个 mesh”的策略；
+    /// 长期 scene 语义仍以 `submeshes` 为准，不能再把 `MeshData` 本身当成几何体。
+    pub fn from_single_submesh(submesh: SubmeshData) -> Self {
+        Self {
+            name: submesh.name.clone(),
+            submeshes: vec![submesh],
+        }
+    }
+
+    #[inline]
+    pub fn submesh_count(&self) -> usize {
+        self.submeshes.len()
+    }
 }
 
 /// 后台 Assimp task 产出的 owned material CPU 数据。

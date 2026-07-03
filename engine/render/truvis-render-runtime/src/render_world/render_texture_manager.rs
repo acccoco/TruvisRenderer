@@ -223,6 +223,13 @@ pub struct UploadedAssetTexture {
     pub sampler: gpu::bindless::ESamplerType,
 }
 
+/// texture 上传阶段对 dirty routing 暴露的结构化结果。
+#[derive(Default)]
+pub(crate) struct RenderTextureUpdateResult {
+    /// 本帧从 uploading/fallback 状态发布为 shader-visible ready 的 scene texture。
+    pub(crate) ready_changed_textures: Vec<TextureHandle>,
+}
+
 /// 渲染侧纹理资产上传与绑定缓存。
 ///
 /// 它是 `TextureHandle -> shader texture binding` 的唯一转换点。加载失败或尚未完成上传时，
@@ -318,8 +325,9 @@ impl RenderTextureManager {
         queue_ctx: GfxQueueCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         shader_binding_system: &mut ShaderBindingSystem,
-    ) {
+    ) -> RenderTextureUpdateResult {
         let _span = tracy_client::span!("RenderTextureManager::update");
+        let mut result = RenderTextureUpdateResult::default();
 
         for upload in pending_uploads {
             if self.retired_textures.contains(&upload.handle) {
@@ -348,7 +356,10 @@ impl RenderTextureManager {
                 handle,
                 image,
             );
+            result.ready_changed_textures.push(handle);
         }
+
+        result
     }
 
     /// 移除 scene texture 对应的 shader-visible cache。

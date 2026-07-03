@@ -29,10 +29,9 @@ pub enum SceneEditError {
         kind: SceneHandleKind,
         dependent_count: usize,
     },
+    /// mesh payload 不满足 scene store 的长期语义约束。
+    InvalidMeshData { reason: String },
     /// instance 的 material 列表与 mesh submesh 数量不匹配。
-    ///
-    /// 当前实现还没有在 `SceneStore` 长期保存 submesh 数量，因此该错误先作为目标错误边界保留；
-    /// 后续 mesh metadata 落地后由 `register_instance` / `update_instance_materials` 返回。
     MaterialCountMismatch { expected: usize, actual: usize },
 }
 
@@ -44,6 +43,7 @@ impl fmt::Display for SceneEditError {
             Self::StillReferenced { kind, dependent_count } => {
                 write!(f, "scene {kind:?} is still referenced by {dependent_count} object(s)")
             }
+            Self::InvalidMeshData { reason } => write!(f, "invalid mesh data: {reason}"),
             Self::MaterialCountMismatch { expected, actual } => {
                 write!(f, "material count mismatch: expected {expected}, got {actual}")
             }

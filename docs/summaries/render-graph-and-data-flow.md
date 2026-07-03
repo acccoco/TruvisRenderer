@@ -7,14 +7,18 @@
 CPU 语义数据从 `World` 进入 RenderRuntime。`World::sync_for_render` 从内部 `AssetHub`
 取出 upload-ready CPU bytes，并由 `SceneAssetIngestor` 翻译为带 CPU resource handle 的
 `WorldRenderSync.asset_uploads` typed payload；同一次 sync 还会 drain `SceneStore` 的
-`SceneChanges`。asset payload 再由 `RenderWorld` 内部的 `RenderTextureManager` 在渲染线程上传到 GPU 并注册 bindless。
-`SceneChanges.removed_textures` / `removed_meshes` / `removed_materials` 会在新的 upload payload 前写入对应
-render manager，确保 CPU scene 删除不会被同一帧或迟到的上传结果重新发布到 resolver。
+`SceneChanges`。`RenderWorld` 会把 scene change 与 manager update result 归一化为 `DirtyEvent`，
+再通过静态 `DirtyRuleKind` rule set 写入本帧 `DirtyDispatchPlan`。asset payload 再由 `RenderWorld`
+内部的 `RenderTextureManager` 在渲染线程上传到 GPU 并注册 bindless。texture / mesh / material remove dispatch
+会在新的 upload payload 前写入对应 render manager，确保 CPU scene 删除不会被同一帧或迟到的上传结果重新发布到 resolver。
 
-material 添加 / 更新由 `WorldRenderSync.scene_changes.changed_materials` 表达；`RenderMaterialManager`
-只以 `MaterialHandle` 维护 stable slot 和 dirty upload 状态，写 GPU material buffer 时通过
-`SceneReadView` 从 `SceneStore` 读取当前 CPU 权威参数。mesh CPU 数据由 `RenderWorld` 内部的
-`RenderMeshManager` 在 graphics queue 上上传 vertex/index buffer 并构建 BLAS。
+material 添加 / 更新由 `WorldRenderSync.scene_changes.changed_materials` 表达，并通过 dirty rule 变成 material dispatch；
+`RenderMaterialManager` 只以 `MaterialHandle` 维护 stable slot 和 dirty upload 状态，写 GPU material buffer 时通过
+`SceneReadView` 从 `SceneStore` 读取当前 CPU 权威参数。texture ready 不再由 material manager 内部扫描，而是由
+`TextureReadyChanged -> dependent material` rule 标记对应 material dirty。mesh CPU 数据由 `RenderWorld` 内部的
+`RenderMeshManager` 在 graphics queue 上按 submesh 上传 vertex/index buffer、创建 `RtGeometry` 并为同一个
+mesh 构建一个 BLAS。`SceneStore` 保存 mesh 的 submesh metadata，并在 instance 注册 / 换材质时强制
+material list 与 submesh 数量对齐。
 
 Assimp / glTF model 读取当前仍由 `AssetHub` 在后台完成，完成后通过 `ModelLoaded` 事件一次性交付 owned CPU scene payload；App 通过
 `World::request_model_import` 发起请求，拿到的是 `ModelImportHandle`，再通过
@@ -24,11 +28,12 @@ Assimp / glTF model 读取当前仍由 `AssetHub` 在后台完成，完成后通
 或把 `AssetHub` 与 `SceneStore` 串起来。
 `SceneStore` 保存运行时语义，但 owner 不跨 crate 暴露；`RenderWorld` 通过 `World::scene_view()` 得到只读
 `SceneReadView`，并通过 `WorldRenderSync.scene_changes` 得到本帧 instance / material / light 语义变化。
-内部 `RenderInstanceManager` 负责稳定 GPU instance slot、ready gate 和 active render list。
+内部 `RenderInstanceManager` 消费 instance dispatch entries，负责稳定 GPU instance slot、ready gate 和 active render list。
 `SceneStore` 内部维护 texture -> material、material -> instance、mesh -> instance 反向依赖索引；
 删除 texture/material/mesh 前如果仍有依赖会由 `WorldEditError` 暴露失败，失败 edit 不写 change log。
 sky enabled、intensity、texture handle 与 revision 保存在 `SceneSkyState`；`changed_sky_environment`
-会随 `WorldRenderSync.scene_changes` 到达 prepare，`RenderSkyManager` 通过 `SceneReadView` 读取权威值。
+会随 `WorldRenderSync.scene_changes` 到达 prepare，并经 `SceneSkyChangedMarksSky` rule 标记 sky dispatch，
+`RenderSkyManager` 再通过 `SceneReadView` 读取权威值。
 
 mesh/material ready 查询通过 `truvis-render-runtime` 私有 render resolver trait 连接到 `RenderWorld` 内部的
 `RenderMeshManager` 与 `RenderMaterialManager`，这些 resolver 不属于 `truvis-world`。
@@ -39,7 +44,7 @@ mesh/material ready 查询通过 `truvis-render-runtime` 私有 render resolver 
 真实 sky image 仍由 `RenderTextureManager` 上传，scene root buffer 只消费当前可用的 sky SRV、sampler 与
 distribution 快照。
 
-`RenderWorld`、`RenderTlasManager`、`RenderEmissiveLightTable` 与 `RenderData` 是 runtime 私有 scene 翻译层；
+`RenderWorld`、`RenderTlasManager`、`RenderAnalyticLightManager`、`RenderEmissiveLightTable` 与 `RenderData` 是 runtime 私有 scene 翻译层；
 render pass 只通过 `RenderSceneView` 访问 scene buffer、TLAS handle 和光栅化 draw。`RenderSceneView::accum_signature` 只暴露
 TLAS / emissive light / analytic light / sky distribution 的版本号快照，供 app-owned 离线累计判断 scene 语义是否变化；
 它不暴露 `RenderWorld` owner 或具体 GPU buffer 布局。
@@ -53,22 +58,25 @@ flowchart LR
     Ingestor --> TextureManager["RenderTextureManager<br/>texture GPU upload + bindless"]
     Scene --> RenderSkyManager["RenderSkyManager<br/>SceneSkyState + fallback"]
     Ingestor --> RenderSkyManager
-    Ingestor --> MeshManager["RenderMeshManager<br/>mesh buffer upload + BLAS"]
+    Ingestor --> MeshManager["RenderMeshManager<br/>submesh geometry upload + mesh BLAS"]
     Ingestor --> RenderMaterialManager["RenderMaterialManager(RenderWorld)<br/>scene material -> stable slot + material buffer"]
     AssetHub --> ModelCpuPayload["ModelLoaded event<br/>owned CPU scene payload"]
     ModelCpuPayload --> SceneSpawner["World::sync_for_render<br/>SceneAssetIngestor + SceneStore"]
     SceneSpawner --> SceneChanges["SceneChanges<br/>CPU semantic changes"]
+    SceneChanges --> DirtyRouter["DirtyRouterHelper<br/>event + rule -> DirtyDispatchPlan"]
     SceneSpawner --> Scene["SceneReadView<br/>runtime instance / light snapshot"]
-    SceneChanges --> RenderInstanceManager["RenderInstanceManager<br/>stable instance slot + ready gate"]
+    DirtyRouter --> RenderInstanceManager["RenderInstanceManager<br/>stable instance slot + ready gate"]
     Scene --> RenderInstanceManager
     TextureManager --> RenderMaterialManager
     TextureManager --> RenderSkyManager
     MeshManager --> RenderInstanceManager
+    DirtyRouter --> AnalyticLightManager["RenderAnalyticLightManager<br/>analytic light buffers"]
     Scene --> Prepare["RenderRuntime::prepare(render_view)"]
     RenderMaterialManager --> RenderInstanceManager
     RenderMaterialManager --> Prepare
     RenderSkyManager --> Prepare
     RenderInstanceManager --> Prepare
+    AnalyticLightManager --> Prepare
     Prepare --> EmissiveTable["RenderEmissiveLightTable<br/>emissive triangle records + alias"]
     RenderMaterialManager --> EmissiveTable
     EmissiveTable --> GpuResources
@@ -130,7 +138,7 @@ light-class 选择概率乘入对外 PDF。
 HDRI 采样的概念解释、alias table 原理和项目内数据路径见
 [`docs/summaries/hdri-sampling.md`](hdri-sampling.md)。
 
-自发光三角形由 `RenderEmissiveLightTable` 在 prepare 阶段构建。`RenderMeshManager` 保留 mesh-local triangle metadata，
+自发光三角形由 `RenderEmissiveLightTable` 在 prepare 阶段构建。`RenderMeshManager` 保留每个 submesh 的 triangle metadata，
 `SceneStore` 提供材质自发光参数的只读 view，`RenderMaterialManager` 只提供 material stable slot resolver；`RenderEmissiveLightTable` 在
 `RenderInstanceManager::prepare_render_data` 之后、`RenderWorld::prepare_render_data` 内部 scene buffer upload 之前读取 active instance/submesh，
 上传 `emissive_triangle_lights`、`emissive_light_alias_table` 和 `instance_emissive_triangle_base_map`。
@@ -147,13 +155,13 @@ lookup 的构建步骤、buffer 内部结构和查询伪代码见 [`docs/summari
 
 `PathTracingCommonSettings.emissive_nee_enabled` 默认开启；关闭或 table 为空时统一入口不会把 emissive class 纳入候选来源。
 `NeeEmissive` debug channel 只显示统一 NEE 中抽到 emissive triangle class 的贡献，HDRI class 仍由既有
-`NeeHdri` 通道观察。emissive table 的 rebuild
-revision 由 mesh ready revision、instance revision 和 material revision 组合得到；mesh ready、instance
-transform / active set、material emissive / base color 参数变化会刷新 table。
+`NeeHdri` 通道观察。emissive table 的 rebuild 由 dirty dispatch 显式触发；mesh ready、instance
+transform / active set / binding、material emissive / base color 参数变化会通过 rule 标记 emissive dirty。
 
 analytic point / spot / area light 由 `SceneStore` 保存 CPU 语义记录，`RenderInstanceManager::prepare_render_data`
-把三类 light 快照写入 `RenderData`，`RenderWorld::prepare_render_data` 分别上传 point / spot / area structured buffer
-并在 scene root 中写入 device address、count 与 `analytic_light_version`。`PathTracingCommonSettings.analytic_nee_enabled` 开启且 light 数量非 0
+不再携带 analytic light 快照；`RenderAnalyticLightManager` 在 analytic dirty dispatch 到达后读取 `SceneReadView`，
+分别上传 point / spot / area structured buffer，并在 scene root 中写入 device address、count 与
+`analytic_light_version`。`PathTracingCommonSettings.analytic_nee_enabled` 开启且 light 数量非 0
 时，统一入口才会把 analytic class 纳入候选来源；`NeeAnalytic` debug channel 只显示统一 NEE 中抽到 analytic
 class 的贡献。更细的
 sphere emitter、spot cone、area 单面 PDF 和 MIS 边界见 [`analytic-light-sampling.md`](analytic-light-sampling.md)。

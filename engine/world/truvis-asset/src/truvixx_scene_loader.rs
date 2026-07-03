@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use truvis_assimp_binding::truvixx;
 
 use crate::asset_loader::{LoadResult, ModelLoadRequest};
-use crate::handle::{MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData};
+use crate::handle::{MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData, SubmeshData};
 
 /// 实际的 scene 导入任务。
 ///
@@ -244,16 +244,16 @@ impl TruvixxSceneReader<'_> {
 
         let indices = unsafe { std::slice::from_raw_parts(indices_ptr, mesh_info.index_count as usize) };
 
-        // `MeshData` 是 asset 层传给 render-side mesh manager 的 owned CPU 边界格式。
+        // `SubmeshData` 是 asset 层传给 render-side mesh manager 的 owned CPU 几何边界格式。
         // 从这里返回后，C++ importer 的顶点/索引内存是否释放都不再影响 Rust 数据。
-        Ok(MeshData {
+        Ok(MeshData::from_single_submesh(SubmeshData {
             positions,
             normals,
             tangents,
             uvs,
             indices: indices.to_vec(),
             name: format!("{}-{}", self.model_name, mesh_index),
-        })
+        }))
     }
 
     /// 复制一个 material 的 CPU 参数。

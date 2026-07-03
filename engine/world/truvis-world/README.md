@@ -31,6 +31,8 @@
   `MeshHandle` / `MaterialHandle`，不使用 `Asset*Handle` 作为兼容层。
 - `SceneStore` 内部维护 texture -> material、material -> instance 和 mesh -> instance 反向依赖索引；
   删除 texture/material/mesh 前先检查依赖，存在依赖时拒绝删除并返回 edit error。
+- `SceneStore` 保存 mesh 的 submesh metadata，并在注册 instance 或更新 instance material 列表时强制
+  `materials.len() == mesh.submesh_count()`；第 `i` 个 material 始终对应第 `i` 个 submesh / geometry。
 - `SceneStore` 持有 `SceneSkyState`，记录 sky enabled、intensity、引用的 `TextureHandle` 和 revision；
   删除 texture 时也会检查 sky 是否仍引用该 texture。
 - `SceneStore` 与 `AssetHub` 字段对外保持私有；只有 `World` 方法可以组合二者。

@@ -89,8 +89,8 @@ struct SkyDistributionBinding {
     version: u32,
 }
 
-/// `RenderSkyManager::update_sky_binding` 的本帧解析结果。
-pub(crate) struct SkyBindingUpdate {
+/// sky 阶段对 dirty routing 暴露的结构化结果。
+pub(crate) struct RenderSkyUpdateResult {
     pub(crate) binding: EnvironmentSkyBinding,
     /// sky 绑定或 active distribution 是否变化；变化后当前 view temporal history 不再匹配。
     pub(crate) changed: bool,
@@ -113,6 +113,7 @@ pub(crate) struct RenderSkyManager {
     next_distribution_version: u32,
     last_active_distribution_version: u32,
     using_real_sky: bool,
+    state_changed_pending: bool,
 }
 
 impl RenderSkyManager {
@@ -152,6 +153,7 @@ impl RenderSkyManager {
             next_distribution_version: 2,
             last_active_distribution_version: 1,
             using_real_sky: false,
+            state_changed_pending: false,
         }
     }
 
@@ -172,6 +174,7 @@ impl RenderSkyManager {
         self.sky_enabled = state.enabled;
         self.sky_intensity = state.intensity;
         self.sky_revision = state.revision;
+        self.state_changed_pending |= state_changed;
         state_changed
     }
 
@@ -221,12 +224,8 @@ impl RenderSkyManager {
     ///
     /// 这里故意先检查 `is_texture_ready`，避免 `TextureResolver::resolve_texture` 在未就绪时
     /// 返回材质专用的洋红 fallback。sky 的降级策略由本 bridge 独立定义。
-    pub(crate) fn update_sky_binding(
-        &mut self,
-        scene_sky: &SceneSkyState,
-        texture_resolver: &dyn TextureResolver,
-    ) -> SkyBindingUpdate {
-        let scene_changed = self.apply_scene_sky_state(scene_sky);
+    pub(crate) fn update_sky_binding(&mut self, texture_resolver: &dyn TextureResolver) -> RenderSkyUpdateResult {
+        let scene_changed = std::mem::take(&mut self.state_changed_pending);
         let real_ready =
             self.sky_texture.is_some_and(|texture| self.sky_enabled && texture_resolver.is_texture_ready(texture));
         let sky_source_changed = self.using_real_sky != real_ready;
@@ -264,7 +263,7 @@ impl RenderSkyManager {
             self.fallback_binding(distribution)
         };
 
-        SkyBindingUpdate {
+        RenderSkyUpdateResult {
             binding,
             changed: scene_changed || sky_source_changed || distribution_changed,
         }

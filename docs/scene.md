@@ -32,7 +32,7 @@ RenderRuntime
       ModelImportHandle
       PendingTextureUpload(TextureHandle, revision, TextureCpuData)
       PendingSkyDistributionUpload(TextureHandle, texture_revision, sky_revision, SkyDistributionCpuData)
-      PendingMeshUpload(MeshHandle, revision, MeshCpuData)
+      PendingMeshUpload(MeshHandle, revision, MeshData)
     assets: AssetHub
       TextureLoadHandle / ModelLoadHandle
     World::sync_for_render() -> WorldRenderSync
@@ -141,7 +141,7 @@ impl World {
         &mut self,
         source: MeshSource,
         import: MeshImportDesc,
-        data: MeshCpuData,
+        data: MeshData,
     ) -> Result<MeshHandle, WorldEditError>;
 
     pub fn remove_mesh(
@@ -198,7 +198,7 @@ impl World {
 
 这些 API 是 App-facing facade；App 不应直接拿到 `SceneStore` 的可变引用，也不应直接调用
 `SceneAssetIngestor`。`register_texture_data` / `register_mesh` 代表 runtime / procedural 数据直接进入
-scene 的路径：`World` 先在 `SceneStore` 注册 metadata，再把 `TextureCpuData` / `MeshCpuData` 放入
+scene 的路径：`World` 先在 `SceneStore` 注册 metadata，再把 `TextureCpuData` / `MeshData` 放入
 `SceneAssetIngestor` 的短期 pending upload 队列。文件 texture 则由 `World::register_texture` 注册
 `TextureHandle` 后交给 `SceneAssetIngestor` 提交 loader 请求。
 
@@ -441,14 +441,16 @@ pub struct SceneSubmesh {
 mesh 或 material list 时必须重新验证这个长度约束，并同步维护 `material -> instance` 与 `mesh -> instance`
 反向依赖。
 
-`MeshCpuData` 只作为 `ModelCpuData`、`PendingMeshUpload` 或其他短期 upload payload 流动：
+`MeshData` 只作为 `RawSceneData`、`PendingMeshUpload` 或其他短期 upload payload 流动：
 
 ```rust
-pub struct MeshCpuData {
-    pub submeshes: Vec<SubmeshCpuData>,
+pub struct MeshData {
+    pub name: String,
+    pub submeshes: Vec<SubmeshData>,
 }
 
-pub struct SubmeshCpuData {
+pub struct SubmeshData {
+    pub name: String,
     pub positions: Vec<glam::Vec3>,
     pub normals: Vec<glam::Vec3>,
     pub tangents: Vec<glam::Vec3>,
@@ -669,11 +671,11 @@ sky / environment owner 直接请求 `AssetHub` texture。
 `RenderSkyManager` 使用 fallback distribution，不使 scene import 失败。
 
 对于 runtime / procedural texture 或 mesh，`World` 不需要经过 `AssetHub`：它先把 scene metadata 注册到
-`SceneStore`，再把 `TextureCpuData` / `MeshCpuData` 直接压入 `SceneAssetIngestor` 的短期 pending upload
+`SceneStore`，再把 `TextureCpuData` / `MeshData` 直接压入 `SceneAssetIngestor` 的短期 pending upload
 收件箱。这样 texture / mesh 添加仍然不进入 `SceneChanges`，也不会要求 `AssetHub` 成为长期 asset database。
 
 如果 loader event 到达时等待表中已经没有对应 scene handle，或对应 CPU resource handle 在 `SceneStore`
-中已经 stale，`SceneAssetIngestor` 应直接丢弃 event payload：`TextureCpuData` / `MeshCpuData` /
+中已经 stale，`SceneAssetIngestor` 应直接丢弃 event payload：`TextureCpuData` / `MeshData` /
 `ModelCpuData` 不进入 pending upload，不重新创建 scene 资源，也不触发重试。这保证删除 scene 资源后，
 迟到的后台加载结果不会把旧资源“复活”。
 
@@ -982,8 +984,8 @@ pub struct RenderMeshUpdateResult {
 ```
 
 `RenderMeshManager.update(...)` 消费 `PendingMeshUpload`，提交 vertex / index upload 和 BLAS build。
-`MeshCpuData` 在 upload submission 后释放，`RenderMeshManager` 不长期保存完整 mesh CPU 数据。它可以在
-upload submission 前从 `MeshCpuData` 派生并保存轻量 triangle metadata，供 `RenderEmissiveLightTable`
+`MeshData` 在 upload submission 后释放，`RenderMeshManager` 不长期保存完整 mesh CPU 数据。它可以在
+upload submission 前按 submesh 派生并保存轻量 triangle metadata，供 `RenderEmissiveLightTable`
 计算 triangle area、primitive id 和 submesh-local record。
 upload queue 使用单调递增 timeline value；完成检测非阻塞。timeline 完成前，vertex / index buffer、
 BLAS、geometry slots 和 derived triangle metadata 不进入 ready resolver，也不能被 active instance / TLAS
@@ -1904,7 +1906,7 @@ pub struct SkyDistributionCpuData {
 pub struct PendingMeshUpload {
     pub scene_mesh: MeshHandle,
     pub revision: u64,
-    pub data: MeshCpuData,
+    pub data: MeshData,
 }
 ```
 
@@ -2070,7 +2072,7 @@ for each dirty SceneMaterial:
 #### Mesh update
 
 `RenderMeshManager.update(...)` 消费 `PendingMeshUpload`。它提交 vertex / index upload 和 BLAS build；
-完成前 mesh 不进入 resolver 可见状态。`MeshCpuData` 在 upload submission 后释放，mesh ready 状态变化只记录在
+完成前 mesh 不进入 resolver 可见状态。`MeshData` 在 upload submission 后释放，mesh ready 状态变化只记录在
 `RenderMeshManager`，不写回 `SceneStore`。
 
 ```text
@@ -2079,7 +2081,7 @@ for each PendingMeshUpload { scene_mesh, revision, data }:
       submit vertex/index upload(data)
       submit BLAS build
       gpu_status = Uploading { revision, timeline }
-  drop MeshCpuData after upload submission
+  drop MeshData after upload submission
 
 timeline reached:
   -> if handle stale, revision mismatch, or status is not matching Uploading { revision, timeline }:
@@ -2254,7 +2256,7 @@ bindless table 和 TLAS handle 读取 prepare 后的 GPU 快照。
 | sky GPU binding / distribution buffer | `RenderSkyManager` | fallback binding、sky texture binding、alias table / distribution buffer、version 和 retired resource owner |
 | emissive material CPU resolver | `SceneStore` | `SceneMaterialEmissiveResolver`，按 handle 查询 base color / emissive / opaque 等权威参数 |
 | material slot resolver | `RenderMaterialManager` | `MaterialHandle -> stable material slot` 只读 resolver，不提供 material 参数 view |
-| emissive triangle derived metadata | `RenderMeshManager` | 从 `MeshCpuData` 派生的轻量 `RtTriangleMeta`，不是完整 mesh CPU data |
+| emissive triangle derived metadata | `RenderMeshManager` | 从 `MeshData.submeshes` 派生的轻量 `RtTriangleMeta`，不是完整 mesh CPU data |
 | emissive triangle sampling table | `RenderEmissiveLightTable` | emissive records、alias table、instance emissive base map owner |
 | scene root buffer / draw cache / TLAS / light views | `RenderWorld` | render pass 只通过 `RenderSceneView` 消费 |
 | `RenderSceneView` contract | `truvis-render-foundation` | scene root address、TLAS handle、accum signature、raster draw 的只读 trait |
@@ -2300,8 +2302,8 @@ bindless table 和 TLAS handle 读取 prepare 后的 GPU 快照。
   source 不走路径规范化。
 - `AssetHub` loader 输入收敛为一次性 `TextureLoadDesc` / `ModelLoadDesc`；不维护
   `LoadDesc -> LoadHandle` 去重表，只维护 `LoadHandle -> LoadRecord`。
-- 将 mesh / submesh 模型收敛为“一个 submesh 对应一个完整 geometry”，instance 只引用一个 mesh，
-  material list 按 submesh index 对齐。
+- mesh / submesh 基础模型已经收敛为“一个 submesh 对应一个完整 geometry”，instance 只引用一个 mesh，
+  material list 按 submesh index 对齐；后续导入器可继续细化源文件 primitive 到 submesh 的映射策略。
 - model import v1 只对 texture 去重；mesh / material / instance 每次 import 都创建新 scene handle。
 - 将 sky texture 注册为普通 `TextureHandle`；`SceneStore` 通过 `SceneSkyState` 持有 enabled、
   intensity、texture handle 和 revision，sky / environment owner 不直接请求 `AssetHub` texture。
@@ -2330,7 +2332,7 @@ bindless table 和 TLAS handle 读取 prepare 后的 GPU 快照。
 - v1 render-side 容量使用固定总容量：`max_instance_count`、`max_geometry_count`、
   `max_instance_submesh_indirect_count`，容量耗尽沿用当前 fatal / panic / expect 风格。
 - 将 mesh GPU 上传、BLAS 缓存和 geometry slots 收敛到 `RenderMeshManager`，但不让它长期保存完整
-  `MeshCpuData`。
+  `MeshData`。
 - texture / mesh upload completion 必须检查当前 `CPU resource handle + revision`，stale 或 revision mismatch
   或不匹配当前 `Uploading { revision, timeline }` 的完成资源只销毁，不 publish ready。
 - 将 stable instance slot、instance buffer 和 geometry/material indirect maps 收敛到

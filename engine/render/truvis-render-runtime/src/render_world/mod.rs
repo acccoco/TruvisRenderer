@@ -6,9 +6,11 @@
 //! 最后只通过 `RenderSceneView` 对外读取。
 
 pub(crate) mod buffers;
+pub(crate) mod dirty_router;
 pub(crate) mod environment_binding;
 pub(crate) mod geometry;
 pub(crate) mod raster_draw_cache;
+pub(crate) mod render_analytic_light_manager;
 pub(crate) mod render_data;
 pub(crate) mod render_emissive_light_table;
 pub(crate) mod render_instance_manager;

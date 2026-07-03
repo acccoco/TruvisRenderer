@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use gltf::buffer;
 
 use crate::asset_loader::{LoadResult, ModelLoadRequest};
-use crate::handle::{MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData};
+use crate::handle::{MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData, SubmeshData};
 
 /// 实际的 glTF scene 导入任务。
 ///
@@ -194,14 +194,14 @@ impl GltfSceneReader {
 
         Self::validate_mesh_attributes(&name, vertex_count, &normals, &tangents, &uvs, &indices)?;
 
-        Ok(MeshData {
+        Ok(MeshData::from_single_submesh(SubmeshData {
             positions,
             normals,
             tangents,
             uvs,
             indices,
             name,
-        })
+        }))
     }
 
     /// 递归复制 node tree 中的 prefab instance。

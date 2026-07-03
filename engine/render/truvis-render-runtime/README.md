@@ -32,9 +32,10 @@
 - runtime 内部拥有默认 surface format、present mode 与 depth format 候选顺序；这些默认策略不放入
   foundation 公共配置契约。
 - `RenderWorld` 是 runtime 私有的 scene GPU 翻译层，内部持有 `RenderTextureManager`、`RenderMeshManager`、
-  `RenderMaterialManager`、`RenderInstanceManager`、`RenderSkyManager`、`RenderEmissiveLightTable`、
-  scene/instance/geometry/light/indirect buffer、raster draw cache 和 `RenderTlasManager`；render pass
-  只通过 `RenderSceneView` 读取它。
+  `RenderMaterialManager`、`RenderInstanceManager`、`RenderSkyManager`、`RenderAnalyticLightManager`、
+  `RenderEmissiveLightTable`、scene/instance/geometry/indirect buffer、raster draw cache 和
+  `RenderTlasManager`；dirty 传播通过私有 `DirtyRouterHelper` 与本帧 `DirtyDispatchPlan`
+  在 prepare 阶段完成，render pass 只通过 `RenderSceneView` 读取它。
 - 默认 sky 通过 `World` facade 注册为普通 `TextureHandle`，再写入 `SceneStore::SceneSkyState`；
   `RenderSkyManager` 从 `World::scene_view()` 读取 sky state，持有常驻纯色 fallback sky，并在当前 sky CPU texture
   bytes 到达时构建 HDRI importance distribution；`RenderWorld` 只消费 sky 环境绑定快照。
@@ -42,15 +43,20 @@
   image view 与 bindless SRV；未 ready 或失败时通过 fallback texture 保证材质仍可安全读取。
   默认 sky 的真实 texture 也复用该上传路径，但 sky fallback 由 `RenderSkyManager` 独立维护。`SceneChanges.removed_textures`
   会先移除已 ready cache；已提交但未完成的 stale upload 在 timeline 到达后只销毁，不会重新 publish 到 resolver。
-- `RenderMeshManager` 消费 `WorldRenderSync.asset_uploads.pending_mesh_uploads` 的 mesh CPU 数据，在 graphics queue 上完成 vertex/index
-  buffer copy 和 BLAS build；mesh 完成前不会被 `RenderInstanceManager` 激活。`SceneChanges.removed_meshes`
+- `RenderMeshManager` 消费 `WorldRenderSync.asset_uploads.pending_mesh_uploads` 的 mesh CPU 数据，在 graphics queue 上按 submesh
+  创建 vertex/index buffer 和 `RtGeometry`，并为同一个 mesh 构建一个包含多 geometry input 的 BLAS；mesh 完成前不会被 `RenderInstanceManager` 激活。`SceneChanges.removed_meshes`
   会移除 ready cache，并阻止 late BLAS/geometry completion 重新进入 resolver。
-- `RenderMaterialManager` 消费 `WorldRenderSync.scene_changes` 中的 material add/update/remove，维护
-  `MaterialHandle -> stable material slot` 映射、FIF material buffer、dirty region 上传、texture ready 检查和延迟
-  slot 回收；写 GPU material buffer 时通过 `SceneReadView` 读取 `SceneStore` 的 CPU 权威材质参数。
-- `RenderInstanceManager` 消费 `WorldRenderSync.scene_changes` 中的 instance lifecycle / transform 变化，
-  同步 `InstanceHandle -> GpuInstanceSlot`，在 mesh/material 都 GPU ready 前保持 pending，并按稳定 slot 输出
-  active render list，同时为同步 raycast 生成当前 prepare 快照的 slot 反查表。
+- `RenderMaterialManager` 消费 `DirtyDispatchPlan` 中的 material dirty/remove entries，维护
+  `MaterialHandle -> stable material slot` 映射、FIF material buffer、dirty region 上传和延迟 slot 回收；
+  texture ready 不再由 manager 扫描，而是由 `TextureReadyChanged` rule 标记依赖材质 dirty。写 GPU material buffer
+  时通过 `SceneReadView` 读取 `SceneStore` 的 CPU 权威材质参数。
+- `RenderInstanceManager` 消费 `DirtyDispatchPlan` 中的 instance dirty/remove entries，同步
+  `InstanceHandle -> GpuInstanceSlot`，在 mesh/material 都 GPU ready 前保持 pending，并按稳定 slot 输出
+  active render list，同时为同步 raycast 生成当前 prepare 快照的 slot 反查表。每帧 motion history 推进仍属于
+  instance manager 自身的 temporal 生命周期维护，不参与 dirty 传播。
+- `RenderAnalyticLightManager` 消费 analytic dirty dispatch，按 FIF 持有 point / spot / area light structured buffer；
+  dirty 时标记全部 FIF，当前 frame label 使用前上传最新 `SceneReadView` light snapshot，并向 scene root 提供
+  device address、count 和 analytic light version。
 - `RayCastService` 持有 runtime 私有的专用 ray tracing pipeline/SBT、可增长 ray/result/readback buffer、
   command pool 和 fence；它由 runtime 拥有，不进入 RenderGraph，也不通过 app 层 pass crate 暴露。
 - `SwapchainPresenter` 拥有 surface、swapchain wrapper、swapchain image/view handle 和 present 同步对象；
@@ -103,28 +109,32 @@
 
 ## Prepare 数据流
 
-- `RenderRuntime::prepare_render_world` 先调用 `World::sync_for_render()`，把其中的
-  `WorldRenderSync.asset_uploads` 交给 `RenderWorld::prepare_asset_sync`，再把
-  `WorldRenderSync.scene_changes` 交给 `RenderWorld::prepare_render_data`；`RenderWorld` 内部按 typed payload
-  转发给 texture / mesh / material / sky owner。removed texture/mesh/material 会在 asset upload 之前先写入对应
-  render manager，避免 stale upload 或 stale slot 在同一帧重新变为 ready。model ready/failed 状态由 `World` 内部的
-  `SceneAssetIngestor` 在 asset sync 阶段写回 import status，并自动完成 loader prefab 到 `SceneStore`
-  runtime handle 的翻译。
+- `RenderRuntime::prepare_render_world` 先调用 `World::sync_for_render()`，把
+  `WorldRenderSync.scene_changes` 归一化成 `DirtyEvent`，再由静态 `DirtyRuleKind` rule set 写入本帧
+  `DirtyDispatchPlan`。`RenderWorld::prepare_asset_sync` 先按 plan 处理 texture/mesh/material/sky 的同步边界，
+  再把 texture/mesh upload result 重新路由为后续 material/sky/instance/emissive dirty；返回的
+  `DirtyDispatchPlan` 会在 bindless prepare 后交给 `RenderWorld::prepare_render_data` 继续消费。
+  removed texture/mesh/material 会在新的 upload payload 前写入对应 render manager，避免 stale upload 或 stale slot
+  在同一帧重新变为 ready。model ready/failed 状态由 `World` 内部的 `SceneAssetIngestor` 在 asset sync 阶段写回
+  import status，并自动完成 loader prefab 到 `SceneStore` runtime handle 的翻译。
 - `RenderRuntime::prepare` 是 update 与 render 之间的固定桥接阶段，按 bindless、`RenderWorld::prepare_render_data`、
   per-frame data 的顺序准备渲染可见数据。
-- `RenderMaterialManager` 在 prepare asset sync 中消费 `SceneChanges.changed_materials` / `removed_materials`；
-  prepare 阶段再通过 `SceneReadView` 和 `TextureResolver` 把当前 CPU material 参数与 texture fallback/ready 状态按 dirty
-  slot 局部写入 material buffer。
-- `RenderSkyManager` 在 prepare asset sync 中先同步 `SceneSkyState`，再观察当前 sky texture bytes 并构建 importance
-  distribution；在 prepare 阶段通过 `TextureResolver` 查询当前 sky texture 是否 GPU ready。未 ready 或失败时写入纯色
-  fallback SRV 与 1x1 fallback distribution，sky revision、真实 sky 切换或 distribution 版本变化时重置累积帧。
-- `RenderInstanceManager` 先消费 `SceneChanges` 处理 instance 新增、删除和 transform 变化，再通过
-  `World::scene_view()` 暴露的只读 snapshot，结合 `MaterialSlotResolver` 与 `MeshRenderResolver` 做 ready gate；
-  material resolver 由 `RenderMaterialManager` 的 scene material stable slot 表提供，只有完整可渲染的实例才进入 `RenderData`。
+- `RenderMaterialManager` 在 prepare asset sync 中消费 material dispatch entries；scene material 变化会推进 CPU material
+  revision 并 dirty material slot，texture ready 只 dirty GPU upload，不伪装成 CPU 材质语义变化。prepare 阶段通过
+  `SceneReadView` 和 `TextureResolver` 把当前 CPU material 参数与 texture fallback/ready 状态按 dirty slot 局部写入
+  material buffer。
+- `RenderSkyManager` 只在 sky dirty dispatch 到达时同步 `SceneSkyState`，并在 texture upload payload 被 move 前观察当前
+  sky texture bytes 构建 importance distribution；在 prepare 阶段通过 `TextureResolver` 查询当前 sky texture 是否 GPU ready。
+  未 ready 或失败时写入纯色 fallback SRV 与 1x1 fallback distribution，sky revision、真实 sky 切换或 distribution 版本变化时重置累积帧。
+- `RenderInstanceManager` 先消费 instance dispatch entries 处理 instance 新增、删除、transform、material/mesh binding
+  dirty，再通过 `World::scene_view()` 暴露的只读 snapshot，结合 `MaterialSlotResolver` 与 `MeshRenderResolver` 做 ready gate；
+  material resolver 由 `RenderMaterialManager` 的 scene material stable slot 表提供，且 instance material 数量必须与 mesh geometry 数量一致，只有完整可渲染的实例才进入 `RenderData`。
 - `RenderInstanceManager` 在同一次 prepare 输出中同步生成 `GpuInstanceSlot -> CPU record`
   反查快照。raycast readback 只信任这个快照，避免查询阶段重新遍历 CPU scene。
-- `RenderWorld` 消费 `RenderData`，按当前 FIF 上传 geometry、instance、light、indirect 和 scene
-  root buffer，刷新 raster draw cache，并把 TLAS build / reuse / destroy 委托给内部 `RenderTlasManager`。
+- `RenderWorld` 消费 `RenderData`、analytic light binding、environment binding 和 emissive binding，按当前 FIF 上传
+  geometry、instance、indirect 和 scene root buffer，刷新 raster draw cache，并把 TLAS build / reuse / destroy 委托给内部
+  `RenderTlasManager`。TLAS 和 emissive table 是否重建由 dirty dispatch 显式标记，不再由 mesh/material/instance revision
+  手写合成推断。
 
 ## 同步与稳定性约束
 
@@ -134,7 +144,7 @@
 - mesh copy 到 BLAS build 前必须覆盖 `TRANSFER_WRITE -> ACCELERATION_STRUCTURE_BUILD_KHR`，
   并包含 device address 输入对应的 `SHADER_READ` 访问。
 - material slot 与 instance slot 都延迟到跨过 FIF 窗口后才回收，避免在飞命令中的旧索引指向新对象。
-- mesh ready revision 与 instance revision 合成 TLAS revision，`RenderTlasManager` 只在当前 FIF 的 TLAS 过期时重建。
+- dirty router 显式推进 TLAS dirty revision，`RenderTlasManager` 只在当前 FIF 的 TLAS 过期时重建。
 - 同步 raycast 是阻塞接口，适合拾取、编辑器选择等即时交互，不适合作为每帧大规模查询队列。
   结果语义是视觉拾取：closest hit shader 返回可见表面，any-hit 会按材质 opacity / diffuse alpha 忽略透明命中。
 - swapchain resize 采用 latest-size 标记；窗口事件只记录最新尺寸，实际重建延迟到 render loop 的安全点。

@@ -144,7 +144,7 @@ impl World {
     /// `SceneAssetIngestor` 会把内部 loader 事件转换为 `MeshHandle` 标记的短期
     /// mesh upload payload，render-side manager 不接触 asset mesh handle。
     pub fn register_mesh(&mut self, data: MeshData) -> Result<MeshHandle, WorldEditError> {
-        Ok(self.scene_assets.register_mesh(&mut self.scene, data))
+        self.scene_assets.register_mesh(&mut self.scene, data).map_err(Into::into)
     }
 
     /// 注册已经在 CPU 内存中的 material 参数。

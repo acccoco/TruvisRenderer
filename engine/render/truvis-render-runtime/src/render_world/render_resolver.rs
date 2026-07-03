@@ -25,11 +25,6 @@ pub(crate) trait MaterialSlotResolver {
 /// 由 render-side mesh manager 实现，CPU scene 只保存 scene mesh handle，
 /// 不接触 vertex/index buffer 上传或 BLAS 构建细节。
 pub(crate) trait MeshRenderResolver {
-    /// 判断 mesh 是否已经完成 vertex/index 上传和 BLAS build。
-    fn is_mesh_ready(&self, handle: MeshHandle) -> bool {
-        self.resolve_mesh(handle).is_some()
-    }
-
     /// 解析 GPU-ready mesh 数据引用。
     ///
     /// 返回的数据由 mesh manager 持有生命周期，`RenderData` 只在 prepare 阶段借用它。

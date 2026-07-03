@@ -82,13 +82,13 @@ impl SceneAssetIngestor {
     }
 
     /// 注册 CPU mesh payload，并返回 CPU world mesh handle。
-    pub fn register_mesh(&mut self, scene: &mut SceneStore, data: MeshData) -> MeshHandle {
-        let scene_mesh = scene.register_mesh();
+    pub fn register_mesh(&mut self, scene: &mut SceneStore, data: MeshData) -> Result<MeshHandle, SceneEditError> {
+        let scene_mesh = scene.register_mesh(&data)?;
         self.pending_asset_sync.pending_mesh_uploads.push(PendingMeshUpload {
             handle: scene_mesh,
             data,
         });
-        scene_mesh
+        Ok(scene_mesh)
     }
 
     /// 注册 CPU material 参数，并返回 CPU world material handle。
@@ -174,7 +174,7 @@ impl SceneAssetIngestor {
         asset_sync: &mut SceneAssetSyncOutput,
     ) {
         let scene_import = self.take_scene_import_for_load(model_load);
-        if let Err(error) = Self::validate_model_indices(&raw) {
+        if let Err(error) = Self::validate_model_payload(&raw) {
             self.fail_scene_import(scene_import, error);
             return;
         }
@@ -187,7 +187,13 @@ impl SceneAssetIngestor {
 
         let mut scene_meshes = Vec::with_capacity(raw.meshes.len());
         for mesh_data in raw.meshes {
-            let scene_mesh = scene.register_mesh();
+            let scene_mesh = match scene.register_mesh(&mesh_data) {
+                Ok(handle) => handle,
+                Err(err) => {
+                    self.fail_scene_import(scene_import, err.to_string());
+                    return;
+                }
+            };
             asset_sync.pending_mesh_uploads.push(PendingMeshUpload {
                 handle: scene_mesh,
                 data: mesh_data,
@@ -277,7 +283,13 @@ impl SceneAssetIngestor {
         record.spawned_instances = Some(spawned_instances);
     }
 
-    fn validate_model_indices(raw: &RawSceneData) -> Result<(), String> {
+    fn validate_model_payload(raw: &RawSceneData) -> Result<(), String> {
+        for mesh in &raw.meshes {
+            if mesh.submeshes.is_empty() {
+                return Err(format!("model mesh '{}' has no submeshes", mesh.name));
+            }
+        }
+
         for instance in &raw.instances {
             if instance.mesh_index as usize >= raw.meshes.len() {
                 return Err(format!(
@@ -292,6 +304,17 @@ impl SceneAssetIngestor {
                         instance.name, material_index
                     ));
                 }
+            }
+            let mesh = &raw.meshes[instance.mesh_index as usize];
+            let expected_materials = mesh.submesh_count();
+            if instance.material_indices.len() != expected_materials {
+                return Err(format!(
+                    "model instance '{}' material count mismatch for mesh '{}': expected {}, got {}",
+                    instance.name,
+                    mesh.name,
+                    expected_materials,
+                    instance.material_indices.len()
+                ));
             }
         }
         Ok(())

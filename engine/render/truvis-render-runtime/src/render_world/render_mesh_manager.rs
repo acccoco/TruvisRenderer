@@ -6,7 +6,7 @@ use anyhow::{Result, bail};
 use ash::vk;
 use slotmap::SecondaryMap;
 
-use truvis_asset::handle::MeshData;
+use truvis_asset::handle::{MeshData, SubmeshData};
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::commands::command_pool::GfxCommandPool;
@@ -37,8 +37,8 @@ struct SubmittedMeshUpload {
     command_buffer: GfxCommandBuffer,
     staging_buffers: Vec<GfxBuffer>,
     scratch_buffer: GfxAccelerationScratchBuffer,
-    geometry: RtGeometry,
-    triangle_metadata: Vec<RtTriangleMeta>,
+    geometries: Vec<RtGeometry>,
+    triangle_metadata: Vec<Vec<RtTriangleMeta>>,
     blas: GfxAcceleration,
     name: String,
 }
@@ -49,8 +49,8 @@ struct SubmittedMeshUpload {
 /// 解析为 render-side 几何数据。
 struct FinishedMeshUpload {
     handle: MeshHandle,
-    geometry: RtGeometry,
-    triangle_metadata: Vec<RtTriangleMeta>,
+    geometries: Vec<RtGeometry>,
+    triangle_metadata: Vec<Vec<RtTriangleMeta>>,
     blas: GfxAcceleration,
     name: String,
 }
@@ -102,31 +102,47 @@ impl MeshUploadQueue {
         let _span = tracy_client::span!("MeshUploadQueue::submit_mesh_upload");
         Self::validate_mesh_data(&data)?;
 
-        // CPU mesh 数据在这里被转换为 render-side SoA 顶点布局与 index buffer。
-        // `RtGeometry` 从创建开始就同时服务光栅化 draw 和 BLAS 输入，避免两套 mesh GPU 表示。
-        let vertex_count = data.positions.len();
-        let index_count = data.indices.len();
-        let triangle_metadata = Self::build_triangle_metadata(&data);
         let name = data.name.clone();
+        let mut geometries = Vec::with_capacity(data.submeshes.len());
+        let mut triangle_metadata = Vec::with_capacity(data.submeshes.len());
+        let mut staging_buffers = Vec::with_capacity(data.submeshes.len() * 2);
 
-        let vertex_buffer = GfxVertexBuffer::<VertexLayoutSoA3D>::new_device_local(
-            resource_ctx,
-            vertex_count,
-            format!("{name}-vertex"),
-        );
-        let index_buffer = GfxIndex32Buffer::new_device_local(resource_ctx, index_count, format!("{name}-index"));
-        let vertex_stage_buffer =
-            Self::create_vertex_stage_buffer(resource_ctx, vertex_count, &data, format!("{name}-vertex-stage"));
-        let index_stage_buffer =
-            Self::create_index_stage_buffer(resource_ctx, &data.indices, format!("{name}-index-stage"));
+        for (submesh_index, submesh) in data.submeshes.iter().enumerate() {
+            // CPU submesh 数据在这里被转换为 render-side SoA 顶点布局与 index buffer。
+            // 一个 submesh 对应 BLAS 内一条 geometry，多个 geometry 共享 mesh 级 BLAS 生命周期。
+            let vertex_count = submesh.positions.len();
+            let index_count = submesh.indices.len();
+            let submesh_name =
+                if submesh.name.is_empty() { format!("{name}-submesh{submesh_index}") } else { submesh.name.clone() };
 
-        let geometry = RtGeometry {
-            vertex_buffer,
-            index_buffer,
-        };
+            let vertex_buffer = GfxVertexBuffer::<VertexLayoutSoA3D>::new_device_local(
+                resource_ctx,
+                vertex_count,
+                format!("{submesh_name}-vertex"),
+            );
+            let index_buffer =
+                GfxIndex32Buffer::new_device_local(resource_ctx, index_count, format!("{submesh_name}-index"));
+            let vertex_stage_buffer = Self::create_vertex_stage_buffer(
+                resource_ctx,
+                vertex_count,
+                submesh,
+                format!("{submesh_name}-vertex-stage"),
+            );
+            let index_stage_buffer =
+                Self::create_index_stage_buffer(resource_ctx, &submesh.indices, format!("{submesh_name}-index-stage"));
+
+            geometries.push(RtGeometry {
+                vertex_buffer,
+                index_buffer,
+            });
+            triangle_metadata.push(Self::build_triangle_metadata(submesh));
+            staging_buffers.push(vertex_stage_buffer);
+            staging_buffers.push(index_stage_buffer);
+        }
+
         // BLAS 输入直接引用刚创建的 device-local vertex/index buffer。后续 command buffer
         // 会先完成 staging copy，再通过 barrier 保证 build 命令读取到复制后的内容。
-        let blas_inputs = [geometry.get_blas_geometry_info()];
+        let blas_inputs = geometries.iter().map(RtGeometry::get_blas_geometry_info).collect::<Vec<_>>();
         let (blas, scratch_buffer) = GfxAcceleration::new_blas_for_build(
             resource_ctx,
             device_ctx,
@@ -140,22 +156,26 @@ impl MeshUploadQueue {
         let command_buffer = GfxCommandBuffer::new(device_ctx, command_pool, "AssetMeshUploadCmd");
 
         command_buffer.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "AssetMeshUpload");
-        command_buffer.cmd_copy_buffer(
-            &vertex_stage_buffer,
-            &geometry.vertex_buffer,
-            &[vk::BufferCopy {
-                size: vertex_stage_buffer.size(),
-                ..Default::default()
-            }],
-        );
-        command_buffer.cmd_copy_buffer(
-            &index_stage_buffer,
-            &geometry.index_buffer,
-            &[vk::BufferCopy {
-                size: index_stage_buffer.size(),
-                ..Default::default()
-            }],
-        );
+        for (geometry, stage_pair) in geometries.iter().zip(staging_buffers.chunks_exact(2)) {
+            let vertex_stage_buffer = &stage_pair[0];
+            let index_stage_buffer = &stage_pair[1];
+            command_buffer.cmd_copy_buffer(
+                vertex_stage_buffer,
+                &geometry.vertex_buffer,
+                &[vk::BufferCopy {
+                    size: vertex_stage_buffer.size(),
+                    ..Default::default()
+                }],
+            );
+            command_buffer.cmd_copy_buffer(
+                index_stage_buffer,
+                &geometry.index_buffer,
+                &[vk::BufferCopy {
+                    size: index_stage_buffer.size(),
+                    ..Default::default()
+                }],
+            );
+        }
 
         // vertex/index copy 与 BLAS build 在同一个 graphics command buffer 中录制。
         // Vulkan 验证层会把 BLAS 的 device-address 输入视为 shader read，因此 barrier 同时覆盖
@@ -167,28 +187,27 @@ impl MeshUploadQueue {
             // BLAS build 通过 device address 读取 vertex/index 输入，验证层按 shader read 归类。
             dst_access: vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR | vk::AccessFlags2::SHADER_READ,
         };
-        command_buffer.buffer_memory_barrier(
-            vk::DependencyFlags::empty(),
-            &[
-                GfxBufferBarrier::default().mask(transfer_to_blas_mask).buffer(
-                    geometry.vertex_buffer.vk_buffer(),
-                    0,
-                    vk::WHOLE_SIZE,
-                ),
-                GfxBufferBarrier::default().mask(transfer_to_blas_mask).buffer(
-                    geometry.index_buffer.vk_buffer(),
-                    0,
-                    vk::WHOLE_SIZE,
-                ),
-            ],
-        );
+        let mut barriers = Vec::with_capacity(geometries.len() * 2);
+        for geometry in &geometries {
+            barriers.push(GfxBufferBarrier::default().mask(transfer_to_blas_mask).buffer(
+                geometry.vertex_buffer.vk_buffer(),
+                0,
+                vk::WHOLE_SIZE,
+            ));
+            barriers.push(GfxBufferBarrier::default().mask(transfer_to_blas_mask).buffer(
+                geometry.index_buffer.vk_buffer(),
+                0,
+                vk::WHOLE_SIZE,
+            ));
+        }
+        command_buffer.buffer_memory_barrier(vk::DependencyFlags::empty(), &barriers);
 
-        let geometries = blas_inputs.iter().map(|blas_input| blas_input.geometry).collect::<Vec<_>>();
+        let blas_geometries = blas_inputs.iter().map(|blas_input| blas_input.geometry).collect::<Vec<_>>();
         let range_infos = blas_inputs.iter().map(|blas_input| blas_input.range).collect::<Vec<_>>();
         let build_geometry_info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
             .ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
             .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-            .geometries(&geometries)
+            .geometries(&blas_geometries)
             .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
             .dst_acceleration_structure(blas.handle())
             .scratch_data(vk::DeviceOrHostAddressKHR {
@@ -218,14 +237,20 @@ impl MeshUploadQueue {
         );
         queue_ctx.gfx_queue().submit(vec![submit_info], None);
 
-        log::trace!("RenderMeshManager: submitted mesh {:?} '{}' timeline={}", handle, name, target_value);
+        log::trace!(
+            "RenderMeshManager: submitted mesh {:?} '{}' submeshes={} timeline={}",
+            handle,
+            name,
+            geometries.len(),
+            target_value
+        );
         self.pending_uploads.push_back(SubmittedMeshUpload {
             semaphore_value: target_value,
             handle,
             command_buffer,
-            staging_buffers: vec![vertex_stage_buffer, index_stage_buffer],
+            staging_buffers,
             scratch_buffer,
-            geometry,
+            geometries,
             triangle_metadata,
             blas,
             name,
@@ -261,7 +286,7 @@ impl MeshUploadQueue {
             upload.scratch_buffer.destroy(resource_ctx, DestroyReason::DeferredCleanup);
             finished_uploads.push(FinishedMeshUpload {
                 handle: upload.handle,
-                geometry: upload.geometry,
+                geometries: upload.geometries,
                 triangle_metadata: upload.triangle_metadata,
                 blas: upload.blas,
                 name: upload.name,
@@ -299,7 +324,9 @@ impl MeshUploadQueue {
                 staging_buffer.destroy(resource_ctx, DestroyReason::Shutdown);
             }
             upload.scratch_buffer.destroy(resource_ctx, DestroyReason::Shutdown);
-            upload.geometry.destroy(resource_ctx, DestroyReason::Shutdown);
+            for geometry in upload.geometries {
+                geometry.destroy(resource_ctx, DestroyReason::Shutdown);
+            }
             upload.blas.destroy(resource_ctx, device_ctx, DestroyReason::Shutdown);
         }
 
@@ -310,21 +337,41 @@ impl MeshUploadQueue {
 
     /// 在分配 GPU 资源前验证 CPU mesh 数据满足当前渲染运行时的固定假设。
     ///
-    /// 当前后端按三角形索引构建 BLAS，并要求 SoA 顶点属性一一对应；这里提前失败，
-    /// 避免创建部分 GPU 资源后再在 Vulkan build 阶段暴露难定位的问题。
+    /// mesh 必须至少包含一个 submesh；每个 submesh 按三角形索引构建一条 BLAS geometry，
+    /// 并要求 SoA 顶点属性一一对应。这里提前失败，避免创建部分 GPU 资源后再在 Vulkan
+    /// build 阶段暴露难定位的问题。
     fn validate_mesh_data(data: &MeshData) -> Result<()> {
+        if data.submeshes.is_empty() {
+            bail!("mesh '{}' has no submeshes", data.name);
+        }
+        for (submesh_index, submesh) in data.submeshes.iter().enumerate() {
+            Self::validate_submesh_data(&data.name, submesh_index, submesh)?;
+        }
+        Ok(())
+    }
+
+    fn validate_submesh_data(mesh_name: &str, submesh_index: usize, data: &SubmeshData) -> Result<()> {
+        let debug_name = if data.name.is_empty() { mesh_name } else { &data.name };
         let vertex_count = data.positions.len();
         if vertex_count == 0 {
-            bail!("mesh '{}' has no vertices", data.name);
+            bail!("mesh '{}' submesh {} '{}' has no vertices", mesh_name, submesh_index, debug_name);
         }
         if data.normals.len() != vertex_count || data.tangents.len() != vertex_count || data.uvs.len() != vertex_count {
-            bail!("mesh '{}' has mismatched vertex attribute counts", data.name);
+            bail!(
+                "mesh '{}' submesh {} '{}' has mismatched vertex attribute counts",
+                mesh_name,
+                submesh_index,
+                debug_name
+            );
         }
         if data.indices.is_empty() {
-            bail!("mesh '{}' has no indices", data.name);
+            bail!("mesh '{}' submesh {} '{}' has no indices", mesh_name, submesh_index, debug_name);
         }
         if !data.indices.len().is_multiple_of(3) {
-            bail!("mesh '{}' index count is not a multiple of 3", data.name);
+            bail!("mesh '{}' submesh {} '{}' index count is not a multiple of 3", mesh_name, submesh_index, debug_name);
+        }
+        if data.indices.iter().any(|&index| index as usize >= vertex_count) {
+            bail!("mesh '{}' submesh {} '{}' has out-of-range index", mesh_name, submesh_index, debug_name);
         }
         Ok(())
     }
@@ -332,7 +379,7 @@ impl MeshUploadQueue {
     fn create_vertex_stage_buffer(
         resource_ctx: GfxResourceCtx<'_>,
         vertex_count: usize,
-        data: &MeshData,
+        data: &SubmeshData,
         debug_name: impl AsRef<str>,
     ) -> GfxBuffer {
         let total_size = VertexLayoutSoA3D::buffer_size(vertex_count) as vk::DeviceSize;
@@ -382,7 +429,7 @@ impl MeshUploadQueue {
     /// 该函数和 vertex/index 上传同处 `MeshUploadQueue`，保证 CPU metadata 与真正提交给
     /// GPU 的索引顺序完全一致；后续 scene sync 只通过 mesh manager 的 ready cache 读取它，
     /// 不回到 asset hub 重新查询或复制整份 mesh。
-    fn build_triangle_metadata(data: &MeshData) -> Vec<RtTriangleMeta> {
+    fn build_triangle_metadata(data: &SubmeshData) -> Vec<RtTriangleMeta> {
         data.indices
             .chunks_exact(3)
             .enumerate()
@@ -413,13 +460,22 @@ impl Drop for MeshUploadQueue {
 
 /// resolver 可见的 GPU-ready mesh 缓存。
 ///
-/// `geometry` 服务光栅化 draw，`blas`/`blas_device_address` 服务 TLAS 构建；二者共享同一份
-/// vertex/index buffer，避免 mesh 在 runtime 内出现两套 GPU 表示。
+/// `geometries` 服务光栅化 draw 和 BLAS geometry 输入，`blas`/`blas_device_address`
+/// 服务 TLAS 构建；二者共享同一批 vertex/index buffer，避免 mesh 在 runtime 内出现两套 GPU 表示。
 struct UploadedMesh {
-    geometry: RtGeometry,
+    geometries: Vec<RtGeometry>,
     triangle_metadata: Vec<Vec<RtTriangleMeta>>,
     blas: GfxAcceleration,
     blas_device_address: vk::DeviceAddress,
+}
+
+impl UploadedMesh {
+    fn destroy(self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>, reason: DestroyReason) {
+        for geometry in self.geometries {
+            geometry.destroy(resource_ctx, reason);
+        }
+        self.blas.destroy(resource_ctx, device_ctx, reason);
+    }
 }
 
 /// 渲染侧 mesh 资产上传与 BLAS 缓存。
@@ -431,6 +487,13 @@ pub struct RenderMeshManager {
     retired_meshes: HashSet<MeshHandle>,
     upload_queue: MeshUploadQueue,
     ready_revision: u64,
+}
+
+/// mesh 上传阶段对 dirty routing 暴露的结构化结果。
+#[derive(Default)]
+pub(crate) struct RenderMeshUpdateResult {
+    /// 本帧完成上传/BLAS build 并进入 resolver 可见状态的 scene mesh。
+    pub(crate) ready_changed_meshes: Vec<MeshHandle>,
 }
 
 impl RenderMeshManager {
@@ -456,8 +519,9 @@ impl RenderMeshManager {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-    ) {
+    ) -> RenderMeshUpdateResult {
         let _span = tracy_client::span!("RenderMeshManager::update");
+        let mut result = RenderMeshUpdateResult::default();
 
         for upload in pending_uploads {
             if self.retired_meshes.contains(&upload.handle) {
@@ -472,14 +536,20 @@ impl RenderMeshManager {
 
         for finished in self.upload_queue.update(resource_ctx, device_ctx) {
             if self.retired_meshes.remove(&finished.handle) {
-                finished.geometry.destroy(resource_ctx, DestroyReason::DeferredCleanup);
+                for geometry in finished.geometries {
+                    geometry.destroy(resource_ctx, DestroyReason::DeferredCleanup);
+                }
                 finished.blas.destroy(resource_ctx, device_ctx, DestroyReason::DeferredCleanup);
                 self.ready_revision = self.ready_revision.saturating_add(1);
                 continue;
             }
+            let handle = finished.handle;
             self.replace_uploaded_mesh(resource_ctx, device_ctx, finished);
             self.ready_revision = self.ready_revision.saturating_add(1);
+            result.ready_changed_meshes.push(handle);
         }
+
+        result
     }
 
     /// 移除 scene mesh 对应的 GPU-ready cache。
@@ -497,23 +567,9 @@ impl RenderMeshManager {
             let Some(mesh) = self.meshes.remove(handle) else {
                 continue;
             };
-            mesh.geometry.destroy(resource_ctx, DestroyReason::ImmediateRelease);
-            mesh.blas.destroy(resource_ctx, device_ctx, DestroyReason::ImmediateRelease);
+            mesh.destroy(resource_ctx, device_ctx, DestroyReason::ImmediateRelease);
             self.ready_revision = self.ready_revision.saturating_add(1);
         }
-    }
-
-    /// 查询指定 mesh 是否已经完成 vertex/index 上传和 BLAS build。
-    pub fn is_mesh_ready(&self, handle: MeshHandle) -> bool {
-        self.meshes.contains_key(handle)
-    }
-
-    /// 返回 mesh ready 状态的单调递增 revision。
-    ///
-    /// `RenderRuntime` 会把它与 instance revision 合成 scene revision，供 `RenderWorld` 判断
-    /// 当前 FIF 的 TLAS 是否需要重建。
-    pub fn ready_revision(&self) -> u64 {
-        self.ready_revision
     }
 
     fn replace_uploaded_mesh(
@@ -527,8 +583,7 @@ impl RenderMeshManager {
         if let Some(old_mesh) = self.meshes.remove(finished.handle) {
             // 同一 handle 的 mesh 重新上传时，旧 geometry/BLAS 不能继续被 resolver 返回。
             // 当前实现依赖帧开始的 FIF 等待保证立即释放不会撞上在飞命令。
-            old_mesh.geometry.destroy(resource_ctx, DestroyReason::ImmediateRelease);
-            old_mesh.blas.destroy(resource_ctx, device_ctx, DestroyReason::ImmediateRelease);
+            old_mesh.destroy(resource_ctx, device_ctx, DestroyReason::ImmediateRelease);
         }
 
         let blas_device_address = finished.blas.device_address(device_ctx);
@@ -542,8 +597,8 @@ impl RenderMeshManager {
         self.meshes.insert(
             finished.handle,
             UploadedMesh {
-                geometry: finished.geometry,
-                triangle_metadata: vec![finished.triangle_metadata],
+                geometries: finished.geometries,
+                triangle_metadata: finished.triangle_metadata,
                 blas: finished.blas,
                 blas_device_address,
             },
@@ -557,21 +612,16 @@ impl RenderMeshManager {
         self.upload_queue.shutdown(resource_ctx, device_ctx);
 
         for (_, mesh) in self.meshes.drain() {
-            mesh.geometry.destroy(resource_ctx, DestroyReason::Shutdown);
-            mesh.blas.destroy(resource_ctx, device_ctx, DestroyReason::Shutdown);
+            mesh.destroy(resource_ctx, device_ctx, DestroyReason::Shutdown);
         }
     }
 }
 
 impl MeshRenderResolver for RenderMeshManager {
-    fn is_mesh_ready(&self, handle: MeshHandle) -> bool {
-        self.is_mesh_ready(handle)
-    }
-
     fn resolve_mesh(&self, handle: MeshHandle) -> Option<MeshRenderData<'_>> {
         let mesh = self.meshes.get(handle)?;
         Some(MeshRenderData {
-            geometries: std::slice::from_ref(&mesh.geometry),
+            geometries: mesh.geometries.as_slice(),
             triangle_metadata: mesh.triangle_metadata.as_slice(),
             blas_device_address: Some(mesh.blas_device_address),
         })
