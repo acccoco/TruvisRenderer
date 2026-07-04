@@ -26,6 +26,7 @@ use app_kit::render_pipeline::common_settings::PathTracingCommonSettings;
 use app_kit::render_pipeline::offline_render_graph::OfflinePipeline;
 use app_kit::render_pipeline::rt_render_graph::RtPipeline;
 
+use crate::coordinate_gizmo::CoordinateGizmoRenderer;
 use crate::overlay_ui::{
     DebugImageViewerData, PipelineControlsData, RaycastOverlayData, TruvisOverlayFrame, TruvisOverlayOptions,
     TruvisOverlayUi,
@@ -38,6 +39,7 @@ pub struct TruvisApp {
     rt_pipeline: RtPipeline,
     offline_pipeline: OfflinePipeline,
     selection_outline: SelectionOutlineRenderer,
+    coordinate_gizmo: CoordinateGizmoRenderer,
     path_tracing_common_settings: PathTracingCommonSettings,
     render_mode: RenderMode,
     camera_controller: CameraController,
@@ -463,11 +465,13 @@ impl RenderAppHooks for TruvisApp {
         visit(&mut self.rt_pipeline);
         visit(&mut self.offline_pipeline);
         visit(&mut self.selection_outline);
+        visit(&mut self.coordinate_gizmo);
         visit(&mut self.gui);
     }
 
     fn visit_plugins_mut_rev(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
         visit(&mut self.gui);
+        visit(&mut self.coordinate_gizmo);
         visit(&mut self.selection_outline);
         visit(&mut self.offline_pipeline);
         visit(&mut self.rt_pipeline);
@@ -654,6 +658,12 @@ impl RenderAppHooks for TruvisApp {
                     ctx.present.swapchain_image_info().image_extent,
                     self.selected_submesh,
                 );
+                self.coordinate_gizmo.contribute_passes(
+                    &mut graph,
+                    ctx,
+                    present_targets.present_image,
+                    ctx.present.swapchain_image_info().image_extent,
+                );
                 self.gui.contribute_passes(
                     &mut graph,
                     &plugin_ctx,
@@ -695,6 +705,12 @@ impl RenderAppHooks for TruvisApp {
                     present_targets.present_image,
                     ctx.present.swapchain_image_info().image_extent,
                     self.selected_submesh,
+                );
+                self.coordinate_gizmo.contribute_passes(
+                    &mut graph,
+                    ctx,
+                    present_targets.present_image,
+                    ctx.present.swapchain_image_info().image_extent,
                 );
                 self.gui.contribute_passes(
                     &mut graph,

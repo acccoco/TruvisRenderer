@@ -1,7 +1,7 @@
 //! App 层共享 render pass 实现。
 //!
 //! 包含可复用的 GPU pass：real-time ray tracing、accumulation、
-//! denoising、tone-mapping (SDR)、image clear、blit、resolve 和 Phong shading。
+//! denoising、tone-mapping (SDR)、image clear、blit、resolve、coordinate gizmo 和 Phong shading。
 //!
 //! 本 crate 表达 Truvis app / samples 复用的具体渲染效果，不属于
 //! engine core。Pipeline 编排和 GUI RenderGraph 集成保留在
@@ -10,6 +10,7 @@
 pub mod accum_pass;
 pub mod blit_pass;
 mod compute_pass;
+pub mod coordinate_gizmo_pass;
 pub mod denoise_accum_pass;
 pub mod dlss_rr_pass;
 pub mod dlss_sr_pass;

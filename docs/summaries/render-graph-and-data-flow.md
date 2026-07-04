@@ -112,8 +112,9 @@ Truvis 现在通过 `RenderMode { Realtime, Offline }` 在实时和离线两套 
 
 Truvis 主视图 present graph 在两种模式下都保持同一叠加顺序：对应 pipeline 先把 main view resolve 到
 present image，随后 App-owned selection outline pass 以 `WorldSubmeshSelection` 语义光栅化选中 submesh 到 per-FIF
-R8 mask，再用 composite pass `LOAD` present image 叠加轮廓，最后 `GuiPlugin` 绘制 ImGui。outline mask 不导出为
-debug image，GUI debug viewer 只接收实时/离线 pipeline 显式收集的 debug images。
+R8 mask，再用 composite pass `LOAD` present image 叠加轮廓；随后 App-owned coordinate gizmo pass 读取当前
+`per_frame_data.view`，在右下角以 `LOAD` present image 叠加三轴朝向，最后 `GuiPlugin` 绘制 ImGui。outline mask 不导出为
+debug image，gizmo 不导出中间 image，GUI debug viewer 只接收实时/离线 pipeline 显式收集的 debug images。
 
 离线 `accum_image` 是 pipeline-owned 单张 HDR image，不按 FIF 轮转；RenderGraph import 初始状态为
 `STORAGE_READ_WRITE_COMPUTE`。离线 present graph 只读取 per-FIF `render_target`，不导出图片，不复用 DLSS、ReSTIR、RR、denoise 或 realtime `ViewAccumState`。

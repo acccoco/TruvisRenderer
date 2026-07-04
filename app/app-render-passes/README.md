@@ -2,7 +2,7 @@
 
 `app-render-passes` 存放 Truvis 主体 app 与 samples 共享的具体 render pass 实现，
 例如 real-time / offline ray tracing、accumulation、denoise、SDR、image clear、blit、resolve、
-selection outline 和 Phong shading。
+coordinate gizmo、selection outline 和 Phong shading。
 
 ## 主要职责
 
@@ -12,6 +12,8 @@ selection outline 和 Phong shading。
 - 在需要场景数据的 pass 中通过 `RenderSceneView` 读取 scene buffer / TLAS / raster draw 能力，不在 render phase 访问 `World` 或重新 prepare scene。
 - `SelectionOutlinePass` 只负责录制 R8 mask 光栅化与 present composite；mask image 生命周期、selection
   状态和 pass 插入顺序属于具体 App。
+- `CoordinateGizmoPass` 只负责在 present image 右下角叠加当前相机朝向下的三轴 gizmo；它不持有几何 buffer
+  或中间 image，pass 插入顺序属于具体 App。
 - `ImageClearPass` 只负责把 bindless UAV storage image 写成确定颜色；具体 pipeline 必须通过 RenderGraph
   声明目标图像写状态，并决定何时清理历史。
 
