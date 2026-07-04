@@ -13,6 +13,7 @@ tools/tracy
 tools/streamline-sdk
 tools/rtx-gi
 tools/rtx-di
+tools/openpbr
 
 # operating system
 .DS_Store

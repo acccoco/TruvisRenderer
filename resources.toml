@@ -71,3 +71,12 @@ target_dir = "tools"
 rename_to = "rtx-di"
 git_ref = "v3.0.0"
 recursive_submodules = true
+
+[[resources]]
+name = "openpbr-repo"
+url = "https://github.com/AcademySoftwareFoundation/OpenPBR.git"
+resource_type = "git"
+target_dir = "tools"
+rename_to = "openpbr"
+git_ref = "v1.1.1"
+recursive_submodules = true

@@ -96,8 +96,7 @@ impl GitHubResourceFetcher {
 
     /// 下载单个资源
     pub fn fetch_resource(&self, item: &ResourceItem) -> anyhow::Result<()> {
-        info!("===============================");
-        info!("开始处理资源: {}", item.name);
+        info!("=============================== 开始处理资源: {} ===============================", item.name);
 
         let target_path = PathBuf::from(&item.target_dir);
         let actual_target = target_path.join(&item.rename_to);
