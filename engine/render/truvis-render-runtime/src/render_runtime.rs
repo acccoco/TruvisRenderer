@@ -489,6 +489,7 @@ impl RenderRuntime {
                 per_frame_gpu_data: &self.per_frame_gpu_data,
             },
             render_scene: &self.render_world,
+            world_submesh_raster: &self.render_world,
             present: self.swapchain_presenter.as_ref().unwrap().view(),
             timeline: &self.fif_timeline_semaphore,
         }

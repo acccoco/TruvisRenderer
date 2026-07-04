@@ -27,9 +27,12 @@ use crate::render_world::render_sky_manager::RenderSkyManager;
 use crate::render_world::render_texture_manager::RenderTextureManager;
 use crate::render_world::render_tlas_manager::RenderTlasManager;
 use crate::resources::gfx_resource_manager::GfxResourceManager;
+use crate::selection::{WorldSubmeshRasterView, WorldSubmeshSelection};
 
 use super::buffers::RenderWorldBuffers;
-use super::raster_draw_cache::{RasterDrawItem, draw_raster_cache, update_raster_draw_cache};
+use super::raster_draw_cache::{
+    RasterDrawItem, draw_raster_cache, draw_raster_cache_selected, update_raster_draw_cache,
+};
 
 /// runtime 私有的 GPU scene 翻译层。
 ///
@@ -415,6 +418,26 @@ impl RenderSceneView for RenderWorld {
     fn draw_raster(&self, frame_label: FrameLabel, cmd: &GfxCommandBuffer, before_draw: &mut dyn FnMut(u32, u32)) {
         let _span = tracy_client::span!("RenderWorld::draw_raster");
         draw_raster_cache(&self.raster_draws[*frame_label], cmd, before_draw);
+    }
+}
+
+// 选择轮廓使用的窄接口：App 提供 CPU World 语义，runtime 负责解析当前 GPU draw。
+impl WorldSubmeshRasterView for RenderWorld {
+    fn draw_selected_submesh_raster(
+        &self,
+        frame_label: FrameLabel,
+        cmd: &GfxCommandBuffer,
+        selection: WorldSubmeshSelection,
+        before_draw: &mut dyn FnMut(u32, u32),
+    ) -> bool {
+        let _span = tracy_client::span!("RenderWorld::draw_selected_submesh_raster");
+        let Some((instance_slot, submesh_idx)) =
+            self.render_instance_manager.resolve_active_raster_submesh(selection.instance, selection.submesh_index)
+        else {
+            return false;
+        };
+
+        draw_raster_cache_selected(&self.raster_draws[*frame_label], cmd, instance_slot, submesh_idx, before_draw)
     }
 }
 

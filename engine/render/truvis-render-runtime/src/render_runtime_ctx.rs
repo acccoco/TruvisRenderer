@@ -13,6 +13,7 @@ use crate::ray_cast::{RayCastRay, RayCastResult, RayCastService};
 use crate::render_world::render_instance_manager::RenderInstanceManager;
 use crate::resources::cmd_allocator::CmdAllocator;
 use crate::resources::gfx_resource_manager::GfxResourceManager;
+use crate::selection::WorldSubmeshRasterView;
 use crate::state::dlss_options::DlssOptions;
 use crate::state::dlss_sr::DlssSrState;
 use crate::state::frame_state::FrameRenderState;
@@ -73,6 +74,8 @@ pub struct RenderRuntimeRenderCtx<'a> {
     pub record_ctx: RenderPassRecordCtx<'a>,
     /// runtime 私有 `RenderWorld` 的只读视图；pass 不能访问 concrete scene owner。
     pub render_scene: &'a dyn RenderSceneView,
+    /// World 语义 selection 到当前 raster draw 的只读解析/绘制接口；不暴露 GPU slot owner。
+    pub world_submesh_raster: &'a dyn WorldSubmeshRasterView,
     /// 当前窗口 present 边界，只暴露 swapchain 信息和 RenderGraph 导入 helper。
     pub present: PresentView<'a>,
     /// runtime 全局 FIF timeline，用于 render graph signal 当前 frame id。

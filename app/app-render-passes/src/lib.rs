@@ -20,4 +20,5 @@ pub mod phong_pass;
 pub mod realtime_rt_pass;
 pub mod resolve_pass;
 pub mod sdr_pass;
+pub mod selection_outline_pass;
 pub(crate) mod streamline_pass;

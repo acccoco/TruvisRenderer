@@ -18,5 +18,7 @@ mod render_world;
 /// manager-owned GPU resource 与 command/staging owner。
 pub mod resources;
 mod runtime_defaults;
+/// CPU World 语义的选择绘制接口。
+pub mod selection;
 /// runtime 派生帧状态、DLSS 选项、时间快照和 DLSS SR 状态。
 pub mod state;

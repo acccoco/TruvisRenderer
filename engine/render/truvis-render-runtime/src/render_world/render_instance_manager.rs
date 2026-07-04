@@ -113,6 +113,30 @@ impl RenderInstanceManager {
         self.ray_cast_records.get(instance_slot as usize)?.as_ref()
     }
 
+    /// 将 CPU `InstanceHandle + submesh_index` 解析为当前 prepare 快照里的稳定 GPU draw key。
+    ///
+    /// 该接口只做只读查询，不激活 pending instance，也不重新遍历 CPU scene。`ray_cast_records`
+    /// 与 raster draw cache 在同一次 prepare 中生成，因此这里用它校验 slot 仍属于同一个
+    /// `InstanceHandle`，并用 material 数量作为 instance-local submesh 边界。
+    pub(crate) fn resolve_active_raster_submesh(
+        &self,
+        instance: InstanceHandle,
+        submesh_index: u32,
+    ) -> Option<(u32, u32)> {
+        let binding = self.bindings.get(instance)?;
+        if binding.state != InstanceState::Active {
+            return None;
+        }
+
+        let slot = binding.slot.as_u32();
+        let record = self.ray_cast_record(slot)?;
+        if record.instance != instance || submesh_index as usize >= record.materials.len() {
+            return None;
+        }
+
+        Some((slot, submesh_index))
+    }
+
     /// 从 CPU scene read view 构建本帧可渲染的 `RenderData` 快照。
     ///
     /// 该阶段会先同步 instance 生命周期与依赖 ready 状态；只有 mesh/material 都能被 resolver

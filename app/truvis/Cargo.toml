@@ -11,7 +11,9 @@ path = "src/main.rs"
 [dependencies]
 truvis-app-frame = { workspace = true }
 app-kit = { workspace = true }
+app-render-passes = { workspace = true }
 truvis-winit-app = { workspace = true }
+truvis-gfx = { workspace = true }
 truvis-render-runtime = { workspace = true }
 truvis-render-foundation = { workspace = true }
 truvis-render-graph = { workspace = true }
@@ -24,3 +26,5 @@ ash = { workspace = true }
 glam = { workspace = true }
 imgui = { workspace = true }
 log = { workspace = true }
+slotmap = { workspace = true }
+vk-mem = { workspace = true }

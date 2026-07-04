@@ -3572,12 +3572,15 @@ name = "truvis"
 version = "0.1.0"
 dependencies = [
  "app-kit",
+ "app-render-passes",
  "ash",
  "glam",
  "imgui",
  "log",
+ "slotmap",
  "truvis-app-frame",
  "truvis-asset",
+ "truvis-gfx",
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
@@ -3585,6 +3588,7 @@ dependencies = [
  "truvis-shader-binding",
  "truvis-winit-app",
  "truvis-world",
+ "vk-mem",
 ]
 
 [[package]]

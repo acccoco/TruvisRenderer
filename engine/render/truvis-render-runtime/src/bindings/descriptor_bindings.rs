@@ -59,13 +59,13 @@ impl BindlessDescriptorBinding {
 pub struct PerFrameDescriptorBinding {
     #[binding = 0]
     #[descriptor_type = "UNIFORM_BUFFER"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR | COMPUTE"]
+    #[stage = "VERTEX | FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR | COMPUTE"]
     #[count = 1]
     _per_frame_data: (),
 
     #[binding = 1]
     #[descriptor_type = "UNIFORM_BUFFER"]
-    #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR | COMPUTE"]
+    #[stage = "VERTEX | FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR | COMPUTE"]
     #[count = 1]
     _gpu_scene: (),
 }

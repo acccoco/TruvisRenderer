@@ -15,6 +15,9 @@
   material slot、instance slot、GPU scene buffer、BLAS/TLAS 和 raster draw cache。
 - 在 `prepare` 完成后提供 runtime-owned 同步 raycast 服务，把 GPU hit 的 instance slot
   与 submesh index 转回 CPU `InstanceHandle` / `MeshHandle` / `MaterialHandle`。
+- 提供 `WorldSubmeshSelection` 与只读 selection raster view，把 App 提供的 CPU
+  `InstanceHandle + submesh_index` 解析到当前 prepare 快照中的 active raster draw；pending、stale
+  或 submesh 越界选择只会跳过绘制，不向上层暴露 GPU slot。
 - 负责 surface/swapchain/present image wrapper、acquire/present semaphore 与窗口 resize 重建。
 - 不负责窗口事件循环、具体 app/plugin 编排、GUI RenderGraph 适配、Assimp 文件导入或具体 pass 逻辑。
 
@@ -78,6 +81,8 @@
   不暴露 texture/mesh manager owner，pass 不能绕过 runtime 私有 bridge 读取上传缓存。
 - `RenderRuntimeRayCastCtx` 只暴露同步批量 raycast 调用；App 应在 `after_prepare`
   阶段使用它，update/input 阶段不提供该接口。
+- `RenderRuntimeRenderCtx` 除普通 `RenderSceneView` 外，还暴露 `WorldSubmeshRasterView` trait
+  object，供 App-owned selection outline 等效果以 World 选择语义录制单个 submesh raster draw。
 
 ## 生命周期
 

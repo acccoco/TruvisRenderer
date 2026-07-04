@@ -61,3 +61,28 @@ pub(super) fn draw_raster_cache(
         cmd.draw_indexed(draw.index_count, 0, 1, 0, 0);
     }
 }
+
+pub(super) fn draw_raster_cache_selected(
+    draw_cache: &[RasterDrawItem],
+    cmd: &GfxCommandBuffer,
+    instance_slot: u32,
+    submesh_idx: u32,
+    before_draw: &mut dyn FnMut(u32, u32),
+) -> bool {
+    // 选中 submesh 复用同一份 prepare draw cache。这里不重新解析 mesh/material，
+    // 只匹配 runtime 已确认 active 的稳定 slot 与 instance-local submesh index。
+    for draw in draw_cache {
+        if draw.instance_slot != instance_slot || draw.submesh_idx != submesh_idx {
+            continue;
+        }
+
+        cmd.cmd_bind_index_buffer_raw(draw.index_buffer, 0, super::geometry::RtGeometry::index_type());
+        cmd.cmd_bind_vertex_buffers(0, &draw.vertex_buffers, &draw.vertex_offsets);
+
+        before_draw(draw.instance_slot, draw.submesh_idx);
+        cmd.draw_indexed(draw.index_count, 0, 1, 0, 0);
+        return true;
+    }
+
+    false
+}

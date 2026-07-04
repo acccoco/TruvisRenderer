@@ -6,6 +6,7 @@ use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
 use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
 use truvis_render_runtime::render_runtime::{RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
+use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_shader_binding::gpu;
 use truvis_world::{
     World, components::instance::Instance, components::material::MaterialData, guid_new_type::MeshHandle,
@@ -26,18 +27,21 @@ use crate::overlay_ui::{
     DebugImageViewerData, PipelineControlsData, RaycastOverlayData, TruvisOverlayFrame, TruvisOverlayOptions,
     TruvisOverlayUi,
 };
+use crate::selection_outline::SelectionOutlineRenderer;
 
 #[derive(Default)]
 pub struct TruvisApp {
     gui: GuiPlugin,
     rt_pipeline: RtPipeline,
     offline_pipeline: OfflinePipeline,
+    selection_outline: SelectionOutlineRenderer,
     path_tracing_common_settings: PathTracingCommonSettings,
     render_mode: RenderMode,
     camera_controller: CameraController,
     input: InputManager,
     overlay_ui: TruvisOverlayUi,
     click_ray_cast_probe: ClickRayCastProbe,
+    selected_submesh: Option<WorldSubmeshSelection>,
 }
 
 #[derive(Clone, Copy)]
@@ -415,6 +419,32 @@ impl TruvisApp {
             .map_err(|err| err.to_string())
             .map(|mut results| results.pop().expect("single raycast result missing"))
     }
+
+    fn selection_from_raycast_result(result: &Result<RayCastResult, String>) -> Option<WorldSubmeshSelection> {
+        match result {
+            Ok(RayCastResult::Hit(hit)) => Some(WorldSubmeshSelection {
+                instance: hit.instance,
+                submesh_index: hit.submesh_index,
+            }),
+            Ok(RayCastResult::Miss) | Err(_) => None,
+        }
+    }
+
+    fn clear_stale_selection(&mut self, world: &World) {
+        let Some(selection) = self.selected_submesh else {
+            return;
+        };
+
+        let scene = world.scene_view();
+        let valid = scene
+            .get_instance(selection.instance)
+            .is_some_and(|instance| (selection.submesh_index as usize) < instance.materials.len());
+        if !valid {
+            // 这里只清理 CPU 语义已失效的选择；GPU 未 ready / pending 由 runtime resolver 在
+            // render 阶段返回“不绘制”，避免 update 阶段感知 RenderWorld 内部状态。
+            self.selected_submesh = None;
+        }
+    }
 }
 
 impl RenderAppHooks for TruvisApp {
@@ -430,11 +460,13 @@ impl RenderAppHooks for TruvisApp {
     fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
         visit(&mut self.rt_pipeline);
         visit(&mut self.offline_pipeline);
+        visit(&mut self.selection_outline);
         visit(&mut self.gui);
     }
 
     fn visit_plugins_mut_rev(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
         visit(&mut self.gui);
+        visit(&mut self.selection_outline);
         visit(&mut self.offline_pipeline);
         visit(&mut self.rt_pipeline);
     }
@@ -450,6 +482,7 @@ impl RenderAppHooks for TruvisApp {
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
         self.click_ray_cast_probe.update_time(ctx.delta_time_s);
+        self.clear_stale_selection(ctx.world);
 
         let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
         let viewport_size = glam::vec2(ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32);
@@ -459,6 +492,9 @@ impl RenderAppHooks for TruvisApp {
             let mouse_position = self.input.state().mouse_position();
             let screen_pos = glam::vec2(mouse_position[0] as f32, mouse_position[1] as f32);
             let ray = self.camera_controller.make_screen_raycast(mouse_position, viewport_size);
+            if ray.is_none() {
+                self.selected_submesh = None;
+            }
             self.click_ray_cast_probe.request_cast(screen_pos, ray);
         }
 
@@ -511,6 +547,7 @@ impl RenderAppHooks for TruvisApp {
 
         if let Some((ray, screen_pos)) = self.click_ray_cast_probe.take_pending_cast() {
             let result = Self::cast_single_ray(ctx, ray);
+            self.selected_submesh = Self::selection_from_raycast_result(&result);
             self.click_ray_cast_probe.finish_cast(screen_pos, result);
         }
     }
@@ -608,6 +645,13 @@ impl RenderAppHooks for TruvisApp {
                     &self.path_tracing_common_settings,
                 );
                 let debug_graph_entries = present_targets.debug_graph_entries();
+                self.selection_outline.contribute_passes(
+                    &mut graph,
+                    ctx,
+                    present_targets.present_image,
+                    ctx.present.swapchain_image_info().image_extent,
+                    self.selected_submesh,
+                );
                 self.gui.contribute_passes(
                     &mut graph,
                     &plugin_ctx,
@@ -643,6 +687,13 @@ impl RenderAppHooks for TruvisApp {
                     &self.path_tracing_common_settings,
                 );
                 let debug_graph_entries = present_targets.debug_graph_entries();
+                self.selection_outline.contribute_passes(
+                    &mut graph,
+                    ctx,
+                    present_targets.present_image,
+                    ctx.present.swapchain_image_info().image_extent,
+                    self.selected_submesh,
+                );
                 self.gui.contribute_passes(
                     &mut graph,
                     &plugin_ctx,

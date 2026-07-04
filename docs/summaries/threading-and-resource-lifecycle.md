@@ -57,8 +57,9 @@ flowchart LR
 - Persistent：pipeline、sampler、descriptor layout、shader binding。
 - Frame：command buffer、per-frame buffer、FrameLabel / timeline state。
 - Swapchain：swapchain image/view、present semaphore。
-- App / Pipeline targets：RT working target、main view target、GBuffer 等窗口尺寸资源由具体 app/plugin 持有，并在 init /
-  resize / shutdown 阶段通过 ctx 中的 `GfxResourceManager` 与 `ShaderBindingSystem` 显式创建、注册或释放。
+- App / Pipeline targets：RT working target、main view target、GBuffer、selection outline mask 等窗口尺寸资源由具体
+  app/plugin 持有，并在 init / resize / shutdown 阶段通过 ctx 中的 `GfxResourceManager` 与
+  `ShaderBindingSystem` 显式创建、注册或释放。
 - Asset：`AssetHub` 只持有 texture / model loader task handle、后台任务状态和完成事件队列，并负责 Assimp / glTF model 到 owned
   CPU payload 的导入；`SceneAssetIngestor` 把 loader 结果翻译为 CPU resource handle 事件；`RenderWorld` 内部的 `RenderTextureManager` 持有 texture 的 GPU image/view/bindless 绑定；
   `SceneStore` 保存 mesh 的 submesh metadata 和 instance material 对齐约束；`RenderMeshManager` 持有每个 submesh 的 vertex/index buffer、

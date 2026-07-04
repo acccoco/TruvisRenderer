@@ -27,6 +27,7 @@
 ## 2) 细分规则文档
 
 - 代码风格、注释与文档规则见 `.agents/rules/code-style-comments-docs.md`。
+- Shader ABI、字节对齐、padding 与跨 Slang / Vulkan / Rust / C++ 内存布局规则见 `.agents/rules/shader-abi-layout.md`。
 
 ## 3) 渲染项目约束
 

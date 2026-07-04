@@ -110,6 +110,11 @@ Truvis 现在通过 `RenderMode { Realtime, Offline }` 在实时和离线两套 
 - `Offline`：执行 `OfflinePipeline`，数据流是 1-8 组 `offline ray tracing -> per-FIF single_frame_image -> FIF 唯一 accum_image`，
   再输出到 `per-FIF render_target -> present`。
 
+Truvis 主视图 present graph 在两种模式下都保持同一叠加顺序：对应 pipeline 先把 main view resolve 到
+present image，随后 App-owned selection outline pass 以 `WorldSubmeshSelection` 语义光栅化选中 submesh 到 per-FIF
+R8 mask，再用 composite pass `LOAD` present image 叠加轮廓，最后 `GuiPlugin` 绘制 ImGui。outline mask 不导出为
+debug image，GUI debug viewer 只接收实时/离线 pipeline 显式收集的 debug images。
+
 离线 `accum_image` 是 pipeline-owned 单张 HDR image，不按 FIF 轮转；RenderGraph import 初始状态为
 `STORAGE_READ_WRITE_COMPUTE`。离线 present graph 只读取 per-FIF `render_target`，不导出图片，不复用 DLSS、ReSTIR、RR、denoise 或 realtime `ViewAccumState`。
 Truvis 持有一份 `PathTracingCommonSettings`，并在构建 graph 时同时传给 realtime 与 offline pipeline；这份状态保存 sky
