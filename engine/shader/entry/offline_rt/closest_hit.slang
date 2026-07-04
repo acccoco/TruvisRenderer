@@ -4,33 +4,31 @@
 #include "lib/scene/material_access.slangi"
 #include "lib/scene/scene_access.slangi"
 
-/// hit shader 内的粗粒度材质分类。
+/// hit shader 内的采样事件分类。
 ///
-/// 当前分类直接基于常量材质参数，目的是为 raygen 选择 diffuse/specular/transparent/emissive
-/// 分支。更细的 BRDF 评估仍归属 `RtMaterialSampler`，不放在 hit shader 中。
+/// CPU material class 只描述材质语义；这里把 class 与 roughness 合成为 raygen 实际需要的
+/// delta / non-delta 事件。opacity 只参与后续 transmission 采样，不参与 delta 判定。
 struct RtMaterialClassifier
 {
     static MaterialType classify(material::PbrMaterial* mat)
     {
-        const float transparent_delta_opaque_threshold = 0.99f;
         const float smooth_delta_roughness_threshold = 0.02f;
 
-        if (max(mat.emissive.x, max(mat.emissive.y, mat.emissive.z)) > 0.f)
+        if (mat.material_class == material::MATERIAL_CLASS_EMISSIVE)
         {
             return MaterialType::EMISSIVE;
         }
-        // 当前材质 ABI 尚未提供显式 material domain / transmission flag，因此 delta 判定
-        // 只覆盖足够光滑的 glass / mirror。普通 alpha blend/cutout 不能仅凭 opaque < 1
-        // 进入折射 delta，否则会把半透明贴图误送到 RR specular/transmission 路径。
-        if (mat.opaque < transparent_delta_opaque_threshold && mat.roughness <= smooth_delta_roughness_threshold)
+
+        const bool smooth_delta = mat.roughness <= smooth_delta_roughness_threshold;
+        if (mat.material_class == material::MATERIAL_CLASS_TRANSMISSION)
         {
-            return MaterialType::TRANSPARENT;
+            return smooth_delta ? MaterialType::DELTA_TRANSMISSION : MaterialType::ROUGH_TRANSMISSION;
         }
-        if (mat.opaque >= transparent_delta_opaque_threshold && mat.roughness <= smooth_delta_roughness_threshold)
+        if (smooth_delta)
         {
-            return MaterialType::SPECULAR;
+            return MaterialType::DELTA_SPECULAR;
         }
-        return MaterialType::DIFFUSE;
+        return MaterialType::ROUGH_SURFACE;
     }
 };
 
@@ -88,8 +86,8 @@ void main_closest_hit(inout RtTracePayload payload, in BuiltInTriangleIntersecti
     payload.surface.base_color = base_color;
     payload.surface.metallic = mat.metallic;
     payload.surface.roughness = mat.roughness;
-    payload.surface.opaque = mat.opaque;
-    payload.surface.ior = 1.5f; // 默认折射率，后续可从材质中读取
+    payload.surface.opacity = mat.opacity;
+    payload.surface.ior = mat.ior;
 
     payload.surface.emissive = mat.emissive * base_color;
 

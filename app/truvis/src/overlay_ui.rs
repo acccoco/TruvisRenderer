@@ -15,7 +15,7 @@ use app_kit::render_pipeline::rt_render_graph::RtPipelineSettings;
 use truvis_render_runtime::ray_cast::RayCastResult;
 use truvis_render_runtime::state::dlss_options::DlssOptions;
 use truvis_world::World;
-use truvis_world::components::material::MaterialData;
+use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
 
 use crate::truvis_app::ClickRayCastProbe;
 
@@ -452,15 +452,30 @@ impl TruvisOverlayUi {
             "Base color: ({:.3}, {:.3}, {:.3}, {:.3})",
             material.base_color.x, material.base_color.y, material.base_color.z, material.base_color.w
         ));
-        ui.text(format!(
-            "Emissive: ({:.3}, {:.3}, {:.3}, {:.3})",
-            material.emissive.x, material.emissive.y, material.emissive.z, material.emissive.w
-        ));
         ui.text(format!("Metallic: {:.3}", material.metallic));
         ui.text(format!("Roughness: {:.3}", material.roughness));
-        ui.text(format!("Opaque: {:.3}", material.opaque));
+        ui.text(format!("Class: {}", Self::material_class_label(material.class)));
+        ui.text(format!("Coverage: {}", Self::coverage_label(material.coverage)));
+        ui.text(format!("Alpha factor: {:.3}", material.base_color.w));
         ui.text(format!("Diffuse texture: {:?}", material.diffuse_texture));
         ui.text(format!("Normal texture: {:?}", material.normal_texture));
+    }
+
+    fn material_class_label(class: MaterialClass) -> String {
+        match class {
+            MaterialClass::Surface => "Surface".to_string(),
+            MaterialClass::Transmission { opacity, ior } => format!("Transmission opacity={opacity:.3} ior={ior:.3}"),
+            MaterialClass::Emissive { radiance } => {
+                format!("Emissive radiance=({:.3}, {:.3}, {:.3})", radiance.x, radiance.y, radiance.z)
+            }
+        }
+    }
+
+    fn coverage_label(coverage: CoverageMode) -> String {
+        match coverage {
+            CoverageMode::Opaque => "Opaque".to_string(),
+            CoverageMode::AlphaMask { alpha_cutoff } => format!("AlphaMask cutoff={alpha_cutoff:.3}"),
+        }
     }
 }
 

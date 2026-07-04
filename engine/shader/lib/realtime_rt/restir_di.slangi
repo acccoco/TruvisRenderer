@@ -337,10 +337,10 @@ struct RtRestirDI
         surface.base_color = primary_key.base_color;
         surface.metallic = primary_key.metallic;
         surface.roughness = primary_key.roughness;
-        surface.opaque = 1.0f;
-        surface.ior = 1.5f;
+        surface.opacity = 1.0f;
+        surface.ior = 1.0f;
         surface.emissive = float3(0.0f);
-        surface.material_type = primary_key.valid ? MaterialType::DIFFUSE : MaterialType::NO_HIT;
+        surface.material_type = primary_key.valid ? MaterialType::ROUGH_SURFACE : MaterialType::NO_HIT;
         return surface;
     }
 

@@ -198,10 +198,15 @@ impl RenderInstanceManager {
             }
 
             let mut material_slots = Vec::with_capacity(instance.materials.len());
+            let mut requires_any_hit = false;
             for &material in &instance.materials {
                 let Some(slot) = material_slot_resolver.resolve_material_slot(material) else {
                     continue 'active;
                 };
+                let Some(data) = scene.material_data(material) else {
+                    continue 'active;
+                };
+                requires_any_hit |= data.coverage.requires_any_hit();
                 material_slots.push(slot);
             }
 
@@ -210,6 +215,7 @@ impl RenderInstanceManager {
                 mesh_index,
                 material_slots,
                 material_handles: instance.materials.clone(),
+                requires_any_hit,
                 transform: instance.transform,
                 previous_transform: binding.previous_transform,
             });
@@ -309,8 +315,8 @@ impl RenderInstanceManager {
             }
 
             if flags.material_binding && binding.state == InstanceState::Active {
-                // material list 变化不会影响 TLAS，但会改变 instance material indirect map 和
-                // emissive table。当前 scene buffer 每帧上传，revision 用于驱动依赖该语义的派生表。
+                // material list 或 material class/coverage 变化会改变 instance material indirect map、emissive table，
+                // 也可能改变 TLAS FORCE_OPAQUE 派生规则；dirty router 会据此推进 TLAS。
                 self.revision = self.revision.saturating_add(1);
                 result.material_binding_changed = true;
             }

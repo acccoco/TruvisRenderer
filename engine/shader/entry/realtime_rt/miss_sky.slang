@@ -30,7 +30,7 @@ void sky_miss(inout RtTracePayload payload)
     payload.surface.base_color = sky_color;
     payload.surface.metallic = 0.f;
     payload.surface.roughness = 1.f;
-    payload.surface.opaque = 1.f;
+    payload.surface.opacity = 1.f;
     payload.surface.ior = 1.f;
 
     payload.surface.emissive = sky_color;

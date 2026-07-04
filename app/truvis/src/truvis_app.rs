@@ -9,7 +9,10 @@ use truvis_render_runtime::render_runtime::{RenderRuntimeRayCastCtx, RenderRunti
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_shader_binding::gpu;
 use truvis_world::{
-    World, components::instance::Instance, components::material::MaterialData, guid_new_type::MeshHandle,
+    World,
+    components::instance::Instance,
+    components::material::{CoverageMode, MaterialClass, MaterialData},
+    guid_new_type::MeshHandle,
     procedural_mesh::ProceduralMeshKind,
 };
 
@@ -49,10 +52,10 @@ struct MaterialCubeSpec {
     name: &'static str,
     center: glam::Vec3,
     base_color: glam::Vec4,
-    emissive: glam::Vec4,
     metallic: f32,
     roughness: f32,
-    opaque: f32,
+    class: MaterialClass,
+    coverage: CoverageMode,
 }
 
 #[derive(Clone, Copy)]
@@ -71,7 +74,7 @@ struct EmissiveCubeMatrixConfig {
 struct EmissiveCubePaletteSpec {
     name: &'static str,
     base_color: glam::Vec4,
-    emissive: glam::Vec4,
+    radiance: glam::Vec3,
 }
 
 const EMISSIVE_CUBE_MATRIX_CONFIG: EmissiveCubeMatrixConfig = EmissiveCubeMatrixConfig {
@@ -260,46 +263,46 @@ impl TruvisApp {
                 name: "glass",
                 center: glam::vec3(-800.0, cube_y, cube_z),
                 base_color: glam::vec4(0.65, 0.85, 1.0, 1.0),
-                emissive: glam::Vec4::ZERO,
                 metallic: 0.0,
                 roughness: 0.0,
-                opaque: 0.25,
+                class: MaterialClass::transmission(0.25, MaterialClass::DEFAULT_IOR),
+                coverage: CoverageMode::Opaque,
             },
             MaterialCubeSpec {
                 name: "mirror",
                 center: glam::vec3(-450.0, cube_y, cube_z),
                 base_color: glam::vec4(0.96, 0.96, 0.92, 1.0),
-                emissive: glam::Vec4::ZERO,
                 metallic: 1.0,
                 roughness: 0.0,
-                opaque: 1.0,
+                class: MaterialClass::Surface,
+                coverage: CoverageMode::Opaque,
             },
             MaterialCubeSpec {
                 name: "glossy-plastic",
                 center: glam::vec3(-100.0, cube_y, cube_z),
                 base_color: glam::vec4(0.95, 0.08, 0.18, 1.0),
-                emissive: glam::Vec4::ZERO,
                 metallic: 0.0,
                 roughness: 0.18,
-                opaque: 1.0,
+                class: MaterialClass::Surface,
+                coverage: CoverageMode::Opaque,
             },
             MaterialCubeSpec {
                 name: "rough-plastic",
                 center: glam::vec3(250.0, cube_y, cube_z),
                 base_color: glam::vec4(0.18, 0.95, 0.25, 1.0),
-                emissive: glam::Vec4::ZERO,
                 metallic: 0.0,
                 roughness: 0.75,
-                opaque: 1.0,
+                class: MaterialClass::Surface,
+                coverage: CoverageMode::Opaque,
             },
             MaterialCubeSpec {
                 name: "emissive-reference",
                 center: glam::vec3(600.0, cube_y, cube_z),
                 base_color: glam::vec4(1.0, 0.65, 0.18, 1.0),
-                emissive: glam::vec4(4.0, 2.2, 0.5, 1.0),
                 metallic: 0.0,
                 roughness: 1.0,
-                opaque: 1.0,
+                class: MaterialClass::emissive(glam::vec3(4.0, 2.2, 0.5)),
+                coverage: CoverageMode::Opaque,
             },
         ];
 
@@ -309,10 +312,10 @@ impl TruvisApp {
             let material = world
                 .register_material(MaterialData {
                     base_color: spec.base_color,
-                    emissive: spec.emissive,
                     metallic: spec.metallic,
                     roughness: spec.roughness,
-                    opaque: spec.opaque,
+                    class: spec.class,
+                    coverage: spec.coverage,
                     diffuse_texture: None,
                     normal_texture: None,
                     name: format!("material-test-cube-{}-{}", MATERIAL_SOURCE, spec.name),
@@ -340,27 +343,27 @@ impl TruvisApp {
             EmissiveCubePaletteSpec {
                 name: "warm-amber",
                 base_color: glam::vec4(1.0, 0.72, 0.32, 1.0),
-                emissive: glam::vec4(4.8, 2.7, 0.8, 1.0) * 5.0,
+                radiance: glam::vec3(4.8, 2.7, 0.8) * 5.0,
             },
             EmissiveCubePaletteSpec {
                 name: "rose",
                 base_color: glam::vec4(1.0, 0.36, 0.54, 1.0),
-                emissive: glam::vec4(4.2, 0.9, 1.8, 1.0) * 5.0,
+                radiance: glam::vec3(4.2, 0.9, 1.8) * 5.0,
             },
             EmissiveCubePaletteSpec {
                 name: "cyan",
                 base_color: glam::vec4(0.42, 0.95, 1.0, 1.0),
-                emissive: glam::vec4(1.2, 3.8, 4.8, 1.0) * 5.0,
+                radiance: glam::vec3(1.2, 3.8, 4.8) * 5.0,
             },
             EmissiveCubePaletteSpec {
                 name: "lime",
                 base_color: glam::vec4(0.54, 1.0, 0.38, 1.0),
-                emissive: glam::vec4(1.4, 4.5, 1.0, 1.0) * 5.0,
+                radiance: glam::vec3(1.4, 4.5, 1.0) * 5.0,
             },
             EmissiveCubePaletteSpec {
                 name: "violet",
                 base_color: glam::vec4(0.72, 0.48, 1.0, 1.0),
-                emissive: glam::vec4(2.2, 1.2, 4.8, 1.0) * 5.0,
+                radiance: glam::vec3(2.2, 1.2, 4.8) * 5.0,
             },
         ];
         let emissive_materials = palette_specs
@@ -369,10 +372,10 @@ impl TruvisApp {
                 world
                     .register_material(MaterialData {
                         base_color: spec.base_color,
-                        emissive: spec.emissive,
                         metallic: 0.0,
                         roughness: 1.0,
-                        opaque: 1.0,
+                        class: MaterialClass::emissive(spec.radiance),
+                        coverage: CoverageMode::Opaque,
                         diffuse_texture: None,
                         normal_texture: None,
                         name: format!("emissive-cube-matrix-{}", spec.name),
@@ -383,8 +386,7 @@ impl TruvisApp {
 
         let mut cube_index = 0usize;
         // 配置使用“第一个 cube 中心点 + XYZ 间距”的语义，方便在场景中手工平移和拉开矩阵。
-        // 自发光 cube 仍只是普通 material emission：当前 RT 路径只在命中 surface 时累加 emission，
-        // 不会把这些 cube 注册成 emissive triangle NEE 光源。
+        // 自发光 cube 使用显式 Emissive class；render-side emissive light table 会把这些三角形纳入 NEE。
         for y in 0..config.counts.y {
             for z in 0..config.counts.z {
                 for x in 0..config.counts.x {

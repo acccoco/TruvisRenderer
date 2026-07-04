@@ -80,14 +80,27 @@ struct RtMaterialSampler
         return true;
     }
 
-    static RtMaterialSample sample_transparent(
+    static float dielectric_fresnel(const RtSurfaceHit surface, const float3 ray_dir)
+    {
+        const float eta = max(surface.ior, 1.0001f);
+        const float f0_sqrt = (eta - 1.0f) / (eta + 1.0f);
+        const float f0 = f0_sqrt * f0_sqrt;
+        const float cos_theta = saturate(dot(-ray_dir, surface.forward_normal));
+        const float one_minus_cos = 1.0f - cos_theta;
+        return f0 + (1.0f - f0) * one_minus_cos * one_minus_cos * one_minus_cos * one_minus_cos * one_minus_cos;
+    }
+
+    static RtMaterialSample sample_delta_transmission(
         inout RtTracePayload payload,
         const RtSurfaceHit surface,
         const float3 ray_dir
     )
     {
         RtMaterialSample sample = RtMaterialSample::make_default(surface, ray_dir);
-        const bool choose_refract = Random::rnd(payload.random_seed) >= surface.opaque;
+        const float transparency = saturate(1.0f - surface.opacity);
+        const float fresnel = dielectric_fresnel(surface, ray_dir);
+        const float refract_probability = saturate(transparency * (1.0f - fresnel));
+        const bool choose_refract = Random::rnd(payload.random_seed) < refract_probability;
         if (choose_refract)
         {
             if (!sample_refraction(surface, ray_dir, sample.direction, sample.throughput))
@@ -173,11 +186,14 @@ struct RtMaterialSampler
 
         switch (surface.material_type)
         {
-        case MaterialType::TRANSPARENT:
-            return sample_transparent(payload, surface, ray_dir);
-        case MaterialType::SPECULAR:
+        case MaterialType::DELTA_TRANSMISSION:
+            return sample_delta_transmission(payload, surface, ray_dir);
+        case MaterialType::DELTA_SPECULAR:
             return sample_specular(surface, ray_dir);
-        case MaterialType::DIFFUSE:
+        case MaterialType::ROUGH_TRANSMISSION:
+            // v1 尚未实现 rough BTDF；这里明确走 non-delta surface fallback，避免 rough glass 被误当作 delta path。
+            return sample_diffuse(payload, surface, ray_dir);
+        case MaterialType::ROUGH_SURFACE:
         default:
             return sample_diffuse(payload, surface, ray_dir);
         }

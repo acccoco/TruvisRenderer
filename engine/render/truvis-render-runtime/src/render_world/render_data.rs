@@ -44,6 +44,8 @@ pub(crate) struct InstanceRenderData {
     pub(crate) material_slots: Vec<u32>,
     /// 该实例每个 submesh 对应的 CPU `MaterialHandle`，与 `material_slots` 顺序一致。
     pub(crate) material_handles: Vec<MaterialHandle>,
+    /// true 表示任一 submesh material 需要 any-hit alpha test，TLAS 不能对该实例设置 FORCE_OPAQUE。
+    pub(crate) requires_any_hit: bool,
     /// 由 CPU scene 提供的模型矩阵，prepare 阶段会写入 instance buffer 并参与 TLAS 构建。
     pub(crate) transform: glam::Mat4,
     /// 上一帧用于 DLSS motion vector 回溯的模型矩阵。

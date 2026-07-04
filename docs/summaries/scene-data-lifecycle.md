@@ -41,6 +41,29 @@ bindless SRV，mesh manager 负责 vertex/index buffer 和 BLAS，material manag
 和 material buffer，instance manager 负责 stable instance slot、ready gate 和 active render list，
 TLAS manager 负责当前 FIF 的 TLAS。
 
+## 材质类型契约
+
+CPU scene 的 `MaterialData` 是材质语义权威来源。v1 把光学类别和 alpha 覆盖拆成两条正交语义：
+
+- `MaterialClass::Surface`：普通表面；是否 delta / rough 由 shader 根据 roughness 决定。
+- `MaterialClass::Transmission { opacity, ior }`：透射表面；`opacity` 只表示透明度，`ior` 表示折射率。
+- `MaterialClass::Emissive { radiance }`：显式自发光表面；emissive table 和 closest-hit emission 都从该 class 派生。
+- `CoverageMode::Opaque` / `CoverageMode::AlphaMask { alpha_cutoff }`：只决定可见性 alpha test 与 TLAS any-hit。
+
+GPU `PbrMaterial` 不再固定 64B；当前生成 binding 为 80B，并显式写入 `base_color`、`metallic`、
+`alpha_factor`、`roughness`、`material_class`、`coverage_mode`、`opacity`、`ior`、`alpha_cutoff`、
+`emissive` 与 diffuse/normal bindless handles。`RenderMaterialManager` 只从 CPU
+`MaterialClass/CoverageMode` 派生这些字段；closest-hit、any-hit、RayQuery shadow/specular-motion
+和 TLAS instance flags 不能各自推断透明或自发光语义。
+
+glTF 导入规则是：`alphaMode = MASK` 只导入为 `CoverageMode::AlphaMask`，未写 cutoff 时使用 `0.5`；
+`KHR_materials_transmission.transmissionFactor > 0` 导入为
+`Transmission { opacity: 1.0 - transmissionFactor, ior }`，IOR 来自 `KHR_materials_ior`，缺省为 `1.5`；
+`emissive_factor` 非零导入为 `Emissive { radiance }`。v1 class 互斥，优先级为
+`Emissive > Transmission > Surface`，冲突时打印 warning。`BLEND` v1 不做 alpha blend，coverage 降级为
+`Opaque` 并 warning。Assimp/Truvixx 把 `opacity < 0.99` 直接识别为
+`Transmission { opacity, ior: 1.5 }`，不再要求低 roughness，也不从标量 opacity 推断 alpha mask。
+
 ## 身份转换链路
 
 这个同步机制刻意分离三套身份，避免 loader、CPU scene 和 GPU cache 互相泄漏。
@@ -71,9 +94,12 @@ material 会先写入对应 manager，确保同一帧的新 upload 或迟到 com
 texture 和 mesh upload 通过 timeline 异步完成；完成前 resolver 仍看不到真实资源。
 
 `RenderWorld::prepare_render_data()` 再读取 `SceneReadView`。material manager 从 CPU 材质参数打包
-material buffer；instance manager 用 material slot resolver 和 mesh resolver 做 ready gate；emissive table、
+material buffer；instance manager 用 material slot resolver 和 mesh resolver 做 ready gate，并为每个 active
+instance 派生 `requires_any_hit`；emissive table、
 analytic light buffer、geometry / instance / indirect buffer 和 scene root buffer 在同一 prepare 快照中更新。
-TLAS 只基于 active instance 和 ready mesh BLAS 构建或复用。
+TLAS 只基于 active instance 和 ready mesh BLAS 构建或复用：`requires_any_hit == false` 的 instance 会设置
+`FORCE_OPAQUE` 跳过 any-hit，含 `CoverageMode::AlphaMask` 的 instance 保留 any-hit。BLAS geometry 不设置 `OPAQUE`，
+因为同一 mesh 可能被不同 material 复用。
 
 render 阶段只消费 `RenderSceneView`：shader 从 scene root buffer 读 device address、bindless handle、
 light count 和 sky / emissive binding；ray tracing 通过 TLAS custom index 回到 stable instance slot；
@@ -81,8 +107,10 @@ raster 通过 prepare 阶段展开的 draw cache 录制 draw。
 
 ## 更新、删除与不变量
 
-`SceneChanges` 只表达 CPU scene 语义变化，不表达 GPU ready 状态。material 更新会让 material slot dirty；
-instance transform / material binding 更新会影响 instance buffer、indirect map、emissive table 或 TLAS revision；
+`SceneChanges` 只表达 CPU scene 语义变化，不表达 GPU ready 状态。material 更新会让 material slot dirty，
+并保守地标记依赖该 material 的 instance 重新评估 material binding；这会让 coverage / alpha cutoff 变化
+触发 TLAS `FORCE_OPAQUE` 派生重算。instance transform / material binding 更新会影响 instance buffer、
+indirect map、emissive table 或 TLAS revision；
 sky / light 更新随 scene snapshot 在 prepare 中上传到对应 GPU buffer。
 
 texture 未 ready 或上传失败不会阻塞整个 material / instance。material buffer 会通过 texture resolver 写入 fallback

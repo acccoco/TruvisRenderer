@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use truvis_assimp_binding::truvixx;
 
 use crate::asset_loader::{LoadResult, ModelLoadRequest};
-use crate::handle::{MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData, SubmeshData};
+use crate::handle::{
+    CoverageMode, MaterialClass, MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData, SubmeshData,
+};
 
 /// 实际的 scene 导入任务。
 ///
@@ -274,14 +276,24 @@ impl TruvixxSceneReader<'_> {
         // texture 路径保持为导入器原始表达，稍后由 SceneAssetIngestor 根据 scene 路径统一解析。
         Ok(RawMaterialData {
             base_color: Self::truvixx_float4_to_vec4(mat.base_color),
-            emissive: Self::truvixx_float4_to_vec4(mat.emissive),
             metallic: mat.metallic,
             roughness: mat.roughness,
-            opaque: mat.opacity,
+            class: Self::material_class(mat.opacity, Self::truvixx_float4_to_vec4(mat.emissive).truncate()),
+            coverage: CoverageMode::Opaque,
             diffuse_texture_path: (!diffuse_map.is_empty()).then(|| PathBuf::from(diffuse_map)),
             normal_texture_path: (!normal_map.is_empty()).then(|| PathBuf::from(normal_map)),
             name: if name.is_empty() { format!("material-{}", material_index) } else { name },
         })
+    }
+
+    fn material_class(opacity: f32, emissive: glam::Vec3) -> MaterialClass {
+        if emissive.max_element() > 0.0 {
+            MaterialClass::emissive(emissive)
+        } else if opacity < 0.99 {
+            MaterialClass::transmission(opacity, MaterialClass::DEFAULT_IOR)
+        } else {
+            MaterialClass::Surface
+        }
     }
 
     /// 复制一个 Assimp node 对应的 prefab instance 记录。

@@ -69,6 +69,7 @@ pub(crate) enum DirtyRuleKind {
     TextureReadyChangedMarksSky,
     SceneSkyChangedMarksSky,
     SceneMaterialChangedMarksMaterial,
+    SceneMaterialChangedMarksDependentInstances,
     SceneMaterialRemovedMarksMaterialRemoved,
     MaterialChangedMarksEmissive,
     MaterialSlotChangedMarksDependentInstances,
@@ -94,6 +95,7 @@ pub(crate) const SKY_STAGE_RULES: &[DirtyRuleKind] = &[DirtyRuleKind::SceneSkyCh
 
 pub(crate) const MATERIAL_STAGE_RULES: &[DirtyRuleKind] = &[
     DirtyRuleKind::SceneMaterialChangedMarksMaterial,
+    DirtyRuleKind::SceneMaterialChangedMarksDependentInstances,
     DirtyRuleKind::SceneMaterialRemovedMarksMaterialRemoved,
     DirtyRuleKind::MaterialChangedMarksEmissive,
 ];
@@ -437,6 +439,16 @@ impl DirtyRouterHelper {
             (DirtyRuleKind::SceneMaterialChangedMarksMaterial, DirtyEvent::SceneMaterialChanged(material)) => {
                 out.mark_material_dirty(material, DirtyMaterialFlags::scene_changed());
             }
+            (
+                DirtyRuleKind::SceneMaterialChangedMarksDependentInstances,
+                DirtyEvent::SceneMaterialChanged(material),
+            ) => {
+                // coverage / alpha cutoff 会影响 active instance 是否需要 any-hit；
+                // v1 保守地让依赖该 material 的实例重算 binding，并由 instance update 推进 TLAS。
+                for instance in scene.instances_using_material(material) {
+                    out.mark_instance_dirty(instance, DirtyInstanceFlags::material_binding());
+                }
+            }
             (DirtyRuleKind::SceneMaterialRemovedMarksMaterialRemoved, DirtyEvent::SceneMaterialRemoved(material)) => {
                 out.mark_material_removed(material);
             }
@@ -474,8 +486,8 @@ impl DirtyRouterHelper {
             (DirtyRuleKind::InstanceUpdateMarksTlas, DirtyEvent::InstanceUpdated(kind)) => match kind {
                 DirtyInstanceUpdateKind::ActiveSetChanged
                 | DirtyInstanceUpdateKind::TransformChanged
+                | DirtyInstanceUpdateKind::MaterialBindingChanged
                 | DirtyInstanceUpdateKind::MeshBindingChanged => out.mark_tlas_dirty(),
-                DirtyInstanceUpdateKind::MaterialBindingChanged => {}
             },
             (DirtyRuleKind::InstanceUpdateMarksEmissive, DirtyEvent::InstanceUpdated(_)) => {
                 out.mark_emissive_dirty();

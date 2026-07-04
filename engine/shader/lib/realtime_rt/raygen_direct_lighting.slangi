@@ -144,7 +144,8 @@ struct RtDirectLighting
     /// shadow ray 只需要判断是否有任何可见几何遮挡，不运行 closest-hit。
     ///
     /// 这里用 RayQuery inline path，是为了把 NEE 阴影测试保持在 raygen helper 内，不增加额外
-    /// SBT miss/hit group。非 opaque triangle 直接 commit，当前语义等价于“任何 alpha 后仍提交的候选都遮挡”。
+    /// SBT miss/hit group。non-opaque candidate 只表示 TLAS 未强制 opaque，仍必须通过统一 alpha-test
+    /// helper 判断 AlphaMask 洞口，不能无条件 commit。
     static bool is_occluded(RaytracingAccelerationStructure tlas, const RayDesc ray)
     {
         RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> rq;
@@ -158,7 +159,16 @@ struct RtDirectLighting
         {
             if (rq.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE)
             {
-                rq.CommitNonOpaqueTriangleHit();
+                const bool cutout = MaterialOpacity::is_candidate_cutout(
+                    rq.CandidateInstanceID(),
+                    rq.CandidateGeometryIndex(),
+                    rq.CandidatePrimitiveIndex(),
+                    rq.CandidateTriangleBarycentrics()
+                );
+                if (!cutout)
+                {
+                    rq.CommitNonOpaqueTriangleHit();
+                }
             }
         }
         return rq.CommittedStatus() == COMMITTED_TRIANGLE_HIT;

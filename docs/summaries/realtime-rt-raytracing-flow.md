@@ -79,7 +79,9 @@ candidate 必须包含：
 - `solid_angle_pdf`：light sample 的 solid-angle PDF。
 - `shadow_ray`：与方向和距离配套的 visibility ray。
 
-visibility 使用 inline `RayQuery`，只判断是否有遮挡，不运行 closest-hit。shade 公式是：
+visibility 使用 inline `RayQuery`，只判断是否有遮挡，不运行 closest-hit。TLAS 会为不含 alpha mask 的
+instance 设置 `FORCE_OPAQUE`；含 `CoverageMode::AlphaMask` 的 instance 保留 non-opaque candidate，RayQuery 对这些候选
+调用与 any-hit 相同的 alpha-test helper，只有未被 cutout 的三角形才 commit 为遮挡。shade 公式是：
 
 ```text
 contribution =
@@ -108,7 +110,7 @@ shader 侧通过 `push_const.restir_di_mode` 和 `push_const.restir_di_phase` �
 reservoir 使用四张 image 打包 light sample identity、样本参数、target、weight sum、M、source age、valid 和版本元数据。写入 image 的 `weight_sum` 是 RTXDI-style finalized inverse PDF，只有 phase 内部 streaming 时临时表示 raw RIS weight sum；`target` 是选中样本在当前 phase 输出 surface 上的 target PDF，`M` 是参与复用的候选/历史规模，initial 输出固定设为 1。
 A/D 为 `R32G32B32A32_UINT`，保存 candidate kind、light index、class mask、valid 以及 sky/emissive/analytic version；B/C 为
 `R32G32B32A32_SFLOAT`，保存 HDRI 方向、emissive barycentric、analytic light 局部样本参数和权重统计。
-current/previous primary surface key 使用三张 RGBA32F image 保存 position/depth、normal/roughness 与 base color/metallic，同时作为 ReSTIR eligibility 标记；miss、emissive primary、specular/transparent delta primary 都写 invalid key。temporal/spatial/final 的 surface 重建使用该高精度 key，避免把 RR/SR 输入用的压缩 GBuffer 当作 ReSTIR visibility 起点或 target 材质签名。所有这些资源属于
+current/previous primary surface key 使用三张 RGBA32F image 保存 position/depth、normal/roughness 与 base color/metallic，同时作为 ReSTIR eligibility 标记；miss、emissive primary、delta specular / delta transmission primary 都写 invalid key。temporal/spatial/final 的 surface 重建使用该高精度 key，避免把 RR/SR 输入用的压缩 GBuffer 当作 ReSTIR visibility 起点或 target 材质签名。所有这些资源属于
 RT pipeline 自有 target，按 `render_extent` 和 FIF frame label 轮转，不进入 DLSS state，也不读取 DLSS output。
 
 initial reservoir 复用统一 Light Candidate System 的 solid-angle PDF 契约。当前 path phase 抽取 8 个 proposal；被遮挡或背面的零 target 候选通过固定 finalize denominator 计入同一次 RIS 估计。ReSTIR target 评估使用当前 surface 可见的 light radiance、BRDF*cos 和 MIS 的 RGB 最大通道，不除以 proposal PDF；final shade 直接乘 finalized inverse PDF，不再额外除以 `target * M`，因此 `InitialOnly` 的单样本估计与旧 unified NEE 的能量契约一致。
@@ -189,17 +191,18 @@ analytic light v1 没有 BRDF-hit 竞争估计器，因此 NEE shade 固定 `MIS
 
 ## BRDF、多 Bounce 与 Throughput
 
-当前材质分类由 closest-hit 根据常量材质参数粗分：
+当前 closest-hit 先读取 GPU `material_class`，再用 roughness 合成为 raygen 需要的采样事件：
 
-- `EMISSIVE`：直接累加 `mat.emissive * base_color`，路径终止。
-- `TRANSPARENT`：`opaque < 0.99` 且 `roughness <= 0.02` 时进入 smooth glass delta path，
-  按 opaque 概率在折射和镜面反射之间选择。
-- `SPECULAR`：`opaque >= 0.99` 且 `roughness <= 0.02` 时进入 smooth mirror delta path。
-- `DIFFUSE`：按 roughness 在 cosine diffuse 与 GGX glossy 之间混合采样。
+- `EMISSIVE`：`MaterialClass::Emissive`，直接累加 `mat.emissive * base_color`，路径终止。
+- `DELTA_TRANSMISSION`：`MaterialClass::Transmission` 且 `roughness <= 0.02`，进入 smooth glass delta path。
+- `ROUGH_TRANSMISSION`：`MaterialClass::Transmission` 且 roughness 更高；v1 尚未实现 rough BTDF，先按 non-delta surface fallback 积分。
+- `DELTA_SPECULAR`：非 Transmission 且 `roughness <= 0.02`，进入 smooth mirror delta path。
+- `ROUGH_SURFACE`：其余普通非 delta 表面，按 roughness 在 cosine diffuse 与 GGX glossy 之间混合采样。
 
-当前材质 ABI 尚未提供显式 material domain / transmission flag，因此 delta 判定刻意保持保守：
-粗糙透明、普通 alpha blend/cutout 和非理想 glossy surface 仍走非 delta BRDF 路径，避免被误送到
-DLSS RR 的 specular/transmission 输入语义中。
+`Transmission.opacity` 只表示透明度，delta / rough 分类不读取 opacity；delta transmission 采样用
+`transparency = 1.0 - opacity` 与 IOR/Fresnel 决定反射或折射。`CoverageMode::AlphaMask` 只影响 any-hit /
+RayQuery 可见性，closest-hit 仍按 material class 和 roughness 分类。glTF `BLEND` v1 不做排序或半透明
+compositing，在导入阶段把 coverage 降级为 `Opaque` 并 warning。
 
 普通非 delta 材质采样后，throughput 使用完整混合 BRDF PDF：
 
@@ -211,7 +214,7 @@ raygen 同时保存 `prev_brdf_pdf` 和 `prev_is_delta`。下一次如果 miss s
 与对应 light PDF 做 MIS。delta path 不做 NEE，也不与 sky/emissive direct sampling 竞争；camera ray 或 delta 链路
 直接看到 sky/emissive 时，保持完整直视/镜面语义。
 
-Russian roulette 对连续 delta 链路延后启用：`SPECULAR` / `TRANSPARENT` 事件后会继续保留路径，直到后续命中
+Russian roulette 对连续 delta 链路延后启用：`DELTA_SPECULAR` / `DELTA_TRANSMISSION` 事件后会继续保留路径，直到后续命中
 第一个 non-delta surface 后才回到普通 depth 规则。这样镜面/透明链路仍由 `max_depth = 16` 提供硬上限，
 不会在尚未到达 sky、emissive 或 diffuse 事件前被 depth 3 的轮盘赌放大为高方差黑样本。离开 delta 链路后，
 存活概率使用当前 throughput 的最大 RGB 通道，并 clamp 到 `[0.05, 0.95]`；存活路径会除以该概率补偿

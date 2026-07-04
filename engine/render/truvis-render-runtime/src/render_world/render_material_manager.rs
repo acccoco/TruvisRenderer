@@ -12,7 +12,7 @@ use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
 use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
-use truvis_world::components::material::MaterialData;
+use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
 use truvis_world::guid_new_type::MaterialHandle;
 
 use crate::render_world::dirty_router::{DirtyMaterialFlags, MaterialDispatch};
@@ -408,17 +408,36 @@ impl RenderMaterialManager {
 
         gpu::material::PbrMaterial {
             base_color: data.base_color.truncate().into(),
-            emissive: data.emissive.truncate().into(),
             metallic: data.metallic,
+            alpha_factor: data.base_color.w,
             roughness: data.roughness,
+            material_class: Self::gpu_material_class(data.class),
+            coverage_mode: Self::gpu_coverage_mode(data.coverage),
+            opacity: data.class.opacity(),
+            ior: data.class.ior(),
+            alpha_cutoff: data.coverage.alpha_cutoff(),
+            _padding_0: 0.0,
+            emissive: data.class.emissive_radiance().into(),
+            _padding_1: 0.0,
             diffuse_map: diffuse_binding.srv_handle.0,
             diffuse_map_sampler_type: diffuse_binding.sampler,
             normal_map: normal_binding.srv_handle.0,
             normal_map_sampler_type: normal_binding.sampler,
-            opaque: data.opaque,
-            _padding_1: Default::default(),
-            _padding_2: Default::default(),
-            _padding_3: Default::default(),
+        }
+    }
+
+    fn gpu_material_class(class: MaterialClass) -> u32 {
+        match class {
+            MaterialClass::Surface => gpu::material::MATERIAL_CLASS_SURFACE,
+            MaterialClass::Transmission { .. } => gpu::material::MATERIAL_CLASS_TRANSMISSION,
+            MaterialClass::Emissive { .. } => gpu::material::MATERIAL_CLASS_EMISSIVE,
+        }
+    }
+
+    fn gpu_coverage_mode(coverage: CoverageMode) -> u32 {
+        match coverage {
+            CoverageMode::Opaque => gpu::material::COVERAGE_OPAQUE,
+            CoverageMode::AlphaMask { .. } => gpu::material::COVERAGE_ALPHA_MASK,
         }
     }
 

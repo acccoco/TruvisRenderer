@@ -22,14 +22,15 @@ realtime_rt::PushConstants push_const;
 /// 路径追踪最大深度。递归深度仍由 raygen 手动推进，Vulkan pipeline recursion depth 只覆盖 shader 调用栈。
 const static uint max_depth = 16;
 
-/// 材质类型枚举
+/// closest-hit 返回给 raygen 的采样事件类型。
 enum MaterialType : uint
 {
-    DIFFUSE = 0,     ///< 漫反射材质
-    SPECULAR = 1,    ///< 镜面反射材质（delta 路径）
-    TRANSPARENT = 2, ///< 透明/折射材质（delta 路径）
-    EMISSIVE = 3,    ///< 自发光材质
-    NO_HIT = 4,      ///< 未命中任何几何体
+    ROUGH_SURFACE = 0,       ///< 非 delta 普通表面
+    DELTA_SPECULAR = 1,      ///< smooth surface 的 delta 镜面反射事件
+    DELTA_TRANSMISSION = 2,  ///< smooth transmission 的 delta 反射/折射事件
+    ROUGH_TRANSMISSION = 3,  ///< rough transmission，v1 先按非 delta surface fallback 积分
+    EMISSIVE = 4,            ///< 自发光表面
+    NO_HIT = 5,              ///< 未命中任何几何体
 };
 
 /// 一次 TraceRay 返回给 raygen 的表面/环境事件。
@@ -66,8 +67,8 @@ struct RtSurfaceHit
     float metallic;
     /// 粗糙度
     float roughness;
-    /// 不透明度（1.0 = 完全不透明）
-    float opaque;
+    /// Transmission 材质的不透明度；1 表示不透射，0 表示完全透射。非透射材质固定为 1。
+    float opacity;
     /// 折射率
     float ior;
 
@@ -80,8 +81,8 @@ struct RtSurfaceHit
     /// 是否为 delta 路径（镜面反射或透明折射）。
     bool is_delta_path()
     {
-        return material_type == MaterialType::SPECULAR ||
-            material_type == MaterialType::TRANSPARENT;
+        return material_type == MaterialType::DELTA_SPECULAR ||
+            material_type == MaterialType::DELTA_TRANSMISSION;
     }
 
     /// 是否是真实几何表面事件。

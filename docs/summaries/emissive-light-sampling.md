@@ -266,7 +266,7 @@ base map + record array 更简单，也能避免为 hit path 维护额外查找�
    `RtTriangleMeta`：local positions、UV、`primitive_id` 和 local area。这个顺序与 BLAS geometry /
    closest-hit 的 `GeometryIndex()`、`PrimitiveIndex()` 对齐。
 2. `RenderMaterialManager` 只提供 `MaterialHandle -> stable material slot` resolver；`SceneStore`
-   通过 `SceneReadView::material_emissive_view` 提供 borrowed `SceneMaterialEmissiveView`，作为 emissive/base color
+   通过 `SceneReadView::material_emissive_view` 提供 borrowed `SceneMaterialEmissiveView`，作为 emissive class/base color
    等 CPU 权威参数来源。
 3. `RenderEmissiveLightTable` 的 revision 由 mesh ready revision、instance revision 和 material revision 组合得到；
    revision 变化时清空 `triangle_lights`、`alias_table`、`base_map` 并重建。
@@ -277,8 +277,8 @@ base map + record array 更简单，也能避免为 hit path 维护额外查找�
    追加所有 `EmissiveTriangleLight` record。
 7. 每个 record 的 world positions、world area 和 normal 由 instance transform 计算；`geometry_id` 写 submesh
    index，`primitive_id` 来自 `RtTriangleMeta`。
-8. power 近似使用 `luminance(material.emissive * estimated_base_color) * world_area`。无 diffuse texture 时使用常量
-   base color；有 diffuse texture 时第一版用 `1` 作为稳定近似，shader shade 阶段仍按真实 UV 读取 base color。
+8. power 近似使用 `luminance(MaterialClass::Emissive.radiance * estimated_base_color) * world_area`。无 diffuse texture
+   时使用常量 base color；有 diffuse texture 时第一版用 `1` 作为稳定近似，shader shade 阶段仍按真实 UV 读取 base color。
 9. power 大于 0 的 record 进入 `weighted_records`；全部 record 追加完成后，用 `weight / total_weight` 回填
    对应 record 的 `select_pdf`，再用这些有效 record 构建 alias table。
 10. 如果总 power 为 0，alias table 为空，`emissive_light_enabled = 0`；直接寻址 records 可以存在，但所有
@@ -355,7 +355,7 @@ area。`RenderMaterialManager` 提供 material slot resolver；`SceneStore` 通�
 - `instance_emissive_triangle_base_map`：instance-local submesh 到 record base 的映射，非 emissive 为 `UINT_MAX`。
 
 rebuild revision 由 mesh ready revision、instance revision 与 material revision 组合得到；mesh ready、instance
-transform / active set、material emissive / base color 参数变化都会刷新 table。带 diffuse texture 的 power
+transform / active set、material class / emissive radiance / base color 参数变化都会刷新 table。带 diffuse texture 的 power
 分布第一版使用稳定近似，shader shade 阶段仍按真实 UV 读取 base color。
 
 `PathTracingCommonSettings.emissive_nee_enabled` 默认开启；关闭、表为空或 GPU scene 标记未启用时，统一入口不会把

@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use gltf::buffer;
 
 use crate::asset_loader::{LoadResult, ModelLoadRequest};
-use crate::handle::{MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData, SubmeshData};
+use crate::handle::{
+    CoverageMode, MaterialClass, MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData, SubmeshData,
+};
 
 /// 实际的 glTF scene 导入任务。
 ///
@@ -136,20 +138,26 @@ impl GltfSceneReader {
         let pbr = material.pbr_metallic_roughness();
         let base_color = pbr.base_color_factor();
         let emissive = material.emissive_factor();
+        let name =
+            material.name().map(str::to_string).unwrap_or_else(|| Self::material_fallback_name(material.index()));
+        let transmission_factor =
+            material.transmission().map(|transmission| transmission.transmission_factor()).unwrap_or(0.0);
+        let emissive_radiance = glam::Vec3::new(emissive[0], emissive[1], emissive[2]);
+        let ior = material.ior().unwrap_or(MaterialClass::DEFAULT_IOR);
 
         RawMaterialData {
             base_color: glam::Vec4::new(base_color[0], base_color[1], base_color[2], base_color[3]),
-            emissive: glam::Vec4::new(emissive[0], emissive[1], emissive[2], 1.0),
             metallic: pbr.metallic_factor(),
             roughness: pbr.roughness_factor(),
-            opaque: Self::material_opacity(material.alpha_mode(), base_color[3]),
+            class: Self::material_class(&name, emissive_radiance, transmission_factor, ior),
+            coverage: Self::coverage_mode(&name, material.alpha_mode(), material.alpha_cutoff()),
             diffuse_texture_path: pbr
                 .base_color_texture()
                 .and_then(|texture| Self::external_texture_path(texture.texture().source())),
             normal_texture_path: material
                 .normal_texture()
                 .and_then(|texture| Self::external_texture_path(texture.texture().source())),
-            name: material.name().map(str::to_string).unwrap_or_else(|| Self::material_fallback_name(material.index())),
+            name,
         }
     }
 
@@ -255,10 +263,10 @@ impl GltfSceneReader {
     fn default_material() -> RawMaterialData {
         RawMaterialData {
             base_color: glam::Vec4::ONE,
-            emissive: glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
             metallic: 0.0,
             roughness: 0.5,
-            opaque: 1.0,
+            class: MaterialClass::Surface,
+            coverage: CoverageMode::Opaque,
             diffuse_texture_path: None,
             normal_texture_path: None,
             name: "material-default".to_string(),
@@ -272,10 +280,39 @@ impl GltfSceneReader {
         }
     }
 
-    fn material_opacity(alpha_mode: gltf::material::AlphaMode, base_alpha: f32) -> f32 {
+    fn material_class(name: &str, emissive: glam::Vec3, transmission_factor: f32, ior: f32) -> MaterialClass {
+        let has_emissive = emissive.max_element() > 0.0;
+        let has_transmission = transmission_factor > 0.0;
+        if has_emissive {
+            if has_transmission {
+                log::warn!(
+                    "glTF material '{}' uses emissive and KHR_materials_transmission; v1 imports it as Emissive and ignores transmission",
+                    name
+                );
+            }
+            return MaterialClass::emissive(emissive);
+        }
+
+        if has_transmission {
+            return MaterialClass::transmission(1.0 - transmission_factor, ior);
+        }
+
+        MaterialClass::Surface
+    }
+
+    fn coverage_mode(name: &str, alpha_mode: gltf::material::AlphaMode, alpha_cutoff: Option<f32>) -> CoverageMode {
         match alpha_mode {
-            gltf::material::AlphaMode::Opaque => 1.0,
-            gltf::material::AlphaMode::Mask | gltf::material::AlphaMode::Blend => base_alpha,
+            gltf::material::AlphaMode::Mask => {
+                CoverageMode::alpha_mask(alpha_cutoff.unwrap_or(CoverageMode::DEFAULT_ALPHA_CUTOFF))
+            }
+            gltf::material::AlphaMode::Blend => {
+                log::warn!(
+                    "glTF material '{}' uses alpha BLEND; v1 has no alpha blend path, importing coverage as Opaque",
+                    name
+                );
+                CoverageMode::Opaque
+            }
+            gltf::material::AlphaMode::Opaque => CoverageMode::Opaque,
         }
     }
 

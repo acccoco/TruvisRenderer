@@ -346,7 +346,7 @@ impl RenderEmissiveLightTable {
     ) {
         let estimated_base_color =
             if material.diffuse_texture().is_some() { glam::Vec3::ONE } else { material.base_color().truncate() };
-        let estimated_radiance = material.emissive().truncate() * estimated_base_color;
+        let estimated_radiance = material.emissive_radiance() * estimated_base_color;
         let luminance = Self::luminance(estimated_radiance).max(0.0);
 
         for triangle in triangles {
@@ -381,8 +381,7 @@ impl RenderEmissiveLightTable {
     }
 
     fn is_emissive_material(material: SceneMaterialEmissiveView<'_>) -> bool {
-        let emissive = material.emissive().truncate();
-        emissive.max_element() > 0.0
+        material.is_emissive() && material.emissive_radiance().max_element() > 0.0
     }
 
     fn luminance(color: glam::Vec3) -> f32 {

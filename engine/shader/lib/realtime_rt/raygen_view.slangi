@@ -7,6 +7,7 @@
 #include "lib/realtime_rt/gbuffer.slangi"
 #include "lib/realtime_rt/raygen_material.slangi"
 #include "lib/scene/geometry_eval.slangi"
+#include "lib/scene/material_access.slangi"
 #include "lib/scene/scene_access.slangi"
 
 struct RtRaygenView
@@ -119,7 +120,7 @@ struct RtRaygenView
 
     static float3 primary_specular_motion_direction(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
     {
-        if (primary_hit.material_type == MaterialType::TRANSPARENT)
+        if (primary_hit.material_type == MaterialType::DELTA_TRANSMISSION)
         {
             return transparent_motion_direction(primary_hit, primary_ray_dir);
         }
@@ -147,10 +148,18 @@ struct RtRaygenView
         );
         while (rq.Proceed())
         {
-            // 反射 motion vector 只需要几何命中位置；alpha cutout 由 inline query 直接提交非不透明候选。
             if (rq.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE)
             {
-                rq.CommitNonOpaqueTriangleHit();
+                const bool cutout = MaterialOpacity::is_candidate_cutout(
+                    rq.CandidateInstanceID(),
+                    rq.CandidateGeometryIndex(),
+                    rq.CandidatePrimitiveIndex(),
+                    rq.CandidateTriangleBarycentrics()
+                );
+                if (!cutout)
+                {
+                    rq.CommitNonOpaqueTriangleHit();
+                }
             }
         }
 

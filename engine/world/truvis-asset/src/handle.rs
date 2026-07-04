@@ -101,6 +101,104 @@ impl MeshData {
     }
 }
 
+/// CPU 材质的光学类别。
+///
+/// `MaterialClass` 只表达命中表面后如何解释光学事件；alpha mask 可见性由
+/// `CoverageMode` 单独表达。它是 CPU scene、GPU material buffer、closest-hit
+/// 分类和 emissive light table 的共同语义来源，不直接决定 TLAS any-hit。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MaterialClass {
+    /// 普通表面。是否 delta / rough 由 shader 根据 roughness 决定。
+    Surface,
+    /// 透射表面。`opacity` 只表示透明度，delta / rough 仍只由 roughness 决定。
+    Transmission { opacity: f32, ior: f32 },
+    /// 自发光表面。radiance 是材质自发光辐亮度，shader 侧会再乘 base color。
+    Emissive { radiance: glam::Vec3 },
+}
+
+impl MaterialClass {
+    /// glTF / 通用玻璃材质未显式指定 IOR 时的标准默认值。
+    pub const DEFAULT_IOR: f32 = 1.5;
+
+    pub fn transmission(opacity: f32, ior: f32) -> Self {
+        Self::Transmission {
+            opacity: opacity.clamp(0.0, 1.0),
+            ior: ior.max(1.0),
+        }
+    }
+
+    pub fn emissive(radiance: glam::Vec3) -> Self {
+        Self::Emissive {
+            radiance: radiance.max(glam::Vec3::ZERO),
+        }
+    }
+
+    #[inline]
+    pub fn opacity(self) -> f32 {
+        match self {
+            Self::Transmission { opacity, .. } => opacity,
+            Self::Surface | Self::Emissive { .. } => 1.0,
+        }
+    }
+
+    #[inline]
+    pub fn ior(self) -> f32 {
+        match self {
+            Self::Transmission { ior, .. } => ior,
+            Self::Surface | Self::Emissive { .. } => 1.0,
+        }
+    }
+
+    #[inline]
+    pub fn emissive_radiance(self) -> glam::Vec3 {
+        match self {
+            Self::Emissive { radiance } => radiance,
+            Self::Surface | Self::Transmission { .. } => glam::Vec3::ZERO,
+        }
+    }
+
+    #[inline]
+    pub fn is_emissive(self) -> bool {
+        matches!(self, Self::Emissive { .. })
+    }
+}
+
+/// CPU 材质的表面覆盖模式。
+///
+/// Coverage 只决定三角形候选是否需要 alpha test。它不改变材质光学类别，因此同一个
+/// `MaterialClass` 可以在 v1 中与 Opaque 或 AlphaMask 组合；TLAS any-hit 只从这里派生。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CoverageMode {
+    /// 普通覆盖，`base_color.w` 不参与可见性判断。
+    Opaque,
+    /// alpha mask 覆盖。`base_color.w * diffuse_texture_alpha <= alpha_cutoff` 的片元会被忽略。
+    AlphaMask { alpha_cutoff: f32 },
+}
+
+impl CoverageMode {
+    /// glTF alpha mask 未显式指定 cutoff 时的标准默认值。
+    pub const DEFAULT_ALPHA_CUTOFF: f32 = 0.5;
+
+    pub fn alpha_mask(alpha_cutoff: f32) -> Self {
+        Self::AlphaMask {
+            alpha_cutoff: alpha_cutoff.clamp(0.0, 1.0),
+        }
+    }
+
+    #[inline]
+    pub fn requires_any_hit(self) -> bool {
+        matches!(self, Self::AlphaMask { .. })
+    }
+
+    #[inline]
+    pub fn alpha_cutoff(self) -> f32 {
+        match self {
+            Self::AlphaMask { alpha_cutoff } => alpha_cutoff,
+            Self::Opaque => 0.0,
+        }
+    }
+}
+
 /// 后台 Assimp task 产出的 owned material CPU 数据。
 ///
 /// texture 仍以导入器返回的路径表达，避免后台 task 直接修改 `SceneStore`。
@@ -109,10 +207,10 @@ impl MeshData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawMaterialData {
     pub base_color: glam::Vec4,
-    pub emissive: glam::Vec4,
     pub metallic: f32,
     pub roughness: f32,
-    pub opaque: f32,
+    pub class: MaterialClass,
+    pub coverage: CoverageMode,
     pub diffuse_texture_path: Option<PathBuf>,
     pub normal_texture_path: Option<PathBuf>,
     pub name: String,

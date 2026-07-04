@@ -53,17 +53,21 @@ struct RtDebugAccumulator
 
     static float3 encode_material_type(MaterialType material_type)
     {
-        if (material_type == MaterialType::DIFFUSE)
+        if (material_type == MaterialType::ROUGH_SURFACE)
         {
             return float3(0.20f, 0.80f, 0.25f);
         }
-        if (material_type == MaterialType::SPECULAR)
+        if (material_type == MaterialType::DELTA_SPECULAR)
         {
             return float3(0.20f, 0.45f, 1.00f);
         }
-        if (material_type == MaterialType::TRANSPARENT)
+        if (material_type == MaterialType::DELTA_TRANSMISSION)
         {
             return float3(0.05f, 0.90f, 1.00f);
+        }
+        if (material_type == MaterialType::ROUGH_TRANSMISSION)
+        {
+            return float3(0.25f, 0.95f, 0.85f);
         }
         if (material_type == MaterialType::EMISSIVE)
         {

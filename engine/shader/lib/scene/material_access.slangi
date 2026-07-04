@@ -2,14 +2,16 @@
 
 #include "api/common/mod.slangi"
 #include "lib/core/bindless.slangi"
+#include "lib/scene/geometry_eval.slangi"
+#include "lib/scene/scene_access.slangi"
 
 /// 材质贴图读取统一集中在这里，避免 RT、raycast、raster 各自维护透明度和 fallback 规则。
 struct MaterialAccess
 {
     /// 读取 base color + alpha。
     ///
-    /// 有 diffuse_map 时 alpha 来自贴图；无贴图时 alpha 使用材质常量 `opaque`。这样 any-hit
-    /// 和 closest-hit 对透明度的解释保持一致。
+    /// 有 diffuse_map 时 alpha 来自贴图；无贴图时 alpha 为 1。材质常量 alpha factor
+    /// 在 `MaterialOpacity::alpha` 中统一相乘，避免 base color 采样路径重复处理透明语义。
     static float4 base_color_rgba(material::PbrMaterial* mat, float2 uv)
     {
         if (BindlessSrv::is_valid(mat.diffuse_map))
@@ -17,7 +19,7 @@ struct MaterialAccess
             return BindlessSrv::sample_level(mat.diffuse_map, uv, mat.diffuse_map_sampler_type, 0.0);
         }
 
-        return float4(mat.base_color, mat.opaque);
+        return float4(mat.base_color, 1.0f);
     }
 
     static float3 base_color(material::PbrMaterial* mat, float2 uv)
@@ -28,10 +30,10 @@ struct MaterialAccess
 
 struct MaterialOpacity
 {
-    /// 综合材质常量 opaque 与贴图 alpha 后的有效透明度。
+    /// 综合材质 alpha factor 与贴图 alpha 后的有效透明度。
     static float alpha(material::PbrMaterial* mat, float2 uv)
     {
-        return mat.opaque * MaterialAccess::base_color_rgba(mat, uv).w;
+        return mat.alpha_factor * MaterialAccess::base_color_rgba(mat, uv).w;
     }
 
     /// alpha cutout 判定。
@@ -39,6 +41,23 @@ struct MaterialOpacity
     /// realtime RT 与同步 raycast 共同使用该阈值，保证可见性和拾取结果不会因为路径不同而分歧。
     static bool is_cutout(material::PbrMaterial* mat, float2 uv)
     {
-        return alpha(mat, uv) <= 0.01f;
+        if (mat.coverage_mode != material::COVERAGE_ALPHA_MASK)
+        {
+            return false;
+        }
+        return alpha(mat, uv) <= mat.alpha_cutoff;
+    }
+
+    /// 根据 RayQuery / any-hit 候选三角形身份执行同一套 alpha test。
+    ///
+    /// TLAS 只让 AlphaMask coverage 保留 any-hit，因此这里必须用 coverage 再做一次保护；
+    /// shadow、specular motion 和同步 raycast 都通过这个 helper 解释 non-opaque candidate。
+    static bool is_candidate_cutout(uint instance_id, uint geometry_id, uint primitive_id, float2 barycentrics)
+    {
+        material::PbrMaterial* mat = SceneAccess::get_material(instance_id, geometry_id);
+        geometry::Geometry* geometry = SceneAccess::get_geometry(instance_id, geometry_id);
+        const uint3 triangle = GeometryEval::triangle(geometry, primitive_id);
+        const float2 interp_uv = GeometryEval::interp_uv(geometry, triangle, barycentrics);
+        return is_cutout(mat, interp_uv);
     }
 };

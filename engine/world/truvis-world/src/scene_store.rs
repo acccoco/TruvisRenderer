@@ -254,13 +254,13 @@ impl<'a> SceneMaterialEmissiveView<'a> {
     }
 
     #[inline]
-    pub fn emissive(&self) -> glam::Vec4 {
-        self.data.emissive
+    pub fn emissive_radiance(&self) -> glam::Vec3 {
+        self.data.class.emissive_radiance()
     }
 
     #[inline]
-    pub fn opaque(&self) -> f32 {
-        self.data.opaque
+    pub fn is_emissive(&self) -> bool {
+        self.data.class.is_emissive()
     }
 
     #[inline]
@@ -833,6 +833,7 @@ impl SceneStore {
 
 #[cfg(test)]
 mod tests {
+    use crate::components::material::{CoverageMode, MaterialClass};
     use truvis_asset::handle::{MeshData, SubmeshData};
 
     use super::*;
@@ -862,10 +863,10 @@ mod tests {
     fn test_material(name: &str) -> MaterialData {
         MaterialData {
             base_color: glam::Vec4::ONE,
-            emissive: glam::Vec4::ZERO,
             metallic: 0.0,
             roughness: 0.5,
-            opaque: 1.0,
+            class: MaterialClass::Surface,
+            coverage: CoverageMode::Opaque,
             diffuse_texture: None,
             normal_texture: None,
             name: name.to_string(),

@@ -132,6 +132,11 @@ fn get_as_instance_info(
     scene_data: &RenderData<'_>,
 ) -> vk::AccelerationStructureInstanceKHR {
     let mesh = &scene_data.all_meshes[instance.mesh_index];
+    let mut flags = vk::GeometryInstanceFlagsKHR::TRIANGLE_FACING_CULL_DISABLE;
+    if !instance.requires_any_hit {
+        // FORCE_OPAQUE 只表示跳过 any-hit shader；真实光学分类仍由 closest-hit 的 material_class 决定。
+        flags |= vk::GeometryInstanceFlagsKHR::FORCE_OPAQUE;
+    }
     // Vulkan TLAS instance transform 是 3x4 row-major；glam 的 Mat4 是列向量布局，
     // 需要在 `rt_transform_matrix` 中转置成 Vulkan 期望的行数据。
     vk::AccelerationStructureInstanceKHR {
@@ -139,7 +144,7 @@ fn get_as_instance_info(
         instance_custom_index_and_mask: vk::Packed24_8::new(custom_idx, 0xFF),
         instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(
             0, // TODO 暂时使用同一个 hit group
-            vk::GeometryInstanceFlagsKHR::TRIANGLE_FACING_CULL_DISABLE.as_raw() as u8,
+            flags.as_raw() as u8,
         ),
         acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
             device_handle: mesh.blas_device_address.expect("BLAS not built for mesh"),

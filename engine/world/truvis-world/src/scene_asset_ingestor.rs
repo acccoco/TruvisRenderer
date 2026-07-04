@@ -205,10 +205,10 @@ impl SceneAssetIngestor {
         for material in raw.materials {
             let scene_data = MaterialData {
                 base_color: material.base_color,
-                emissive: material.emissive,
                 metallic: material.metallic,
                 roughness: material.roughness,
-                opaque: material.opaque,
+                class: material.class,
+                coverage: material.coverage,
                 diffuse_texture: match self.register_model_texture_ref(
                     assets,
                     scene,

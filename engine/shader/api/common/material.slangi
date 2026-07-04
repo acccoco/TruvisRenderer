@@ -4,6 +4,13 @@
 namespace material
 {
 
+static const uint MATERIAL_CLASS_SURFACE = 0;
+static const uint MATERIAL_CLASS_TRANSMISSION = 1;
+static const uint MATERIAL_CLASS_EMISSIVE = 2;
+
+static const uint COVERAGE_OPAQUE = 0;
+static const uint COVERAGE_ALPHA_MASK = 1;
+
 /// PBR 材质的 shader-visible 表示。
 ///
 /// 该结构由 render-side material manager 写入稳定 slot，instance/geometry 只保存 slot 映射。
@@ -15,10 +22,28 @@ struct PbrMaterial
     /// 金属度，范围按资产导入结果传入，shader 侧不做额外 clamp。
     float metallic;
 
-    /// 自发光颜色，会在 closest-hit 中乘以 base color 得到实际 emissive。
-    float3 emissive;
+    /// base color alpha factor。AlphaMask 中会与 diffuse texture alpha 相乘后参与 alpha test。
+    float alpha_factor;
     /// 粗糙度；RT 采样中会平方为 GGX alpha。
     float roughness;
+    /// `MaterialClass` 的 GPU ABI 值；CPU class 是该字段的唯一来源。
+    uint material_class;
+    /// `CoverageMode` 的 GPU ABI 值；TLAS any-hit 与 shader alpha-test 都由 CPU coverage 派生。
+    uint coverage_mode;
+
+    /// Transmission 的不透明度：1 表示不透射，0 表示完全透射；非 Transmission 固定为 1。
+    float opacity;
+    /// Transmission 的折射率；非 Transmission 固定为 1。
+    float ior;
+    /// AlphaMask 的 alpha cutoff；其他 coverage 固定写 0。
+    float alpha_cutoff;
+    /// 使下一行 `emissive` 从 16 字节边界开始，保持 CPU/GPU buffer stride 可验证。
+    float _padding_0;
+
+    /// Emissive 的 radiance，会在 closest-hit 中乘以 base color 得到实际 emissive；非 Emissive 固定为 0。
+    float3 emissive;
+    /// 显式补齐 emissive 行，避免依赖 host 侧隐式尾部填充。
+    float _padding_1;
 
     /// base color 贴图 SRV；无效时使用 `base_color`。
     bindless::SrvHandle diffuse_map;
@@ -27,13 +52,6 @@ struct PbrMaterial
     /// 法线贴图 SRV，当前主路径尚未消费但保留 ABI。
     bindless::SrvHandle normal_map;
     bindless::ESamplerType normal_map_sampler_type;
-
-    /// 不透明度；小于 1 时 any-hit / 材质采样会按透明路径处理。
-    float opaque;
-    /// 显式 padding，保持结构体 16 字节对齐并稳定 Rust 绑定布局。
-    float _padding_1;
-    float _padding_2;
-    float _padding_3;
 };
 
 }
