@@ -20,6 +20,10 @@
 - 底层使用 CMake + vcpkg manifest，不建议手工 `vcpkg install`
 - `truvis-assimp-binding/build.rs` 只负责 bindgen 生成 Assimp Rust FFI 绑定，并向 Cargo 声明链接 `truvixx-assimp-capi`
 - `truvis-streamline-binding/build.rs` 只负责 bindgen 生成 Streamline C API 绑定，并向 Cargo 声明链接 `truvixx-streamline-capi`
+- Rust FFI 绑定源文件生成到 `build/bindings/{TARGET}/cxx/{crate}/`，由各 binding crate 通过 `include!` 引入；
+  源码树不保存 `_ffi_bindings.rs`，避免 IDE 或增量检查读取过期绑定。
+- binding crate 还会把生成内容的短 hash 写入同目录 marker 文件并通过 `cargo:rustc-env` 暴露，让固定路径下的
+  FFI binding 内容变化能触发 Cargo / rust-analyzer 重新检查依赖 crate。
 - `truvis-cxx-build` 会按 profile 复制 Streamline SR/RR runtime DLL：Debug 使用 `tools/streamline-sdk/bin/x64/development`，Release 使用 `tools/streamline-sdk/bin/x64`；运行时 JSON 从项目维护的 `tools/streamline/` 复制。
 - CMake binary dir 和 native 输出目录位于 workspace 根目录的 `build/cxx/`：preset 中间产物位于 `build/cxx/{vs2022,vs2026,clang-cl}`，`.lib` / `.dll` / `.pdb` 输出位于 `build/cxx/output/{Debug,Release}`。
 - 当前 Cargo 输出目录由 `.cargo/config.toml` 指向 `build/`；native runtime DLL 和 Streamline JSON 会被复制到 `build/{profile}` 和 `build/{profile}/examples`，与最终 executable 同目录。

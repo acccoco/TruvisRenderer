@@ -14,7 +14,14 @@
 //! 关闭时调用方应先释放上层 GPU child resources，再在 Vulkan device / instance 等 root
 //! 对象销毁前 drop [`StreamlineRuntime`]，确保 `slShutdown` 仍处在有效 Vulkan root 生命周期内。
 
-pub mod _ffi_bindings;
+pub mod _ffi_bindings {
+    include!(env!("TRUVIS_STREAMLINE_BINDINGS_RS"));
+}
+
+// 生成文件路径保持稳定；内容 hash 只用于让 Cargo / rust-analyzer 感知 binding 内容变化。
+const _: &str = env!("TRUVIS_STREAMLINE_BINDINGS_HASH");
+const _: &str = include_str!(env!("TRUVIS_STREAMLINE_BINDINGS_HASH_FILE"));
+
 pub use crate::_ffi_bindings::root as truvixx;
 
 mod config;

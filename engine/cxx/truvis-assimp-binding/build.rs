@@ -1,21 +1,56 @@
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
+
 use truvis_path::TruvisPath;
 
-fn write_binding_if_changed(bindings: bindgen::Bindings, out_path: std::path::PathBuf) {
-    let mut generated = Vec::new();
-    bindings.write(Box::new(&mut generated)).expect("Couldn't render bindings!");
+fn binding_content_hash(content: &[u8]) -> String {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
 
-    // 生成文件仍放在 src/ 下供当前模块结构直接 include，但只有内容变化时才写回。
-    // 这样 bindgen 每次运行不会单纯刷新 ignored 文件时间戳，避免 Cargo 把一串依赖 crate
-    // 误判为需要重新编译；ABI 变化时内容不同，仍会正常写入并触发后续 rebuild。
-    if std::fs::read(&out_path).is_ok_and(|old_content| old_content == generated) {
+    let mut hash = FNV_OFFSET_BASIS;
+    for byte in content {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+
+    format!("{hash:016x}")[..8].to_owned()
+}
+
+fn write_file_if_changed(out_path: &Path, content: &[u8]) {
+    if fs::read(out_path).is_ok_and(|old_content| old_content == content) {
         return;
     }
 
-    std::fs::write(out_path, generated).expect("Couldn't write bindings!");
+    if let Some(parent) = out_path.parent() {
+        fs::create_dir_all(parent).expect("Couldn't create binding output directory!");
+    }
+
+    fs::write(out_path, content).expect("Couldn't write bindings!");
 }
 
-/// 读取 Assimp C API 头文件，输出到当前 crate 中。
-fn gen_rust_binding() {
+fn write_binding_if_changed(bindings: bindgen::Bindings, out_path: PathBuf) -> (String, PathBuf) {
+    let mut generated = Vec::new();
+    bindings.write(Box::new(&mut generated)).expect("Couldn't render bindings!");
+    let content_hash = binding_content_hash(&generated);
+    let hash_path = out_path.with_extension("hash");
+
+    // 生成文件位于 workspace 级 build/bindings 目录；只有内容变化时才写回，
+    // 避免 bindgen 每次运行都刷新时间戳，减少下游 crate 的无意义 rebuild。
+    write_file_if_changed(&out_path, &generated);
+    write_file_if_changed(&hash_path, format!("{content_hash}\n").as_bytes());
+
+    (content_hash, hash_path)
+}
+
+fn binding_output_path() -> PathBuf {
+    let target = env::var("TARGET").expect("TARGET must be set by Cargo build scripts");
+    TruvisPath::rust_binding_build_dir().join(target).join("cxx").join("truvis-assimp-binding").join("_ffi_bindings.rs")
+}
+
+/// 读取 Assimp C API 头文件，输出到 workspace 级 Rust binding 生成目录。
+fn gen_rust_binding() -> (String, PathBuf) {
     let cxx_root_path = TruvisPath::cxx_root_path();
 
     let bindings = bindgen::Builder::default()
@@ -25,30 +60,32 @@ fn gen_rust_binding() {
             cxx_root_path.join("mods/truvixx-assimp/include").to_str().unwrap()
         )])
         // 任何被包含的头文件变化时，都通知 cargo 重新构建当前 crate。
-        .raw_line("#![allow(clippy::all)]")
-        .raw_line("#![allow(warnings)]")
+        .raw_line("#[allow(clippy::all)]")
+        .raw_line("#[allow(warnings)]")
         .derive_default(true)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .enable_cxx_namespaces()
         .generate()
         .expect("Unable to generate bindings");
 
-    // 将 bindings 写入 crate 内的生成文件。
-    let out_path = std::path::PathBuf::from("src").join("_ffi_bindings.rs");
-    write_binding_if_changed(bindings, out_path);
+    let out_path = binding_output_path();
+    write_binding_if_changed(bindings, out_path)
 }
 
 /// 强制执行的方法: touch build.rs; cargo build
 fn main() {
     let cxx_root_path = TruvisPath::cxx_root_path();
+    let out_path = binding_output_path();
 
     println!("cargo:rerun-if-changed={}", cxx_root_path.join("CMakeLists.txt").display());
     println!("cargo:rerun-if-changed={}", cxx_root_path.join("vcpkg.json").display());
     println!("cargo:rerun-if-changed={}", cxx_root_path.join("mods/truvixx-assimp").display());
     println!("cargo:rerun-if-changed=build.rs");
-
-    // 将自动绑定文件写入到当前项目中
-    gen_rust_binding();
+    // 将自动绑定文件写入 workspace 级 build/bindings 目录中。
+    let (bindings_hash, bindings_hash_file) = gen_rust_binding();
+    println!("cargo:rustc-env=TRUVIS_ASSIMP_BINDINGS_RS={}", out_path.display());
+    println!("cargo:rustc-env=TRUVIS_ASSIMP_BINDINGS_HASH={bindings_hash}");
+    println!("cargo:rustc-env=TRUVIS_ASSIMP_BINDINGS_HASH_FILE={}", bindings_hash_file.display());
 
     let build_type = std::env::var("PROFILE").unwrap();
 

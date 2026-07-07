@@ -11,6 +11,7 @@
 - `../../build/shader/`：编译产物目录（SPIR-V）
 - `truvis-shader-build/`：shader 编译工具 crate
 - `truvis-shader-binding/`：通过 bindgen 从 `ffi/rust_ffi.hpp` 和共享 Slang 头文件生成 Rust 绑定的 crate
+  生成的 Rust 源文件位于 `build/bindings/{TARGET}/shader/truvis-shader-binding/`，源码树不保存 `_shader_bindings.rs`
 
 ## 工作流
 
@@ -20,6 +21,10 @@
 
 `just shader` 会先运行 `cargo run --bin shader-build` 生成 `build/shader/**/*.spv`，
 再构建 `truvis-shader-binding`，让 Rust 侧绑定跟随共享结构更新。
+`truvis-shader-binding` 的 `build.rs` 会把 bindgen 产物写入 `build/bindings/{TARGET}/shader/truvis-shader-binding/`，
+再通过 `include!` 引入到 crate 中；`src/` 下不保留自动生成文件，避免 IDE 读取过期绑定。
+build script 还会把生成内容的短 hash 写入同目录 marker 文件并通过 `cargo:rustc-env` 暴露，让 Cargo /
+rust-analyzer 在固定文件路径下也能感知 binding 内容变化并重新检查依赖 crate。
 `shader-build` 在 `build/shader/.state/` 记录 manifest：单个入口 shader 变化时只重编该入口；
 `api/`、`lib/` 或 entry 下的 include 文件变化时保守重编全部入口。需要绕过 manifest 时执行
 `just shader-force`。

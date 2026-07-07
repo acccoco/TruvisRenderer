@@ -1,18 +1,57 @@
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
+
 use bindgen::callbacks::ItemInfo;
 use truvis_path::TruvisPath;
 
-fn write_binding_if_changed(bindings: bindgen::Bindings, out_path: std::path::PathBuf) {
-    let mut generated = Vec::new();
-    bindings.write(Box::new(&mut generated)).expect("Couldn't render bindings!");
+fn binding_content_hash(content: &[u8]) -> String {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
 
-    // 生成文件仍放在 src/ 下供当前模块结构直接 include，但只有内容变化时才写回。
-    // 这样 bindgen 每次运行不会单纯刷新 ignored 文件时间戳，避免 Cargo 把 shader binding
-    // 及其下游渲染 crate 误判为需要重新编译；共享结构变化时内容不同，仍会正常触发 rebuild。
-    if std::fs::read(&out_path).is_ok_and(|old_content| old_content == generated) {
+    let mut hash = FNV_OFFSET_BASIS;
+    for byte in content {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+
+    format!("{hash:016x}")[..8].to_owned()
+}
+
+fn write_file_if_changed(out_path: &Path, content: &[u8]) {
+    if fs::read(out_path).is_ok_and(|old_content| old_content == content) {
         return;
     }
 
-    std::fs::write(out_path, generated).expect("Couldn't write bindings!");
+    if let Some(parent) = out_path.parent() {
+        fs::create_dir_all(parent).expect("Couldn't create binding output directory!");
+    }
+
+    fs::write(out_path, content).expect("Couldn't write bindings!");
+}
+
+fn write_binding_if_changed(bindings: bindgen::Bindings, out_path: PathBuf) -> (String, PathBuf) {
+    let mut generated = Vec::new();
+    bindings.write(Box::new(&mut generated)).expect("Couldn't render bindings!");
+    let content_hash = binding_content_hash(&generated);
+    let hash_path = out_path.with_extension("hash");
+
+    // 生成文件位于 workspace 级 build/bindings 目录；只有内容变化时才写回，
+    // 避免 bindgen 每次运行都刷新时间戳，减少下游 crate 的无意义 rebuild。
+    write_file_if_changed(&out_path, &generated);
+    write_file_if_changed(&hash_path, format!("{content_hash}\n").as_bytes());
+
+    (content_hash, hash_path)
+}
+
+fn binding_output_path() -> PathBuf {
+    let target = env::var("TARGET").expect("TARGET must be set by Cargo build scripts");
+    TruvisPath::rust_binding_build_dir()
+        .join(target)
+        .join("shader")
+        .join("truvis-shader-binding")
+        .join("_shader_bindings.rs")
 }
 
 // 创建自定义回调实现
@@ -41,7 +80,7 @@ impl bindgen::callbacks::ParseCallbacks for ModifyAdder {
     }
 }
 
-fn gen_rust_binding() {
+fn gen_rust_binding() -> (String, PathBuf) {
     let shader_root_path = TruvisPath::shader_root_path();
 
     let bindings = bindgen::Builder::default()
@@ -49,8 +88,8 @@ fn gen_rust_binding() {
         .clang_arg(format!("-I{}", shader_root_path.to_str().unwrap()))
         .derive_default(false)
         // 禁用 clippy 的检查
-        .raw_line("#![allow(clippy::all)]")
-        .raw_line("#![allow(warnings)]")
+        .raw_line("#[allow(clippy::all)]")
+        .raw_line("#[allow(warnings)]")
         .enable_cxx_namespaces()
         // .ignore_functions()
         // 添加自定义回调
@@ -60,11 +99,15 @@ fn gen_rust_binding() {
         .generate()
         .expect("Unable to generate bindings");
 
-    // 将 bindings 写入 crate 内的生成文件。
-    let out_path = std::path::PathBuf::from("src").join("_shader_bindings.rs");
-    write_binding_if_changed(bindings, out_path);
+    let out_path = binding_output_path();
+    write_binding_if_changed(bindings, out_path)
 }
 
 fn main() {
-    gen_rust_binding();
+    let out_path = binding_output_path();
+    let (bindings_hash, bindings_hash_file) = gen_rust_binding();
+
+    println!("cargo:rustc-env=TRUVIS_SHADER_BINDINGS_RS={}", out_path.display());
+    println!("cargo:rustc-env=TRUVIS_SHADER_BINDINGS_HASH={bindings_hash}");
+    println!("cargo:rustc-env=TRUVIS_SHADER_BINDINGS_HASH_FILE={}", bindings_hash_file.display());
 }

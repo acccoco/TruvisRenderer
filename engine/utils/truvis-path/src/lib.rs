@@ -173,6 +173,15 @@ impl TruvisPath {
         Self::target().join("shader")
     }
 
+    /// Rust 自动绑定生成目录（`build/bindings/`）。
+    ///
+    /// 该目录保存 bindgen 生成的 Rust 源文件，和 `build/shader/`、`build/cxx/`
+    /// 一样属于 workspace 级构建产物；具体 crate 需要继续按 target 和模块名拆分子目录，
+    /// 避免不同 FFI / shader binding 互相覆盖。
+    pub fn rust_binding_build_dir() -> PathBuf {
+        Self::target().join("bindings")
+    }
+
     /// 编译后的 SPIR-V 路径：`build/shader/<filename>.spv`
     pub fn shader_build_spv(filename: &str) -> String {
         let path = Self::shader_build_dir().join(filename);
