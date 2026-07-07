@@ -141,8 +141,6 @@ shadow ray 和 solid-angle PDF 描述光源侧样本；visibility 复用现有 i
 solid-angle PDF；fallback sky 使用 1x1 均匀分布，无效分布或 `PathTracingCommonSettings.sky_sampling_mode = Uniform`
 时回退 uniform sphere。HDRI class 内部采样与 BRDF sky miss 读取同一 `EnvMap::pdf`，统一入口再把
 light-class 选择概率乘入对外 PDF。
-HDRI 采样的概念解释、alias table 原理和项目内数据路径见
-[`docs/summaries/hdri-sampling.md`](hdri-sampling.md)。
 
 自发光三角形由 `RenderEmissiveLightTable` 在 prepare 阶段构建。`RenderMeshManager` 保留每个 submesh 的 triangle metadata，
 `SceneStore` 提供材质自发光参数的只读 view，`RenderMaterialManager` 只提供 material stable slot resolver；`RenderEmissiveLightTable` 在
@@ -157,7 +155,6 @@ emissive submesh 为所有 primitive 保留连续 `EmissiveTriangleLight` record
 alias probability；hit PDF 查询不经过 alias table。自发光 NEE 的面积采样 PDF 会转换到 solid-angle 度量，
 统一入口再把 light-class 选择概率乘入对外 PDF 后与 BRDF PDF 做 MIS；camera ray 或上一段 delta path
 直接命中 emissive 仍保持当前直视/镜面语义。
-lookup 的构建步骤、buffer 内部结构和查询伪代码见 [`docs/summaries/emissive-light-sampling.md`](emissive-light-sampling.md)。
 
 `PathTracingCommonSettings.emissive_nee_enabled` 默认开启；关闭或 table 为空时统一入口不会把 emissive class 纳入候选来源。
 `NeeEmissive` debug channel 只显示统一 NEE 中抽到 emissive triangle class 的贡献，HDRI class 仍由既有
@@ -169,8 +166,8 @@ analytic point / spot / area light 由 `SceneStore` 保存 CPU 语义记录，`R
 分别上传 point / spot / area structured buffer，并在 scene root 中写入 device address、count 与
 `analytic_light_version`。`PathTracingCommonSettings.analytic_nee_enabled` 开启且 light 数量非 0
 时，统一入口才会把 analytic class 纳入候选来源；`NeeAnalytic` debug channel 只显示统一 NEE 中抽到 analytic
-class 的贡献。更细的
-sphere emitter、spot cone、area 单面 PDF 和 MIS 边界见 [`analytic-light-sampling.md`](analytic-light-sampling.md)。
+class 的贡献。analytic candidate 也会作为 primary ReSTIR DI initial proposal 参与 reservoir；由于当前 analytic light
+不创建 TLAS 可命中的发光几何，BRDF path 没有对应 hit PDF 查询，analytic shade 仍使用固定 `MIS = 1`。
 
 Primary ReSTIR DI 是 RT pipeline 自有的 temporal lighting 资源，不属于 DLSS state，也不注册到全局 bindless SRV/UAV 表。`RestirDiTargets` 按
 `render_extent` 创建 initial、temporal、final reservoir 和 primary surface key 图像，每个 target 都按 FIF frame label

@@ -373,6 +373,8 @@ impl RenderSkyManager {
             .zip(alias_probability.iter().zip(alias_index.iter()))
             .map(|((weight, solid_angle), (probability, alias))| {
                 let texel_probability = *weight / total_weight;
+                // scene root 只发布 solid-angle PDF；shader 的 NEE 采样和 sky miss MIS
+                // 都通过同一 distribution 查询，不能在另一侧重新解释为贴图 UV 概率。
                 let solid_angle_pdf = if *solid_angle > 0.0 { (texel_probability / *solid_angle) as f32 } else { 0.0 };
                 gpu::scene::SkyDistributionEntry {
                     alias_probability: *probability,
@@ -408,6 +410,8 @@ impl RenderSkyManager {
             return None;
         }
 
+        // 预处理后的表只改变 texel 被选中的概率，不改变 sky texture radiance；
+        // `solid_angle_pdf` 仍在调用方按同一组权重写入，保持 sample/pdf 闭合。
         let mut scaled: Vec<f64> = weights.iter().map(|weight| weight * count as f64 / total_weight).collect();
         let mut small = Vec::new();
         let mut large = Vec::new();

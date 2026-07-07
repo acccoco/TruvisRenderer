@@ -143,16 +143,19 @@ distribution 中该方向的 solid-angle PDF。`sky_brightness` 只在 shader �
 它不改变 alias table 权重，也不改变 PDF。
 
 HDRI class 内部采样与 PDF 查询必须读取同一个 `EnvMap::pdf`；统一策略对外再乘上 HDRI class 的选择概率。
-更细的 HDRI alias table 和 PDF 语义见
-[`hdri-sampling.md`](hdri-sampling.md)。
 
 ## 自发光三角形采样
 
-自发光三角形由 `RenderEmissiveLightTable` 在 prepare 阶段构建并上传：
+自发光三角形由 `RenderEmissiveLightTable` 在 `RenderInstanceManager::prepare_render_data` 输出 active render data
+之后、scene root buffer 上传之前构建并上传：
 
 - `emissive_triangle_lights`：world-space triangle record array。
 - `emissive_light_alias_table`：只包含正面积、正 power record 的 NEE alias table。
 - `instance_emissive_triangle_base_map`：instance-local submesh 到 record base 的映射，非 emissive 为 `UINT_MAX`。
+
+dirty 来源由 dirty router 显式标记：mesh ready、instance active set / transform / binding、material emissive / base color
+参数或 material slot 变化都会让 table 在下一次 prepare 重建。`RenderEmissiveLightTable` 自身不反推 mesh / material /
+instance revision，只消费已经路由好的 dirty 标志。
 
 emissive NEE 先在 alias table 中 O(1) 抽一个有效 record，再在三角形面积上均匀采样点。shader 插值 UV 后读取
 `mat.emissive * base_color` 作为 radiance。面积 PDF 转换为方向 PDF：
@@ -173,21 +176,20 @@ base = instance_emissive_triangle_base_map[instance.geometry_indirect_idx + geom
 light = emissive_triangle_lights[base + primitive_id]
 ```
 
-更细的 record 字段、lookup 构建和 hit PDF 查询流程见 [`emissive-light-sampling.md`](emissive-light-sampling.md)。
-
 ## Analytic Light 采样
 
-analytic light NEE 读取 GPU scene 中独立上传的 point / spot / area light buffer。Point / Spot 在 RT 中不是
-delta light，而是半径固定为 `0.5` 的 analytic sphere surface emitter；Area 是 `center + half_u + half_v`
-描述的矩形单面 emitter。
+analytic point / spot / area light 的 CPU 语义记录由 `SceneStore` 保存。`RenderAnalyticLightManager` 在 analytic
+dirty dispatch 到达后读取 `SceneReadView`，分别上传 point / spot / area structured buffer，并在 scene root 中写入
+device address、count 与 `analytic_light_version`。Point / Spot 在 RT 中不是 delta light，而是半径固定为 `0.5`
+的 analytic sphere surface emitter；Area 是 `center + half_u + half_v` 描述的矩形单面 emitter。
 
 统一入口选中 analytic class 后，shader 先在所有 analytic light 中均匀选择一个 light。Point / Spot 从
 shading point 看到的 sphere visible cap 做 solid-angle 均匀采样，PDF 为 `select_pdf / solid_angle`；Spot
 额外按 radians 表达的 inner / outer cone 计算 soft falloff。Area 在矩形面积上均匀采样，并把面积 PDF
 转换为 solid-angle PDF，背面无效。
 
-analytic light v1 没有 BRDF-hit 竞争估计器，因此 NEE shade 固定 `MIS = 1`。更细的 sphere / area 采样、PDF 和
-调试边界见 [`analytic-light-sampling.md`](analytic-light-sampling.md)。
+analytic candidate 会进入统一候选系统，也可以作为 primary ReSTIR DI initial proposal 被 reservoir 复用。analytic light
+v1 仍没有 BRDF-hit 竞争估计器，因此 final shade 和普通 NEE shade 都使用固定 `MIS = 1`。
 
 ## BRDF、多 Bounce 与 Throughput
 

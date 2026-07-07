@@ -274,6 +274,8 @@ impl RenderEmissiveLightTable {
         self.alias_table.clear();
         self.base_map.clear();
 
+        // dirty router 决定何时重建，本函数只按当前 active instance/submesh 快照重算表。
+        // 这样 emissive table 不需要自己保存 mesh/material/instance revision 组合状态。
         let mut weighted_records = Vec::new();
         for instance in &render_data.all_instances {
             self.append_instance(render_data, scene, instance, &mut weighted_records);
@@ -287,6 +289,8 @@ impl RenderEmissiveLightTable {
         for &(light_index, weight) in &weighted_records {
             self.triangle_lights[light_index].select_pdf = (weight / total_weight) as f32;
         }
+        // alias table 只用于 NEE 抽样；BRDF hit 仍通过 base_map + primitive_id
+        // 直接寻址完整 record array，避免 hit path 依赖采样表的压缩形状。
         self.alias_table = Self::build_alias_table(&weighted_records, total_weight);
     }
 

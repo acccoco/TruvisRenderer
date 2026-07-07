@@ -604,6 +604,8 @@ struct RtDirectLighting
         candidate.direction = light_dir;
         candidate.distance = distance;
         candidate.radiance = area_light.radiance;
+        // area light 是单面 emitter。这里把面积均匀采样转换到 solid-angle PDF，
+        // 与 HDRI / emissive / BRDF PDF 处在同一度量后再进入统一候选系统。
         candidate.solid_angle_pdf = select_pdf * distance * distance / (area * light_cos);
 
         candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);

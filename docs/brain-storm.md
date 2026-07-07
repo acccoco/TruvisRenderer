@@ -1,67 +1,31 @@
-# Brain Storm 文档索引与当前状态
+# Brain Storm 文档索引
 
-本目录保存架构发散、设计草案和阶段性诊断。当前实现事实以
-[`docs/ARCHITECTURE.md`](ARCHITECTURE.md) 及 [`docs/summaries/`](summaries/) 为准；这里的文档只记录仍有参考价值的
-设计方向和未完成问题。
+本目录只记录尚未进入主线实现、但仍有明确工程价值的设计方向和方案评估。当前实现事实以
+[`docs/ARCHITECTURE.md`](ARCHITECTURE.md)、[`docs/summaries/`](summaries/) 和模块 README 为准。
 
-## 当前代码快照（2026-05-23）
+这里的文档不是事实摘要，也不是历史归档。一个方向完成后，应把仍需保留的事实提炼到 `docs/summaries/`
+或模块 README，再从本目录移除；历史讨论通过 Git 历史追溯。
 
-已经落地、后续不应再作为待办重复推进的内容：
+## 活跃方向
 
-- winit 主线程与渲染线程已分离；主线程只负责事件循环、窗口生命周期和跨线程信号。
-- `RenderAppShell` 是平台无关的帧骨架，具体 App 通过 `RenderAppHooks` 接入。
-- `Plugin` trait 已提供 init / input / update / resize / shutdown 生命周期，具体 App 通过字段显式组合插件能力。
-- `RenderRuntime` 持有 `World + GPU resource/binding/timing owners + GpuScene + present/cmd/sync`，并通过 typed lifecycle
-  Ctx 暴露窄能力。
-- `World` 是 CPU 侧聚合层，只持有 `SceneManager + AssetHub`。
-- `AssetHub` 已收敛为内容资产身份、CPU 加载状态和加载事件来源，不再创建 GPU image/view 或注册 bindless。
-- texture / mesh / material / instance 的 GPU 可见状态由 render-side manager / bridge 管理。
-- `GpuScene` 与 `RenderData` 已成为 `truvis-render-runtime` 私有 scene 翻译层，pass 只通过 `RenderSceneView` 读取。
-- `truvis-render-graph` 与 app 层 `app-render-passes` 不再依赖 `truvis-world` / `truvis-asset`。
-- `truvis-render-foundation` 是当前渲染基础层名称，不再使用旧 `render-interface` 命名。
-
-仍然存在、brain-storm 文档中的讨论还有效的边界问题：
-
-- `RenderRuntime::prepare()` 仍把 scene extract、GPU scene upload、per-frame uniform 和 descriptor 更新串在一个 prepare 入口里；显式 `extract -> prepare -> render` phase 仍未成形。
-- 当前只有 App 手写组合的插件列表，还没有 `PluginGroup`、依赖声明或拓扑校验。
-- Camera / input / GUI / overlay 已移到 App 与 app-kit 侧，但仍不是声明式 builtin plugin。
-- `ViewDesc` / `PreparedView` / `ViewStore` 尚未落地，当前仍是隐式 main view。
-- `RenderPresent` 仍由 `RenderRuntime` 持有；更彻底的 `SurfaceRegistry` / 多窗口 / headless 边界仍是远期方向。
-- `Gfx` 构造注入和进一步去全局访问仍未完成。
-- Streamline runtime、C++ wrapper 与 Vulkan interposer 默认 loader 已进入第一阶段实现；
-  DLSS evaluate、RenderGraph opaque pass 和 temporal resources 边界仍待落地。
-- 资产上传仍可继续探索 batched upload / staging thread，避免大量资源同帧 ready 时挤占 render thread。
-- `app-kit` 仍承载 GUI、camera/input、overlay 与 pipeline glue，后续可继续拆分可复用能力。
-
-## 活跃文档
-
-- [`architecture-principles-and-open-issues.md`](brain-storm/architecture-principles-and-open-issues.md)：
-  当前仍应遵守的架构原则、职责边界和开放问题。
-- [`asset-scene-pipeline-status.md`](brain-storm/asset-scene-pipeline-status.md)：
-  AssetHub、render-side manager/bridge、GpuScene 与 RenderSceneView 的当前状态。
-- [`render-view-concept.md`](brain-storm/render-view-concept.md)：
-  轻量 main view / prepared view 的引入方向。
-- [`render-graph-improvement-direction.md`](brain-storm/render-graph-improvement-direction.md)：
-  RenderGraph 到 FrameGraph + subgraph/scope 的演进方向、handle 规则和 adapter 层改进。
-- [`dlss-streamline-integration.md`](brain-storm/dlss-streamline-integration.md)：
-  DLSS Super Resolution、Streamline Vulkan interposer、C++ wrapper 与 RenderGraph 接入边界。
-- [`realtime-rt-lighting-roadmap.md`](brain-storm/realtime-rt-lighting-roadmap.md)：
-  ReSTIR DI、HDRI / 自发光 NEE 分布与 SHARC 类 world-space radiance cache 的阶段路线。
-- [`offline-ground-truth-rendering.md`](brain-storm/offline-ground-truth-rendering.md)：
-  离线 ground truth 渲染管线、FIF 唯一累计图像、实时/离线模式切换和分批实现步骤。
-- [`restir-di-algorithm-intuition.md`](brain-storm/restir-di-algorithm-intuition.md)：
-  ReSTIR DI 的算法直觉、reservoir 权重、temporal / spatial reuse 和 light sample identity 正确性规则。
-- [`plugin-feature-evolution.md`](brain-storm/plugin-feature-evolution.md)：
-  PluginGroup、pipeline feature、GUI / platform / event 分层的演进方向。
-- [`threading-model-evolution.md`](brain-storm/threading-model-evolution.md)：
-  当前线程拓扑与 asset upload / update thread 的后续取舍。
-- [`naming-and-glossary.md`](brain-storm/naming-and-glossary.md)：
-  当前术语、已完成命名决策和历史名称对照。
+- [`runtime-boundary-evolution.md`](brain-storm/runtime-boundary-evolution.md)：
+  runtime phase、main view、surface/headless 和 `Gfx` owner 边界的后续收敛。
+- [`render-graph-evolution.md`](brain-storm/render-graph-evolution.md)：
+  RenderGraph resource model、跨 graph 状态校验、adapter helper 与 FrameGraph 方向。
+- [`plugin-and-app-kit-evolution.md`](brain-storm/plugin-and-app-kit-evolution.md)：
+  PluginGroup、PipelineFeature、app-kit builtin feature 和分层事件模型。
+- [`asset-upload-and-scene-evolution.md`](brain-storm/asset-upload-and-scene-evolution.md)：
+  asset upload、热重载、跨场景卸载和 scene invalidation 的后续能力。
+- [`realtime-lighting-evolution.md`](brain-storm/realtime-lighting-evolution.md)：
+  realtime RT light-class 策略、ReSTIR 稳定性、SHARC 历史控制和间接光复用评估。
+- [`dlss-quality-and-cleanup.md`](brain-storm/dlss-quality-and-cleanup.md)：
+  DLSS 画质验证、specular motion vector 后续质量、运行时降级和旧 pass 清理。
+- [`offline-rendering-evolution.md`](brain-storm/offline-rendering-evolution.md)：
+  离线渲染设置、累计统计、专用 debug target 和交互验证能力。
 
 ## 维护规则
 
-- 新增 brain-storm 文档时，先确认是否能合并进现有活跃主题。
-- 活跃文档应优先记录当前状态、明确边界和下一步方向，不保留大段历史论证。
-- 旧路线落地或被覆盖后，更新本索引和对应活跃主题；没有当前价值的草案直接删除。
-- 本目录不建立归档机制；需要历史上下文时查看 Git 历史。
-- 不把本目录当作唯一事实来源；当前实现边界仍以 `docs/ARCHITECTURE.md`、`docs/summaries/` 和代码为准。
+- 每个文档必须对应一个可独立推进的工程方向，避免把多个 owner 或多个阶段无边界地混在一起。
+- 文档结构统一为：目标、当前基线、待推进内容、边界与非目标、完成标准。
+- 不复述已进入 summaries 的实现事实；只用少量链接说明阅读入口。
+- 不建立归档目录；失去当前价值的讨论直接删除。
