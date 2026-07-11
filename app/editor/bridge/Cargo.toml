@@ -1,0 +1,10 @@
+[package]
+name = "truvis-editor-bridge"
+version = "0.1.0"
+edition = "2024"
+description = "Editor protocol DTOs and bounded cross-thread endpoints for Truvis"
+
+[dependencies]
+serde = { workspace = true }
+tokio = { workspace = true }
+ts-rs = { workspace = true }

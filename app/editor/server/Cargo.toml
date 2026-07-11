@@ -1,0 +1,17 @@
+[package]
+name = "truvis-editor-server"
+version = "0.1.0"
+edition = "2024"
+description = "Loopback HTTP and WebSocket server for the Truvis editor"
+
+[dependencies]
+truvis-editor-bridge = { workspace = true }
+
+axum = { workspace = true }
+anyhow = { workspace = true }
+futures-util = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }

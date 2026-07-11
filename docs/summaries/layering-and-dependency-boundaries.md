@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TB
-    L6["L6 app/truvis + samples<br/>主体 app 与独立示例入口<br/><br/>L6 truvis-winit-app<br/>winit 事件循环、窗口生命周期、渲染线程启动"]
+    L6["L6 app/truvis + samples<br/>主体 app 与独立示例入口<br/><br/>L6 app/editor<br/>Web UI、HTTP/WebSocket adapter、跨线程 editor 契约<br/><br/>L6 truvis-winit-app<br/>winit 事件循环、窗口生命周期、渲染线程启动"]
     L5["L5 app-kit<br/>GuiPlugin、私有 GUI backend、overlay plugin、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp / RenderAppHooks / Plugin 契约与 Plugin Ctx<br/>RenderAppShell 帧骨架 + render loop"]
     L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GfxResourceManager / ShaderBindingSystem / CmdAllocator / PerFrameGpuData + timing owners + runtime render state + RenderWorld + RenderPassRecordCtx + swapchain/present 生命周期"]
     L3["L3 truvis-render-graph / truvis-world / truvis-asset<br/>按帧同步辅助、CPU 场景、资产加载"]
@@ -27,6 +27,9 @@ flowchart TB
   `truvis-render-graph` 只依赖 foundation 中的句柄和 `GfxResourceAccess`，`truvis-render-runtime` 负责集成 runtime-owned
   GPU resource/binding/cmd/per-frame 能力。
 - 具体 app 复用的 RT / 后处理 pass 位于 `app/app-render-passes`，GUI backend 位于 `app/app-kit` 私有模块。
+- Web editor 属于 app 域：`truvis-editor-bridge` 只包含协议 DTO 和有界 channel endpoint，
+  `truvis-editor-server` 只依赖 bridge；两者都禁止依赖 `truvis-world`、render runtime 或 GPU 类型。
+  `app/truvis::editor_controller` 是唯一把 editor DTO 适配到权威 `World` 的位置。
 
 当前允许的主依赖方向：
 
@@ -65,4 +68,7 @@ RT 管线的 GBuffer 通道布局和 per-FIF 纹理资源管理，由 `RtPipelin
 - `app/app-kit`：app 层公共组件，包含 GUI、输入/相机、overlay 和 RT pipeline glue。
 - `app/app-render-passes`：主体 app 与 samples 共享的具体 pass。
 - `app/truvis`：主体 app，提供 `truvis-app`。
+- `app/editor/bridge`：editor 协议 DTO、transport envelope 和方向受限的有界 channel endpoint。
+- `app/editor/server`：独立线程上的 loopback HTTP / WebSocket adapter 和 Web 静态文件服务。
+- `app/editor/web`：React / TypeScript 编辑器；页面状态只是可丢弃投影，不属于 CPU scene 权威状态。
 - `app/samples/*`：独立 sample crate，提供 triangle、shader-toy 和 Cornell 入口。

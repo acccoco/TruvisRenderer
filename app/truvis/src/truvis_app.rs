@@ -1,6 +1,8 @@
 use truvis_app_frame::input_event::InputEvent;
 use truvis_app_frame::plugin_api::{Plugin, PluginRenderCtx};
-use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx};
+use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx, RenderAppShutdownCtx};
+use truvis_editor_bridge::{EditorBridgeConfig, create_editor_bridge};
+use truvis_editor_server::{EditorServer, EditorServerConfig, EditorServerHandle};
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
@@ -27,13 +29,13 @@ use app_kit::render_pipeline::offline_render_graph::OfflinePipeline;
 use app_kit::render_pipeline::rt_render_graph::RtPipeline;
 
 use crate::coordinate_gizmo::CoordinateGizmoRenderer;
+use crate::editor_controller::{EditorController, EditorControllerConfig};
 use crate::overlay_ui::{
     DebugImageViewerData, PipelineControlsData, RaycastOverlayData, TruvisOverlayFrame, TruvisOverlayOptions,
     TruvisOverlayUi,
 };
 use crate::selection_outline::SelectionOutlineRenderer;
 
-#[derive(Default)]
 pub struct TruvisApp {
     gui: GuiPlugin,
     rt_pipeline: RtPipeline,
@@ -47,6 +49,34 @@ pub struct TruvisApp {
     overlay_ui: TruvisOverlayUi,
     click_ray_cast_probe: ClickRayCastProbe,
     selected_submesh: Option<WorldSubmeshSelection>,
+    editor_controller: EditorController,
+    editor_server: Option<EditorServerHandle>,
+}
+
+impl Default for TruvisApp {
+    fn default() -> Self {
+        let (server_endpoint, app_endpoint) = create_editor_bridge(EditorBridgeConfig::default());
+        let editor_server = EditorServer::start(EditorServerConfig::default(), server_endpoint)
+            .unwrap_or_else(|error| panic!("failed to start EditorServer: {error:#}"));
+        log::info!("Truvis Web editor: http://{}", editor_server.bound_addr());
+
+        Self {
+            gui: Default::default(),
+            rt_pipeline: Default::default(),
+            offline_pipeline: Default::default(),
+            selection_outline: Default::default(),
+            coordinate_gizmo: Default::default(),
+            path_tracing_common_settings: Default::default(),
+            render_mode: Default::default(),
+            camera_controller: Default::default(),
+            input: Default::default(),
+            overlay_ui: Default::default(),
+            click_ray_cast_probe: Default::default(),
+            selected_submesh: None,
+            editor_controller: EditorController::new(app_endpoint, EditorControllerConfig::default()),
+            editor_server: Some(editor_server),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -176,6 +206,17 @@ impl ClickRayCastProbe {
 }
 
 impl TruvisApp {
+    fn editor_url(&self) -> String {
+        let server = self.editor_server.as_ref().expect("TruvisApp update cannot run after EditorServer shutdown");
+        format!("http://{}/", server.bound_addr())
+    }
+
+    fn open_editor_in_browser(editor_url: &str) {
+        if let Err(error) = webbrowser::open(editor_url) {
+            log::error!("Failed to open Truvis Web editor at {editor_url}: {error}");
+        }
+    }
+
     pub fn overlay_options(&self) -> &TruvisOverlayOptions {
         self.overlay_ui.options()
     }
@@ -434,9 +475,9 @@ impl TruvisApp {
         }
     }
 
-    fn clear_stale_selection(&mut self, world: &World) {
+    fn clear_stale_selection(&mut self, world: &World) -> bool {
         let Some(selection) = self.selected_submesh else {
-            return;
+            return false;
         };
 
         let scene = world.scene_view();
@@ -447,7 +488,9 @@ impl TruvisApp {
             // 这里只清理 CPU 语义已失效的选择；GPU 未 ready / pending 由 runtime resolver 在
             // render 阶段返回“不绘制”，避免 update 阶段感知 RenderWorld 内部状态。
             self.selected_submesh = None;
+            return true;
         }
+        false
     }
 }
 
@@ -488,7 +531,10 @@ impl RenderAppHooks for TruvisApp {
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
         self.click_ray_cast_probe.update_time(ctx.delta_time_s);
-        self.clear_stale_selection(ctx.world);
+        if self.clear_stale_selection(ctx.world) {
+            self.editor_controller.notify_selection_changed(None);
+        }
+        self.editor_controller.process_requests(ctx.world, self.selected_submesh);
 
         let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
         let viewport_size = glam::vec2(ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32);
@@ -499,17 +545,21 @@ impl RenderAppHooks for TruvisApp {
             let screen_pos = glam::vec2(mouse_position[0] as f32, mouse_position[1] as f32);
             let ray = self.camera_controller.make_screen_raycast(mouse_position, viewport_size);
             if ray.is_none() {
-                self.selected_submesh = None;
+                if self.selected_submesh.take().is_some() {
+                    self.editor_controller.notify_selection_changed(None);
+                }
             }
             self.click_ray_cast_probe.request_cast(screen_pos, ray);
         }
 
+        let editor_url = self.editor_url();
         self.gui.begin_frame(delta);
-        {
+        let open_editor_requested = {
             let ui = self.gui.ui();
             let offline_sample_count = self.offline_pipeline.sample_count();
             let frame = TruvisOverlayFrame {
                 ui,
+                editor_url: &editor_url,
                 stats: FrameStatsOverlayData {
                     camera: self.camera_controller.camera(),
                     swapchain_extent: ctx.swapchain_extent,
@@ -530,9 +580,12 @@ impl RenderAppHooks for TruvisApp {
                 },
                 debug_images: DebugImageViewerData { gui: &self.gui },
             };
-            self.overlay_ui.build(frame);
-        }
+            self.overlay_ui.build(frame)
+        };
         self.gui.end_frame();
+        if open_editor_requested {
+            Self::open_editor_in_browser(&editor_url);
+        }
     }
 
     fn after_prepare(&mut self, ctx: &mut RenderRuntimeRayCastCtx<'_>) {
@@ -553,8 +606,23 @@ impl RenderAppHooks for TruvisApp {
 
         if let Some((ray, screen_pos)) = self.click_ray_cast_probe.take_pending_cast() {
             let result = Self::cast_single_ray(ctx, ray);
-            self.selected_submesh = Self::selection_from_raycast_result(&result);
+            let selection = Self::selection_from_raycast_result(&result);
+            if selection != self.selected_submesh {
+                let editor_selection = match &result {
+                    Ok(RayCastResult::Hit(hit)) => Some((hit.instance, hit.submesh_index, hit.material)),
+                    Ok(RayCastResult::Miss) | Err(_) => None,
+                };
+                self.editor_controller.notify_selection_changed(editor_selection);
+            }
+            self.selected_submesh = selection;
             self.click_ray_cast_probe.finish_cast(screen_pos, result);
+        }
+    }
+
+    fn shutdown(&mut self, _ctx: &mut RenderAppShutdownCtx<'_>) {
+        self.editor_controller.shutdown();
+        if let Some(mut editor_server) = self.editor_server.take() {
+            editor_server.shutdown();
         }
     }
 

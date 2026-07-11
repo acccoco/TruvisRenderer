@@ -8,15 +8,29 @@ tracy_profiler := justfile_directory() + "\\tools\\tracy\\tracy-profiler.exe"
 default:
     @just --list
 
-# 构建 shader、CXX 绑定与整个 workspace
+# 构建 Web editor、shader、CXX 绑定与整个 workspace
 [group('1 常用工作流')]
-build-all: shader cxx
+build-all: editor-web shader cxx
     cargo build --all
 
 # 拉取资源与工具
 [group('2 资源生成与构建')]
 fetch-res:
     cargo run --bin fetch_res
+
+# 生成协议类型并构建 Web editor 生产资源
+[group('2 资源生成与构建')]
+[working-directory("app/editor/web")]
+editor-web: _editor-web-types
+    npm install
+    npm run build
+
+# 生成协议类型并启动 Web editor 开发服务器
+[group('2 资源生成与构建')]
+[working-directory("app/editor/web")]
+editor-web-dev: _editor-web-types
+    npm install
+    npm run dev
 
 # 增量编译 shader 并更新 Rust 绑定
 [group('2 资源生成与构建')]
@@ -60,13 +74,13 @@ shader-toy *run_opts: shader (_run-cargo-bin "shader-toy" run_opts)
 [group('3 运行示例')]
 cornell *run_opts: shader cxx-debug (_run-cargo-bin "rt-cornell" run_opts)
 
-# 运行 Truvis 主体应用；可追加 imgui / no-validation 选项
+# 构建 Web editor 后运行 Truvis 主体应用；可追加 imgui / no-validation 选项
 [group('3 运行示例')]
-truvis *run_opts: shader cxx-debug (_run-cargo-bin "truvis-app" run_opts)
+truvis *run_opts: editor-web shader cxx-debug (_run-cargo-bin "truvis-app" run_opts)
 
-# 直接运行 Truvis 主体应用，不更新 shader / CXX 绑定；可追加 imgui / no-validation 选项
+# 构建 Web editor 后直接运行 Truvis 主体应用，不更新 shader / CXX 绑定；可追加 imgui / no-validation 选项
 [group('3 运行示例')]
-truvis-direct *run_opts: (_run-cargo-bin "truvis-app" run_opts)
+truvis-direct *run_opts: editor-web (_run-cargo-bin "truvis-app" run_opts)
 
 # 启动 Tracy Profiler
 [group('4 工具入口')]
@@ -80,6 +94,10 @@ cxx-preset tool="vs2026" profile="debug": (_cxx-cmake "preset" tool profile)
 # 构建 CXX CMake preset：tool=vs2026/vs2022/clang，profile=debug/release
 [group('5 CXX CMake 手工入口')]
 cxx-build tool="vs2026" profile="debug": (_cxx-cmake "build" tool profile)
+
+# Web editor 的 TypeScript 协议必须从 Rust DTO 生成；该内部 recipe 不作为日常命令暴露。
+_editor-web-types:
+    cargo run -p truvis-editor-bridge --bin export_editor_types
 
 _run-cargo-bin bin *run_opts:
     #!nu

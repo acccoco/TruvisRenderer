@@ -5,6 +5,8 @@
 ## 主要职责
 
 - `World` 持有 `SceneStore`，负责 CPU 侧场景语义数据。
+- `SceneStore` 持有单调递增的 `u64 scene_version`；只有成功且非 no-op 的场景语义修改才推进版本，
+  `SceneReadView::scene_version()` 为 editor 等只读 consumer 提供当前版本。
 - `World` 持有 `AssetHub`，负责 asset 数据入口。
 - `World` 持有 `SceneAssetIngestor`，负责把 App-facing scene import 请求映射到内部 asset
   loader 状态。

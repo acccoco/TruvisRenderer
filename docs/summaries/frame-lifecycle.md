@@ -73,6 +73,8 @@ Plugin。
 关闭流程：
 
 - 渲染线程观察到退出信号后调用 `RenderApp::shutdown(&mut self)`。
+- `TruvisApp` 在 shutdown 中先关闭 `EditorController` endpoint，再停止并 join editor Server 线程；Server 不参与 GPU idle
+  或资源销毁。
 - `RenderAppShell` 先调用 App hooks 的 `shutdown()`，再通过 App 提供的 shutdown visitor 调用 Plugin shutdown，最后销毁
   RenderRuntime。
 - `RenderRuntime` 拥有 `Gfx` root owner；runtime 销毁时先等待 GPU idle，释放所有子资源，最后销毁 `Gfx`。
@@ -181,7 +183,7 @@ Runtime phase 的核心意图是用借用和 ctx 限制能力：update 阶段可
 |-----------------|-------------------------------------|--------------------------------------------------------------|----------------------------------------------------------------|
 | `init`          | `RenderAppShell::init_after_window` | 初始化 App 自有状态和资源                                              | 发生在 runtime window 绑定后、标准 Plugin `init` 前                      |
 | `on_input`      | `RenderAppShell::run_frame`         | 处理本帧累积输入，决定 GUI、camera、业务输入的消费策略                             | 标准 Plugin `on_input` 不自动批量调用，App 可显式调用具体 Plugin                |
-| `update`        | `RenderAppShell::run_frame`         | 更新 camera、overlay、UI frame state、`DlssOptions` 或 app-local pipeline 配置、CPU scene | 运行在 `RenderRuntimeUpdateCtx` 内，早于 `Plugin::update` 和 `prepare` |
+| `update`        | `RenderAppShell::run_frame`         | 更新 camera、overlay、UI frame state、editor 请求、`DlssOptions` 或 app-local pipeline 配置、CPU scene | 运行在 `RenderRuntimeUpdateCtx` 内，早于 `Plugin::update` 和 `prepare` |
 | `after_prepare` | `RenderAppShell::run_frame`         | 对已同步的 GPU scene 做同步查询                                        | 只拿 `RenderRuntimeRayCastCtx`，常见用途是拾取                           |
 | `render`        | `RenderAppShell::run_frame`         | 创建 RenderGraph，显式决定具体 Plugin pass 与 GUI pass 的加入顺序           | 读取 `RenderRuntimeRenderCtx`，通常在这里构造 `PluginRenderCtx`          |
 | `render_view`   | `RenderAppShell::run_frame`         | 提供当前 camera / view 的纯数据快照                                    | runtime 在 `prepare` 中读取，不拥有 App camera                         |
@@ -212,6 +214,8 @@ App 是业务编排层。它既不拥有 runtime，也不把具体 Plugin 交给
 - `App` 是业务组合 owner；它持有具体 Plugin，并在 render 阶段决定 RenderGraph pass 顺序。
 - `Plugin` 是可复用能力单元；标准生命周期可以批量驱动，特有能力由 App 显式调用。
 - `World` 只应在 init / update / resize / shutdown 等允许可变借用的阶段修改；render 阶段不再修改 CPU scene。
+- `EditorController` 只在 App `update` 中以非阻塞、预算受限方式处理 Query / Command；selection 在 `after_prepare`
+  拾取完成后通过 best-effort notification 发布，不把 Web/Server 引入 render 或 GPU 同步边界。
 - `prepare` 是 update 与 render 之间的语义翻译边界；它生成本帧 GPU scene、通过 runtime 私有
   `RenderTlasManager` 更新 TLAS、刷新 per-frame data 和 descriptor 状态。
 - `after_prepare` 是显式例外窗口；它可以同步查询刚准备好的 GPU scene，但普通渲染工作仍应进入 `render` hook 和 RenderGraph。

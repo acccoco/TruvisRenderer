@@ -12,6 +12,8 @@ path = "src/main.rs"
 truvis-app-frame = { workspace = true }
 app-kit = { workspace = true }
 app-render-passes = { workspace = true }
+truvis-editor-bridge = { workspace = true }
+truvis-editor-server = { workspace = true }
 truvis-winit-app = { workspace = true }
 truvis-gfx = { workspace = true }
 truvis-render-runtime = { workspace = true }
@@ -27,4 +29,6 @@ glam = { workspace = true }
 imgui = { workspace = true }
 log = { workspace = true }
 slotmap = { workspace = true }
+tokio = { workspace = true }
 vk-mem = { workspace = true }
+webbrowser = { workspace = true }

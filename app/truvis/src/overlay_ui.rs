@@ -4,7 +4,8 @@
 //! `DebugInfoOverlay` / `PipelineControlsOverlay`，Debug Images 的选择状态与
 //! texture 映射仍归 `GuiPlugin` 持有。这里不接触 RenderGraph、GPU resource
 //! 生命周期或 GUI draw data 上传，调用方必须在 `GuiPlugin::begin_frame` 与
-//! `GuiPlugin::end_frame` 之间调用 `TruvisOverlayUi::build`。
+//! `GuiPlugin::end_frame` 之间调用 `TruvisOverlayUi::build`，并在 UI frame 结束后
+//! 消费其返回的一次性 Web Editor 打开请求。
 
 use app_kit::gui_plugin::GuiPlugin;
 use app_kit::overlay::{DebugInfoOverlay, FrameStatsOverlayData, PipelineControlsOverlay};
@@ -196,21 +197,27 @@ impl TruvisOverlayUi {
         &mut self.options
     }
 
-    pub(crate) fn build(&mut self, frame: TruvisOverlayFrame<'_>) {
+    /// 绘制当前 Overlay，并返回本帧是否请求打开 Web Editor。
+    ///
+    /// 返回值只表达一次性 UI intent，不在 Overlay、Bridge 或 Server 中保存状态；
+    /// 系统浏览器启动由 `TruvisApp` 在 ImGui frame 结束后执行。
+    pub(crate) fn build(&mut self, frame: TruvisOverlayFrame<'_>) -> bool {
         match self.options.layout {
             OverlayLayoutMode::SeparateWindows => self.build_separate_windows(frame),
             OverlayLayoutMode::VerticalStack => self.build_vertical_stack(frame),
         }
     }
 
-    fn build_separate_windows(&self, frame: TruvisOverlayFrame<'_>) {
+    fn build_separate_windows(&self, frame: TruvisOverlayFrame<'_>) -> bool {
         let TruvisOverlayFrame {
             ui,
+            editor_url,
             stats,
             mut pipeline,
             raycast,
             debug_images,
         } = frame;
+        let mut open_editor_requested = false;
 
         if self.section_visible(OverlayTag::Diagnostics) && self.window(OverlayTag::Diagnostics).visible {
             DebugInfoOverlay::build_frame_stats_hud(ui, &stats);
@@ -218,10 +225,9 @@ impl TruvisOverlayUi {
 
         let upscaling_is_separate =
             self.section_visible(OverlayTag::Upscaling) && self.window(OverlayTag::Upscaling).visible;
-        if self.options.windows.stack.visible
-            && (self.section_visible(OverlayTag::Rendering) || self.section_visible(OverlayTag::Picking))
-        {
+        if self.options.windows.stack.visible {
             Self::build_window_with_options(ui, self.options.windows.stack, || {
+                open_editor_requested = Self::draw_editor_entry(ui, editor_url);
                 if self.section_visible(OverlayTag::Rendering) {
                     Self::draw_stack_section_header(ui, OverlayTag::Rendering);
                     // 默认 separate-style 布局把渲染选项与点选结果放进同一个 App 级主面板；
@@ -249,11 +255,13 @@ impl TruvisOverlayUi {
                 debug_images.gui.build_debug_image_viewer_contents(ui);
             });
         }
+        open_editor_requested
     }
 
-    fn build_vertical_stack(&self, frame: TruvisOverlayFrame<'_>) {
+    fn build_vertical_stack(&self, frame: TruvisOverlayFrame<'_>) -> bool {
         let TruvisOverlayFrame {
             ui,
+            editor_url,
             stats,
             mut pipeline,
             raycast,
@@ -261,10 +269,12 @@ impl TruvisOverlayUi {
         } = frame;
         let stack = self.options.windows.stack;
         if !stack.visible {
-            return;
+            return false;
         }
 
+        let mut open_editor_requested = false;
         Self::build_window_with_options(ui, stack, || {
+            open_editor_requested = Self::draw_editor_entry(ui, editor_url);
             for tag in OverlayTag::STACK_ORDER {
                 if !self.section_visible(tag) {
                     continue;
@@ -283,6 +293,7 @@ impl TruvisOverlayUi {
                 }
             }
         });
+        open_editor_requested
     }
 
     fn section_visible(&self, tag: OverlayTag) -> bool {
@@ -339,6 +350,13 @@ impl TruvisOverlayUi {
             OverlayTag::Images => "Images",
         });
         ui.separator();
+    }
+
+    fn draw_editor_entry(ui: &imgui::Ui, editor_url: &str) -> bool {
+        let open_requested = ui.button("Open Web Editor");
+        ui.same_line();
+        ui.text_disabled(editor_url);
+        open_requested
     }
 
     fn draw_controls_contents(ui: &imgui::Ui, pipeline: &mut PipelineControlsData<'_>, include_dlss: bool) {
@@ -481,6 +499,8 @@ impl TruvisOverlayUi {
 
 pub(crate) struct TruvisOverlayFrame<'a> {
     pub(crate) ui: &'a imgui::Ui,
+    /// 当前进程中已经成功绑定的 Editor Server 地址；只用于显示和发出打开请求。
+    pub(crate) editor_url: &'a str,
     pub(crate) stats: FrameStatsOverlayData<'a>,
     pub(crate) pipeline: PipelineControlsData<'a>,
     pub(crate) raycast: RaycastOverlayData<'a>,

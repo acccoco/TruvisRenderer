@@ -303,6 +303,15 @@ impl<'a> SceneReadView<'a> {
         &self.scene.all_instances
     }
 
+    /// 返回 CPU scene 的单调递增全局语义版本。
+    ///
+    /// 该版本不会随 `SceneChanges` drain 清零，也不表示 GPU prepare 已完成；Editor
+    /// 只用它检测多次最终一致查询之间是否发生 CPU 语义变化。
+    #[inline]
+    pub fn scene_version(&self) -> u64 {
+        self.scene.scene_version
+    }
+
     /// 返回全部 live point light。
     #[inline]
     pub fn point_light_map(&self) -> &'a SlotMap<LightHandle, gpu::light::PointLight> {
@@ -387,6 +396,8 @@ impl<'a> SceneReadView<'a> {
 /// prepare/sync 阶段读取这里的数据，并维护 CPU handle 到 GPU scene slot 的映射。
 #[derive(Default)]
 pub(crate) struct SceneStore {
+    /// CPU scene 的全局语义版本；只在实际 mutation 成功后推进，失败和 no-op 不推进。
+    scene_version: u64,
     /// scene texture 存储；key 是 CPU scene 长期引用，不表示 CPU bytes 或 GPU image ready。
     all_textures: SlotMap<TextureHandle, SceneTextureRecord>,
     /// scene mesh 存储；key 是 CPU scene 长期引用，不表示 GPU mesh ready。
@@ -416,6 +427,11 @@ pub(crate) struct SceneStore {
 }
 // 创建与初始化
 impl SceneStore {
+    fn bump_scene_version(&mut self) {
+        // u64 饱和在实际工程生命周期内不可达；使用饱和加法保持“不会回退”的协议契约。
+        self.scene_version = self.scene_version.saturating_add(1);
+    }
+
     /// 创建空的 CPU scene store。
     pub fn new() -> Self {
         Self::default()
@@ -455,7 +471,9 @@ impl SceneStore {
 
     /// 注册一个 scene texture 语义记录。
     pub fn register_texture(&mut self) -> TextureHandle {
-        self.all_textures.insert(SceneTextureRecord)
+        let handle = self.all_textures.insert(SceneTextureRecord);
+        self.bump_scene_version();
+        handle
     }
 
     /// 注册一个 scene mesh 语义记录。
@@ -465,7 +483,9 @@ impl SceneStore {
     /// 都依赖同一个 instance-local submesh 顺序。
     pub fn register_mesh(&mut self, data: &MeshData) -> Result<MeshHandle, SceneEditError> {
         let record = SceneMeshRecord::from_mesh_data(data)?;
-        Ok(self.all_meshes.insert(record))
+        let handle = self.all_meshes.insert(record);
+        self.bump_scene_version();
+        Ok(handle)
     }
 
     /// 删除一个 scene texture 语义记录。
@@ -491,6 +511,7 @@ impl SceneStore {
         self.all_textures.remove(handle);
         self.texture_to_materials.remove(&handle);
         self.change_log.mark_texture_removed(handle);
+        self.bump_scene_version();
         Ok(())
     }
 
@@ -510,6 +531,7 @@ impl SceneStore {
         self.sky_state.texture = texture;
         self.bump_sky_revision();
         self.change_log.mark_sky_environment_changed();
+        self.bump_scene_version();
         Ok(())
     }
 
@@ -521,6 +543,7 @@ impl SceneStore {
         self.sky_state.enabled = enabled;
         self.bump_sky_revision();
         self.change_log.mark_sky_environment_changed();
+        self.bump_scene_version();
     }
 
     /// 更新 sky 亮度语义参数。
@@ -531,6 +554,7 @@ impl SceneStore {
         self.sky_state.intensity = intensity;
         self.bump_sky_revision();
         self.change_log.mark_sky_environment_changed();
+        self.bump_scene_version();
     }
 
     /// 删除一个 scene mesh 语义记录。
@@ -551,6 +575,7 @@ impl SceneStore {
         self.all_meshes.remove(handle);
         self.mesh_to_instances.remove(&handle);
         self.change_log.mark_mesh_removed(handle);
+        self.bump_scene_version();
         Ok(())
     }
 
@@ -561,6 +586,7 @@ impl SceneStore {
         let data = self.all_materials[handle].data.clone();
         self.add_material_texture_dependencies(handle, &data);
         self.change_log.mark_material_changed(handle);
+        self.bump_scene_version();
         Ok(handle)
     }
 
@@ -581,6 +607,7 @@ impl SceneStore {
         let record = self.all_materials.get_mut(handle).expect("SceneStore: material disappeared after validation");
         record.data = data;
         self.change_log.mark_material_changed(handle);
+        self.bump_scene_version();
         Ok(true)
     }
 
@@ -604,6 +631,7 @@ impl SceneStore {
         self.remove_material_texture_dependencies(handle, &data);
         self.material_to_instances.remove(&handle);
         self.change_log.mark_material_removed(handle);
+        self.bump_scene_version();
         Ok(())
     }
 
@@ -617,6 +645,7 @@ impl SceneStore {
         let instance = self.all_instances.get(handle).expect("SceneStore: instance disappeared after insert").clone();
         self.add_instance_dependencies(handle, &instance);
         self.change_log.mark_instance_created(handle);
+        self.bump_scene_version();
         Ok(handle)
     }
 
@@ -632,6 +661,7 @@ impl SceneStore {
         };
         self.remove_instance_dependencies(handle, &instance);
         self.change_log.mark_instance_removed(handle);
+        self.bump_scene_version();
         Ok(())
     }
 
@@ -654,6 +684,7 @@ impl SceneStore {
         }
         instance.transform = transform;
         self.change_log.mark_instance_changed(handle, SceneInstanceChangeKind::Transform);
+        self.bump_scene_version();
         Ok(())
     }
 
@@ -683,6 +714,7 @@ impl SceneStore {
             self.all_instances.get_mut(handle).expect("SceneStore: instance disappeared after dependency validation");
         instance.materials = materials;
         self.change_log.mark_instance_changed(handle, SceneInstanceChangeKind::MaterialBinding);
+        self.bump_scene_version();
         Ok(())
     }
 
@@ -694,6 +726,7 @@ impl SceneStore {
         let handle = self.all_point_lights.insert(light);
         self.bump_light_revision();
         self.change_log.mark_analytic_lights_changed();
+        self.bump_scene_version();
         handle
     }
 
@@ -705,6 +738,7 @@ impl SceneStore {
         let handle = self.all_spot_lights.insert(light);
         self.bump_light_revision();
         self.change_log.mark_analytic_lights_changed();
+        self.bump_scene_version();
         handle
     }
 
@@ -716,6 +750,7 @@ impl SceneStore {
         let handle = self.all_area_lights.insert(light);
         self.bump_light_revision();
         self.change_log.mark_analytic_lights_changed();
+        self.bump_scene_version();
         handle
     }
 
