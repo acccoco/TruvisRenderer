@@ -26,7 +26,7 @@ export function ScenePanel({ objects, selection, pageOffset, nextOffset, onPrevi
   return (
     <section className="panel scene-panel" aria-labelledby="scene-title">
       <div className="panel-heading">
-        <h2 id="scene-title">Scene</h2>
+        <h2 id="scene-title">Scene Objects</h2>
         <span>{objects.length} objects</span>
       </div>
       <label className="search-field">

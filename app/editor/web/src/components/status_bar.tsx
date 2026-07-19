@@ -10,7 +10,7 @@ export function StatusBar({ connected, pendingRequests, lastRequestMs, error }: 
     <footer className="status-bar">
       <span className={connected ? 'status-bar__ready' : 'status-bar__offline'}>
         <span className="status-dot" />
-        {connected ? 'Ready' : 'Offline'}
+        {connected ? 'Renderer ready' : 'Renderer offline'}
       </span>
       <span>{pendingRequests > 0 ? `${pendingRequests} request${pendingRequests > 1 ? 's' : ''} pending` : 'No pending requests'}</span>
       <span>{lastRequestMs === null ? 'No completed request' : `Last request ${Math.round(lastRequestMs)} ms`}</span>

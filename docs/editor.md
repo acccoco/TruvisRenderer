@@ -1,19 +1,21 @@
-# Web 编辑器设计
+# Tauri Web 编辑器设计
 
-> 状态：第一阶段已实现。本文同时记录稳定设计边界和当前实现参数，后续扩展场景属性编辑时沿用这些约束。
-> 当前技术栈为 Axum、Tokio current-thread runtime、Tokio bounded mpsc、Vite、React、TypeScript 和 `ts-rs`。
+> 状态：Tauri + Windows child HWND 集成已实现。本文同时记录稳定设计边界和当前实现参数。
+> 当前技术栈为 Tauri/Tao、winit、Axum、Tokio current-thread runtime、Tokio bounded mpsc、Vite、React、TypeScript 和 `ts-rs`。
 
 ## 1. 设计背景与目标
 
 Truvis 后续需要提供材质编辑能力，并在此基础上扩展场景对象、灯光、环境等属性编辑。
 
-当前不计划把完整编辑器面板集成到渲染窗口中。虽然项目已有 app 层 ImGui 集成，但大型编辑器继续使用 ImGui
-会增加 GUI pass、纹理、每帧 mesh 和相关资源生命周期的组合复杂度，也会让编辑器界面与渲染窗口产生不必要的耦合。
+主体应用现在由 Tauri 提供顶层窗口和 WebView，复杂编辑器界面由 React/DOM 绘制；现有 winit/Vulkan render window
+作为真正的 Windows child HWND 覆盖在 WebView 中央 slot 上方。这样不需要把复杂 UI 迁入 ImGui，也不需要 CPU bitmap
+或 shared texture 合成。
 
-初步方案是在 Truvis 进程中启动独立 Server 线程，通过 HTTP / WebSocket 与浏览器中的 Web 编辑器通信：
+进程内仍启动独立 EditorServer 线程，通过 loopback WebSocket 连接 Tauri WebView：
 
-- 用户继续在渲染窗口中完成场景拾取与选择。
-- Web 页面显示当前选择及其可编辑属性。
+- 用户直接在中央 child HWND 中完成场景拾取与选择，输入不经过 Web 转发。
+- Tauri WebView 在左侧显示场景对象，在右侧显示当前选择和材质编辑器。
+- 中央 DOM slot 只把相对 parent client area 的物理像素矩形提交给窗口宿主。
 - Web 页面发送材质或场景编辑命令。
 - Render 线程在合法的 update 阶段修改 CPU `World`。
 - `RenderRuntime::prepare` 继续通过现有路径把 CPU scene 变化同步到 GPU。
@@ -22,10 +24,11 @@ Truvis 后续需要提供材质编辑能力，并在此基础上扩展场景对�
 
 ### 1.1 非目标
 
-第一阶段不解决：
+当前方案不解决：
 
-- 把 Web UI 嵌入渲染窗口；
 - Server 或 Web 直接访问 GPU scene；
+- 在 native child HWND 上方叠加 DOM；该区域遵循 Windows native child airspace；
+- macOS/Linux 的对应嵌入窗口实现；`EmbeddedWinitHost` 当前是 Windows child HWND 方案；
 - 多用户协同编辑；
 - 断线重连、事件重放和离线修改合并；
 - 原子化的完整场景快照；
@@ -71,7 +74,7 @@ Editor 是主体应用能力，不进入 `engine/`。`truvis-editor-server`、`t
 
 ## 3. 项目与 crate 布局
 
-第一阶段新增两个 Rust crate、一个 Web 项目，并在主体 App 内增加一个 controller 模块：
+当前目录把桌面 owner、Render 侧 controller 与 Web 子系统明确分开：
 
 ```text
 app/
@@ -88,7 +91,12 @@ app/
 │
 └── truvis/
     └── src/
-        └── editor_controller.rs      # 主体 App 内部模块
+        ├── desktop.rs                # Tauri main-thread owner 与 child host 组装
+        └── editor_controller.rs      # RenderThread 内部协议适配
+
+engine/app-frame/truvis-winit-app/src/
+├── embedded.rs                       # Windows child HWND + RenderWindowThread
+└── render_worker.rs                  # standalone / embedded 共用 RenderThread owner
 ```
 
 第一阶段不单独建立 `truvis-editor-protocol` 或 `truvis-editor-client` crate：
@@ -104,7 +112,9 @@ app/
 
 ```mermaid
 flowchart TB
-    Web["app/editor/web<br/>浏览器 UI"]
+    Web["app/editor/web<br/>Tauri WebView UI"]
+    Desktop["truvis::desktop<br/>Tauri main-thread owner"]
+    WinitHost["truvis-winit-app::embedded<br/>child HWND host"]
     Bridge["truvis-editor-bridge<br/>协议 DTO + 跨线程 endpoint"]
     Server["truvis-editor-server<br/>HTTP / WebSocket adapter"]
     Controller["truvis::editor_controller<br/>Render 侧请求处理"]
@@ -113,6 +123,8 @@ flowchart TB
     Runtime["truvis-render-runtime"]
 
     Web <-->|"JSON / WebSocket"| Server
+    Web -->|"DOM physical rect / Tauri command"| Desktop
+    Desktop --> WinitHost
     Server --> Bridge
     Controller --> Bridge
     App --> Controller
@@ -272,7 +284,7 @@ EditorServer::start(config, ServerEndpoint)
 ```
 
 `EditorServerHandle` 负责查询绑定地址、请求停止、等待 Server 线程退出并报告运行失败。当前采用 fail-fast：绑定失败或
-静态目录配置错误会中止 `TruvisApp` 创建，避免产生“渲染正常但编辑器不可用”的半初始化状态。
+静态目录配置错误会中止 `TruvisDesktop` 创建，避免产生“渲染正常但编辑器不可用”的半初始化状态。
 
 默认监听 `127.0.0.1:9473`，静态目录为 `app/editor/web/dist`；可以分别通过 `TRUVIS_EDITOR_ADDR` 和
 `TRUVIS_EDITOR_WEB_ROOT` 覆盖。WebSocket 单消息上限为 `256 KiB`，每个 client 的网络发送队列容量为 `128`。
@@ -320,19 +332,23 @@ EditorController::shutdown()
 `EditorController` 不实现标准 `Plugin`。它没有 GPU 资源或 RenderGraph pass，并且需要同时参与 App 的 update 与
 after-prepare selection 流程，因此由 `TruvisApp` 显式调用更符合现有 App 编排边界。
 
-当前所有权为：
+当前所有权按线程拆分为：
 
 ```text
-TruvisApp
-├── editor_controller: EditorController
+main thread · TruvisDesktopState
+├── render_host: EmbeddedWinitHost
 └── editor_server: EditorServerHandle
+
+RenderThread · TruvisApp
+└── editor_controller: EditorController
 ```
 
-二者都是 App-owned CPU 能力，不进入 `RenderRuntime`。
+三者都不进入 `RenderRuntime`。Desktop owner 只管理平台和网络生命周期；`EditorController` 仍是唯一接触
+`World` 的 editor 适配器。
 
 ## 8. Web 项目
 
-Web 项目使用 Vite、React 和 TypeScript，放在 `app/editor/web/`，不是 Cargo workspace member。按 UI、transport 和
+Web 项目使用 Vite、React 和 TypeScript，放在 `app/editor/web/`，同时是 Tauri production frontend，且不是 Cargo workspace member。按 UI、transport 和
 view state 分层：
 
 ```text
@@ -358,9 +374,15 @@ app/editor/web/
 把 `dist/` 放在默认相对路径，或通过 `TRUVIS_EDITOR_WEB_ROOT` 显式指向发布目录。开发环境可使用 `?mock=1` 启用纯前端
 mock transport；该入口在 production build 中不会启用。
 
-Truvis 启动后，正式页面入口由 `EditorServerHandle::bound_addr()` 决定，默认是 `http://127.0.0.1:9473/`。App 级
-`Truvis Overlay` 主面板顶部显示实际地址和 `Open Web Editor` 按钮；点击后由 `TruvisApp` 使用系统默认浏览器打开正式
-入口。该动作发生在 ImGui frame 结束后，不携带 selection/material 参数，不改变 Bridge、Server 或场景状态。
+Truvis 启动后，Tauri 直接加载 production `dist/`。WebView 通过 `editor_websocket_url` command 获取
+`EditorServerHandle::bound_addr()` 对应的实际 WebSocket 地址；场景与材质数据仍只走 WebSocket。
+`set_render_viewport_rect` command 只传递中央 DOM slot 的窗口几何，不能承载 selection/material 或 swapchain 命令。
+
+当前 Web UI 使用浅色主题，并直接导入仓库级 `assets/resources/DruvisIII.png`。Tauri Windows EXE / 默认窗口图标使用
+由同一源图机械转换出的 `app/truvis/icons/DruvisIII.ico`；Web 与 Tauri 不再维护另一套自研品牌图标。三列桌面布局由 `EditorWorkspace` 持有左右
+面板宽度；用户拖动两条竖向 DOM separator 时只更新 CSS grid。`RenderViewport` 已有的 `ResizeObserver` 会观察中央 slot
+变化并调用 `set_render_viewport_rect`，因此 native child HWND、winit resize 和 swapchain 重建继续复用既有路径，不新增
+Web 输入转发或平台 resize 协议。左右面板和中央 viewport 都有最小宽度约束，separator 同时支持方向键调整。
 
 ## 9. Web 与 Server 的通信
 
@@ -409,12 +431,12 @@ just editor-web-dev
 
 本方案是消息驱动模型，但不把所有消息都称为事件：
 
-| 类型 | 方向 | 示例 | 语义 |
-| --- | --- | --- | --- |
-| Command | Web → Render | `UpdateMaterial` | 请求修改权威状态，必须返回应用结果 |
-| Query | Web → Render | `GetSelection`、`GetSceneObjects` | 读取当前权威状态，不建立订阅 |
-| Response | Render → Web | `MaterialResponse`、`CommandResult` | 对指定请求的结果 |
-| Notification | Render → Web | `SelectionChanged`、`SceneVersionChanged` | best-effort 状态变化提示 |
+| 类型         | 方向          | 示例                                          | 语义                               |
+| ------------ | ------------- | --------------------------------------------- | ---------------------------------- |
+| Command      | Web → Render | `UpdateMaterial`                            | 请求修改权威状态，必须返回应用结果 |
+| Query        | Web → Render | `GetSelection`、`GetSceneObjects`         | 读取当前权威状态，不建立订阅       |
+| Response     | Render → Web | `MaterialResponse`、`CommandResult`       | 对指定请求的结果                   |
+| Notification | Render → Web | `SelectionChanged`、`SceneVersionChanged` | best-effort 状态变化提示           |
 
 ### 10.2 Web 协议 envelope
 
@@ -679,25 +701,30 @@ HTTP Server 自身不是主要性能风险。需要重点避免的是 Render 线
 
 ## 14. 生命周期与安全
 
-当前生命周期为：
+当前桌面生命周期为：
 
 ```text
-创建 TruvisApp
-  -> 创建 ServerEndpoint / AppEndpoint
-  -> 启动 EditorServer
-  -> 创建 EditorController
-  -> App init
+Tauri main thread 创建 TruvisDesktop
+  -> 创建 ServerEndpoint / AppEndpoint 并启动 EditorServer
+  -> 从 Tauri top-level HWND 创建 RenderWindowThread + child HWND
+  -> RenderWindowThread 创建 RenderThread
+  -> RenderThread 创建 TruvisApp + EditorController
+  -> WebView 显示，DOM slot 提交 child rect
   -> update 处理 Query / Command
   -> after_prepare 发布 selection notification
-  -> App shutdown 停止接收新请求
+  -> main close 请求 RenderThread 退出
+  -> App / Plugin / RenderRuntime / Vulkan surface 销毁
+  -> RenderWindowThread drop child HWND 并退出
   -> 停止并 join EditorServer
-  -> 继续销毁 App / Plugin / RenderRuntime
+  -> Tauri drop WebView 与 parent HWND
 ```
 
 其他约束：
 
 - Server 线程不得创建、访问或销毁 Vulkan / VMA / WSI 对象。
 - Server shutdown 必须可取消并有明确等待边界，不能无限阻塞 Render/App shutdown。
+- parent HWND 必须活到 Vulkan surface 与 child HWND 都销毁之后；非正常 `app.exit` 也由 desktop state 和
+  `EmbeddedWinitHost::Drop` 执行同一兜底顺序。
 - 初期默认仅监听 loopback 地址，并限制 Origin / CORS。
 - 页面刷新视为新 client session；第一阶段不支持断线重连和旧页面状态恢复。
 - 如果未来开放局域网访问，需要单独设计认证、授权和访问范围。
@@ -712,6 +739,7 @@ HTTP Server 自身不是主要性能风险。需要重点避免的是 Render 线
 - Server 不缓存场景状态，因此只有 Render 处理请求后才能返回权威结果。
 - 当前窗口尺寸为零时 render loop 会跳过 App frame。第一阶段明确不处理该情况：窗口最小化期间 editor 请求可以超时或
   返回错误，Web 不保证继续编辑；暂不增加独立于渲染帧的 CPU request pump。
+- child HWND 当前是 Windows 专属实现；native viewport 之上不能放置 WebView DOM overlay，viewport 之外的左右面板不受影响。
 
 ### 15.2 后续扩展前再评估
 

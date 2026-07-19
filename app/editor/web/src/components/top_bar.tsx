@@ -13,7 +13,7 @@ export function TopBar({ connection, sceneVersion, pendingRequests, onRefresh }:
     <header className="top-bar">
       <div className="brand">
         <TruvisMark />
-        <h1>Truvis Material Editor</h1>
+        <h1>Truvis Editor</h1>
       </div>
       <div className="top-bar__status">
         <span className={`connection connection--${connection}`}>

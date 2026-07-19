@@ -1,16 +1,19 @@
 # truvis-winit-app
 
-`truvis-winit-app` 是平台入口层，负责窗口创建、事件循环与渲染线程启动。
+`truvis-winit-app` 是平台入口层，负责 standalone 顶层窗口或 Windows child HWND 的创建、winit 事件循环与渲染线程启动。
 
 ## 主要职责
 
 - 创建并管理 winit `EventLoop` 与窗口生命周期
+- 通过 `EmbeddedWinitHost` 在 `RenderWindowThread` 创建 parent-owned child HWND
 - 将平台事件转换为引擎输入事件并转发
-- 驱动渲染线程运行 `Box<dyn RenderApp>`，示例入口通常传入 `RenderAppShell<DemoState>`
+- 通过两种窗口模式共用的 `RenderWorker` 驱动渲染线程运行 `Box<dyn RenderApp>`
 
 ## 入口位置
 
 - `src/app.rs`：平台运行时封装
+- `src/embedded.rs`：Windows child HWND 宿主、几何命令与窗口线程生命周期
+- `src/render_worker.rs`：standalone / embedded 共用的 `RenderThread` owner
 - `src/winit_event_adapter.rs`：winit 事件到 `InputEvent` 的转换
 
 具体 app 与 sample 入口位于 `app/` 下，本 crate 不声明可执行入口。
@@ -19,18 +22,29 @@
 
 - 入口：`WinitApp::run_app(|| Box<dyn RenderApp>)`
 - 示例：`WinitApp::run_app(|| Box::new(RenderAppShell::new(DemoState::default())))`
+- 嵌入入口：`EmbeddedWinitHost::spawn(parent_raw_handle, || Box<dyn RenderApp>)`
 
 ## 线程模型
 
-- main thread 持有 winit `EventLoop` 和 `Window`，负责接收平台事件。
+- standalone 模式由 main thread 持有 winit `EventLoop` 和顶层 `Window`。
+- embedded 模式由 Tauri/Tao 占用 main thread，专用 `RenderWindowThread` 持有 winit `EventLoop` 和 child `Window`。
+- embedded startup 先把 `EventLoopProxy` 交还 Tauri setup，再异步创建 child；不能让 main thread 同步等待跨线程
+  `CreateWindowEx`，否则 Windows 的 parent notification 会造成互等。创建前的 viewport rect 会缓存 latest 值。
+- child 创建后保持隐藏的 `1x1` 初始状态，直到收到第一个非零 DOM viewport rect；窗口线程先应用该 rect，再从
+  `Window::inner_size` 创建 `RenderWorker`。因此 App、GUI plugin 与 Vulkan swapchain 共享同一个真实初始 extent，
+  不依赖后续 resize 才完成初始化。
 - render thread 持有 `Box<dyn RenderApp>`，所有 Vulkan 对象都在该线程创建、使用和销毁。
+- embedded render child 收到任意鼠标按下事件时，由 `RenderWindowThread` 显式调用 `SetFocus` 取得 keyboard focus；
+  点击周围 WebView 控件后由 WebView 自然收回焦点。两侧之间不转发或复制键盘事件。
 - 输入事件通过 channel 传给 render thread，再由 `RenderApp::push_input_event` 进入 runtime shell 的输入队列。
 - resize 使用 latest-size 模式合并连续事件；零尺寸窗口不会触发 swapchain 重建。
-- 退出时 main thread 发出退出信号，render thread 完成 `RenderApp::shutdown` 和 GPU 资源释放后，main thread 再 join 渲染线程并允许 `Window` drop。
+- 退出时窗口 owner 发出退出信号；render thread 完成 `RenderApp::shutdown` 和 GPU 资源释放后，窗口 owner 再 join
+  渲染线程并允许 `Window` drop。embedded 模式还会在 child HWND drop 后 join `RenderWindowThread`，保证 parent HWND 最后销毁。
 
 ## 模块边界
 
 - 本模块不实现具体渲染算法，只负责平台与线程编排。
+- 本模块不依赖 Tauri、DOM、WebView 或 editor 协议；嵌入 API 只接收 parent raw handle 和物理像素矩形。
 - 本模块不依赖主体 app 或 samples，调用方通过 `WinitApp::run_app` 注入 `Box<dyn RenderApp>`。
 - App / Plugin 契约、帧骨架与 render loop 定义在 `engine/app-frame/truvis-app-frame`。
 - 渲染运行时在 `engine/render/truvis-render-runtime`，具体 app 复用的 RT / 后处理 pass 在 `app/app-render-passes`。

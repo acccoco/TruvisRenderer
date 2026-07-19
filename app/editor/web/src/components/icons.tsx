@@ -1,5 +1,7 @@
 import type { SVGProps } from 'react';
 
+import appIconUrl from '../../../../../assets/resources/DruvisIII.png';
+
 const iconProps = {
   width: 18,
   height: 18,
@@ -38,11 +40,6 @@ export function ChevronIcon({ direction, ...props }: SVGProps<SVGSVGElement> & {
   );
 }
 
-export function TruvisMark(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg width="26" height="26" viewBox="0 0 26 26" fill="none" {...props} aria-hidden="true">
-      <path d="M13 2.8 23.2 21H2.8L13 2.8Z" stroke="currentColor" strokeWidth="2" />
-      <path d="m13 8.2 4 7.1H9l4-7.1Z" fill="currentColor" />
-    </svg>
-  );
+export function TruvisMark({ className }: { className?: string }) {
+  return <img className={className} src={appIconUrl} alt="" aria-hidden="true" draggable={false} />;
 }

@@ -43,13 +43,17 @@ phase 内使用窄化后的 ctx。
 
 ## 启动、Resize 与关闭入口
 
-启动入口唯一：平台层创建窗口和渲染线程，渲染线程只通过 `Box<dyn RenderApp>` 驱动 App。
+渲染入口仍然唯一：平台层最终都通过 `RenderWorker` 创建渲染线程，渲染线程只通过 `Box<dyn RenderApp>` 驱动 App。
+主体应用的 Tauri 窗口与独立 sample 的 winit 顶层窗口只是在该入口之前采用不同的窗口 owner。
 
 ```mermaid
 flowchart TD
-    RunApp["WinitApp::run_app"] --> InitEnv["init_env"]
-    InitEnv --> CreateWindow["create Window + SharedState"]
-    CreateWindow --> SpawnThread["spawn RenderThread"]
+    Entry["Tauri TruvisDesktop / standalone WinitApp"] --> CreateWindow["create child / top-level winit Window"]
+    CreateWindow --> InitialSize{"embedded child?"}
+    InitialSize -->|"yes"| AwaitDom["await first non-zero DOM rect<br/>SetWindowPos before renderer startup"]
+    InitialSize -->|"no"| Worker["RenderWorker::spawn<br/>create SharedState + raw handles"]
+    AwaitDom --> Worker
+    Worker --> SpawnThread["spawn RenderThread"]
     SpawnThread --> AppFactory["app_factory() -> Box&lt;dyn RenderApp&gt;<br/>通常是 RenderAppShell&lt;ConcreteApp&gt;"]
     AppFactory --> InitAfterWindow["app.init_after_window(raw handles, scale_factor, initial_size)"]
 ```
@@ -73,12 +77,13 @@ Plugin。
 关闭流程：
 
 - 渲染线程观察到退出信号后调用 `RenderApp::shutdown(&mut self)`。
-- `TruvisApp` 在 shutdown 中先关闭 `EditorController` endpoint，再停止并 join editor Server 线程；Server 不参与 GPU idle
-  或资源销毁。
+- `TruvisApp` 在 shutdown 中关闭 RenderThread 一侧的 `EditorController` endpoint；EditorServer 由 main thread 的
+  `TruvisDesktopState` 持有，不参与 GPU idle 或资源销毁。
 - `RenderAppShell` 先调用 App hooks 的 `shutdown()`，再通过 App 提供的 shutdown visitor 调用 Plugin shutdown，最后销毁
   RenderRuntime。
 - `RenderRuntime` 拥有 `Gfx` root owner；runtime 销毁时先等待 GPU idle，释放所有子资源，最后销毁 `Gfx`。
-- 主线程等待渲染线程完成后再 drop `Window`。
+- 窗口 owner 等待渲染线程完成后再 drop winit `Window`；Tauri 主窗口关闭时继续等待 `RenderWindowThread` 和
+  EditorServer，最后才允许 parent HWND drop。
 
 ## 一帧三泳道图
 

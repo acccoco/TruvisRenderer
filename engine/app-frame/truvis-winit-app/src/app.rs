@@ -1,32 +1,29 @@
-use std::panic::{self, AssertUnwindSafe};
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::thread::{self, JoinHandle};
 
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Window, WindowId};
 
 use truvis_app_frame::render_app_api::RenderApp;
-use truvis_app_frame::{RenderInitMsg, SendWrapper, SharedState, init_env_with_log_file, pack_size, render_loop};
+use truvis_app_frame::{init_env_with_log_file, pack_size};
 use truvis_logs::LogFilePath;
 use truvis_path::TruvisPath;
 
+use crate::render_worker::{RenderAppFactory, RenderWorker};
 use crate::winit_event_adapter::WinitEventAdapter;
 
-pub struct UserEvent;
-
-type RenderAppFactory = Box<dyn FnOnce() -> Box<dyn RenderApp> + Send + 'static>;
+enum UserEvent {
+    RenderFinished,
+}
 
 /// winit 主线程 app handler。
 pub struct WinitApp {
     window: Option<Window>,
-    shared: Option<Arc<SharedState>>,
     app_factory: Option<RenderAppFactory>,
-    render_thread: Option<JoinHandle<()>>,
+    render_worker: Option<RenderWorker>,
+    event_proxy: EventLoopProxy<UserEvent>,
 }
 
 impl WinitApp {
@@ -42,12 +39,13 @@ impl WinitApp {
         init_env_with_log_file(LogFilePath::current_exe(TruvisPath::temp_dir()));
 
         let event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event().build().unwrap();
+        let event_proxy = event_loop.create_proxy();
 
         let mut app = Self {
             window: None,
-            shared: None,
             app_factory: Some(app_factory),
-            render_thread: None,
+            render_worker: None,
+            event_proxy,
         };
 
         event_loop.run_app(&mut app).unwrap();
@@ -83,59 +81,22 @@ impl WinitApp {
 
     fn init_after_window(&mut self, event_loop: &ActiveEventLoop) {
         let window = Self::create_window(event_loop, "Truvis".to_string(), [1200.0, 800.0]);
-        let window_size = window.inner_size();
-        let initial_size = [window_size.width, window_size.height];
-
-        let shared = Arc::new(SharedState::new(initial_size));
-
-        let init_msg = RenderInitMsg {
-            raw_display: SendWrapper(window.display_handle().unwrap().as_raw()),
-            raw_window: SendWrapper(window.window_handle().unwrap().as_raw()),
-            scale_factor: window.scale_factor(),
-            initial_size,
-        };
-
         let factory = self.app_factory.take().expect("app_factory already consumed");
-        let shared_for_thread = shared.clone();
-
-        let join_handle = thread::Builder::new()
-            .name("RenderThread".to_string())
-            .spawn(move || {
-                let shared_in_thread = shared_for_thread;
-                let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                    let app = factory();
-                    render_loop(shared_in_thread.clone(), init_msg, app);
-                }));
-                if let Err(payload) = result {
-                    log::error!("RenderThread panicked; capturing payload for main thread resume.");
-                    if let Ok(mut slot) = shared_in_thread.panic_payload.lock() {
-                        *slot = Some(payload);
-                    }
-                }
-                shared_in_thread.exit.store(true, Ordering::Release);
-                shared_in_thread.render_finished.store(true, Ordering::Release);
-            })
-            .expect("failed to spawn RenderThread");
+        let event_proxy = self.event_proxy.clone();
+        let render_worker = RenderWorker::spawn(&window, factory, move || {
+            let _ = event_proxy.send_event(UserEvent::RenderFinished);
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
 
         self.window = Some(window);
-        self.shared = Some(shared);
-        self.render_thread = Some(join_handle);
+        self.render_worker = Some(render_worker);
     }
 
     fn destroy(mut self) {
-        if let Some(handle) = self.render_thread.take() {
-            if let Err(e) = handle.join() {
-                log::error!("RenderThread join returned Err: {:?}", e);
-            }
-        }
-
+        let panic_payload = self.render_worker.take().and_then(RenderWorker::finish);
         self.window = None;
-
-        if let Some(shared) = self.shared.take() {
-            let payload = shared.panic_payload.lock().ok().and_then(|mut g| g.take());
-            if let Some(payload) = payload {
-                panic::resume_unwind(payload);
-            }
+        if let Some(payload) = panic_payload {
+            std::panic::resume_unwind(payload);
         }
     }
 }
@@ -149,18 +110,21 @@ impl ApplicationHandler<UserEvent> for WinitApp {
         self.init_after_window(event_loop);
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: UserEvent) {
-        todo!()
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::RenderFinished => event_loop.exit(),
+        }
     }
 
     fn window_event(&mut self, _event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
-        let Some(shared) = self.shared.as_ref() else {
+        let Some(worker) = self.render_worker.as_ref() else {
             return;
         };
+        let shared = worker.shared();
 
         match &event {
             WindowEvent::CloseRequested => {
-                shared.exit.store(true, Ordering::Release);
+                worker.request_exit();
             }
             WindowEvent::Resized(size) => {
                 shared.size.store(pack_size(size.width, size.height), Ordering::Relaxed);
@@ -183,8 +147,8 @@ impl ApplicationHandler<UserEvent> for WinitApp {
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: DeviceId, _event: DeviceEvent) {}
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(shared) = self.shared.as_ref() {
-            if shared.render_finished.load(Ordering::Acquire) {
+        if let Some(worker) = self.render_worker.as_ref() {
+            if worker.shared().render_finished.load(Ordering::Acquire) {
                 event_loop.exit();
             }
         }

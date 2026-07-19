@@ -190,6 +190,11 @@ impl EditorServerRuntime {
         origin.starts_with("http://127.0.0.1:")
             || origin.starts_with("http://localhost:")
             || origin.starts_with("http://[::1]:")
+            // Windows Tauri 自定义协议通过 WebView2 的本地 http(s) origin 加载；
+            // Server 仍只监听 loopback，因此只额外允许 Tauri 自身的固定 origin。
+            || origin == "http://tauri.localhost"
+            || origin == "https://tauri.localhost"
+            || origin == "tauri://localhost"
     }
 
     async fn serve_websocket(state: Arc<EditorServerState>, socket: WebSocket) {

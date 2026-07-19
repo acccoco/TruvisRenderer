@@ -74,11 +74,11 @@ shader-toy *run_opts: shader (_run-cargo-bin "shader-toy" run_opts)
 [group('3 运行示例')]
 cornell *run_opts: shader cxx-debug (_run-cargo-bin "rt-cornell" run_opts)
 
-# 构建 Web editor 后运行 Truvis 主体应用；可追加 imgui / no-validation 选项
+# 构建 Tauri WebView 前端后运行 Truvis 主体应用；可追加 imgui / no-validation 选项
 [group('3 运行示例')]
 truvis *run_opts: editor-web shader cxx-debug (_run-cargo-bin "truvis-app" run_opts)
 
-# 构建 Web editor 后直接运行 Truvis 主体应用，不更新 shader / CXX 绑定；可追加 imgui / no-validation 选项
+# 构建 Tauri WebView 前端后直接运行 Truvis 主体应用，不更新 shader / CXX 绑定；可追加 imgui / no-validation 选项
 [group('3 运行示例')]
 truvis-direct *run_opts: editor-web (_run-cargo-bin "truvis-app" run_opts)
 

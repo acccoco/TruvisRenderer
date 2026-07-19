@@ -1,8 +1,7 @@
 use truvis_app_frame::input_event::InputEvent;
 use truvis_app_frame::plugin_api::{Plugin, PluginRenderCtx};
 use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx, RenderAppShutdownCtx};
-use truvis_editor_bridge::{EditorBridgeConfig, create_editor_bridge};
-use truvis_editor_server::{EditorServer, EditorServerConfig, EditorServerHandle};
+use truvis_editor_bridge::AppEndpoint;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
@@ -50,16 +49,14 @@ pub struct TruvisApp {
     click_ray_cast_probe: ClickRayCastProbe,
     selected_submesh: Option<WorldSubmeshSelection>,
     editor_controller: EditorController,
-    editor_server: Option<EditorServerHandle>,
 }
 
-impl Default for TruvisApp {
-    fn default() -> Self {
-        let (server_endpoint, app_endpoint) = create_editor_bridge(EditorBridgeConfig::default());
-        let editor_server = EditorServer::start(EditorServerConfig::default(), server_endpoint)
-            .unwrap_or_else(|error| panic!("failed to start EditorServer: {error:#}"));
-        log::info!("Truvis Web editor: http://{}", editor_server.bound_addr());
-
+impl TruvisApp {
+    /// 使用桌面壳预先创建的 App endpoint 构造渲染侧业务状态。
+    ///
+    /// EditorServer 生命周期属于 Tauri desktop；本 App 只拥有协议到权威 `World`
+    /// 的非阻塞 controller，避免 RenderThread 同时承担窗口壳和网络 owner 职责。
+    pub(crate) fn new(app_endpoint: AppEndpoint) -> Self {
         Self {
             gui: Default::default(),
             rt_pipeline: Default::default(),
@@ -74,7 +71,6 @@ impl Default for TruvisApp {
             click_ray_cast_probe: Default::default(),
             selected_submesh: None,
             editor_controller: EditorController::new(app_endpoint, EditorControllerConfig::default()),
-            editor_server: Some(editor_server),
         }
     }
 }
@@ -206,17 +202,6 @@ impl ClickRayCastProbe {
 }
 
 impl TruvisApp {
-    fn editor_url(&self) -> String {
-        let server = self.editor_server.as_ref().expect("TruvisApp update cannot run after EditorServer shutdown");
-        format!("http://{}/", server.bound_addr())
-    }
-
-    fn open_editor_in_browser(editor_url: &str) {
-        if let Err(error) = webbrowser::open(editor_url) {
-            log::error!("Failed to open Truvis Web editor at {editor_url}: {error}");
-        }
-    }
-
     pub fn overlay_options(&self) -> &TruvisOverlayOptions {
         self.overlay_ui.options()
     }
@@ -552,14 +537,12 @@ impl RenderAppHooks for TruvisApp {
             self.click_ray_cast_probe.request_cast(screen_pos, ray);
         }
 
-        let editor_url = self.editor_url();
         self.gui.begin_frame(delta);
-        let open_editor_requested = {
+        {
             let ui = self.gui.ui();
             let offline_sample_count = self.offline_pipeline.sample_count();
             let frame = TruvisOverlayFrame {
                 ui,
-                editor_url: &editor_url,
                 stats: FrameStatsOverlayData {
                     camera: self.camera_controller.camera(),
                     swapchain_extent: ctx.swapchain_extent,
@@ -580,12 +563,9 @@ impl RenderAppHooks for TruvisApp {
                 },
                 debug_images: DebugImageViewerData { gui: &self.gui },
             };
-            self.overlay_ui.build(frame)
-        };
-        self.gui.end_frame();
-        if open_editor_requested {
-            Self::open_editor_in_browser(&editor_url);
+            self.overlay_ui.build(frame);
         }
+        self.gui.end_frame();
     }
 
     fn after_prepare(&mut self, ctx: &mut RenderRuntimeRayCastCtx<'_>) {
@@ -621,9 +601,6 @@ impl RenderAppHooks for TruvisApp {
 
     fn shutdown(&mut self, _ctx: &mut RenderAppShutdownCtx<'_>) {
         self.editor_controller.shutdown();
-        if let Some(mut editor_server) = self.editor_server.take() {
-            editor_server.shutdown();
-        }
     }
 
     fn render(&mut self, ctx: &RenderRuntimeRenderCtx) {

@@ -1,4 +1,6 @@
+import { EditorWorkspace } from './components/editor_workspace';
 import { MaterialInspector } from './components/material_inspector';
+import { RenderViewport } from './components/render_viewport';
 import { ScenePanel } from './components/scene_panel';
 import { SelectionPanel } from './components/selection_panel';
 import { StatusBar } from './components/status_bar';
@@ -16,23 +18,30 @@ export function App() {
         pendingRequests={state.pendingRequests}
         onRefresh={() => void refresh()}
       />
-      <main className="editor-grid">
-        <ScenePanel
-          objects={state.objects}
-          selection={state.selection}
-          pageOffset={state.pageOffset}
-          nextOffset={state.nextOffset}
-          onPreviousPage={() => void previousPage()}
-          onNextPage={() => void nextPage()}
-        />
-        <SelectionPanel selection={state.selection} material={state.draft} dirty={state.dirty} />
-        <MaterialInspector
-          material={state.draft}
-          dirty={state.dirty}
-          updateDraft={updateDraft}
-          commitMaterial={commitMaterial}
-        />
-      </main>
+      <EditorWorkspace
+        scenePanel={(
+          <ScenePanel
+            objects={state.objects}
+            selection={state.selection}
+            pageOffset={state.pageOffset}
+            nextOffset={state.nextOffset}
+            onPreviousPage={() => void previousPage()}
+            onNextPage={() => void nextPage()}
+          />
+        )}
+        viewport={<RenderViewport />}
+        inspector={(
+          <aside className="inspector-sidebar" aria-label="Selection and material inspector">
+            <SelectionPanel selection={state.selection} material={state.draft} dirty={state.dirty} />
+            <MaterialInspector
+              material={state.draft}
+              dirty={state.dirty}
+              updateDraft={updateDraft}
+              commitMaterial={commitMaterial}
+            />
+          </aside>
+        )}
+      />
       <StatusBar
         connected={state.connection === 'connected'}
         pendingRequests={state.pendingRequests}

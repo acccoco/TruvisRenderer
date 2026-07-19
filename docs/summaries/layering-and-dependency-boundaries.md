@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TB
-    L6["L6 app/truvis + samples<br/>主体 app 与独立示例入口<br/><br/>L6 app/editor<br/>Web UI、HTTP/WebSocket adapter、跨线程 editor 契约<br/><br/>L6 truvis-winit-app<br/>winit 事件循环、窗口生命周期、渲染线程启动"]
+    L6["L6 app/truvis + samples<br/>Tauri 主体 app 与独立示例入口<br/><br/>L6 app/editor<br/>Tauri WebView UI、HTTP/WebSocket adapter、跨线程 editor 契约<br/><br/>L6 truvis-winit-app<br/>standalone / child HWND 窗口生命周期、winit 事件循环、渲染线程启动"]
     L5["L5 app-kit<br/>GuiPlugin、私有 GUI backend、overlay plugin、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp / RenderAppHooks / Plugin 契约与 Plugin Ctx<br/>RenderAppShell 帧骨架 + render loop"]
     L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GfxResourceManager / ShaderBindingSystem / CmdAllocator / PerFrameGpuData + timing owners + runtime render state + RenderWorld + RenderPassRecordCtx + swapchain/present 生命周期"]
     L3["L3 truvis-render-graph / truvis-world / truvis-asset<br/>按帧同步辅助、CPU 场景、资产加载"]
@@ -42,8 +42,8 @@ flowchart LR
     Runtime["render-runtime<br/>运行时集成、GPU owner、GPU 上传、present 生命周期"]
     Frame["frame<br/>RenderApp 契约、RenderAppShell、render loop"]
     AppKit["app-kit + app-render-passes<br/>GUI 集成与私有 backend、输入/相机、overlay、RT/后处理 pass 与 pipeline glue"]
-    App["app / samples<br/>Truvis 主体应用与独立示例"]
-    Platform["truvis-winit-app<br/>winit 平台入口"]
+    App["app / samples<br/>Truvis Tauri 桌面壳与独立示例"]
+    Platform["truvis-winit-app<br/>standalone + embedded winit 平台入口"]
     App --> Platform --> Frame --> Runtime --> RenderDomain --> Core --> Gfx --> Foundation
     App --> AppKit --> Frame
     AppKit --> Runtime
@@ -64,11 +64,14 @@ RT 管线的 GBuffer 通道布局和 per-FIF 纹理资源管理，由 `RtPipelin
 ## 物理目录约定
 
 - `engine/app-frame/truvis-app-frame`：平台无关的 App 契约、shell 与 render loop。
-- `engine/app-frame/truvis-winit-app`：winit 平台入口，只负责窗口、事件循环和渲染线程启动。
+- `engine/app-frame/truvis-winit-app`：winit 平台入口；`WinitApp` 服务独立顶层窗口，`EmbeddedWinitHost` 在专用线程服务
+  Windows child HWND，两者复用同一 `RenderWorker` 启动和回收渲染线程。
 - `app/app-kit`：app 层公共组件，包含 GUI、输入/相机、overlay 和 RT pipeline glue。
 - `app/app-render-passes`：主体 app 与 samples 共享的具体 pass。
-- `app/truvis`：主体 app，提供 `truvis-app`。
+- `app/truvis`：主体 app，提供 `truvis-app`；Tauri/Tao desktop owner 在 main thread 组装 WebView、EditorServer 与
+  embedded winit host，`TruvisApp` 仍只承载 RenderThread 上的场景和渲染业务。
 - `app/editor/bridge`：editor 协议 DTO、transport envelope 和方向受限的有界 channel endpoint。
 - `app/editor/server`：独立线程上的 loopback HTTP / WebSocket adapter 和 Web 静态文件服务。
-- `app/editor/web`：React / TypeScript 编辑器；页面状态只是可丢弃投影，不属于 CPU scene 权威状态。
+- `app/editor/web`：作为 Tauri WebView 内容运行的 React / TypeScript 编辑器；中央 DOM slot 只发布 child HWND 的物理像素矩形，
+  页面状态仍只是可丢弃投影，不属于 CPU scene 权威状态。
 - `app/samples/*`：独立 sample crate，提供 triangle、shader-toy 和 Cornell 入口。

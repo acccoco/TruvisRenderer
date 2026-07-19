@@ -7,7 +7,8 @@
 - `app-kit/`：公共 app 组件，包括 GUI、输入/相机控制、overlay 与 RT pipeline glue。
 - `editor/`：Web editor 子系统；`bridge` 定义协议与跨线程 endpoint，`server` 提供本地 HTTP / WebSocket，`web`
   是 React / TypeScript 页面。场景协议到 `World` 的适配保留在 `truvis/src/editor_controller.rs`。
-- `truvis/`：主体 app crate，提供 `truvis-app`，默认加载 Sponza 并叠加程序化材质测试 cubes 与可配置自发光
+- `truvis/`：主体 Tauri app crate，提供 `truvis-app`；Tauri WebView 组成编辑器 UI，中央区域由 Windows child HWND
+  承载现有 winit/Vulkan viewport，右侧栏承载材质编辑器。渲染侧默认加载 Sponza 并叠加程序化材质测试 cubes 与可配置自发光
   cube 矩阵；左键 raycast overlay 会显示命中 submesh 的基础材质信息，并在主视图最终呈现中为命中
   `InstanceHandle + submesh_index` 绘制 selection outline。
 - `samples/hello-triangle/`：Triangle 示例，提供 `triangle`。
@@ -18,4 +19,5 @@
 
 - `app-kit` 只放可复用组件，不放具体 app state。
 - sample 专用 pass 留在对应 sample crate 内。
-- 平台窗口和事件循环由 `engine/app-frame/truvis-winit-app` 提供，app crate 只注入 `RenderAppShell<ConcreteApp>`。
+- 主体 app 的顶层窗口和 WebView 由 Tauri/Tao main thread 持有，child render 窗口和独立 samples 的顶层窗口由
+  `engine/app-frame/truvis-winit-app` 提供；app crate 只向渲染入口注入 `RenderAppShell<ConcreteApp>`。

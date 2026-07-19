@@ -1,3 +1,5 @@
+import { invoke, isTauri } from '@tauri-apps/api/core';
+
 import type {
   EditorClientMessage,
   EditorNotification,
@@ -34,8 +36,7 @@ export class EditorSocket implements EditorTransport {
     }
 
     this.emitConnectionState('connecting');
-    const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const socket = new WebSocket(`${scheme}://${window.location.host}/api/editor/v1/ws`);
+    const socket = new WebSocket(await this.resolveWebsocketUrl());
     this.socket = socket;
 
     await new Promise<void>((resolve, reject) => {
@@ -118,6 +119,16 @@ export class EditorSocket implements EditorTransport {
     window.clearTimeout(pending.timeout);
     this.pending.delete(message.request_id);
     pending.resolve(message.response);
+  }
+
+  private async resolveWebsocketUrl(): Promise<string> {
+    if (isTauri()) {
+      // EditorServer 仍是现有 loopback WebSocket adapter；Tauri command 只返回
+      // 实际 bind 地址，不承担材质或场景协议传输。
+      return invoke<string>('editor_websocket_url');
+    }
+    const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    return `${scheme}://${window.location.host}/api/editor/v1/ws`;
   }
 
   private handleClose(socket: WebSocket): void {

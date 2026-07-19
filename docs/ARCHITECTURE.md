@@ -24,7 +24,9 @@
 ## 全局架构约束
 
 - 项目保持无环依赖：上层可以依赖下层，下层不反向依赖上层业务；同层 crate 默认不互相依赖，除非 summaries 中明确记录。
-- 平台层只负责窗口、事件循环和渲染线程启动；渲染线程通过 `Box<dyn RenderApp>` 驱动 App，并创建、使用、销毁所有 Vulkan 对象。
+- 平台层只负责窗口、事件循环和渲染线程启动：主体应用由 Tauri/Tao main thread 持有顶层窗口，
+  `truvis-winit-app` 在 `RenderWindowThread` 持有嵌入式 child HWND；独立 samples 仍由 winit main thread 持有顶层窗口。
+  两种入口都通过同一个 `RenderWorker` 把 `Box<dyn RenderApp>` 交给 `RenderThread`，所有 Vulkan 对象只在该线程创建、使用和销毁。
 - `RenderRuntime` 拥有 `Gfx`、`World`、`GfxResourceManager`、`ShaderBindingSystem`、`FrameTiming`、`PerFrameGpuData`、
   runtime-owned render state、`RenderWorld`、present、cmd 和同步资源；App / Plugin 只通过 phase-appropriate
   Ctx 使用窄能力，不长期持有完整 runtime 或 typed `Gfx` Ctx。
