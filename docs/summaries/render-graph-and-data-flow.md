@@ -9,7 +9,7 @@ CPU 语义数据从 `World` 进入 RenderRuntime。`World::sync_for_render` 从�
 `WorldRenderSync.asset_uploads` typed payload；同一次 sync 还会 drain `SceneStore` 的
 `SceneChanges`。`RenderWorld` 会把 scene change 与 manager update result 归一化为 `DirtyEvent`，
 再通过静态 `DirtyRuleKind` rule set 写入本帧 `DirtyDispatchPlan`。asset payload 再由 `RenderWorld`
-内部的 `RenderTextureManager` 在渲染线程上传到 GPU 并注册 bindless。texture / mesh / material remove dispatch
+内部的 `RenderTextureManager` 在渲染线程上传到 GPU，并把 Material/Scene 数据需要动态索引的 texture 注册为 bindless SRV。texture / mesh / material remove dispatch
 会在新的 upload payload 前写入对应 render manager，确保 CPU scene 删除不会被同一帧或迟到的上传结果重新发布到 resolver。
 
 material 添加 / 更新由 `WorldRenderSync.scene_changes.changed_materials` 表达，并通过 dirty rule 变成 material dispatch；
@@ -55,7 +55,7 @@ App 对刚同步完成的 GPU scene 发起同步查询，例如批量 raycast；
 ```mermaid
 flowchart LR
     AssetHub["AssetHub<br/>loader CPU payload"] --> Ingestor["SceneAssetIngestor<br/>Asset event -> Scene handle"]
-    Ingestor --> TextureManager["RenderTextureManager<br/>texture GPU upload + bindless"]
+    Ingestor --> TextureManager["RenderTextureManager<br/>texture GPU upload + dynamic SRV bindless"]
     Scene --> RenderSkyManager["RenderSkyManager<br/>SceneSkyState + fallback"]
     Ingestor --> RenderSkyManager
     Ingestor --> MeshManager["RenderMeshManager<br/>submesh geometry upload + mesh BLAS"]
@@ -96,6 +96,18 @@ flowchart LR
 - 渲染管线 Plugin 只贡献自己的 pass，不决定整个 App 的完整执行顺序。
 - App 显式决定 GUI pass 与渲染管线 pass 的添加顺序，RenderGraph 按该顺序录制，不做自动重排。
 - pass 必须声明 image 读写状态，让 RenderGraph 在线性序列中推导同步与 layout transition。
+
+固定管线 image 的职责分为三层，不能互相替代：
+
+- pipeline/plugin owner 创建并持有 render target、GBuffer、DLSS 输入输出、累计图、selection mask、GUI font/debug image，
+  并在既有 resize/shutdown 安全点释放资源。
+- 具体 pass 通过 `GLOBAL_SETS_COUNT` 之后的 local set（当前为 set 3）写入本次 draw/dispatch 的 push descriptor；
+  storage image 使用 `GENERAL`，sampled image 使用 `SHADER_READ_ONLY_OPTIMAL`。descriptor 只引用 image view，不拥有资源。
+- RenderGraph pass 声明 sampled/storage/color-attachment 等访问，负责 pass 间同步和 layout transition；descriptor 声明的
+  layout 必须与执行该 pass 时 RenderGraph 推导出的状态一致。
+
+全局 bindless set 1 只保留 Material/Scene 数据动态索引的 asset texture 与 sky sampled-image SRV。固定管线 image
+不消耗 bindless slot，窗口 resize 因而只重建 owner 资源和 pass-local 引用，不产生全局 slot 注册/回收压力。
 
 ## 典型 Graph 组织
 

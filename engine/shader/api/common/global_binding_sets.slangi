@@ -9,18 +9,11 @@
 [[vk::binding(0, 0)]]
 SamplerState global_samplers[];
 
-// set 1：bindless 资源。
-// 注意：所有动态下标都需要通过 NonUniformResourceIndex 包装，因为同一个 wavefront 内不同像素
-// 可能访问不同 texture/UAV/SRV。遗漏该包装会让 Vulkan descriptor indexing 语义不可靠。
+// set 1：由 Material / Scene 数据动态索引的 sampled image 表。
+// 固定管线 image 由各 pass 的 local descriptor set 显式绑定，不进入该全局数组。
+// 动态下标必须通过 NonUniformResourceIndex 包装，因为同一个 wavefront 内不同像素可能访问不同 SRV。
+// 采样器来自 set 0，SRV 本身只表达 image view slot。
 [[vk::binding(0, 1)]]
-Sampler2D<float4> bindless_textures[];
-
-// storage image 表。RenderGraph 负责声明读写状态和 layout transition。
-[[vk::binding(1, 1)]]
-RWTexture2D<float4> bindless_uavs[];
-
-// sampled image 表。采样器来自 set 0，SRV 本身只表达 image view slot。
-[[vk::binding(2, 1)]]
 Texture2D<float4> bindless_srvs[];
 
 // set 2：per-frame 数据。由 runtime 在 prepare 后冻结，render pass 只能读取这个快照。

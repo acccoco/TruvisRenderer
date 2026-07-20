@@ -1,69 +1,6 @@
 #pragma once
 #include "api/common/mod.slangi"
 
-/// 旧 Texture2D bindless 表访问器。
-///
-/// 新代码优先使用 SRV + sampler 的 `BindlessSrv`；该类型保留给仍直接使用 `Sampler2D`
-/// 全局数组的入口。动态下标必须包装 `NonUniformResourceIndex`。
-struct BindlessTexture
-{
-[ForceInline]
-static float4 sample(bindless::TextureHandle handle, float2 uv)
-{
-    if (handle.index == bindless::INVALID_TEX_ID)
-    {
-        return bindless::INVALID_TEX_COLOR;
-    }
-    else
-    {
-        return bindless_textures[NonUniformResourceIndex(handle.index)].Sample(uv);
-    }
-}
-
-static float4 sample_level(bindless::TextureHandle handle, float2 uv, float level)
-{
-    if (handle.index == bindless::INVALID_TEX_ID)
-    {
-        return bindless::INVALID_TEX_COLOR;
-    }
-    else
-    {
-        return bindless_textures[NonUniformResourceIndex(handle.index)].SampleLevel(uv, level);
-    }
-}
-
-[ForceInline]
-static bool is_valid(bindless::TextureHandle handle)
-{
-    return handle.index != bindless::INVALID_TEX_ID;
-}
-
-};
-
-struct BindlessUav
-{
-
-/// storage image 写入。调用方必须在 RenderGraph 中声明 image 处于 storage write/read-write 状态。
-[ForceInline]
-static void store(bindless::UavHandle handle, uint2 coord, float4 value)
-{
-    bindless_uavs[NonUniformResourceIndex(handle.index)].Store(coord, value);
-}
-
-[ForceInline]
-static float4 load(bindless::UavHandle handle, uint2 coord)
-{
-    return bindless_uavs[NonUniformResourceIndex(handle.index)].Load(coord);
-}
-
-[ForceInline]
-static bool is_valid(bindless::UavHandle handle)
-{
-    return handle.index != bindless::INVALID_TEX_ID;
-}
-
-};
-
 struct BindlessSrv
 {
 /// sampled image 采样。

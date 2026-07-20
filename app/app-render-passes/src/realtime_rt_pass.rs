@@ -713,7 +713,6 @@ impl RealtimeRtPass {
                 .handle()
         };
 
-        let _rt_handle = record_ctx.shader_bindings.get_shader_uav_handle(pass_data.single_frame_output_view);
         let rt_image_view = image_view(pass_data.single_frame_output_view);
 
         // 获取 GBuffer 与 DLSS input image views。它们都由 raygen 以 storage image 写入当前 render extent。

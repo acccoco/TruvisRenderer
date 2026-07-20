@@ -29,21 +29,6 @@ enum ESamplerType : uint
     _Count_,
 };
 
-struct TextureHandle
-{
-    /// `bindless_textures[]` 中的索引；当前保留给旧 Texture2D 无采样器路径。
-    int index;
-};
-
-struct UavHandle
-{
-    /// `bindless_uavs[]` 中的 storage image 索引。
-    ///
-    /// UAV handle 可能被 compute/post pass 同时读写，调用方必须先在 RenderGraph 中声明正确的
-    /// image state，shader 侧不承担同步或 layout transition。
-    int index;
-};
-
 struct SrvHandle
 {
     /// `bindless_srvs[]` 中的 sampled image 索引。

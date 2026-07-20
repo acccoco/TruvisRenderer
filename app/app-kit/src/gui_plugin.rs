@@ -33,7 +33,8 @@ pub enum DebugImageVisualizeMode {
 /// ImGui debug viewer 每帧显示的外部图像入口。
 ///
 /// 该结构只保存 `GfxResourceManager` 中已有 image/view 的 handle 快照，不拥有资源生命周期。
-/// 调用方必须保证图像 owner 至少活到当前 RenderGraph 录制和提交完成，并为 `view` 注册 SRV。
+/// 调用方必须保证图像 owner 至少活到当前 RenderGraph 录制和提交完成。GUI pass 会在实际 draw 前
+/// 把 `view` 写入自己的 sampled-image push descriptor，不要求图像进入全局 bindless 表。
 /// `graph_state` 描述图像跨 graph 传入 GUI preview 时的稳定状态；SR 输入被 DLSS pass 读取后
 /// 可能不再是 `GENERAL`，因此不能在 GUI 侧统一假设 storage layout。
 #[derive(Clone, Copy, Debug)]
@@ -58,7 +59,7 @@ impl DebugImageEntry {
         format: vk::Format,
         extent: vk::Extent2D,
     ) -> Self {
-        // 旧 debug image 默认都是 storage/bindless target，跨 graph 稳定状态为 GENERAL。
+        // 现有 debug image 默认都是 storage target，跨 graph 稳定状态为 GENERAL。
         Self::raw_with_graph_state(id, label, image, view, format, extent, RgImageState::GENERAL)
     }
 
@@ -265,7 +266,7 @@ impl GuiPlugin {
 
         let mut tex_map = HashMap::from([(
             imgui::TextureId::new(FONT_TEXTURE_ID),
-            self.fonts_image_view_handle.expect("imgui font texture not registered"),
+            self.fonts_image_view_handle.expect("imgui font texture not initialized"),
         )]);
         for entry in &self.debug_images {
             if let Some(texture_id) = self.debug_texture_ids.get(entry.id) {
@@ -403,8 +404,6 @@ impl GuiPlugin {
             GfxImageViewDesc::new_2d(vk::Format::R8G8B8A8_UNORM, vk::ImageAspectFlags::COLOR),
             "imgui-fonts",
         );
-        ctx.shader_binding_system.register_srv(fonts_image_view_handle);
-
         self.fonts_image_handle = Some(fonts_image_handle);
         self.fonts_image_view_handle = Some(fonts_image_view_handle);
     }
@@ -469,9 +468,7 @@ impl Plugin for GuiPlugin {
         self.debug_texture_ids.clear();
         self.selected_debug_image_id.set(None);
 
-        if let Some(view_handle) = self.fonts_image_view_handle.take() {
-            ctx.shader_binding_system.unregister_srv(view_handle);
-        }
+        self.fonts_image_view_handle.take();
         if let Some(image_handle) = self.fonts_image_handle.take() {
             ctx.gfx_resource_manager.release_image_immediate(
                 ctx.resource_ctx,
@@ -524,7 +521,7 @@ impl RgPass for GuiRenderGraphPass<'_> {
         self.gui_pass.draw(
             frame_label,
             self.record_ctx.shader_bindings.global_descriptor_sets(),
-            self.record_ctx.shader_bindings.bindless_manager(),
+            ctx.resource_manager,
             canvas_color_view.handle(),
             self.canvas_extent,
             ctx.cmd,

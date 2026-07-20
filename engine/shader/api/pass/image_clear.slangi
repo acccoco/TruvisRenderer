@@ -3,6 +3,14 @@
 namespace image_clear
 {
 
+/// Image clear pass-local descriptor set。
+#define IMAGE_CLEAR_SET_NUM GLOBAL_SETS_COUNT
+
+#ifdef __SLANG__
+[[vk::binding(0, IMAGE_CLEAR_SET_NUM)]]
+RWTexture2D<float4> dst_image;
+#endif
+
 /// storage image 清理 compute pass 的线程组尺寸。Rust 侧 dispatch 会按该尺寸向上取整。
 static const int SHADER_X = 8;
 static const int SHADER_Y = 8;
@@ -15,12 +23,10 @@ struct PushConstant
 {
     /// 写入目标颜色，保持 linear/HDR 数值空间，由调用方决定语义。
     float4 clear_color;
-    /// 目标 storage image。
-    bindless::UavHandle dst_image;
-    /// `uint2` 在 push constant ABI 中按 8 字节边界读取；padding 必须放在字段前。
-    uint _padding_0;
 
     /// 当前 dispatch 有效图像尺寸；多余线程必须跳过写入。
     uint2 image_size;
+    /// 显式补齐到 32 字节，保持 push constant range 为 16 字节倍数。
+    uint2 _padding_0;
 };
 };

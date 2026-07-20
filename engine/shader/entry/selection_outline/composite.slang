@@ -1,5 +1,4 @@
 #include "api/pass/selection_outline.slangi"
-#include "lib/core/bindless.slangi"
 
 [[vk::push_constant]]
 selection_outline::CompositePushConstant g_params;
@@ -38,7 +37,7 @@ VsOutput vsmain(uint vertexID : SV_VertexID)
 
 float mask_at(float2 uv)
 {
-    return BindlessSrv::sample(g_params.mask_texture, uv, g_params.sampler_type).r;
+    return selection_outline::mask_texture.Sample(global_samplers[bindless::ESamplerType::PointClamp], uv);
 }
 
 [shader("fragment")]

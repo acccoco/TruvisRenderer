@@ -1,7 +1,7 @@
 # app-render-passes
 
 `app-render-passes` 存放 Truvis 主体 app 与 samples 共享的具体 render pass 实现，
-例如 real-time / offline ray tracing、accumulation、denoise、SDR、image clear、blit、resolve、
+例如 real-time / offline ray tracing、accumulation、SDR、image clear、resolve、
 coordinate gizmo、selection outline 和 Phong shading。
 
 ## 主要职责
@@ -14,8 +14,10 @@ coordinate gizmo、selection outline 和 Phong shading。
   状态和 pass 插入顺序属于具体 App。
 - `CoordinateGizmoPass` 只负责在 present image 右下角叠加当前相机朝向下的三轴 gizmo；它不持有几何 buffer
   或中间 image，pass 插入顺序属于具体 App。
-- `ImageClearPass` 只负责把 bindless UAV storage image 写成确定颜色；具体 pipeline 必须通过 RenderGraph
-  声明目标图像写状态，并决定何时清理历史。
+- `ImageClearPass` 只负责通过 pass-local storage image descriptor 把目标写成确定颜色；具体 pipeline 必须通过
+  RenderGraph 声明目标图像写状态，并决定何时清理历史。
+- 固定管线 image 由具体 pass 通过 set 3 的 typed push descriptor 引用。storage image 固定使用 `GENERAL`，
+  sampled image 固定使用 `SHADER_READ_ONLY_OPTIMAL`；descriptor 中的 layout 必须与该 pass 的 RenderGraph 声明一致。
 
 ## 边界约束
 
@@ -23,6 +25,8 @@ coordinate gizmo、selection outline 和 Phong shading。
 - 本 crate 不持有 `RenderRuntime`，也不依赖 frame runtime 或 App hooks。
 - runtime-owned 同步 raycast pipeline 不在本 crate 中；它是 `truvis-render-runtime` 的私有实现细节。
 - `GuiPass` 不在本 crate 中；GUI Vulkan 后端是 `app/app-kit` 的私有实现细节，GUI RenderGraph 集成属于 `GuiPlugin`。
+- pass-local descriptor 只描述本次 draw/dispatch 使用哪个 image view，不拥有 image/view，也不替代 RenderGraph 的
+  layout transition、访问同步或 pipeline owner 的 GPU-safe 释放责任。
 
 ## 设计意图
 

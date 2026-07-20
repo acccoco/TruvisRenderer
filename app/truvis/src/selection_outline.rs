@@ -13,7 +13,7 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
-use truvis_render_runtime::bindings::shader_binding_system::ShaderBindingSystem;
+use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime::RenderRuntimeRenderCtx;
 use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
 use truvis_render_runtime::selection::WorldSubmeshSelection;
@@ -22,7 +22,7 @@ use truvis_render_runtime::selection::WorldSubmeshSelection;
 ///
 /// 本类型只持有窗口尺寸 mask image 和 outline pass pipeline，不进入 engine runtime。
 /// mask 按 FIF 轮转，跟随 swapchain/output extent 在 init/resize 阶段创建或重建，
-/// shutdown 时先注销 bindless SRV 再释放 manager-owned image。
+/// composite pass 在录制时通过 pass-local descriptor 采样 mask；shutdown 只释放 manager-owned image。
 #[derive(Default)]
 pub(crate) struct SelectionOutlineRenderer {
     inner: Option<SelectionOutlineRendererInner>,
@@ -102,7 +102,7 @@ impl Plugin for SelectionOutlineRenderer {
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.gfx_resource_manager,
-            ctx.shader_binding_system,
+            ctx.shader_binding_system.global_descriptor_sets(),
             image_info.image_extent,
             image_info.image_format,
             ctx.frame_timing.frame_counter(),
@@ -116,8 +116,8 @@ impl Plugin for SelectionOutlineRenderer {
             inner.rebuild_masks(
                 ctx.resource_ctx,
                 ctx.device_ctx,
-                ctx.shader_binding_system,
                 ctx.gfx_resource_manager,
+                ctx.shader_binding_system.global_descriptor_sets(),
                 image_info.image_extent,
                 image_info.image_format,
                 ctx.frame_timing.frame_counter(),
@@ -127,7 +127,7 @@ impl Plugin for SelectionOutlineRenderer {
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.gfx_resource_manager,
-                ctx.shader_binding_system,
+                ctx.shader_binding_system.global_descriptor_sets(),
                 image_info.image_extent,
                 image_info.image_format,
                 ctx.frame_timing.frame_counter(),
@@ -137,13 +137,7 @@ impl Plugin for SelectionOutlineRenderer {
 
     fn shutdown(&mut self, ctx: &mut PluginShutdownCtx<'_>) {
         if let Some(inner) = self.inner.take() {
-            inner.destroy(
-                ctx.resource_ctx,
-                ctx.device_ctx,
-                ctx.shader_binding_system,
-                ctx.gfx_resource_manager,
-                DestroyReason::Shutdown,
-            );
+            inner.destroy(ctx.resource_ctx, ctx.device_ctx, ctx.gfx_resource_manager, DestroyReason::Shutdown);
         }
     }
 }
@@ -153,21 +147,13 @@ impl SelectionOutlineRendererInner {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        shader_binding_system: &mut ShaderBindingSystem,
+        global_descriptor_sets: &GlobalDescriptorSets,
         extent: vk::Extent2D,
         present_format: vk::Format,
         frame_counter: &FrameCounter,
     ) -> Self {
-        let pass =
-            SelectionOutlinePass::new(device_ctx, present_format, shader_binding_system.global_descriptor_sets());
-        let masks = SelectionOutlineMasks::new(
-            resource_ctx,
-            device_ctx,
-            gfx_resource_manager,
-            shader_binding_system,
-            extent,
-            frame_counter,
-        );
+        let pass = SelectionOutlinePass::new(device_ctx, present_format, global_descriptor_sets);
+        let masks = SelectionOutlineMasks::new(resource_ctx, device_ctx, gfx_resource_manager, extent, frame_counter);
         Self {
             pass,
             present_format,
@@ -179,43 +165,28 @@ impl SelectionOutlineRendererInner {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
+        global_descriptor_sets: &GlobalDescriptorSets,
         extent: vk::Extent2D,
         present_format: vk::Format,
         frame_counter: &FrameCounter,
     ) {
         if self.present_format != present_format {
             // composite pipeline 的 color attachment format 必须和当前 swapchain/present format 对齐。
-            let new_pass =
-                SelectionOutlinePass::new(device_ctx, present_format, shader_binding_system.global_descriptor_sets());
+            let new_pass = SelectionOutlinePass::new(device_ctx, present_format, global_descriptor_sets);
             let old_pass = std::mem::replace(&mut self.pass, new_pass);
             old_pass.destroy(device_ctx);
             self.present_format = present_format;
         }
 
-        self.masks.destroy(
-            resource_ctx,
-            device_ctx,
-            shader_binding_system,
-            gfx_resource_manager,
-            DestroyReason::Resize,
-        );
-        self.masks = SelectionOutlineMasks::new(
-            resource_ctx,
-            device_ctx,
-            gfx_resource_manager,
-            shader_binding_system,
-            extent,
-            frame_counter,
-        );
+        self.masks.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
+        self.masks = SelectionOutlineMasks::new(resource_ctx, device_ctx, gfx_resource_manager, extent, frame_counter);
     }
 
     fn destroy(
         self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
@@ -224,7 +195,7 @@ impl SelectionOutlineRendererInner {
             present_format: _,
             mut masks,
         } = self;
-        masks.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, reason);
+        masks.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
         pass.destroy(device_ctx);
     }
 }
@@ -234,7 +205,6 @@ impl SelectionOutlineMasks {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        shader_binding_system: &mut ShaderBindingSystem,
         extent: vk::Extent2D,
         frame_counter: &FrameCounter,
     ) -> Self {
@@ -255,9 +225,7 @@ impl SelectionOutlineMasks {
             )
         });
 
-        let masks = Self { images, views, extent };
-        masks.register_bindless(shader_binding_system);
-        masks
+        Self { images, views, extent }
     }
 
     fn target(&self, frame_label: FrameLabel) -> ImageTarget {
@@ -269,27 +237,13 @@ impl SelectionOutlineMasks {
         }
     }
 
-    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        for view in &self.views {
-            shader_binding_system.register_srv(*view);
-        }
-    }
-
-    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        for view in &self.views {
-            shader_binding_system.unregister_srv(*view);
-        }
-    }
-
     fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
-        self.unregister_bindless(shader_binding_system);
         for image in std::mem::take(&mut self.images) {
             gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, image, reason);
         }

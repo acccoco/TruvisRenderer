@@ -6,7 +6,7 @@
 //!
 //! 设计边界：
 //! - `FrameCounter` / `FrameLabel` 仍来自 engine，用来表达当前使用哪个在飞帧槽位。
-//! - 具体图像的用途、格式、bindless 可见性和 resize 生命周期属于 app 层管线策略。
+//! - 具体图像的用途、格式和 resize 生命周期属于 app 层管线策略；shader 可见性由消费它的 pass-local descriptor 表达。
 //! - 本模块不保存 `Gfx` / device / allocator 引用，避免长期资源 owner 反向持有 runtime 能力。
 
 use ash::vk;
@@ -21,7 +21,6 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_render_runtime::bindings::shader_binding_system::ShaderBindingSystem;
 use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
 use truvis_render_runtime::state::frame_state::FrameRenderState;
 
@@ -34,7 +33,7 @@ use truvis_render_runtime::state::frame_state::FrameRenderState;
 pub struct ImageTarget {
     /// manager-owned image handle，用于 RenderGraph import。
     pub image: GfxImageHandle,
-    /// 对应 image view handle；bindless 注册也以 view 为单位。
+    /// 对应 image view handle；具体 pass 在录制时把它写入自己的 descriptor。
     pub view: GfxImageViewHandle,
     /// pass 创建和 RenderGraph import 必须使用同一格式，避免 view 与 pipeline attachment 不一致。
     pub format: vk::Format,
@@ -64,7 +63,7 @@ impl PerFrameImageSet {
         frame_counter: &FrameCounter,
     ) -> Self {
         // image 先创建为未注册的 Vulkan wrapper，方便在同一批 immediate 命令中做初始 layout 转换；
-        // 转换完成后再注册到 manager，后续只通过 handle 暴露给 RenderGraph 和 bindless。
+        // 转换完成后再注册到 manager，后续只通过 handle 暴露给 RenderGraph 和具体 pass。
         let create_one_image = |frame_label: FrameLabel| {
             create_image(
                 resource_ctx,
@@ -78,8 +77,8 @@ impl PerFrameImageSet {
 
         transition_images_to_general(immediate_ctx, &images, &format!("transfer-{}-layout", desc.name_prefix));
 
-        // view 生命周期由 `GfxResourceManager` 跟随 image 释放。owner 只需要保存 view handle，
-        // 并在销毁 image 前把 shader-visible bindless 注册撤掉。
+        // view 生命周期由 `GfxResourceManager` 跟随 image 释放。owner 只保存 view handle；
+        // pass-local descriptor 在 command recording 时按值写入，不形成额外的长期资源 owner。
         let image_handles = images.map(|image| gfx_resource_manager.register_image(image));
         let image_view_handles = FrameCounter::frame_labes().map(|frame_label| {
             gfx_resource_manager.get_or_create_image_view(
@@ -107,30 +106,6 @@ impl PerFrameImageSet {
         }
     }
 
-    fn register_uav(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        for view in &self.views {
-            shader_binding_system.register_uav(*view);
-        }
-    }
-
-    fn register_srv(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        for view in &self.views {
-            shader_binding_system.register_srv(*view);
-        }
-    }
-
-    fn unregister_uav(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        for view in &self.views {
-            shader_binding_system.unregister_uav(*view);
-        }
-    }
-
-    fn unregister_srv(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        for view in &self.views {
-            shader_binding_system.unregister_srv(*view);
-        }
-    }
-
     fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -138,8 +113,8 @@ impl PerFrameImageSet {
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
-        // 调用者必须先完成 bindless 注销；这里仅释放 manager-owned image。
-        // view 会由 manager 在释放 image 时按 image-view-before-image 顺序处理。
+        // view 会由 manager 在释放 image 时按 image-view-before-image 顺序处理。调用方仍必须遵守
+        // resize/shutdown 的 GPU safe point；pass-local descriptor 不改变底层 image 的在飞生命周期。
         for image in std::mem::take(&mut self.images) {
             gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, image, reason);
         }
@@ -155,8 +130,8 @@ impl Drop for PerFrameImageSet {
 /// 单张窗口尺寸图像。
 ///
 /// 这类 target 不随 frame label 轮转，适合保存跨帧持续累积的 pipeline 私有历史。
-/// 调用方必须通过 RenderGraph 为每次读写声明状态；本类型只负责 image/view 生命周期和
-/// bindless 注册，不表达任何跨帧同步语义。
+/// 调用方必须通过 RenderGraph 为每次读写声明状态；本类型只负责 image/view 生命周期，
+/// 不表达 descriptor 绑定或任何跨帧同步语义。
 struct SingleImageTarget {
     image: GfxImageHandle,
     view: GfxImageViewHandle,
@@ -211,22 +186,6 @@ impl SingleImageTarget {
         }
     }
 
-    fn register_uav(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        shader_binding_system.register_uav(self.view);
-    }
-
-    fn register_srv(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        shader_binding_system.register_srv(self.view);
-    }
-
-    fn unregister_uav(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        shader_binding_system.unregister_uav(self.view);
-    }
-
-    fn unregister_srv(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        shader_binding_system.unregister_srv(self.view);
-    }
-
     fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -261,7 +220,6 @@ impl RtWorkingTargets {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        shader_binding_system: &mut ShaderBindingSystem,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
@@ -283,9 +241,7 @@ impl RtWorkingTargets {
             frame_counter,
         );
 
-        let targets = Self { single_frame_rt };
-        targets.register_bindless(shader_binding_system);
-        targets
+        Self { single_frame_rt }
     }
 
     pub fn rebuild(
@@ -293,52 +249,29 @@ impl RtWorkingTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
-        // resize 走 destroy + new，而不是在原 handle 上复用；这样旧尺寸 image/view/bindless slot
-        // 会按明确的 DestroyReason 离开全局表，RenderGraph 下一帧只看到新尺寸 target。
-        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            shader_binding_system,
-            frame_state,
-            frame_counter,
-        );
+        // resize 走 destroy + new，而不是在原 handle 上复用；RenderGraph 下一帧只看到新尺寸 target，
+        // 各 pass 在录制时直接把新 view 写入自己的 local descriptor。
+        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
-        // bindless slot 可能仍被 shader-visible descriptor table 引用；必须先注销 view，
-        // 再释放 manager image，避免后续 descriptor 更新读到已释放的 view handle。
-        self.unregister_bindless(shader_binding_system);
         self.single_frame_rt.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
     }
 
     #[inline]
     pub fn single_frame_rt(&self, frame_label: FrameLabel) -> ImageTarget {
         self.single_frame_rt.target(frame_label)
-    }
-
-    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        self.single_frame_rt.register_uav(shader_binding_system);
-        self.single_frame_rt.register_srv(shader_binding_system);
-    }
-
-    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        self.single_frame_rt.unregister_srv(shader_binding_system);
-        self.single_frame_rt.unregister_uav(shader_binding_system);
     }
 }
 
@@ -363,7 +296,6 @@ impl OfflineTargets {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        shader_binding_system: &mut ShaderBindingSystem,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
@@ -414,13 +346,11 @@ impl OfflineTargets {
             frame_counter,
         );
 
-        let targets = Self {
+        Self {
             single_frame_image,
             accum_image,
             render_target,
-        };
-        targets.register_bindless(shader_binding_system);
-        targets
+        }
     }
 
     pub fn rebuild(
@@ -428,34 +358,21 @@ impl OfflineTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
-        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            shader_binding_system,
-            frame_state,
-            frame_counter,
-        );
+        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
-        // bindless 表项必须先撤销再释放 manager image；否则 GUI/debug 或后续 pass 可能保留
-        // 指向已销毁 view 的 UAV/SRV handle。具体 image/view 释放顺序交给 manager 处理。
-        self.unregister_bindless(shader_binding_system);
         self.single_frame_image.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
         self.accum_image.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
         self.render_target.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
@@ -474,28 +391,6 @@ impl OfflineTargets {
     #[inline]
     pub fn render_target(&self, frame_label: FrameLabel) -> ImageTarget {
         self.render_target.target(frame_label)
-    }
-
-    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        // 离线 target 同时注册 UAV/SRV：RT/compute clear/accum 走 UAV 写入，GUI/debug/present
-        // 相关路径以 SRV 读取。注册集中在 owner 内，避免 pass 层临时改动全局 bindless 表。
-        self.single_frame_image.register_uav(shader_binding_system);
-        self.single_frame_image.register_srv(shader_binding_system);
-        self.accum_image.register_uav(shader_binding_system);
-        self.accum_image.register_srv(shader_binding_system);
-        self.render_target.register_uav(shader_binding_system);
-        self.render_target.register_srv(shader_binding_system);
-    }
-
-    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        // 注销顺序与注册顺序不承担同步语义；关键不变量是所有 shader-visible view
-        // 在 image 释放前都已从 bindless 系统移除。
-        self.single_frame_image.unregister_srv(shader_binding_system);
-        self.single_frame_image.unregister_uav(shader_binding_system);
-        self.accum_image.unregister_srv(shader_binding_system);
-        self.accum_image.unregister_uav(shader_binding_system);
-        self.render_target.unregister_srv(shader_binding_system);
-        self.render_target.unregister_uav(shader_binding_system);
     }
 }
 
@@ -570,7 +465,6 @@ impl RestirDiTargets {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        _shader_binding_system: &mut ShaderBindingSystem,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
@@ -618,28 +512,18 @@ impl RestirDiTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
-        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            shader_binding_system,
-            frame_state,
-            frame_counter,
-        );
+        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        _shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
@@ -849,12 +733,11 @@ impl DlssSrInputTargets {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        shader_binding_system: &mut ShaderBindingSystem,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
-        // raygen 通过 UAV 写入，Debug Viewer 通过 SRV 采样；Streamline evaluate 则直接使用
-        // 原始 image/view handle 做 resource tag，不经过 bindless descriptor。
+        // raygen 和 Debug Viewer 分别通过自己的 pass-local descriptor 写入/采样；Streamline evaluate
+        // 直接使用原始 image/view handle 做 resource tag。
         let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
         let depth = PerFrameImageSet::new(
             resource_ctx,
@@ -883,9 +766,7 @@ impl DlssSrInputTargets {
             frame_counter,
         );
 
-        let targets = Self { depth, motion_vectors };
-        targets.register_bindless(shader_binding_system);
-        targets
+        Self { depth, motion_vectors }
     }
 
     pub fn rebuild(
@@ -893,33 +774,21 @@ impl DlssSrInputTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
-        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            shader_binding_system,
-            frame_state,
-            frame_counter,
-        );
+        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
-        // SR input 同时注册 UAV/SRV；销毁前必须对两个 bindless 表都撤销注册。
-        self.unregister_bindless(shader_binding_system);
         self.depth.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
         self.motion_vectors.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
     }
@@ -932,20 +801,6 @@ impl DlssSrInputTargets {
     #[inline]
     pub fn motion_vectors(&self, frame_label: FrameLabel) -> ImageTarget {
         self.motion_vectors.target(frame_label)
-    }
-
-    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        self.depth.register_uav(shader_binding_system);
-        self.depth.register_srv(shader_binding_system);
-        self.motion_vectors.register_uav(shader_binding_system);
-        self.motion_vectors.register_srv(shader_binding_system);
-    }
-
-    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        self.depth.unregister_srv(shader_binding_system);
-        self.depth.unregister_uav(shader_binding_system);
-        self.motion_vectors.unregister_srv(shader_binding_system);
-        self.motion_vectors.unregister_uav(shader_binding_system);
     }
 }
 
@@ -1056,7 +911,6 @@ impl DlssRrInputTargets {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        shader_binding_system: &mut ShaderBindingSystem,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
@@ -1101,13 +955,11 @@ impl DlssRrInputTargets {
             frame_counter,
         );
 
-        let targets = Self {
+        Self {
             diffuse_albedo,
             specular_albedo,
             specular_motion_vectors,
-        };
-        targets.register_bindless(shader_binding_system);
-        targets
+        }
     }
 
     pub fn rebuild(
@@ -1115,32 +967,21 @@ impl DlssRrInputTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
-        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            shader_binding_system,
-            frame_state,
-            frame_counter,
-        );
+        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
-        self.unregister_bindless(shader_binding_system);
         self.diffuse_albedo.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
         self.specular_albedo.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
         self.specular_motion_vectors.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
@@ -1159,24 +1000,6 @@ impl DlssRrInputTargets {
     #[inline]
     pub fn specular_motion_vectors(&self, frame_label: FrameLabel) -> ImageTarget {
         self.specular_motion_vectors.target(frame_label)
-    }
-
-    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        self.diffuse_albedo.register_uav(shader_binding_system);
-        self.diffuse_albedo.register_srv(shader_binding_system);
-        self.specular_albedo.register_uav(shader_binding_system);
-        self.specular_albedo.register_srv(shader_binding_system);
-        self.specular_motion_vectors.register_uav(shader_binding_system);
-        self.specular_motion_vectors.register_srv(shader_binding_system);
-    }
-
-    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        self.diffuse_albedo.unregister_srv(shader_binding_system);
-        self.diffuse_albedo.unregister_uav(shader_binding_system);
-        self.specular_albedo.unregister_srv(shader_binding_system);
-        self.specular_albedo.unregister_uav(shader_binding_system);
-        self.specular_motion_vectors.unregister_srv(shader_binding_system);
-        self.specular_motion_vectors.unregister_uav(shader_binding_system);
     }
 }
 
@@ -1203,7 +1026,6 @@ impl DlssOutputTargets {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        shader_binding_system: &mut ShaderBindingSystem,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
@@ -1226,9 +1048,7 @@ impl DlssOutputTargets {
             frame_counter,
         );
 
-        let targets = Self { color };
-        targets.register_bindless(shader_binding_system);
-        targets
+        Self { color }
     }
 
     pub fn rebuild(
@@ -1236,48 +1056,27 @@ impl DlssOutputTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
-        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            shader_binding_system,
-            frame_state,
-            frame_counter,
-        );
+        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
-        self.unregister_bindless(shader_binding_system);
         self.color.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
     }
 
     #[inline]
     pub fn color(&self, frame_label: FrameLabel) -> ImageTarget {
         self.color.target(frame_label)
-    }
-
-    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        self.color.register_uav(shader_binding_system);
-        self.color.register_srv(shader_binding_system);
-    }
-
-    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        self.color.unregister_srv(shader_binding_system);
-        self.color.unregister_uav(shader_binding_system);
     }
 }
 
@@ -1303,7 +1102,6 @@ impl MainViewTargets {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        shader_binding_system: &mut ShaderBindingSystem,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) -> Self {
@@ -1325,9 +1123,7 @@ impl MainViewTargets {
         );
         let depth = create_depth_target(resource_ctx, device_ctx, gfx_resource_manager, frame_state, frame_counter);
 
-        let targets = Self { color, depth };
-        targets.register_bindless(shader_binding_system);
-        targets
+        Self { color, depth }
     }
 
     pub fn rebuild(
@@ -1335,32 +1131,21 @@ impl MainViewTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
         frame_counter: &FrameCounter,
     ) {
-        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            shader_binding_system,
-            frame_state,
-            frame_counter,
-        );
+        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
-        self.unregister_bindless(shader_binding_system);
         self.color.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
         gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, self.depth.image, reason);
         self.depth = ImageTarget::default();
@@ -1374,18 +1159,6 @@ impl MainViewTargets {
     #[inline]
     pub fn depth(&self) -> ImageTarget {
         self.depth
-    }
-
-    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        // main view color 既可能被 compute/post-process 写入，也会在 present/GUI 合成阶段被读取；
-        // 因此同时注册 UAV 和 SRV。depth target 只作为 attachment 使用，不进入 bindless。
-        self.color.register_uav(shader_binding_system);
-        self.color.register_srv(shader_binding_system);
-    }
-
-    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        self.color.unregister_uav(shader_binding_system);
-        self.color.unregister_srv(shader_binding_system);
     }
 }
 
@@ -1468,7 +1241,7 @@ fn create_image(
 }
 
 fn transition_images_to_general(immediate_ctx: GfxImmediateCtx<'_>, images: &[GfxImage], label: &str) {
-    // storage/bindless target 在本项目里以 GENERAL 作为初始稳定布局，
+    // storage target 在本项目里以 GENERAL 作为初始稳定布局，
     // 后续精确读写状态由 RenderGraph 在每帧导入后继续接管。
     immediate_ctx.one_time_exec(
         |cmd| {

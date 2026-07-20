@@ -43,8 +43,9 @@ Vulkan RHI 抽象层，封装设备、队列、资源、同步与图形/计算/�
 
 - typed Ctx 把 Vulkan 能力按阶段拆窄：resource allocation、descriptor/pipeline、queue submit、surface/swapchain、device info 和 immediate helper 分别使用对应 context。
 - `GfxDevice` 统一启用 bindless descriptor indexing 与 sampled / storage image 的 non-uniform array indexing；
-  shader 侧通过 `NonUniformResourceIndex` 动态访问 `bindless_textures[]`、`bindless_uavs[]` 和
-  `bindless_srvs[]` 时依赖该 logical device feature 契约。
+  当前全局 bindless 只保留 `bindless_srvs[]`，shader 通过 `NonUniformResourceIndex` 按 Material/Scene
+  数据动态访问 asset texture/sky 时依赖该 logical device feature 契约。pass-local storage/sampled descriptor
+  不依赖全局 slot，但仍复用同一套 Vulkan descriptor 基础能力。
 - 长期资源对象不保存 `&Gfx`、`&GfxDevice` 或 allocator 引用，销毁依赖由 owner 在调用点传入。
 - `Drop` 只做遗漏销毁诊断，避免在不可控 drop 顺序中调用 Vulkan/VMA/WSI release API。
 

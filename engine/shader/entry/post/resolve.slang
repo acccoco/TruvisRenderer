@@ -1,10 +1,9 @@
 #include "api/pass/resolve.slangi"
-#include "lib/core/bindless.slangi"
 
 /// graphics resolve 入口。
 ///
 /// vertex shader 在目标 color attachment 上生成一个指定像素区域的 quad；fragment shader 从
-/// bindless SRV 采样源图像。它用于把 main view、DLSS output 或 debug image 合成到 swapchain。
+/// pass-local sampled image descriptor 采样源图像。它用于把 main view、DLSS output 或 debug image 合成到 swapchain。
 [[vk::push_constant]]
 resolve::PushConstant g_params;
 
@@ -69,10 +68,5 @@ VsOutput vsmain(uint vertexID: SV_VertexID)
 float4 psmain(VsOutput input)
     : SV_Target
 {
-    // 使用 NonUniformResourceIndex 处理 divergent indexing
-    return BindlessSrv::sample(
-        g_params.src_texture,
-        input.uv,
-        g_params.sampler_type
-    );
+    return resolve::src_texture.Sample(global_samplers[bindless::ESamplerType::LinearClamp], input.uv);
 }

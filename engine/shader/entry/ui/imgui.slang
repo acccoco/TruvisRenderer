@@ -1,5 +1,4 @@
 #include "api/pass/ui_imgui.slangi"
-#include "lib/core/bindless.slangi"
 
 /// ImGui Vulkan backend shader。
 ///
@@ -67,10 +66,9 @@ PsOutput psmain(PsInput input)
     output.color =
         // ImGui 颜色已经包含 style/alpha，texture alpha 再决定字体或 image 的实际覆盖。
         input.coarse_vertex.color *
-        BindlessSrv::sample_level(
-            push_constant.texture,
+        ui_imgui::texture.SampleLevel(
+            global_samplers[bindless::ESamplerType::LinearRepeat],
             input.coarse_vertex.uv,
-            push_constant.texture_sampler_type,
             0.0
         );
     return output;

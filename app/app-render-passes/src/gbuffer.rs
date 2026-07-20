@@ -24,14 +24,12 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_render_runtime::bindings::shader_binding_system::ShaderBindingSystem;
 use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
 
 /// RT 管线使用的 GBuffer 资源集合。
 ///
-/// 持有三个通道（A/B/C）的 per-FIF storage image 和对应 image view，
-/// 以及它们在 `ShaderBindingSystem` 中的 UAV 注册。RT raygen pass 写入，
-/// denoise/accum compute pass 通过 bindless UAV 读取；调试 UI 通过 SRV 采样当前帧内容。
+/// 持有三个通道（A/B/C）的 per-FIF storage image 和对应 image view。RT raygen pass 通过
+/// pass-local descriptor 写入；调试 UI 只在显示当前图像时通过自己的 descriptor 采样。
 ///
 /// 格式和通道语义是管线策略决策，由 app 层决定，不属于 engine 基础设施。
 pub struct GBuffer {
@@ -53,7 +51,6 @@ impl GBuffer {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        shader_binding_system: &mut ShaderBindingSystem,
         extent: vk::Extent2D,
         frame_counter: &FrameCounter,
     ) -> Self {
@@ -88,7 +85,7 @@ impl GBuffer {
             "gbuffer-c",
         );
 
-        let gbuffer = Self {
+        Self {
             a_images,
             a_views,
             b_images,
@@ -96,9 +93,7 @@ impl GBuffer {
             c_images,
             c_views,
             extent,
-        };
-        gbuffer.register_bindless(shader_binding_system);
-        gbuffer
+        }
     }
 
     /// 窗口尺寸变化时重建所有 GBuffer 资源。
@@ -107,34 +102,22 @@ impl GBuffer {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         extent: vk::Extent2D,
         frame_counter: &FrameCounter,
     ) {
-        self.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_manager,
-            shader_binding_system,
-            extent,
-            frame_counter,
-        );
+        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, extent, frame_counter);
     }
 
-    /// 释放所有 GBuffer GPU 资源并取消 bindless 注册。
+    /// 释放所有 GBuffer GPU 资源。
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        shader_binding_system: &mut ShaderBindingSystem,
         gfx_resource_manager: &mut GfxResourceManager,
         reason: DestroyReason,
     ) {
-        self.unregister_bindless(shader_binding_system);
-
         for image in std::mem::take(&mut self.a_images) {
             gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, image, reason);
         }
@@ -148,39 +131,6 @@ impl GBuffer {
         self.a_views = Default::default();
         self.b_views = Default::default();
         self.c_views = Default::default();
-    }
-}
-
-// Bindless 注册
-impl GBuffer {
-    fn register_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        for view in &self.a_views {
-            shader_binding_system.register_uav(*view);
-            shader_binding_system.register_srv(*view);
-        }
-        for view in &self.b_views {
-            shader_binding_system.register_uav(*view);
-            shader_binding_system.register_srv(*view);
-        }
-        for view in &self.c_views {
-            shader_binding_system.register_uav(*view);
-            shader_binding_system.register_srv(*view);
-        }
-    }
-
-    fn unregister_bindless(&self, shader_binding_system: &mut ShaderBindingSystem) {
-        for view in &self.a_views {
-            shader_binding_system.unregister_srv(*view);
-            shader_binding_system.unregister_uav(*view);
-        }
-        for view in &self.b_views {
-            shader_binding_system.unregister_srv(*view);
-            shader_binding_system.unregister_uav(*view);
-        }
-        for view in &self.c_views {
-            shader_binding_system.unregister_srv(*view);
-            shader_binding_system.unregister_uav(*view);
-        }
     }
 }
 

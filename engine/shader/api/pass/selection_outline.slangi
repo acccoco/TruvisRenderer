@@ -7,6 +7,14 @@
 namespace selection_outline
 {
 
+/// Selection composite pass-local descriptor set。mask pipeline 不使用该 set。
+#define SELECTION_OUTLINE_COMPOSITE_SET_NUM GLOBAL_SETS_COUNT
+
+#ifdef __SLANG__
+[[vk::binding(0, SELECTION_OUTLINE_COMPOSITE_SET_NUM)]]
+Texture2D<float> mask_texture;
+#endif
+
 /// mask pass 每次 draw 更新的最小 push constant。
 ///
 /// frame data 与 GPU scene 通过全局 set 2 读取，避免把 UBO 当成 buffer device address
@@ -23,16 +31,18 @@ struct MaskPushConstant
 /// composite pass 的全屏采样参数。
 ///
 /// `target_size` 位于 8 字节边界，`color` 位于 16 字节边界；末尾 padding
-/// 明确补齐到 48 字节，避免 Slang / SPIR-V 与 Rust 侧对 `float3` padding 产生分歧。
+/// 使用三个 scalar 明确补齐到 48 字节，避免 `float3` 在 Slang std430 与 C ABI 中对齐不同。
 struct CompositePushConstant
 {
-    bindless::SrvHandle mask_texture;
-    bindless::ESamplerType sampler_type;
     float2 target_size;
+    /// 使后续 `color` 从 16 字节边界开始。
+    float2 _padding_0;
     float4 color;
     float radius_px;
-    float _padding_0;
-    float2 _padding_1;
+    /// 显式补齐到 48 字节；不能合并为 `float3`，否则 SPIR-V 会把它对齐到 16 字节边界。
+    float _padding_1;
+    float _padding_2;
+    float _padding_3;
 };
 
 };

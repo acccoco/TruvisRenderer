@@ -412,7 +412,6 @@ impl RtPipelineInner {
             ctx.device_ctx,
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
-            &mut *ctx.shader_binding_system,
             &target_frame_state,
             ctx.frame_timing.frame_counter(),
         );
@@ -421,7 +420,6 @@ impl RtPipelineInner {
             ctx.device_ctx,
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
-            &mut *ctx.shader_binding_system,
             &target_frame_state,
             ctx.frame_timing.frame_counter(),
         );
@@ -430,7 +428,6 @@ impl RtPipelineInner {
             ctx.device_ctx,
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
-            &mut *ctx.shader_binding_system,
             &target_frame_state,
             ctx.frame_timing.frame_counter(),
         );
@@ -439,7 +436,6 @@ impl RtPipelineInner {
             ctx.device_ctx,
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
-            &mut *ctx.shader_binding_system,
             &target_frame_state,
             ctx.frame_timing.frame_counter(),
         );
@@ -455,7 +451,6 @@ impl RtPipelineInner {
             ctx.device_ctx,
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
-            &mut *ctx.shader_binding_system,
             &target_frame_state,
             ctx.frame_timing.frame_counter(),
         );
@@ -464,7 +459,6 @@ impl RtPipelineInner {
             ctx.device_ctx,
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
-            &mut *ctx.shader_binding_system,
             &target_frame_state,
             ctx.frame_timing.frame_counter(),
         );
@@ -474,7 +468,6 @@ impl RtPipelineInner {
             ctx.device_ctx,
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
-            &mut *ctx.shader_binding_system,
             target_frame_state.render_extent,
             ctx.frame_timing.frame_counter(),
         );
@@ -507,7 +500,7 @@ impl RtPipelineInner {
     }
 
     fn destroy(mut self, ctx: &mut PluginShutdownCtx<'_>) {
-        // pass pipeline 本身只依赖 device；target image/view 依赖 resource manager 和 bindless。
+        // pass pipeline 本身只依赖 device；target image/view 依赖 resource manager。
         // shutdown 阶段 runtime 已经 wait idle，先销毁 pipeline 再释放 target 不会影响 GPU 引用安全，
         // 但 target 仍必须在 runtime `GfxResourceManager` 销毁前显式释放。
         self.realtime_rt_pass.destroy(ctx.resource_ctx, ctx.device_ctx);
@@ -515,24 +508,16 @@ impl RtPipelineInner {
         self.dlss_rr_pass.destroy();
         self.sdr_pass.destroy(ctx.device_ctx);
         self.resolve_pass.destroy(ctx.device_ctx);
-        self.gbuffer.destroy(
-            ctx.resource_ctx,
-            ctx.device_ctx,
-            &mut *ctx.shader_binding_system,
-            &mut *ctx.gfx_resource_manager,
-            DestroyReason::Shutdown,
-        );
+        self.gbuffer.destroy(ctx.resource_ctx, ctx.device_ctx, &mut *ctx.gfx_resource_manager, DestroyReason::Shutdown);
         self.rt_targets.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
-            &mut *ctx.shader_binding_system,
             &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
         self.restir_di_targets.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
-            &mut *ctx.shader_binding_system,
             &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
@@ -540,7 +525,6 @@ impl RtPipelineInner {
         self.dlss_sr_inputs.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
-            &mut *ctx.shader_binding_system,
             &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
@@ -553,21 +537,18 @@ impl RtPipelineInner {
         self.dlss_rr_inputs.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
-            &mut *ctx.shader_binding_system,
             &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
         self.dlss_outputs.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
-            &mut *ctx.shader_binding_system,
             &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
         self.main_view_targets.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
-            &mut *ctx.shader_binding_system,
             &mut *ctx.gfx_resource_manager,
             DestroyReason::Shutdown,
         );
@@ -589,7 +570,6 @@ impl Plugin for RtPipeline {
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
-                &mut *ctx.shader_binding_system,
                 &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
                 ctx.frame_timing.frame_counter(),
@@ -598,7 +578,6 @@ impl Plugin for RtPipeline {
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
-                &mut *ctx.shader_binding_system,
                 &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
                 ctx.frame_timing.frame_counter(),
@@ -607,7 +586,6 @@ impl Plugin for RtPipeline {
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
-                &mut *ctx.shader_binding_system,
                 &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
                 ctx.frame_timing.frame_counter(),
@@ -616,7 +594,6 @@ impl Plugin for RtPipeline {
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
-                &mut *ctx.shader_binding_system,
                 &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
                 ctx.frame_timing.frame_counter(),
@@ -625,7 +602,6 @@ impl Plugin for RtPipeline {
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
-                &mut *ctx.shader_binding_system,
                 &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
                 ctx.frame_timing.frame_counter(),
@@ -634,7 +610,6 @@ impl Plugin for RtPipeline {
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
-                &mut *ctx.shader_binding_system,
                 &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
                 ctx.frame_timing.frame_counter(),
@@ -643,7 +618,6 @@ impl Plugin for RtPipeline {
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
-                &mut *ctx.shader_binding_system,
                 &mut *ctx.gfx_resource_manager,
                 target_frame_state.render_extent,
                 ctx.frame_timing.frame_counter(),

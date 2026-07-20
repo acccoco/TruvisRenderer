@@ -6,7 +6,6 @@
 /// 重新生成绑定时稳定覆盖所有 CPU/GPU 共享类型。
 #include "api/common/mod.slangi"
 
-#include "api/pass/denoise_accum.slangi"
 #include "api/pass/image_clear.slangi"
 #include "api/pass/offline_rt.slangi"
 #include "api/pass/post_accum.slangi"
@@ -16,5 +15,4 @@
 #include "api/pass/resolve.slangi"
 #include "api/pass/sdr.slangi"
 #include "api/pass/selection_outline.slangi"
-#include "api/pass/ui_blit.slangi"
 #include "api/pass/ui_imgui.slangi"

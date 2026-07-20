@@ -1,7 +1,9 @@
 use ash::vk;
 
+use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxDeviceCtx;
+use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
@@ -13,7 +15,7 @@ use crate::compute_pass::ComputePass;
 
 /// 清理单张 storage image 所需的 CPU 侧参数。
 ///
-/// `dst_image` 必须已经在 bindless 系统中注册为 UAV；`image_extent` 是本次 dispatch 的有效写入区域，
+/// `dst_image` 由当前 dispatch 的 pass-local descriptor 绑定；`image_extent` 是本次 dispatch 的有效写入区域，
 /// 不隐含完整 allocation 尺寸。越界线程由 shader 侧保护。
 pub struct ImageClearPassData {
     pub dst_image: GfxImageViewHandle,
@@ -23,17 +25,27 @@ pub struct ImageClearPassData {
 
 /// 单张 storage image 的确定颜色清理 pass。
 ///
-/// 该 pass 只封装 bindless UAV 与 compute dispatch 细节；图像所有权、layout transition
+/// 该 pass 只封装 pass-local storage image descriptor 与 compute dispatch；图像所有权、layout transition
 /// 和跨 pass 同步仍由调用方通过 RenderGraph 声明。
+#[derive(DescriptorBinding)]
+struct ImageClearDescriptorBinding {
+    #[binding = 0]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "COMPUTE"]
+    #[count = 1]
+    _dst_image: (),
+}
+
 pub struct ImageClearPass {
-    clear_pass: ComputePass<gpu::image_clear::PushConstant>,
+    clear_pass: ComputePass<gpu::image_clear::PushConstant, ImageClearDescriptorBinding>,
 }
 
 impl ImageClearPass {
     pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets) -> Self {
-        let clear_pass = ComputePass::<gpu::image_clear::PushConstant>::new(
+        let clear_pass = ComputePass::<gpu::image_clear::PushConstant, ImageClearDescriptorBinding>::new(
             ctx,
             render_descriptor_sets,
+            gpu::IMAGE_CLEAR_SET_NUM,
             c"main",
             TruvisPath::shader_build_path_str("post/image_clear.slang").as_str(),
         );
@@ -46,17 +58,26 @@ impl ImageClearPass {
     }
 
     pub fn exec(&self, cmd: &GfxCommandBuffer, data: ImageClearPassData, record_ctx: &RenderPassRecordCtx<'_>) {
-        let dst_image_bindless_handle = record_ctx.shader_bindings.get_shader_uav_handle(data.dst_image);
+        let dst_view = record_ctx
+            .gfx_resource_manager
+            .get_image_view(data.dst_image)
+            .expect("ImageClearPass: dst image view not found")
+            .handle();
+        let descriptor_writes = [ImageClearDescriptorBinding::dst_image().write_image(
+            vk::DescriptorSet::null(),
+            0,
+            vec![vk::DescriptorImageInfo::default().image_layout(vk::ImageLayout::GENERAL).image_view(dst_view)],
+        )];
         let frame_label = record_ctx.frame_timing.frame_label();
         self.clear_pass.exec(
             cmd,
             frame_label,
             record_ctx.shader_bindings.global_descriptor_sets(),
+            &descriptor_writes,
             &gpu::image_clear::PushConstant {
                 clear_color: data.clear_color.into(),
-                dst_image: dst_image_bindless_handle.0,
-                _padding_0: 0,
                 image_size: glam::uvec2(data.image_extent.width, data.image_extent.height).into(),
+                _padding_0: glam::UVec2::ZERO.into(),
             },
             glam::uvec3(
                 data.image_extent.width.div_ceil(gpu::image_clear::SHADER_X as u32),

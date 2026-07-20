@@ -627,7 +627,7 @@ impl RenderAppHooks for TruvisApp {
 
         self.gui.begin_debug_image_frame();
         // debug image 的来源跟随当前模式选择。App 只把所选 pipeline 的图像交给 GUI，
-        // 图像生命周期、layout 导出和 bindless 注册仍由各 pipeline 自己维护。
+        // 图像生命周期和 layout 导出仍由各 pipeline 自己维护；GUI 只做本次 draw 的局部绑定。
         let debug_images = match self.render_mode {
             RenderMode::Realtime => self.rt_pipeline.collect_debug_images(frame_label, *ctx.record_ctx.dlss_options),
             RenderMode::Offline => self.offline_pipeline.collect_debug_images(frame_label),

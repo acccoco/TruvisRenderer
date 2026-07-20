@@ -3,21 +3,27 @@
 namespace sdr
 {
 
+/// SDR pass-local descriptor set。src/dst 的具体 image 由 CPU 录制当前 dispatch 时确定。
+#define SDR_SET_NUM GLOBAL_SETS_COUNT
+
+#ifdef __SLANG__
+[[vk::binding(0, SDR_SET_NUM)]]
+RWTexture2D<float4> src_image;
+
+[[vk::binding(1, SDR_SET_NUM)]]
+RWTexture2D<float4> dst_image;
+#endif
+
 /// SDR compute pass 的线程组尺寸。Rust 侧 dispatch 会按该尺寸向上取整。
 static const int SHADER_X = 8;
 static const int SHADER_Y = 8;
 
 /// HDR -> SDR / debug channel 输出参数。
 ///
-/// src/dst 都是 bindless UAV，是因为 native、DLSS SR/RR 和调试路径会把不同中间图作为
-/// storage image 传入；RenderGraph 负责声明这些 image 的读写状态。
+/// native、DLSS SR/RR 和调试路径可传入不同中间图；image 身份通过 pass-local descriptor
+/// 绑定，RenderGraph 负责声明这些 image 的读写状态。
 struct PushConstant
 {
-    /// HDR 源图像或 debug 源图像。
-    bindless::UavHandle src_image;
-    /// SDR 目标图像。
-    bindless::UavHandle dst_image;
-
     /// 目标有效尺寸；SR 开启时源/目标尺寸可能不同，shader 以目标尺寸做 OOB 保护。
     uint2 image_size;
     /// RT debug channel。Final 通道做 tone mapping，其它通道保持调试值语义。

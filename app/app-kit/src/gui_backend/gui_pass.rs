@@ -7,9 +7,12 @@ use enum_map::{Enum, EnumMap, enum_map};
 use imgui::TextureId;
 use itertools::Itertools;
 
+use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
+use truvis_gfx::descriptors::descriptor::GfxDescriptorSetLayout;
 use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_gfx::resources::layout::GfxVertexLayout;
+use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_gfx::{
     commands::command_buffer::GfxCommandBuffer,
     pipelines::{
@@ -20,10 +23,9 @@ use truvis_gfx::{
 use truvis_path::TruvisPath;
 use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::handles::GfxImageViewHandle;
-use truvis_render_runtime::bindings::bindless_manager::BindlessManager;
+use truvis_render_foundation::resource_access::GfxResourceAccess;
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_shader_binding::gpu;
-use truvis_shader_binding::gpu::bindless::SrvHandle;
 
 use super::gui_mesh::GuiMesh;
 use super::gui_vertex_layout::ImGuiVertexLayoutAoS;
@@ -49,16 +51,37 @@ static SHADER_STAGES: LazyLock<EnumMap<ShaderStage, GfxShaderStageInfo>> = LazyL
     }
 });
 
+/// GUI draw-local sampled image descriptor。
+///
+/// ImGui `TextureId` 由 CPU 在每个 draw command 上解析，因此 texture 不需要进入全局 bindless 表。
+#[derive(DescriptorBinding)]
+struct GuiDescriptorBinding {
+    #[binding = 0]
+    #[descriptor_type = "SAMPLED_IMAGE"]
+    #[stage = "FRAGMENT"]
+    #[count = 1]
+    _texture: (),
+}
+
 pub struct GuiPass {
     pipeline: GfxGraphicsPipeline,
     pipeline_layout: Rc<GfxPipelineLayout>,
+    descriptor_set_layout: GfxDescriptorSetLayout<GuiDescriptorBinding>,
 }
 // 创建与初始化
 impl GuiPass {
     pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets, color_format: vk::Format) -> Self {
+        let descriptor_set_layout = GfxDescriptorSetLayout::<GuiDescriptorBinding>::new(
+            ctx,
+            vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR,
+            "ui-pass-local-descriptor-layout",
+        );
+        let mut descriptor_set_layouts = render_descriptor_sets.global_set_layouts();
+        assert_eq!(gpu::UI_IMGUI_SET_NUM, descriptor_set_layouts.len() as u32);
+        descriptor_set_layouts.push(descriptor_set_layout.handle());
         let pipeline_layout = Rc::new(GfxPipelineLayout::new(
             ctx,
-            &render_descriptor_sets.global_set_layouts(),
+            &descriptor_set_layouts,
             &[vk::PushConstantRange {
                 stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 offset: 0,
@@ -100,12 +123,14 @@ impl GuiPass {
         Self {
             pipeline,
             pipeline_layout,
+            descriptor_set_layout,
         }
     }
 
     pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
         self.pipeline.destroy(ctx);
         self.pipeline_layout.destroy(ctx);
+        self.descriptor_set_layout.destroy(ctx);
     }
 }
 // 绘制
@@ -114,7 +139,7 @@ impl GuiPass {
         &self,
         frame_label: FrameLabel,
         global_descriptor_sets: &GlobalDescriptorSets,
-        bindless_manager: &BindlessManager,
+        gfx_resource_manager: &dyn GfxResourceAccess,
         canvas_color_view: vk::ImageView,
         canvas_extent: vk::Extent2D,
         cmd: &GfxCommandBuffer,
@@ -145,7 +170,7 @@ impl GuiPass {
         cmd.cmd_bind_pipeline(vk::PipelineBindPoint::GRAPHICS, self.pipeline.handle());
         cmd.cmd_set_viewport(0, std::slice::from_ref(&viewport));
 
-        let mut push_constant = gpu::ui_imgui::PushConstant {
+        let push_constant = gpu::ui_imgui::PushConstant {
             ortho: glam::Mat4::orthographic_rh(
                 0.0,
                 draw_data.display_size[0],
@@ -155,12 +180,6 @@ impl GuiPass {
                 1.0,
             )
             .into(),
-            texture: SrvHandle {
-                index: gpu::bindless::INVALID_TEX_ID,
-            },
-            texture_sampler_type: gpu::bindless::ESamplerType_LinearRepeat,
-            _padding_0: Default::default(),
-            _padding_1: Default::default(),
         };
 
         cmd.bind_descriptor_sets(
@@ -226,16 +245,26 @@ impl GuiPass {
                                 log::warn!("GuiPass: missing texture id {:?}", texture_id);
                                 continue;
                             };
-                            let srv_bindless_handle =
-                                bindless_manager.get_shader_srv_handle(*texture_image_view_handle);
-
-                            push_constant.texture = srv_bindless_handle.0;
-
-                            cmd.cmd_push_constants(
-                                self.pipeline_layout.handle(),
-                                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                            let Some(texture_image_view) =
+                                gfx_resource_manager.get_image_view(*texture_image_view_handle)
+                            else {
+                                log::warn!("GuiPass: missing image view for texture id {:?}", texture_id);
+                                continue;
+                            };
+                            let descriptor_writes = [GuiDescriptorBinding::texture().write_image(
+                                vk::DescriptorSet::null(),
                                 0,
-                                BytesConvert::bytes_of(&push_constant),
+                                vec![
+                                    vk::DescriptorImageInfo::default()
+                                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                                        .image_view(texture_image_view.handle()),
+                                ],
+                            )];
+                            cmd.push_descriptor_set(
+                                vk::PipelineBindPoint::GRAPHICS,
+                                self.pipeline_layout.handle(),
+                                gpu::UI_IMGUI_SET_NUM,
+                                &descriptor_writes,
                             );
                             last_texture_id = Some(texture_id);
                         }

@@ -1,12 +1,8 @@
 use ash::vk;
 
-use truvis_gfx::descriptors::descriptor::GfxDescriptorSet;
 use truvis_gfx::gfx::GfxDeviceCtx;
 
-use crate::bindings::bindless_manager::{BindlessManager, BindlessSrvHandle, BindlessUavHandle};
-use crate::bindings::descriptor_bindings::{
-    BindlessDescriptorBinding, PerFrameDescriptorBinding, StaticDescriptorBinding,
-};
+use crate::bindings::bindless_manager::{BindlessManager, BindlessSrvHandle};
 use crate::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use crate::bindings::sampler_manager::RenderSamplerManager;
 use crate::resources::gfx_resource_manager::GfxResourceManager;
@@ -70,23 +66,8 @@ impl ShaderBindingSystem {
     }
 
     #[inline]
-    pub fn register_uav(&mut self, image_view_handle: GfxImageViewHandle) {
-        self.bindless_manager.register_uav(image_view_handle);
-    }
-
-    #[inline]
-    pub fn unregister_uav(&mut self, image_view_handle: GfxImageViewHandle) {
-        self.bindless_manager.unregister_uav(image_view_handle);
-    }
-
-    #[inline]
     pub fn get_shader_srv_handle(&self, image_view_handle: GfxImageViewHandle) -> BindlessSrvHandle {
         self.bindless_manager.get_shader_srv_handle(image_view_handle)
-    }
-
-    #[inline]
-    pub fn get_shader_uav_handle(&self, image_view_handle: GfxImageViewHandle) -> BindlessUavHandle {
-        self.bindless_manager.get_shader_uav_handle(image_view_handle)
     }
 
     #[inline]
@@ -98,30 +79,23 @@ impl ShaderBindingSystem {
     pub fn view(&self) -> ShaderBindingView<'_> {
         ShaderBindingView {
             global_descriptor_sets: &self.global_descriptor_sets,
-            bindless_manager: &self.bindless_manager,
         }
     }
 }
 
 /// render/pass 阶段可见的只读 shader binding 视图。
 ///
-/// 它允许 pass 查询全局 descriptor set 与 shader-visible bindless handle，
-/// 但不允许注册、注销或刷新 descriptor。
+/// 它只允许 pass 绑定全局 descriptor sets；固定管线资源必须由 pass-local descriptor 表达，
+/// 因此 render 阶段不暴露 bindless manager 或 image-view 到 slot 的查询能力。
 #[derive(Clone, Copy)]
 pub struct ShaderBindingView<'a> {
     global_descriptor_sets: &'a GlobalDescriptorSets,
-    bindless_manager: &'a BindlessManager,
 }
 
 impl ShaderBindingView<'_> {
     #[inline]
     pub fn global_descriptor_sets(&self) -> &GlobalDescriptorSets {
         self.global_descriptor_sets
-    }
-
-    #[inline]
-    pub fn bindless_manager(&self) -> &BindlessManager {
-        self.bindless_manager
     }
 
     #[inline]
@@ -132,30 +106,5 @@ impl ShaderBindingView<'_> {
     #[inline]
     pub fn global_sets(&self, frame_label: FrameLabel) -> Vec<vk::DescriptorSet> {
         self.global_descriptor_sets.global_sets(frame_label)
-    }
-
-    #[inline]
-    pub fn current_perframe_set(&self, frame_label: FrameLabel) -> &GfxDescriptorSet<PerFrameDescriptorBinding> {
-        self.global_descriptor_sets.current_perframe_set(frame_label)
-    }
-
-    #[inline]
-    pub fn sampler_set(&self) -> &GfxDescriptorSet<StaticDescriptorBinding> {
-        self.global_descriptor_sets.sampler_set()
-    }
-
-    #[inline]
-    pub fn bindless_set(&self) -> &GfxDescriptorSet<BindlessDescriptorBinding> {
-        self.global_descriptor_sets.bindless_set()
-    }
-
-    #[inline]
-    pub fn get_shader_srv_handle(&self, image_view_handle: GfxImageViewHandle) -> BindlessSrvHandle {
-        self.bindless_manager.get_shader_srv_handle(image_view_handle)
-    }
-
-    #[inline]
-    pub fn get_shader_uav_handle(&self, image_view_handle: GfxImageViewHandle) -> BindlessUavHandle {
-        self.bindless_manager.get_shader_uav_handle(image_view_handle)
     }
 }

@@ -1,7 +1,9 @@
 use ash::vk;
 
+use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxDeviceCtx;
+use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
@@ -43,14 +45,34 @@ pub struct SdrPassData {
     pub tone_mapping: SdrToneMappingSettings,
 }
 
+#[derive(DescriptorBinding)]
+struct SdrDescriptorBinding {
+    #[binding = 0]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "COMPUTE"]
+    #[count = 1]
+    _src_image: (),
+
+    #[binding = 1]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "COMPUTE"]
+    #[count = 1]
+    _dst_image: (),
+}
+
+/// HDR 到 SDR 的 compute pass。
+///
+/// src/dst image 由当前 RenderGraph dispatch 通过 pass-local push descriptor 绑定；本 pass 不注册、
+/// 缓存或拥有 image，因此 resize 只改变本次录制使用的 view，不产生全局 bindless slot 生命周期。
 pub struct SdrPass {
-    sdr_pass: ComputePass<gpu::sdr::PushConstant>,
+    sdr_pass: ComputePass<gpu::sdr::PushConstant, SdrDescriptorBinding>,
 }
 impl SdrPass {
     pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets) -> Self {
-        let sdr_pass = ComputePass::<gpu::sdr::PushConstant>::new(
+        let sdr_pass = ComputePass::<gpu::sdr::PushConstant, SdrDescriptorBinding>::new(
             ctx,
             render_descriptor_sets,
+            gpu::SDR_SET_NUM,
             c"main",
             TruvisPath::shader_build_path_str("post/sdr.slang").as_str(),
         );
@@ -63,17 +85,31 @@ impl SdrPass {
     }
 
     pub fn exec(&self, cmd: &GfxCommandBuffer, data: SdrPassData, record_ctx: &RenderPassRecordCtx<'_>) {
-        let src_image_bindless_handle = record_ctx.shader_bindings.get_shader_uav_handle(data.src_image);
-        let dst_image_bindless_handle = record_ctx.shader_bindings.get_shader_uav_handle(data.dst_image);
+        let image_view = |handle| {
+            record_ctx.gfx_resource_manager.get_image_view(handle).expect("SdrPass: image view not found").handle()
+        };
+        let image_info =
+            |view| vec![vk::DescriptorImageInfo::default().image_layout(vk::ImageLayout::GENERAL).image_view(view)];
+        let descriptor_writes = [
+            SdrDescriptorBinding::src_image().write_image(
+                vk::DescriptorSet::null(),
+                0,
+                image_info(image_view(data.src_image)),
+            ),
+            SdrDescriptorBinding::dst_image().write_image(
+                vk::DescriptorSet::null(),
+                0,
+                image_info(image_view(data.dst_image)),
+            ),
+        ];
 
         let frame_label = record_ctx.frame_timing.frame_label();
         self.sdr_pass.exec(
             cmd,
             frame_label,
             record_ctx.shader_bindings.global_descriptor_sets(),
+            &descriptor_writes,
             &gpu::sdr::PushConstant {
-                src_image: src_image_bindless_handle.0,
-                dst_image: dst_image_bindless_handle.0,
                 image_size: glam::uvec2(data.src_image_size.width, data.src_image_size.height).into(),
                 channel: data.debug_channel,
                 exposure_ev: data.tone_mapping.exposure_ev,

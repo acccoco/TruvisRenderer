@@ -5,12 +5,15 @@ use ash::vk;
 use enum_map::{Enum, EnumMap, enum_map};
 use itertools::Itertools;
 
+use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
+use truvis_gfx::descriptors::descriptor::GfxDescriptorSetLayout;
 use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_gfx::pipelines::graphics_pipeline::{GfxGraphicsPipeline, GfxGraphicsPipelineCreateInfo, GfxPipelineLayout};
 use truvis_gfx::pipelines::rendering_info::GfxRenderingInfo;
 use truvis_gfx::pipelines::shader::GfxShaderStageInfo;
+use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
@@ -41,10 +44,8 @@ static SHADER_STAGES: LazyLock<EnumMap<ShaderStage, GfxShaderStageInfo>> = LazyL
 
 /// 用于绘制的参数
 pub struct ResolvePassData {
-    /// 源图像的 texture handle（将从 bindless_textures 中采样）
+    /// 源图像 view，由当前 draw 的 pass-local sampled-image descriptor 引用。
     pub render_target: GfxImageViewHandle,
-    /// 采样器类型
-    pub sampler_type: gpu::bindless::ESamplerType,
     /// 在 color attachment 上的偏移量（像素坐标）
     pub offset: glam::Vec2,
     /// 绘制区域的大小（像素尺寸）
@@ -56,11 +57,21 @@ pub struct ResolvePassData {
 /// 功能：将指定的 image 按照给定的 offset 和 size 绘制到 color attachment
 ///
 /// - 使用固定的边长为1的正方形作为顶点（无需顶点缓冲区，顶点数据在着色器中内置）
-/// - 通过 bindless descriptor 指定需要绘制的 image
+/// - 通过 pass-local descriptor 指定需要绘制的 image
 /// - 使用 push constant 传递 offset、size 等参数
+#[derive(DescriptorBinding)]
+struct ResolveDescriptorBinding {
+    #[binding = 0]
+    #[descriptor_type = "SAMPLED_IMAGE"]
+    #[stage = "FRAGMENT"]
+    #[count = 1]
+    _src_texture: (),
+}
+
 pub struct ResolvePass {
     pipeline: GfxGraphicsPipeline,
     pipeline_layout: Rc<GfxPipelineLayout>,
+    descriptor_set_layout: GfxDescriptorSetLayout<ResolveDescriptorBinding>,
 }
 
 impl ResolvePass {
@@ -96,30 +107,36 @@ impl ResolvePass {
             [0.0; 4],
         );
 
-        // Pipeline layout：包含全局描述符集和 push constant
+        // Pipeline layout：全局 set 之后追加当前 draw 的 sampled-image push descriptor set。
         let push_constant_range = vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
             .size(size_of::<gpu::resolve::PushConstant>() as u32);
 
-        let pipeline_layout = Rc::new(GfxPipelineLayout::new(
+        let descriptor_set_layout = GfxDescriptorSetLayout::<ResolveDescriptorBinding>::new(
             ctx,
-            &global_descriptor_sets.global_set_layouts(),
-            &[push_constant_range],
-            "resolve-pass",
-        ));
+            vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR,
+            "resolve-pass-local-descriptor-layout",
+        );
+        let mut descriptor_set_layouts = global_descriptor_sets.global_set_layouts();
+        assert_eq!(gpu::RESOLVE_SET_NUM, descriptor_set_layouts.len() as u32);
+        descriptor_set_layouts.push(descriptor_set_layout.handle());
+        let pipeline_layout =
+            Rc::new(GfxPipelineLayout::new(ctx, &descriptor_set_layouts, &[push_constant_range], "resolve-pass"));
 
         let pipeline = GfxGraphicsPipeline::new(ctx, &pipeline_ci, pipeline_layout.clone(), "resolve-pipeline");
 
         Self {
             pipeline,
             pipeline_layout,
+            descriptor_set_layout,
         }
     }
 
     pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
         self.pipeline.destroy(ctx);
         self.pipeline_layout.destroy(ctx);
+        self.descriptor_set_layout.destroy(ctx);
     }
 
     /// 绘制指定的 image 到 color attachment
@@ -141,16 +158,27 @@ impl ResolvePass {
     ) {
         let frame_label = record_ctx.frame_timing.frame_label();
 
-        // 获取源图像的 bindless handle
-        let src_srv_handle = record_ctx.shader_bindings.get_shader_srv_handle(params.render_target);
+        let src_view = record_ctx
+            .gfx_resource_manager
+            .get_image_view(params.render_target)
+            .expect("ResolvePass: source image view not found")
+            .handle();
+        let descriptor_writes = [ResolveDescriptorBinding::src_texture().write_image(
+            vk::DescriptorSet::null(),
+            0,
+            vec![
+                vk::DescriptorImageInfo::default()
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .image_view(src_view),
+            ],
+        )];
 
         // 构造 push constant
         let push_constant = gpu::resolve::PushConstant {
-            src_texture: src_srv_handle.0,
-            sampler_type: params.sampler_type,
             offset: params.offset.into(),
             size: params.size.into(),
             target_size: glam::vec2(target_extent.width as f32, target_extent.height as f32).into(),
+            _padding_0: glam::Vec2::ZERO.into(),
         };
 
         // 设置渲染区域
@@ -166,6 +194,12 @@ impl ResolvePass {
         // 开始渲染
         cmd.cmd_begin_rendering2(&rendering_info);
         cmd.cmd_bind_pipeline(vk::PipelineBindPoint::GRAPHICS, self.pipeline.handle());
+        cmd.push_descriptor_set(
+            vk::PipelineBindPoint::GRAPHICS,
+            self.pipeline_layout.handle(),
+            gpu::RESOLVE_SET_NUM,
+            &descriptor_writes,
+        );
 
         // 设置 viewport（Y 轴翻转以适配 Vulkan 坐标系）
         cmd.cmd_set_viewport(
@@ -244,7 +278,6 @@ impl RgPass for ResolveRgPass<'_> {
             self.swapchain_extent,
             &ResolvePassData {
                 render_target: render_target_view_handle,
-                sampler_type: gpu::bindless::ESamplerType_LinearClamp,
                 offset: glam::vec2(0.0, 0.0),
                 size: glam::vec2(self.swapchain_extent.width as f32, self.swapchain_extent.height as f32),
             },

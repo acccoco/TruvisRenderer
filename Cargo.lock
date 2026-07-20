@@ -195,6 +195,8 @@ dependencies = [
  "log",
  "slotmap",
  "truvis-app-frame",
+ "truvis-descriptor-layout-macro",
+ "truvis-descriptor-layout-trait",
  "truvis-gfx",
  "truvis-path",
  "truvis-render-foundation",

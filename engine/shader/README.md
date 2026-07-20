@@ -36,8 +36,9 @@ rust-analyzer 在固定文件路径下也能感知 binding 内容变化并重新
 等 2 分量向量字段按 8 字节边界安排；如果前一个字段结束位置不是 8 字节对齐，必须在该向量字段前
 插入显式 4 字节 padding，不能把 padding 放在向量字段后面补救。
 
-新增或调整共享 ABI 时，优先参考 `api/pass/denoise_accum.slangi` 中先 padding、再放 `uint2 image_size`
-的模式。修改后执行 `just shader` 或 `just shader-force`，必要时用 `spirv-dis` 检查 SPIR-V 中的
+新增或调整共享 ABI 时，参考 `api/pass/image_clear.slangi` 的显式向量 padding，以及
+`api/pass/selection_outline.slangi` 把末尾 padding 拆成 scalar 的模式；不要用 `float3` 表达 C ABI padding。
+修改后执行 `just shader` 或 `just shader-force`，必要时用 `spirv-dis` 检查 SPIR-V 中的
 `OpMemberDecorate ... Offset` 是否与生成的 Rust binding 一致。
 
 ## 注意事项

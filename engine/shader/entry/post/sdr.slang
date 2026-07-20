@@ -1,6 +1,5 @@
 #include "api/pass/sdr.slangi"
 #include "lib/core/random.slangi"
-#include "lib/core/bindless.slangi"
 
 /// HDR -> SDR compute 入口。
 ///
@@ -48,7 +47,7 @@ void main(uint3 dispatchThreadID: SV_DispatchThreadID)
         return; // Out of bounds
     }
 
-    const float4 hdr_color = BindlessUav::load(g_params.src_image, dispatchThreadID.xy);
+    const float4 hdr_color = sdr::src_image.Load(dispatchThreadID.xy);
 
     uint random_seed = Random::tea(dispatchThreadID.y, dispatchThreadID.x);
     // 1/255 量级 dithering 用于减少 SDR 8-bit 显示上的 banding，不改变 HDR 中间结果。
@@ -63,9 +62,5 @@ void main(uint3 dispatchThreadID: SV_DispatchThreadID)
         sdr_color = hdr_color.rgb;
     }
 
-    BindlessUav::store(
-        g_params.dst_image,
-        dispatchThreadID.xy,
-        float4(sdr_color, hdr_color.a)
-    );
+    sdr::dst_image.Store(dispatchThreadID.xy, float4(sdr_color, hdr_color.a));
 }

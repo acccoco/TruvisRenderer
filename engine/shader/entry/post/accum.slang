@@ -8,7 +8,6 @@
 /// `ViewAccumState` reset 后把 accum_frames 传为 0，并在 RenderGraph 中声明 accum image 的读写状态。
 
 #include "api/pass/post_accum.slangi"
-#include "lib/core/bindless.slangi"
 
 
 [push_constant]
@@ -28,7 +27,7 @@ void main(uint3 dispatchThreadID: SV_DispatchThreadID)
     uint2 pixel = dispatchThreadID.xy;
     
     // 读取当前帧的单帧 RT 输出
-    float4 new_frame = BindlessUav::load(g_params.single_frame_input, pixel);
+    float4 new_frame = post_accum::single_frame_input.Load(pixel);
     
     float4 result;
     if (g_params.accum_frames == 0)
@@ -39,7 +38,7 @@ void main(uint3 dispatchThreadID: SV_DispatchThreadID)
     else
     {
         // 读取累积图像中的旧值
-        float4 old_accum = BindlessUav::load(g_params.accum_output, pixel);
+        float4 old_accum = post_accum::accum_output.Load(pixel);
         
         // 计算混合因子: 1 / (accum_frames + 1)
         // 例如: accum_frames=1 时，blend=0.5，新旧各占一半
@@ -51,5 +50,5 @@ void main(uint3 dispatchThreadID: SV_DispatchThreadID)
     }
     
     // 写入累积结果
-    BindlessUav::store(g_params.accum_output, pixel, result);
+    post_accum::accum_output.Store(pixel, result);
 }

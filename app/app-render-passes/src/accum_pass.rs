@@ -1,10 +1,12 @@
 use ash::vk;
 
+use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxDeviceCtx;
+use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_path::TruvisPath;
+use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
-use truvis_render_runtime::bindings::bindless_manager::BindlessUavHandle;
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_shader_binding::gpu;
@@ -13,24 +15,43 @@ use crate::compute_pass::ComputePass;
 
 /// 累积 Pass 的数据
 pub struct AccumPassData {
-    pub single_frame_bindless_uav_handle: BindlessUavHandle,
-    pub accum_bindless_uav_handle: BindlessUavHandle,
+    pub single_frame_image: GfxImageViewHandle,
+    pub accum_image: GfxImageViewHandle,
     pub image_size: vk::Extent2D,
     /// 调用方维护的离线历史样本数。pass 只按这个数做 running average，
     /// 不能回读 runtime `ViewAccumState`，否则会把 realtime temporal reset 语义混入离线 reference。
     pub accum_frames: u32,
 }
 
-/// 累积 Pass - 将单帧 RT 结果累积到 accum_image 中
+#[derive(DescriptorBinding)]
+struct AccumDescriptorBinding {
+    #[binding = 0]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "COMPUTE"]
+    #[count = 1]
+    _single_frame_input: (),
+
+    #[binding = 1]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "COMPUTE"]
+    #[count = 1]
+    _accum_output: (),
+}
+
+/// 累积 Pass - 将单帧 RT 结果累积到 accum_image 中。
+///
+/// 两张 image 都由当前 dispatch 的 pass-local descriptor 绑定；历史 image 的所有权和有效性仍由
+/// OfflinePipeline 管理，RenderGraph 负责同一 image 的跨 dispatch 读写同步。
 pub struct AccumPass {
-    accum_pass: ComputePass<gpu::post_accum::PushConstant>,
+    accum_pass: ComputePass<gpu::post_accum::PushConstant, AccumDescriptorBinding>,
 }
 
 impl AccumPass {
     pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets) -> Self {
-        let accum_pass = ComputePass::<gpu::post_accum::PushConstant>::new(
+        let accum_pass = ComputePass::<gpu::post_accum::PushConstant, AccumDescriptorBinding>::new(
             ctx,
             render_descriptor_sets,
+            gpu::POST_ACCUM_SET_NUM,
             c"main",
             TruvisPath::shader_build_path_str("post/accum.slang").as_str(),
         );
@@ -43,14 +64,30 @@ impl AccumPass {
     }
 
     pub fn exec(&self, cmd: &GfxCommandBuffer, data: AccumPassData, record_ctx: &RenderPassRecordCtx<'_>) {
+        let image_view = |handle| {
+            record_ctx.gfx_resource_manager.get_image_view(handle).expect("AccumPass: image view not found").handle()
+        };
+        let image_info =
+            |view| vec![vk::DescriptorImageInfo::default().image_layout(vk::ImageLayout::GENERAL).image_view(view)];
+        let descriptor_writes = [
+            AccumDescriptorBinding::single_frame_input().write_image(
+                vk::DescriptorSet::null(),
+                0,
+                image_info(image_view(data.single_frame_image)),
+            ),
+            AccumDescriptorBinding::accum_output().write_image(
+                vk::DescriptorSet::null(),
+                0,
+                image_info(image_view(data.accum_image)),
+            ),
+        ];
         let frame_label = record_ctx.frame_timing.frame_label();
         self.accum_pass.exec(
             cmd,
             frame_label,
             record_ctx.shader_bindings.global_descriptor_sets(),
+            &descriptor_writes,
             &gpu::post_accum::PushConstant {
-                single_frame_input: data.single_frame_bindless_uav_handle.0,
-                accum_output: data.accum_bindless_uav_handle.0,
                 image_size: glam::uvec2(data.image_size.width, data.image_size.height).into(),
                 accum_frames: data.accum_frames,
                 _padding_: 0,
@@ -93,15 +130,11 @@ impl<'a> RgPass for AccumRgPass<'a> {
         let single_frame_view_handle = ctx.get_image_view_handle(self.single_frame_image).unwrap();
         let accum_view_handle = ctx.get_image_view_handle(self.accum_image).unwrap();
 
-        let single_frame_bindless_uav_handle =
-            self.record_ctx.shader_bindings.get_shader_uav_handle(single_frame_view_handle);
-        let accum_bindless_uav_handle = self.record_ctx.shader_bindings.get_shader_uav_handle(accum_view_handle);
-
         self.accum_pass.exec(
             ctx.cmd,
             AccumPassData {
-                single_frame_bindless_uav_handle,
-                accum_bindless_uav_handle,
+                single_frame_image: single_frame_view_handle,
+                accum_image: accum_view_handle,
                 image_size: self.image_extent,
                 accum_frames: self.accum_frames,
             },

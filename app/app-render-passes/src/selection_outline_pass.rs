@@ -3,10 +3,13 @@ use std::rc::Rc;
 
 use ash::vk;
 
+use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
+use truvis_gfx::descriptors::descriptor::GfxDescriptorSetLayout;
 use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_gfx::pipelines::graphics_pipeline::{GfxGraphicsPipeline, GfxGraphicsPipelineCreateInfo, GfxPipelineLayout};
+use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
@@ -20,9 +23,19 @@ use truvis_shader_binding::gpu;
 /// 该 pass 拥有两条 graphics pipeline：mask pipeline 把选中 submesh 光栅化到 R8 mask；
 /// composite pipeline 再用全屏 quad 采样 mask 邻域并叠加到 present image。它不拥有
 /// mask image，也不注册 debug image；窗口尺寸 mask 资源由具体 App 持有。
+#[derive(DescriptorBinding)]
+struct SelectionOutlineCompositeDescriptorBinding {
+    #[binding = 0]
+    #[descriptor_type = "SAMPLED_IMAGE"]
+    #[stage = "FRAGMENT"]
+    #[count = 1]
+    _mask_texture: (),
+}
+
 pub struct SelectionOutlinePass {
     mask_pipeline: GfxGraphicsPipeline,
     composite_pipeline: GfxGraphicsPipeline,
+    composite_descriptor_set_layout: GfxDescriptorSetLayout<SelectionOutlineCompositeDescriptorBinding>,
 }
 
 /// mask pass 的目标。
@@ -57,16 +70,28 @@ impl SelectionOutlinePass {
         global_descriptor_sets: &GlobalDescriptorSets,
     ) -> Self {
         let mask_pipeline = Self::create_mask_pipeline(ctx, global_descriptor_sets);
-        let composite_pipeline = Self::create_composite_pipeline(ctx, present_format, global_descriptor_sets);
+        let composite_descriptor_set_layout = GfxDescriptorSetLayout::<SelectionOutlineCompositeDescriptorBinding>::new(
+            ctx,
+            vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR,
+            "selection-outline-composite-local-descriptor-layout",
+        );
+        let composite_pipeline = Self::create_composite_pipeline(
+            ctx,
+            present_format,
+            global_descriptor_sets,
+            &composite_descriptor_set_layout,
+        );
         Self {
             mask_pipeline,
             composite_pipeline,
+            composite_descriptor_set_layout,
         }
     }
 
     pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
         self.mask_pipeline.destroy(ctx);
         self.composite_pipeline.destroy(ctx);
+        self.composite_descriptor_set_layout.destroy(ctx);
     }
 
     fn create_mask_pipeline(
@@ -116,6 +141,7 @@ impl SelectionOutlinePass {
         ctx: GfxDeviceCtx<'_>,
         present_format: vk::Format,
         global_descriptor_sets: &GlobalDescriptorSets,
+        descriptor_set_layout: &GfxDescriptorSetLayout<SelectionOutlineCompositeDescriptorBinding>,
     ) -> GfxGraphicsPipeline {
         let mut ci = GfxGraphicsPipelineCreateInfo::default();
         ci.vertex_shader_stage(&TruvisPath::shader_build_path_str("selection_outline/composite.slang"), c"vsmain");
@@ -140,9 +166,12 @@ impl SelectionOutlinePass {
             [0.0; 4],
         );
 
+        let mut descriptor_set_layouts = global_descriptor_sets.global_set_layouts();
+        assert_eq!(gpu::SELECTION_OUTLINE_COMPOSITE_SET_NUM, descriptor_set_layouts.len() as u32);
+        descriptor_set_layouts.push(descriptor_set_layout.handle());
         let pipeline_layout = Rc::new(GfxPipelineLayout::new(
             ctx,
-            &global_descriptor_sets.global_set_layouts(),
+            &descriptor_set_layouts,
             &[vk::PushConstantRange::default()
                 .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
@@ -220,15 +249,28 @@ impl SelectionOutlinePass {
         target: SelectionOutlineCompositeTarget,
     ) {
         let frame_label = record_ctx.frame_timing.frame_label();
-        let mask_srv_handle = record_ctx.shader_bindings.get_shader_srv_handle(target.mask_view_handle);
+        let mask_view = record_ctx
+            .gfx_resource_manager
+            .get_image_view(target.mask_view_handle)
+            .expect("SelectionOutlinePass: mask image view not found")
+            .handle();
+        let descriptor_writes = [SelectionOutlineCompositeDescriptorBinding::mask_texture().write_image(
+            vk::DescriptorSet::null(),
+            0,
+            vec![
+                vk::DescriptorImageInfo::default()
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .image_view(mask_view),
+            ],
+        )];
         let push_constants = gpu::selection_outline::CompositePushConstant {
-            mask_texture: mask_srv_handle.0,
-            sampler_type: gpu::bindless::ESamplerType_PointClamp,
             target_size: glam::vec2(target.extent.width as f32, target.extent.height as f32).into(),
+            _padding_0: glam::Vec2::ZERO.into(),
             color: glam::Vec4::from_array(Self::OUTLINE_COLOR).into(),
             radius_px: Self::OUTLINE_RADIUS_PX,
-            _padding_0: 0.0,
-            _padding_1: glam::Vec2::ZERO.into(),
+            _padding_1: 0.0,
+            _padding_2: 0.0,
+            _padding_3: 0.0,
         };
 
         let color_attachment = vk::RenderingAttachmentInfo::default()
@@ -243,6 +285,12 @@ impl SelectionOutlinePass {
 
         cmd.cmd_begin_rendering(&render_info);
         cmd.cmd_bind_pipeline(vk::PipelineBindPoint::GRAPHICS, self.composite_pipeline.handle());
+        cmd.push_descriptor_set(
+            vk::PipelineBindPoint::GRAPHICS,
+            self.composite_pipeline.layout(),
+            gpu::SELECTION_OUTLINE_COMPOSITE_SET_NUM,
+            &descriptor_writes,
+        );
         Self::set_fullscreen_viewport(cmd, target.extent);
         cmd.bind_descriptor_sets(
             vk::PipelineBindPoint::GRAPHICS,

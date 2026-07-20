@@ -12,30 +12,6 @@ use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
 use truvis_render_foundation::handles::GfxImageViewHandle;
 
 #[derive(Copy, Clone)]
-pub struct BindlessUavHandle(pub gpu::bindless::UavHandle);
-impl BindlessUavHandle {
-    #[inline]
-    pub fn new(index: usize) -> Self {
-        Self(gpu::bindless::UavHandle { index: index as i32 })
-    }
-    #[inline]
-    pub fn null() -> Self {
-        Self(gpu::bindless::UavHandle {
-            index: gpu::bindless::INVALID_TEX_ID,
-        })
-    }
-    #[inline]
-    pub fn index(&self) -> usize {
-        self.0.index as usize
-    }
-}
-impl Default for BindlessUavHandle {
-    fn default() -> Self {
-        Self::null()
-    }
-}
-
-#[derive(Copy, Clone)]
 pub struct BindlessSrvHandle(pub gpu::bindless::SrvHandle);
 impl BindlessSrvHandle {
     #[inline]
@@ -59,9 +35,10 @@ impl Default for BindlessSrvHandle {
     }
 }
 
-/// Bindless 描述符管理器
+/// 数据驱动 sampled image 的全局 bindless 描述符管理器。
 ///
-/// - 只允许 add 和 remove 操作，不支持 update 操作
+/// 固定管线 image 由各 pass 的 local descriptor 绑定；这里仅保存 Material/Scene shader record
+/// 中需要稳定 slot 的 asset texture、sky 及 fallback SRV。
 ///
 /// # slot 稳定性
 /// - 使用单套 descriptor set（配合 `UPDATE_UNUSED_WHILE_PENDING_BIT`），slot 是稳定的：
@@ -78,20 +55,16 @@ impl Default for BindlessSrvHandle {
 pub struct BindlessManager {
     // 核心结构：index = bindless shader slot
     srvs_slots: Vec<Option<GfxImageViewHandle>>,
-    uavs_slots: Vec<Option<GfxImageViewHandle>>,
 
     // 空闲 slot 池（降序存放，pop 返回较小 slot）
     srvs_free_slots: Vec<usize>,
-    uavs_free_slots: Vec<usize>,
 
     // 逆向映射：handle → slot（辅助查询）
     srvs_handle_to_slot: SecondaryMap<GfxImageViewHandle, usize>,
-    uavs_handle_to_slot: SecondaryMap<GfxImageViewHandle, usize>,
 
     // TODO 新增专门的 pending remove 和 pending write 字段，而不是使用复杂的方法判断是 add 还是 remove
     /// dirty 列表：key=slot，value=最后修改时的 frame_id
     dirty_srvs: HashMap<usize, u64>,
-    dirty_uavs: HashMap<usize, u64>,
 
     /// 当前帧的 token，用于计算 dirty 条目的 age
     ///
@@ -109,13 +82,9 @@ impl BindlessManager {
         let free_slots: Vec<usize> = (0..bindless_count).rev().collect();
         Self {
             srvs_slots: vec![None; bindless_count],
-            uavs_slots: vec![None; bindless_count],
-            srvs_free_slots: free_slots.clone(),
-            uavs_free_slots: free_slots,
+            srvs_free_slots: free_slots,
             srvs_handle_to_slot: SecondaryMap::new(),
-            uavs_handle_to_slot: SecondaryMap::new(),
             dirty_srvs: HashMap::new(),
-            dirty_uavs: HashMap::new(),
             frame_token,
         }
     }
@@ -179,33 +148,6 @@ impl BindlessManager {
             }
         }
 
-        // 处理 UAV dirty 条目
-        let mut uavs_to_remove: Vec<usize> = Vec::new();
-        let mut uavs_to_reclaim: Vec<usize> = Vec::new();
-        for (&slot, &dirty_frame_id) in &self.dirty_uavs {
-            match self.uavs_slots[slot] {
-                Some(view_handle) => {
-                    let image_view = gfx_resource_manager.get_image_view(view_handle).unwrap();
-                    let image_info = vk::DescriptorImageInfo::default()
-                        .image_view(image_view.handle())
-                        .image_layout(vk::ImageLayout::GENERAL);
-                    writes.push(BindlessDescriptorBinding::uavs().write_image(
-                        bindless_set,
-                        slot as u32,
-                        vec![image_info],
-                    ));
-                    uavs_to_remove.push(slot);
-                }
-                None => {
-                    let age = self.frame_token.frame_id().saturating_sub(dirty_frame_id);
-                    if age >= fif {
-                        uavs_to_remove.push(slot);
-                        uavs_to_reclaim.push(slot);
-                    }
-                }
-            }
-        }
-
         // 提交所有 descriptor 写入
         if !writes.is_empty() {
             ctx.device().write_descriptor_sets(&writes);
@@ -218,42 +160,6 @@ impl BindlessManager {
         for slot in srvs_to_reclaim {
             self.srvs_free_slots.push(slot);
         }
-        for slot in uavs_to_remove {
-            self.dirty_uavs.remove(&slot);
-        }
-        for slot in uavs_to_reclaim {
-            self.uavs_free_slots.push(slot);
-        }
-    }
-}
-
-// UAV 资源
-impl BindlessManager {
-    pub fn register_uav(&mut self, image_view_handle: GfxImageViewHandle) {
-        debug_assert!(!image_view_handle.is_null());
-        if self.uavs_handle_to_slot.contains_key(image_view_handle) {
-            log::error!("UAV handle {:?} is already registered", image_view_handle);
-            return;
-        }
-        let slot = self.uavs_free_slots.pop().expect("Bindless UAV slots exhausted");
-        self.uavs_slots[slot] = Some(image_view_handle);
-        self.uavs_handle_to_slot.insert(image_view_handle, slot);
-        self.dirty_uavs.insert(slot, self.frame_token.frame_id());
-    }
-
-    pub fn unregister_uav(&mut self, image_view_handle: GfxImageViewHandle) {
-        debug_assert!(!image_view_handle.is_null());
-        let slot = self.uavs_handle_to_slot.remove(image_view_handle).unwrap();
-        self.uavs_slots[slot] = None;
-        // 不立即归还 free_list，等 dirty 清除（age >= FIF_COUNT）后再归还
-        self.dirty_uavs.insert(slot, self.frame_token.frame_id());
-    }
-
-    #[inline]
-    pub fn get_shader_uav_handle(&self, image_view_handle: GfxImageViewHandle) -> BindlessUavHandle {
-        debug_assert!(!image_view_handle.is_null());
-        let slot = *self.uavs_handle_to_slot.get(image_view_handle).unwrap();
-        BindlessUavHandle::new(slot)
     }
 }
 

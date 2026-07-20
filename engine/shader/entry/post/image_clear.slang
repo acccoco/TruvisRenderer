@@ -1,5 +1,4 @@
 #include "api/pass/image_clear.slangi"
-#include "lib/core/bindless.slangi"
 
 /// storage image 清理 compute 入口。
 ///
@@ -20,5 +19,5 @@ void main(uint3 dispatchThreadID: SV_DispatchThreadID)
     }
 
     // clear_color 已经由调用方按目标图像的数值空间提供，本 pass 不做 tone mapping 或格式转换。
-    BindlessUav::store(g_params.dst_image, dispatchThreadID.xy, g_params.clear_color);
+    image_clear::dst_image.Store(dispatchThreadID.xy, g_params.clear_color);
 }

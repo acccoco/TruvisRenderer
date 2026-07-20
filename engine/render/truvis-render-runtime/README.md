@@ -28,7 +28,9 @@
   render runtime 只通过 `World::sync_for_render` 产出的 `WorldRenderSync` typed payload、`SceneChanges` 和
   `World::scene_view()` 只读 scene snapshot 访问这些 CPU owner。
 - `GfxResourceManager` 承载 manager-owned GPU image/buffer/view 生命周期。
-- `ShaderBindingSystem` 承载 global descriptors、bindless 和 sampler manager，并向 render 阶段提供只读 shader binding view。
+- `ShaderBindingSystem` 承载 global descriptors、动态 SRV bindless 和 sampler manager，并向 render 阶段提供只读
+  shader binding view。全局 set 1 只保存 Material/Scene 数据动态索引的 asset texture 与 sky SRV，固定管线 target
+  不进入该表。
 - `FrameTiming` 是 runtime-owned 当前帧时间快照，承载 frame counter、delta time 和 total time；`PerFrameGpuData` 承载 per-FIF `PerFrameData` UBO。
 - `FrameRenderState`、`DlssOptions`、`ViewAccumState` 和 `DlssSrState` 定义在本 crate，
   并由 `RenderRuntime` 持有；`DlssOptions` 同时提供 SR/RR active feature 决策。
@@ -73,12 +75,15 @@
   其中 `dlss_options` 提供 `DlssOptions`，作为 SR/RR active 判断、旧 feature 比较和资源释放的统一 owner；foundation 只保留 FIF 基础索引、资源句柄、view trait 和 `GfxResourceAccess` 契约。
 - GPU resource owner 通过 `resources` 模块公开，包括 `GfxResourceManager`、`CmdAllocator` 和 `StageBufferManager`。
 - shader-visible binding owner 通过 `bindings` 模块公开，包括 `ShaderBindingSystem`、`GlobalDescriptorSets`、`BindlessManager` 和 `PerFrameGpuData`。
+  `BindlessManager` 只提供 sampled-image SRV 注册与 FIF 延迟回收，不提供 combined-image-sampler 或 storage-image 表。
 - render-side asset managers、instance manager、`RenderWorld` 数据结构和 prepare 辅助逻辑都是 runtime 私有实现；
   render-side scene owner、resolver trait 和环境绑定快照都收敛在私有 `render_world` 模块。
 - 生命周期 Ctx 在 `render_runtime_ctx` 模块定义，并由 `render_runtime` 重新导出；
   调用方仍通过 `truvis_render_runtime::render_runtime::*Ctx` 使用这些阶段契约。
 - `RenderRuntimeRenderCtx` 只暴露 `RenderPassRecordCtx`、`RenderSceneView`、`PresentView` 和 timeline；
   不暴露 texture/mesh manager owner，pass 不能绕过 runtime 私有 bridge 读取上传缓存。
+- render 阶段的 `ShaderBindingView` 只暴露 global set layouts/sets；固定管线 image 由各 pass 解析 view handle 并写入
+  自己的 local descriptor，不能反查或依赖全局 bindless slot。
 - `RenderRuntimeRayCastCtx` 只暴露同步批量 raycast 调用；App 应在 `after_prepare`
   阶段使用它，update/input 阶段不提供该接口。
 - `RenderRuntimeRenderCtx` 除普通 `RenderSceneView` 外，还暴露 `WorldSubmeshRasterView` trait
