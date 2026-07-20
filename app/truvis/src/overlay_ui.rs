@@ -1,13 +1,13 @@
 //! Truvis App 级 ImGui overlay 编排。
 //!
 //! 本模块只决定“哪些 section 以什么布局绘制”。具体控件仍复用 app-kit 的
-//! `DebugInfoOverlay` / `PipelineControlsOverlay`，Debug Images 的选择状态与
-//! texture 映射仍归 `GuiPlugin` 持有。这里不接触 RenderGraph、GPU resource
+//! `DebugInfoOverlay` / `PipelineControlsOverlay`，Debug Images 只在这里修改 App-owned
+//! `DebugImageSelector`。这里不接触 RenderGraph、GPU resource
 //! 生命周期或 GUI draw data 上传，调用方必须在 `GuiPlugin::begin_frame` 与
 //! `GuiPlugin::end_frame` 之间调用 `TruvisOverlayUi::build`，并在 UI frame 结束后
 //! 消费其返回的一次性 Web Editor 打开请求。
 
-use app_kit::gui_plugin::GuiPlugin;
+use app_kit::debug_image::{DebugImageOption, DebugImageSelector};
 use app_kit::overlay::{DebugInfoOverlay, FrameStatsOverlayData, PipelineControlsOverlay};
 use app_kit::render_pipeline::RenderMode;
 use app_kit::render_pipeline::common_settings::PathTracingCommonSettings;
@@ -117,7 +117,7 @@ impl Default for OverlayWindowSet {
             images: OverlayWindowOptions {
                 title: "Debug Images",
                 position: [370.0, 10.0],
-                size: [420.0, 360.0],
+                size: [280.0, 90.0],
                 condition: imgui::Condition::FirstUseEver,
                 flags: imgui::WindowFlags::empty(),
                 visible: true,
@@ -214,7 +214,7 @@ impl TruvisOverlayUi {
             stats,
             mut pipeline,
             raycast,
-            debug_images,
+            mut debug_images,
         } = frame;
 
         if self.section_visible(OverlayTag::Diagnostics) && self.window(OverlayTag::Diagnostics).visible {
@@ -249,7 +249,7 @@ impl TruvisOverlayUi {
         }
         if self.section_visible(OverlayTag::Images) {
             self.build_right_aligned_image_window(ui, &stats, || {
-                debug_images.gui.build_debug_image_viewer_contents(ui);
+                debug_images.build_contents(ui, *pipeline.render_mode);
             });
         }
     }
@@ -260,7 +260,7 @@ impl TruvisOverlayUi {
             stats,
             mut pipeline,
             raycast,
-            debug_images,
+            mut debug_images,
         } = frame;
         let stack = self.options.windows.stack;
         if !stack.visible {
@@ -282,7 +282,7 @@ impl TruvisOverlayUi {
                         pipeline.dlss_options,
                     ),
                     OverlayTag::Picking => Self::draw_raycast_contents(ui, &raycast),
-                    OverlayTag::Images => debug_images.gui.build_debug_image_viewer_contents(ui),
+                    OverlayTag::Images => debug_images.build_contents(ui, *pipeline.render_mode),
                 }
             }
         });
@@ -487,7 +487,7 @@ pub(crate) struct TruvisOverlayFrame<'a> {
     pub(crate) stats: FrameStatsOverlayData<'a>,
     pub(crate) pipeline: PipelineControlsData<'a>,
     pub(crate) raycast: RaycastOverlayData<'a>,
-    pub(crate) debug_images: DebugImageViewerData<'a>,
+    pub(crate) debug_images: DebugImageSelectorData<'a>,
 }
 
 pub(crate) struct PipelineControlsData<'a> {
@@ -510,6 +510,18 @@ pub(crate) struct RaycastOverlayData<'a> {
     pub(crate) world: &'a World,
 }
 
-pub(crate) struct DebugImageViewerData<'a> {
-    pub(crate) gui: &'a GuiPlugin,
+pub(crate) struct DebugImageSelectorData<'a> {
+    pub(crate) selector: &'a mut DebugImageSelector,
+    pub(crate) realtime_options: &'static [DebugImageOption],
+    pub(crate) offline_options: &'static [DebugImageOption],
+}
+
+impl DebugImageSelectorData<'_> {
+    fn build_contents(&mut self, ui: &imgui::Ui, render_mode: RenderMode) {
+        let options = match render_mode {
+            RenderMode::Realtime => self.realtime_options,
+            RenderMode::Offline => self.offline_options,
+        };
+        self.selector.build_contents(ui, options);
+    }
 }

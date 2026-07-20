@@ -100,7 +100,8 @@ flowchart LR
   持有 per-FIF TLAS；`RenderSceneView` 只向 render pass 暴露只读 scene 快照。默认 sky 由 `World` 注册为
   `TextureHandle` 并写入 `SceneStore::SceneSkyState`，通过 `RenderTextureManager` 异步上传，并由
   `RenderSkyManager` 根据 scene sky state 提供 fallback、真实 sky binding 和 distribution。
-- GUI：imgui font texture、per-frame GUI mesh buffer、texture map。
+- GUI：imgui font texture、per-frame GUI mesh buffer、当前只包含 font view 的 texture map；debug image handle
+  不进入 GUI 生命周期，由 realtime/offline pipeline owner 持有并在当前 present graph 内短暂导入。
 - RenderGraph：按帧导入的 image 状态引用与同步计划；图内 transient image/buffer 是未来能力，不作为当前资源生命周期类别。
 
 ## 创建路径

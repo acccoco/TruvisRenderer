@@ -6,6 +6,7 @@
 
 pub mod camera;
 pub mod camera_controller;
+pub mod debug_image;
 mod gui_backend;
 pub mod gui_plugin;
 pub mod input_state;

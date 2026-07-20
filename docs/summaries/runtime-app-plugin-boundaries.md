@@ -35,7 +35,8 @@ RenderRuntime
 - App 自有 overlay 编排器，或 app-kit 提供的 `DebugInfoOverlay` / `PipelineControlsOverlay`
   兼容整窗 wrapper；Truvis 使用 `TruvisOverlayUi` 统一决定 tag、窗口布局、section 可见性和绘制顺序。
   默认布局保留透明 diagnostics HUD，将 Rendering controls 与 Picking 结果上下拼接到左侧主面板，
-  Debug Images 由 `GuiPlugin` 继续持有状态，并作为独立小窗口锚定到 swapchain 右侧。
+  Debug Images 的 CPU 显示开关和稳定选择 ID 由 App-owned `DebugImageSelector` 持有；ImGui 选择器作为独立小窗口
+  锚定到 swapchain 右侧，真实 GPU source 仍由当前 realtime/offline pipeline 在 render phase 解析。
 - Truvis 的 `SelectionOutlineRenderer` 持有 per-FIF R8 mask image 和 outline graphics pipelines；App 保存
   `Option<WorldSubmeshSelection>`，输入语义只包含 CPU `InstanceHandle + submesh_index`，不保存 GPU slot。
 - `TrianglePlugin`、`ShaderToyPlugin`、`RtPipeline`、`OfflinePipeline` 等具体渲染能力
@@ -69,11 +70,12 @@ RenderGraph 内的当前 present image 与 image info，acquire/render-complete 
 
 GUI draw data 不进入通用 Ctx。`GuiPlugin` 自行持有 imgui context、draw data、GUI mesh buffer、font texture map，
 并通过 `prepare_render_data` 和 `contribute_passes` 接入 render hook。Debug Images 的窗口外壳可由具体 App
-重新编排，但选择状态、texture id 映射和每帧 image/view handle 快照仍归 `GuiPlugin`。
+重新编排，但选择状态归 App-owned `DebugImageSelector`；GUI 不保存 debug image handle，也不为它生成 `TextureId`。
+当前 pipeline 根据稳定 ID 解析本帧 image/view 与 layout，并在 present resolve scope 内完成缩略图绘制。
 
 selection outline 使用单独的 `WorldSubmeshRasterView` render ctx 能力。该能力只接受
 `WorldSubmeshSelection`，由 runtime 在当前 prepare 快照内解析 active instance slot 与 draw cache；App 不接触
-`RenderWorld` concrete owner，也不把 outline mask 注册给 GUI debug viewer。
+`RenderWorld` concrete owner，也不把 outline mask 暴露为可选 debug image source。
 
 ## RenderApp 外部契约
 

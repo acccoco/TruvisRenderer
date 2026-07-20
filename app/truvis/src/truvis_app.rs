@@ -19,6 +19,7 @@ use truvis_world::{
 
 use app_kit::camera::Camera;
 use app_kit::camera_controller::CameraController;
+use app_kit::debug_image::DebugImageSelector;
 use app_kit::gui_plugin::GuiPlugin;
 use app_kit::input_state::InputManager;
 use app_kit::overlay::FrameStatsOverlayData;
@@ -30,13 +31,14 @@ use app_kit::render_pipeline::rt_render_graph::RtPipeline;
 use crate::coordinate_gizmo::CoordinateGizmoRenderer;
 use crate::editor_controller::{EditorController, EditorControllerConfig};
 use crate::overlay_ui::{
-    DebugImageViewerData, PipelineControlsData, RaycastOverlayData, TruvisOverlayFrame, TruvisOverlayOptions,
+    DebugImageSelectorData, PipelineControlsData, RaycastOverlayData, TruvisOverlayFrame, TruvisOverlayOptions,
     TruvisOverlayUi,
 };
 use crate::selection_outline::SelectionOutlineRenderer;
 
 pub struct TruvisApp {
     gui: GuiPlugin,
+    debug_image_selector: DebugImageSelector,
     rt_pipeline: RtPipeline,
     offline_pipeline: OfflinePipeline,
     selection_outline: SelectionOutlineRenderer,
@@ -59,6 +61,7 @@ impl TruvisApp {
     pub(crate) fn new(app_endpoint: AppEndpoint) -> Self {
         Self {
             gui: Default::default(),
+            debug_image_selector: Default::default(),
             rt_pipeline: Default::default(),
             offline_pipeline: Default::default(),
             selection_outline: Default::default(),
@@ -561,10 +564,20 @@ impl RenderAppHooks for TruvisApp {
                     probe: &self.click_ray_cast_probe,
                     world: ctx.world,
                 },
-                debug_images: DebugImageViewerData { gui: &self.gui },
+                debug_images: DebugImageSelectorData {
+                    selector: &mut self.debug_image_selector,
+                    realtime_options: RtPipeline::debug_image_options(),
+                    offline_options: OfflinePipeline::debug_image_options(),
+                },
             };
             self.overlay_ui.build(frame);
         }
+        let debug_image_options = match self.render_mode {
+            RenderMode::Realtime => RtPipeline::debug_image_options(),
+            RenderMode::Offline => OfflinePipeline::debug_image_options(),
+        };
+        // 选择归一化属于 App 状态维护，不能依赖 Debug Images window/section 当前是否可见。
+        self.debug_image_selector.normalize_options(debug_image_options);
         self.gui.end_frame();
     }
 
@@ -625,17 +638,8 @@ impl RenderAppHooks for TruvisApp {
             &self.path_tracing_common_settings,
         );
 
-        self.gui.begin_debug_image_frame();
-        // debug image 的来源跟随当前模式选择。App 只把所选 pipeline 的图像交给 GUI，
-        // 图像生命周期和 layout 导出仍由各 pipeline 自己维护；GUI 只做本次 draw 的局部绑定。
-        let debug_images = match self.render_mode {
-            RenderMode::Realtime => self.rt_pipeline.collect_debug_images(frame_label, *ctx.record_ctx.dlss_options),
-            RenderMode::Offline => self.offline_pipeline.collect_debug_images(frame_label),
-        };
-        for debug_image in debug_images {
-            self.gui.register_debug_image(debug_image);
-        }
         self.gui.prepare_render_data(&plugin_ctx);
+        let selected_debug_image_id = self.debug_image_selector.selected_id();
 
         // App 持有实时/离线模式选择；具体 pipeline 只负责向 RenderGraph 贡献自己的 compute subgraph。
         // 两条分支都生成同一队列上的第一段 submit，保证后续 present graph 可按统一顺序消费结果。
@@ -694,8 +698,8 @@ impl RenderAppHooks for TruvisApp {
                     &mut graph,
                     &plugin_ctx,
                     &self.path_tracing_common_settings,
+                    selected_debug_image_id,
                 );
-                let debug_graph_entries = present_targets.debug_graph_entries();
                 self.selection_outline.contribute_passes(
                     &mut graph,
                     ctx,
@@ -714,7 +718,6 @@ impl RenderAppHooks for TruvisApp {
                     &plugin_ctx,
                     present_targets.present_image,
                     ctx.present.swapchain_image_info().image_extent,
-                    &debug_graph_entries,
                 );
 
                 let compiled_graph = graph.compile();
@@ -742,8 +745,8 @@ impl RenderAppHooks for TruvisApp {
                     &mut graph,
                     &plugin_ctx,
                     &self.path_tracing_common_settings,
+                    selected_debug_image_id,
                 );
-                let debug_graph_entries = present_targets.debug_graph_entries();
                 self.selection_outline.contribute_passes(
                     &mut graph,
                     ctx,
@@ -762,7 +765,6 @@ impl RenderAppHooks for TruvisApp {
                     &plugin_ctx,
                     present_targets.present_image,
                     ctx.present.swapchain_image_info().image_extent,
-                    &debug_graph_entries,
                 );
 
                 let compiled_graph = graph.compile();

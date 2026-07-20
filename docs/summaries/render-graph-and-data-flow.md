@@ -99,8 +99,8 @@ flowchart LR
 
 固定管线 image 的职责分为三层，不能互相替代：
 
-- pipeline/plugin owner 创建并持有 render target、GBuffer、DLSS 输入输出、累计图、selection mask、GUI font/debug image，
-  并在既有 resize/shutdown 安全点释放资源。
+- pipeline/plugin owner 创建并持有 render target、GBuffer、DLSS 输入输出、累计图、selection mask 与 GUI font，
+  并在既有 resize/shutdown 安全点释放资源；debug image 只是 pipeline-owned 中间图像在当前帧的只读用途，不是独立资源类别。
 - 具体 pass 通过 `GLOBAL_SETS_COUNT` 之后的 local set（当前为 set 3）写入本次 draw/dispatch 的 push descriptor；
   storage image 使用 `GENERAL`，sampled image 使用 `SHADER_READ_ONLY_OPTIMAL`。descriptor 只引用 image view，不拥有资源。
 - RenderGraph pass 声明 sampled/storage/color-attachment 等访问，负责 pass 间同步和 layout transition；descriptor 声明的
@@ -122,14 +122,17 @@ Truvis 现在通过 `RenderMode { Realtime, Offline }` 在实时和离线两套 
 - `Offline`：执行 `OfflinePipeline`，数据流是 1-8 组 `offline ray tracing -> per-FIF single_frame_image -> FIF 唯一 accum_image`，
   再输出到 `per-FIF render_target -> present`。
 
-Truvis 主视图 present graph 在两种模式下都保持同一叠加顺序：对应 pipeline 先把 main view resolve 到
-present image，随后 App-owned selection outline pass 以 `WorldSubmeshSelection` 语义光栅化选中 submesh 到 per-FIF
-R8 mask，再用 composite pass `LOAD` present image 叠加轮廓；随后 App-owned coordinate gizmo pass 读取当前
-`per_frame_data.view`，在右下角以 `LOAD` present image 叠加三轴朝向，最后 `GuiPlugin` 绘制 ImGui。outline mask 不导出为
-debug image，gizmo 不导出中间 image，GUI debug viewer 只接收实时/离线 pipeline 显式收集的 debug images。
+Truvis 主视图 present graph 在两种模式下都保持同一叠加顺序：对应 pipeline 在一次 resolve scope 中先把 main view
+绘制到 present image，再按 App-owned 稳定选择 ID 解析当前 FIF 的 debug source，并在右侧垂直居中绘制保持宽高比的
+缩略图；非 main target 会按 pipeline 声明的稳定状态导入，并在 graph 末尾恢复原 layout。随后 App-owned selection
+outline pass 以 `WorldSubmeshSelection` 语义光栅化选中 submesh 到 per-FIF R8 mask，再用 composite pass `LOAD`
+present image 叠加轮廓；随后 App-owned coordinate gizmo pass 读取当前 `per_frame_data.view`，在右下角以 `LOAD`
+present image 叠加三轴朝向，最后 `GuiPlugin` 绘制 ImGui。outline mask 不导出为 debug image，gizmo 不导出中间 image，
+ImGui 只修改 CPU 选择状态，不采样或注册 debug image。
 
 离线 `accum_image` 是 pipeline-owned 单张 HDR image，不按 FIF 轮转；RenderGraph import 初始状态为
-`STORAGE_READ_WRITE_COMPUTE`。离线 present graph 只读取 per-FIF `render_target`，不导出图片，不复用 DLSS、ReSTIR、RR、denoise 或 realtime `ViewAccumState`。
+`STORAGE_READ_WRITE_COMPUTE`。离线 present graph 固定读取 per-FIF `render_target` 作为主图；选择 debug image 时才额外读取
+对应 offline target，并在 graph 末尾恢复其 pipeline 声明的稳定状态。离线路径不复用 DLSS、ReSTIR、RR、denoise 或 realtime `ViewAccumState`。
 Truvis 持有一份 `PathTracingCommonSettings`，并在构建 graph 时同时传给 realtime 与 offline pipeline；这份状态保存 sky
 采样、sky 亮度、NEE 开关和 tone mapping，因此 ImGui 在 `Realtime / Offline` 间切换时不会让公共参数分叉。RT debug /
 ReSTIR DI 与 offline debug / dispatch count 仍分别属于各自 pipeline settings。

@@ -1,18 +1,15 @@
-use crate::gui_plugin::{DebugImageEntry, DebugImageGraphEntry};
-use crate::render_pipeline::common_settings::PathTracingCommonSettings;
-use crate::render_pipeline::targets::{
-    DlssOutputTargets, DlssRrInputTargets, DlssSrExposureTarget, DlssSrInputTargets, ImageTarget, MainViewTargets,
-    RestirDiTargets, RestirReservoirTarget, RestirSurfaceKeyTarget, RtWorkingTargets, SharcTargets,
-};
+use std::{cell::Cell, env};
+
+use slotmap::Key;
+
 use app_render_passes::dlss_rr_pass::{DlssRrPass, DlssRrRgPass};
 use app_render_passes::dlss_sr_pass::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
 use app_render_passes::gbuffer::GBuffer;
 use app_render_passes::realtime_rt_pass::{
     RealtimeRtPass, RealtimeRtRgPass, RestirReservoirRgImages, RestirSurfaceKeyRgImages,
 };
-use app_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
+use app_render_passes::resolve_pass::{ResolveDebugImage, ResolvePass, ResolveRgPass};
 use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
-use std::{cell::Cell, env};
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
@@ -20,7 +17,28 @@ use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 use truvis_render_runtime::state::dlss_options::DlssOptions;
 
+use crate::debug_image::DebugImageOption;
+use crate::render_pipeline::common_settings::PathTracingCommonSettings;
+use crate::render_pipeline::targets::{
+    DlssOutputTargets, DlssRrInputTargets, DlssSrExposureTarget, DlssSrInputTargets, ImageTarget, MainViewTargets,
+    RestirDiTargets, RestirReservoirTarget, RestirSurfaceKeyTarget, RtWorkingTargets, SharcTargets,
+};
+
 pub use crate::render_pipeline::common_settings::RtSkySamplingMode;
+
+const RT_DEBUG_IMAGE_OPTIONS: [DebugImageOption; 11] = [
+    DebugImageOption::new("single-frame-rt", "Single Frame RT"),
+    DebugImageOption::new("main-view-color", "Main View Color"),
+    DebugImageOption::new("dlss-output", "DLSS Output"),
+    DebugImageOption::new("dlss-depth", "DLSS Depth"),
+    DebugImageOption::new("dlss-motion-vectors", "DLSS Motion Vectors"),
+    DebugImageOption::new("dlss-rr-diffuse-albedo", "DLSS RR Diffuse Albedo"),
+    DebugImageOption::new("dlss-rr-specular-albedo", "DLSS RR Specular Albedo"),
+    DebugImageOption::new("dlss-rr-specular-motion-vectors", "DLSS RR Specular Motion Vectors"),
+    DebugImageOption::new("gbuffer-a", "GBuffer-A"),
+    DebugImageOption::new("gbuffer-b", "GBuffer-B"),
+    DebugImageOption::new("gbuffer-c", "GBuffer-C"),
+];
 
 #[derive(Default)]
 pub struct RtPipeline {
@@ -360,23 +378,9 @@ struct RtPipelineInner {
     present_cmds: [GfxCommandBuffer; FrameCounter::fif_count()],
 }
 
-/// RT present graph 中已经导入的关键图像。
-///
-/// 调用方把 `present_image` 交给 GUI 叠加；`main_view_color` 可作为 debug image 复用，
-/// 避免同一物理图像在 present graph 内重复 import。
+/// RT present graph 暴露给 App 后续 overlay 的当前 present image。
 pub struct RtPresentGraphTargets {
     pub present_image: RgImageHandle,
-    pub main_view_color: RgImageHandle,
-}
-
-impl RtPresentGraphTargets {
-    pub fn debug_graph_entries(&self) -> [DebugImageGraphEntry; 1] {
-        [DebugImageGraphEntry::new(
-            "main-view-color",
-            self.main_view_color,
-            RgImageState::SHADER_READ_FRAGMENT,
-        )]
-    }
 }
 
 impl RtPipelineInner {
@@ -974,7 +978,21 @@ impl RtPipeline {
         }
     }
 
-    pub fn collect_debug_images(&self, frame_label: FrameLabel, dlss_options: DlssOptions) -> Vec<DebugImageEntry> {
+    /// 返回 ImGui 选择器可见的稳定元数据，不暴露当前 FIF 的 GPU handle。
+    pub fn debug_image_options() -> &'static [DebugImageOption] {
+        &RT_DEBUG_IMAGE_OPTIONS
+    }
+
+    /// 根据稳定 ID 解析当前帧 debug image 及其跨 graph 稳定状态。
+    ///
+    /// 该解析必须发生在 render phase：per-FIF target 由当前 `FrameLabel` 决定，DLSS 输入的
+    /// 稳定 layout 也取决于本帧 SR/RR mode。返回值只借给当前 present graph 使用。
+    fn debug_image_source(
+        &self,
+        frame_label: FrameLabel,
+        dlss_options: DlssOptions,
+        id: &str,
+    ) -> Option<(ImageTarget, RgImageState)> {
         let inner = self.inner();
         let rt_targets = &inner.rt_targets;
         let main_view_targets = &inner.main_view_targets;
@@ -1000,56 +1018,46 @@ impl RtPipeline {
         let rr_input_state = if dlss_options.is_rr_active() { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
         let gbuffer_a_state = if dlss_options.is_rr_active() { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
 
-        vec![
-            debug_entry_with_state("single-frame-rt", "Single Frame RT", single_frame, sl_input_state),
-            debug_entry("main-view-color", "Main View Color", main_view_color),
-            debug_entry("dlss-output", "DLSS Output", dlss_output),
-            debug_entry_with_state("dlss-depth", "DLSS Depth", depth, sl_input_state),
-            debug_entry_with_state("dlss-motion-vectors", "DLSS Motion Vectors", motion_vectors, sl_input_state),
-            debug_entry_with_state(
-                "dlss-rr-diffuse-albedo",
-                "DLSS RR Diffuse Albedo",
-                rr_diffuse_albedo,
-                rr_input_state,
-            ),
-            debug_entry_with_state(
-                "dlss-rr-specular-albedo",
-                "DLSS RR Specular Albedo",
-                rr_specular_albedo,
-                rr_input_state,
-            ),
-            debug_entry_with_state(
-                "dlss-rr-specular-motion-vectors",
-                "DLSS RR Specular Motion Vectors",
-                rr_specular_motion_vectors,
-                rr_input_state,
-            ),
-            DebugImageEntry::raw_with_graph_state(
-                "gbuffer-a",
-                "GBuffer-A",
-                gbuffer_a_image,
-                gbuffer_a_view,
-                GBuffer::A_FORMAT,
-                gbuffer.extent(),
+        let source = match id {
+            "single-frame-rt" => (single_frame, sl_input_state),
+            "main-view-color" => (main_view_color, RgImageState::SHADER_READ_FRAGMENT),
+            "dlss-output" => (dlss_output, RgImageState::GENERAL),
+            "dlss-depth" => (depth, sl_input_state),
+            "dlss-motion-vectors" => (motion_vectors, sl_input_state),
+            "dlss-rr-diffuse-albedo" => (rr_diffuse_albedo, rr_input_state),
+            "dlss-rr-specular-albedo" => (rr_specular_albedo, rr_input_state),
+            "dlss-rr-specular-motion-vectors" => (rr_specular_motion_vectors, rr_input_state),
+            "gbuffer-a" => (
+                ImageTarget {
+                    image: gbuffer_a_image,
+                    view: gbuffer_a_view,
+                    format: GBuffer::A_FORMAT,
+                    extent: gbuffer.extent(),
+                },
                 gbuffer_a_state,
             ),
-            DebugImageEntry::raw(
-                "gbuffer-b",
-                "GBuffer-B",
-                gbuffer_b_image,
-                gbuffer_b_view,
-                GBuffer::B_FORMAT,
-                gbuffer.extent(),
+            "gbuffer-b" => (
+                ImageTarget {
+                    image: gbuffer_b_image,
+                    view: gbuffer_b_view,
+                    format: GBuffer::B_FORMAT,
+                    extent: gbuffer.extent(),
+                },
+                RgImageState::GENERAL,
             ),
-            DebugImageEntry::raw(
-                "gbuffer-c",
-                "GBuffer-C",
-                gbuffer_c_image,
-                gbuffer_c_view,
-                GBuffer::C_FORMAT,
-                gbuffer.extent(),
+            "gbuffer-c" => (
+                ImageTarget {
+                    image: gbuffer_c_image,
+                    view: gbuffer_c_view,
+                    format: GBuffer::C_FORMAT,
+                    extent: gbuffer.extent(),
+                },
+                RgImageState::GENERAL,
             ),
-        ]
+            _ => return None,
+        };
+
+        (!source.0.image.is_null() && !source.0.view.is_null()).then_some(source)
     }
 
     pub fn contribute_present_passes<'a>(
@@ -1057,6 +1065,7 @@ impl RtPipeline {
         rg_builder: &mut RenderGraphBuilder<'a>,
         ctx: &'a PluginRenderCtx<'a>,
         _common_settings: &PathTracingCommonSettings,
+        selected_debug_image_id: Option<&str>,
     ) -> RtPresentGraphTargets {
         let inner = self.inner();
         let record_ctx = ctx.record_ctx;
@@ -1077,6 +1086,24 @@ impl RtPipeline {
 
         let present_target = ctx.present.import_current_target(rg_builder, frame_label);
         let present_image = present_target.image;
+        let debug_image = selected_debug_image_id
+            .and_then(|id| {
+                self.debug_image_source(frame_label, *record_ctx.dlss_options, id)
+                    .map(|(source, final_state)| (id, source, final_state))
+            })
+            .map(|(id, source, final_state)| {
+                // main view 已作为本 graph 的 resolve 输入导入；其它中间图像才创建新的 graph handle。
+                let image = if source.image == color_target.image {
+                    render_target
+                } else {
+                    rg_builder.import_image(id, source.image, Some(source.view), source.format, final_state, None)
+                };
+                rg_builder.export_image(image, final_state, None);
+                ResolveDebugImage {
+                    image,
+                    source_extent: source.extent,
+                }
+            });
 
         rg_builder.add_pass(
             "resolve",
@@ -1084,15 +1111,13 @@ impl RtPipeline {
                 resolve_pass: &inner.resolve_pass,
                 record_ctx,
                 render_target,
+                debug_image,
                 swapchain_image: present_image,
                 swapchain_extent: present_target.image_info.image_extent,
             },
         );
 
-        RtPresentGraphTargets {
-            present_image,
-            main_view_color: render_target,
-        }
+        RtPresentGraphTargets { present_image }
     }
 
     fn inner(&self) -> &RtPipelineInner {
@@ -1178,27 +1203,6 @@ fn import_restir_surface_key<'a>(
             None,
         ),
     }
-}
-
-fn debug_entry(id: &'static str, label: &'static str, target: ImageTarget) -> DebugImageEntry {
-    DebugImageEntry::raw(id, label, target.image, target.view, target.format, target.extent)
-}
-
-fn debug_entry_with_state(
-    id: &'static str,
-    label: &'static str,
-    target: ImageTarget,
-    graph_state: RgImageState,
-) -> DebugImageEntry {
-    DebugImageEntry::raw_with_graph_state(
-        id,
-        label,
-        target.image,
-        target.view,
-        target.format,
-        target.extent,
-        graph_state,
-    )
 }
 
 impl Drop for RtPipeline {

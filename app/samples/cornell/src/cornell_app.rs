@@ -10,6 +10,7 @@ use truvis_world::World;
 
 use app_kit::camera::Camera;
 use app_kit::camera_controller::CameraController;
+use app_kit::debug_image::DebugImageSelector;
 use app_kit::gui_plugin::GuiPlugin;
 use app_kit::input_state::InputManager;
 use app_kit::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
@@ -20,6 +21,7 @@ use app_kit::render_pipeline::rt_render_graph::RtPipeline;
 #[derive(Default)]
 pub struct CornellApp {
     gui: GuiPlugin,
+    debug_image_selector: DebugImageSelector,
     rt_pipeline: RtPipeline,
     path_tracing_common_settings: PathTracingCommonSettings,
     camera_controller: CameraController,
@@ -130,7 +132,7 @@ impl RenderAppHooks for CornellApp {
                 None,
                 None,
             );
-            self.gui.build_debug_image_viewer_ui(ui);
+            self.debug_image_selector.build_window(ui, RtPipeline::debug_image_options());
         }
         self.gui.end_frame();
 
@@ -155,11 +157,6 @@ impl RenderAppHooks for CornellApp {
         let frame_label = ctx.record_ctx.frame_timing.frame_label();
         let frame_id = ctx.record_ctx.frame_timing.frame_id();
 
-        self.gui.begin_debug_image_frame();
-        // debug image import state 取决于当前 SR/RR mode；Streamline 输入在 evaluate 后会停在 read-only layout。
-        for debug_image in self.rt_pipeline.collect_debug_images(frame_label, *ctx.record_ctx.dlss_options) {
-            self.gui.register_debug_image(debug_image);
-        }
         self.gui.prepare_render_data(&plugin_ctx);
 
         let compute_submit = {
@@ -187,15 +184,17 @@ impl RenderAppHooks for CornellApp {
                 ash::vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
                 frame_id,
             ));
-            let present_targets =
-                self.rt_pipeline.contribute_present_passes(&mut graph, &plugin_ctx, &self.path_tracing_common_settings);
-            let debug_graph_entries = present_targets.debug_graph_entries();
+            let present_targets = self.rt_pipeline.contribute_present_passes(
+                &mut graph,
+                &plugin_ctx,
+                &self.path_tracing_common_settings,
+                self.debug_image_selector.selected_id(),
+            );
             self.gui.contribute_passes(
                 &mut graph,
                 &plugin_ctx,
                 present_targets.present_image,
                 ctx.present.swapchain_image_info().image_extent,
-                &debug_graph_entries,
             );
 
             let compiled_graph = graph.compile();

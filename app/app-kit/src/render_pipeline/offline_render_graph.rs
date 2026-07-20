@@ -1,13 +1,12 @@
-use crate::gui_plugin::{DebugImageEntry, DebugImageGraphEntry};
-use crate::render_pipeline::common_settings::{PathTracingCommonSettings, RtSkySamplingMode};
-use crate::render_pipeline::rt_render_graph::RtDebugChannel;
-use crate::render_pipeline::targets::{ImageTarget, OfflineTargets};
+use std::cell::Cell;
+
+use slotmap::Key;
+
 use app_render_passes::accum_pass::{AccumPass, AccumRgPass};
 use app_render_passes::image_clear_pass::{ImageClearPass, ImageClearRgPass};
 use app_render_passes::offline_rt_pass::{OfflineRtPass, OfflineRtRgPass};
-use app_render_passes::resolve_pass::{ResolvePass, ResolveRgPass};
+use app_render_passes::resolve_pass::{ResolveDebugImage, ResolvePass, ResolveRgPass};
 use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
-use std::cell::Cell;
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
@@ -15,6 +14,17 @@ use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
 use truvis_render_foundation::render_scene_view::RenderSceneAccumSignature;
 use truvis_render_foundation::render_view::RenderViewAccumSignature;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
+
+use crate::debug_image::DebugImageOption;
+use crate::render_pipeline::common_settings::{PathTracingCommonSettings, RtSkySamplingMode};
+use crate::render_pipeline::rt_render_graph::RtDebugChannel;
+use crate::render_pipeline::targets::{ImageTarget, OfflineTargets};
+
+const OFFLINE_DEBUG_IMAGE_OPTIONS: [DebugImageOption; 3] = [
+    DebugImageOption::new("offline-single-frame", "Offline Single Frame"),
+    DebugImageOption::new("offline-accum", "Offline Accum"),
+    DebugImageOption::new("offline-render-target", "Offline Render Target"),
+];
 
 /// 离线 ground truth 管线。
 ///
@@ -184,17 +194,6 @@ struct OfflinePipelineInner {
 
 pub struct OfflinePresentGraphTargets {
     pub present_image: RgImageHandle,
-    pub offline_render_target: RgImageHandle,
-}
-
-impl OfflinePresentGraphTargets {
-    pub fn debug_graph_entries(&self) -> [DebugImageGraphEntry; 1] {
-        [DebugImageGraphEntry::new(
-            "offline-render-target",
-            self.offline_render_target,
-            RgImageState::SHADER_READ_FRAGMENT,
-        )]
-    }
 }
 
 impl OfflinePipelineInner {
@@ -464,6 +463,7 @@ impl OfflinePipeline {
         rg_builder: &mut RenderGraphBuilder<'a>,
         ctx: &'a PluginRenderCtx<'a>,
         _common_settings: &PathTracingCommonSettings,
+        selected_debug_image_id: Option<&str>,
     ) -> OfflinePresentGraphTargets {
         let inner = self.inner();
         let record_ctx = ctx.record_ctx;
@@ -480,6 +480,20 @@ impl OfflinePipeline {
 
         let present_target = ctx.present.import_current_target(rg_builder, frame_label);
         let present_image = present_target.image;
+        let debug_image = selected_debug_image_id
+            .and_then(|id| self.debug_image_source(frame_label, id).map(|(source, state)| (id, source, state)))
+            .map(|(id, source, final_state)| {
+                let image = if source.image == color_target.image {
+                    render_target
+                } else {
+                    rg_builder.import_image(id, source.image, Some(source.view), source.format, final_state, None)
+                };
+                rg_builder.export_image(image, final_state, None);
+                ResolveDebugImage {
+                    image,
+                    source_extent: source.extent,
+                }
+            });
 
         rg_builder.add_pass(
             "resolve",
@@ -487,33 +501,34 @@ impl OfflinePipeline {
                 resolve_pass: &inner.resolve_pass,
                 record_ctx,
                 render_target,
+                debug_image,
                 swapchain_image: present_image,
                 swapchain_extent: present_target.image_info.image_extent,
             },
         );
 
-        OfflinePresentGraphTargets {
-            present_image,
-            offline_render_target: render_target,
-        }
+        OfflinePresentGraphTargets { present_image }
     }
 
-    pub fn collect_debug_images(&self, frame_label: FrameLabel) -> Vec<DebugImageEntry> {
+    /// 返回 ImGui 选择器可见的稳定元数据，不暴露 pipeline-owned GPU target。
+    pub fn debug_image_options() -> &'static [DebugImageOption] {
+        &OFFLINE_DEBUG_IMAGE_OPTIONS
+    }
+
+    fn debug_image_source(&self, frame_label: FrameLabel, id: &str) -> Option<(ImageTarget, RgImageState)> {
         let targets = &self.inner().targets;
-        vec![
-            debug_entry("offline-single-frame", "Offline Single Frame", targets.single_frame_image(frame_label)),
-            debug_entry("offline-accum", "Offline Accum", targets.accum_image()),
-            debug_entry("offline-render-target", "Offline Render Target", targets.render_target(frame_label)),
-        ]
+        let source = match id {
+            "offline-single-frame" => (targets.single_frame_image(frame_label), RgImageState::GENERAL),
+            "offline-accum" => (targets.accum_image(), RgImageState::GENERAL),
+            "offline-render-target" => (targets.render_target(frame_label), RgImageState::SHADER_READ_FRAGMENT),
+            _ => return None,
+        };
+        (!source.0.image.is_null() && !source.0.view.is_null()).then_some(source)
     }
 
     fn inner(&self) -> &OfflinePipelineInner {
         self.inner.as_ref().expect("OfflinePipeline not initialized")
     }
-}
-
-fn debug_entry(id: &'static str, label: &'static str, target: ImageTarget) -> DebugImageEntry {
-    DebugImageEntry::raw(id, label, target.image, target.view, target.format, target.extent)
 }
 
 impl Drop for OfflinePipeline {

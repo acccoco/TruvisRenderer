@@ -16,6 +16,8 @@ coordinate gizmo、selection outline 和 Phong shading。
   或中间 image，pass 插入顺序属于具体 App。
 - `ImageClearPass` 只负责通过 pass-local storage image descriptor 把目标写成确定颜色；具体 pipeline 必须通过
   RenderGraph 声明目标图像写状态，并决定何时清理历史。
+- `ResolvePass` 在同一个 dynamic rendering scope 内先绘制全屏 main image，再按需重新绑定 sampled image
+  descriptor 绘制右侧 debug thumbnail；color attachment 只执行一次 `CLEAR`，不会为 thumbnail 新建 pipeline 或 rendering scope。
 - 固定管线 image 由具体 pass 通过 set 3 的 typed push descriptor 引用。storage image 固定使用 `GENERAL`，
   sampled image 固定使用 `SHADER_READ_ONLY_OPTIMAL`；descriptor 中的 layout 必须与该 pass 的 RenderGraph 声明一致。
 
