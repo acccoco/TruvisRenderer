@@ -1,16 +1,19 @@
 //! Truvis 主体应用的 Tauri 桌面壳。
 //!
 //! 本模块拥有顶层 Tauri window、EditorServer 与 embedded winit host 的组装和关闭
-//! 顺序。它不处理材质领域命令，也不访问 Vulkan；editor DTO 到 `World` 的翻译仍由
-//! RenderThread 上的 `EditorController` 完成。
+//! 顺序。它不处理材质领域命令，也不访问 Vulkan；editor DTO 与本地桌面特权命令
+//! 都只能在 RenderThread 上各自的 controller 中进入权威 `World`。
 
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use raw_window_handle::HasWindowHandle;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::{Manager, RunEvent, State, WindowEvent};
+use tauri_plugin_dialog::DialogExt;
+use tokio::sync::oneshot;
 
 use truvis_app_frame::{RenderAppShell, SendWrapper, init_env_with_log_file};
 use truvis_editor_bridge::{EditorBridgeConfig, create_editor_bridge};
@@ -19,6 +22,7 @@ use truvis_logs::LogFilePath;
 use truvis_path::TruvisPath;
 use truvis_winit_app::embedded::{EmbeddedViewportRect, EmbeddedWinitHost};
 
+use crate::desktop_command::{DesktopCommandController, DesktopCommandSender};
 use crate::truvis_app::TruvisApp;
 
 /// Tauri command 使用的 DOM viewport 物理像素矩形。
@@ -56,22 +60,41 @@ struct TruvisDesktopResources {
 
 /// Tauri 主线程和 command handler 共享的桌面生命周期状态。
 ///
-/// 本状态只保存窗口宿主、Server handle 和网络入口，不保存 scene/material/selection
-/// 投影。`shutting_down` 保证重复 close/exit 事件不会重复 join 同一线程。
+/// 本状态只保存窗口宿主、Server handle、网络入口和进程内 command sender，不保存
+/// scene/material/selection 投影。`shutting_down` 保证重复 close/exit 事件不会重复
+/// join 同一线程。
 struct TruvisDesktopState {
+    /// 严格按 RenderThread、EditorServer 顺序关闭的桌面资源集合。
     resources: Mutex<TruvisDesktopResources>,
+
+    /// WebView 建立 Editor WebSocket 时读取的 loopback 地址。
     editor_websocket_url: String,
+
+    /// Tauri command 向 RenderThread 提交本地特权命令的进程内 sender。
+    desktop_command_sender: DesktopCommandSender,
+
+    /// 防止多个原生 HDRI 文件对话框或待确认请求同时存在。
+    hdri_dialog_open: Arc<AtomicBool>,
+
+    /// 标记桌面资源已经进入 shutdown，阻止新 command 跨入正在销毁的线程。
     shutting_down: AtomicBool,
 }
 
 impl TruvisDesktopState {
-    fn new(render_host: EmbeddedWinitHost, editor_server: EditorServerHandle, editor_websocket_url: String) -> Self {
+    fn new(
+        render_host: EmbeddedWinitHost,
+        editor_server: EditorServerHandle,
+        editor_websocket_url: String,
+        desktop_command_sender: DesktopCommandSender,
+    ) -> Self {
         Self {
             resources: Mutex::new(TruvisDesktopResources {
                 render_host: Some(render_host),
                 editor_server: Some(editor_server),
             }),
             editor_websocket_url,
+            desktop_command_sender,
+            hdri_dialog_open: Arc::new(AtomicBool::new(false)),
             shutting_down: AtomicBool::new(false),
         }
     }
@@ -97,6 +120,42 @@ impl TruvisDesktopState {
         })
     }
 
+    /// 获取一次独占的 HDRI 对话框许可。
+    ///
+    /// permit 使用 RAII 归还原子标记，因此 command future 被取消、用户取消选择或
+    /// RenderThread reply 失败都不会让后续文件选择永久处于 busy。
+    fn begin_hdri_dialog(&self) -> std::result::Result<HdriDialogPermit, String> {
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err("Truvis desktop is shutting down".to_string());
+        }
+        self.hdri_dialog_open
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| "An HDRI selection is already in progress".to_string())?;
+        Ok(HdriDialogPermit {
+            dialog_open: Arc::clone(&self.hdri_dialog_open),
+        })
+    }
+
+    /// clone 轻量 sender，使 async command 不必跨 await 持有 Tauri `State` guard。
+    fn desktop_command_sender(&self) -> DesktopCommandSender {
+        self.desktop_command_sender.clone()
+    }
+
+    /// 对原生 dialog 结果执行最终 App 入口校验。
+    ///
+    /// dialog filter 只改善用户体验，不能作为输入约束；这里再次检查扩展名，确保私有
+    /// RenderThread command 只接收本功能承诺的 Radiance HDR 或 OpenEXR 文件。
+    fn validate_hdri_path(path: &Path) -> std::result::Result<(), String> {
+        let supported = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("hdr") || extension.eq_ignore_ascii_case("exr"));
+        if !supported {
+            return Err("Selected file must use the .hdr or .exr extension".to_string());
+        }
+        Ok(())
+    }
+
     /// 关闭顺序是本集成最重要的生命周期不变量：RenderThread → child HWND →
     /// EditorServer → Tauri parent HWND。
     fn shutdown(&self) {
@@ -114,6 +173,38 @@ impl TruvisDesktopState {
     }
 }
 
+/// 一次原生 HDRI 文件选择及其 RenderThread 接受过程的独占许可。
+///
+/// permit 完整覆盖 dialog 和 reply 等待期；只要 command future 结束，`Drop` 就恢复
+/// `hdri_dialog_open`，不依赖每个错误分支手工清理。
+struct HdriDialogPermit {
+    /// 指向 `TruvisDesktopState` 中并发保护标记的共享引用。
+    dialog_open: Arc<AtomicBool>,
+}
+
+impl Drop for HdriDialogPermit {
+    fn drop(&mut self) {
+        self.dialog_open.store(false, Ordering::Release);
+    }
+}
+
+/// `select_hdri` 返回给 WebView 的最小结果。
+///
+/// 完整路径不会跨越 Rust/Tauri IPC；`Accepted` 只确认 CPU scene 已接受请求，不代表
+/// 后台 decode、GPU upload 或 sky distribution 已完成。
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum SelectHdriResult {
+    /// 用户主动关闭文件对话框，scene 没有发生变化。
+    Cancelled,
+
+    /// RenderThread 已接受 sky texture 请求。
+    Accepted {
+        /// 仅供 TopBar 展示的文件名，不包含本机目录。
+        file_name: String,
+    },
+}
+
 #[tauri::command]
 fn set_render_viewport_rect(
     rect: RenderViewportRect,
@@ -125,6 +216,44 @@ fn set_render_viewport_rect(
 #[tauri::command]
 fn editor_websocket_url(state: State<'_, TruvisDesktopState>) -> String {
     state.editor_websocket_url.clone()
+}
+
+/// 打开原生 HDRI 文件选择器，并等待 RenderThread 接受 scene mutation。
+///
+/// 文件对话框使用 callback API，避免阻塞 Tauri main event loop；选中的 `PathBuf`
+/// 随后只经过进程内有界队列。这里等待的是 CPU scene 结果，不等待任何 asset/GPU 阶段。
+#[tauri::command]
+async fn select_hdri(
+    app: tauri::AppHandle,
+    state: State<'_, TruvisDesktopState>,
+) -> std::result::Result<SelectHdriResult, String> {
+    let _dialog_permit = state.begin_hdri_dialog()?;
+    let desktop_command_sender = state.desktop_command_sender();
+    drop(state);
+
+    let (selection_sender, selection_receiver) = oneshot::channel();
+    let mut dialog =
+        app.dialog().file().set_title("Choose HDR Environment").add_filter("HDR Environment", &["hdr", "exr"]);
+    if let Some(window) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&window);
+    }
+    dialog.pick_file(move |selection| {
+        let _ = selection_sender.send(selection);
+    });
+
+    let selection = selection_receiver.await.map_err(|_| "HDRI file dialog did not return a result".to_string())?;
+    let Some(selection) = selection else {
+        return Ok(SelectHdriResult::Cancelled);
+    };
+    let path: PathBuf =
+        selection.into_path().map_err(|_| "Selected HDRI is not available as a local filesystem path".to_string())?;
+    TruvisDesktopState::validate_hdri_path(&path)?;
+    let file_name =
+        path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| "Selected HDRI".to_string());
+
+    let reply = desktop_command_sender.try_request_sky_texture(path)?;
+    reply.await.map_err(|_| "Native renderer stopped before accepting the HDRI request".to_string())??;
+    Ok(SelectHdriResult::Accepted { file_name })
 }
 
 /// 主体应用的 Tauri/Tao 进程入口。
@@ -139,12 +268,14 @@ impl TruvisDesktop {
         init_env_with_log_file(LogFilePath::current_exe(TruvisPath::temp_dir()));
 
         let (server_endpoint, app_endpoint) = create_editor_bridge(EditorBridgeConfig::default());
+        let (desktop_command_sender, desktop_command_controller) = DesktopCommandController::create();
         let editor_server = EditorServer::start(EditorServerConfig::default(), server_endpoint)
             .context("failed to start embedded EditorServer")?;
         let websocket_url = format!("ws://{}/api/editor/v1/ws", editor_server.bound_addr());
 
         let app = tauri::Builder::default()
-            .invoke_handler(tauri::generate_handler![set_render_viewport_rect, editor_websocket_url])
+            .plugin(tauri_plugin_dialog::init())
+            .invoke_handler(tauri::generate_handler![set_render_viewport_rect, editor_websocket_url, select_hdri])
             .setup(move |app| {
                 let window = app
                     .get_webview_window("main")
@@ -154,11 +285,11 @@ impl TruvisDesktop {
                     .map_err(|error| std::io::Error::other(format!("failed to get Tauri parent HWND: {error}")))?
                     .as_raw();
                 let render_host = EmbeddedWinitHost::spawn(SendWrapper(parent_window), move || {
-                    Box::new(RenderAppShell::new(TruvisApp::new(app_endpoint)))
+                    Box::new(RenderAppShell::new(TruvisApp::new(app_endpoint, desktop_command_controller)))
                 })
                 .map_err(std::io::Error::other)?;
 
-                app.manage(TruvisDesktopState::new(render_host, editor_server, websocket_url));
+                app.manage(TruvisDesktopState::new(render_host, editor_server, websocket_url, desktop_command_sender));
                 window.show()?;
                 Ok(())
             })

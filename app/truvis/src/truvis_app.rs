@@ -29,6 +29,7 @@ use app_kit::render_pipeline::offline_render_graph::OfflinePipeline;
 use app_kit::render_pipeline::rt_render_graph::RtPipeline;
 
 use crate::coordinate_gizmo::CoordinateGizmoRenderer;
+use crate::desktop_command::DesktopCommandController;
 use crate::editor_controller::{EditorController, EditorControllerConfig};
 use crate::overlay_ui::{
     DebugImageSelectorData, PipelineControlsData, RaycastOverlayData, TruvisOverlayFrame, TruvisOverlayOptions,
@@ -50,15 +51,23 @@ pub struct TruvisApp {
     overlay_ui: TruvisOverlayUi,
     click_ray_cast_probe: ClickRayCastProbe,
     selected_submesh: Option<WorldSubmeshSelection>,
+
+    /// RenderThread 独占的 Tauri 桌面特权命令消费者。
+    ///
+    /// 它只在 update 阶段短暂借用 `World`，确保文件选择结果不会让 Tauri 主线程、
+    /// WebView 或 EditorServer 越过 CPU scene 权威边界。
+    desktop_command_controller: DesktopCommandController,
+
     editor_controller: EditorController,
 }
 
 impl TruvisApp {
     /// 使用桌面壳预先创建的 App endpoint 构造渲染侧业务状态。
     ///
-    /// EditorServer 生命周期属于 Tauri desktop；本 App 只拥有协议到权威 `World`
-    /// 的非阻塞 controller，避免 RenderThread 同时承担窗口壳和网络 owner 职责。
-    pub(crate) fn new(app_endpoint: AppEndpoint) -> Self {
+    /// EditorServer 生命周期属于 Tauri desktop；本 App 只拥有 Editor 协议和桌面特权
+    /// command 到权威 `World` 的非阻塞 controller，避免 RenderThread 同时承担窗口壳和
+    /// 网络 owner 职责。
+    pub(crate) fn new(app_endpoint: AppEndpoint, desktop_command_controller: DesktopCommandController) -> Self {
         Self {
             gui: Default::default(),
             debug_image_selector: Default::default(),
@@ -73,6 +82,7 @@ impl TruvisApp {
             overlay_ui: Default::default(),
             click_ray_cast_probe: Default::default(),
             selected_submesh: None,
+            desktop_command_controller,
             editor_controller: EditorController::new(app_endpoint, EditorControllerConfig::default()),
         }
     }
@@ -522,6 +532,10 @@ impl RenderAppHooks for TruvisApp {
         if self.clear_stale_selection(ctx.world) {
             self.editor_controller.notify_selection_changed(None);
         }
+        let desktop_update = self.desktop_command_controller.process_next(ctx.world);
+        if let Some(scene_version) = desktop_update.scene_version_changed {
+            self.editor_controller.notify_scene_version_changed(scene_version);
+        }
         self.editor_controller.process_requests(ctx.world, self.selected_submesh);
 
         let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
@@ -613,6 +627,7 @@ impl RenderAppHooks for TruvisApp {
     }
 
     fn shutdown(&mut self, _ctx: &mut RenderAppShutdownCtx<'_>) {
+        self.desktop_command_controller.shutdown();
         self.editor_controller.shutdown();
     }
 

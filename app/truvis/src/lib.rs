@@ -2,6 +2,7 @@
 
 mod coordinate_gizmo;
 pub mod desktop;
+mod desktop_command;
 mod editor_controller;
 pub mod overlay_ui;
 mod selection_outline;

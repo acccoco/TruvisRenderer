@@ -33,6 +33,7 @@ raw-window-handle = { workspace = true }
 serde = { workspace = true }
 slotmap = { workspace = true }
 tauri = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
 tokio = { workspace = true }
 vk-mem = { workspace = true }
 anyhow = { workspace = true }

@@ -110,6 +110,7 @@ windows-sys = { version = "0.61.2", features = [
 imgui = { version = "0.12.0", features = ["docking"] }
 tauri = "2.11.5"
 tauri-build = "2.6.3"
+tauri-plugin-dialog = "2.7.2"
 
 ###########################################################
 # 资源加载与序列化 (Asset Loading & Serialization)

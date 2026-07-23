@@ -340,6 +340,17 @@ impl EditorController {
 }
 
 impl EditorController {
+    /// 广播由 Editor WebSocket 之外的 App-local mutation 产生的 scene version 变化。
+    ///
+    /// 本方法只复用现有失效通知，不携带本地文件路径或新的领域 DTO。notification
+    /// outbox 是 best-effort；发送失败时 Web 仍会通过既有一秒 polling 收敛。
+    pub(crate) fn notify_scene_version_changed(&self, scene_version: u64) {
+        let _ = self.endpoint.try_send_notification(EditorNotificationEnvelope {
+            target: EditorNotificationTarget::Broadcast,
+            notification: EditorNotification::SceneVersionChanged(SceneVersion::from_u64(scene_version)),
+        });
+    }
+
     pub(crate) fn notify_selection_changed(&self, selection: Option<(InstanceHandle, u32, MaterialHandle)>) {
         let selection = selection.map(|(instance, submesh_index, material)| {
             Self::selection_dto_from_handles(instance, submesh_index, material)
