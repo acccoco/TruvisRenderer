@@ -15,7 +15,8 @@ bindless descriptor 或 material slot。GPU 上传和 shader 可见绑定由
 - `AssetHub`：对外统一入口，负责 loader handle 分配和完成事件汇聚
 - `AssetLoadEvent`：CPU 数据完成事件，交给 `SceneAssetIngestor` 翻译成 CPU resource handle 和 render upload event
 - `TextureLoadDesc` / `ModelLoadDesc`：一次性 loader task 输入描述，不承担长期去重 identity
-- `TextureBytes`：从图片文件解码出的 owned CPU 纹理 bytes，只通过事件交给 texture manager
+- `TexturePixels` / `TextureBytes`：从图片文件解码出的共享 owned CPU payload；普通图片为
+  `Arc<[u8]>` RGBA8，HDR/EXR 为 `Arc<[u16]>` RGBA16F bit pattern，只通过事件交给 render-side owner
 - `SubmeshData`：从导入器复制出来的 owned CPU 几何数据，是 scene / GPU scene / RT 中的最小几何单元
 - `MeshData`：由一个或多个 `SubmeshData` 组成的 owned CPU mesh payload，只通过事件交给 mesh manager；mesh 对应一个 BLAS，submesh 对应 BLAS 内一条 geometry
 - `RawSceneData`：model 导入后的 owned CPU scene payload，通过 `ModelLoaded` 事件交给 `SceneAssetIngestor`
@@ -23,7 +24,7 @@ bindless descriptor 或 material slot。GPU 上传和 shader 可见绑定由
 ## 内部结构
 
 - `asset_loader`：crate 内部后台调度层，只持有 Rayon 线程池、结果 channel 和任务等待逻辑。
-- `texture_loader`：crate 内部纹理任务实现，只负责 image 文件读取、CPU 解码和 RGBA8 bytes 输出。
+- `texture_loader`：crate 内部纹理任务实现，只负责 image 文件读取、CPU 解码和 RGBA8/RGBA16F payload 输出。
 - `truvixx_scene_loader`：crate 内部 Assimp scene 导入任务实现，通过 `truvis-assimp-binding` 调用 Assimp C API，只负责 C++ importer 生命周期和 owned CPU scene 数据复制；当前每份导入几何显式包装为单 submesh mesh。
 - `gltf_scene_loader`：crate 内部 glTF / GLB scene 导入任务实现，通过 Rust `gltf` crate 读取 material / mesh / instance，并复制成与 Assimp 路径相同的 owned CPU scene 数据；当前每个 glTF primitive 仍包装为单 submesh mesh。
 - 外部调用方不直接使用 loader 模块；加载请求、状态查询和完成事件都通过 `AssetHub` 进入或离开 asset 层。
@@ -39,3 +40,17 @@ bindless descriptor 或 material slot。GPU 上传和 shader 可见绑定由
 - Assimp / glTF 导入失败会通过 `ModelFailed` 事件回传给 `SceneAssetIngestor`
 - model material 引用的相对纹理路径按 model 文件所在目录解析，绝对路径保持不变；asset 层不做 scene texture identity 去重或 canonicalize，后续是否规范化由 `World` / `SceneAssetIngestor` 的 scene 规则决定。glTF v1 只把外部 image URI 注册为 texture path，GLB/data URI 嵌入贴图暂不改变 texture path 身份模型。
 - 保持 asset 层不依赖 GPU 资源缓存或 bindless 绑定策略
+
+## HDR / EXR 边界
+
+- Radiance `.hdr` 和 OpenEXR `.exr` 的 `Rgb32F` / `Rgba32F` 解码结果转换为
+  scene-linear RGBA16F；大于 `1.0` 的 radiance 保留，不做 gamma、曝光、tone mapping
+  或色彩空间转换。普通 JPG/PNG 等格式继续输出 RGBA8 UNORM。
+- RGB 非有限值与负值转为 `0`，有限值裁剪到 binary16 最大有限值 `65504`；alpha
+  裁剪到 `[0, 1]`，非有限 alpha 按 `1` 处理。
+- `TextureBytes` 构造阶段校验 extent 与四通道元素数量，GPU format 只由 payload
+  variant 推导。image upload 与 sky distribution worker 通过 `Arc` 共享像素，不复制大型 HDR 数据。
+- EXR v1 只承诺 image 解码器返回的第一张 non-deep RGB/RGBA layer 与最大 mip level，
+  并把数值视为 scene-linear RGB。不支持 arbitrary channels、deep EXR、multipart
+  layer 选择，也不根据 chromaticities 自动转换 ACEScg 或其它色域。
+- asset 层不判断环境贴图投影；render runtime 把输入解释为 lat-long，非 2:1 只记录 warning。

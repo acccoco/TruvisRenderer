@@ -38,14 +38,17 @@
   foundation 公共配置契约。
 - `RenderWorld` 是 runtime 私有的 scene GPU 翻译层，内部持有 `RenderTextureManager`、`RenderMeshManager`、
   `RenderMaterialManager`、`RenderInstanceManager`、`RenderSkyManager`、`RenderAnalyticLightManager`、
-  `RenderEmissiveLightTable`、scene/instance/geometry/indirect buffer、raster draw cache 和
+  `RenderEmissiveLightTable`、共享 `RenderAssetUploadQueue`、scene/instance/geometry/indirect buffer、raster draw cache 和
   `RenderTlasManager`；dirty 传播通过私有 `DirtyRouterHelper` 与本帧 `DirtyDispatchPlan`
   在 prepare 阶段完成，render pass 只通过 `RenderSceneView` 读取它。
 - 默认 sky 通过 `World` facade 注册为普通 `TextureHandle`，再写入 `SceneStore::SceneSkyState`；
-  `RenderSkyManager` 从 `World::scene_view()` 读取 sky state，持有常驻纯色 fallback sky，并在当前 sky CPU texture
-  bytes 到达时构建 HDRI importance distribution；`RenderWorld` 只消费 sky 环境绑定快照。
+  `RenderSkyManager` 从 `World::scene_view()` 读取 sky state，持有常驻纯色 fallback sky、单线程
+  `SkyDistributionBuilder`、request generation 与 active/retired distribution。当前 sky CPU texture bytes
+  到达后异步构建最高 `4096x2048` 的 Alias 表，再通过共享 transfer timeline 异步上传；
+  `RenderWorld` 只消费已发布的 sky 环境绑定快照。
 - `RenderTextureManager` 消费 `WorldRenderSync.asset_uploads.pending_texture_uploads` 的 texture CPU bytes，异步上传 GPU image，并注册
   image view 与 bindless SRV；未 ready 或失败时通过 fallback texture 保证材质仍可安全读取。
+  image upload 与 sky distribution buffer upload 共用 `RenderWorld` 私有的 `RenderAssetUploadQueue`；
   默认 sky 的真实 texture 也复用该上传路径，但 sky fallback 由 `RenderSkyManager` 独立维护。`SceneChanges.removed_textures`
   会先移除已 ready cache；已提交但未完成的 stale upload 在 timeline 到达后只销毁，不会重新 publish 到 resolver。
 - `RenderMeshManager` 消费 `WorldRenderSync.asset_uploads.pending_mesh_uploads` 的 mesh CPU 数据，在 graphics queue 上按 submesh
@@ -97,7 +100,8 @@
 - `RenderRuntime::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
   swapchain 与 `SwapchainPresenter`，并返回 init Ctx 供 app/plugin 创建长期 GPU 资源。
 - `begin_frame` 是每帧资源回收入口：推进 runtime 私有帧计时器、等待当前 FIF slot、重置 frame command pool、
-  清理延迟释放队列，并推进 bindless 与 `RenderWorld` 内部 managers 的 frame token。AssetHub 事件只在
+  清理延迟释放队列，并推进 bindless 与 `RenderWorld` 内部 managers 的 frame token；旧 sky distribution
+  跨过 FIF 窗口后由 `GfxResourceManager` 销毁。AssetHub 事件只在
   prepare 边界通过 `World::sync_for_render()` drain。
 - `update_phase` 同步 present extent 到 `FrameRenderState`、acquire 当前 swapchain image，并返回 CPU update Ctx。具体窗口尺寸 render target 由 app/plugin 在 init/resize/shutdown 阶段管理。
 - App / Plugin update 结束后，`RenderAppShell` 调用 `sync_dlss_options_frame_state`，把 `DlssOptions`
@@ -133,9 +137,12 @@
   revision 并 dirty material slot，texture ready 只 dirty GPU upload，不伪装成 CPU 材质语义变化。prepare 阶段通过
   `SceneReadView` 和 `TextureResolver` 把当前 CPU material 参数与 texture fallback/ready 状态按 dirty slot 局部写入
   material buffer。
-- `RenderSkyManager` 只在 sky dirty dispatch 到达时同步 `SceneSkyState`，并在 texture upload payload 被 move 前观察当前
-  sky texture bytes 构建 importance distribution；在 prepare 阶段通过 `TextureResolver` 查询当前 sky texture 是否 GPU ready。
-  未 ready 或失败时写入纯色 fallback SRV 与 1x1 fallback distribution，sky revision、真实 sky 切换或 distribution 版本变化时重置累积帧。
+- `RenderSkyManager` 只在 sky dirty dispatch 到达时同步 `SceneSkyState`，并在 texture upload payload 被 move 前通过
+  `Arc` 共享当前 sky texture bytes 给 worker。worker 同时最多一个 in-flight build，连续切换时只保留最新 pending
+  request；CPU/GPU completion 必须同时匹配最新 request id 与 `TextureHandle` 才能发布。
+  在 prepare 阶段通过 `TextureResolver` 查询当前 sky texture 是否 GPU ready：image ready 而 distribution 未 ready
+  时显示真实 HDRI 并使用 1x1 uniform sphere PDF；无效/全黑分布也保持 uniform。sky revision、真实 sky 切换或
+  distribution 版本变化时重置累积帧。
 - `RenderInstanceManager` 先消费 instance dispatch entries 处理 instance 新增、删除、transform、material/mesh binding
   dirty，再通过 `World::scene_view()` 暴露的只读 snapshot，结合 `MaterialSlotResolver` 与 `MeshRenderResolver` 做 ready gate；
   material resolver 由 `RenderMaterialManager` 的 scene material stable slot 表提供，且 instance material 数量必须与 mesh geometry 数量一致，只有完整可渲染的实例才进入 `RenderData`。
@@ -149,7 +156,13 @@
 ## 同步与稳定性约束
 
 - runtime 全局 FIF timeline 确保 frame command pool 与延迟释放资源不会覆盖 GPU 仍在读取的数据。
-- texture manager 使用 transfer queue timeline semaphore 异步检测 copy 完成，不阻塞帧循环。
+- `RenderAssetUploadQueue` 使用一套 transfer command pool 与 timeline semaphore，按 FIFO 完成 texture image 和
+  sky structured-buffer copy，不阻塞帧循环。sky buffer copy 后建立
+  `TRANSFER_WRITE -> SHADER_READ` barrier，timeline 完成前 device address 不写入 scene root。
+- 真实天空 Alias distribution 上限为 `4096x2048`、8,388,608 entries、约 128 MiB；
+  更高分辨率 HDRI image 保留原尺寸，CPU builder 按源 texel solid angle 向目标 cell 聚合能量。
+  active distribution 被替换后按 FIF 延迟释放；未发布的 stale upload 在 transfer 完成后立即销毁。
+- lat-long sky sampler 使用 U `REPEAT`、V/W `CLAMP_TO_EDGE`；既有 sampler enum 数值保持不变，新类型追加在末尾。
 - mesh manager 使用 graphics queue timeline semaphore，因为 BLAS build 不能假设 transfer queue 支持。
 - mesh copy 到 BLAS build 前必须覆盖 `TRANSFER_WRITE -> ACCELERATION_STRUCTURE_BUILD_KHR`，
   并包含 device address 输入对应的 `SHADER_READ` 访问。

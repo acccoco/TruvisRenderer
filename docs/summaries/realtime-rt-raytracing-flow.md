@@ -127,21 +127,26 @@ version。resize、DLSS reset、mode 变化、sky/emissive/analytic light 变化
 
 HDRI 和 sky 的采样与 PDF 查询统一走 `EnvMap::sample` / `EnvMap::pdf`。
 
-- 默认 `RtSkySamplingMode::Importance`：使用 `RenderSkyManager` 基于真实 sky CPU texture bytes 构建的 alias table。
+- 默认 `RtSkySamplingMode::Importance`：使用 `RenderSkyManager` 异步构建并上传的 Alias table。
 - `RtSkySamplingMode::Uniform`：强制回退 uniform sphere，用于 A/B 对比。
 - fallback sky：真实 sky GPU image 未 ready 前使用 1x1 均匀 distribution 和纯色 fallback 贴图。
+- 过渡态：真实 HDRI image 已 ready、Alias table 尚未 ready 时，继续显示真实 HDRI，但 PDF 使用 uniform sphere。
 - 无效 distribution：回退 uniform sphere，避免读取非法分布。
 
 importance distribution 的 CPU 权重为：
 
 ```text
-weight = luminance(texel) * solid_angle(texel)
+target_cell_weight += max(finite_linear_luminance(source_texel), 0)
+                      * source_texel_solid_angle
 ```
 
-shader 抽中 texel 后，会在该 texel 覆盖的 solid angle 内继续均匀采样方向。`EnvMap::pdf(dir)` 返回同一个
+distribution 保持源尺寸或等比聚合到不超过 `4096x2048`；真实 HDRI image 保留原分辨率。
+目标 cell PDF 为 `cell_weight / total_weight / target_cell_solid_angle`，Alias entry 仍为 16 bytes，
+4K 上限共 8,388,608 entries、约 128 MiB。shader 抽中 cell 后，会在该 cell 覆盖的 solid angle 内继续均匀采样方向。`EnvMap::pdf(dir)` 返回同一个
 distribution 中该方向的 solid-angle PDF。`sky_brightness` 只在 shader 采样 sky 贴图后统一缩放 radiance；
 它不改变 alias table 权重，也不改变 PDF。
 
+HDRI 纹理使用 lat-long sampler：U repeat 消除水平接缝，V/W clamp 防止南北极互相 wrap。
 HDRI class 内部采样与 PDF 查询必须读取同一个 `EnvMap::pdf`；统一策略对外再乘上 HDRI class 的选择概率。
 
 ## 自发光三角形采样

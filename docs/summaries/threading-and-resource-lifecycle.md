@@ -45,6 +45,9 @@ flowchart LR
 
 - main thread 与 `RenderWindowThread` 都不调用 Vulkan、`ash` 或 `truvis-gfx` API。
 - 所有 Vulkan 对象在渲染线程创建、使用和销毁。
+- `truvis-asset` Rayon worker 只做文件读取与 HDR/EXR/普通图片 CPU decode；
+  `SkyDistributionBuilder` 的独立单线程只读取共享 `TextureBytes` 并构建 CPU Alias entries。
+  两类 worker 都不创建、提交或销毁 Vulkan 资源。
 - `EmbeddedWinitHost::spawn` 只等待窗口线程的 `EventLoopProxy` ready，然后立即释放 Tauri setup。child HWND 在
   Tao main thread 进入消息泵后异步创建；这避免 Windows 跨线程 `CreateWindowEx` 同步通知 parent 时形成互等。
   child ready 前到达的 viewport rect 只保留 latest 值。
@@ -87,7 +90,10 @@ flowchart LR
   app/plugin 持有，并在 init / resize / shutdown 阶段通过 ctx 中的 `GfxResourceManager` 与
   `ShaderBindingSystem` 显式创建、注册或释放。
 - Asset：`AssetHub` 只持有 texture / model loader task handle、后台任务状态和完成事件队列，并负责 Assimp / glTF model 到 owned
-  CPU payload 的导入；`SceneAssetIngestor` 把 loader 结果翻译为 CPU resource handle 事件；`RenderWorld` 内部的 `RenderTextureManager` 持有 texture 的 GPU image/view/bindless 绑定；
+  CPU payload 的导入；HDR/EXR texture payload 以共享 RGBA16F 保存，普通图片以共享 RGBA8 保存。
+  `SceneAssetIngestor` 把 loader 结果翻译为 CPU resource handle 事件；`RenderWorld` 内部的
+  `RenderAssetUploadQueue` 统一持有 texture image 与 sky distribution 的 transfer command pool/timeline，
+  `RenderTextureManager` 持有完成后的 texture GPU image/view/bindless 绑定；
   `SceneStore` 保存 mesh 的 submesh metadata 和 instance material 对齐约束；`RenderMeshManager` 持有每个 submesh 的 vertex/index buffer、
   `RtGeometry`、mesh 级 BLAS 和 GPU ready 状态；`RenderMaterialManager` 管理 material
   GPU buffer、稳定 slot 以及 `MaterialHandle -> stable slot` 映射；App 通过
@@ -99,7 +105,9 @@ flowchart LR
   instance / geometry / light / indirect buffer 和当前 FIF 的 raster draw cache，并通过内部 `RenderTlasManager`
   持有 per-FIF TLAS；`RenderSceneView` 只向 render pass 暴露只读 scene 快照。默认 sky 由 `World` 注册为
   `TextureHandle` 并写入 `SceneStore::SceneSkyState`，通过 `RenderTextureManager` 异步上传，并由
-  `RenderSkyManager` 根据 scene sky state 提供 fallback、真实 sky binding 和 distribution。
+  `RenderSkyManager` 根据 scene sky state 提供 fallback、真实 sky binding 和 distribution，并拥有
+  distribution worker、request generation 与 active/retired 状态。旧 distribution 交给
+  `GfxResourceManager` 按退休 frame id 跨过 FIF 后销毁，stale 未发布 buffer 在 transfer timeline 完成后立即销毁。
 - GUI：imgui font texture、per-frame GUI mesh buffer、当前只包含 font view 的 texture map；debug image handle
   不进入 GUI 生命周期，由 realtime/offline pipeline owner 持有并在当前 present graph 内短暂导入。
 - RenderGraph：按帧导入的 image 状态引用与同步计划；图内 transient image/buffer 是未来能力，不作为当前资源生命周期类别。
@@ -122,6 +130,11 @@ flowchart LR
 - 具体 app/plugin 在 resize 阶段重建自己持有的窗口尺寸 render target。
 
 ## 销毁路径
+
+`RenderWorld` 的资产 shutdown 顺序固定为：先停止并 join `SkyDistributionBuilder`，再等待共享
+`RenderAssetUploadQueue` timeline 并释放 pending staging/image/buffer，最后销毁
+`RenderSkyManager` 已发布的 active/retired/fallback 资源与 `RenderTextureManager` ready images。
+这保证 CPU producer、transfer queue 和 shader-visible owner 不会交叉销毁。
 
 桌面窗口的外层销毁顺序固定为：`RenderThread` 完成 App/runtime/Vulkan 销毁 → `RenderWindowThread` drop child HWND →
 停止并 join EditorServer → Tauri/Tao drop WebView 与 top-level HWND。`EmbeddedWinitHost::Drop` 为非正常 exit 提供相同顺序的兜底。

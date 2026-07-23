@@ -9,7 +9,8 @@ CPU 语义数据从 `World` 进入 RenderRuntime。`World::sync_for_render` 从�
 `WorldRenderSync.asset_uploads` typed payload；同一次 sync 还会 drain `SceneStore` 的
 `SceneChanges`。`RenderWorld` 会把 scene change 与 manager update result 归一化为 `DirtyEvent`，
 再通过静态 `DirtyRuleKind` rule set 写入本帧 `DirtyDispatchPlan`。asset payload 再由 `RenderWorld`
-内部的 `RenderTextureManager` 在渲染线程上传到 GPU，并把 Material/Scene 数据需要动态索引的 texture 注册为 bindless SRV。texture / mesh / material remove dispatch
+内部的 `RenderTextureManager` 在渲染线程提交到 `RenderWorld` 共享 `RenderAssetUploadQueue`，timeline 完成后再把
+Material/Scene 数据需要动态索引的 texture 注册为 bindless SRV。texture / mesh / material remove dispatch
 会在新的 upload payload 前写入对应 render manager，确保 CPU scene 删除不会被同一帧或迟到的上传结果重新发布到 resolver。
 
 material 添加 / 更新由 `WorldRenderSync.scene_changes.changed_materials` 表达，并通过 dirty rule 变成 material dispatch；
@@ -40,9 +41,10 @@ mesh/material ready 查询通过 `truvis-render-runtime` 私有 render resolver 
 
 默认 sky 通过 `World` facade 注册为普通 `TextureHandle` 并写入 `SceneStore::SceneSkyState`；
 真实贴图仍异步加载。`RenderSkyManager` 从 `SceneReadView` 读取 CPU sky state，在真实贴图 GPU ready 前使用常驻
-纯色 fallback。当前 sky 的 CPU texture bytes 到达时，`RenderSkyManager` 构建 HDRI importance alias table；
-真实 sky image 仍由 `RenderTextureManager` 上传，scene root buffer 只消费当前可用的 sky SRV、sampler 与
-distribution 快照。
+纯色 fallback。当前 sky 的共享 CPU texture payload 到达时，`RenderSkyManager` 把 distribution 请求交给单线程 worker；
+CPU Alias 构建与共享 transfer queue 上传都异步执行。真实 sky image 仍由 `RenderTextureManager` 上传，
+scene root buffer 只消费 timeline 已完成且 request id / `TextureHandle` 仍匹配的 sky SRV、lat-long sampler 与
+distribution 快照。image 先 ready 时显示真实 HDRI 并使用 uniform sphere PDF，不会绑定旧 texture 的 distribution。
 
 `RenderWorld`、`RenderTlasManager`、`RenderAnalyticLightManager`、`RenderEmissiveLightTable` 与 `RenderData` 是 runtime 私有 scene 翻译层；
 render pass 只通过 `RenderSceneView` 访问 scene buffer、TLAS handle 和光栅化 draw。`RenderSceneView::accum_signature` 只暴露
@@ -56,8 +58,11 @@ App 对刚同步完成的 GPU scene 发起同步查询，例如批量 raycast；
 flowchart LR
     AssetHub["AssetHub<br/>loader CPU payload"] --> Ingestor["SceneAssetIngestor<br/>Asset event -> Scene handle"]
     Ingestor --> TextureManager["RenderTextureManager<br/>texture GPU upload + dynamic SRV bindless"]
+    TextureManager --> AssetUploadQueue["RenderAssetUploadQueue<br/>shared transfer timeline"]
     Scene --> RenderSkyManager["RenderSkyManager<br/>SceneSkyState + fallback"]
     Ingestor --> RenderSkyManager
+    RenderSkyManager --> DistributionWorker["SkyDistributionBuilder<br/>single CPU worker + latest pending"]
+    DistributionWorker --> AssetUploadQueue
     Ingestor --> MeshManager["RenderMeshManager<br/>submesh geometry upload + mesh BLAS"]
     Ingestor --> RenderMaterialManager["RenderMaterialManager(RenderWorld)<br/>scene material -> stable slot + material buffer"]
     AssetHub --> ModelCpuPayload["ModelLoaded event<br/>owned CPU scene payload"]
@@ -152,9 +157,10 @@ shadow ray 和 solid-angle PDF 描述光源侧样本；visibility 复用现有 i
 [`docs/summaries/realtime-rt-raytracing-flow.md`](realtime-rt-raytracing-flow.md)。
 
 环境光 sample 与 PDF 统一通过 `EnvMap` 查询。默认 sky 真实贴图 ready 后，`EnvMap` 使用
-`RenderSkyManager` 生成的 `luminance(texel) * solid_angle(texel)` alias table 做 importance sampling，并返回
+`RenderSkyManager` 异步生成的 `luminance(texel) * source_texel_solid_angle` Alias table 做 importance sampling，并返回
 solid-angle PDF；fallback sky 使用 1x1 均匀分布，无效分布或 `PathTracingCommonSettings.sky_sampling_mode = Uniform`
-时回退 uniform sphere。HDRI class 内部采样与 BRDF sky miss 读取同一 `EnvMap::pdf`，统一入口再把
+时回退 uniform sphere。distribution 保持源尺寸或等比聚合到不超过 `4096x2048`，真实 sky image 不降分辨率；
+lat-long sampler 为 U repeat、V/W clamp。HDRI class 内部采样与 BRDF sky miss 读取同一 `EnvMap::pdf`，统一入口再把
 light-class 选择概率乘入对外 PDF。
 
 自发光三角形由 `RenderEmissiveLightTable` 在 prepare 阶段构建。`RenderMeshManager` 保留每个 submesh 的 triangle metadata，

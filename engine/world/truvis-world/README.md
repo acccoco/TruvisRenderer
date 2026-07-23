@@ -12,6 +12,9 @@
   loader 状态。
 - `World` 提供 App-facing facade：App 通过它请求 model import、注册 texture/procedural mesh/material、
   注册 runtime instance、更新 sky state 和 analytic light，不直接组合 `AssetHub` 与 `SceneStore` 的内部调用顺序。
+- `World::request_sky_texture_from_path` 组合 canonicalize、普通 scene texture 注册和
+  `SceneSkyState.texture` 更新，立即返回 `TextureHandle`，不等待 CPU decode、GPU upload 或天空分布构建；
+  旧 texture 不自动删除，避免破坏仍由 material 持有的引用。
 - `World` 的 scene edit API 使用 `WorldEditError` 显式报告 stale handle、缺失依赖、仍被引用和
   filesystem canonicalize 失败；失败 edit 不写 change log，也不污染依赖索引。
 - file texture 通过 `World::register_texture` 进入 scene 前会先执行 filesystem canonicalize；model 主路径和
