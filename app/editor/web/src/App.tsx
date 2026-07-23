@@ -5,10 +5,12 @@ import { ScenePanel } from './components/scene_panel';
 import { SelectionPanel } from './components/selection_panel';
 import { StatusBar } from './components/status_bar';
 import { TopBar } from './components/top_bar';
+import { useDesktopSkyAction } from './state/use_desktop_sky_action';
 import { useEditorSession } from './state/use_editor_session';
 
 export function App() {
   const { state, refresh, nextPage, previousPage, updateDraft, commitMaterial } = useEditorSession();
+  const desktopSky = useDesktopSkyAction();
 
   return (
     <div className="app-shell">
@@ -16,7 +18,11 @@ export function App() {
         connection={state.connection}
         sceneVersion={state.sceneVersion}
         pendingRequests={state.pendingRequests}
+        desktopSkySupported={desktopSky.state.supported}
+        selectingSky={desktopSky.state.selecting}
+        lastRequestedSkyFile={desktopSky.state.lastRequestedFile}
         onRefresh={() => void refresh()}
+        onChooseHdri={() => void desktopSky.chooseHdri()}
       />
       <EditorWorkspace
         scenePanel={(
@@ -45,8 +51,9 @@ export function App() {
       <StatusBar
         connected={state.connection === 'connected'}
         pendingRequests={state.pendingRequests}
+        selectingSky={desktopSky.state.selecting}
         lastRequestMs={state.lastRequestMs}
-        error={state.error}
+        error={desktopSky.state.error ?? state.error}
       />
     </div>
   );

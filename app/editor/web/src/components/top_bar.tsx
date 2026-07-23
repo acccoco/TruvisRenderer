@@ -1,14 +1,31 @@
 import type { ConnectionState } from '../transport/editor_transport';
-import { RefreshIcon, TruvisMark } from './icons';
+import { EnvironmentIcon, RefreshIcon, TruvisMark } from './icons';
 
 interface TopBarProps {
   connection: ConnectionState;
   sceneVersion: string;
   pendingRequests: number;
+  desktopSkySupported: boolean;
+  selectingSky: boolean;
+  lastRequestedSkyFile: string | null;
   onRefresh(): void;
+  onChooseHdri(): void;
 }
 
-export function TopBar({ connection, sceneVersion, pendingRequests, onRefresh }: TopBarProps) {
+export function TopBar({
+  connection,
+  sceneVersion,
+  pendingRequests,
+  desktopSkySupported,
+  selectingSky,
+  lastRequestedSkyFile,
+  onRefresh,
+  onChooseHdri,
+}: TopBarProps) {
+  const chooseHdriTitle = desktopSkySupported
+    ? 'Choose a Radiance HDR or OpenEXR environment'
+    : 'Available in the Tauri desktop app';
+
   return (
     <header className="top-bar">
       <div className="brand">
@@ -23,6 +40,21 @@ export function TopBar({ connection, sceneVersion, pendingRequests, onRefresh }:
         <span className="scene-version">
           Scene version <strong>{sceneVersion}</strong>
         </span>
+        {lastRequestedSkyFile ? (
+          <span className="sky-request" title={`HDRI requested: ${lastRequestedSkyFile}`}>
+            HDRI requested <strong>{lastRequestedSkyFile}</strong>
+          </span>
+        ) : null}
+        <button
+          className="icon-button icon-button--labeled"
+          type="button"
+          onClick={onChooseHdri}
+          disabled={!desktopSkySupported || selectingSky}
+          title={chooseHdriTitle}
+        >
+          <EnvironmentIcon />
+          {selectingSky ? 'Choosing…' : 'Choose HDRI'}
+        </button>
         <button className="icon-button icon-button--labeled" type="button" onClick={onRefresh} disabled={connection !== 'connected'}>
           <RefreshIcon className={pendingRequests > 0 ? 'is-spinning' : undefined} />
           Refresh

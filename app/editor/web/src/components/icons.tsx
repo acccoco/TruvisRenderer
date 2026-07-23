@@ -23,6 +23,16 @@ export function RefreshIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function EnvironmentIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps} {...props} aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M3.5 12h17" />
+      <path d="M12 3.5c2.4 2.3 3.7 5.1 3.7 8.5S14.4 18.2 12 20.5C9.6 18.2 8.3 15.4 8.3 12S9.6 5.8 12 3.5Z" />
+    </svg>
+  );
+}
+
 export function SearchIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg {...iconProps} {...props} aria-hidden="true">

@@ -97,6 +97,7 @@ select:focus-visible {
 .top-bar__status,
 .connection,
 .scene-version,
+.sky-request,
 .icon-button--labeled {
   display: flex;
   align-items: center;
@@ -126,7 +127,8 @@ select:focus-visible {
 }
 
 .top-bar__status {
-  gap: 28px;
+  min-width: 0;
+  gap: 18px;
   color: var(--muted);
   font-size: 13px;
 }
@@ -164,6 +166,20 @@ select:focus-visible {
 .scene-version strong {
   color: var(--cyan);
   font-weight: 560;
+}
+
+.sky-request {
+  min-width: 0;
+  max-width: 220px;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.sky-request strong {
+  overflow: hidden;
+  color: var(--cyan);
+  font-weight: 560;
+  text-overflow: ellipsis;
 }
 
 .icon-button {
@@ -768,6 +784,10 @@ input[type="range"] {
 }
 
 @media (max-width: 1240px) {
+  .sky-request {
+    max-width: 150px;
+  }
+
   .field--row {
     grid-template-columns: 112px minmax(0, 1fr);
   }
