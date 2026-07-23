@@ -217,6 +217,32 @@ impl GfxResourceManager {
     pub fn release_buffer_deferred(&mut self, handle: GfxBufferHandle, current_frame_index: u64) {
         self.pending_destroy_buffers.push((handle, current_frame_index, DestroyReason::DeferredCleanup));
     }
+
+    /// 立即销毁 Buffer。
+    ///
+    /// 只允许在 GPU 已不再引用该资源时调用，例如 device-idle shutdown，或 transfer
+    /// timeline 已完成但资源尚未发布的清理路径。
+    pub fn release_buffer_immediate(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        handle: GfxBufferHandle,
+        reason: DestroyReason,
+    ) {
+        if handle.is_null() {
+            return;
+        }
+        self.pending_destroy_buffers.retain(|(pending_handle, _, _)| *pending_handle != handle);
+        if let Some(buffer) = self.buffer_pool.remove(handle) {
+            log::trace!(
+                "GfxResourceManager releasing immediate buffer manager={:?} name={} raw={:#x} reason={}",
+                handle,
+                buffer.debug_name(),
+                buffer.vk_buffer().as_raw(),
+                reason
+            );
+            buffer.destroy(resource_ctx, reason);
+        }
+    }
 }
 // 图像 API
 impl GfxResourceManager {

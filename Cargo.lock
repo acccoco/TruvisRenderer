@@ -6043,10 +6043,12 @@ name = "truvis-asset"
 version = "0.1.0"
 dependencies = [
  "ash",
+ "bytemuck",
  "crossbeam-channel",
  "crossbeam-utils",
  "glam",
  "gltf",
+ "half",
  "image",
  "log",
  "rayon",

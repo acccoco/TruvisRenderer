@@ -17,6 +17,7 @@ use crate::bindings::shader_binding_system::ShaderBindingSystem;
 use crate::render_world::dirty_router::{DirtyDispatchPlan, DirtyRouterHelper, DirtyStageKind};
 use crate::render_world::environment_binding::EnvironmentBinding;
 use crate::render_world::render_analytic_light_manager::{AnalyticLightBinding, RenderAnalyticLightManager};
+use crate::render_world::render_asset_upload_queue::RenderAssetUploadQueue;
 use crate::render_world::render_data::RenderData;
 use crate::render_world::render_emissive_light_table::EmissiveLightBinding;
 use crate::render_world::render_emissive_light_table::RenderEmissiveLightTable;
@@ -41,6 +42,11 @@ use super::raster_draw_cache::{
 /// `RenderSceneView` 读取 prepare 后的快照。
 /// `RenderWorld` 不拥有 CPU scene；它拥有 render-side managers 和当前 FIF 可用的 GPU scene 表示。
 pub struct RenderWorld {
+    /// texture image 与 sky distribution 共用的异步 transfer owner。
+    ///
+    /// queue 在任何 manager 发布资源前以 timeline 完成作为唯一 ready 条件，并在 shutdown
+    /// 时晚于 CPU producer 停止、早于 manager-owned GPU 资源销毁。
+    asset_upload_queue: RenderAssetUploadQueue,
     /// render-side scene managers 统一收敛在 `RenderWorld` 内部，避免 `RenderRuntime` 直接编排各类
     /// texture/mesh/material/instance/sky/emissive 资源 owner。
     pub(super) render_texture_manager: RenderTextureManager,
@@ -82,13 +88,16 @@ impl RenderWorld {
         frame_token: FrameToken,
     ) -> Self {
         let _span = tracy_client::span!("RenderWorld::new");
+        let asset_upload_queue = {
+            let _span = tracy_client::span!("RenderWorld::new/asset_upload_queue");
+            RenderAssetUploadQueue::new(device_ctx, queue_ctx)
+        };
         let render_texture_manager = {
             let _span = tracy_client::span!("RenderWorld::new/render_texture_manager");
             RenderTextureManager::new(
                 resource_ctx,
                 device_ctx,
                 immediate_ctx,
-                queue_ctx,
                 gfx_resource_manager,
                 shader_binding_system,
             )
@@ -107,7 +116,14 @@ impl RenderWorld {
         };
         let render_sky_manager = {
             let _span = tracy_client::span!("RenderWorld::new/render_sky_manager");
-            RenderSkyManager::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, shader_binding_system)
+            RenderSkyManager::new(
+                resource_ctx,
+                device_ctx,
+                immediate_ctx,
+                gfx_resource_manager,
+                shader_binding_system,
+                frame_token,
+            )
         };
         let render_emissive_light_table = {
             let _span = tracy_client::span!("RenderWorld::new/render_emissive_light_table");
@@ -124,6 +140,7 @@ impl RenderWorld {
         };
 
         Self {
+            asset_upload_queue,
             render_texture_manager,
             render_sky_manager,
             render_mesh_manager,
@@ -149,7 +166,16 @@ impl RenderWorld {
         gfx_resource_manager: &mut GfxResourceManager,
     ) {
         self.render_material_manager.destroy(resource_ctx);
-        self.render_sky_manager.destroy_mut(resource_ctx, device_ctx, shader_binding_system, gfx_resource_manager);
+        // shutdown 顺序是协议的一部分：先停止 CPU producer，再等待/释放 pending
+        // transfer，最后销毁已经发布的 manager resources。
+        self.render_sky_manager.stop_worker();
+        self.asset_upload_queue.shutdown(resource_ctx, device_ctx);
+        self.render_sky_manager.destroy_gpu_resources(
+            resource_ctx,
+            device_ctx,
+            shader_binding_system,
+            gfx_resource_manager,
+        );
         self.render_texture_manager.destroy(resource_ctx, device_ctx, gfx_resource_manager, shader_binding_system);
         self.render_analytic_light_manager.destroy_mut(resource_ctx);
         self.render_emissive_light_table.destroy_mut(resource_ctx);
@@ -164,6 +190,7 @@ impl RenderWorld {
 // Runtime 内部阶段入口：`RenderRuntime` 只负责提供阶段上下文，具体 render-side scene 状态在这里推进。
 impl RenderWorld {
     pub(crate) fn begin_frame(&mut self, frame_token: FrameToken) {
+        self.render_sky_manager.begin_frame(frame_token);
         self.render_material_manager.begin_frame(frame_token);
         self.render_instance_manager.begin_frame(frame_token);
     }
@@ -188,7 +215,7 @@ impl RenderWorld {
         scene: SceneReadView<'_>,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
+        _immediate_ctx: GfxImmediateCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         shader_binding_system: &mut ShaderBindingSystem,
@@ -219,7 +246,7 @@ impl RenderWorld {
         self.render_mesh_manager.remove_meshes(&mesh_removals, resource_ctx, device_ctx);
 
         if dirty_dispatch_plan.take_sky_dirty() {
-            self.render_sky_manager.apply_scene_sky_state(scene.sky_state());
+            self.render_sky_manager.apply_scene_sky_state(scene.sky_state(), gfx_resource_manager);
         }
 
         let material_result =
@@ -233,20 +260,38 @@ impl RenderWorld {
         );
 
         for upload in &asset_uploads.pending_texture_uploads {
-            self.render_sky_manager.observe_texture_loaded(resource_ctx, immediate_ctx, upload.handle, &upload.data);
+            self.render_sky_manager.observe_texture_loaded(upload.handle, &upload.data, gfx_resource_manager);
         }
         for failed in &asset_uploads.failed_textures {
-            self.render_sky_manager.observe_texture_failed(failed.handle, &failed.error);
+            self.render_sky_manager.observe_texture_failed(failed.handle, &failed.error, gfx_resource_manager);
         }
 
-        let texture_result = self.render_texture_manager.update(
+        self.render_texture_manager.submit_uploads(
             asset_uploads.pending_texture_uploads,
             asset_uploads.failed_textures,
             resource_ctx,
             device_ctx,
             queue_ctx,
+            &mut self.asset_upload_queue,
+        );
+        self.render_sky_manager.submit_completed_builds(
+            resource_ctx,
+            device_ctx,
+            queue_ctx,
+            &mut self.asset_upload_queue,
+        );
+        let completed_uploads = self.asset_upload_queue.poll(resource_ctx, device_ctx);
+        let texture_result = self.render_texture_manager.publish_completed_uploads(
+            completed_uploads.textures,
+            resource_ctx,
+            device_ctx,
             gfx_resource_manager,
             shader_binding_system,
+        );
+        self.render_sky_manager.publish_completed_uploads(
+            completed_uploads.sky_distributions,
+            resource_ctx,
+            gfx_resource_manager,
         );
         let texture_events = DirtyRouterHelper::events_from_texture_update_result(texture_result);
         DirtyRouterHelper::route_stage(DirtyStageKind::AfterTexture, &texture_events, scene, &mut dirty_dispatch_plan);

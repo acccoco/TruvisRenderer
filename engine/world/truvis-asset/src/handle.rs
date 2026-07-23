@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use slotmap::new_key_type;
 
@@ -38,19 +39,110 @@ pub struct ModelLoadDesc {
     pub path: std::path::PathBuf,
 }
 
+/// 解码后的纹理 CPU 像素。
+///
+/// 两种 payload 都固定为四通道。`Arc` 使 render-side image upload 与异步天空
+/// distribution builder 可以共享同一份 32--128 MiB HDR 数据，避免为了跨线程再复制。
+#[derive(Debug, Clone)]
+pub enum TexturePixels {
+    /// 普通图片的 RGBA8 UNORM 像素。
+    Rgba8(Arc<[u8]>),
+    /// HDR/EXR 的 RGBA16F 像素；每个 `u16` 保存 IEEE-754 binary16 bit pattern。
+    Rgba16Float(Arc<[u16]>),
+}
+
 /// 解码后的纹理 CPU 数据。
 ///
-/// 这是 asset 层传给渲染运行时 texture manager 的边界格式：像素已经位于 owned
-/// CPU buffer，并带有 Vulkan 上传所需的 extent / format 元数据，但还没有创建
-/// image、image view 或 bindless descriptor。
+/// 这是 asset 层传给渲染运行时 texture manager 的边界格式：像素已经位于 owned、
+/// 可共享的 CPU buffer，但还没有创建 image、image view 或 bindless descriptor。
+/// Vulkan format 只能由 `TexturePixels` 推导，调用方不能单独指定，因而不会出现
+/// pixel payload 与 GPU format 不一致的状态。
 ///
 /// 当前纹理 bytes 只通过 `AssetLoadEvent::TextureLoaded` 短期交给 `SceneAssetIngestor`
 /// 和 render-side texture manager，`AssetHub` 本身不保存像素数据。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TextureBytes {
-    pub pixels: Vec<u8>,
-    pub extent: vk::Extent3D,
-    pub format: vk::Format,
+    pixels: TexturePixels,
+    extent: vk::Extent3D,
+}
+
+impl TextureBytes {
+    /// 创建并校验 upload-ready texture payload。
+    ///
+    /// extent 必须是非空 2D image，`pixels` 严格包含 `width * height * 4` 个通道元素。校验集中在
+    /// asset 边界，后续 staging upload 和 sky distribution 可以依赖该不变量。
+    pub fn new(pixels: TexturePixels, extent: vk::Extent3D) -> Result<Self, String> {
+        if extent.width == 0 || extent.height == 0 || extent.depth != 1 {
+            return Err(format!("texture extent must be a non-empty 2D image: {extent:?}"));
+        }
+        let texel_count = (extent.width as usize)
+            .checked_mul(extent.height as usize)
+            .ok_or_else(|| format!("texture extent overflows usize: {extent:?}"))?;
+        let expected_channel_count =
+            texel_count.checked_mul(4).ok_or_else(|| format!("texture channel count overflows usize: {extent:?}"))?;
+        let actual_channel_count = match &pixels {
+            TexturePixels::Rgba8(pixels) => pixels.len(),
+            TexturePixels::Rgba16Float(pixels) => pixels.len(),
+        };
+        if actual_channel_count != expected_channel_count {
+            return Err(format!(
+                "texture pixel count mismatch: extent={extent:?}, expected_channels={expected_channel_count}, actual_channels={actual_channel_count}"
+            ));
+        }
+
+        Ok(Self { pixels, extent })
+    }
+
+    #[inline]
+    pub fn format(&self) -> vk::Format {
+        match &self.pixels {
+            TexturePixels::Rgba8(_) => vk::Format::R8G8B8A8_UNORM,
+            TexturePixels::Rgba16Float(_) => vk::Format::R16G16B16A16_SFLOAT,
+        }
+    }
+
+    /// 返回 staging upload 使用的原始字节视图。
+    ///
+    /// `Rgba16Float` 已保存为 native-endian `u16` bit pattern；Vulkan staging copy
+    /// 只关心原始 bytes，因此这里使用 bytemuck 的安全 slice cast，不产生新分配。
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        match &self.pixels {
+            TexturePixels::Rgba8(pixels) => pixels,
+            TexturePixels::Rgba16Float(pixels) => bytemuck::cast_slice(pixels),
+        }
+    }
+
+    #[inline]
+    pub fn extent(&self) -> vk::Extent3D {
+        self.extent
+    }
+
+    #[inline]
+    pub fn texel_count(&self) -> usize {
+        self.extent.width as usize * self.extent.height as usize
+    }
+
+    /// 按 texel 索引读取线性 RGB。
+    ///
+    /// 普通 RGBA8 继续遵循现有 UNORM 上传语义；HDR/EXR 则从 binary16 恢复 scene-linear
+    /// 数值。该接口只服务亮度分布构建，不暴露底层 payload 布局。
+    pub fn linear_rgb(&self, index: usize) -> [f32; 3] {
+        assert!(index < self.texel_count(), "texture texel index out of bounds");
+        let channel = index * 4;
+        match &self.pixels {
+            TexturePixels::Rgba8(pixels) => [
+                pixels[channel] as f32 / 255.0,
+                pixels[channel + 1] as f32 / 255.0,
+                pixels[channel + 2] as f32 / 255.0,
+            ],
+            TexturePixels::Rgba16Float(pixels) => [
+                half::f16::from_bits(pixels[channel]).to_f32(),
+                half::f16::from_bits(pixels[channel + 1]).to_f32(),
+                half::f16::from_bits(pixels[channel + 2]).to_f32(),
+            ],
+        }
+    }
 }
 
 /// upload-ready 的 CPU submesh 数据。

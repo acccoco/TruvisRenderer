@@ -59,6 +59,20 @@ impl RenderSamplerManager {
             }
         }
 
+        /// lat-long 天空只允许经度 U wrap；纬度 V 与未使用的 W 必须 clamp，
+        /// 否则南北极会彼此采样并形成错误接缝。
+        fn create_lat_long_sampler_desc() -> GfxSamplerDesc {
+            GfxSamplerDesc {
+                mag_filter: vk::Filter::LINEAR,
+                min_filter: vk::Filter::LINEAR,
+                mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+                address_mode_u: vk::SamplerAddressMode::REPEAT,
+                address_mode_v: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                address_mode_w: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                ..Default::default()
+            }
+        }
+
         sampler_descs[gpu::bindless::ESamplerType_PointRepeat as usize] =
             ("PointRepeat".to_string(), create_sampler_desc(vk::Filter::NEAREST, vk::SamplerAddressMode::REPEAT));
         sampler_descs[gpu::bindless::ESamplerType_PointClamp as usize] =
@@ -81,6 +95,8 @@ impl RenderSamplerManager {
                 ..create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::CLAMP_TO_EDGE)
             },
         );
+        sampler_descs[gpu::bindless::ESamplerType_LinearRepeatClamp as usize] =
+            ("LinearRepeatClamp".to_string(), create_lat_long_sampler_desc());
 
         sampler_descs.map(|(name, desc)| GfxSampler::new(ctx, &desc, format!("bindless-sampler-{}", name)))
     }

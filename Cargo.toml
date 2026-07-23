@@ -115,6 +115,7 @@ tauri-build = "2.6.3"
 # 资源加载与序列化 (Asset Loading & Serialization)
 ###########################################################
 image = "0.25.6"
+half = "2.7.1"
 gltf = { version = "1.0.0", features = ["KHR_materials_ior", "KHR_materials_transmission"] }
 tobj = "4.0.3"
 serde = { version = "1.0.152", features = ["derive"] }

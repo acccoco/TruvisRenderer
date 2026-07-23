@@ -25,6 +25,8 @@ enum ESamplerType : uint
     LinearClamp,
     AnisoRepeat,
     AnisoClamp,
+    /// Lat-long environment map: horizontal longitude wraps, vertical poles clamp.
+    LinearRepeatClamp,
 
     _Count_,
 };

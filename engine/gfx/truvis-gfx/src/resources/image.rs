@@ -38,6 +38,9 @@ impl VulkanFormatUtils {
 
         match format {
             vk::Format::R32_SFLOAT => 4,
+            // 上面的 region helper 使用半开区间；RGBA16F 恰好是该范围终点，
+            // 因此必须显式列出，保证 HDR staging copy 按 8 bytes/texel 校验。
+            vk::Format::R16G16B16A16_SFLOAT => 8,
             f if is_in_format_region(f, &BYTE_3_FORMAT) => 3,
             f if is_in_format_region(f, &BYTE_4_FORMAT) => 4,
             f if is_in_format_region(f, &BYTE_6_FORMAT) => 6,

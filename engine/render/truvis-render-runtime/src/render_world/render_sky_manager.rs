@@ -2,12 +2,13 @@ use ash::vk;
 use slotmap::Key;
 
 use truvis_asset::handle::TextureBytes;
-use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
+use truvis_render_foundation::handles::{GfxBufferHandle, GfxImageHandle, GfxImageViewHandle};
 use truvis_shader_binding::gpu;
 use truvis_world::SceneSkyState;
 use truvis_world::guid_new_type::TextureHandle;
@@ -15,6 +16,10 @@ use truvis_world::guid_new_type::TextureHandle;
 use crate::bindings::bindless_manager::BindlessSrvHandle;
 use crate::bindings::shader_binding_system::ShaderBindingSystem;
 use crate::render_world::environment_binding::EnvironmentSkyBinding;
+use crate::render_world::render_asset_upload_queue::{CompletedSkyDistributionUpload, RenderAssetUploadQueue};
+use crate::render_world::sky_distribution_builder::{
+    SkyDistributionBuildRequest, SkyDistributionBuildResult, SkyDistributionBuilder,
+};
 use crate::render_world::texture_resolver::TextureResolver;
 use crate::resources::gfx_resource_manager::GfxResourceManager;
 
@@ -25,59 +30,71 @@ struct FallbackSkyTexture {
     srv_handle: BindlessSrvHandle,
 }
 
-/// 默认 sky 采样分布的 GPU 资源。
+/// 1x1 uniform sphere distribution。
 ///
-/// 该 buffer 通过 device address 写入 scene root buffer，shader 在 render 阶段只读访问。
-/// 资源由 `RenderSkyManager` 拥有并在 shutdown 显式释放，不通过 bindless 表管理。
-struct SkyDistributionResource {
+/// fallback 体积极小且整个 runtime 常驻，继续使用同步创建；大型真实 HDRI distribution
+/// 则必须通过 worker + shared transfer timeline 异步发布。
+struct FallbackSkyDistribution {
     entries: GfxStructuredBuffer<gpu::scene::SkyDistributionEntry>,
-    width: u32,
-    height: u32,
-    enabled: bool,
     version: u32,
 }
 
-struct SkyDistributionBuild {
-    entries: Vec<gpu::scene::SkyDistributionEntry>,
-    width: u32,
-    height: u32,
-}
-
-impl SkyDistributionResource {
-    fn new(
-        resource_ctx: GfxResourceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
-        build: SkyDistributionBuild,
-        version: u32,
-        debug_name: impl AsRef<str>,
-    ) -> Self {
-        let entries = GfxStructuredBuffer::new_ssbo(resource_ctx, build.entries.len(), debug_name);
-        entries.transfer_data_sync(resource_ctx, immediate_ctx, &build.entries);
-        Self {
-            entries,
-            width: build.width,
-            height: build.height,
-            enabled: build.width > 0 && build.height > 0,
-            version,
-        }
-    }
-
-    fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>) {
-        self.entries.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.enabled = false;
-        self.width = 0;
-        self.height = 0;
+impl FallbackSkyDistribution {
+    fn new(resource_ctx: GfxResourceCtx<'_>, immediate_ctx: GfxImmediateCtx<'_>) -> Self {
+        let entry = gpu::scene::SkyDistributionEntry {
+            alias_probability: 1.0,
+            solid_angle_pdf: 1.0 / (4.0 * std::f32::consts::PI),
+            alias_index: 0,
+            _padding_0: 0,
+        };
+        let entries = GfxStructuredBuffer::new_ssbo(resource_ctx, 1, "FallbackSkyDistribution");
+        entries.transfer_data_sync(resource_ctx, immediate_ctx, std::slice::from_ref(&entry));
+        Self { entries, version: 1 }
     }
 
     fn to_binding(&self) -> SkyDistributionBinding {
         SkyDistributionBinding {
             device_address: self.entries.device_address(),
-            width: self.width,
-            height: self.height,
-            enabled: u32::from(self.enabled),
+            width: 1,
+            height: 1,
+            enabled: 1,
             version: self.version,
         }
     }
+
+    fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>) {
+        self.entries.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+    }
+}
+
+/// 已发布、可由 scene root device address 引用的真实天空 Alias buffer。
+struct SkyDistributionResource {
+    buffer_handle: GfxBufferHandle,
+    device_address: u64,
+    width: u32,
+    height: u32,
+    version: u32,
+}
+
+impl SkyDistributionResource {
+    fn to_binding(&self) -> SkyDistributionBinding {
+        SkyDistributionBinding {
+            device_address: self.device_address,
+            width: self.width,
+            height: self.height,
+            enabled: 1,
+            version: self.version,
+        }
+    }
+}
+
+/// 已交给 `GfxResourceManager` 按 FIF 延迟释放的 distribution。
+///
+/// 本地记录只用于在 `RenderWorld::begin_frame` 后收敛 manager 状态；真实资源 owner
+/// 是 `GfxResourceManager::pending_destroy_buffers`。
+struct RetiredSkyDistribution {
+    buffer_handle: GfxBufferHandle,
+    retired_frame_id: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -98,32 +115,38 @@ pub(crate) struct RenderSkyUpdateResult {
 
 /// scene sky 的 runtime 私有桥接层。
 ///
-/// `SceneStore` 只负责 sky 语义状态；真实 GPU texture 由 `RenderTextureManager`
-/// 管理。`RenderSkyManager` 缓存本帧 sky state 并持有一个常驻纯色 fallback，保证 shader 侧
-/// scene root buffer 始终写入合法 SRV 和与之匹配的 sky importance distribution。
+/// `SceneStore` 只保存 `TextureHandle` 与天空语义；真实 image 由 `RenderTextureManager`
+/// 持有。该 manager 拥有 distribution worker、请求 generation、active/retired Alias
+/// buffer，并保证新 texture 绝不引用旧 texture 的 distribution。
 pub(crate) struct RenderSkyManager {
     sky_texture: Option<TextureHandle>,
     sky_enabled: bool,
     sky_intensity: f32,
     sky_revision: u64,
     fallback: FallbackSkyTexture,
-    fallback_distribution: SkyDistributionResource,
+    fallback_distribution: FallbackSkyDistribution,
     sky_distribution: Option<SkyDistributionResource>,
-    retired_distributions: Vec<SkyDistributionResource>,
+    retired_distributions: Vec<RetiredSkyDistribution>,
+    distribution_builder: SkyDistributionBuilder,
+    next_request_id: u64,
+    latest_request: Option<(u64, TextureHandle)>,
     next_distribution_version: u32,
     last_active_distribution_version: u32,
+    current_frame_id: u64,
     using_real_sky: bool,
     state_changed_pending: bool,
+    worker_stopped: bool,
 }
 
 impl RenderSkyManager {
-    /// 创建立即可用的纯色 fallback sky。
+    /// 创建立即可用的纯色 fallback sky 与 uniform sphere distribution。
     pub(crate) fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         shader_binding_system: &mut ShaderBindingSystem,
+        frame_token: FrameToken,
     ) -> Self {
         let _span = tracy_client::span!("RenderSkyManager::new");
         let fallback = Self::create_fallback_sky(
@@ -133,13 +156,7 @@ impl RenderSkyManager {
             gfx_resource_manager,
             shader_binding_system,
         );
-        let fallback_distribution = SkyDistributionResource::new(
-            resource_ctx,
-            immediate_ctx,
-            Self::build_fallback_distribution(),
-            1,
-            "FallbackSkyDistribution",
-        );
+        let fallback_distribution = FallbackSkyDistribution::new(resource_ctx, immediate_ctx);
 
         Self {
             sky_texture: None,
@@ -150,25 +167,38 @@ impl RenderSkyManager {
             fallback_distribution,
             sky_distribution: None,
             retired_distributions: Vec::new(),
+            distribution_builder: SkyDistributionBuilder::new(),
+            next_request_id: 1,
+            latest_request: None,
             next_distribution_version: 2,
             last_active_distribution_version: 1,
+            current_frame_id: frame_token.frame_id(),
             using_real_sky: false,
             state_changed_pending: false,
+            worker_stopped: false,
         }
     }
 
+    /// 在 RenderRuntime 已等待当前 FIF slot 后推进 frame id，并收敛 retired bookkeeping。
+    pub(crate) fn begin_frame(&mut self, frame_token: FrameToken) {
+        self.current_frame_id = frame_token.frame_id();
+        let fif = FrameCounter::fif_count() as u64;
+        self.retired_distributions
+            .retain(|retired| retired.retired_frame_id.saturating_add(fif) > self.current_frame_id);
+    }
+
     /// 同步 CPU scene 中的 sky 语义状态。
-    ///
-    /// `SceneStore` 是 enabled/intensity/texture 的权威 owner；这里仅缓存当前 prepare
-    /// 已应用的值，用于选择本帧 sky binding 和决定旧 distribution 是否需要退休。
-    pub(crate) fn apply_scene_sky_state(&mut self, state: &SceneSkyState) -> bool {
+    pub(crate) fn apply_scene_sky_state(
+        &mut self,
+        state: &SceneSkyState,
+        gfx_resource_manager: &mut GfxResourceManager,
+    ) -> bool {
         let state_changed = self.sky_revision != state.revision;
         if self.sky_texture != state.texture {
-            if let Some(old_distribution) = self.sky_distribution.take() {
-                // distribution device address 可能仍被上一轮 scene root buffer 引用，延迟到
-                // shutdown 统一释放，保持当前 RenderSkyManager 的资源生命周期策略。
-                self.retired_distributions.push(old_distribution);
-            }
+            // texture identity 一改变就先撤下旧 distribution。新 image ready 而新 Alias
+            // 尚未完成时只能配 uniform PDF，不能短暂复用旧表。
+            self.retire_active_distribution(gfx_resource_manager);
+            self.latest_request = None;
             self.sky_texture = state.texture;
         }
         self.sky_enabled = state.enabled;
@@ -178,52 +208,144 @@ impl RenderSkyManager {
         state_changed
     }
 
-    /// 观察当前 scene sky 的 CPU texture bytes，并在 texture manager 上传真实 sky image 前构建采样分布。
-    ///
-    /// `World::sync_for_render` 的 texture upload payload 只会被消费一次，因此分布构建必须发生在
-    /// `RenderWorld::prepare_asset_sync`。真实 sky image 仍由 `RenderTextureManager` 上传；本 bridge 只拥有与默认 sky
-    /// 采样语义绑定的 alias table。
+    /// 共享 texture payload 给单线程 distribution builder，不阻塞渲染线程。
     pub(crate) fn observe_texture_loaded(
         &mut self,
-        resource_ctx: GfxResourceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
         handle: TextureHandle,
         data: &TextureBytes,
+        gfx_resource_manager: &mut GfxResourceManager,
     ) {
         if Some(handle) != self.sky_texture {
             return;
         }
 
-        let Some(build) = Self::build_distribution_from_texture(data) else {
-            log::warn!(
-                "RenderSkyManager: default sky distribution fell back to uniform because texture data is invalid"
-            );
-            return;
-        };
-
-        if let Some(old_distribution) = self.sky_distribution.take() {
-            // scene root buffer 通过 device address 引用 sky distribution；旧表可能仍被在飞帧读取，
-            // 因此不在重建当帧立即释放，统一留到 shutdown 阶段销毁。
-            self.retired_distributions.push(old_distribution);
-        }
-
-        let version = self.next_distribution_version;
-        self.next_distribution_version = self.next_distribution_version.saturating_add(1).max(2);
-        self.sky_distribution =
-            Some(SkyDistributionResource::new(resource_ctx, immediate_ctx, build, version, "DefaultSkyDistribution"));
-        log::info!("RenderSkyManager: scene sky importance distribution is ready, version={version}");
+        // 同一 handle 的 reload 也可能代表不同像素；在新请求开始时撤下旧表，保持
+        // image/distribution generation 一致。
+        self.retire_active_distribution(gfx_resource_manager);
+        let request_id = self.next_request_id;
+        self.next_request_id = self.next_request_id.checked_add(1).expect("RenderSkyManager request id exhausted");
+        self.latest_request = Some((request_id, handle));
+        self.distribution_builder.request(SkyDistributionBuildRequest {
+            request_id,
+            texture: handle,
+            texture_bytes: data.clone(),
+        });
     }
 
-    pub(crate) fn observe_texture_failed(&mut self, handle: TextureHandle, error: &str) {
+    pub(crate) fn observe_texture_failed(
+        &mut self,
+        handle: TextureHandle,
+        error: &str,
+        gfx_resource_manager: &mut GfxResourceManager,
+    ) {
         if Some(handle) == self.sky_texture {
+            self.latest_request = None;
+            self.retire_active_distribution(gfx_resource_manager);
+            self.state_changed_pending = true;
             log::warn!("RenderSkyManager: scene sky texture failed; keep fallback sky distribution: {error}");
         }
     }
 
-    /// 解析本帧 sky 绑定；真实 sky 未 GPU ready 时返回纯色 fallback。
+    /// 收集 CPU worker 结果，并把仍为最新 generation 的 Alias entries 提交到共享 transfer queue。
+    pub(crate) fn submit_completed_builds(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        queue_ctx: GfxQueueCtx<'_>,
+        upload_queue: &mut RenderAssetUploadQueue,
+    ) {
+        for result in self.distribution_builder.poll() {
+            match result {
+                SkyDistributionBuildResult::Ready(build) => {
+                    if !self.is_latest_request(build.request_id, build.texture) {
+                        log::debug!(
+                            "RenderSkyManager: discard stale CPU distribution request={} texture={:?}",
+                            build.request_id,
+                            build.texture
+                        );
+                        continue;
+                    }
+                    if let Err(error) = upload_queue.submit_sky_distribution(resource_ctx, device_ctx, queue_ctx, build)
+                    {
+                        log::error!("RenderSkyManager: failed to submit sky distribution upload: {error}");
+                    }
+                }
+                SkyDistributionBuildResult::UniformFallback {
+                    request_id,
+                    texture,
+                    source_width,
+                    source_height,
+                    cpu_build_elapsed,
+                } => {
+                    if self.is_latest_request(request_id, texture) {
+                        self.state_changed_pending = true;
+                        log::warn!(
+                            "RenderSkyManager: sky {:?} {}x{} has zero/invalid energy; use uniform sphere PDF (CPU build {:.2} ms)",
+                            texture,
+                            source_width,
+                            source_height,
+                            cpu_build_elapsed.as_secs_f64() * 1000.0
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// 发布 timeline 已完成且 generation 仍匹配的 distribution buffer。
+    pub(crate) fn publish_completed_uploads(
+        &mut self,
+        completed_uploads: Vec<CompletedSkyDistributionUpload>,
+        resource_ctx: GfxResourceCtx<'_>,
+        gfx_resource_manager: &mut GfxResourceManager,
+    ) {
+        for completed in completed_uploads {
+            if !self.is_latest_request(completed.request_id, completed.texture) {
+                log::debug!(
+                    "RenderSkyManager: destroy stale GPU distribution request={} texture={:?}",
+                    completed.request_id,
+                    completed.texture
+                );
+                completed.buffer.destroy(resource_ctx, DestroyReason::DeferredCleanup);
+                continue;
+            }
+
+            self.retire_active_distribution(gfx_resource_manager);
+            let device_address = completed.buffer.device_address();
+            let buffer_handle = gfx_resource_manager.register_buffer(completed.buffer);
+            let version = self.next_distribution_version;
+            self.next_distribution_version = self.next_distribution_version.saturating_add(1).max(2);
+            self.sky_distribution = Some(SkyDistributionResource {
+                buffer_handle,
+                device_address,
+                width: completed.width,
+                height: completed.height,
+                version,
+            });
+            self.state_changed_pending = true;
+
+            let entry_count = completed.width as u64 * completed.height as u64;
+            let gpu_bytes = entry_count * std::mem::size_of::<gpu::scene::SkyDistributionEntry>() as u64;
+            log::info!(
+                "RenderSkyManager: published sky distribution request={} source={}x{} distribution={}x{} entries={} GPU={} bytes CPU={:.2} ms upload={:.2} ms version={}",
+                completed.request_id,
+                completed.source_width,
+                completed.source_height,
+                completed.width,
+                completed.height,
+                entry_count,
+                gpu_bytes,
+                completed.cpu_build_elapsed.as_secs_f64() * 1000.0,
+                completed.upload_elapsed.as_secs_f64() * 1000.0,
+                version
+            );
+        }
+    }
+
+    /// 解析本帧 sky 绑定；真实 image 未 ready 时显示纯色 fallback。
     ///
-    /// 这里故意先检查 `is_texture_ready`，避免 `TextureResolver::resolve_texture` 在未就绪时
-    /// 返回材质专用的洋红 fallback。sky 的降级策略由本 bridge 独立定义。
+    /// 真实 image ready 但 Alias 尚未发布时，仍绑定真实 HDRI，并用 1x1 uniform sphere
+    /// distribution。这样 CPU/GPU 异步过程不会制造黑帧，也不会把旧 Alias 配给新图。
     pub(crate) fn update_sky_binding(&mut self, texture_resolver: &dyn TextureResolver) -> RenderSkyUpdateResult {
         let scene_changed = std::mem::take(&mut self.state_changed_pending);
         let real_ready =
@@ -239,7 +361,7 @@ impl RenderSkyManager {
             }
         }
 
-        let mut distribution = self.active_distribution(real_ready).to_binding();
+        let mut distribution = self.active_distribution_binding(real_ready);
         if !self.sky_enabled {
             distribution.enabled = 0;
         }
@@ -252,7 +374,7 @@ impl RenderSkyManager {
             );
             EnvironmentSkyBinding {
                 srv_handle: texture.srv_handle,
-                sampler: gpu::bindless::ESamplerType_LinearClamp,
+                sampler: gpu::bindless::ESamplerType_LinearRepeatClamp,
                 distribution_device_address: distribution.device_address,
                 distribution_width: distribution.width,
                 distribution_height: distribution.height,
@@ -269,8 +391,20 @@ impl RenderSkyManager {
         }
     }
 
-    /// 释放 fallback sky。真实 sky texture 由 `RenderTextureManager` 释放。
-    pub(crate) fn destroy_mut(
+    /// shutdown 第一步：停止并 join CPU producer。
+    pub(crate) fn stop_worker(&mut self) {
+        if self.worker_stopped {
+            return;
+        }
+        self.distribution_builder.shutdown();
+        self.worker_stopped = true;
+    }
+
+    /// shutdown 最后阶段：销毁已发布、retired 与 fallback 资源。
+    ///
+    /// 调用前 shared transfer queue 已完成等待并销毁 pending distribution，因此此处
+    /// 不会与 transfer queue 争用 buffer。
+    pub(crate) fn destroy_gpu_resources(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
@@ -288,163 +422,55 @@ impl RenderSkyManager {
                 DestroyReason::Shutdown,
             );
         }
-
         self.fallback = FallbackSkyTexture::default();
-        if let Some(mut distribution) = self.sky_distribution.take() {
-            distribution.destroy_mut(resource_ctx);
+
+        if let Some(distribution) = self.sky_distribution.take() {
+            gfx_resource_manager.release_buffer_immediate(
+                resource_ctx,
+                distribution.buffer_handle,
+                DestroyReason::Shutdown,
+            );
         }
-        for distribution in &mut self.retired_distributions {
-            distribution.destroy_mut(resource_ctx);
+        for retired in self.retired_distributions.drain(..) {
+            gfx_resource_manager.release_buffer_immediate(resource_ctx, retired.buffer_handle, DestroyReason::Shutdown);
         }
-        self.retired_distributions.clear();
         self.fallback_distribution.destroy_mut(resource_ctx);
     }
 
-    fn active_distribution(&self, real_ready: bool) -> &SkyDistributionResource {
+    fn is_latest_request(&self, request_id: u64, texture: TextureHandle) -> bool {
+        self.latest_request == Some((request_id, texture)) && self.sky_texture == Some(texture)
+    }
+
+    fn retire_active_distribution(&mut self, gfx_resource_manager: &mut GfxResourceManager) {
+        let Some(distribution) = self.sky_distribution.take() else {
+            return;
+        };
+        gfx_resource_manager.release_buffer_deferred(distribution.buffer_handle, self.current_frame_id);
+        self.retired_distributions.push(RetiredSkyDistribution {
+            buffer_handle: distribution.buffer_handle,
+            retired_frame_id: self.current_frame_id,
+        });
+    }
+
+    fn active_distribution_binding(&self, real_ready: bool) -> SkyDistributionBinding {
         if real_ready {
             if let Some(distribution) = &self.sky_distribution {
-                return distribution;
+                return distribution.to_binding();
             }
         }
-        &self.fallback_distribution
+        self.fallback_distribution.to_binding()
     }
 
     fn fallback_binding(&self, distribution: SkyDistributionBinding) -> EnvironmentSkyBinding {
         EnvironmentSkyBinding {
             srv_handle: self.fallback.srv_handle,
-            sampler: gpu::bindless::ESamplerType_LinearClamp,
+            sampler: gpu::bindless::ESamplerType_LinearRepeatClamp,
             distribution_device_address: distribution.device_address,
             distribution_width: distribution.width,
             distribution_height: distribution.height,
             distribution_enabled: distribution.enabled,
             distribution_version: distribution.version,
         }
-    }
-
-    fn build_fallback_distribution() -> SkyDistributionBuild {
-        SkyDistributionBuild {
-            entries: vec![gpu::scene::SkyDistributionEntry {
-                alias_probability: 1.0,
-                solid_angle_pdf: 1.0 / (4.0 * std::f32::consts::PI),
-                alias_index: 0,
-                _padding_0: 0,
-            }],
-            width: 1,
-            height: 1,
-        }
-    }
-
-    fn build_distribution_from_texture(data: &TextureBytes) -> Option<SkyDistributionBuild> {
-        let width = data.extent.width;
-        let height = data.extent.height;
-        if width == 0 || height == 0 {
-            return None;
-        }
-
-        let texel_count = width.checked_mul(height)? as usize;
-        if data.pixels.len() < texel_count.checked_mul(4)? {
-            return None;
-        }
-
-        let mut weights = vec![0.0_f64; texel_count];
-        let mut solid_angles = vec![0.0_f64; texel_count];
-        let mut total_weight = 0.0_f64;
-        for y in 0..height {
-            let solid_angle = Self::lat_long_texel_solid_angle(y, width, height);
-            for x in 0..width {
-                let idx = (y * width + x) as usize;
-                let pixel = &data.pixels[idx * 4..idx * 4 + 4];
-                let luminance = Self::rgba8_luminance(pixel);
-                let weight = luminance * solid_angle;
-                weights[idx] = weight;
-                solid_angles[idx] = solid_angle;
-                total_weight += weight;
-            }
-        }
-
-        if total_weight <= f64::EPSILON {
-            return None;
-        }
-
-        let (alias_probability, alias_index) = Self::build_alias_table(&weights, total_weight)?;
-        let entries = weights
-            .iter()
-            .zip(solid_angles.iter())
-            .zip(alias_probability.iter().zip(alias_index.iter()))
-            .map(|((weight, solid_angle), (probability, alias))| {
-                let texel_probability = *weight / total_weight;
-                // scene root 只发布 solid-angle PDF；shader 的 NEE 采样和 sky miss MIS
-                // 都通过同一 distribution 查询，不能在另一侧重新解释为贴图 UV 概率。
-                let solid_angle_pdf = if *solid_angle > 0.0 { (texel_probability / *solid_angle) as f32 } else { 0.0 };
-                gpu::scene::SkyDistributionEntry {
-                    alias_probability: *probability,
-                    solid_angle_pdf,
-                    alias_index: *alias,
-                    _padding_0: 0,
-                }
-            })
-            .collect();
-
-        Some(SkyDistributionBuild { entries, width, height })
-    }
-
-    fn lat_long_texel_solid_angle(row: u32, width: u32, height: u32) -> f64 {
-        let dphi = 2.0 * std::f64::consts::PI / f64::from(width);
-        let v0 = f64::from(row) / f64::from(height);
-        let v1 = f64::from(row + 1) / f64::from(height);
-        let theta_top = (0.5 - v0) * std::f64::consts::PI;
-        let theta_bottom = (0.5 - v1) * std::f64::consts::PI;
-        dphi * (theta_top.sin() - theta_bottom.sin()).max(0.0)
-    }
-
-    fn rgba8_luminance(pixel: &[u8]) -> f64 {
-        let r = f64::from(pixel[0]) / 255.0;
-        let g = f64::from(pixel[1]) / 255.0;
-        let b = f64::from(pixel[2]) / 255.0;
-        0.2126 * r + 0.7152 * g + 0.0722 * b
-    }
-
-    fn build_alias_table(weights: &[f64], total_weight: f64) -> Option<(Vec<f32>, Vec<u32>)> {
-        let count = weights.len();
-        if count == 0 || total_weight <= f64::EPSILON || count > u32::MAX as usize {
-            return None;
-        }
-
-        // 预处理后的表只改变 texel 被选中的概率，不改变 sky texture radiance；
-        // `solid_angle_pdf` 仍在调用方按同一组权重写入，保持 sample/pdf 闭合。
-        let mut scaled: Vec<f64> = weights.iter().map(|weight| weight * count as f64 / total_weight).collect();
-        let mut small = Vec::new();
-        let mut large = Vec::new();
-        for (idx, probability) in scaled.iter().enumerate() {
-            if *probability < 1.0 {
-                small.push(idx);
-            } else {
-                large.push(idx);
-            }
-        }
-
-        let mut alias_probability = vec![1.0_f32; count];
-        let mut alias_index: Vec<u32> = (0..count as u32).collect();
-        while !small.is_empty() && !large.is_empty() {
-            let small_idx = small.pop().unwrap();
-            let large_idx = large.pop().unwrap();
-            alias_probability[small_idx] = scaled[small_idx].clamp(0.0, 1.0) as f32;
-            alias_index[small_idx] = large_idx as u32;
-
-            scaled[large_idx] = (scaled[large_idx] + scaled[small_idx]) - 1.0;
-            if scaled[large_idx] < 1.0 {
-                small.push(large_idx);
-            } else {
-                large.push(large_idx);
-            }
-        }
-
-        for idx in small.into_iter().chain(large.into_iter()) {
-            alias_probability[idx] = 1.0;
-            alias_index[idx] = idx as u32;
-        }
-
-        Some((alias_probability, alias_index))
     }
 
     fn create_fallback_sky(
@@ -455,7 +481,7 @@ impl RenderSkyManager {
         shader_binding_system: &mut ShaderBindingSystem,
     ) -> FallbackSkyTexture {
         // sky fallback 需要视觉中性，避免材质缺失用的洋红色污染环境光。
-        // shader 当前会将 sky sample 乘以 8，因此这里保持低亮度灰蓝。
+        // PathTracingCommonSettings::sky_brightness 仍是唯一生效的天空亮度控制。
         let pixels: [u8; 4] = [10, 13, 15, 255];
         let image = GfxImage::from_rgba8(resource_ctx, immediate_ctx, 1, 1, &pixels, "FallbackSky");
         let image_format = image.format();
@@ -480,6 +506,7 @@ impl RenderSkyManager {
 
 impl Drop for RenderSkyManager {
     fn drop(&mut self) {
+        debug_assert!(self.worker_stopped);
         debug_assert!(self.fallback.image_handle.is_null());
         debug_assert!(self.fallback.view_handle.is_null());
         debug_assert!(self.sky_distribution.is_none());
