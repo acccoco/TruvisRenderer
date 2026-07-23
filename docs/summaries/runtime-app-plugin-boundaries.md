@@ -39,6 +39,9 @@ RenderRuntime
   锚定到 swapchain 右侧，真实 GPU source 仍由当前 realtime/offline pipeline 在 render phase 解析。
 - Truvis 的 `SelectionOutlineRenderer` 持有 per-FIF R8 mask image 和 outline graphics pipelines；App 保存
   `Option<WorldSubmeshSelection>`，输入语义只包含 CPU `InstanceHandle + submesh_index`，不保存 GPU slot。
+- Truvis 的 `EditorController` 持有 Editor bridge receiver，把 WebSocket DTO 适配到 `World`；App-local
+  `DesktopCommandController` 独占 Tauri desktop command receiver，只在 update 阶段把 Rust 侧本地 `PathBuf` 交给
+  `World::request_sky_texture_from_path`。二者都不属于 `RenderRuntime` 或 Plugin。
 - `TrianglePlugin`、`ShaderToyPlugin`、`RtPipeline`、`OfflinePipeline` 等具体渲染能力
 
 ## Ctx 裁剪契约
@@ -109,7 +112,9 @@ selection outline 使用单独的 `WorldSubmeshRasterView` render ctx 能力。�
 `RenderAppShell` 使用 `visit_plugins_mut` 批量调用 `Plugin::init`、`Plugin::update` 和 `Plugin::on_resize`，使用
 `visit_plugins_mut_rev` 调用 `Plugin::shutdown`。
 
-输入事件目前仍由 App hooks 显式处理，因为 GUI 事件消费和 App 自有 `InputManager` 之间存在 App 级策略。
+输入事件目前仍由 App hooks 显式处理，因为 GUI 事件消费和 App 自有 `InputManager` 之间存在 App 级策略。Editor request
+与 Tauri desktop command 同样由 `TruvisApp::update` 显式编排：它们需要访问 App 选择状态或权威 `World`，但没有标准
+Plugin 生命周期或可复用 GPU 能力。
 
 ## Plugin 模型
 
@@ -136,5 +141,7 @@ App 通过持有具体类型来组合这些能力，并通过 visitor 暴露标�
 - `RenderRuntime` 是 phase 能力来源，但不是 App / Plugin 编排者。
 - `RenderAppShell` 是固定帧骨架，只转发外部生命周期并裁剪 ctx。
 - App 是业务组合 owner，持有具体 Plugin，并在 render 阶段决定 RenderGraph pass 顺序；Truvis 也在这里按 `RenderMode` 选择实时或离线 sub RenderGraph。
+- Tauri 文件对话框和私有 desktop command bridge 属于具体 App 的平台特权能力；本地路径不得进入 Editor WebSocket、
+  `RenderRuntime` 或通用 Plugin 接口，Tauri main thread 也不得直接修改 `World`。
 - Plugin 是可复用能力单元；标准生命周期可以批量驱动，特有能力由 App 显式调用。
 - App / Plugin 不长期保存完整 runtime owner、typed `Gfx` Ctx 或底层 Vulkan/VMA 依赖。

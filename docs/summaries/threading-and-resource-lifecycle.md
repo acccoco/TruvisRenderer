@@ -13,7 +13,12 @@ flowchart LR
         Parent["owns top-level HWND + WebView"]
         Desktop["owns TruvisDesktopState"]
         DomRect["receives latest DOM viewport rect"]
-        Parent --> Desktop --> DomRect
+        Dialog["native HDRI dialog"]
+        Sender["owns DesktopCommandSender"]
+        Parent --> Desktop
+        Desktop --> DomRect
+        Desktop --> Dialog
+        Desktop --> Sender
     end
 
     subgraph WindowThread["RenderWindowThread · winit"]
@@ -26,8 +31,10 @@ flowchart LR
 
     subgraph RenderThread["RenderThread"]
         RenderApp["owns Box&lt;dyn RenderApp&gt;"]
+        DesktopCommand["owns DesktopCommandController"]
         Runtime["owns RenderRuntime"]
         Vulkan["creates, uses, destroys all Vulkan objects"]
+        RenderApp --> DesktopCommand
         RenderApp --> Runtime --> Vulkan
     end
 
@@ -36,6 +43,7 @@ flowchart LR
     end
 
     DomRect -- "EventLoopProxy / SetWindowPos" --> Child
+    Sender -- "capacity-1 PathBuf command + oneshot reply" --> DesktopCommand
     Input -- "bounded InputEvent channel" --> RenderApp
     Size -- "AtomicU64 + resize generation" --> RenderApp
     Server <-- "bounded editor bridge DTO" --> RenderApp
@@ -62,6 +70,12 @@ flowchart LR
   `WM_*BUTTONDOWN` 后不会替嵌入式 child 自动切换 keyboard focus，因此 `RenderWindowThread` 在任意鼠标按下时对 child
   调用 `SetFocus`；点击周围 WebView 控件后焦点按 Windows 默认行为返回 WebView。Web UI 不转发 viewport 键盘输入。
 - DOM rect 命令只改变平台窗口几何，不进入 `RenderApp`，也不携带场景、材质或 swapchain 语义。
+- Tauri `select_hdri` 使用非阻塞原生 dialog；`TruvisDesktopState` 只持有 sender 和 dialog-open 原子状态，不持有 scene
+  投影，也不在持有 desktop resources mutex 时打开 dialog 或等待 reply。
+- HDRI 的本地 `PathBuf` 只通过容量为 `1` 的私有 `DesktopCommandSender` 进入 RenderThread，不进入 Editor WebSocket。
+  `DesktopCommandController` 每帧最多处理一条，并且只在 `TruvisApp::update` 中短暂借用 `World`。
+- desktop oneshot reply 只确认 `World::request_sky_texture_from_path` 已接受 CPU scene mutation，不等待 asset decode、
+  texture upload 或 sky distribution；Tauri main thread、WebView 和 EditorServer 仍不访问 Vulkan。
 - GPU 同步优先通过 RenderGraph、binary semaphore 和 frame timeline 表达。
 - `after_prepare` 中的同步 raycast 是显式例外：它使用 runtime-owned `RayCastService` 提交独立 graphics command buffer，并用
   fence 阻塞等待 GPU trace、copy 和 readback。
@@ -136,8 +150,10 @@ flowchart LR
 `RenderSkyManager` 已发布的 active/retired/fallback 资源与 `RenderTextureManager` ready images。
 这保证 CPU producer、transfer queue 和 shader-visible owner 不会交叉销毁。
 
-桌面窗口的外层销毁顺序固定为：`RenderThread` 完成 App/runtime/Vulkan 销毁 → `RenderWindowThread` drop child HWND →
-停止并 join EditorServer → Tauri/Tao drop WebView 与 top-level HWND。`EmbeddedWinitHost::Drop` 为非正常 exit 提供相同顺序的兜底。
+桌面窗口的外层销毁顺序固定为：RenderThread 上的 `TruvisApp` 先关闭并清空 desktop command receiver，使尚未处理的
+oneshot reply 因 sender drop 退出 → App/runtime/Vulkan 销毁 → `RenderWindowThread` drop child HWND → 停止并 join
+EditorServer → Tauri/Tao drop WebView 与 top-level HWND。`TruvisDesktopState::shutting_down` 阻止新 dialog，
+`EmbeddedWinitHost::Drop` 为非正常 exit 提供相同顺序的兜底。
 
 - `RenderApp::shutdown(&mut self)`：`RenderAppShell` 等待 GPU idle 后，先用 `RenderAppShutdownCtx` 调用 App hooks
   shutdown，再用 `PluginShutdownCtx` 反向遍历 Plugin shutdown。

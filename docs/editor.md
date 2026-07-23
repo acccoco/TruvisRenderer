@@ -92,6 +92,7 @@ app/
 └── truvis/
     └── src/
         ├── desktop.rs                # Tauri main-thread owner 与 child host 组装
+        ├── desktop_command.rs        # Tauri → RenderThread 私有特权命令桥
         └── editor_controller.rs      # RenderThread 内部协议适配
 
 engine/app-frame/truvis-winit-app/src/
@@ -118,17 +119,21 @@ flowchart TB
     Bridge["truvis-editor-bridge<br/>协议 DTO + 跨线程 endpoint"]
     Server["truvis-editor-server<br/>HTTP / WebSocket adapter"]
     Controller["truvis::editor_controller<br/>Render 侧请求处理"]
+    DesktopCommand["truvis::desktop_command<br/>Render 侧私有命令处理"]
     App["TruvisApp"]
     World["truvis-world"]
     Runtime["truvis-render-runtime"]
 
     Web <-->|"JSON / WebSocket"| Server
-    Web -->|"DOM physical rect / Tauri command"| Desktop
-    Desktop --> WinitHost
+    Web -->|"viewport rect / select_hdri invoke"| Desktop
+    Desktop -->|"DOM physical rect"| WinitHost
+    Desktop -->|"PathBuf / bounded mpsc"| DesktopCommand
     Server --> Bridge
     Controller --> Bridge
     App --> Controller
+    App --> DesktopCommand
     Controller --> World
+    DesktopCommand --> World
     App --> Runtime
 ```
 
@@ -155,8 +160,9 @@ truvis-editor-server -> truvis-render-runtime
 engine/* -> editor-*
 ```
 
-由主应用 crate 中的 `EditorController` 负责把 editor 协议 DTO 翻译成 `World` 查询或修改。Bridge 和 Server
-都不感知 SlotMap handle、`MaterialData`、`RenderWorld` 或任何 GPU 类型。
+由主应用 crate 中的 `EditorController` 负责把 editor 协议 DTO 翻译成 `World` 查询或修改。只有不适合进入网络协议的
+本机文件选择结果会经过 App-local `DesktopCommandController` 进入同一个 `World`。Bridge 和 Server 都不感知
+SlotMap handle、`MaterialData`、本机路径、`RenderWorld` 或任何 GPU 类型。
 
 ## 5. `truvis-editor-bridge` crate
 
@@ -337,14 +343,37 @@ after-prepare selection 流程，因此由 `TruvisApp` 显式调用更符合现�
 ```text
 main thread · TruvisDesktopState
 ├── render_host: EmbeddedWinitHost
-└── editor_server: EditorServerHandle
+├── editor_server: EditorServerHandle
+├── desktop_command_sender: DesktopCommandSender
+└── hdri_dialog_open: AtomicBool
 
 RenderThread · TruvisApp
-└── editor_controller: EditorController
+├── editor_controller: EditorController
+└── desktop_command_controller: DesktopCommandController
 ```
 
-三者都不进入 `RenderRuntime`。Desktop owner 只管理平台和网络生命周期；`EditorController` 仍是唯一接触
-`World` 的 editor 适配器。
+这些 owner 都不进入 `RenderRuntime`。Desktop owner 只管理平台、网络生命周期和命令提交端；`EditorController` 是
+Editor WebSocket 唯一的 `World` 适配器，`DesktopCommandController` 则只处理不进入协议的本地特权命令。
+
+### 7.1 Tauri 桌面特权命令
+
+`select_hdri` 是 Tauri Rust command，不是 Editor command。它通过 `tauri-plugin-dialog` 的 callback API 打开单选原生
+文件对话框，filter 仅包含 `.hdr` / `.exr`；选择结果进入队列前还会执行一次大小写不敏感的扩展名校验。WebView 只收到
+`cancelled`，或 `accepted + file_name`，完整 `PathBuf` 不经过 Tauri IPC 返回值、Editor WebSocket 或 EditorServer。
+
+进程内 bridge 的所有权和背压固定为：
+
+- `TruvisDesktopState` 持有可 clone 的 `DesktopCommandSender`，`TruvisApp` 内的
+  `DesktopCommandController` 独占 receiver；
+- 有界队列容量为 `1`，Tauri command 使用 `try_send`，队列满或 receiver 关闭时立即失败；
+- `hdri_dialog_open` 的 RAII permit 覆盖 dialog 打开和 RenderThread reply 等待期，避免重复 dialog；
+- RenderThread 每帧至多处理一条 command，并且只在 `TruvisApp::update` 中调用
+  `World::request_sky_texture_from_path`；
+- oneshot reply 只表示 CPU scene 已接受请求，不等待 HDR/EXR decode、GPU upload 或 Alias distribution；
+- scene version 发生实际变化时，App 复用现有 `SceneVersionChanged` notification；发送失败仍由一秒 polling 最终收敛。
+
+同一 canonical path 沿用现有 texture 去重，不强制 reload。异步 decode 失败后再次选择同一路径也不会重试，这是 v1 的已知
+限制；损坏文件的最终失败继续由 asset/runtime 日志表达，GUI 不伪造 `Ready` 状态。
 
 ## 8. Web 项目
 
@@ -361,7 +390,8 @@ app/editor/web/
 │   │   ├── editor_socket.ts
 │   │   └── mock_editor_transport.ts # 仅 Vite dev + ?mock=1
 │   ├── state/
-│   │   └── use_editor_session.ts
+│   │   ├── use_editor_session.ts
+│   │   └── use_desktop_sky_action.ts # Tauri-only 本地文件选择动作
 │   └── components/
 └── dist/
 ```
@@ -375,8 +405,9 @@ app/editor/web/
 mock transport；该入口在 production build 中不会启用。
 
 Truvis 启动后，Tauri 直接加载 production `dist/`。WebView 通过 `editor_websocket_url` command 获取
-`EditorServerHandle::bound_addr()` 对应的实际 WebSocket 地址；场景与材质数据仍只走 WebSocket。
-`set_render_viewport_rect` command 只传递中央 DOM slot 的窗口几何，不能承载 selection/material 或 swapchain 命令。
+`EditorServerHandle::bound_addr()` 对应的实际 WebSocket 地址；Editor 场景与材质协议仍只走 WebSocket。
+`set_render_viewport_rect` command 只传递中央 DOM slot 的窗口几何。`select_hdri` 是明确隔离的桌面特权入口：它不扩展
+Editor 协议，只把 Rust 侧原生文件选择结果送入 App-local queue。
 
 当前 Web UI 使用浅色主题，并直接导入仓库级 `assets/resources/DruvisIII.png`。Tauri Windows EXE / 默认窗口图标使用
 由同一源图机械转换出的 `app/truvis/icons/DruvisIII.ico`；Web 与 Tauri 不再维护另一套自研品牌图标。三列桌面布局由 `EditorWorkspace` 持有左右
@@ -642,7 +673,33 @@ Web 在用户拖动材质滑条期间只修改页面内的 draft，不发送 pre
 时发送一次 commit；仅打开或取消颜色选择器不发送请求。Web 可以对同一对象串行发送 commit，Server 不合并参数，
 也不自动重放失败的修改请求。
 
-### 11.3 查询与 scene version
+### 11.3 HDRI 桌面选择
+
+```mermaid
+sequenceDiagram
+    participant Web as WebView
+    participant Desktop as Tauri Rust command
+    participant Dialog as Native file dialog
+    participant Command as DesktopCommandController
+    participant World as World
+    participant Assets as Asset / RenderWorld async pipeline
+
+    Web->>Desktop: select_hdri()
+    Desktop->>Dialog: pick_file(.hdr, .exr)
+    Dialog-->>Desktop: local PathBuf / cancelled
+    Desktop->>Command: try_send RequestSkyTexture(PathBuf)
+    Command->>World: request_sky_texture_from_path(path)
+    World-->>Command: TextureHandle / WorldEditError
+    Command-->>Desktop: oneshot accepted / error
+    Desktop-->>Web: accepted(file_name) / cancelled / error
+    World-->>Assets: existing async decode, upload and distribution
+```
+
+`accepted` 的边界停在 `World` 已注册 scene texture 并更新 sky 语义状态。真实 HDRI、uniform PDF 过渡和最终 importance
+distribution 切换仍由既有异步管线完成；完整路径始终留在 Rust 侧。取消选择不修改 sky 或 scene version。Web 将成功文案
+表述为 `HDRI requested`，浏览器与 mock 环境禁用该入口并提示仅 Tauri desktop 可用。
+
+### 11.4 查询与 scene version
 
 Web 初次连接后主动查询 capabilities、scene version、selection、对象列表和需要展示的属性。Render 在 update 阶段从
 当前 `World` 构造 owned DTO；JSON 序列化、压缩和网络发送留在 Server 线程。
@@ -689,6 +746,8 @@ Web 当前每秒请求一次 `GetSceneVersion`，同时接收 best-effort `Scene
 - Server 在独立线程或独立 async runtime 中运行，不在 Render 线程处理网络 IO。
 - Server → Render request inbox 必须有界；队列满时 Server 返回 busy / unavailable，不能等待 Render。
 - Render 每帧最多处理 `32` 个请求且最多占用 `500 us`，任一预算耗尽即停止，避免请求洪峰拉长整帧。
+- Tauri desktop command inbox 容量为 `1`，只使用 `try_send`；Render 每帧最多处理一条，文件 dialog 与 reply 等待期间
+  拒绝重复选择。
 - Render 访问所有 endpoint 时只使用非阻塞操作。
 - Notification 队列满时允许丢弃；Response 发送失败后由 Web pending request timeout 收敛为请求失败。
 - Query / Command 必须有明确 timeout，不能无限等待。
@@ -706,13 +765,15 @@ HTTP Server 自身不是主要性能风险。需要重点避免的是 Render 线
 ```text
 Tauri main thread 创建 TruvisDesktop
   -> 创建 ServerEndpoint / AppEndpoint 并启动 EditorServer
+  -> 创建 DesktopCommandSender / DesktopCommandController
   -> 从 Tauri top-level HWND 创建 RenderWindowThread + child HWND
   -> RenderWindowThread 创建 RenderThread
-  -> RenderThread 创建 TruvisApp + EditorController
+  -> RenderThread 创建 TruvisApp + EditorController + DesktopCommandController
   -> WebView 显示，DOM slot 提交 child rect
-  -> update 处理 Query / Command
+  -> update 处理 desktop command 与 Editor Query / Command
   -> after_prepare 发布 selection notification
   -> main close 请求 RenderThread 退出
+  -> TruvisApp 先关闭并清空 desktop receiver，再关闭 Editor request receiver
   -> App / Plugin / RenderRuntime / Vulkan surface 销毁
   -> RenderWindowThread drop child HWND 并退出
   -> 停止并 join EditorServer
@@ -722,6 +783,8 @@ Tauri main thread 创建 TruvisDesktop
 其他约束：
 
 - Server 线程不得创建、访问或销毁 Vulkan / VMA / WSI 对象。
+- Tauri main thread、WebView 与 EditorServer 都不得访问 `World` 或 Vulkan；本地文件 `PathBuf` 只能进入私有 desktop
+  command queue，不能进入日志之外的网络 DTO 或返回给 Web。
 - Server shutdown 必须可取消并有明确等待边界，不能无限阻塞 Render/App shutdown。
 - parent HWND 必须活到 Vulkan surface 与 child HWND 都销毁之后；非正常 `app.exit` 也由 desktop state 和
   `EmbeddedWinitHost::Drop` 执行同一兜底顺序。
@@ -740,6 +803,8 @@ Tauri main thread 创建 TruvisDesktop
 - 当前窗口尺寸为零时 render loop 会跳过 App frame。第一阶段明确不处理该情况：窗口最小化期间 editor 请求可以超时或
   返回错误，Web 不保证继续编辑；暂不增加独立于渲染帧的 CPU request pump。
 - child HWND 当前是 Windows 专属实现；native viewport 之上不能放置 WebView DOM overlay，viewport 之外的左右面板不受影响。
+- HDRI GUI 只报告请求是否被 CPU scene 接受，不提供最终 `Loading / Ready / Failed` 状态。
+- 同一 canonical HDRI path 不强制 reload；首次异步加载失败后再次选择同一路径不会重试。
 
 ### 15.2 后续扩展前再评估
 
