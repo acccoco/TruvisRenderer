@@ -127,6 +127,17 @@ impl World {
         Ok(self.scene_assets.register_texture_canonical(&mut self.assets, &mut self.scene, canonical_path))
     }
 
+    /// 注册 file texture 并立即把它设为 scene sky。
+    ///
+    /// 返回只表示 CPU scene 已接受请求，不等待文件解码、GPU image upload 或 sky
+    /// distribution build。等待期间 render-side 保持 sky fallback；失败时也保持 fallback
+    /// 并记录 loader 错误。旧 texture 不会自动删除，因为它仍可能被 material 引用。
+    pub fn request_sky_texture_from_path(&mut self, path: PathBuf) -> Result<TextureHandle, WorldEditError> {
+        let texture = self.register_texture(path)?;
+        self.update_sky_texture(Some(texture))?;
+        Ok(texture)
+    }
+
     /// 查询 model import 的 CPU 加载状态。
     ///
     /// App 只用它显示或驱动 UI，不直接读取 `AssetHub` 的 loader state。
