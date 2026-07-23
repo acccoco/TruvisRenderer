@@ -634,7 +634,8 @@ impl RenderRuntime {
     ///
     /// 该方法只做时间判断，不推进 frame counter，也不会等待 GPU。
     pub fn time_to_render(&self) -> bool {
-        self.frame_timing.frame_delta_time_limit_us() < self.timer.elapsed_since_tick().as_micros() as f32
+        true
+        // self.frame_timing.frame_delta_time_limit_us() < self.timer.elapsed_since_tick().as_micros() as f32
     }
 
     /// 处理窗口 resize。只有 present 层实际重建 swapchain 时才返回 `Some(ctx)`。
