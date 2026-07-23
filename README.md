@@ -33,6 +33,7 @@ TruvisRenderer 是一个基于 Rust、Vulkan 1.3 和 Slang 构建的实时光线
 - Node.js 20.19.x 或 22.12+，以及 npm
 - CMake 3.21+；Visual Studio 2026 generator 需要 PATH 中的 CMake 4.2+
 - Visual Studio 2022 或 2026，并安装 MSVC C++ workload
+- LLVM LLD，并确保 `lld-link.exe` 位于 `PATH`；Cargo 的 Windows MSVC target 使用它缩短链接时间
 - 已配置 `VCPKG_ROOT`
 - [`just`](https://github.com/casey/just) 与 [`Nushell`](https://www.nushell.sh/)
 
