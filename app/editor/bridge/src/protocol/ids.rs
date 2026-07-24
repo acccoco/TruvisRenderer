@@ -49,6 +49,16 @@ impl InstanceId {
     }
 }
 
+/// 当前 Truvis session 内的 mesh opaque ID。
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+pub struct MeshId(pub String);
+
+impl MeshId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+}
+
 /// 当前 Truvis session 内的 material opaque ID。
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 pub struct MaterialId(pub String);

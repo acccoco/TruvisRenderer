@@ -2,6 +2,7 @@ import type {
   EditorNotification,
   EditorRequest,
   EditorResponse,
+  InstanceDetailsDto,
   MaterialDto,
   SceneObjectSummary,
   SelectionDto,
@@ -32,6 +33,7 @@ export class MockEditorTransport implements EditorTransport {
   };
   private readonly objects: SceneObjectSummary[] = Array.from({ length: 18 }, (_, index) => ({
     instance_id: index === 3 ? MOCK_INSTANCE_ID : `instance:000000010000${(1001 + index).toString(16).padStart(4, '0')}`,
+    name: index === 3 ? 'Sponza_Curtain_West' : `Sponza_Instance_${String(index + 1).padStart(2, '0')}`,
     material_count: index % 4 === 3 ? 3 : (index % 2) + 1,
   }));
   private readonly connectionListeners = new Set<(state: ConnectionState) => void>();
@@ -78,6 +80,38 @@ export class MockEditorTransport implements EditorTransport {
         return { type: 'scene_version', payload: String(this.sceneVersion) };
       case 'get_selection':
         return { type: 'selection', payload: this.selection };
+      case 'get_instance_details': {
+        const instanceId = request.payload.instance_id;
+        const object = this.objects.find((candidate) => candidate.instance_id === instanceId);
+        if (!object) {
+          return {
+            type: 'error',
+            payload: { code: 'stale_object', message: 'instance ID is no longer valid' },
+          };
+        }
+        const materials = Array.from({ length: object.material_count }, (_, submeshIndex) => ({
+          submesh_index: submeshIndex,
+          material_id: submeshIndex === 1 ? MOCK_MATERIAL_ID : `material:000000010000da${(10 + submeshIndex).toString(16)}`,
+          name: submeshIndex === 1 ? this.material.name : `Sponza_Material_${submeshIndex + 1}`,
+        }));
+        const details: InstanceDetailsDto = {
+          scene_version: String(this.sceneVersion),
+          instance_id: object.instance_id,
+          name: object.name,
+          transform: [
+            [1, 0, 0, 124.5],
+            [0, 0.866, -0.5, 32],
+            [0, 0.5, 0.866, -48.25],
+            [0, 0, 0, 1],
+          ],
+          mesh: {
+            mesh_id: 'mesh:000000010000a410',
+            name: 'Sponza_Curtain_Mesh',
+          },
+          materials,
+        };
+        return { type: 'instance_details', payload: details };
+      }
       case 'get_material':
         return { type: 'material', payload: { ...this.material } };
       case 'get_scene_objects': {

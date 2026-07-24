@@ -4,9 +4,9 @@ use slotmap::{Key, KeyData};
 
 use truvis_editor_bridge::protocol::{
     CoverageModeDto, DEFAULT_SCENE_PAGE_SIZE, EDITOR_PROTOCOL_VERSION, EditorCapabilities, EditorCommand, EditorError,
-    EditorErrorCode, EditorNotification, EditorQuery, EditorRequest, EditorResponse, InstanceId, MAX_SCENE_PAGE_SIZE,
-    MaterialClassDto, MaterialDto, MaterialId, MaterialPatch, SceneObjectSummary, SceneObjectsPage, SceneVersion,
-    SelectionDto, TextureId,
+    EditorErrorCode, EditorNotification, EditorQuery, EditorRequest, EditorResponse, InstanceDetailsDto, InstanceId,
+    InstanceMaterialBindingDto, MAX_SCENE_PAGE_SIZE, MaterialClassDto, MaterialDto, MaterialId, MaterialPatch, MeshId,
+    MeshSummaryDto, SceneObjectSummary, SceneObjectsPage, SceneVersion, SelectionDto, TextureId,
 };
 use truvis_editor_bridge::{
     AppEndpoint, EditorNotificationEnvelope, EditorNotificationTarget, EditorRequestEnvelope, EditorResponseEnvelope,
@@ -14,7 +14,7 @@ use truvis_editor_bridge::{
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_world::World;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
-use truvis_world::guid_new_type::{InstanceHandle, MaterialHandle, TextureHandle};
+use truvis_world::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle, TextureHandle};
 
 /// Editor 请求在单帧 update 中的处理预算。
 ///
@@ -118,6 +118,7 @@ impl EditorController {
                 limit,
                 expected_scene_version,
             } => Self::scene_objects_page(world, offset, limit, expected_scene_version),
+            EditorQuery::GetInstanceDetails { instance_id } => Self::instance_details(world, instance_id),
             EditorQuery::GetMaterial { material_id } => match Self::decode_material_id(&material_id) {
                 Ok(handle) => match Self::material_dto(world, handle) {
                     Some(material) => EditorResponse::Material(material),
@@ -197,6 +198,7 @@ impl EditorController {
             .take(limit)
             .map(|(handle, instance)| SceneObjectSummary {
                 instance_id: Self::encode_instance_id(handle),
+                name: instance.name.clone(),
                 material_count: instance.materials.len() as u32,
             })
             .collect::<Vec<_>>();
@@ -207,6 +209,50 @@ impl EditorController {
             scene_version: SceneVersion::from_u64(scene_version),
             objects,
             next_offset,
+        })
+    }
+
+    /// 从一次 CPU scene 只读快照构造 Web inspector 的 owned instance 详情。
+    ///
+    /// Instance 对 mesh/material 的引用完整性由 `SceneStore` 在注册、更新和删除边界维护；
+    /// 因此 live instance 出现缺失依赖表示内部不变量已经破坏，而不是普通 stale query。
+    fn instance_details(world: &World, instance_id: InstanceId) -> EditorResponse {
+        let handle = match Self::decode_instance_id(&instance_id) {
+            Ok(handle) => handle,
+            Err(error) => return EditorResponse::Error(error),
+        };
+        let view = world.scene_view();
+        let Some(instance) = view.get_instance(handle) else {
+            return Self::error(EditorErrorCode::StaleObject, "instance ID is no longer valid");
+        };
+        let Some(mesh_name) = view.mesh_name(instance.mesh) else {
+            return Self::error(EditorErrorCode::Internal, "live instance references a missing mesh");
+        };
+
+        let mut materials = Vec::with_capacity(instance.materials.len());
+        for (submesh_index, material_handle) in instance.materials.iter().copied().enumerate() {
+            let Some(material) = view.material_data(material_handle) else {
+                return Self::error(EditorErrorCode::Internal, "live instance references a missing material");
+            };
+            materials.push(InstanceMaterialBindingDto {
+                submesh_index: submesh_index as u32,
+                material_id: Self::encode_material_id(material_handle),
+                name: material.name.clone(),
+            });
+        }
+
+        // glam 使用 column-major 存储；先 transpose 再导出 columns，使 wire DTO 的外层数组明确表示 matrix rows。
+        let transform = instance.transform.transpose().to_cols_array_2d();
+        EditorResponse::InstanceDetails(InstanceDetailsDto {
+            scene_version: SceneVersion::from_u64(view.scene_version()),
+            instance_id,
+            name: instance.name.clone(),
+            transform,
+            mesh: MeshSummaryDto {
+                mesh_id: Self::encode_mesh_id(instance.mesh),
+                name: mesh_name.to_string(),
+            },
+            materials,
         })
     }
 
@@ -387,6 +433,10 @@ impl EditorController {
         MaterialId::new(Self::encode_key("material", handle))
     }
 
+    fn encode_mesh_id(handle: MeshHandle) -> MeshId {
+        MeshId::new(Self::encode_key("mesh", handle))
+    }
+
     fn encode_texture_id(handle: TextureHandle) -> TextureId {
         TextureId::new(Self::encode_key("texture", handle))
     }
@@ -397,6 +447,10 @@ impl EditorController {
 
     fn decode_material_id(id: &MaterialId) -> Result<MaterialHandle, EditorError> {
         Self::decode_key("material", &id.0)
+    }
+
+    fn decode_instance_id(id: &InstanceId) -> Result<InstanceHandle, EditorError> {
+        Self::decode_key("instance", &id.0)
     }
 
     fn decode_key<K: Key>(expected_prefix: &str, value: &str) -> Result<K, EditorError> {

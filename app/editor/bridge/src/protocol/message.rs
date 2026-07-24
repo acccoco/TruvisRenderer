@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::protocol::{
-    EditorCapabilities, EditorError, MaterialDto, MaterialId, MaterialPatch, RequestId, SceneObjectsPage, SceneVersion,
-    SelectionDto,
+    EditorCapabilities, EditorError, InstanceDetailsDto, InstanceId, MaterialDto, MaterialId, MaterialPatch, RequestId,
+    SceneObjectsPage, SceneVersion, SelectionDto,
 };
 
 /// 不修改 World 的 Editor 查询。
@@ -18,6 +18,9 @@ pub enum EditorQuery {
         offset: u32,
         limit: u16,
         expected_scene_version: Option<SceneVersion>,
+    },
+    GetInstanceDetails {
+        instance_id: InstanceId,
     },
     GetMaterial {
         material_id: MaterialId,
@@ -61,6 +64,7 @@ pub enum EditorResponse {
     SceneVersion(SceneVersion),
     Selection(Option<SelectionDto>),
     SceneObjects(SceneObjectsPage),
+    InstanceDetails(InstanceDetailsDto),
     Material(MaterialDto),
     CommandApplied {
         scene_version: SceneVersion,

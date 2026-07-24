@@ -4,4 +4,16 @@ import type { InstanceId } from "./InstanceId";
 /**
  * 场景对象列表中的轻量 instance 摘要。
  */
-export type SceneObjectSummary = { instance_id: InstanceId, material_count: number, };
+export type SceneObjectSummary = {
+/**
+ * 当前 session 内用于查询和稳定列表 key 的 opaque identity。
+ */
+instance_id: InstanceId,
+/**
+ * `SceneStore` 持有的展示名称；名称不要求唯一，不能替代 `instance_id`。
+ */
+name: string,
+/**
+ * instance-local material binding 数量，与 mesh submesh 数量保持一致。
+ */
+material_count: number, };

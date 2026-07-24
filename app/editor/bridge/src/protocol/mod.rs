@@ -11,13 +11,16 @@ mod scene;
 mod selection;
 
 pub use error::{EditorError, EditorErrorCode};
-pub use ids::{ClientId, InstanceId, MaterialId, RequestId, SceneVersion, TextureId};
+pub use ids::{ClientId, InstanceId, MaterialId, MeshId, RequestId, SceneVersion, TextureId};
 pub use material::{CoverageModeDto, MaterialClassDto, MaterialDto, MaterialPatch};
 pub use message::{
     EditorClientMessage, EditorCommand, EditorNotification, EditorQuery, EditorRequest, EditorResponse,
     EditorServerMessage,
 };
-pub use scene::{EditorCapabilities, SceneObjectSummary, SceneObjectsPage};
+pub use scene::{
+    EditorCapabilities, InstanceDetailsDto, InstanceMaterialBindingDto, MeshSummaryDto, SceneObjectSummary,
+    SceneObjectsPage,
+};
 pub use selection::SelectionDto;
 
 /// 第一版 Editor JSON 协议版本。

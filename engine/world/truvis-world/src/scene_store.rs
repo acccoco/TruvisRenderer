@@ -360,6 +360,15 @@ impl<'a> SceneReadView<'a> {
         self.scene.all_instances.get(handle)
     }
 
+    /// 按 CPU scene mesh handle 查询长期保存的展示名称。
+    ///
+    /// 这里只暴露编辑器需要的语义 metadata，不暴露 `SceneMeshRecord` owner，也不表示
+    /// render-side mesh 已经完成 GPU upload 或 BLAS build。
+    #[inline]
+    pub fn mesh_name(&self, handle: MeshHandle) -> Option<&'a str> {
+        self.scene.all_meshes.get(handle).map(|mesh| mesh.name.as_str())
+    }
+
     /// 查询直接引用指定 texture 的 material。
     ///
     /// 这是 render-side dirty routing 使用的只读依赖视图。调用方只能拿到当前
