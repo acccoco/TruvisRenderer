@@ -436,7 +436,10 @@ pub struct SceneSubmesh {
 }
 ```
 
-一个 `SceneInstance` 只能引用一个 `MeshHandle`，但可以有多个 material。`SceneInstance.materials.len()`
+一个 `SceneInstance` 只能引用一个 `MeshHandle`，但可以有多个 material。CPU instance 同时保存面向 Editor/debug
+投影的 `name`；名称不要求唯一，也不能替代 `InstanceHandle`，并且不会写入 GPU instance buffer。model importer
+产生的 `RawSceneInstanceData.name` 必须在 ingest 时保留，程序化 instance 则由注册调用方提供名称。
+`SceneInstance.materials.len()`
 必须等于 `SceneMesh.submeshes.len()`；第 `i` 个 material 对应第 `i` 个 submesh / geometry。更新 instance
 mesh 或 material list 时必须重新验证这个长度约束，并同步维护 `material -> instance` 与 `mesh -> instance`
 反向依赖。

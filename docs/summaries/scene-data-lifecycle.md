@@ -25,8 +25,9 @@ CPU scene change，再让 `RenderWorld` 消费同步包。render 阶段只读取
 它不做 scene identity 分配，也不创建任何 GPU 资源。
 
 `SceneStore` 是 CPU scene 的语义 owner。它保存 scene texture / mesh / material / instance / sky /
-analytic light 的运行时身份、依赖索引和 `SceneChanges`。删除 texture、material、mesh 前的引用检查也在这里完成；
-失败 edit 不写 change log。
+analytic light 的运行时身份、展示名称、依赖索引和 `SceneChanges`。Instance name 由导入器或程序化注册调用方提供，
+只作为 Editor/debug metadata；opaque `InstanceHandle` 仍是唯一身份。删除 texture、material、mesh 前的引用检查
+也在这里完成；失败 edit 不写 change log。
 
 `SceneAssetIngestor` 是 loader 身份到 scene 身份的翻译边界。model 加载完成后，它把 `RawSceneData`
 里的 mesh/material/instance index 转成 `MeshHandle`、`MaterialHandle`、`TextureHandle`

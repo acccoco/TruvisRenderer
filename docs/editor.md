@@ -14,7 +14,7 @@ Truvis 后续需要提供材质编辑能力，并在此基础上扩展场景对�
 进程内仍启动独立 EditorServer 线程，通过 loopback WebSocket 连接 Tauri WebView：
 
 - 用户直接在中央 child HWND 中完成场景拾取与选择，输入不经过 Web 转发。
-- Tauri WebView 在左侧显示场景对象，在右侧显示当前选择和材质编辑器。
+- Tauri WebView 在左侧按 instance name 分页显示场景对象，在右侧显示当前 instance 详情和 viewport 所选材质编辑器。
 - 中央 DOM slot 只把相对 parent client area 的物理像素矩形提交给窗口宿主。
 - Web 页面发送材质或场景编辑命令。
 - Render 线程在合法的 update 阶段修改 CPU `World`。
@@ -510,6 +510,7 @@ EditorQuery
 │       limit,
 │       expected_scene_version?,
 │   }
+├── GetInstanceDetails { instance_id }
 └── GetMaterial { material_id }
 
 EditorCommand
@@ -531,6 +532,7 @@ EditorResponse
 │       objects,
 │       next_offset?,
 │   }
+├── InstanceDetails
 ├── Material
 ├── CommandApplied
 └── Error
@@ -589,11 +591,12 @@ Rust 内部的 `u64 scene_version`、`request_id` 和 SlotMap key 在线协议�
 - GPU slot、bindless handle 或 Vulkan 类型；
 - Rust 错误堆栈和内部文件路径。
 
-Editor ID 使用协议自有包装类型，例如 `InstanceId`、`MaterialId`、`TextureId`，但身份直接来自 `World` 内对应的
+Editor ID 使用协议自有包装类型，例如 `InstanceId`、`MeshId`、`MaterialId`、`TextureId`，但身份直接来自 `World` 内对应的
 SlotMap key，不建立 App 侧 ID registry 或双向映射表。线协议采用带类型前缀的可逆字符串编码，例如：
 
 ```text
 instance:000000010000002a
+mesh:0000000200000007
 material:0000000300000011
 ```
 
@@ -635,6 +638,11 @@ SelectionChanged {
 
 通知应覆盖选中、切换选择、取消选择和原选择失效。Web 初次连接时主动请求 `GetSelection`；notification 丢失后，
 Web 可以按需或定时重新查询，不要求 Bridge 或 Server 保存 latest selection。
+
+Web 另有一个可丢弃的 `inspectedInstanceId`，只表示右侧 instance inspector 当前聚焦的对象。左侧列表点击只更新
+这个 Web-local focus 并发送 `GetInstanceDetails`，不会构造 submesh selection、修改 Render/App selection 或改变
+selection outline。viewport selection 切换到另一个 instance 时，Web 会自动把 inspector focus 跟随到该 instance；
+此后列表点击仍可独立查看其他 instance，而下方 material editor 继续编辑 viewport 实际选中的 material。
 
 编辑命令必须携带明确目标，例如 `material_id`，不能使用 `UpdateSelectedMaterial` 之类依赖处理时当前 selection
 的隐式语义，避免 selection 和 command 异步交错后修改错误对象。
@@ -701,8 +709,10 @@ distribution 切换仍由既有异步管线完成；完整路径始终留在 Rus
 
 ### 11.4 查询与 scene version
 
-Web 初次连接后主动查询 capabilities、scene version、selection、对象列表和需要展示的属性。Render 在 update 阶段从
-当前 `World` 构造 owned DTO；JSON 序列化、压缩和网络发送留在 Server 线程。
+Web 初次连接后主动查询 capabilities、scene version、selection、对象列表和需要展示的属性。对象摘要包含
+instance name、opaque ID 和 material count；右侧详情按 instance ID 单独查询，在同一个 `SceneReadView` 中复制
+row-major world transform、mesh name/ID 和按 submesh index 对齐的 material name/ID。Render 在 update 阶段从
+当前 `World` 构造这些 owned DTO；JSON 序列化、压缩和网络发送留在 Server 线程。
 
 `SceneStore` 增加一个初始值为 `0` 的 `u64 scene_version`，作为 CPU scene 的单调递增全局版本。它只在实际发生
 CPU scene 语义变化后推进；校验失败或新旧值相同的 no-op 修改不推进版本。需要覆盖：
@@ -720,7 +730,9 @@ asset ingest 最终进入 `SceneStore` 时遵守同一版本契约，不需要 B
 `World` → `RenderWorld` 的单次 prepare 同步数据，不直接成为 Web 协议或由 Server 竞争消费。
 
 Web 当前每秒请求一次 `GetSceneVersion`，同时接收 best-effort `SceneVersionChanged` 并读取 Response 携带的 scene version。
-版本变化只是投影失效信号；当前 Web 自主重查 selection、对象第一页和所选材质，Bridge 与 Server 不保存这些投影。
+版本变化只是投影失效信号；当前 Web 自主重查 selection、对象第一页、所选材质和当前 instance 详情，Bridge 与 Server
+不保存这些投影。详情查询使用页面内 request sequence 丢弃快速切换产生的迟到响应；instance 已删除时
+`stale_object` 会清空详情并保留明确的失效状态。
 
 对象列表查询从第一阶段开始分页。`limit` 默认为 `128`，Server / Render 强制最大值为 `256`；Response 携带用于
 构造该页的 `scene_version` 和可选 `next_offset`。Web 可以把上一页版本作为 `expected_scene_version` 发送；如果查询时
