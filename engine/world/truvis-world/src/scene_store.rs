@@ -924,6 +924,7 @@ mod tests {
 
         let err = scene
             .register_instance(Instance {
+                name: "invalid-material-count".to_string(),
                 mesh,
                 materials: vec![material_a],
                 transform: glam::Mat4::IDENTITY,
@@ -933,6 +934,7 @@ mod tests {
 
         let instance = scene
             .register_instance(Instance {
+                name: "valid-material-count".to_string(),
                 mesh,
                 materials: vec![material_a, material_b],
                 transform: glam::Mat4::IDENTITY,

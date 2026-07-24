@@ -365,6 +365,7 @@ impl TruvisApp {
 
             world
                 .register_instance(Instance {
+                    name: format!("material-test-cube-{}-{}", MATERIAL_SOURCE, spec.name),
                     mesh: cube_mesh,
                     materials: vec![material],
                     transform: glam::Mat4::from_scale_rotation_translation(
@@ -441,6 +442,7 @@ impl TruvisApp {
 
                     world
                         .register_instance(Instance {
+                            name: format!("emissive-cube-matrix-{x}-{y}-{z}"),
                             mesh: cube_mesh,
                             materials: vec![material],
                             transform: glam::Mat4::from_scale_rotation_translation(

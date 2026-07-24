@@ -256,6 +256,7 @@ impl SceneAssetIngestor {
                 .map(|material_index| scene_materials[material_index as usize])
                 .collect();
             let scene_instance = match scene.register_instance(Instance {
+                name: instance.name,
                 mesh,
                 materials,
                 transform: instance.transform,
