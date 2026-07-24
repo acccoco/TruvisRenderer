@@ -345,7 +345,7 @@ select:focus-visible {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 0.9fr) minmax(0, 1.1fr);
   gap: 1px;
   overflow: hidden;
   background: var(--border-soft);
@@ -404,14 +404,19 @@ select:focus-visible {
 .object-row {
   position: relative;
   display: grid;
+  width: 100%;
   grid-template-columns: minmax(0, 1fr) 72px;
   align-items: center;
   min-height: 38px;
   padding: 0 10px;
+  border: 0;
   border-bottom: 1px solid var(--border-soft);
   color: #33434c;
-  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
   font-size: 12px;
+  text-align: left;
 }
 
 .object-row > span:first-child {
@@ -428,9 +433,15 @@ select:focus-visible {
 .object-row--header {
   min-height: 34px;
   color: var(--muted);
-  font-family: inherit;
+  cursor: default;
   font-size: 11px;
   letter-spacing: 0.02em;
+}
+
+.object-row:not(.object-row--header):hover,
+.object-row:not(.object-row--header):focus-visible {
+  outline: none;
+  background: #edf5f7;
 }
 
 .object-row--selected {
@@ -471,40 +482,111 @@ select:focus-visible {
   font-size: 11px;
 }
 
-.selection-panel {
+.instance-inspector {
   display: grid;
-  grid-template-rows: 54px auto;
-  max-height: 194px;
+  min-height: 0;
+  grid-template-rows: 54px minmax(0, 1fr);
   overflow: hidden;
   padding: 0 14px 14px;
 }
 
-.selection-summary {
-  display: grid;
-  gap: 7px 14px;
-  margin: 12px 4px 0;
-}
-
-.selection-summary > div {
-  display: grid;
-  grid-template-columns: 84px minmax(0, 1fr);
-  align-items: baseline;
-}
-
-.selection-state {
+.instance-state {
   display: flex;
   align-items: center;
   gap: 7px;
   color: var(--green) !important;
 }
 
-.selection-state--dirty {
+.instance-state--loading {
   color: var(--amber) !important;
 }
 
-.selection-state .status-dot {
+.instance-state .status-dot {
   width: 7px;
   height: 7px;
+}
+
+.instance-details {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-color: #bcc8ce transparent;
+}
+
+.instance-detail-section {
+  display: grid;
+  gap: 7px;
+  padding: 14px 4px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.instance-detail-section h3 {
+  margin: 0;
+  color: #33434c;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.instance-detail-section > strong {
+  color: #2c3a42;
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.instance-detail-section code {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.transform-matrix {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.transform-matrix output {
+  min-width: 0;
+  padding: 5px 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  color: #33434c;
+  background: #f8fafb;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
+  text-align: right;
+}
+
+.material-binding-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.material-binding-list li {
+  display: grid;
+  gap: 3px;
+  padding: 8px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: #f8fafb;
+}
+
+.material-binding-list strong {
+  color: #2c3a42;
+  font-size: 11px;
+  font-weight: 560;
+}
+
+.binding-index,
+.instance-detail-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
 }
 
 dt {
@@ -865,8 +947,8 @@ input[type="range"] {
     min-height: 520px;
   }
 
-  .selection-panel {
-    min-height: 170px;
+  .instance-inspector {
+    min-height: 420px;
   }
 
   .render-viewport {

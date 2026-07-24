@@ -1,26 +1,31 @@
 import { useMemo, useState } from 'react';
 
-import type { SceneObjectSummary, SelectionDto } from '../protocol/generated';
+import type { SceneObjectSummary } from '../protocol/generated';
 import { ChevronIcon, SearchIcon } from './icons';
 
 interface ScenePanelProps {
   objects: SceneObjectSummary[];
-  selection: SelectionDto | null;
+  inspectedInstanceId: string | null;
   pageOffset: number;
   nextOffset: number | null;
+  onInspectInstance(instanceId: string): void;
   onPreviousPage(): void;
   onNextPage(): void;
 }
 
-function shortId(id: string): string {
-  return id.split(':')[1]?.slice(-8) ?? id;
-}
-
-export function ScenePanel({ objects, selection, pageOffset, nextOffset, onPreviousPage, onNextPage }: ScenePanelProps) {
+export function ScenePanel({
+  objects,
+  inspectedInstanceId,
+  pageOffset,
+  nextOffset,
+  onInspectInstance,
+  onPreviousPage,
+  onNextPage,
+}: ScenePanelProps) {
   const [search, setSearch] = useState('');
   const filteredObjects = useMemo(() => {
     const normalized = search.trim().toLowerCase();
-    return normalized ? objects.filter((object) => object.instance_id.toLowerCase().includes(normalized)) : objects;
+    return normalized ? objects.filter((object) => object.name.toLowerCase().includes(normalized)) : objects;
   }, [objects, search]);
 
   return (
@@ -32,26 +37,33 @@ export function ScenePanel({ objects, selection, pageOffset, nextOffset, onPrevi
       <label className="search-field">
         <SearchIcon />
         <span className="sr-only">Search scene objects</span>
-        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search object ID…" />
+        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search instance name…" />
       </label>
-      <div className="object-table" role="table" aria-label="Scene objects">
-        <div className="object-row object-row--header" role="row">
-          <span role="columnheader">Object ID</span>
-          <span role="columnheader">Materials</span>
+      <div className="object-table" aria-label="Scene instances">
+        <div className="object-row object-row--header">
+          <span>Instance</span>
+          <span>Materials</span>
         </div>
         <div className="object-list">
           {filteredObjects.length === 0 ? (
             <div className="empty-state">No objects on this page.</div>
           ) : (
             filteredObjects.map((object) => {
-              const selected = selection?.instance_id === object.instance_id;
+              const selected = inspectedInstanceId === object.instance_id;
               return (
-                <div className={`object-row${selected ? ' object-row--selected' : ''}`} role="row" key={object.instance_id}>
-                  <span role="cell" title={object.instance_id}>
-                    {shortId(object.instance_id)}
+                <button
+                  className={`object-row${selected ? ' object-row--selected' : ''}`}
+                  type="button"
+                  key={object.instance_id}
+                  aria-pressed={selected}
+                  title={object.instance_id}
+                  onClick={() => onInspectInstance(object.instance_id)}
+                >
+                  <span>
+                    {object.name}
                   </span>
-                  <span role="cell">{object.material_count}</span>
-                </div>
+                  <span>{object.material_count}</span>
+                </button>
               );
             })
           )}

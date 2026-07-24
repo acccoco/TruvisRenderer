@@ -2,10 +2,12 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import type {
   EditorCapabilities,
+  EditorErrorCode,
   EditorNotification,
   EditorQuery,
   EditorRequest,
   EditorResponse,
+  InstanceDetailsDto,
   MaterialDto,
   MaterialPatch,
   SceneObjectSummary,
@@ -13,6 +15,8 @@ import type {
 } from '../protocol/generated';
 import { createEditorTransport } from '../transport/create_editor_transport';
 import type { ConnectionState, EditorTransport } from '../transport/editor_transport';
+
+export type InstanceDetailsStatus = 'idle' | 'loading' | 'ready' | 'stale' | 'error';
 
 export interface EditorSessionState {
   connection: ConnectionState;
@@ -22,6 +26,9 @@ export interface EditorSessionState {
   objects: SceneObjectSummary[];
   pageOffset: number;
   nextOffset: number | null;
+  inspectedInstanceId: string | null;
+  instanceDetails: InstanceDetailsDto | null;
+  instanceDetailsStatus: InstanceDetailsStatus;
   material: MaterialDto | null;
   draft: MaterialDto | null;
   dirty: boolean;
@@ -36,6 +43,10 @@ type Action =
   | { type: 'sceneVersion'; value: string }
   | { type: 'selection'; value: SelectionDto | null }
   | { type: 'objects'; value: { objects: SceneObjectSummary[]; offset: number; nextOffset: number | null } }
+  | { type: 'instanceDetailsStart'; instanceId: string }
+  | { type: 'instanceDetailsReady'; value: InstanceDetailsDto }
+  | { type: 'instanceDetailsStale'; instanceId: string }
+  | { type: 'instanceDetailsFailed'; instanceId: string }
   | { type: 'material'; value: MaterialDto | null }
   | { type: 'draft'; value: Partial<MaterialDto> }
   | { type: 'requestStart' }
@@ -50,6 +61,9 @@ const initialState: EditorSessionState = {
   objects: [],
   pageOffset: 0,
   nextOffset: null,
+  inspectedInstanceId: null,
+  instanceDetails: null,
+  instanceDetailsStatus: 'idle',
   material: null,
   draft: null,
   dirty: false,
@@ -83,6 +97,30 @@ function reducer(state: EditorSessionState, action: Action): EditorSessionState 
         pageOffset: action.value.offset,
         nextOffset: action.value.nextOffset,
       };
+    case 'instanceDetailsStart': {
+      const sameInstance = state.inspectedInstanceId === action.instanceId;
+      return {
+        ...state,
+        inspectedInstanceId: action.instanceId,
+        instanceDetails: sameInstance ? state.instanceDetails : null,
+        instanceDetailsStatus: 'loading',
+      };
+    }
+    case 'instanceDetailsReady':
+      return {
+        ...state,
+        inspectedInstanceId: action.value.instance_id,
+        instanceDetails: action.value,
+        instanceDetailsStatus: 'ready',
+      };
+    case 'instanceDetailsStale':
+      return state.inspectedInstanceId === action.instanceId
+        ? { ...state, instanceDetails: null, instanceDetailsStatus: 'stale' }
+        : state;
+    case 'instanceDetailsFailed':
+      return state.inspectedInstanceId === action.instanceId
+        ? { ...state, instanceDetails: null, instanceDetailsStatus: 'error' }
+        : state;
     case 'material':
       return { ...state, material: action.value, draft: action.value, dirty: false };
     case 'draft':
@@ -96,11 +134,22 @@ function reducer(state: EditorSessionState, action: Action): EditorSessionState 
   }
 }
 
+class EditorResponseError extends Error {
+  readonly code: EditorErrorCode;
+
+  constructor(code: EditorErrorCode, message: string) {
+    super(message);
+    this.name = 'EditorResponseError';
+    this.code = code;
+  }
+}
+
 export interface EditorSession {
   state: EditorSessionState;
   refresh(): Promise<void>;
   nextPage(): Promise<void>;
   previousPage(): Promise<void>;
+  inspectInstance(instanceId: string): Promise<void>;
   updateDraft(patch: Partial<MaterialDto>): void;
   commitMaterial(patch: MaterialPatch): Promise<void>;
 }
@@ -109,10 +158,16 @@ export function useEditorSession(): EditorSession {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [transport] = useState<EditorTransport>(() => createEditorTransport());
   const sceneVersionRef = useRef(initialState.sceneVersion);
+  const inspectedInstanceIdRef = useRef<string | null>(null);
+  const instanceDetailsRequestSequenceRef = useRef(0);
 
   useEffect(() => {
     sceneVersionRef.current = state.sceneVersion;
   }, [state.sceneVersion]);
+
+  useEffect(() => {
+    inspectedInstanceIdRef.current = state.inspectedInstanceId;
+  }, [state.inspectedInstanceId]);
 
   const request = useCallback(
     async (requestValue: EditorRequest): Promise<EditorResponse> => {
@@ -121,7 +176,7 @@ export function useEditorSession(): EditorSession {
       try {
         const response = await transport.request(requestValue);
         if (response.type === 'error') {
-          throw new Error(response.payload.message);
+          throw new EditorResponseError(response.payload.code, response.payload.message);
         }
         return response;
       } finally {
@@ -150,6 +205,41 @@ export function useEditorSession(): EditorSession {
     [query],
   );
 
+  /**
+   * 查询 Web 当前聚焦 instance 的 owned 详情投影。
+   *
+   * sequence 只解决页面内快速切换产生的响应乱序，不成为 scene identity 或缓存版本；
+   * scene 的权威失效判断仍来自 `scene_version` 和 App 返回的 `stale_object`。
+   */
+  const loadInstanceDetails = useCallback(
+    async (instanceId: string) => {
+      const requestSequence = ++instanceDetailsRequestSequenceRef.current;
+      inspectedInstanceIdRef.current = instanceId;
+      dispatch({ type: 'instanceDetailsStart', instanceId });
+      try {
+        const response = await query({ type: 'get_instance_details', instance_id: instanceId });
+        if (requestSequence !== instanceDetailsRequestSequenceRef.current) {
+          return;
+        }
+        if (response.type !== 'instance_details') {
+          throw new Error('Editor returned an unexpected instance details response');
+        }
+        dispatch({ type: 'instanceDetailsReady', value: response.payload });
+      } catch (error) {
+        if (requestSequence !== instanceDetailsRequestSequenceRef.current) {
+          return;
+        }
+        if (error instanceof EditorResponseError && error.code === 'stale_object') {
+          dispatch({ type: 'instanceDetailsStale', instanceId });
+          return;
+        }
+        dispatch({ type: 'instanceDetailsFailed', instanceId });
+        dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
+      }
+    },
+    [query],
+  );
+
   const loadPage = useCallback(
     async (offset: number, expectedSceneVersion: string | null) => {
       const response = await query({
@@ -173,7 +263,7 @@ export function useEditorSession(): EditorSession {
     [query],
   );
 
-  const refresh = useCallback(async () => {
+  const refreshProjection = useCallback(async () => {
     try {
       const [capabilities, version, selection, objects] = await Promise.all([
         query({ type: 'get_capabilities' }),
@@ -203,6 +293,24 @@ export function useEditorSession(): EditorSession {
     }
   }, [loadMaterial, query]);
 
+  const refresh = useCallback(async () => {
+    const inspectedInstanceId = inspectedInstanceIdRef.current;
+    await Promise.all([
+      refreshProjection(),
+      inspectedInstanceId ? loadInstanceDetails(inspectedInstanceId) : Promise.resolve(),
+    ]);
+  }, [loadInstanceDetails, refreshProjection]);
+
+  const selectedInstanceId = state.selection?.instance_id ?? null;
+  const previousSelectedInstanceIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (selectedInstanceId && selectedInstanceId !== previousSelectedInstanceIdRef.current) {
+      void loadInstanceDetails(selectedInstanceId);
+    }
+    previousSelectedInstanceIdRef.current = selectedInstanceId;
+  }, [loadInstanceDetails, selectedInstanceId]);
+
   useEffect(() => {
     let active = true;
     const removeConnectionListener = transport.onConnectionState((connection) => {
@@ -228,7 +336,7 @@ export function useEditorSession(): EditorSession {
 
     void transport
       .connect()
-      .then(() => refresh())
+      .then(() => refreshProjection())
       .catch((error) => dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) }));
 
     return () => {
@@ -237,7 +345,7 @@ export function useEditorSession(): EditorSession {
       removeNotificationListener();
       transport.close();
     };
-  }, [loadMaterial, refresh, transport]);
+  }, [loadMaterial, refresh, refreshProjection, transport]);
 
   useEffect(() => {
     if (state.connection !== 'connected') {
@@ -292,6 +400,13 @@ export function useEditorSession(): EditorSession {
     }
   }, [loadPage, state.pageOffset, state.sceneVersion]);
 
+  const inspectInstance = useCallback(
+    async (instanceId: string) => {
+      await loadInstanceDetails(instanceId);
+    },
+    [loadInstanceDetails],
+  );
+
   const updateDraft = useCallback((patch: Partial<MaterialDto>) => {
     dispatch({ type: 'draft', value: patch });
   }, []);
@@ -317,5 +432,5 @@ export function useEditorSession(): EditorSession {
     [request, state.draft],
   );
 
-  return { state, refresh, nextPage, previousPage, updateDraft, commitMaterial };
+  return { state, refresh, nextPage, previousPage, inspectInstance, updateDraft, commitMaterial };
 }
