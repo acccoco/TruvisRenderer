@@ -7,7 +7,7 @@
 - 创建并管理 winit `EventLoop` 与窗口生命周期
 - 通过 `EmbeddedWinitHost` 在 `RenderWindowThread` 创建 parent-owned child HWND
 - 将平台事件转换为引擎输入事件并转发
-- 通过两种窗口模式共用的 `RenderWorker` 驱动渲染线程运行 `Box<dyn RenderApp>`
+- 通过两种窗口模式共用的 `RenderWorker` 在渲染线程创建具体 App 与唯一 `RenderAppShell`
 
 ## 入口位置
 
@@ -21,7 +21,7 @@
 ## 启动方式
 
 - 入口：`WinitApp::run_app(|| Box<dyn RenderApp>)`
-- 示例：`WinitApp::run_app(|| Box::new(RenderAppShell::new(DemoState::default())))`
+- 示例：`WinitApp::run_app(|| Box::new(DemoState::default()))`
 - 嵌入入口：`EmbeddedWinitHost::spawn(parent_raw_handle, || Box<dyn RenderApp>)`
 
 ## 线程模型
@@ -33,12 +33,12 @@
 - child 创建后保持隐藏的 `1x1` 初始状态，直到收到第一个非零 DOM viewport rect；窗口线程先应用该 rect，再从
   `Window::inner_size` 创建 `RenderWorker`。因此 App、GUI plugin 与 Vulkan swapchain 共享同一个真实初始 extent，
   不依赖后续 resize 才完成初始化。
-- render thread 持有 `Box<dyn RenderApp>`，所有 Vulkan 对象都在该线程创建、使用和销毁。
+- render thread 先执行 factory 得到 `Box<dyn RenderApp>`，再统一构造并持有 `RenderAppShell`；所有 Vulkan 对象都在该线程创建、使用和销毁。
 - embedded render child 收到任意鼠标按下事件时，由 `RenderWindowThread` 显式调用 `SetFocus` 取得 keyboard focus；
   点击周围 WebView 控件后由 WebView 自然收回焦点。两侧之间不转发或复制键盘事件。
-- 输入事件通过 channel 传给 render thread，再由 `RenderApp::push_input_event` 进入 runtime shell 的输入队列。
+- 输入事件通过 channel 传给 render thread，再由 `RenderAppShell::push_input_event` 进入 Shell 的输入队列。
 - resize 使用 latest-size 模式合并连续事件；零尺寸窗口不会触发 swapchain 重建。
-- 退出时窗口 owner 发出退出信号；render thread 完成 `RenderApp::shutdown` 和 GPU 资源释放后，窗口 owner 再 join
+- 退出时窗口 owner 发出退出信号；render thread 完成 `RenderAppShell::shutdown` 和 GPU 资源释放后，窗口 owner 再 join
   渲染线程并允许 `Window` drop。embedded 模式还会在 child HWND drop 后 join `RenderWindowThread`，保证 parent HWND 最后销毁。
 
 ## 模块边界

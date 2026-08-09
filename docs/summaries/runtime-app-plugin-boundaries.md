@@ -24,7 +24,7 @@ RenderRuntime
 
 - `RenderRuntime`
 - 待处理 `InputEvent` 队列
-- 具体 App hooks
+- 一次性构造注入的 `Box<dyn RenderApp>`
 
 `RenderAppShell` 不持有 GUI、Camera、Overlay、InputState 或任何具体 render pipeline plugin。
 
@@ -80,23 +80,24 @@ selection outline 使用单独的 `WorldSubmeshRasterView` render ctx 能力。�
 `WorldSubmeshSelection`，由 runtime 在当前 prepare 快照内解析 active instance slot 与 draw cache；App 不接触
 `RenderWorld` concrete owner，也不把 outline mask 暴露为可选 debug image source。
 
-## RenderApp 外部契约
+## RenderAppShell 外部契约
 
-`RenderApp` 是 render loop 的外部契约：
+`RenderAppShell` 是 render loop 唯一可以驱动的完整帧骨架，它通过 inherent methods 提供：
 
 - `init_after_window`
 - `run_frame`
 - `push_input_event`
 - `recreate_swapchain_if_needed`
 - `time_to_render`
+- `has_pending_swapchain_recreate`
 - `shutdown`
 
-`RenderAppShell<A>` 是适配层：它实现 `RenderApp`，持有 `RenderRuntime`、输入事件队列和 `A: RenderAppHooks`，把 render loop
-的外部生命周期转发到 runtime 与具体 App hooks。
+`RenderAppShell` 是非泛型类型，持有 `RenderRuntime`、输入事件队列和 `Box<dyn RenderApp>`。App factory 仍在 RenderThread
+内执行，`RenderWorker` 得到具体 App 后统一构造 Shell，因此 standalone 与 embedded 平台入口都不能绕开固定帧骨架。
 
-## RenderAppHooks 契约
+## RenderApp 契约
 
-`RenderAppHooks` 是 `RenderAppShell` 回调具体 App 的 hook 契约：
+`RenderApp` 是 `RenderAppShell` 内部持有的 object-safe 具体 App 契约：
 
 - `init`
 - `visit_plugins_mut`
@@ -139,7 +140,7 @@ App 通过持有具体类型来组合这些能力，并通过 visitor 暴露标�
 ## 边界不变量
 
 - `RenderRuntime` 是 phase 能力来源，但不是 App / Plugin 编排者。
-- `RenderAppShell` 是固定帧骨架，只转发外部生命周期并裁剪 ctx。
+- `RenderAppShell` 是唯一固定帧骨架，独占 runtime，并通过内部 `dyn RenderApp` 回调具体业务阶段和裁剪 ctx。
 - App 是业务组合 owner，持有具体 Plugin，并在 render 阶段决定 RenderGraph pass 顺序；Truvis 也在这里按 `RenderMode` 选择实时或离线 sub RenderGraph。
 - Tauri 文件对话框和私有 desktop command bridge 属于具体 App 的平台特权能力；本地路径不得进入 Editor WebSocket、
   `RenderRuntime` 或通用 Plugin 接口，Tauri main thread 也不得直接修改 `World`。

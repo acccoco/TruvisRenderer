@@ -1,7 +1,7 @@
 # 帧生命周期与 Phase 关系
 
 > 状态：当前实现事实总结。本文只解释现有 `RenderRuntime`、`RenderAppShell`、
-> `RenderAppHooks` 和 `Plugin` 的 phase 边界，不提出新的 API 或重命名方案。
+> `RenderApp` 和 `Plugin` 的 phase 边界。
 
 本文把一帧理解成三层协作：
 
@@ -32,7 +32,7 @@ flowchart TB
     App["Concrete App<br/>业务状态 owner<br/>camera / input / GUI / overlay / pipeline plugin"]
     Plugin["Plugin<br/>App 持有的能力单元<br/>标准生命周期 + 具体特有能力"]
     Shell -->|" 调用 begin_frame / update_phase / prepare / render_phase "| Runtime
-    Shell -->|" 回调 RenderAppHooks "| App
+    Shell -->|" 回调 dyn RenderApp "| App
     App -->|" visit_plugins_mut / 显式调用具体能力 "| Plugin
     Runtime -->|" RenderRuntime*Ctx "| Shell
     Shell -->|" RenderApp*Ctx / Plugin*Ctx "| App
@@ -43,7 +43,8 @@ phase 内使用窄化后的 ctx。
 
 ## 启动、Resize 与关闭入口
 
-渲染入口仍然唯一：平台层最终都通过 `RenderWorker` 创建渲染线程，渲染线程只通过 `Box<dyn RenderApp>` 驱动 App。
+渲染入口仍然唯一：平台层最终都通过 `RenderWorker` 创建渲染线程。App factory 在 RenderThread 内执行并返回
+`Box<dyn RenderApp>`，`RenderWorker` 随后统一构造 `RenderAppShell`，render loop 只驱动这个非泛型 Shell。
 主体应用的 Tauri 窗口与独立 sample 的 winit 顶层窗口只是在该入口之前采用不同的窗口 owner。
 
 ```mermaid
@@ -54,8 +55,9 @@ flowchart TD
     InitialSize -->|"no"| Worker["RenderWorker::spawn<br/>create SharedState + raw handles"]
     AwaitDom --> Worker
     Worker --> SpawnThread["spawn RenderThread"]
-    SpawnThread --> AppFactory["app_factory() -> Box&lt;dyn RenderApp&gt;<br/>通常是 RenderAppShell&lt;ConcreteApp&gt;"]
-    AppFactory --> InitAfterWindow["app.init_after_window(raw handles, scale_factor, initial_size)"]
+    SpawnThread --> AppFactory["app_factory() -> Box&lt;dyn RenderApp&gt;"]
+    AppFactory --> ShellFactory["RenderAppShell::new(app)"]
+    ShellFactory --> InitAfterWindow["shell.init_after_window(raw handles, scale_factor, initial_size)"]
 ```
 
 render loop 的外层顺序先合并输入与窗口尺寸变化，再让 `RenderAppShell` 进入单帧 phase：
@@ -63,11 +65,11 @@ render loop 的外层顺序先合并输入与窗口尺寸变化，再让 `Render
 ```mermaid
 flowchart TD
     RenderLoop["render_loop"] --> DrainInput["drain channel InputEvent"]
-    DrainInput --> PushInput["app.push_input_event(event)"]
+    DrainInput --> PushInput["shell.push_input_event(event)"]
     PushInput --> ReadSize["read latest window size"]
-    ReadSize --> RecreateSwapchain["app.recreate_swapchain_if_needed(size)"]
-    RecreateSwapchain --> TimeToRender["app.time_to_render()"]
-    TimeToRender --> RunFrame["app.run_frame()"]
+    ReadSize --> RecreateSwapchain["shell.recreate_swapchain_if_needed(size)"]
+    RecreateSwapchain --> TimeToRender["shell.time_to_render()"]
+    TimeToRender --> RunFrame["shell.run_frame()"]
 ```
 
 resize 只在 render loop 的安全点处理。`RenderRuntime::handle_resize` 只有实际重建 swapchain / present 相关状态时才返回
@@ -76,7 +78,7 @@ Plugin。
 
 关闭流程：
 
-- 渲染线程观察到退出信号后调用 `RenderApp::shutdown(&mut self)`。
+- 渲染线程观察到退出信号后调用 `RenderAppShell::shutdown(&mut self)`；Shell 再调用具体 `RenderApp::shutdown` hook。
 - `TruvisApp` 在 shutdown 中关闭 RenderThread 一侧的 `EditorController` endpoint；EditorServer 由 main thread 的
   `TruvisDesktopState` 持有，不参与 GPU idle 或资源销毁。
 - `RenderAppShell` 先调用 App hooks 的 `shutdown()`，再通过 App 提供的 shutdown visitor 调用 Plugin shutdown，最后销毁
@@ -102,7 +104,7 @@ flowchart LR
         R9["signal_current_frame_complete<br/>无 present target 时补齐 timeline"]
     end
 
-    subgraph A["App / RenderAppHooks"]
+    subgraph A["Concrete App / RenderApp"]
         A0["on_input(events)<br/>输入消费策略"]
         A1["update(ctx)<br/>更新 camera / UI frame state / settings"]
         A2["on_resize(ctx)<br/>重建 App-owned targets"]
@@ -146,7 +148,7 @@ flowchart TB
     RuntimeCtx --> ResizeCtx
     RuntimeCtx --> ShutdownCtx
     Shell["RenderAppShell<br/>裁剪标准生命周期 ctx"]
-    AppHooks["RenderAppHooks<br/>App 级 hook ctx"]
+    AppHooks["dyn RenderApp<br/>App 级 hook ctx"]
     PluginStd["Plugin 标准生命周期 ctx<br/>PluginInitCtx / PluginUpdateCtx / PluginResizeCtx / PluginShutdownCtx"]
     AppRender["App::render<br/>按具体能力构造 PluginRenderCtx"]
     PluginRender["具体 Plugin render 能力<br/>contribute_passes / prepare_render_data"]
@@ -215,7 +217,7 @@ App 是业务编排层。它既不拥有 runtime，也不把具体 Plugin 交给
 ## 关系与约束
 
 - `RenderRuntime` 是 phase 能力来源，但不是 App / Plugin 编排者；它只暴露当前阶段需要的 typed ctx。
-- `RenderAppShell` 是固定帧骨架；它把 runtime phase 和 App hook、Plugin 标准生命周期串成一帧。
+- `RenderAppShell` 是唯一固定帧骨架；render loop 只驱动 Shell，Shell 内部再通过 `dyn RenderApp` 调用具体 App hook。
 - `App` 是业务组合 owner；它持有具体 Plugin，并在 render 阶段决定 RenderGraph pass 顺序。
 - `Plugin` 是可复用能力单元；标准生命周期可以批量驱动，特有能力由 App 显式调用。
 - `World` 只应在 init / update / resize / shutdown 等允许可变借用的阶段修改；render 阶段不再修改 CPU scene。

@@ -3,7 +3,7 @@ use itertools::Itertools;
 
 use truvis_app_frame::input_event::InputEvent;
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
-use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx, RenderAppShutdownCtx};
+use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::render_view::RenderView;
@@ -71,7 +71,7 @@ pub struct ShaderToy {
     cmds: Vec<GfxCommandBuffer>,
 }
 
-impl RenderAppHooks for ShaderToy {
+impl RenderApp for ShaderToy {
     fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
         self.gui.set_hidpi_factor(ctx.scale_factor);
         self.gui.set_display_size(ctx.window_size);
@@ -160,7 +160,7 @@ impl RenderAppHooks for ShaderToy {
         let swapchain_extent = present_target.image_info.image_extent;
 
         self.shader_toy.contribute_passes(&mut graph, &plugin_ctx, swapchain_image, swapchain_extent);
-        self.gui.contribute_passes(&mut graph, &plugin_ctx, swapchain_image, swapchain_extent, &[]);
+        self.gui.contribute_passes(&mut graph, &plugin_ctx, swapchain_image, swapchain_extent);
 
         let compiled_graph = graph.compile();
         if log::log_enabled!(log::Level::Debug) {

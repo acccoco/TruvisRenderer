@@ -30,12 +30,15 @@ flowchart LR
     end
 
     subgraph RenderThread["RenderThread"]
-        RenderApp["owns Box&lt;dyn RenderApp&gt;"]
+        Shell["owns RenderAppShell"]
+        RenderApp["Shell owns Box&lt;dyn RenderApp&gt;"]
         DesktopCommand["owns DesktopCommandController"]
         Runtime["owns RenderRuntime"]
         Vulkan["creates, uses, destroys all Vulkan objects"]
+        Shell --> RenderApp
+        Shell --> Runtime
         RenderApp --> DesktopCommand
-        RenderApp --> Runtime --> Vulkan
+        Runtime --> Vulkan
     end
 
     subgraph ServerThread["EditorServer thread"]
@@ -136,7 +139,7 @@ flowchart LR
 
 ## 重建路径
 
-- render loop 调用 `RenderApp::recreate_swapchain_if_needed(size)`。
+- render loop 调用 `RenderAppShell::recreate_swapchain_if_needed(size)`。
 - `RenderAppShell` 调用 `RenderRuntime::handle_resize(size)`。
 - RenderRuntime 只有实际重建时返回 `Some(RenderRuntimeResizeCtx)`。
 - `RenderAppShell` 把返回值包装为 `RenderAppResizeCtx` 交给 App hooks，App state 构造 `PluginResizeCtx` 并通知需要 resize
@@ -155,7 +158,7 @@ oneshot reply 因 sender drop 退出 → App/runtime/Vulkan 销毁 → `RenderWi
 EditorServer → Tauri/Tao drop WebView 与 top-level HWND。`TruvisDesktopState::shutting_down` 阻止新 dialog，
 `EmbeddedWinitHost::Drop` 为非正常 exit 提供相同顺序的兜底。
 
-- `RenderApp::shutdown(&mut self)`：`RenderAppShell` 等待 GPU idle 后，先用 `RenderAppShutdownCtx` 调用 App hooks
+- `RenderAppShell::shutdown(&mut self)`：Shell 等待 GPU idle 后，先用 `RenderAppShutdownCtx` 调用具体 `RenderApp` 的
   shutdown，再用 `PluginShutdownCtx` 反向遍历 Plugin shutdown。
 - App / Plugin shutdown 必须在 `RenderRuntime::destroy()` 释放 runtime 子资源之前释放自己持有的 GPU 资源；需要 manager
   或 shader-visible binding 访问时通过 shutdown context 使用 `GfxResourceManager` 与 `ShaderBindingSystem`。

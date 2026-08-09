@@ -95,7 +95,7 @@ flowchart LR
 
 ## RenderGraph 规则
 
-- App 在 `RenderAppHooks::render` 中创建 RenderGraph。
+- App 在 `RenderApp::render` 中创建 RenderGraph。
 - 同步 raycast 不接入 RenderGraph；它在 `after_prepare` 通过独立 command pool/fence 提交，阻塞读回后把 GPU instance
   slot/submesh 转回 CPU `InstanceHandle`、`MeshHandle` 与 `MaterialHandle`。
 - 渲染管线 Plugin 只贡献自己的 pass，不决定整个 App 的完整执行顺序。

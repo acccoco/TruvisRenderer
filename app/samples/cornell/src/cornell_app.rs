@@ -1,6 +1,6 @@
 use truvis_app_frame::input_event::InputEvent;
 use truvis_app_frame::plugin_api::{Plugin, PluginRenderCtx};
-use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx};
+use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx};
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
@@ -78,7 +78,7 @@ impl CornellApp {
     }
 }
 
-impl RenderAppHooks for CornellApp {
+impl RenderApp for CornellApp {
     fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
         self.gui.set_hidpi_factor(ctx.scale_factor);
         self.gui.set_display_size(ctx.window_size);

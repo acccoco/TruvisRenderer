@@ -1,6 +1,6 @@
 use truvis_app_frame::input_event::InputEvent;
 use truvis_app_frame::plugin_api::{Plugin, PluginRenderCtx};
-use truvis_app_frame::render_app_api::{RenderAppHooks, RenderAppInitCtx, RenderAppShutdownCtx};
+use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppShutdownCtx};
 use truvis_editor_bridge::AppEndpoint;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
@@ -494,7 +494,7 @@ impl TruvisApp {
     }
 }
 
-impl RenderAppHooks for TruvisApp {
+impl RenderApp for TruvisApp {
     fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
         self.render_mode = RenderMode::initial_from_env();
         self.gui.set_hidpi_factor(ctx.scale_factor);

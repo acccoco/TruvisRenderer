@@ -15,7 +15,7 @@ workspace 顶层 `app/`。
   `RenderSceneView` 和 `GfxResourceAccess`。
 - L3 语义与编排辅助：`world/` 保存 CPU asset/scene 语义，`render/truvis-render-graph` 负责按 App 指定顺序推导 pass 同步。
 - L4 Runtime 集成层：`render/truvis-render-runtime` 持有 `Gfx`、`World`、GPU resource/binding/timing owners、runtime render state、`RenderWorld`、present、`RenderPassRecordCtx` 和 asset-to-GPU bridge。
-- L5 App 框架层：`app-frame/truvis-app-frame` 定义 `RenderApp`、`RenderAppShell`、`RenderAppHooks`、`Plugin` 和 render loop
+- L5 App 框架层：`app-frame/truvis-app-frame` 定义具体 `RenderApp` 契约、唯一 `RenderAppShell`、`Plugin` 和 render loop
   契约。
 - L6 平台与应用层：`app-frame/truvis-winit-app` 负责 winit 平台入口；具体应用和 samples 位于 `../app/`。
 
@@ -74,7 +74,7 @@ CPU 侧语义层，负责 asset 身份、加载状态、scene runtime 身份与 
 
 App 框架和平台入口目录，把平台无关的 App 契约与 winit 平台启动分开。
 
-- `truvis-app-frame/`：定义 `RenderApp`、`RenderAppHooks`、`Plugin`、phase Ctx、`RenderAppShell` 和 render loop 共享状态；不依赖
+- `truvis-app-frame/`：定义具体 `RenderApp`、`Plugin`、phase Ctx、唯一 `RenderAppShell` 和 render loop 共享状态；不依赖
   `winit`，也不持有具体 App/Plugin 业务状态。
 - `truvis-winit-app/`：winit 平台入口，负责窗口、事件循环、输入事件适配和渲染线程启动；通过 `Box<dyn RenderApp>` 注入具体
   App，不依赖主体 app 或 samples。

@@ -5,20 +5,21 @@ use truvis_render_runtime::render_runtime::RenderRuntime;
 
 use crate::input_event::InputEvent;
 use crate::plugin_api::{PluginInitCtx, PluginResizeCtx, PluginShutdownCtx, PluginUpdateCtx};
-use crate::render_app_api::{RenderApp, RenderAppHooks, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx};
+use crate::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx};
 
-/// 将具体 app hooks 转换为 render-loop [`RenderApp`] 的适配器。
+/// 唯一合法的完整帧骨架。
 ///
-/// `RenderAppShell` 持有 RenderRuntime 和待处理输入事件队列，具体 app hooks
-/// 持有 GUI、camera/input state、overlay 和 render plugin。
-pub struct RenderAppShell<A> {
+/// Shell 独占 `RenderRuntime`、待处理输入事件队列和一次性注入的具体 App。
+/// render loop 只能驱动本类型，具体 App 因此无法绕开固定的 init、frame、resize
+/// 与 shutdown 顺序。App 仍自行持有 GUI、camera/input、overlay 和 render plugin。
+pub struct RenderAppShell {
     render_runtime: Option<RenderRuntime>,
     input_events: Vec<InputEvent>,
-    app: A,
+    app: Box<dyn RenderApp>,
 }
 
-impl<A> RenderAppShell<A> {
-    pub fn new(app: A) -> Self {
+impl RenderAppShell {
+    pub fn new(app: Box<dyn RenderApp>) -> Self {
         Self {
             render_runtime: None,
             input_events: Vec::new(),
@@ -26,12 +27,12 @@ impl<A> RenderAppShell<A> {
         }
     }
 
-    pub fn app(&self) -> &A {
-        &self.app
-    }
-
-    pub fn app_mut(&mut self) -> &mut A {
-        &mut self.app
+    /// 在 composition root 已经拥有具体 App 值时提供便捷构造；Shell 类型本身保持非泛型。
+    pub fn from_app<A>(app: A) -> Self
+    where
+        A: RenderApp + 'static,
+    {
+        Self::new(Box::new(app))
     }
 
     fn new_render_runtime(raw_display_handle: RawDisplayHandle) -> RenderRuntime {
@@ -47,13 +48,8 @@ impl<A> RenderAppShell<A> {
     fn destroy_render_runtime(render_runtime: RenderRuntime) {
         render_runtime.destroy();
     }
-}
 
-impl<A> RenderApp for RenderAppShell<A>
-where
-    A: RenderAppHooks,
-{
-    fn init_after_window(
+    pub(crate) fn init_after_window(
         &mut self,
         raw_display: RawDisplayHandle,
         raw_window: RawWindowHandle,
@@ -94,7 +90,7 @@ where
         self.render_runtime = Some(render_runtime);
     }
 
-    fn run_frame(&mut self) {
+    pub(crate) fn run_frame(&mut self) {
         let _span = tracy_client::span!("RenderAppShell::run_frame");
         let Self {
             render_runtime,
@@ -204,11 +200,11 @@ where
         tracy_client::frame_mark();
     }
 
-    fn push_input_event(&mut self, event: InputEvent) {
+    pub(crate) fn push_input_event(&mut self, event: InputEvent) {
         self.input_events.push(event);
     }
 
-    fn recreate_swapchain_if_needed(&mut self, new_size: [u32; 2]) {
+    pub(crate) fn recreate_swapchain_if_needed(&mut self, new_size: [u32; 2]) {
         let _span = tracy_client::span!("RenderAppShell::recreate_swapchain_if_needed");
         let Self {
             render_runtime, app, ..
@@ -244,18 +240,18 @@ where
         });
     }
 
-    fn time_to_render(&self) -> bool {
+    pub(crate) fn time_to_render(&self) -> bool {
         self.render_runtime.as_ref().expect("RenderRuntime missing in RenderAppShell::time_to_render").time_to_render()
     }
 
-    fn has_pending_swapchain_recreate(&self) -> bool {
+    pub(crate) fn has_pending_swapchain_recreate(&self) -> bool {
         self.render_runtime
             .as_ref()
             .expect("RenderRuntime missing in RenderAppShell::has_pending_swapchain_recreate")
             .has_pending_swapchain_recreate()
     }
 
-    fn shutdown(&mut self) {
+    pub(crate) fn shutdown(&mut self) {
         if let Some(render_runtime) = self.render_runtime.as_mut() {
             render_runtime.wait_idle();
 

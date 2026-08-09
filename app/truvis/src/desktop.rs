@@ -15,7 +15,7 @@ use tauri::{Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 use tokio::sync::oneshot;
 
-use truvis_app_frame::{RenderAppShell, SendWrapper, init_env_with_log_file};
+use truvis_app_frame::{SendWrapper, init_env_with_log_file};
 use truvis_editor_bridge::{EditorBridgeConfig, create_editor_bridge};
 use truvis_editor_server::{EditorServer, EditorServerConfig, EditorServerHandle};
 use truvis_logs::LogFilePath;
@@ -285,7 +285,7 @@ impl TruvisDesktop {
                     .map_err(|error| std::io::Error::other(format!("failed to get Tauri parent HWND: {error}")))?
                     .as_raw();
                 let render_host = EmbeddedWinitHost::spawn(SendWrapper(parent_window), move || {
-                    Box::new(RenderAppShell::new(TruvisApp::new(app_endpoint, desktop_command_controller)))
+                    Box::new(TruvisApp::new(app_endpoint, desktop_command_controller))
                 })
                 .map_err(std::io::Error::other)?;
 

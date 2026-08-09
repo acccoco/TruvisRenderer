@@ -14,7 +14,7 @@
 
 ## 顺序执行模型
 
-- App 在 `RenderAppHooks::render` 中创建 per-frame graph，并按业务语义调用具体 Plugin 的 `contribute_passes`。
+- App 在 `RenderApp::render` 中创建 per-frame graph，并按业务语义调用具体 Plugin 的 `contribute_passes`。
 - pass 的添加顺序就是 command recording 顺序，也是最终执行顺序。
 - `read_image` / `write_image` / `read_write_image` 声明只用于 barrier 推导、资源校验和调试输出，不参与 pass 调度。
 - image 初始状态来自 `import_image`；后续线性扫描会处理 write-after-read、read-after-write、write-after-write、layout transition 和连续只读访问。

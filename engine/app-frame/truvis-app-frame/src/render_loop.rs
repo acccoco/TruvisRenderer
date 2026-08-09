@@ -1,22 +1,22 @@
 //! 渲染线程主循环。
 //!
-//! 只通过公开 API 驱动 [`RenderApp`]。
+//! 只驱动唯一完整帧骨架 [`RenderAppShell`]。
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use crate::render_app_api::RenderApp;
+use crate::RenderAppShell;
 use crate::render_thread::{RenderInitMsg, SharedState, unpack_size};
 
 /// 渲染线程入口。
-pub fn render_loop(shared: Arc<SharedState>, init_msg: RenderInitMsg, mut app: Box<dyn RenderApp>) {
+pub fn render_loop(shared: Arc<SharedState>, init_msg: RenderInitMsg, mut shell: RenderAppShell) {
     tracy_client::set_thread_name!("RenderThread");
 
     let raw_display = init_msg.raw_display.0;
     let raw_window = init_msg.raw_window.0;
 
-    app.init_after_window(raw_display, raw_window, init_msg.scale_factor, init_msg.initial_size);
+    shell.init_after_window(raw_display, raw_window, init_msg.scale_factor, init_msg.initial_size);
 
     let mut last_built_size = init_msg.initial_size;
     let mut last_seen_resize_generation = shared.resize_generation.load(Ordering::Acquire);
@@ -25,7 +25,7 @@ pub fn render_loop(shared: Arc<SharedState>, init_msg: RenderInitMsg, mut app: B
 
     while !shared.exit.load(Ordering::Acquire) {
         while let Ok(event) = shared.event_receiver.try_recv() {
-            app.push_input_event(event);
+            shell.push_input_event(event);
         }
 
         let resize_generation = shared.resize_generation.load(Ordering::Acquire);
@@ -50,24 +50,24 @@ pub fn render_loop(shared: Arc<SharedState>, init_msg: RenderInitMsg, mut app: B
                 continue;
             }
 
-            app.recreate_swapchain_if_needed([w, h]);
+            shell.recreate_swapchain_if_needed([w, h]);
             last_built_size = [w, h];
             pending_resize_since = None;
         }
 
-        if app.has_pending_swapchain_recreate() {
-            app.recreate_swapchain_if_needed([w, h]);
+        if shell.has_pending_swapchain_recreate() {
+            shell.recreate_swapchain_if_needed([w, h]);
             last_built_size = [w, h];
         }
 
-        if !app.time_to_render() {
+        if !shell.time_to_render() {
             std::thread::park_timeout(Duration::from_millis(1));
             continue;
         }
 
-        app.run_frame();
+        shell.run_frame();
     }
 
     log::info!("RenderThread: exit flag observed, destroying resources.");
-    app.shutdown();
+    shell.shutdown();
 }

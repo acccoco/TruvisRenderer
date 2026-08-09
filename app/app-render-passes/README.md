@@ -32,7 +32,7 @@ coordinate gizmo、selection outline 和 Phong shading。
 
 ## 设计意图
 
-本 crate 只表达“如何录制 Truvis app 复用的具体 GPU 效果”。具体 App 在 `RenderAppHooks::render`
+本 crate 只表达“如何录制 Truvis app 复用的具体 GPU 效果”。具体 App 在 `RenderApp::render`
 中创建 `RenderGraphBuilder`，再按业务顺序组合 `app/app-kit` 中的 render pipeline glue、
 post-process pass 和 GUI pass。这样新增 demo 或 pipeline 时优先复用 pass 实现，而不把
 App 级编排逻辑下沉到 engine core。

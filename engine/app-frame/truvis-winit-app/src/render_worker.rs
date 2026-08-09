@@ -8,7 +8,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
 use truvis_app_frame::render_app_api::RenderApp;
-use truvis_app_frame::{RenderInitMsg, SendWrapper, SharedState, render_loop};
+use truvis_app_frame::{RenderAppShell, RenderInitMsg, SendWrapper, SharedState, render_loop};
 
 pub(crate) type RenderAppFactory = Box<dyn FnOnce() -> Box<dyn RenderApp> + Send + 'static>;
 
@@ -49,7 +49,8 @@ impl RenderWorker {
                 let shared_in_thread = shared_for_thread;
                 let result = panic::catch_unwind(AssertUnwindSafe(|| {
                     let app = app_factory();
-                    render_loop(shared_in_thread.clone(), init_msg, app);
+                    let shell = RenderAppShell::new(app);
+                    render_loop(shared_in_thread.clone(), init_msg, shell);
                 }));
                 if let Err(payload) = result {
                     log::error!("RenderThread panicked; capturing payload for the window owner.");

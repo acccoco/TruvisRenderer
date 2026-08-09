@@ -9,7 +9,7 @@
 ```mermaid
 flowchart TB
     L6["L6 app/truvis + samples<br/>Tauri 主体 app 与独立示例入口<br/><br/>L6 app/editor<br/>Tauri WebView UI、HTTP/WebSocket adapter、跨线程 editor 契约<br/><br/>L6 truvis-winit-app<br/>standalone / child HWND 窗口生命周期、winit 事件循环、渲染线程启动"]
-    L5["L5 app-kit<br/>GuiPlugin、私有 GUI backend、overlay plugin、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp / RenderAppHooks / Plugin 契约与 Plugin Ctx<br/>RenderAppShell 帧骨架 + render loop"]
+    L5["L5 app-kit<br/>GuiPlugin、私有 GUI backend、overlay plugin、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp / Plugin 契约与 Plugin Ctx<br/>唯一 RenderAppShell 帧骨架 + render loop"]
     L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GfxResourceManager / ShaderBindingSystem / CmdAllocator / PerFrameGpuData + timing owners + runtime render state + RenderWorld + RenderPassRecordCtx + swapchain/present 生命周期"]
     L3["L3 truvis-render-graph / truvis-world / truvis-asset<br/>按帧同步辅助、CPU 场景、资产加载"]
     L2["L2 truvis-render-foundation<br/>FrameCounter / FrameLabel、GPU 资源句柄、RenderView、RenderSceneView、GfxResourceAccess"]
@@ -40,7 +40,7 @@ flowchart LR
     Core["render-foundation + world<br/>渲染契约、CPU scene/assets 聚合"]
     RenderDomain["render-graph<br/>pass 编排基础<br/>通过 GfxResourceAccess 查询 imported image"]
     Runtime["render-runtime<br/>运行时集成、GPU owner、GPU 上传、present 生命周期"]
-    Frame["frame<br/>RenderApp 契约、RenderAppShell、render loop"]
+    Frame["frame<br/>具体 RenderApp 契约、唯一 RenderAppShell、render loop"]
     AppKit["app-kit + app-render-passes<br/>GUI 集成与私有 backend、输入/相机、overlay、RT/后处理 pass 与 pipeline glue"]
     App["app / samples<br/>Truvis Tauri 桌面壳与独立示例"]
     Platform["truvis-winit-app<br/>standalone + embedded winit 平台入口"]
