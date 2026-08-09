@@ -30,19 +30,14 @@ RenderRuntime
 
 具体 App state 持有：
 
-- `app_kit::GuiPlugin`
-- `CameraController` / `InputManager`
-- App 自有 overlay 编排器，或 app-kit 提供的 `DebugInfoOverlay` / `PipelineControlsOverlay`
-  兼容整窗 wrapper；Truvis 使用 `TruvisOverlayUi` 统一决定 tag、窗口布局、section 可见性和绘制顺序。
-  默认布局保留透明 diagnostics HUD，将 Rendering controls 与 Picking 结果上下拼接到左侧主面板，
-  Debug Images 的 CPU 显示开关和稳定选择 ID 由 App-owned `DebugImageSelector` 持有；ImGui 选择器作为独立小窗口
-  锚定到 swapchain 右侧，真实 GPU source 仍由当前 realtime/offline pipeline 在 render phase 解析。
-- Truvis 的 `SelectionOutlineRenderer` 持有 per-FIF R8 mask image 和 outline graphics pipelines；App 保存
-  `Option<WorldSubmeshSelection>`，输入语义只包含 CPU `InstanceHandle + submesh_index`，不保存 GPU slot。
-- Truvis 的 `EditorController` 持有 Editor bridge receiver，把 WebSocket DTO 适配到 `World`；App-local
-  `DesktopCommandController` 独占 Tauri desktop command receiver，只在 update 阶段把 Rust 侧本地 `PathBuf` 交给
-  `World::request_sky_texture_from_path`。二者都不属于 `RenderRuntime` 或 Plugin。
-- `TrianglePlugin`、`ShaderToyPlugin`、`RtPipeline`、`OfflinePipeline` 等具体渲染能力
+- GUI、camera/input、overlay 和 debug 选择等 CPU 交互状态；
+- 具体 render pipeline/plugin 及其窗口尺寸资源、历史状态和 pass-local target；
+- selection 等 App 业务语义，不保存由 runtime 私有 manager 分配的 GPU slot；
+- Editor、desktop command 等只服务具体 App 的 controller；
+- `TrianglePlugin`、`ShaderToyPlugin`、`RtPipeline`、`OfflinePipeline` 等具体渲染能力。
+
+主体 Truvis App 的具体组合、UI/selection owner 和 pass 顺序见 [`app/truvis/README.md`](../../app/truvis/README.md)；
+Editor 协议与线程边界见 [`editor-subsystem.md`](editor-subsystem.md)。
 
 ## Ctx 裁剪契约
 
@@ -71,10 +66,9 @@ present owner 不直接暴露给 app/plugin；render/init/resize Ctx 只提供 `
 RenderGraph 内的当前 present image 与 image info，acquire/render-complete semaphore 由
 `PresentView::import_current_target` 固定接入 RenderGraph。
 
-GUI draw data 不进入通用 Ctx。`GuiPlugin` 自行持有 imgui context、draw data、GUI mesh buffer、font texture map，
-并通过 `prepare_render_data` 和 `contribute_passes` 接入 render hook。Debug Images 的窗口外壳可由具体 App
-重新编排，但选择状态归 App-owned `DebugImageSelector`；GUI 不保存 debug image handle，也不为它生成 `TextureId`。
-当前 pipeline 根据稳定 ID 解析本帧 image/view 与 layout，并在 present resolve scope 内完成缩略图绘制。
+GUI draw data 不进入通用 Ctx。`GuiPlugin` 自行持有 imgui context、draw data 和 GUI GPU 资源，
+并通过自己的 prepare/contribute 接口接入 render hook。App-owned debug 选择只保存稳定 CPU 语义；
+当前 pipeline 在 render phase 解析真实 image/view 与 layout。
 
 selection outline 使用单独的 `WorldSubmeshRasterView` render ctx 能力。该能力只接受
 `WorldSubmeshSelection`，由 runtime 在当前 prepare 快照内解析 active instance slot 与 draw cache；App 不接触
@@ -141,7 +135,7 @@ App 通过持有具体类型来组合这些能力，并通过 visitor 暴露标�
 
 - `RenderRuntime` 是 phase 能力来源，但不是 App / Plugin 编排者。
 - `RenderAppShell` 是唯一固定帧骨架，独占 runtime，并通过内部 `dyn RenderApp` 回调具体业务阶段和裁剪 ctx。
-- App 是业务组合 owner，持有具体 Plugin，并在 render 阶段决定 RenderGraph pass 顺序；Truvis 也在这里按 `RenderMode` 选择实时或离线 sub RenderGraph。
+- App 是业务组合 owner，持有具体 Plugin，并在 render 阶段决定 RenderGraph pass 顺序与具体 pipeline 分支。
 - Tauri 文件对话框和私有 desktop command bridge 属于具体 App 的平台特权能力；本地路径不得进入 Editor WebSocket、
   `RenderRuntime` 或通用 Plugin 接口，Tauri main thread 也不得直接修改 `World`。
 - Plugin 是可复用能力单元；标准生命周期可以批量驱动，特有能力由 App 显式调用。

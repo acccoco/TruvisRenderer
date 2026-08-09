@@ -1,7 +1,7 @@
 # Realtime RT Ray Tracing 采样流程
 
 > 状态：当前实现事实总结。本文说明 realtime RT 主路径中 raygen / path tracing 的运行顺序、NEE、
-> HDRI、自发光三角形、analytic light、MIS、多 bounce、primary ReSTIR DI 和当前未接入的 cache 边界。
+> HDRI、自发光三角形、analytic light、MIS、多 bounce、primary ReSTIR DI 与 SHARC cache 边界。
 
 ## 职责边界
 

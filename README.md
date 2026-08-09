@@ -115,8 +115,11 @@ flowchart LR
 ## 文档导航
 
 - [架构入口](./docs/ARCHITECTURE.md)
-- [编辑器设计与协议](./docs/editor.md)
-- [场景与资源模型](./docs/scene.md)
-- [当前实现事实总结](./docs/summaries/)
+- [Editor 子系统边界与一致性](./docs/summaries/editor-subsystem.md)
+- [CPU Scene 到 GPU Scene 同步机制](./docs/summaries/scene-data-lifecycle.md)
+- [RenderGraph 与帧内数据流](./docs/summaries/render-graph-and-data-flow.md)
+- [Realtime RT 采样流程](./docs/summaries/realtime-rt-raytracing-flow.md)
 - [App 模块说明](./app/README.md)
+- [主体 Truvis App](./app/truvis/README.md)
 - [Shader 模块说明](./engine/shader/README.md)
+- [活跃设计方向](./docs/brain-storm/README.md)

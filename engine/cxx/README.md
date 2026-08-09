@@ -1,45 +1,37 @@
 # CXX
 
-`engine/cxx/` 提供 C++ 子系统与 Rust FFI 桥接，当前 Rust 侧暴露 Assimp 与 Streamline 绑定。
+`engine/cxx/` 提供 C++ 子系统、CMake/vcpkg 构建和 Rust FFI 桥接，当前对 Rust 暴露 Assimp 与 Streamline 能力。
 
-## 目录说明
+## 目录职责
 
-- `mods/`：C++ 模块源码；模块之间使用 C++ API，导出到 Rust 时由具体模块提供 C API
-- `mods/truvixx-utils/`：C++ 公共工具 static library，通过 `PathUtils` / `StringUtils` 聚合 Windows 路径、字符串编码和文件系统 helper
-- `truvis-assimp-binding/`：Assimp Rust FFI 声明 crate
-- `truvis-streamline-binding/`：Streamline / DLSS Rust FFI 声明与最小 RAII wrapper
-- `truvis-cxx-build/`：构建驱动 crate，负责选择 CMake preset、按 profile 增量构建 CXX，把 `.lib` / `.dll` / `.pdb` 复制到 Cargo 输出目录（当前为 `build/{profile}`），并同步 `compile_commands.json`
-- `CMakeLists.txt` / `CMakePresets.json`：CMake 构建配置
-- `vcpkg.json`：manifest 依赖声明
+- `mods/`：C++ 模块源码；模块之间使用 C++ API，需要导出到 Rust 的能力由具体模块提供 C API。
+- `mods/truvixx-utils/`：Windows 路径、字符串编码和文件系统公共工具。
+- `truvis-assimp-binding/`：Assimp C API 的 Rust FFI 声明与链接边界。
+- `truvis-streamline-binding/`：Streamline/DLSS Rust FFI 与最小 RAII runtime。
+- `truvis-cxx-build/`：选择 CMake preset、构建 native 产物、生成绑定并复制运行时文件的 workspace 工具。
+- `CMakeLists.txt` / `CMakePresets.json` / `vcpkg.json`：native 构建与依赖配置。
 
-## 构建方式
+详细命令、输出目录、环境要求和手工 preset 见 [`build.md`](build.md)。
 
-- 日常运行 `just truvis` 时会通过 `just cxx-debug` 只准备 Debug CXX 产物，避免 dev `cargo run` 前无意义构建 Release。
-- 需要完整刷新 Debug + Release 时执行 `just cxx`；需要绕过 manifest 时执行 `just cxx-force`。
-- `just cxx-debug` / `just cxx` 会先运行 `cargo run --bin cxx-build -- --profile ...`，再构建 `truvis-assimp-binding` 与 `truvis-streamline-binding`
-- 底层使用 CMake + vcpkg manifest，不建议手工 `vcpkg install`
-- `truvis-assimp-binding/build.rs` 只负责 bindgen 生成 Assimp Rust FFI 绑定，并向 Cargo 声明链接 `truvixx-assimp-capi`
-- `truvis-streamline-binding/build.rs` 只负责 bindgen 生成 Streamline C API 绑定，并向 Cargo 声明链接 `truvixx-streamline-capi`
-- Rust FFI 绑定源文件生成到 `build/bindings/{TARGET}/cxx/{crate}/`，由各 binding crate 通过 `include!` 引入；
-  源码树不保存 `_ffi_bindings.rs`，避免 IDE 或增量检查读取过期绑定。
-- binding crate 还会把生成内容的短 hash 写入同目录 marker 文件并通过 `cargo:rustc-env` 暴露，让固定路径下的
-  FFI binding 内容变化能触发 Cargo / rust-analyzer 重新检查依赖 crate。
-- `truvis-cxx-build` 会按 profile 复制 Streamline SR/RR runtime DLL：Debug 使用 `tools/streamline-sdk/bin/x64/development`，Release 使用 `tools/streamline-sdk/bin/x64`；运行时 JSON 从项目维护的 `tools/streamline/` 复制。
-- CMake binary dir 和 native 输出目录位于 workspace 根目录的 `build/cxx/`：preset 中间产物位于 `build/cxx/{vs2022,vs2026,clang-cl}`，`.lib` / `.dll` / `.pdb` 输出位于 `build/cxx/output/{Debug,Release}`。
-- 当前 Cargo 输出目录由 `.cargo/config.toml` 指向 `build/`；native runtime DLL 和 Streamline JSON 会被复制到 `build/{profile}` 和 `build/{profile}/examples`，与最终 executable 同目录。
-- `truvis-cxx-build` 在 `build/cxx/.state/` 维护 profile 级 manifest；CXX 输入、CMake preset 和关键环境未变化且输出仍存在时，会跳过 CMake configure/build，只做必要的运行目录复制检查。
-- `compile_commands.json` 在需要重新执行 CMake 构建时由 `truvis-cxx-build` 通过 `clang-cl-debug` preset 生成，并同步到 `build/cxx/compile_commands.json` 和 `.vscode/compile_commands.json`；如果 clang-cl 或 Ninja 不可用，只跳过同步，不阻断 Visual Studio 构建。
-- Streamline 接入当前只面向 Windows x64，Rust binding 直接使用 Windows 路径编码和 DLL 加载约定，不保留跨平台 cfg 分支
-- Streamline C++ wrapper 不链接 `sl.interposer.lib`；Rust 侧把 `sl.interposer.dll` 绝对路径传入 C API，C++ 再通过 `LoadLibraryW` / `GetProcAddress` 显式解析 `slInit` / `slShutdown`。
-- Streamline 日志由 C++ wrapper 接住 `logMessageCallback` 后转发给 Rust；详细链路见 `truvis-streamline-binding/README.md`
+## 绑定与产物边界
+
+- Assimp 与 Streamline binding 的 `build.rs` 只负责 bindgen、link search 和 link library 声明，
+  不负责调用 CMake 或复制 native runtime。
+- Rust FFI binding 生成到 `build/bindings/{TARGET}/cxx/{crate}/`，源码树不保存 `_ffi_bindings.rs`。
+- `truvis-cxx-build` 按 profile 把 native `.lib`/`.dll`/`.pdb`、Streamline runtime DLL 和项目维护的 JSON
+  复制到 Cargo executable 目录。
+- Streamline C++ wrapper 不链接 `sl.interposer.lib`；Rust 传入 `sl.interposer.dll` 绝对路径，C++ 通过
+  `LoadLibraryW`/`GetProcAddress` 解析生命周期入口。
 
 ## 约束
 
-- 对外接口保持 C ABI 与 POD 数据结构稳定。
-- 不再维护统一 C++ interface target；需要导出到 Rust 的 C API 放在对应 C++ 模块内。
-- 变更 FFI 结构时需同步检查 Rust 侧绑定与内存布局兼容性。
-- C++ 模块内重复的路径、UTF-16 / UTF-8 转换和目录创建逻辑优先放入 `truvixx-utils` 的静态工具 struct，业务模块只保留自身生命周期和 API 语义。
-- Streamline C API 覆盖 `slInit/slShutdown` 生命周期、DLSS SR/RR support query、options、resource tagging、evaluate 与 resource free；RenderGraph pass 顺序和 Vulkan 资源生命周期仍由 Rust/app 层负责。
-- Streamline callback 可能来自 init/shutdown 或 Vulkan interposer 调用栈；Rust callback 内只做消息复制和入队，最终日志输出在 `streamline-logger` 线程完成。
-- Assimp scene 加载失败时，`truvixx_scene_load` 可能返回可查询错误的非空句柄；调用方必须通过
-  `truvixx_scene_is_loaded` 判断成功状态，并通过 `truvixx_scene_last_error` 读取详细失败原因。
+- 对外接口保持 C ABI 与 POD 数据结构；修改 FFI 结构时必须同步检查 Rust binding、字段宽度和内存布局。
+- 不维护统一 C++ interface target；C API 留在拥有对应生命周期与业务语义的 C++ 模块内。
+- C++ 模块重复的路径、UTF-16/UTF-8 转换和目录创建逻辑归 `truvixx-utils`，业务模块不复制 helper。
+- Streamline C API 负责 `slInit`/`slShutdown`、feature query/options、resource tagging/evaluate 与 resource free；
+  RenderGraph pass 顺序和 Vulkan 资源生命周期仍由 Rust/app 层负责。
+- Streamline callback 只复制消息并入队，最终日志输出由 Rust `streamline-logger` 线程完成。
+- Assimp scene 加载失败时 C API 可能返回可查询错误的非空句柄；调用方必须先检查 loaded 状态，再读取错误并释放句柄。
+- Streamline 接入当前只面向 Windows x64，不保留没有真实实现的跨平台 cfg 分支。
+
+Streamline 日志、队列和生命周期细节见 [`truvis-streamline-binding/README.md`](truvis-streamline-binding/README.md)。

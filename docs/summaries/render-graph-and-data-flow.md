@@ -1,215 +1,102 @@
-# RenderGraph 与数据流
+# RenderGraph 与帧内数据流
 
-> 状态：当前实现事实总结。本文记录 CPU 语义数据到 GPU scene 的同步路径，以及 RenderGraph 的 pass 编排规则。
+> 状态：当前实现事实总结。本文记录 RenderGraph 的资源声明、线性执行、同步、典型 graph 组织和 owner 边界。
 
-## CPU 资产到 GPU Scene
+## 机制定位
 
-CPU 语义数据从 `World` 进入 RenderRuntime。`World::sync_for_render` 从内部 `AssetHub`
-取出 upload-ready CPU bytes，并由 `SceneAssetIngestor` 翻译为带 CPU resource handle 的
-`WorldRenderSync.asset_uploads` typed payload；同一次 sync 还会 drain `SceneStore` 的
-`SceneChanges`。`RenderWorld` 会把 scene change 与 manager update result 归一化为 `DirtyEvent`，
-再通过静态 `DirtyRuleKind` rule set 写入本帧 `DirtyDispatchPlan`。asset payload 再由 `RenderWorld`
-内部的 `RenderTextureManager` 在渲染线程提交到 `RenderWorld` 共享 `RenderAssetUploadQueue`，timeline 完成后再把
-Material/Scene 数据需要动态索引的 texture 注册为 bindless SRV。texture / mesh / material remove dispatch
-会在新的 upload payload 前写入对应 render manager，确保 CPU scene 删除不会被同一帧或迟到的上传结果重新发布到 resolver。
+`RenderRuntime::prepare` 是 CPU scene 到 GPU scene 的固定同步边界；完整身份转换、upload 和 ready/fallback 规则见
+[`scene-data-lifecycle.md`](scene-data-lifecycle.md)。prepare 完成后，App 在 render hook 中读取
+`RenderSceneView` 和 runtime render state，构造本帧 RenderGraph；render pass 不再访问 `World`、`SceneStore`
+或 render-side manager owner。
 
-material 添加 / 更新由 `WorldRenderSync.scene_changes.changed_materials` 表达，并通过 dirty rule 变成 material dispatch；
-`RenderMaterialManager` 只以 `MaterialHandle` 维护 stable slot 和 dirty upload 状态，写 GPU material buffer 时通过
-`SceneReadView` 从 `SceneStore` 读取当前 CPU 权威参数。texture ready 不再由 material manager 内部扫描，而是由
-`TextureReadyChanged -> dependent material` rule 标记对应 material dirty。mesh CPU 数据由 `RenderWorld` 内部的
-`RenderMeshManager` 在 graphics queue 上按 submesh 上传 vertex/index buffer、创建 `RtGeometry` 并为同一个
-mesh 构建一个 BLAS。`SceneStore` 保存 mesh 的 submesh metadata，并在 instance 注册 / 换材质时强制
-material list 与 submesh 数量对齐。
+RenderGraph 是按 App 指定顺序执行的命令录制与同步辅助，不是自动调度器：
 
-Assimp / glTF model 读取当前仍由 `AssetHub` 在后台完成，完成后通过 `ModelLoaded` 事件一次性交付 owned CPU scene payload；App 通过
-`World::request_model_import` 发起请求，拿到的是 `ModelImportHandle`，再通过
-`World::sync_for_render` 内部的 `SceneAssetIngestor` 把 ready prefab 自动实例化为 runtime instances。`World` facade 内部的
-`SceneAssetIngestor` 负责把 model import handle 映射到内部 loader 状态，并把 loader 结果翻译成
-`MeshHandle` / `MaterialHandle` / `TextureHandle`，App 不再直接接触 `ModelLoadHandle`
-或把 `AssetHub` 与 `SceneStore` 串起来。
-`SceneStore` 保存运行时语义，但 owner 不跨 crate 暴露；`RenderWorld` 通过 `World::scene_view()` 得到只读
-`SceneReadView`，并通过 `WorldRenderSync.scene_changes` 得到本帧 instance / material / light 语义变化。
-内部 `RenderInstanceManager` 消费 instance dispatch entries，负责稳定 GPU instance slot、ready gate 和 active render list。
-`SceneStore` 内部维护 texture -> material、material -> instance、mesh -> instance 反向依赖索引；
-删除 texture/material/mesh 前如果仍有依赖会由 `WorldEditError` 暴露失败，失败 edit 不写 change log。
-sky enabled、intensity、texture handle 与 revision 保存在 `SceneSkyState`；`changed_sky_environment`
-会随 `WorldRenderSync.scene_changes` 到达 prepare，并经 `SceneSkyChangedMarksSky` rule 标记 sky dispatch，
-`RenderSkyManager` 再通过 `SceneReadView` 读取权威值。
+- `RenderGraphBuilder` 按 pass 添加顺序记录执行序列，不做拓扑排序或 pass 重排。
+- App 决定完整业务顺序；pipeline/plugin 只贡献自己的 pass 或 sub-flow。
+- 当前 graph 只跟踪 imported image 的访问与状态，不创建或拥有 image。
+- graph compile 通过线性扫描生成 image barrier、layout transition、epilogue barrier 和 semaphore submit 信息。
+- execution 通过 `GfxResourceAccess` 解析 image/image-view handle，不依赖 concrete `GfxResourceManager`。
 
-mesh/material ready 查询通过 `truvis-render-runtime` 私有 render resolver trait 连接到 `RenderWorld` 内部的
-`RenderMeshManager` 与 `RenderMaterialManager`，这些 resolver 不属于 `truvis-world`。
+## 资源职责
 
-默认 sky 通过 `World` facade 注册为普通 `TextureHandle` 并写入 `SceneStore::SceneSkyState`；
-真实贴图仍异步加载。`RenderSkyManager` 从 `SceneReadView` 读取 CPU sky state，在真实贴图 GPU ready 前使用常驻
-纯色 fallback。当前 sky 的共享 CPU texture payload 到达时，`RenderSkyManager` 把 distribution 请求交给单线程 worker；
-CPU Alias 构建与共享 transfer queue 上传都异步执行。真实 sky image 仍由 `RenderTextureManager` 上传，
-scene root buffer 只消费 timeline 已完成且 request id / `TextureHandle` 仍匹配的 sky SRV、lat-long sampler 与
-distribution 快照。image 先 ready 时显示真实 HDRI 并使用 uniform sphere PDF，不会绑定旧 texture 的 distribution。
+同一张固定管线 image 同时涉及三个不同职责，不能互相替代：
 
-`RenderWorld`、`RenderTlasManager`、`RenderAnalyticLightManager`、`RenderEmissiveLightTable` 与 `RenderData` 是 runtime 私有 scene 翻译层；
-render pass 只通过 `RenderSceneView` 访问 scene buffer、TLAS handle 和光栅化 draw。`RenderSceneView::accum_signature` 只暴露
-TLAS / emissive light / analytic light / sky distribution 的版本号快照，供 app-owned 离线累计判断 scene 语义是否变化；
-它不暴露 `RenderWorld` owner 或具体 GPU buffer 布局。
+1. **Pipeline/Plugin owner**：创建并持有 render target、GBuffer、DLSS 输入输出、累计图、selection mask 或 GUI font，
+   并在 init/resize/shutdown 的 GPU-safe 时机释放。
+2. **Pass-local descriptor**：描述本次 draw/dispatch 使用哪个 image view；descriptor 不拥有 image，也不负责同步。
+3. **RenderGraph state declaration**：声明 sampled/storage/color attachment 等访问，负责 pass 间 barrier 和 layout transition。
 
-`RenderRuntime::prepare` 负责把 `RenderWorld::prepare_render_data` 与 per-frame descriptor 更新串成 update 与 render 之间的 prepare 阶段。`after_prepare` 阶段只用于
-App 对刚同步完成的 GPU scene 发起同步查询，例如批量 raycast；普通渲染工作仍在 `render` hook 中进入 RenderGraph。
+descriptor 中的 image layout 必须与执行该 pass 时 graph 推导出的状态一致。storage image 固定使用 `GENERAL`，
+sampled image 固定使用 `SHADER_READ_ONLY_OPTIMAL`；固定管线 image 通过 local push descriptor 引用，
+不注册到全局 bindless table。
 
-```mermaid
-flowchart LR
-    AssetHub["AssetHub<br/>loader CPU payload"] --> Ingestor["SceneAssetIngestor<br/>Asset event -> Scene handle"]
-    Ingestor --> TextureManager["RenderTextureManager<br/>texture GPU upload + dynamic SRV bindless"]
-    TextureManager --> AssetUploadQueue["RenderAssetUploadQueue<br/>shared transfer timeline"]
-    Scene --> RenderSkyManager["RenderSkyManager<br/>SceneSkyState + fallback"]
-    Ingestor --> RenderSkyManager
-    RenderSkyManager --> DistributionWorker["SkyDistributionBuilder<br/>single CPU worker + latest pending"]
-    DistributionWorker --> AssetUploadQueue
-    Ingestor --> MeshManager["RenderMeshManager<br/>submesh geometry upload + mesh BLAS"]
-    Ingestor --> RenderMaterialManager["RenderMaterialManager(RenderWorld)<br/>scene material -> stable slot + material buffer"]
-    AssetHub --> ModelCpuPayload["ModelLoaded event<br/>owned CPU scene payload"]
-    ModelCpuPayload --> SceneSpawner["World::sync_for_render<br/>SceneAssetIngestor + SceneStore"]
-    SceneSpawner --> SceneChanges["SceneChanges<br/>CPU semantic changes"]
-    SceneChanges --> DirtyRouter["DirtyRouterHelper<br/>event + rule -> DirtyDispatchPlan"]
-    SceneSpawner --> Scene["SceneReadView<br/>runtime instance / light snapshot"]
-    DirtyRouter --> RenderInstanceManager["RenderInstanceManager<br/>stable instance slot + ready gate"]
-    Scene --> RenderInstanceManager
-    TextureManager --> RenderMaterialManager
-    TextureManager --> RenderSkyManager
-    MeshManager --> RenderInstanceManager
-    DirtyRouter --> AnalyticLightManager["RenderAnalyticLightManager<br/>analytic light buffers"]
-    Scene --> Prepare["RenderRuntime::prepare(render_view)"]
-    RenderMaterialManager --> RenderInstanceManager
-    RenderMaterialManager --> Prepare
-    RenderSkyManager --> Prepare
-    RenderInstanceManager --> Prepare
-    AnalyticLightManager --> Prepare
-    Prepare --> EmissiveTable["RenderEmissiveLightTable<br/>emissive triangle records + alias"]
-    RenderMaterialManager --> EmissiveTable
-    EmissiveTable --> GpuResources
-    Prepare --> GpuResources["RenderWorld(RenderRuntime) + internal managers / BindlessManager / GlobalDescriptorSets"]
-    GpuResources --> RayCast["App after_prepare<br/>sync raycast query"]
-    RayCast --> BuildGraph["App render hook builds RenderGraph"]
-    BuildGraph --> RecordCommands["pass command recording"]
-    RecordCommands --> Submit["queue submit"]
-    Submit --> Present["swapchain present"]
-```
+全局 bindless set 只保存 Material/Scene 数据动态索引的 asset texture 与 sky sampled-image SRV。窗口 resize
+只重建具体 pipeline/plugin owner 的 target 和 pass-local 引用，不产生全局 bindless slot 注册/回收压力。
 
-## RenderGraph 规则
+## Pass 顺序与状态推导
 
-- App 在 `RenderApp::render` 中创建 RenderGraph。
-- 同步 raycast 不接入 RenderGraph；它在 `after_prepare` 通过独立 command pool/fence 提交，阻塞读回后把 GPU instance
-  slot/submesh 转回 CPU `InstanceHandle`、`MeshHandle` 与 `MaterialHandle`。
-- 渲染管线 Plugin 只贡献自己的 pass，不决定整个 App 的完整执行顺序。
-- App 显式决定 GUI pass 与渲染管线 pass 的添加顺序，RenderGraph 按该顺序录制，不做自动重排。
-- pass 必须声明 image 读写状态，让 RenderGraph 在线性序列中推导同步与 layout transition。
+pass 使用 `read_image`、`write_image` 或 `read_write_image` 声明资源访问。声明参与 barrier 推导、状态校验和
+调试输出，但不参与调度。image 初始状态来自 import；后续线性扫描处理：
 
-固定管线 image 的职责分为三层，不能互相替代：
+- write-after-read、read-after-write 与 write-after-write；
+- layout transition；
+- 连续只读访问；
+- graph 末尾需要恢复的 exported/imported image 状态；
+- imported image 的 wait semaphore 与 exported image 的 signal semaphore。
 
-- pipeline/plugin owner 创建并持有 render target、GBuffer、DLSS 输入输出、累计图、selection mask 与 GUI font，
-  并在既有 resize/shutdown 安全点释放资源；debug image 只是 pipeline-owned 中间图像在当前帧的只读用途，不是独立资源类别。
-- 具体 pass 通过 `GLOBAL_SETS_COUNT` 之后的 local set（当前为 set 3）写入本次 draw/dispatch 的 push descriptor；
-  storage image 使用 `GENERAL`，sampled image 使用 `SHADER_READ_ONLY_OPTIMAL`。descriptor 只引用 image view，不拥有资源。
-- RenderGraph pass 声明 sampled/storage/color-attachment 等访问，负责 pass 间同步和 layout transition；descriptor 声明的
-  layout 必须与执行该 pass 时 RenderGraph 推导出的状态一致。
+present image 通过 `PresentView::import_current_target` 接入 graph。acquire 和 render-complete semaphore 由
+present adapter 固定提供，App/Plugin 不直接访问 `SwapchainPresenter` owner 或同步对象。
 
-全局 bindless set 1 只保留 Material/Scene 数据动态索引的 asset texture 与 sky sampled-image SRV。固定管线 image
-不消耗 bindless slot，窗口 resize 因而只重建 owner 资源和 pass-local 引用，不产生全局 slot 注册/回收压力。
+同步 raycast 不进入 RenderGraph。它在 prepare 后、render graph 组图前通过 runtime-owned pipeline、command pool 和
+fence 提交，阻塞读取当前 GPU scene snapshot，再把 GPU instance slot/submesh 转回 CPU scene handle。
 
 ## 典型 Graph 组织
 
-Triangle / ShaderToy 使用单个 present graph。
+Triangle 与 ShaderToy 使用单个 present graph。主体 RT App 通常分成 compute graph 与 present graph：
 
-RT demo 使用 compute graph 与 present graph：App 先让 `RtPipeline` 贡献 compute passes，再在 present graph 中先
-resolve，最后调用 `GuiPlugin::contribute_passes` 叠加 GUI。
+```text
+prepare 后的 RenderSceneView
+  -> pipeline compute/RT passes
+  -> main view image
+  -> present resolve
+  -> App-owned overlays/effects
+  -> GUI pass
+  -> present
+```
 
-Truvis 现在通过 `RenderMode { Realtime, Offline }` 在实时和离线两套 app-owned pipeline 之间选择：
+Truvis 根据 `RenderMode` 选择一条 app-owned pipeline：
 
-- `Realtime`：沿用 `RtPipeline`，执行 realtime ray tracing、可选 DLSS SR/RR、可选 ReSTIR DI，再输出 main view color。
-- `Offline`：执行 `OfflinePipeline`，数据流是 1-8 组 `offline ray tracing -> per-FIF single_frame_image -> FIF 唯一 accum_image`，
-  再输出到 `per-FIF render_target -> present`。
+- Realtime：`RtPipeline` 贡献 realtime ray tracing、可选 DLSS SR/RR 与后处理；RT path 内部可启用 ReSTIR DI 和 SHARC。
+- Offline：`OfflinePipeline` 贡献独立 RT dispatch、累计和 output target，不复用 realtime temporal state。
 
-Truvis 主视图 present graph 在两种模式下都保持同一叠加顺序：对应 pipeline 在一次 resolve scope 中先把 main view
-绘制到 present image，再按 App-owned 稳定选择 ID 解析当前 FIF 的 debug source，并在右侧垂直居中绘制保持宽高比的
-缩略图；非 main target 会按 pipeline 声明的稳定状态导入，并在 graph 末尾恢复原 layout。随后 App-owned selection
-outline pass 以 `WorldSubmeshSelection` 语义光栅化选中 submesh 到 per-FIF R8 mask，再用 composite pass `LOAD`
-present image 叠加轮廓；随后 App-owned coordinate gizmo pass 读取当前 `per_frame_data.view`，在右下角以 `LOAD`
-present image 叠加三轴朝向，最后 `GuiPlugin` 绘制 ImGui。outline mask 不导出为 debug image，gizmo 不导出中间 image，
-ImGui 只修改 CPU 选择状态，不采样或注册 debug image。
+realtime light candidate、MIS、ReSTIR 和 SHARC 的算法与 shader 数据契约由
+[`realtime-rt-raytracing-flow.md`](realtime-rt-raytracing-flow.md) 统一说明，本文不复制算法细节。
 
-离线 `accum_image` 是 pipeline-owned 单张 HDR image，不按 FIF 轮转；RenderGraph import 初始状态为
-`STORAGE_READ_WRITE_COMPUTE`。离线 present graph 固定读取 per-FIF `render_target` 作为主图；选择 debug image 时才额外读取
-对应 offline target，并在 graph 末尾恢复其 pipeline 声明的稳定状态。离线路径不复用 DLSS、ReSTIR、RR、denoise 或 realtime `ViewAccumState`。
-Truvis 持有一份 `PathTracingCommonSettings`，并在构建 graph 时同时传给 realtime 与 offline pipeline；这份状态保存 sky
-采样、sky 亮度、NEE 开关和 tone mapping，因此 ImGui 在 `Realtime / Offline` 间切换时不会让公共参数分叉。RT debug /
-ReSTIR DI 与 offline debug / dispatch count 仍分别属于各自 pipeline settings。
+主体 App 的 present 顺序由 `TruvisApp` 显式决定：先 resolve main view，再组合 selection outline、
+coordinate gizmo 和 GUI。具体 App owner 与编排入口见 [`app/truvis/README.md`](../../app/truvis/README.md)。
 
-离线 sample count 和 primary ray jitter 都由 `OfflineAccumState` 按 sample index 维护，jitter 使用离线自有 Halton 2/3 序列，不读取
-`PerFrameData::temporal_jitter_px`。`OfflinePipelineSettings.ray_dispatch_count` 只控制每帧添加多少组 RT/accum pass，
-范围固定为 1-8，改变它不会 reset `accum_image`。如果当前 frame label 没有 TLAS，`OfflinePipeline` 会 reset 离线累计状态，不调度 RT / accum pass，
-而是通过 `ImageClearPass` 把 `single_frame_image`、`accum_image` 和 `render_target` 写成确定黑色输出，避免累积未定义或过期图像。
+离线累计 image 是 pipeline-owned 跨帧历史，不按 FIF 轮转；per-FIF output target 仍按当前 `FrameLabel` 使用。
+没有 TLAS 时，OfflinePipeline 重置累计并把相关 target 清为确定黑色，避免展示未定义或过期结果。
 
-## RT 直接光采样契约
+## 调试与当前能力边界
 
-当前 realtime RT 主路径的直接光通过统一 Light Candidate System 接入 HDRI、自发光三角形和 analytic light。
-raygen shader 每个普通 surface 只生成一个 light candidate；candidate 使用 direction、radiance、distance、
-shadow ray 和 solid-angle PDF 描述光源侧样本；visibility 复用现有 inline `RayQuery` shadow path；shade 使用
-`BRDF * cos / light_pdf * MIS` 的统一公式。
-完整 raygen path loop、miss / emissive hit、多 bounce、Russian roulette 和 MIS 决策顺序见
-[`docs/summaries/realtime-rt-raytracing-flow.md`](realtime-rt-raytracing-flow.md)。
+`CompiledGraph::print_execution_plan()` 输出 pass 顺序、image 访问、pass 前 barrier、epilogue barrier 和
+semaphore 数量，用于核对声明与实际录制顺序。
 
-环境光 sample 与 PDF 统一通过 `EnvMap` 查询。默认 sky 真实贴图 ready 后，`EnvMap` 使用
-`RenderSkyManager` 异步生成的 `luminance(texel) * source_texel_solid_angle` Alias table 做 importance sampling，并返回
-solid-angle PDF；fallback sky 使用 1x1 均匀分布，无效分布或 `PathTracingCommonSettings.sky_sampling_mode = Uniform`
-时回退 uniform sphere。distribution 保持源尺寸或等比聚合到不超过 `4096x2048`，真实 sky image 不降分辨率；
-lat-long sampler 为 U repeat、V/W clamp。HDRI class 内部采样与 BRDF sky miss 读取同一 `EnvMap::pdf`，统一入口再把
-light-class 选择概率乘入对外 PDF。
+当前 RenderGraph 不提供：
 
-自发光三角形由 `RenderEmissiveLightTable` 在 prepare 阶段构建。`RenderMeshManager` 保留每个 submesh 的 triangle metadata，
-`SceneStore` 提供材质自发光参数的只读 view，`RenderMaterialManager` 只提供 material stable slot resolver；`RenderEmissiveLightTable` 在
-`RenderInstanceManager::prepare_render_data` 之后、`RenderWorld::prepare_render_data` 内部 scene buffer upload 之前读取 active instance/submesh，
-上传 `emissive_triangle_lights`、`emissive_light_alias_table` 和 `instance_emissive_triangle_base_map`。
+- transient image/buffer 分配或资源 aliasing；
+- buffer/acceleration-structure 状态跟踪；
+- pass culling、自动拓扑调度或多队列 scheduler；
+- runtime prepare、asset upload 或同步 raycast 的统一编排。
 
-`instance_emissive_triangle_base_map` 与 `instance_geometry_map` / `instance_material_map` 使用同一 instance-local
-submesh 顺序，索引为 `instance.geometry_indirect_idx + geometry_id`；非 emissive submesh 写 `UINT_MAX`。
-emissive submesh 为所有 primitive 保留连续 `EmissiveTriangleLight` record，因此 BRDF hit emissive 时可直接用
-`emissive_triangle_lights[base + primitive_id]` 反查 light-side PDF，不需要额外 lookup entry 或二分查找。
-`emissive_light_alias_table` 只服务 NEE 抽样，内部 entry 保存 primary record index、alias record index 与
-alias probability；hit PDF 查询不经过 alias table。自发光 NEE 的面积采样 PDF 会转换到 solid-angle 度量，
-统一入口再把 light-class 选择概率乘入对外 PDF 后与 BRDF PDF 做 MIS；camera ray 或上一段 delta path
-直接命中 emissive 仍保持当前直视/镜面语义。
+这些能力如需演进，方案与非目标记录在
+[`docs/brain-storm/render-graph-evolution.md`](../brain-storm/render-graph-evolution.md)。
 
-`PathTracingCommonSettings.emissive_nee_enabled` 默认开启；关闭或 table 为空时统一入口不会把 emissive class 纳入候选来源。
-`NeeEmissive` debug channel 只显示统一 NEE 中抽到 emissive triangle class 的贡献，HDRI class 仍由既有
-`NeeHdri` 通道观察。emissive table 的 rebuild 由 dirty dispatch 显式触发；mesh ready、instance
-transform / active set / binding、material emissive / base color 参数变化会通过 rule 标记 emissive dirty。
+## 与帧生命周期的关系
 
-analytic point / spot / area light 由 `SceneStore` 保存 CPU 语义记录，`RenderInstanceManager::prepare_render_data`
-不再携带 analytic light 快照；`RenderAnalyticLightManager` 在 analytic dirty dispatch 到达后读取 `SceneReadView`，
-分别上传 point / spot / area structured buffer，并在 scene root 中写入 device address、count 与
-`analytic_light_version`。`PathTracingCommonSettings.analytic_nee_enabled` 开启且 light 数量非 0
-时，统一入口才会把 analytic class 纳入候选来源；`NeeAnalytic` debug channel 只显示统一 NEE 中抽到 analytic
-class 的贡献。analytic candidate 也会作为 primary ReSTIR DI initial proposal 参与 reservoir；由于当前 analytic light
-不创建 TLAS 可命中的发光几何，BRDF path 没有对应 hit PDF 查询，analytic shade 仍使用固定 `MIS = 1`。
-
-Primary ReSTIR DI 是 RT pipeline 自有的 temporal lighting 资源，不属于 DLSS state，也不注册到全局 bindless SRV/UAV 表。`RestirDiTargets` 按
-`render_extent` 创建 initial、temporal、final reservoir 和 primary surface key 图像，每个 target 都按 FIF frame label
-轮转，image 数量、格式和 RenderGraph target 契约保持不变。reservoir C target 仍保存 weight/target/`M`/age 四个 float，但 shader 内部把写回的 weight 解释为 RTXDI finalized inverse PDF。RenderGraph 在 ray-tracing pass 中同时导入当前 frame label 的 ReSTIR targets，以及 previous frame label 的
-temporal reservoir / surface key 作为 history；首帧、DLSS reset 或 ReSTIR mode 变化时 CPU 侧传入 `restir_history_valid=false`，
-shader 仍会绑定 history image，但不会参与 temporal reuse。
-
-ray-tracing pass 复用同一条 RT pipeline 连续执行多次 `TraceRays` phase：path phase 写 HDR/GBuffer/DLSS 输入和 initial
-reservoir；temporal phase 读 previous temporal history、previous surface key 与 motion vectors 后写 temporal reservoir；spatial phase 只在
-`TemporalSpatial` 模式写 final reservoir，且 spatial final 不回灌下一帧 temporal history；temporal/spatial/final 都会把 reservoir 中的 light sample identity 在当前 primary
-surface 上重建为候选，并用当前 surface visibility 重新计算 target；final shade 仍再次 trace visibility。current surface 来自 ReSTIR 自有 RGBA32F surface key，三张图像分别保存 position/depth、normal/roughness 和 base color/metallic；只有会被 ReSTIR 替换 primary direct NEE 的非 emissive、非 delta primary surface 才写有效 key；GBufferA/B/C 仍服务 RR/SR，不作为 ReSTIR shadow ray 的高精度起点或 target 材质签名。pass 内部在 phase 之间插入 ray-tracing shader image barrier，覆盖 HDR、GBuffer、
-motion vectors 和 ReSTIR targets，避免单个 raygen dispatch 内跨像素读写。
-
-DLSS SR/RR 仍只读取 RT 输出的 HDR、GBuffer、depth、motion vectors 和固定 manual exposure，不参与 light
-candidate、ReSTIR reservoir 或 radiance cache 状态。SR 会显式 tag 1x1 `dlss-sr-exposure`，避免缺少
-`kBufferTypeExposure` 时 Streamline 退回 AutoExposure；SDR `Exposure EV` 仍只作用于 DLSS 之后的 tone mapping。
-SR/RR 启动默认值在 Plugin init 前已经反映到 `FrameRenderState`，所以 RT working target、GBuffer 和 DLSS inputs 都必须按 `render_extent` 创建，DLSS output / main view 按 `output_extent` 创建。
-
-## 与生命周期的关系
-
-- update 阶段可以修改 CPU 语义状态。
-- prepare 是 CPU scene / asset / material / instance 到 GPU 可见状态的同步边界。
-- after_prepare 只处理刚准备好的 GPU scene 的同步查询。
-- render 阶段只读取 prepare 后的 GPU scene 快照，并通过 RenderGraph 录制 pass。
+- update：App/Plugin 可以修改 CPU scene 与 app-owned 设置。
+- prepare：runtime 把 CPU scene、asset 和 view 快照同步为 GPU 可见状态。
+- after_prepare：只处理依赖当前 prepared scene 的同步查询。
+- render：App 构造 RenderGraph，pass 只读取 prepared GPU scene 和 app/runtime render state。
+- submit/present：compiled graph 生成提交信息，present owner 完成 swapchain present。

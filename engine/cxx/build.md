@@ -1,85 +1,69 @@
-# 使用 Visual Studio 作为项目 generator
+# CXX 构建与排查
 
-推荐通过 workspace 命令自动检测 VS2026 / VS2022。日常运行 Truvis 时只需要 Debug 产物：
+本文件是 `engine/cxx/` 唯一的构建操作入口。模块职责、FFI owner 和生命周期约束见 [`README.md`](README.md)。
 
-```shell
+## Workspace 命令
+
+日常运行 Truvis 只需要 Debug CXX 产物：
+
+```powershell
 just cxx-debug
 ```
 
-需要同时准备 Debug + Release 时使用：
+同时准备 Debug 与 Release：
 
-```shell
+```powershell
 just cxx
 ```
 
-需要绕过 manifest、强制清理 profile 输出并重新构建时使用：
+绕过增量 manifest、强制重新生成全部 CXX 产物与绑定：
 
-```shell
+```powershell
 just cxx-force
 ```
 
-`just cxx-debug` 会运行 `cargo run --bin cxx-build -- --profile debug` 并构建 CXX 绑定 crate；
-`just cxx` 会运行 `cargo run --bin cxx-build -- --profile all`。`cxx-build` 在
-`build/cxx/.state/` 记录 profile 级 manifest，输入未变化且 CMake/Cargo 输出仍存在时会跳过
-CMake configure/build，只做必要的 DLL/json 同步检查。
-`cxx-build` 只使用 PATH 上的 `cmake`。CMake presets 文件要求 CMake 3.21+；
-使用 VS2026 preset 时需要 PATH 上的 CMake 4.2+。
-CMake binary dir 位于 workspace 根目录的 `build/cxx/`，native 输出目录为
-`build/cxx/output/{Debug,Release}`。Cargo 可执行文件和运行时复制目标仍是
-`build/{debug,release}`。
+`just cxx-debug` 和 `just cxx` 通过 `truvis-cxx-build` 选择 CMake preset、构建 native target、
+更新 Rust binding，并把运行时 `.lib`/`.dll`/`.pdb` 与 Streamline JSON 复制到 Cargo 输出目录。
 
-## VS2026
+## 目录与增量状态
 
-```shell
+- CMake binary dir：`build/cxx/{vs2022,vs2026,clang-cl}`。
+- Native 输出：`build/cxx/output/{Debug,Release}`。
+- Cargo executable/runtime 目录：`build/{debug,release}` 及其 `examples/`。
+- CXX 增量状态：`build/cxx/.state/`。
+- Rust FFI binding：`build/bindings/{TARGET}/cxx/{crate}/`。
+- Clangd 数据库：`build/cxx/compile_commands.json` 和 `.vscode/compile_commands.json`。
+
+输入、preset、关键环境和预期输出未变化时，`truvis-cxx-build` 会跳过 CMake configure/build，
+只检查运行目录复制。需要验证真实 clean build path 时使用 `just cxx-force`。
+
+## 环境要求
+
+- PATH 上可用的 CMake；CMake presets 需要 3.21+，VS2026 preset 需要 4.2+。
+- Visual Studio 2022 或 2026，并安装 MSVC C++ workload。
+- 已设置 `VCPKG_ROOT`，指向包含 `scripts/buildsystems/vcpkg.cmake` 的 vcpkg checkout。
+- 使用 clang-cl preset 时，PATH 上需要 LLVM/clang-cl 与 Ninja。
+
+不要手工执行 `vcpkg install`；项目使用 `vcpkg.json` manifest。更新本地 vcpkg checkout 后，如确需推进项目 baseline，
+在 workspace 根目录显式运行 `vcpkg x-update-baseline` 并把 `vcpkg.json` 变化作为独立依赖更新审查。
+
+## 手工 Preset 入口
+
+正常开发优先使用上述 workspace 命令。排查 CMake 问题时可以直接运行已有 preset：
+
+```powershell
 cmake --preset vs2026
-# build debug
 cmake --build --preset vs2026-build-debug
-# build release
-cmake --build --preset vs2026-build-release
-```
 
-## VS2022
-
-```shell
 cmake --preset vs2022
-# build debug
 cmake --build --preset vs2022-build-debug
-# build release
-cmake --build --preset vs2022-build-release
-```
 
-# 使用 clang-cl 作为项目 generator
-
-```shell
-# debug
 cmake --preset clang-cl-debug
 cmake --build --preset clang-cl-build-debug
-
-# release
-cmake --preset clang-cl-release
-cmake --build --preset clang-cl-build-release
 ```
 
-对应的 cmake 命令为：
+也可以使用 `just cxx-preset vs2022 debug` 或 `just cxx-build clang release` 统一调用。
+第一个参数支持 `vs2026`、`vs2022`、`clang`，第二个参数支持 `debug`、`release`。
 
-```shell
-cmake `
-  -DCMAKE_BUILD_TYPE=Debug `
-  -DCMAKE_MAKE_PROGRAM=C:/Users/bigso/AppData/Local/Microsoft/WinGet/Links/ninja.exe `
-  "-DCMAKE_C_COMPILER=C:/Program Files/LLVM/bin/clang-cl.exe" `
-  "-DCMAKE_CXX_COMPILER=C:/Program Files/LLVM/bin/clang-cl.exe" `
-  -G Ninja `
-  -S D:\code\Render-Rust-vk-Truvis\engine\cxx `
-  -B D:\code\Render-Rust-vk-Truvis\build\cxx\clang-cl\Debug
-```
-
-`compile_commands.json` 的复制由 `truvis-cxx-build` 负责：工具会尝试配置
-`clang-cl-debug` preset，并把生成文件同步到 `build/cxx/compile_commands.json`
-和 `.vscode/compile_commands.json`。该文件只服务 IDE/clangd，clang-cl 或 Ninja
-不可用时不会阻断 Visual Studio preset 构建。
-
-# 更新 vcpkg
-
-先更新 vcpkg 本地缓存：到达 vcpkg 目录，执行 `git pull` 
-
-然后到达当前项目，更新 baseline: `vcpkg x-update-baseline`
+`compile_commands.json` 由 `truvis-cxx-build` 尝试通过 `clang-cl-debug` preset 生成。clang-cl 或 Ninja 不可用时，
+只跳过 IDE 数据库同步，不阻断 Visual Studio preset 构建。
