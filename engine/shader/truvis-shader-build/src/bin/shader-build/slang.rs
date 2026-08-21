@@ -22,15 +22,20 @@ impl ShaderCompiler for SlangCompiler {
     }
 
     fn compile(&self, task: &ShaderCompileTask) -> Result<(), String> {
-        let output = std::process::Command::new(EnvPath::slangc_path())
+        let mut command = std::process::Command::new(EnvPath::slangc_path());
+        for include_root in &task.include_roots {
+            command.arg("-I").arg(include_root);
+        }
+
+        let output = command
             .args([
-                "-I",
-                EnvPath::shader_root_path().to_str().unwrap(),
                 "-g2",                         // 生成 debug info (默认是 g2)
                 "-matrix-layout-column-major", // 列主序
                 "-fvk-use-entrypoint-name",    // 具有多个 entry 时需要此选项
                 "-target",
                 "spirv", // 如果想要输出字节码：spirv-asm
+                "-depfile",
+                task.depfile_path.to_str().unwrap(),
                 "-o",
                 task.output_path.to_str().unwrap(),
                 task.shader_path.to_str().unwrap(),

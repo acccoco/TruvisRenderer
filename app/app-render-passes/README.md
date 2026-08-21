@@ -4,6 +4,17 @@
 例如 real-time / offline ray tracing、accumulation、SDR、image clear、resolve、
 coordinate gizmo、selection outline 和 Phong shading。
 
+## Shader 所有权
+
+- shader 源码统一位于 `app/shader/`；`abi/app/render_passes/` 保存
+  `app::render_passes::*` CPU/GPU 契约，`lib/app/` 保存依赖 pass ABI/resource 的算法，
+  `entry/app/` 保存最终入口。
+- `app/shader/truvis-app-shader-binding` 统一生成全部 App ABI，只 allowlist `app::*`，并依赖
+  Engine canonical `truvis-shader-binding`。
+- 本 crate 使用 `app` package，产物位于 `build/shader/app/`；Engine ABI/lib 通过
+  `depends_on = ["engine"]` 单向引用。
+- 完整目录、include roots 与增量边界见 `app/shader/README.md`。
+
 ## 主要职责
 
 - 提供具体 GPU pass 的 pipeline、descriptor、dispatch/draw 逻辑。
@@ -27,6 +38,7 @@ coordinate gizmo、selection outline 和 Phong shading。
 - 本 crate 不持有 `RenderRuntime`，也不依赖 frame runtime 或 App hooks。
 - runtime-owned 同步 raycast pipeline 不在本 crate 中；它是 `truvis-render-runtime` 的私有实现细节。
 - `GuiPass` 不在本 crate 中；GUI Vulkan 后端是 `app/app-kit` 的私有实现细节，GUI RenderGraph 集成属于 `GuiPlugin`。
+- shader 源码可以引用 Engine ABI/lib；Engine shader、binding 与构建配置禁止引用本模块的 shader root 或 binding crate。
 - pass-local descriptor 只描述本次 draw/dispatch 使用哪个 image view，不拥有 image/view，也不替代 RenderGraph 的
   layout transition、访问同步或 pipeline owner 的 GPU-safe 释放责任。
 

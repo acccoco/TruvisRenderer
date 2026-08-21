@@ -314,19 +314,19 @@ impl<'a> SceneReadView<'a> {
 
     /// 返回全部 live point light。
     #[inline]
-    pub fn point_light_map(&self) -> &'a SlotMap<LightHandle, gpu::light::PointLight> {
+    pub fn point_light_map(&self) -> &'a SlotMap<LightHandle, gpu::engine::light::PointLight> {
         &self.scene.all_point_lights
     }
 
     /// 返回全部 live spot light。
     #[inline]
-    pub fn spot_light_map(&self) -> &'a SlotMap<LightHandle, gpu::light::SpotLight> {
+    pub fn spot_light_map(&self) -> &'a SlotMap<LightHandle, gpu::engine::light::SpotLight> {
         &self.scene.all_spot_lights
     }
 
     /// 返回全部 live area light。
     #[inline]
-    pub fn area_light_map(&self) -> &'a SlotMap<LightHandle, gpu::light::AreaLight> {
+    pub fn area_light_map(&self) -> &'a SlotMap<LightHandle, gpu::engine::light::AreaLight> {
         &self.scene.all_area_lights
     }
 
@@ -424,11 +424,11 @@ pub(crate) struct SceneStore {
     /// mesh -> instance 反向依赖索引；v1 instance 创建后不支持修改 mesh 引用。
     mesh_to_instances: HashMap<MeshHandle, HashSet<InstanceHandle>>,
     /// live point light 存储；GPU 侧打包和上传由 render runtime 处理。
-    all_point_lights: SlotMap<LightHandle, gpu::light::PointLight>,
+    all_point_lights: SlotMap<LightHandle, gpu::engine::light::PointLight>,
     /// live spot light 存储；与 point light 分开保存，避免 CPU 语义层提前引入统一 light class。
-    all_spot_lights: SlotMap<LightHandle, gpu::light::SpotLight>,
+    all_spot_lights: SlotMap<LightHandle, gpu::engine::light::SpotLight>,
     /// live area light 存储；矩形单面发光的采样语义由 realtime RT shader 解释。
-    all_area_lights: SlotMap<LightHandle, gpu::light::AreaLight>,
+    all_area_lights: SlotMap<LightHandle, gpu::engine::light::AreaLight>,
     /// point/spot/area light 语义变化版本，用于渲染端拒绝不匹配的 ReSTIR history。
     light_revision: u32,
     /// 本帧 CPU 语义变化；只在 `World::sync_for_render()` 中 drain。
@@ -731,7 +731,7 @@ impl SceneStore {
     ///
     /// 光源使用 shader binding 中的共享布局类型，但这里仍只负责 CPU 侧生命周期；GPU buffer
     /// 更新由 render runtime 的 scene 同步流程处理。
-    pub fn register_point_light(&mut self, light: gpu::light::PointLight) -> LightHandle {
+    pub fn register_point_light(&mut self, light: gpu::engine::light::PointLight) -> LightHandle {
         let handle = self.all_point_lights.insert(light);
         self.bump_light_revision();
         self.change_log.mark_analytic_lights_changed();
@@ -743,7 +743,7 @@ impl SceneStore {
     ///
     /// spot light 在 realtime RT 中表示半径固定为 0.5 的 sphere emitter，并额外带 cone
     /// falloff；这里不做角度或方向归一化，调用方和 shader ABI 注释共同约束输入单位。
-    pub fn register_spot_light(&mut self, light: gpu::light::SpotLight) -> LightHandle {
+    pub fn register_spot_light(&mut self, light: gpu::engine::light::SpotLight) -> LightHandle {
         let handle = self.all_spot_lights.insert(light);
         self.bump_light_revision();
         self.change_log.mark_analytic_lights_changed();
@@ -755,7 +755,7 @@ impl SceneStore {
     ///
     /// area light 使用 world-space `center + half_u + half_v` 描述矩形；本 manager 不计算
     /// 法线或面积，避免 CPU scene 与 shader 采样路径维护两套几何派生规则。
-    pub fn register_area_light(&mut self, light: gpu::light::AreaLight) -> LightHandle {
+    pub fn register_area_light(&mut self, light: gpu::engine::light::AreaLight) -> LightHandle {
         let handle = self.all_area_lights.insert(light);
         self.bump_light_revision();
         self.change_log.mark_analytic_lights_changed();

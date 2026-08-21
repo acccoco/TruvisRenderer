@@ -435,7 +435,7 @@ impl RenderWorld {
     ///
     /// buffer 内保存 shader 查找整套 scene 数据所需的 device address、bindless handle 和计数。
     #[inline]
-    pub fn scene_buffer(&self, frame_label: FrameLabel) -> &GfxStructuredBuffer<gpu::scene::GpuScene> {
+    pub fn scene_buffer(&self, frame_label: FrameLabel) -> &GfxStructuredBuffer<gpu::engine::scene::GpuScene> {
         &self.render_world_buffers[*frame_label].scene_buffer
     }
 }
@@ -553,7 +553,7 @@ impl RenderWorld {
         let crt_gpu_buffers = &render_world_buffers[frame_index];
         // scene root buffer 只存放“入口地址”和资源句柄，不复制大块 scene 数据。
         // 它最后写入，确保地址/count 与本帧刚上传的 buffer 和 TLAS revision 匹配。
-        let gpu_scene_data = gpu::scene::GpuScene {
+        let gpu_scene_data = gpu::engine::scene::GpuScene {
             all_instances: crt_gpu_buffers.instance_buffer.device_address(),
             all_mats: material_buffer_device_address,
             all_geometries: crt_gpu_buffers.geometry_buffer.device_address(),
@@ -628,7 +628,7 @@ impl RenderWorld {
                 panic!("geometry cnt can not be larger than buffer");
             }
             for (submesh_idx, geometry) in mesh.geometries.iter().enumerate() {
-                geometry_buffer_slices[crt_geometry_idx + submesh_idx] = gpu::geometry::Geometry {
+                geometry_buffer_slices[crt_geometry_idx + submesh_idx] = gpu::engine::geometry::Geometry {
                     position_buffer: geometry.vertex_buffer.pos_address(),
                     normal_buffer: geometry.vertex_buffer.normal_address(),
                     tangent_buffer: geometry.vertex_buffer.tangent_address(),
@@ -696,7 +696,7 @@ impl RenderWorld {
                 panic!("instance material cnt can not be larger than buffer");
             }
 
-            instance_buffer_slices[instance_slot] = gpu::scene::Instance {
+            instance_buffer_slices[instance_slot] = gpu::engine::scene::Instance {
                 geometry_indirect_idx: crt_geometry_indirect_idx as u32,
                 geometry_count: submesh_cnt as u32,
                 material_indirect_idx: crt_material_indirect_idx as u32,

@@ -1,5 +1,6 @@
 use ash::vk;
 
+use truvis_app_shader_binding::gpu;
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxDeviceCtx;
@@ -9,7 +10,6 @@ use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
-use truvis_shader_binding::gpu;
 
 use crate::compute_pass::ComputePass;
 
@@ -37,18 +37,19 @@ struct ImageClearDescriptorBinding {
 }
 
 pub struct ImageClearPass {
-    clear_pass: ComputePass<gpu::image_clear::PushConstant, ImageClearDescriptorBinding>,
+    clear_pass: ComputePass<gpu::app::render_passes::image_clear::PushConstant, ImageClearDescriptorBinding>,
 }
 
 impl ImageClearPass {
     pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets) -> Self {
-        let clear_pass = ComputePass::<gpu::image_clear::PushConstant, ImageClearDescriptorBinding>::new(
-            ctx,
-            render_descriptor_sets,
-            gpu::IMAGE_CLEAR_SET_NUM,
-            c"main",
-            TruvisPath::shader_build_path_str("post/image_clear.slang").as_str(),
-        );
+        let clear_pass =
+            ComputePass::<gpu::app::render_passes::image_clear::PushConstant, ImageClearDescriptorBinding>::new(
+                ctx,
+                render_descriptor_sets,
+                gpu::app::render_passes::image_clear::SET_NUM,
+                c"main",
+                TruvisPath::shader_build_path_str("app", "post/image_clear.slang").as_str(),
+            );
 
         Self { clear_pass }
     }
@@ -74,14 +75,14 @@ impl ImageClearPass {
             frame_label,
             record_ctx.shader_bindings.global_descriptor_sets(),
             &descriptor_writes,
-            &gpu::image_clear::PushConstant {
+            &gpu::app::render_passes::image_clear::PushConstant {
                 clear_color: data.clear_color.into(),
                 image_size: glam::uvec2(data.image_extent.width, data.image_extent.height).into(),
                 _padding_0: glam::UVec2::ZERO.into(),
             },
             glam::uvec3(
-                data.image_extent.width.div_ceil(gpu::image_clear::SHADER_X as u32),
-                data.image_extent.height.div_ceil(gpu::image_clear::SHADER_Y as u32),
+                data.image_extent.width.div_ceil(gpu::app::render_passes::image_clear::SHADER_X as u32),
+                data.image_extent.height.div_ceil(gpu::app::render_passes::image_clear::SHADER_Y as u32),
                 1,
             ),
         );

@@ -1,6 +1,10 @@
 //! 着色器编译的共享类型和工具
 
-use std::sync::OnceLock;
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
+
 use truvis_path::TruvisPath;
 
 /// Shader 的执行阶段
@@ -12,7 +16,7 @@ pub enum ShaderStage {
     /// HLSL Domain Shader（细分求值着色器）
     TessellationEvaluation,
     Geometry,
-    /// HLSL Pixel Shader（像素着色器）
+    /// HLSL Pixel Shader（片元着色器）
     Fragment,
     Compute,
 
@@ -40,52 +44,33 @@ pub enum ShaderCompilerType {
     Slang,
 }
 
-/// 当前项目的环境路径，基于 workspace 根目录
+/// Shader 构建工具使用的 workspace 路径。
 pub struct EnvPath;
 
 impl EnvPath {
-    pub fn shader_root_path() -> &'static std::path::Path {
-        static PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
-        PATH.get_or_init(TruvisPath::shader_root_path)
-    }
-
-    pub fn shader_entry_path() -> &'static std::path::Path {
-        static PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| TruvisPath::shader_root_path().join("entry"))
-    }
-
-    /// 编译 shader 的输出路径
-    pub fn shader_build_path() -> &'static std::path::Path {
-        static PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
+    /// 编译 shader 的输出路径。
+    pub fn shader_build_path() -> &'static Path {
+        static PATH: OnceLock<PathBuf> = OnceLock::new();
         PATH.get_or_init(TruvisPath::shader_build_dir)
     }
 
-    pub fn shader_api_path() -> &'static std::path::Path {
-        static PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| TruvisPath::shader_root_path().join("api"))
-    }
-
-    /// Slang 编译器路径
-    pub fn slangc_path() -> &'static std::path::Path {
-        static PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| {
-            let mut path = TruvisPath::tools_path();
-            path.extend(["slang", "bin", "slangc.exe"]);
-            path
-        })
+    /// Slang 编译器路径。
+    pub fn slangc_path() -> &'static Path {
+        static PATH: OnceLock<PathBuf> = OnceLock::new();
+        PATH.get_or_init(|| TruvisPath::tools_path().join("slang").join("bin").join("slangc.exe"))
     }
 }
 
-/// 着色器编译器 Trait
+/// 着色器编译器 Trait。
 pub trait ShaderCompiler: Send + Sync {
-    /// 返回编译器类型
+    /// 返回编译器类型。
     #[allow(dead_code)]
     fn compiler_type(&self) -> ShaderCompilerType;
 
-    /// 编译着色器
+    /// 编译着色器。
     fn compile(&self, task: &ShaderCompileTask) -> Result<(), String>;
 
-    /// 根据 cmd 执行的结果，处理输出信息
+    /// 根据命令执行结果统一输出诊断。
     fn process_cmd_output(&self, task: &ShaderCompileTask, output: std::process::Output) -> Result<(), String> {
         if !output.stdout.is_empty() {
             log::info!("stdout: {}", String::from_utf8_lossy(&output.stdout));
@@ -98,7 +83,8 @@ pub trait ShaderCompiler: Send + Sync {
             Ok(())
         } else {
             Err(format!(
-                "Shader 编译失败: {}，退出码: {}",
+                "Shader 编译失败: package={} source={}，退出码: {}",
+                task.package_id,
                 task.shader_path.display(),
                 output.status.code().map_or_else(|| "unknown".to_string(), |code| code.to_string())
             ))
@@ -106,77 +92,80 @@ pub trait ShaderCompiler: Send + Sync {
     }
 }
 
-/// 一个具体的编译任务
+/// 一个 package 内的具体编译任务。
 #[derive(Debug, Clone)]
 pub struct ShaderCompileTask {
-    pub shader_path: std::path::PathBuf,
-    pub output_path: std::path::PathBuf,
+    pub package_id: String,
+    pub entry_relative_path: PathBuf,
+    pub shader_path: PathBuf,
+    pub output_path: PathBuf,
+    pub depfile_path: PathBuf,
+    pub include_roots: Vec<PathBuf>,
+    pub allowed_dependency_roots: Vec<PathBuf>,
     pub shader_stage: ShaderStage,
     pub compiler_type: ShaderCompilerType,
 }
 
 impl ShaderCompileTask {
-    /// 从目录项创建编译任务
-    ///
-    /// # 参数
-    /// * `entry` - 相对于 workspace 的目录项
-    ///
-    /// # 返回值
-    /// 如果文件扩展名不被支持，返回 None
-    pub fn new(entry: &walkdir::DirEntry) -> Option<Self> {
-        let shader_path = entry.path().to_str()?.replace('\\', "/");
-        let shader_path = std::path::Path::new(&shader_path);
-
-        // 相对于 shader src 的路径
-        let relative_path = shader_path.strip_prefix(EnvPath::shader_entry_path()).ok()?;
+    /// 从 package entry 目录项创建编译任务。
+    pub fn new(
+        package_id: &str,
+        entry_root: &Path,
+        output_root: &Path,
+        depfile_root: &Path,
+        output_prefix: &Path,
+        include_roots: &[PathBuf],
+        allowed_dependency_roots: &[PathBuf],
+        entry: &walkdir::DirEntry,
+    ) -> Option<Self> {
+        let shader_path = entry.path();
+        let relative_path = shader_path.strip_prefix(entry_root).ok()?;
         let shader_name = entry.file_name().to_str()?;
 
-        // 构造输出路径
-        let mut output_path = EnvPath::shader_build_path().join(relative_path);
+        let mut output_path = output_root.join(output_prefix).join(relative_path);
         let mut new_ext = output_path.extension()?.to_os_string();
         new_ext.push(".spv");
         output_path.set_extension(new_ext);
 
-        let shader_stage = Self::parse_shader_stage(shader_name)?;
-        let compiler_type = Self::select_compiler(shader_name);
+        let mut depfile_path = depfile_root.join(package_id).join(relative_path);
+        let mut depfile_ext = depfile_path.extension()?.to_os_string();
+        depfile_ext.push(".d");
+        depfile_path.set_extension(depfile_ext);
 
         Some(Self {
+            package_id: package_id.to_string(),
+            entry_relative_path: relative_path.to_path_buf(),
             shader_path: shader_path.to_path_buf(),
             output_path,
-            shader_stage,
-            compiler_type,
+            depfile_path,
+            include_roots: include_roots.to_vec(),
+            allowed_dependency_roots: allowed_dependency_roots.to_vec(),
+            shader_stage: Self::parse_shader_stage(shader_name)?,
+            compiler_type: Self::select_compiler(shader_name),
         })
     }
 
-    /// 根据文件名解析 shader stage
+    /// 根据文件名解析 shader stage。
     fn parse_shader_stage(shader_name: &str) -> Option<ShaderStage> {
         let stage = match () {
-            // 顶点 Shader
             _ if shader_name.ends_with(".vert") || shader_name.ends_with(".vs.hlsl") => ShaderStage::Vertex,
-            // 片元/像素 Shader
             _ if shader_name.ends_with(".frag") || shader_name.ends_with(".ps.hlsl") => ShaderStage::Fragment,
-            // 计算 Shader
             _ if shader_name.ends_with(".comp") || shader_name.ends_with(".cs.hlsl") => ShaderStage::Compute,
-            // Ray Tracing Shader 阶段
             _ if shader_name.ends_with(".rgen") => ShaderStage::RayGen,
             _ if shader_name.ends_with(".rchit") => ShaderStage::ClosestHit,
             _ if shader_name.ends_with(".rmiss") => ShaderStage::Miss,
             _ if shader_name.ends_with(".rahit") => ShaderStage::AnyHit,
             _ if shader_name.ends_with(".rint") => ShaderStage::Intersection,
             _ if shader_name.ends_with(".rcall") => ShaderStage::RayCallable,
-            // Tessellation Shader 阶段
             _ if shader_name.ends_with(".tesc") || shader_name.ends_with(".hs.hlsl") => {
                 ShaderStage::TessellationControl
             }
             _ if shader_name.ends_with(".tese") || shader_name.ends_with(".ds.hlsl") => {
                 ShaderStage::TessellationEvaluation
             }
-            // 几何 Shader
             _ if shader_name.ends_with(".geom") || shader_name.ends_with(".gs.hlsl") => ShaderStage::Geometry,
-            // Mesh Shader 阶段
             _ if shader_name.ends_with(".task") || shader_name.ends_with(".as.hlsl") => ShaderStage::Task,
             _ if shader_name.ends_with(".mesh") || shader_name.ends_with(".ms.hlsl") => ShaderStage::Mesh,
-            // Slang (通用)
             _ if shader_name.ends_with(".slang") => ShaderStage::General,
             _ => return None,
         };
@@ -184,7 +173,7 @@ impl ShaderCompileTask {
         Some(stage)
     }
 
-    /// 根据文件扩展名选择编译器
+    /// 根据文件扩展名选择编译器。
     fn select_compiler(shader_name: &str) -> ShaderCompilerType {
         if shader_name.ends_with(".hlsl") {
             ShaderCompilerType::Hlsl

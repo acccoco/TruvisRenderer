@@ -30,10 +30,10 @@ pub(crate) struct EmissiveLightBinding {
 
 /// 单个 FIF frame label 使用的一组自发光 light table buffer。
 struct EmissiveLightFrameBuffers {
-    triangle_lights: GfxStructuredBuffer<gpu::light::EmissiveTriangleLight>,
-    triangle_lights_stage: GfxStructuredBuffer<gpu::light::EmissiveTriangleLight>,
-    alias_table: GfxStructuredBuffer<gpu::light::EmissiveLightAliasEntry>,
-    alias_table_stage: GfxStructuredBuffer<gpu::light::EmissiveLightAliasEntry>,
+    triangle_lights: GfxStructuredBuffer<gpu::engine::light::EmissiveTriangleLight>,
+    triangle_lights_stage: GfxStructuredBuffer<gpu::engine::light::EmissiveTriangleLight>,
+    alias_table: GfxStructuredBuffer<gpu::engine::light::EmissiveLightAliasEntry>,
+    alias_table_stage: GfxStructuredBuffer<gpu::engine::light::EmissiveLightAliasEntry>,
     base_map: GfxStructuredBuffer<u32>,
     base_map_stage: GfxStructuredBuffer<u32>,
     triangle_capacity: usize,
@@ -123,8 +123,8 @@ impl EmissiveLightFrameBuffers {
         resource_ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
-        triangles: &[gpu::light::EmissiveTriangleLight],
-        aliases: &[gpu::light::EmissiveLightAliasEntry],
+        triangles: &[gpu::engine::light::EmissiveTriangleLight],
+        aliases: &[gpu::engine::light::EmissiveLightAliasEntry],
         base_map: &[u32],
     ) {
         Self::upload_structured_slice(
@@ -211,8 +211,8 @@ impl EmissiveLightFrameBuffers {
 /// 上一帧仍可能被 raygen 读取的 table。
 pub(crate) struct RenderEmissiveLightTable {
     frames: [EmissiveLightFrameBuffers; FrameCounter::fif_count()],
-    triangle_lights: Vec<gpu::light::EmissiveTriangleLight>,
-    alias_table: Vec<gpu::light::EmissiveLightAliasEntry>,
+    triangle_lights: Vec<gpu::engine::light::EmissiveTriangleLight>,
+    alias_table: Vec<gpu::engine::light::EmissiveLightAliasEntry>,
     base_map: Vec<u32>,
     dirty: bool,
     version: u32,
@@ -361,7 +361,7 @@ impl RenderEmissiveLightTable {
             let normal = if world_area > 0.0 { normal_unnormalized.normalize() } else { glam::Vec3::Y };
 
             let light_index = self.triangle_lights.len();
-            self.triangle_lights.push(gpu::light::EmissiveTriangleLight {
+            self.triangle_lights.push(gpu::engine::light::EmissiveTriangleLight {
                 p0: world_positions[0].into(),
                 area: world_area,
                 p1: world_positions[1].into(),
@@ -395,7 +395,7 @@ impl RenderEmissiveLightTable {
     fn build_alias_table(
         weighted_records: &[(usize, f64)],
         total_weight: f64,
-    ) -> Vec<gpu::light::EmissiveLightAliasEntry> {
+    ) -> Vec<gpu::engine::light::EmissiveLightAliasEntry> {
         let count = weighted_records.len();
         if count == 0 || total_weight <= f64::EPSILON {
             return Vec::new();
@@ -439,7 +439,7 @@ impl RenderEmissiveLightTable {
             .enumerate()
             .map(|(idx, (light_index, _))| {
                 let alias_light_index = weighted_records[alias_index[idx]].0;
-                gpu::light::EmissiveLightAliasEntry {
+                gpu::engine::light::EmissiveLightAliasEntry {
                     alias_probability: alias_probability[idx],
                     light_index: u32::try_from(*light_index).expect("emissive light index exceeds u32 range"),
                     alias_light_index: u32::try_from(alias_light_index)

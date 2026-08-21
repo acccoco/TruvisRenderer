@@ -1,8 +1,8 @@
-#include "./payload.slangi"
+#include "lib/engine/raycast/payload.slangi"
 
 /// 初始化 miss 状态。
 ///
-/// sentinel 统一使用 `0xFFFFFFFF`，与 `raycast::RawHit` 的 miss 表示保持一致，便于 CPU readback
+/// sentinel 统一使用 `0xFFFFFFFF`，与 `engine::raycast::RawHit` 的 miss 表示保持一致，便于 CPU readback
 /// 直接判断字段是否有效。
 RayCastPayload init_payload()
 {
@@ -18,9 +18,9 @@ RayCastPayload init_payload()
     return payload;
 }
 
-raycast::RawHit make_miss()
+engine::raycast::RawHit make_miss()
 {
-    raycast::RawHit raw = {};
+    engine::raycast::RawHit raw = {};
     raw.hit = 0;
     raw.instance_slot = 0xFFFFFFFFu;
     raw.submesh_index = 0xFFFFFFFFu;
@@ -36,9 +36,9 @@ raycast::RawHit make_miss()
 ///
 /// 这里不做 instance slot -> CPU handle 转换；runtime 在 fence 等待后读取 raw hit，再结合
 /// `RenderInstanceManager` 的 raycast 反查快照做还原。
-raycast::RawHit make_hit(const RayCastPayload payload)
+engine::raycast::RawHit make_hit(const RayCastPayload payload)
 {
-    raycast::RawHit raw = {};
+    engine::raycast::RawHit raw = {};
     raw.hit = 1;
     raw.instance_slot = payload.instance_slot;
     raw.submesh_index = payload.submesh_index;
@@ -60,7 +60,7 @@ void main_ray_gen()
         return;
     }
 
-    const raycast::Ray input_ray = raycast::rays[ray_idx];
+    const engine::raycast::Ray input_ray = engine::raycast::rays[ray_idx];
 
     RayDesc ray;
     // 输入 ray 已经是 world space；shader 只归一化方向，保留 CPU 侧指定的 t_min/t_max。
@@ -71,7 +71,7 @@ void main_ray_gen()
 
     RayCastPayload payload = init_payload();
     TraceRay(
-        raycast::raycast_tlas,
+        engine::raycast::raycast_tlas,
         RAY_FLAG_NONE,
         0xFF,
         0,
@@ -81,5 +81,5 @@ void main_ray_gen()
         payload
     );
 
-    raycast::raw_hits[ray_idx] = payload.hit ? make_hit(payload) : make_miss();
+    engine::raycast::raw_hits[ray_idx] = payload.hit ? make_hit(payload) : make_miss();
 }

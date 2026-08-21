@@ -2,7 +2,7 @@
 //!
 //! 使用 glslc (来自 Vulkan SDK) 将 GLSL 着色器编译为 SPIR-V
 
-use crate::common::{EnvPath, ShaderCompileTask, ShaderCompiler, ShaderCompilerType};
+use crate::common::{ShaderCompileTask, ShaderCompiler, ShaderCompilerType};
 
 /// GLSL 编译器
 ///
@@ -22,9 +22,16 @@ impl ShaderCompiler for GlslCompiler {
     }
 
     fn compile(&self, task: &ShaderCompileTask) -> Result<(), String> {
-        let output = std::process::Command::new("glslc")
+        let mut command = std::process::Command::new("glslc");
+        for include_root in &task.include_roots {
+            command.arg(format!("-I{}", include_root.display()));
+        }
+
+        let output = command
+            .arg("-MD")
+            .arg("-MF")
+            .arg(&task.depfile_path)
             .args([
-                &format!("-I{:?}", EnvPath::shader_root_path()),
                 "-g", // 生成调试信息
                 "--target-env=vulkan1.2",
                 "--target-spv=spv1.4", // Ray tracing 最低版本为 spv1.4

@@ -1,0 +1,47 @@
+#pragma once
+#include "abi/engine/mod.slangi"
+
+struct BindlessSrv
+{
+/// sampled image 采样。
+///
+/// 无效 handle 或非法 sampler 都返回统一 fallback，避免 shader 因资源尚未 ready 读取未定义描述符。
+[ForceInline]
+static float4 sample(engine::bindless::SrvHandle handle, float2 uv_coord, engine::bindless::ESamplerType sampler_type)
+{
+    if (!is_valid(handle) || sampler_type >= engine::bindless::ESamplerType::_Count_)
+    {
+        return engine::bindless::INVALID_TEX_COLOR;
+    }
+    else
+    {
+        return engine::binding::bindless_srvs[NonUniformResourceIndex(handle.index)].Sample(
+            engine::binding::global_samplers[NonUniformResourceIndex((int)sampler_type)],
+            uv_coord
+        );
+    }
+}
+
+[ForceInline]
+static float4 sample_level(engine::bindless::SrvHandle handle, float2 uv_coord, engine::bindless::ESamplerType sampler_type, float level)
+{
+    if (!is_valid(handle) || sampler_type >= engine::bindless::ESamplerType::_Count_)
+    {
+        return engine::bindless::INVALID_TEX_COLOR;
+    }
+    else
+    {
+        return engine::binding::bindless_srvs[NonUniformResourceIndex(handle.index)].SampleLevel(
+            engine::binding::global_samplers[NonUniformResourceIndex((int)sampler_type)],
+            uv_coord,
+            level
+        );
+    }
+}
+
+[ForceInline]
+static bool is_valid(engine::bindless::SrvHandle handle)
+{
+    return handle.index != engine::bindless::INVALID_TEX_ID;
+}
+};

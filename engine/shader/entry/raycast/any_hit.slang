@@ -1,5 +1,5 @@
-#include "./payload.slangi"
-#include "lib/scene/material_access.slangi"
+#include "lib/engine/raycast/payload.slangi"
+#include "lib/engine/scene/material_access.slangi"
 
 /// raycast alpha cutout any-hit。
 ///

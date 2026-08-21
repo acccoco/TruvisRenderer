@@ -23,6 +23,7 @@ members = [
     "engine/app-frame/truvis-winit-app",
     # shader 绑定相关
     "engine/shader/truvis-shader-binding",
+    "engine/shader/truvis-shader-binding-codegen",
     "engine/shader/truvis-shader-build",
     # cxx 绑定相关
     "engine/cxx/truvis-assimp-binding",
@@ -31,6 +32,7 @@ members = [
     # app
     "app/app-kit",
     "app/app-render-passes",
+    "app/shader/truvis-app-shader-binding",
     "app/editor/bridge",
     "app/editor/server",
     "app/truvis",
@@ -75,10 +77,12 @@ truvis-winit-app = { path = "engine/app-frame/truvis-winit-app" }
 # app
 app-kit = { path = "app/app-kit" }
 app-render-passes = { path = "app/app-render-passes" }
+truvis-app-shader-binding = { path = "app/shader/truvis-app-shader-binding" }
 truvis-editor-bridge = { path = "app/editor/bridge" }
 truvis-editor-server = { path = "app/editor/server" }
 # shader
 truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
+truvis-shader-binding-codegen = { path = "engine/shader/truvis-shader-binding-codegen" }
 truvis-shader-build = { path = "engine/shader/truvis-shader-build" }
 # cxx
 truvis-assimp-binding = { path = "engine/cxx/truvis-assimp-binding" }

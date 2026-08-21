@@ -1,23 +1,23 @@
 //! Shader 编译工具
 //!
-//! 将指定目录下的 shader 入口文件编译为 SPIR-V 文件，输出到 `build/shader` 目录。
-//!
-//! 本 binary 只负责“发现入口文件、判断是否需要重新编译、调用具体 shader compiler、
-//! 维护增量 manifest”。具体的 glslc/dxc/slangc 参数归属在各 backend 模块中，shader 侧
-//! 结构体绑定仍由 `truvis-shader-binding` 负责，避免把编译产物生成和 Rust ABI 绑定生成混在一起。
+//! 按 `shader-packages.toml` 发现多个 shader package，将入口编译到带 package prefix 的
+//! SPIR-V 目录，并维护 package-aware 增量 manifest。
 
 mod common;
+mod dependency;
 mod glsl;
 mod hlsl;
 mod slang;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    io::ErrorKind,
+    path::{Component, Path, PathBuf},
     time::UNIX_EPOCH,
 };
 
 use common::{EnvPath, ShaderCompileTask, ShaderCompiler, ShaderCompilerType};
+use dependency::{ShaderDependencyValidator, ShaderSourceLayer, ShaderSourcePackage, ShaderSourceRoot};
 use glsl::GlslCompiler;
 use hlsl::HlslCompiler;
 use rayon::prelude::*;
@@ -26,17 +26,10 @@ use slang::SlangCompiler;
 use truvis_logs::{LogFilePath, TruvisLogger};
 use truvis_path::TruvisPath;
 
-// manifest schema 版本用于处理 JSON 字段结构变化；一旦结构变化到无法安全兼容旧文件，
-// 提升该版本即可让旧 manifest 自动失效，并触发下一轮完整输入判断。
-const MANIFEST_VERSION: u32 = 2;
-// 编译器参数属于 shader ABI 的隐性输入：即使 shader 源文件没有变化，debug info、matrix layout、
-// target-env 或 entrypoint 规则变化也会改变 SPIR-V 语义。用单独版本隔离这类“命令行契约”变更。
-const COMPILER_ARGS_VERSION: &str = "shader-compiler-args-v2";
+const MANIFEST_VERSION: u32 = 4;
+const COMPILER_ARGS_VERSION: &str = "shader-compiler-args-v4-depfile";
 
 /// 命令行只暴露最小控制面。
-///
-/// `shader-build` 通常由 `just shader` 调用，默认依赖 manifest 做增量判断；`--force`
-/// 是给调试 shader 编译器参数、清理坏缓存或验证全量编译链路时使用的逃生口。
 struct CliOptions {
     force: bool,
 }
@@ -56,106 +49,310 @@ impl CliOptions {
     }
 }
 
-/// `shader-build` 的路径上下文。
-///
-/// 路径转换集中在这里有两个目的：
-/// - manifest 中始终记录 workspace 相对路径，并统一使用 `/`，这样 JSON 不依赖 Windows 路径分隔符；
-/// - 需要访问真实文件系统时，再从 manifest 路径还原为当前 workspace 下的本地路径。
-///
-/// 这个类型只表达路径所有权与路径格式契约，不承担文件扫描、编译或 manifest 语义判断。
+/// shader 编译流程的路径上下文。
 struct ShaderBuildLayout {
     workspace_dir: PathBuf,
-    manifest_path: PathBuf,
+    output_dir: PathBuf,
+    dependency_dir: PathBuf,
+    state_manifest_path: PathBuf,
+    package_manifest_path: PathBuf,
 }
 
 impl ShaderBuildLayout {
     fn new() -> Self {
         let workspace_dir = TruvisPath::workspace_path();
-        let manifest_path = EnvPath::shader_build_path().join(".state").join("shader-build.json");
+        let output_dir = EnvPath::shader_build_path().to_path_buf();
         Self {
+            dependency_dir: output_dir.join(".deps"),
+            state_manifest_path: output_dir.join(".state").join("shader-build.json"),
+            package_manifest_path: workspace_dir.join("shader-packages.toml"),
             workspace_dir,
-            manifest_path,
+            output_dir,
         }
     }
 
-    fn manifest_path(&self) -> &Path {
-        &self.manifest_path
-    }
-
-    fn workspace_path_from_manifest(&self, relative_path: &str) -> PathBuf {
+    fn resolve_workspace_path(&self, relative_path: &str) -> PathBuf {
         self.workspace_dir.join(relative_path.replace('/', "\\"))
     }
 
-    /// 将文件路径转换为稳定的 manifest key。
-    ///
-    /// 这里故意不做 canonicalize：canonicalize 可能触发磁盘访问、解析 junction/symlink，
-    /// 也会把不存在的旧输出路径变成错误。manifest 只需要在当前 workspace 内稳定比较，
-    /// 所以使用词法上的 strip_prefix 更符合这个轻量 build helper 的职责。
     fn relative_slash_path(&self, path: &Path) -> String {
         path.strip_prefix(&self.workspace_dir).unwrap_or(path).to_string_lossy().replace('\\', "/")
     }
+
+    /// 旧 manifest 只能删除本工具输出目录内的文件。
+    fn managed_output_from_manifest(&self, relative_path: &str) -> Result<PathBuf, String> {
+        let path = self.resolve_workspace_path(relative_path);
+        if !path.starts_with(&self.output_dir) {
+            return Err(format!("拒绝删除 shader 输出目录外的 manifest 路径: {}", path.display()));
+        }
+        Ok(path)
+    }
 }
 
-/// shader 编译流程的协调者。
-///
-/// Runner 负责把“输入快照、增量判断、输出清理、并行编译、manifest 保存”按固定顺序串起来。
-/// 它不持有 compiler 进程或跨轮状态；每次运行都从文件系统和 manifest 重新构建决策，避免引入
-/// 常驻缓存导致的隐藏生命周期问题。
+#[derive(Clone, Debug, Deserialize)]
+struct ShaderPackageFile {
+    package: Vec<ShaderPackageConfig>,
+}
+
+/// 一个 shader source/binary owner 的声明。
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct ShaderPackageConfig {
+    id: String,
+    entry_root: String,
+    #[serde(default)]
+    include_roots: Vec<String>,
+    #[serde(default)]
+    shared_input_roots: Vec<String>,
+    #[serde(default)]
+    depends_on: Vec<String>,
+    output_prefix: String,
+}
+
+/// 已校验的 package 集合。
+struct ShaderPackageSet {
+    packages: Vec<ShaderPackageConfig>,
+}
+
+impl ShaderPackageSet {
+    fn load(layout: &ShaderBuildLayout) -> Result<Self, String> {
+        let content = std::fs::read_to_string(&layout.package_manifest_path).map_err(|err| {
+            format!("无法读取 shader package manifest {}: {err}", layout.package_manifest_path.display())
+        })?;
+        let mut file: ShaderPackageFile = toml::from_str(&content).map_err(|err| {
+            format!("无法解析 shader package manifest {}: {err}", layout.package_manifest_path.display())
+        })?;
+        file.package.sort_by(|left, right| left.id.cmp(&right.id));
+
+        let package_set = Self { packages: file.package };
+        package_set.validate(layout)?;
+        Ok(package_set)
+    }
+
+    fn validate(&self, layout: &ShaderBuildLayout) -> Result<(), String> {
+        if self.packages.is_empty() {
+            return Err("shader-packages.toml 至少需要一个 [[package]]".to_string());
+        }
+
+        let mut ids = BTreeSet::new();
+        let mut output_prefixes = BTreeSet::new();
+        for package in &self.packages {
+            if package.id.is_empty()
+                || !package.id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            {
+                return Err(format!("非法 shader package id: '{}'", package.id));
+            }
+            if !ids.insert(package.id.clone()) {
+                return Err(format!("重复 shader package id: '{}'", package.id));
+            }
+
+            Self::validate_relative_path("entry_root", &package.entry_root)?;
+            Self::validate_relative_path("output_prefix", &package.output_prefix)?;
+            for path in &package.include_roots {
+                Self::validate_relative_path("include_roots", path)?;
+            }
+            for path in &package.shared_input_roots {
+                Self::validate_relative_path("shared_input_roots", path)?;
+            }
+
+            if !output_prefixes.insert(package.output_prefix.clone()) {
+                return Err(format!("重复 shader output_prefix: '{}'", package.output_prefix));
+            }
+
+            Self::require_directory(layout, &package.entry_root, &package.id)?;
+            for path in package.include_roots.iter().chain(&package.shared_input_roots) {
+                Self::require_directory(layout, path, &package.id)?;
+            }
+        }
+
+        let dependency_map = self
+            .packages
+            .iter()
+            .map(|package| (package.id.clone(), package.depends_on.clone()))
+            .collect::<BTreeMap<_, _>>();
+        for package in &self.packages {
+            for dependency in &package.depends_on {
+                if dependency == &package.id {
+                    return Err(format!("shader package '{}' 不能依赖自身", package.id));
+                }
+                if !dependency_map.contains_key(dependency) {
+                    return Err(format!("shader package '{}' 依赖不存在的 package '{}'", package.id, dependency));
+                }
+            }
+        }
+
+        let mut visiting = BTreeSet::new();
+        let mut visited = BTreeSet::new();
+        for package in &self.packages {
+            Self::visit_dependencies(&package.id, &dependency_map, &mut visiting, &mut visited)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_relative_path(field: &str, value: &str) -> Result<(), String> {
+        if value.is_empty() {
+            return Err(format!("{field} 不能为空"));
+        }
+
+        let path = Path::new(value);
+        if path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
+        {
+            return Err(format!("{field} 必须是 workspace 内的词法相对路径: '{value}'"));
+        }
+        Ok(())
+    }
+
+    fn require_directory(layout: &ShaderBuildLayout, relative_path: &str, package_id: &str) -> Result<(), String> {
+        let path = layout.resolve_workspace_path(relative_path);
+        if !path.is_dir() {
+            return Err(format!("shader package '{}' 的目录不存在: {}", package_id, path.display()));
+        }
+        Ok(())
+    }
+
+    fn visit_dependencies(
+        package_id: &str,
+        dependency_map: &BTreeMap<String, Vec<String>>,
+        visiting: &mut BTreeSet<String>,
+        visited: &mut BTreeSet<String>,
+    ) -> Result<(), String> {
+        if visited.contains(package_id) {
+            return Ok(());
+        }
+        if !visiting.insert(package_id.to_string()) {
+            return Err(format!("shader package 依赖存在环，回到 '{package_id}'"));
+        }
+
+        for dependency in dependency_map.get(package_id).into_iter().flatten() {
+            Self::visit_dependencies(dependency, dependency_map, visiting, visited)?;
+        }
+
+        visiting.remove(package_id);
+        visited.insert(package_id.to_string());
+        Ok(())
+    }
+
+    fn expand_changed_dependents(&self, directly_changed: &BTreeSet<String>) -> BTreeSet<String> {
+        let mut changed = directly_changed.clone();
+        loop {
+            let mut added = false;
+            for package in &self.packages {
+                if changed.contains(&package.id) {
+                    continue;
+                }
+                if package.depends_on.iter().any(|dependency| changed.contains(dependency)) {
+                    changed.insert(package.id.clone());
+                    added = true;
+                }
+            }
+            if !added {
+                return changed;
+            }
+        }
+    }
+
+    /// 当前 package 与其传递依赖只暴露 shared inputs，不暴露任何其它 entry。
+    fn allowed_dependency_roots(&self, package: &ShaderPackageConfig, layout: &ShaderBuildLayout) -> Vec<PathBuf> {
+        let mut package_ids = BTreeSet::from([package.id.clone()]);
+        self.collect_dependency_ids(&package.id, &mut package_ids);
+
+        let mut roots = package_ids
+            .iter()
+            .flat_map(|package_id| {
+                self.packages
+                    .iter()
+                    .find(|candidate| &candidate.id == package_id)
+                    .expect("validated shader package disappeared")
+                    .shared_input_roots
+                    .iter()
+            })
+            .map(|path| layout.resolve_workspace_path(path))
+            .collect::<Vec<_>>();
+        roots.sort();
+        roots.dedup();
+        roots
+    }
+
+    fn collect_dependency_ids(&self, package_id: &str, collected: &mut BTreeSet<String>) {
+        let package = self
+            .packages
+            .iter()
+            .find(|candidate| candidate.id == package_id)
+            .expect("validated shader package disappeared");
+        for dependency in &package.depends_on {
+            if collected.insert(dependency.clone()) {
+                self.collect_dependency_ids(dependency, collected);
+            }
+        }
+    }
+}
+
+/// package-aware shader 构建协调者。
 struct ShaderBuildRunner {
     layout: ShaderBuildLayout,
+    packages: ShaderPackageSet,
+    dependency_validator: ShaderDependencyValidator,
     force: bool,
 }
 
 impl ShaderBuildRunner {
-    fn new(force: bool) -> Self {
-        Self {
-            layout: ShaderBuildLayout::new(),
+    fn new(force: bool) -> Result<Self, String> {
+        let layout = ShaderBuildLayout::new();
+        let packages = ShaderPackageSet::load(&layout)?;
+        let dependency_validator = ShaderDependencyValidator::new(&layout.workspace_dir)?;
+        Ok(Self {
+            layout,
+            packages,
+            dependency_validator,
             force,
-        }
+        })
     }
 
     fn run(&self) -> Result<(), String> {
-        // 这三条日志是 shader 编译问题排查的第一入口：include、entry 和 output 任一目录解析错误，
-        // 都会直接表现为找不到输入或运行时加载不到 SPIR-V。
-        log::info!("Shader api path: {:?}", EnvPath::shader_api_path());
-        log::info!("Shader entry path: {:?}", EnvPath::shader_entry_path());
-        log::info!("Shader output path: {:?}", EnvPath::shader_build_path());
+        log::info!("Shader package manifest: {:?}", self.layout.package_manifest_path);
+        log::info!("Shader output path: {:?}", self.layout.output_dir);
+        for package in &self.packages.packages {
+            log::info!(
+                "Shader package: id={} entry={} output={}",
+                package.id,
+                package.entry_root,
+                package.output_prefix
+            );
+        }
 
-        let previous_manifest = ShaderBuildManifest::load(self.layout.manifest_path())?;
+        self.validate_source_dependencies()?;
+
+        let previous_state = LoadedShaderBuildManifest::load(&self.layout.state_manifest_path)?;
+        let previous_manifest = previous_state.current.as_ref();
+        let package_states = self.collect_package_states()?;
+        let directly_changed = self.directly_changed_packages(previous_manifest, &package_states);
+        let changed_packages = self.packages.expand_changed_dependents(&directly_changed);
+
         let tasks = self.collect_tasks();
-        let shared_inputs = self.collect_shared_inputs()?;
-        // entry shader 自身可以按文件粒度判断；api/lib 和 entry 下的 include 文件则作为
-        // 全局 shared inputs 处理。当前工具不解析 Slang/GLSL include graph，因此 shared
-        // inputs 一旦变化，就保守重编所有入口，避免少编某个间接依赖它的 shader。
-        let shared_inputs_changed =
-            previous_manifest.as_ref().is_none_or(|manifest| manifest.shared_inputs != shared_inputs);
+        self.remove_stale_outputs(&previous_state.managed_outputs, &tasks)?;
+        self.remove_stale_depfiles(&tasks)?;
+        self.prune_empty_output_directories()?;
 
-        self.remove_stale_outputs(previous_manifest.as_ref(), &tasks)?;
-
-        // task_map 以入口 shader 路径为 key，而不是以输出路径为 key。入口文件才是编译任务的身份；
-        // 输出路径只是当前命名规则推导出的产物位置，未来如果输出扩展名规则调整，应让任务本身失效。
-        let previous_tasks = previous_manifest.as_ref().map(ShaderBuildManifest::task_map).unwrap_or_default();
-
-        let mut next_task_manifests = Vec::new();
+        let previous_tasks = previous_manifest.map(ShaderBuildManifest::task_map).unwrap_or_default();
+        let total_task_count = tasks.len();
+        let mut next_task_manifests = Vec::with_capacity(total_task_count);
         let mut tasks_to_compile = Vec::new();
+
         for task in tasks {
             let task_manifest = ShaderTaskManifest::from_task(&self.layout, &task)?;
-            let previous_task = previous_tasks.get(&task_manifest.shader_path);
-            let output_path = self.layout.workspace_path_from_manifest(&task_manifest.output_path);
-            // 单个入口的增量判断只看该入口文件、编译阶段、编译器类型、输出是否存在，
-            // 以及 shared inputs 是否整体变化。这样修改一个独立 entry 时能只重编它；
-            // 修改 shared/include 时则走保守全量入口重编，优先保证 ABI 与 SPIR-V 一致。
+            let previous_task = previous_tasks.get(&task_manifest.task_id);
+            let output_path = self.layout.resolve_workspace_path(&task_manifest.output_path);
             let needs_compile = self.force
-                || shared_inputs_changed
+                || changed_packages.contains(&task.package_id)
                 || previous_task.is_none_or(|old_task| old_task != &task_manifest)
-                || !output_path.is_file();
+                || !output_path.is_file()
+                || !task.depfile_path.is_file();
 
             if needs_compile {
-                tasks_to_compile.push(task.clone());
+                tasks_to_compile.push(task);
             }
-
-            // 即使本轮不需要编译，也要写入下一份 manifest。这样 manifest 始终描述“当前文件树”，
-            // 不会因为一次跳过编译而保留已经被删除或改名的旧任务。
             next_task_manifests.push(task_manifest);
         }
 
@@ -163,76 +360,174 @@ impl ShaderBuildRunner {
 
         ShaderBuildManifest {
             version: MANIFEST_VERSION,
-            shared_inputs,
+            packages: package_states,
             tasks: next_task_manifests,
         }
-        .save(self.layout.manifest_path())?;
+        .save(&self.layout.state_manifest_path)?;
 
         log::info!(
             "Shader compilation completed. compiled={}, skipped={}",
             tasks_to_compile.len(),
-            previous_tasks.len().saturating_sub(tasks_to_compile.len())
+            total_task_count.saturating_sub(tasks_to_compile.len())
         );
         Ok(())
     }
 
-    /// 只收集可以直接交给具体 compiler 的入口 shader。
-    ///
-    /// `ShaderCompileTask::new` 承担“文件名到 stage/compiler/output”的项目约定判断；这里保持扫描逻辑
-    /// 纯粹，避免在 runner 中复制后缀解析规则。
     fn collect_tasks(&self) -> Vec<ShaderCompileTask> {
-        let mut tasks = walkdir::WalkDir::new(EnvPath::shader_entry_path())
-            .into_iter()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().is_file())
-            .filter_map(|entry| ShaderCompileTask::new(&entry))
-            .collect::<Vec<_>>();
-        tasks.sort_by(|left, right| left.shader_path.cmp(&right.shader_path));
+        let mut tasks = Vec::new();
+        for package in &self.packages.packages {
+            let entry_root = self.layout.resolve_workspace_path(&package.entry_root);
+            let include_roots =
+                package.include_roots.iter().map(|path| self.layout.resolve_workspace_path(path)).collect::<Vec<_>>();
+            let allowed_dependency_roots = self.packages.allowed_dependency_roots(package, &self.layout);
+            let output_prefix = Path::new(&package.output_prefix);
+
+            tasks.extend(
+                walkdir::WalkDir::new(&entry_root)
+                    .into_iter()
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.path().is_file())
+                    .filter_map(|entry| {
+                        ShaderCompileTask::new(
+                            &package.id,
+                            &entry_root,
+                            &self.layout.output_dir,
+                            &self.layout.dependency_dir,
+                            output_prefix,
+                            &include_roots,
+                            &allowed_dependency_roots,
+                            &entry,
+                        )
+                    }),
+            );
+        }
+
+        tasks.sort_by(|left, right| {
+            (&left.package_id, &left.entry_relative_path).cmp(&(&right.package_id, &right.entry_relative_path))
+        });
         tasks
     }
 
-    /// 收集会影响多个入口的共享输入。
-    ///
-    /// 当前工具没有解析 include graph，因此共享输入采用保守模型：`api/`、`lib/` 和 entry 下不能直接
-    /// 编译的 include-like 文件任一变化，都让所有入口重新编译。这样牺牲少量增量精度，换取 shader ABI
-    /// 和 SPIR-V 产物不会因为漏掉间接依赖而失配。
-    fn collect_shared_inputs(&self) -> Result<Vec<FileStamp>, String> {
-        let mut inputs = Vec::new();
+    fn validate_source_dependencies(&self) -> Result<(), String> {
+        let packages = self
+            .packages
+            .packages
+            .iter()
+            .map(|package| {
+                let mut source_roots = package
+                    .shared_input_roots
+                    .iter()
+                    .map(|path| {
+                        let layer = if path.contains("/abi/") {
+                            ShaderSourceLayer::Abi
+                        } else if path.contains("/lib/") {
+                            ShaderSourceLayer::Lib
+                        } else {
+                            return Err(format!(
+                                "shader package '{}' 的 shared_input_root 必须属于 abi 或 lib: '{}'",
+                                package.id, path
+                            ));
+                        };
+                        Ok(ShaderSourceRoot {
+                            path: self.layout.resolve_workspace_path(path),
+                            layer,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                source_roots.push(ShaderSourceRoot {
+                    path: self.layout.resolve_workspace_path(&package.entry_root),
+                    layer: ShaderSourceLayer::Entry,
+                });
 
-        for root in [
-            EnvPath::shader_api_path().to_path_buf(),
-            EnvPath::shader_root_path().join("lib"),
-            EnvPath::shader_entry_path().to_path_buf(),
-        ] {
-            if !root.exists() {
-                continue;
-            }
+                Ok(ShaderSourcePackage {
+                    package_id: package.id.clone(),
+                    include_roots: package
+                        .include_roots
+                        .iter()
+                        .map(|path| self.layout.resolve_workspace_path(path))
+                        .collect(),
+                    source_roots,
+                    allowed_dependency_roots: self.packages.allowed_dependency_roots(package, &self.layout),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
 
+        self.dependency_validator.validate_sources(&packages)
+    }
+
+    fn collect_package_states(&self) -> Result<Vec<ShaderPackageState>, String> {
+        let mut states = Vec::with_capacity(self.packages.packages.len());
+        for package in &self.packages.packages {
+            states.push(ShaderPackageState {
+                config: package.clone(),
+                shared_inputs: self.collect_shared_inputs(package)?,
+            });
+        }
+        states.sort_by(|left, right| left.config.id.cmp(&right.config.id));
+        Ok(states)
+    }
+
+    /// package 的本地 ABI/lib/include 变化只直接失效该 package；依赖传播在下一步统一完成。
+    fn collect_shared_inputs(&self, package: &ShaderPackageConfig) -> Result<Vec<FileStamp>, String> {
+        let entry_root = self.layout.resolve_workspace_path(&package.entry_root);
+        let include_roots =
+            package.include_roots.iter().map(|path| self.layout.resolve_workspace_path(path)).collect::<Vec<_>>();
+        let allowed_dependency_roots = self.packages.allowed_dependency_roots(package, &self.layout);
+        let output_prefix = Path::new(&package.output_prefix);
+        let mut inputs = BTreeMap::new();
+
+        for root in package
+            .shared_input_roots
+            .iter()
+            .map(|path| self.layout.resolve_workspace_path(path))
+            .chain(std::iter::once(entry_root.clone()))
+        {
             for entry in walkdir::WalkDir::new(&root).into_iter().filter_map(Result::ok) {
                 if !entry.path().is_file() {
                     continue;
                 }
 
-                // entry 下无法直接编译的 .slangi / .inc.glsl / works/*.glsl 等文件通常作为 include
-                // 被某个入口引用。解析完整 include graph 需要理解 Slang/GLSL 各自的 include
-                // 语义和编译器搜索路径，复杂度不值得放到这个轻量 build helper 中；因此这类
-                // 文件变化时统一触发保守重编，用少量额外编译时间换取不会漏编。
-                if entry.path().starts_with(EnvPath::shader_entry_path()) && ShaderCompileTask::new(&entry).is_some() {
+                if entry.path().starts_with(&entry_root)
+                    && ShaderCompileTask::new(
+                        &package.id,
+                        &entry_root,
+                        &self.layout.output_dir,
+                        &self.layout.dependency_dir,
+                        output_prefix,
+                        &include_roots,
+                        &allowed_dependency_roots,
+                        &entry,
+                    )
+                    .is_some()
+                {
                     continue;
                 }
 
-                inputs.push(FileStamp::from_path(&self.layout, entry.path())?);
+                let stamp = FileStamp::from_path(&self.layout, entry.path())?;
+                inputs.insert(stamp.path.clone(), stamp);
             }
         }
 
-        inputs.sort_by(|left, right| left.path.cmp(&right.path));
-        Ok(inputs)
+        Ok(inputs.into_values().collect())
     }
 
-    /// 并行编译本轮失效的入口 shader。
-    ///
-    /// 每个任务独立创建输出目录并调用 backend compiler；错误统一收集后再返回，便于一次运行看到
-    /// 多个 shader 的失败信息。这里不让单个任务 panic 终止整个 rayon worker 池。
+    fn directly_changed_packages(
+        &self,
+        previous_manifest: Option<&ShaderBuildManifest>,
+        current_states: &[ShaderPackageState],
+    ) -> BTreeSet<String> {
+        let Some(previous_manifest) = previous_manifest else {
+            return current_states.iter().map(|state| state.config.id.clone()).collect();
+        };
+        let previous_states = previous_manifest.package_map();
+
+        current_states
+            .iter()
+            .filter(|state| previous_states.get(&state.config.id).is_none_or(|old_state| *old_state != *state))
+            .map(|state| state.config.id.clone())
+            .collect()
+    }
+
     fn compile_tasks(&self, tasks: &[ShaderCompileTask]) -> Result<(), String> {
         if tasks.is_empty() {
             log::info!("Shader inputs unchanged; skip shader compiler invocations.");
@@ -242,8 +537,7 @@ impl ShaderBuildRunner {
         let errors = tasks
             .par_iter()
             .filter_map(|task| {
-                log::info!("Compiling shader: {:?}", task.shader_path);
-
+                log::info!("Compiling shader: package={} source={:?}", task.package_id, task.shader_path);
                 self.compile_task(task).err()
             })
             .collect::<Vec<_>>();
@@ -251,10 +545,6 @@ impl ShaderBuildRunner {
         if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
     }
 
-    /// 编译单个入口 shader。
-    ///
-    /// 输出目录创建放在 runner 中，而不是各 backend 中，是因为目录生命周期与构建产物布局有关；
-    /// backend 只应该关心如何把一个已定义好的任务交给 glslc/dxc/slangc。
     fn compile_task(&self, task: &ShaderCompileTask) -> Result<(), String> {
         if let Some(parent) = task.output_path.parent()
             && let Err(err) = std::fs::create_dir_all(parent)
@@ -262,35 +552,49 @@ impl ShaderBuildRunner {
             return Err(format!("无法创建 shader 输出目录 {}: {err}", parent.display()));
         }
 
-        let compiler = Self::compiler_for(task.compiler_type);
-        compiler.compile(task)
+        if let Some(parent) = task.depfile_path.parent()
+            && let Err(err) = std::fs::create_dir_all(parent)
+        {
+            return Err(format!("无法创建 shader depfile 目录 {}: {err}", parent.display()));
+        }
+        if task.depfile_path.is_file() {
+            std::fs::remove_file(&task.depfile_path)
+                .map_err(|err| format!("无法删除旧 shader depfile {}: {err}", task.depfile_path.display()))?;
+        }
+
+        Self::compiler_for(task.compiler_type).compile(task)?;
+        if let Err(err) = self.dependency_validator.validate_compiler_dependencies(task) {
+            if task.output_path.is_file()
+                && let Err(remove_err) = std::fs::remove_file(&task.output_path)
+            {
+                return Err(format!(
+                    "{err}\n同时无法删除依赖越界的 shader 输出 {}: {remove_err}",
+                    task.output_path.display()
+                ));
+            }
+            return Err(err);
+        }
+        Ok(())
     }
 
-    /// 删除上一轮 manifest 管理过、但当前任务集中已经不存在的输出文件。
-    ///
-    /// 删除边界必须以旧 manifest 为准：只有曾被本工具声明管理过的产物才会被清理，避免把
-    /// `build/shader` 中用户临时放置的调试文件或其它工具产物误删。
+    /// stale output 只按旧 manifest 声明删除，并额外限制在 build/shader 下。
     fn remove_stale_outputs(
         &self,
-        previous_manifest: Option<&ShaderBuildManifest>,
+        previous_outputs: &[String],
         current_tasks: &[ShaderCompileTask],
     ) -> Result<(), String> {
-        let Some(previous_manifest) = previous_manifest else {
-            return Ok(());
-        };
-
         let current_outputs = current_tasks
             .iter()
             .map(|task| self.layout.relative_slash_path(&task.output_path))
             .collect::<BTreeSet<_>>();
 
-        for old_task in &previous_manifest.tasks {
-            if current_outputs.contains(&old_task.output_path) {
+        for old_output in previous_outputs {
+            if current_outputs.contains(old_output) {
                 continue;
             }
 
-            let output_path = self.layout.workspace_path_from_manifest(&old_task.output_path);
-            if output_path.exists() {
+            let output_path = self.layout.managed_output_from_manifest(old_output)?;
+            if output_path.is_file() {
                 std::fs::remove_file(&output_path)
                     .map_err(|err| format!("无法删除旧 shader 输出 {}: {err}", output_path.display()))?;
                 log::info!("Removed stale shader output: {}", output_path.display());
@@ -300,7 +604,48 @@ impl ShaderBuildRunner {
         Ok(())
     }
 
-    /// 编译器 backend 的归属保持在 runner 内部，避免让 common.rs 反向依赖具体 backend 模块。
+    /// `.deps` 完全由本工具管理；不再对应当前 task 的依赖产物可以安全删除。
+    fn remove_stale_depfiles(&self, current_tasks: &[ShaderCompileTask]) -> Result<(), String> {
+        if !self.layout.dependency_dir.is_dir() {
+            return Ok(());
+        }
+        let current_depfiles = current_tasks.iter().map(|task| task.depfile_path.clone()).collect::<BTreeSet<_>>();
+        for entry in walkdir::WalkDir::new(&self.layout.dependency_dir).into_iter().filter_map(Result::ok) {
+            let path = entry.path();
+            if path.is_file() && !current_depfiles.contains(path) {
+                std::fs::remove_file(path)
+                    .map_err(|err| format!("无法删除旧 shader depfile {}: {err}", path.display()))?;
+                log::info!("Removed stale shader dependency artifact: {}", path.display());
+            }
+        }
+        Ok(())
+    }
+
+    /// build/shader 是工具管理目录；只删除空目录，并永远停在输出根目录以内。
+    fn prune_empty_output_directories(&self) -> Result<(), String> {
+        if !self.layout.output_dir.is_dir() {
+            return Ok(());
+        }
+        for entry in walkdir::WalkDir::new(&self.layout.output_dir)
+            .min_depth(1)
+            .contents_first(true)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+        {
+            let path = entry.path();
+            if !path.starts_with(&self.layout.output_dir) {
+                return Err(format!("拒绝清理 shader 输出目录外的空目录: {}", path.display()));
+            }
+            match std::fs::remove_dir(path) {
+                Ok(()) => log::info!("Removed empty shader output directory: {}", path.display()),
+                Err(err) if matches!(err.kind(), ErrorKind::DirectoryNotEmpty | ErrorKind::NotFound) => {}
+                Err(err) => return Err(format!("无法清理空 shader 输出目录 {}: {err}", path.display())),
+            }
+        }
+        Ok(())
+    }
+
     fn compiler_for(compiler_type: ShaderCompilerType) -> Box<dyn ShaderCompiler> {
         match compiler_type {
             ShaderCompilerType::Glsl => Box::new(GlslCompiler::new()),
@@ -310,52 +655,28 @@ impl ShaderBuildRunner {
     }
 }
 
-/// 一次 `shader-build` 运行持久化到磁盘的增量状态。
-///
-/// manifest 不试图成为完整依赖图，只保存“共享输入快照 + 每个入口任务快照”。这和当前工具的职责匹配：
-/// 入口文件可以细粒度增量，shared/include 变更则保守全量重编。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ShaderBuildManifest {
     version: u32,
-    shared_inputs: Vec<FileStamp>,
+    packages: Vec<ShaderPackageState>,
     tasks: Vec<ShaderTaskManifest>,
 }
 
 impl ShaderBuildManifest {
-    /// 读取上一轮 manifest。
-    ///
-    /// 版本不匹配时返回 `None` 而不是报错，表示旧状态不再可信但不阻止构建继续；JSON 损坏或读文件失败
-    /// 则返回错误，因为这通常代表磁盘状态或工具写入流程异常，需要显式暴露。
-    fn load(path: &Path) -> Result<Option<Self>, String> {
-        if !path.is_file() {
-            return Ok(None);
-        }
-
-        let content = std::fs::read_to_string(path)
-            .map_err(|err| format!("无法读取 shader manifest {}: {err}", path.display()))?;
-        let manifest: Self = serde_json::from_str(&content)
-            .map_err(|err| format!("无法解析 shader manifest {}: {err}", path.display()))?;
-        if manifest.version == MANIFEST_VERSION { Ok(Some(manifest)) } else { Ok(None) }
-    }
-
-    /// 保存当前 manifest。
-    ///
-    /// 写入前比较内容，避免 no-op 构建反复刷新 `.state/shader-build.json` 的修改时间，从而干扰
-    /// 开发者判断“这次构建是否真的改变了状态”。
     fn save(&self, path: &Path) -> Result<(), String> {
         let content = serde_json::to_string_pretty(self)
             .map_err(|err| format!("无法序列化 shader manifest {}: {err}", path.display()))?;
         Self::write_if_changed(path, content.as_bytes())
     }
 
-    fn task_map(&self) -> BTreeMap<String, ShaderTaskManifest> {
-        self.tasks.iter().map(|task| (task.shader_path.clone(), task.clone())).collect::<BTreeMap<_, _>>()
+    fn package_map(&self) -> BTreeMap<String, &ShaderPackageState> {
+        self.packages.iter().map(|state| (state.config.id.clone(), state)).collect()
     }
 
-    /// 原子性不是这里的目标，少写才是目标。
-    ///
-    /// shader manifest 是可重建缓存；如果写入失败，下一轮可以通过 `--force` 或删除 `.state` 恢复。
-    /// 因此这里优先保持实现简单，只保证写入前创建父目录并在内容不变时跳过写盘。
+    fn task_map(&self) -> BTreeMap<String, ShaderTaskManifest> {
+        self.tasks.iter().map(|task| (task.task_id.clone(), task.clone())).collect()
+    }
+
     fn write_if_changed(path: &Path, content: &[u8]) -> Result<(), String> {
         if path.is_file() {
             let old_content =
@@ -371,15 +692,64 @@ impl ShaderBuildManifest {
     }
 }
 
-/// 单个入口 shader 的增量快照。
-///
-/// 每个入口的 manifest 不只记录源文件时间戳，也记录 stage、compiler 类型和参数版本。这些字段是
-/// shader ABI 的隐性输入：未来如果调整 slangc/dxc/glslc 参数，只需提升 `COMPILER_ARGS_VERSION`，
-/// 就能让旧 manifest 失效，避免继续复用旧 SPIR-V。
+/// 版本变化时仍保留旧 manifest 声明过的输出集合，确保目录重排不会遗留幽灵 SPIR-V。
+struct LoadedShaderBuildManifest {
+    current: Option<ShaderBuildManifest>,
+    managed_outputs: Vec<String>,
+}
+
+impl LoadedShaderBuildManifest {
+    fn load(path: &Path) -> Result<Self, String> {
+        if !path.is_file() {
+            return Ok(Self {
+                current: None,
+                managed_outputs: Vec::new(),
+            });
+        }
+
+        let content = std::fs::read_to_string(path)
+            .map_err(|err| format!("无法读取 shader manifest {}: {err}", path.display()))?;
+        let value: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|err| format!("无法解析 shader manifest {}: {err}", path.display()))?;
+        let managed_outputs = value
+            .get("tasks")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|task| task.get("output_path").and_then(serde_json::Value::as_str))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let version = value.get("version").and_then(serde_json::Value::as_u64);
+        let current = if version == Some(u64::from(MANIFEST_VERSION)) {
+            Some(
+                serde_json::from_value(value)
+                    .map_err(|err| format!("无法解析当前 shader manifest {}: {err}", path.display()))?,
+            )
+        } else {
+            None
+        };
+
+        Ok(Self {
+            current,
+            managed_outputs,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct ShaderPackageState {
+    config: ShaderPackageConfig,
+    shared_inputs: Vec<FileStamp>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ShaderTaskManifest {
+    task_id: String,
+    package_id: String,
+    entry_relative_path: String,
     shader_path: String,
     output_path: String,
+    dependency_path: String,
     shader_input: FileStamp,
     shader_stage: String,
     compiler_type: String,
@@ -387,14 +757,15 @@ struct ShaderTaskManifest {
 }
 
 impl ShaderTaskManifest {
-    /// 从编译任务生成可持久化快照。
-    ///
-    /// 这里保存的是用于判断“任务语义是否变化”的最小集合；不保存完整命令行，避免 manifest
-    /// 和 backend 参数实现重复。参数变化统一通过 `COMPILER_ARGS_VERSION` 表达。
     fn from_task(layout: &ShaderBuildLayout, task: &ShaderCompileTask) -> Result<Self, String> {
+        let entry_relative_path = task.entry_relative_path.to_string_lossy().replace('\\', "/");
         Ok(Self {
+            task_id: format!("{}/{}", task.package_id, entry_relative_path),
+            package_id: task.package_id.clone(),
+            entry_relative_path,
             shader_path: layout.relative_slash_path(&task.shader_path),
             output_path: layout.relative_slash_path(&task.output_path),
+            dependency_path: layout.relative_slash_path(&task.depfile_path),
             shader_input: FileStamp::from_path(layout, &task.shader_path)?,
             shader_stage: format!("{:?}", task.shader_stage),
             compiler_type: format!("{:?}", task.compiler_type),
@@ -403,11 +774,6 @@ impl ShaderTaskManifest {
     }
 }
 
-/// 文件内容变化的轻量判定信息。
-///
-/// 这里使用路径、长度和修改时间，而不是读取文件 hash：shader build 是开发期工具，输入数量和文件体积
-/// 都不大，但每轮读取全部内容仍然没有必要。mtime 精度不足或外部工具异常保留时间戳时，可用 `--force`
-/// 绕过该轻量判定。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 struct FileStamp {
     path: String,
@@ -416,10 +782,6 @@ struct FileStamp {
 }
 
 impl FileStamp {
-    /// 为 manifest 捕获一个文件快照。
-    ///
-    /// 路径通过 `ShaderBuildLayout` 统一转成 workspace 相对 `/` 形式，保证排序和 JSON diff 在 Windows
-    /// 环境下也稳定可读。
     fn from_path(layout: &ShaderBuildLayout, path: &Path) -> Result<Self, String> {
         let metadata =
             std::fs::metadata(path).map_err(|err| format!("无法读取文件元数据 {}: {err}", path.display()))?;
@@ -430,10 +792,6 @@ impl FileStamp {
         })
     }
 
-    /// 将平台文件时间转换为 manifest 可序列化的毫秒值。
-    ///
-    /// 如果文件系统返回早于 UNIX_EPOCH 的时间，使用默认值兜底；这是缓存失效判断，不参与运行时渲染
-    /// 语义，因此宁可让该文件看起来“很旧”，也不因为异常时间戳中断整个构建。
     fn modified_ms(metadata: &std::fs::Metadata) -> Result<u64, String> {
         let modified = metadata.modified().map_err(|err| format!("无法读取文件修改时间: {err}"))?;
         let millis = modified.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
@@ -442,9 +800,8 @@ impl FileStamp {
 }
 
 fn main() -> Result<(), String> {
-    // 日志文件放在 temp 目录，避免 shader build 作为开发工具运行时污染源码树或 build/shader 产物目录。
     TruvisLogger::init_with_file(LogFilePath::current_exe(TruvisPath::temp_dir()));
 
     let options = CliOptions::parse()?;
-    ShaderBuildRunner::new(options.force).run()
+    ShaderBuildRunner::new(options.force)?.run()
 }

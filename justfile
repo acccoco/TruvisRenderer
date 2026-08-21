@@ -36,13 +36,13 @@ editor-web-dev: _editor-web-types
 [group('2 资源生成与构建')]
 shader:
     cargo run --bin shader-build
-    cargo build -p truvis-shader-binding
+    cargo build -p truvis-shader-binding -p truvis-app-shader-binding
 
 # 强制重新编译全部 shader 并更新 Rust 绑定
 [group('2 资源生成与构建')]
 shader-force:
     cargo run --bin shader-build -- --force
-    cargo build -p truvis-shader-binding
+    cargo build -p truvis-shader-binding -p truvis-app-shader-binding
 
 # 增量准备 Debug CXX 产物，供 dev cargo run / just truvis 使用
 [group('2 资源生成与构建')]

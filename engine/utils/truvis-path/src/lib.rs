@@ -27,10 +27,22 @@ struct MapConfig {
     dirs: Dirs,
 }
 
+#[derive(Debug, Deserialize)]
+struct ShaderPackageFile {
+    package: Vec<ShaderPackagePath>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ShaderPackagePath {
+    id: String,
+    output_prefix: String,
+}
+
 // 编译期嵌入 workspace 根目录（由 build.rs 注入）
 const WORKSPACE_ROOT: &str = env!("TRUVIS_WORKSPACE_ROOT");
 
 static CONFIG: OnceLock<MapConfig> = OnceLock::new();
+static SHADER_PACKAGES: OnceLock<ShaderPackageFile> = OnceLock::new();
 
 fn config() -> &'static MapConfig {
     CONFIG.get_or_init(|| {
@@ -38,6 +50,15 @@ fn config() -> &'static MapConfig {
         let content =
             fs::read_to_string(&map_path).unwrap_or_else(|e| panic!("无法读取 map.toml（{map_path:?}）: {e}"));
         toml::from_str(&content).unwrap_or_else(|e| panic!("map.toml 解析失败: {e}"))
+    })
+}
+
+fn shader_packages() -> &'static ShaderPackageFile {
+    SHADER_PACKAGES.get_or_init(|| {
+        let manifest_path = Path::new(WORKSPACE_ROOT).join("shader-packages.toml");
+        let content = fs::read_to_string(&manifest_path)
+            .unwrap_or_else(|e| panic!("无法读取 shader-packages.toml（{manifest_path:?}）: {e}"));
+        toml::from_str(&content).unwrap_or_else(|e| panic!("shader-packages.toml 解析失败: {e}"))
     })
 }
 
@@ -50,7 +71,8 @@ fn config() -> &'static MapConfig {
 /// ```ignore
 /// let model   = TruvisPath::assets("sponza.fbx");
 /// let texture = TruvisPath::resources("sky.jpg"); // assets/resources/sky.jpg
-/// let spv     = TruvisPath::shader_build_spv("realtime_rt/raygen.slang"); // build/shader/realtime_rt/raygen.slang.spv
+/// let spv = TruvisPath::shader_build_spv("app", "realtime_rt/raygen.slang");
+/// // build/shader/app/realtime_rt/raygen.slang.spv
 /// ```
 pub struct TruvisPath;
 
@@ -182,18 +204,25 @@ impl TruvisPath {
         Self::target().join("bindings")
     }
 
-    /// 编译后的 SPIR-V 路径：`build/shader/<filename>.spv`
-    pub fn shader_build_spv(filename: &str) -> String {
-        let path = Self::shader_build_dir().join(filename);
+    /// 按 package id 解析编译后的 SPIR-V 路径。
+    pub fn shader_build_spv(package_id: &str, filename: &str) -> String {
+        let output_prefix = shader_packages()
+            .package
+            .iter()
+            .find(|package| package.id == package_id)
+            .unwrap_or_else(|| panic!("未知 shader package id: {package_id}"))
+            .output_prefix
+            .as_str();
+        let path = Self::shader_build_dir().join(output_prefix).join(filename);
         let mut s = path.to_str().unwrap().to_string();
         s.push_str(".spv");
         s
     }
 
-    /// 编译后的 SPIR-V 路径（兼容旧名称）
+    /// 编译后的 SPIR-V 路径（字符串形式）。
     #[inline]
-    pub fn shader_build_path_str(filename: &str) -> String {
-        Self::shader_build_spv(filename)
+    pub fn shader_build_path_str(package_id: &str, filename: &str) -> String {
+        Self::shader_build_spv(package_id, filename)
     }
 
     /// cxx 根目录（`engine/cxx/`）

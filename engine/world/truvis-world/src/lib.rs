@@ -239,17 +239,17 @@ impl World {
     }
 
     /// 注册 point light。
-    pub fn register_point_light(&mut self, light: gpu::light::PointLight) -> LightHandle {
+    pub fn register_point_light(&mut self, light: gpu::engine::light::PointLight) -> LightHandle {
         self.scene.register_point_light(light)
     }
 
     /// 注册 spot light。
-    pub fn register_spot_light(&mut self, light: gpu::light::SpotLight) -> LightHandle {
+    pub fn register_spot_light(&mut self, light: gpu::engine::light::SpotLight) -> LightHandle {
         self.scene.register_spot_light(light)
     }
 
     /// 注册 area light。
-    pub fn register_area_light(&mut self, light: gpu::light::AreaLight) -> LightHandle {
+    pub fn register_area_light(&mut self, light: gpu::engine::light::AreaLight) -> LightHandle {
         self.scene.register_area_light(light)
     }
 }

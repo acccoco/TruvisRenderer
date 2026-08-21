@@ -1,0 +1,216 @@
+/// @file raygen_view.slangi
+/// @brief raygen 的 view、depth 与 motion-vector 相关计算。
+
+#pragma once
+
+#include "lib/app/realtime_rt/payload.slangi"
+#include "lib/app/realtime_rt/gbuffer.slangi"
+#include "lib/app/realtime_rt/raygen_material.slangi"
+#include "lib/engine/scene/geometry_eval.slangi"
+#include "lib/engine/scene/material_access.slangi"
+#include "lib/engine/scene/scene_access.slangi"
+
+struct RtRaygenView
+{
+    /// 生成 primary camera ray。
+    ///
+    /// temporal jitter 只影响当前帧 primary ray；`engine::binding::per_frame_data.projection / prev_projection`
+    /// 保持无 jitter，保证 motion vector 语义稳定为 previous_pixel - current_pixel。
+    static RayDesc camera_ray(uint2 thread_id)
+    {
+        const float2 pixel_center = float2(thread_id) + float2(0.5f, 0.5f) + engine::binding::per_frame_data.temporal_jitter_px;
+        const float2 in_uv = pixel_center / float2(DispatchRaysDimensions().xy);
+        const float4 target_in_view = mul(
+            engine::binding::per_frame_data.inv_projection,
+            float4(in_uv.x * 2.0 - 1.0, 1.0 - in_uv.y * 2.0, 1.0, 1.0)
+        );
+        const float4 direction = mul(engine::binding::per_frame_data.inv_view, float4(normalize(target_in_view.xyz), 0.0));
+
+        RayDesc ray;
+        ray.Origin = engine::binding::per_frame_data.camera_pos;
+        ray.Direction = direction.xyz;
+        ray.TMin = 0.001f;
+        ray.TMax = 10000.0f;
+        return ray;
+    }
+
+    /// DLSS SR 使用 projection 后的 device depth；不要与 GBufferB.w 中的 ray hit_t 混用。
+    static float device_depth(float3 world_position)
+    {
+        const float4 view_position = mul(engine::binding::per_frame_data.view, float4(world_position, 1.0f));
+        const float4 clip_position = mul(engine::binding::per_frame_data.projection, view_position);
+        return saturate(clip_position.z / clip_position.w);
+    }
+
+    static bool is_projectable_clip(float4 clip_position)
+    {
+        // w 接近 0 表示点不可稳定投影到屏幕，motion vector 回退为 0 更安全。
+        return abs(clip_position.w) > 1e-6f;
+    }
+
+    static float2 clip_to_pixel(float4 clip_position)
+    {
+        // Vulkan NDC y 向上，纹理/像素坐标 y 向下，因此这里做 0.5 - ndc.y * 0.5 的翻转。
+        const float2 ndc = clip_position.xy / clip_position.w;
+        const float2 uv = float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f);
+        return uv * engine::binding::per_frame_data.resolution;
+    }
+
+    static float4 project_world_to_clip(float3 world_position, float4x4 view, float4x4 projection)
+    {
+        const float4 view_position = mul(view, float4(world_position, 1.0f));
+        return mul(projection, view_position);
+    }
+
+    /// 计算 DLSS 使用的 pixel-space 2D motion vector。
+    ///
+    /// 方向约定为“当前像素回溯到上一帧位置”，即 previous_pixel - current_pixel。
+    static float2 motion_vector_pixels(float3 current_world_position, float3 previous_world_position)
+    {
+        const float4 current_clip = project_world_to_clip(
+            current_world_position,
+            engine::binding::per_frame_data.view,
+            engine::binding::per_frame_data.projection
+        );
+        const float4 previous_clip = project_world_to_clip(
+            previous_world_position,
+            engine::binding::per_frame_data.prev_view,
+            engine::binding::per_frame_data.prev_projection
+        );
+
+        if (!is_projectable_clip(current_clip) || !is_projectable_clip(previous_clip))
+        {
+            return float2(0.0f, 0.0f);
+        }
+
+        return clip_to_pixel(previous_clip) - clip_to_pixel(current_clip);
+    }
+
+    static float2 instance_motion_vector_pixels(uint instance_id, float3 object_position)
+    {
+        // 使用 object position 分别乘 current/previous model，才能同时表达相机和物体运动。
+        engine::scene::Instance* instance = SceneAccess::instance(instance_id);
+        const float3 current_world_position = mul(instance.model, float4(object_position, 1.0f)).xyz;
+        const float3 previous_world_position = mul(instance.prev_model, float4(object_position, 1.0f)).xyz;
+        return motion_vector_pixels(current_world_position, previous_world_position);
+    }
+
+    static float3 reflection_motion_direction(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
+    {
+        return normalize(reflect(normalize(primary_ray_dir), primary_hit.forward_normal));
+    }
+
+    static float3 transparent_motion_direction(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
+    {
+        float3 refraction_dir;
+        float3 refraction_throughput;
+        // RR 的 motion 输入必须帧间确定，不能复用 transparent path 的随机反射/折射分支。
+        // 这里优先使用与材质采样相同 eta/normal 约定的折射方向；全内反射或数值失败时回退镜面方向。
+        if (RtMaterialSampler::sample_refraction(
+                primary_hit,
+                normalize(primary_ray_dir),
+                refraction_dir,
+                refraction_throughput
+            ))
+        {
+            return normalize(refraction_dir);
+        }
+        return reflection_motion_direction(primary_hit, primary_ray_dir);
+    }
+
+    static float3 primary_specular_motion_direction(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
+    {
+        if (primary_hit.material_type == MaterialType::DELTA_TRANSMISSION)
+        {
+            return transparent_motion_direction(primary_hit, primary_ray_dir);
+        }
+        return reflection_motion_direction(primary_hit, primary_ray_dir);
+    }
+
+    /// 为 RR specular motion vectors 追踪一次 delta 主路径方向上的虚拟几何。
+    ///
+    /// 未命中时返回零向量；这是 RR 可接受的保守 fallback，比复用 primary motion 更不容易把
+    /// 错误历史强行拖到反射/折射区域。
+    static float2 specular_motion_vector_pixels_for_direction(const RtSurfaceHit primary_hit, float3 motion_dir)
+    {
+        RayDesc specular_ray;
+        specular_ray.Origin = primary_hit.position + 0.001f * motion_dir;
+        specular_ray.Direction = motion_dir;
+        specular_ray.TMin = 0.001f;
+        specular_ray.TMax = 10000.0f;
+
+        RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> rq;
+        rq.TraceRayInline(
+            app::render_passes::realtime_rt::rt_tlas,
+            RAY_FLAG_NONE,
+            0xFF,
+            specular_ray
+        );
+        while (rq.Proceed())
+        {
+            if (rq.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE)
+            {
+                const bool cutout = MaterialOpacity::is_candidate_cutout(
+                    rq.CandidateInstanceID(),
+                    rq.CandidateGeometryIndex(),
+                    rq.CandidatePrimitiveIndex(),
+                    rq.CandidateTriangleBarycentrics()
+                );
+                if (!cutout)
+                {
+                    rq.CommitNonOpaqueTriangleHit();
+                }
+            }
+        }
+
+        if (rq.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
+        {
+            return float2(0.0f, 0.0f);
+        }
+
+        const uint instance_id = rq.CommittedInstanceID();
+        const uint geometry_id = rq.CommittedGeometryIndex();
+        const uint primitive_id = rq.CommittedPrimitiveIndex();
+        const float2 barycentrics = rq.CommittedTriangleBarycentrics();
+
+        engine::geometry::Geometry* geometry = SceneAccess::get_geometry(instance_id, geometry_id);
+        const uint3 triangle = GeometryEval::triangle(geometry, primitive_id);
+        const float3 object_position = GeometryEval::interp_position(geometry, triangle, barycentrics);
+        return instance_motion_vector_pixels(instance_id, object_position);
+    }
+
+    static float2 primary_specular_motion_vector_pixels(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
+    {
+        return specular_motion_vector_pixels_for_direction(
+            primary_hit,
+            primary_specular_motion_direction(primary_hit, primary_ray_dir)
+        );
+    }
+
+    /// 写入首次命中的 GBuffer 与 DLSS 输入。
+    static void write_primary_hit_outputs(uint2 thread_id, const RtSurfaceHit surface, float3 primary_ray_dir)
+    {
+        RtGBufferData gbuffer_data = RtGBufferWriter::make_data(
+            surface.position,
+            surface.forward_normal,
+            surface.hit_t,
+            surface.base_color,
+            surface.metallic,
+            surface.roughness,
+            surface.material_type
+        );
+        RtGBufferWriter::write_gbuffer_hit(thread_id, gbuffer_data);
+        const float2 primary_motion_vector = instance_motion_vector_pixels(surface.instance_id, surface.object_position);
+        const float2 specular_motion_vector = primary_specular_motion_vector_pixels(surface, primary_ray_dir);
+        RtGBufferWriter::write_dlss_sr_hit(thread_id, device_depth(surface.position), primary_motion_vector);
+        RtGBufferWriter::write_dlss_rr_hit(thread_id, gbuffer_data, specular_motion_vector);
+    }
+
+    /// miss 像素也必须写入 DLSS 输入，避免 SR/RR 读取上一帧残留。
+    static void write_primary_miss_outputs(uint2 thread_id)
+    {
+        RtGBufferWriter::write_gbuffer_miss(thread_id);
+        RtGBufferWriter::write_dlss_sr_miss(thread_id);
+        RtGBufferWriter::write_dlss_rr_miss(thread_id);
+    }
+};

@@ -195,6 +195,7 @@ dependencies = [
  "log",
  "slotmap",
  "truvis-app-frame",
+ "truvis-app-shader-binding",
  "truvis-descriptor-layout-macro",
  "truvis-descriptor-layout-trait",
  "truvis-gfx",
@@ -202,7 +203,6 @@ dependencies = [
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-runtime",
- "truvis-shader-binding",
  "vk-mem",
 ]
 
@@ -217,6 +217,7 @@ dependencies = [
  "itertools 0.10.5",
  "log",
  "slotmap",
+ "truvis-app-shader-binding",
  "truvis-descriptor-layout-macro",
  "truvis-descriptor-layout-trait",
  "truvis-gfx",
@@ -224,7 +225,6 @@ dependencies = [
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-runtime",
- "truvis-shader-binding",
  "truvis-streamline-binding",
  "vk-mem",
 ]
@@ -6123,6 +6123,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "truvis-app-shader-binding"
+version = "0.1.0"
+dependencies = [
+ "truvis-path",
+ "truvis-shader-binding",
+ "truvis-shader-binding-codegen",
+]
+
+[[package]]
 name = "truvis-asset"
 version = "0.1.0"
 dependencies = [
@@ -6315,9 +6324,17 @@ dependencies = [
 name = "truvis-shader-binding"
 version = "0.1.0"
 dependencies = [
- "bindgen",
  "bytemuck",
  "glam",
+ "truvis-path",
+ "truvis-shader-binding-codegen",
+]
+
+[[package]]
+name = "truvis-shader-binding-codegen"
+version = "0.1.0"
+dependencies = [
+ "bindgen",
  "truvis-path",
 ]
 
@@ -6329,6 +6346,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "toml 0.8.2",
  "truvis-logs",
  "truvis-path",
  "walkdir",

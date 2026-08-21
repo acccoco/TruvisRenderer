@@ -25,12 +25,12 @@ pub(crate) struct AnalyticLightBinding {
 }
 
 struct AnalyticLightFrameBuffers {
-    point_light_buffer: GfxStructuredBuffer<gpu::light::PointLight>,
-    point_light_stage_buffer: GfxStructuredBuffer<gpu::light::PointLight>,
-    spot_light_buffer: GfxStructuredBuffer<gpu::light::SpotLight>,
-    spot_light_stage_buffer: GfxStructuredBuffer<gpu::light::SpotLight>,
-    area_light_buffer: GfxStructuredBuffer<gpu::light::AreaLight>,
-    area_light_stage_buffer: GfxStructuredBuffer<gpu::light::AreaLight>,
+    point_light_buffer: GfxStructuredBuffer<gpu::engine::light::PointLight>,
+    point_light_stage_buffer: GfxStructuredBuffer<gpu::engine::light::PointLight>,
+    spot_light_buffer: GfxStructuredBuffer<gpu::engine::light::SpotLight>,
+    spot_light_stage_buffer: GfxStructuredBuffer<gpu::engine::light::SpotLight>,
+    area_light_buffer: GfxStructuredBuffer<gpu::engine::light::AreaLight>,
+    area_light_stage_buffer: GfxStructuredBuffer<gpu::engine::light::AreaLight>,
 }
 
 impl AnalyticLightFrameBuffers {
@@ -192,7 +192,7 @@ impl RenderAnalyticLightManager {
             let area_light_buffer_slices = frame.area_light_stage_buffer.mapped_slice();
 
             for (light_idx, (_, point_light)) in scene.point_light_map().iter().enumerate() {
-                point_light_buffer_slices[light_idx] = gpu::light::PointLight {
+                point_light_buffer_slices[light_idx] = gpu::engine::light::PointLight {
                     pos: point_light.pos,
                     color: point_light.color,
                     _color_padding: Default::default(),
@@ -201,7 +201,7 @@ impl RenderAnalyticLightManager {
             }
 
             for (light_idx, (_, spot_light)) in scene.spot_light_map().iter().enumerate() {
-                spot_light_buffer_slices[light_idx] = gpu::light::SpotLight {
+                spot_light_buffer_slices[light_idx] = gpu::engine::light::SpotLight {
                     pos: spot_light.pos,
                     inner_angle: spot_light.inner_angle,
                     color: spot_light.color,
@@ -212,7 +212,7 @@ impl RenderAnalyticLightManager {
             }
 
             for (light_idx, (_, area_light)) in scene.area_light_map().iter().enumerate() {
-                area_light_buffer_slices[light_idx] = gpu::light::AreaLight {
+                area_light_buffer_slices[light_idx] = gpu::engine::light::AreaLight {
                     center: area_light.center,
                     half_u: area_light.half_u,
                     half_v: area_light.half_v,

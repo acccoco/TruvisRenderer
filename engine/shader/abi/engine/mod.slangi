@@ -1,0 +1,14 @@
+#pragma once
+
+/// Engine shader 侧共享 ABI 聚合入口。
+///
+/// Engine binding 与所有依赖 Engine 的 shader package 都经过这里引入共享类型；新增
+/// CPU/GPU 契约时应先放入 `abi/` 的明确 owner namespace，再从本文件统一暴露。
+#include "abi/engine/bindless/mod.slangi"
+#include "abi/engine/frame/mod.slangi"
+#include "abi/engine/geometry/mod.slangi"
+#include "abi/engine/binding/mod.slangi"
+#include "abi/engine/light/mod.slangi"
+#include "abi/engine/material/mod.slangi"
+#include "abi/engine/ptr.slangi"
+#include "abi/engine/scene/mod.slangi"

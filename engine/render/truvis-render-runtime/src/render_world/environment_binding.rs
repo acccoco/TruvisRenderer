@@ -8,7 +8,7 @@ use crate::bindings::bindless_manager::BindlessSrvHandle;
 #[derive(Clone, Copy)]
 pub(crate) struct EnvironmentSkyBinding {
     pub(crate) srv_handle: BindlessSrvHandle,
-    pub(crate) sampler: gpu::bindless::ESamplerType,
+    pub(crate) sampler: gpu::engine::bindless::ESamplerType,
     pub(crate) distribution_device_address: u64,
     pub(crate) distribution_width: u32,
     pub(crate) distribution_height: u32,

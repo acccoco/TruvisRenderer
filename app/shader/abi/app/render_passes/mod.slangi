@@ -1,0 +1,11 @@
+#pragma once
+
+/// `app-render-passes` 拥有的 shader-visible ABI 聚合入口。
+#include "abi/app/render_passes/image_clear/mod.slangi"
+#include "abi/app/render_passes/offline_rt/mod.slangi"
+#include "abi/app/render_passes/post_accum/mod.slangi"
+#include "abi/app/render_passes/raster/mod.slangi"
+#include "abi/app/render_passes/realtime_rt/mod.slangi"
+#include "abi/app/render_passes/resolve/mod.slangi"
+#include "abi/app/render_passes/sdr/mod.slangi"
+#include "abi/app/render_passes/selection_outline/mod.slangi"

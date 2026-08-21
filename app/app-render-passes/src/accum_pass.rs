@@ -1,5 +1,6 @@
 use ash::vk;
 
+use truvis_app_shader_binding::gpu;
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxDeviceCtx;
@@ -9,7 +10,6 @@ use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
-use truvis_shader_binding::gpu;
 
 use crate::compute_pass::ComputePass;
 
@@ -43,17 +43,17 @@ struct AccumDescriptorBinding {
 /// 两张 image 都由当前 dispatch 的 pass-local descriptor 绑定；历史 image 的所有权和有效性仍由
 /// OfflinePipeline 管理，RenderGraph 负责同一 image 的跨 dispatch 读写同步。
 pub struct AccumPass {
-    accum_pass: ComputePass<gpu::post_accum::PushConstant, AccumDescriptorBinding>,
+    accum_pass: ComputePass<gpu::app::render_passes::post_accum::PushConstant, AccumDescriptorBinding>,
 }
 
 impl AccumPass {
     pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets) -> Self {
-        let accum_pass = ComputePass::<gpu::post_accum::PushConstant, AccumDescriptorBinding>::new(
+        let accum_pass = ComputePass::<gpu::app::render_passes::post_accum::PushConstant, AccumDescriptorBinding>::new(
             ctx,
             render_descriptor_sets,
-            gpu::POST_ACCUM_SET_NUM,
+            gpu::app::render_passes::post_accum::SET_NUM,
             c"main",
-            TruvisPath::shader_build_path_str("post/accum.slang").as_str(),
+            TruvisPath::shader_build_path_str("app", "post/accum.slang").as_str(),
         );
 
         Self { accum_pass }
@@ -87,14 +87,14 @@ impl AccumPass {
             frame_label,
             record_ctx.shader_bindings.global_descriptor_sets(),
             &descriptor_writes,
-            &gpu::post_accum::PushConstant {
+            &gpu::app::render_passes::post_accum::PushConstant {
                 image_size: glam::uvec2(data.image_size.width, data.image_size.height).into(),
                 accum_frames: data.accum_frames,
                 _padding_: 0,
             },
             glam::uvec3(
-                data.image_size.width.div_ceil(gpu::post_accum::SHADER_X as u32),
-                data.image_size.height.div_ceil(gpu::post_accum::SHADER_Y as u32),
+                data.image_size.width.div_ceil(gpu::app::render_passes::post_accum::SHADER_X as u32),
+                data.image_size.height.div_ceil(gpu::app::render_passes::post_accum::SHADER_Y as u32),
                 1,
             ),
         );

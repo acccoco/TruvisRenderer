@@ -1,5 +1,6 @@
 use ash::vk;
 
+use truvis_app_shader_binding::gpu;
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxDeviceCtx;
@@ -9,7 +10,6 @@ use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
-use truvis_shader_binding::gpu;
 
 use crate::compute_pass::ComputePass;
 
@@ -65,16 +65,16 @@ struct SdrDescriptorBinding {
 /// src/dst image 由当前 RenderGraph dispatch 通过 pass-local push descriptor 绑定；本 pass 不注册、
 /// 缓存或拥有 image，因此 resize 只改变本次录制使用的 view，不产生全局 bindless slot 生命周期。
 pub struct SdrPass {
-    sdr_pass: ComputePass<gpu::sdr::PushConstant, SdrDescriptorBinding>,
+    sdr_pass: ComputePass<gpu::app::render_passes::sdr::PushConstant, SdrDescriptorBinding>,
 }
 impl SdrPass {
     pub fn new(ctx: GfxDeviceCtx<'_>, render_descriptor_sets: &GlobalDescriptorSets) -> Self {
-        let sdr_pass = ComputePass::<gpu::sdr::PushConstant, SdrDescriptorBinding>::new(
+        let sdr_pass = ComputePass::<gpu::app::render_passes::sdr::PushConstant, SdrDescriptorBinding>::new(
             ctx,
             render_descriptor_sets,
-            gpu::SDR_SET_NUM,
+            gpu::app::render_passes::sdr::SET_NUM,
             c"main",
-            TruvisPath::shader_build_path_str("post/sdr.slang").as_str(),
+            TruvisPath::shader_build_path_str("app", "post/sdr.slang").as_str(),
         );
 
         Self { sdr_pass }
@@ -109,7 +109,7 @@ impl SdrPass {
             frame_label,
             record_ctx.shader_bindings.global_descriptor_sets(),
             &descriptor_writes,
-            &gpu::sdr::PushConstant {
+            &gpu::app::render_passes::sdr::PushConstant {
                 image_size: glam::uvec2(data.src_image_size.width, data.src_image_size.height).into(),
                 channel: data.debug_channel,
                 exposure_ev: data.tone_mapping.exposure_ev,
@@ -118,8 +118,8 @@ impl SdrPass {
                 _padding_1: Default::default(),
             },
             glam::uvec3(
-                data.dst_image_size.width.div_ceil(gpu::sdr::SHADER_X as u32),
-                data.dst_image_size.height.div_ceil(gpu::sdr::SHADER_Y as u32),
+                data.dst_image_size.width.div_ceil(gpu::app::render_passes::sdr::SHADER_X as u32),
+                data.dst_image_size.height.div_ceil(gpu::app::render_passes::sdr::SHADER_Y as u32),
                 1,
             ),
         );

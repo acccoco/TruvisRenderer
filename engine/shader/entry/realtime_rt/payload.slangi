@@ -1,8 +1,0 @@
-/// @file payload.slangi
-/// @brief realtime RT entry shader 的兼容 include 入口。
-///
-/// 真实 payload 契约归属 `lib/realtime_rt/payload.slangi`，避免 shader library 反向依赖
-/// `entry/` 目录；entry shader 继续 include 当前文件以保持局部入口路径稳定。
-
-#pragma once
-#include "lib/realtime_rt/payload.slangi"

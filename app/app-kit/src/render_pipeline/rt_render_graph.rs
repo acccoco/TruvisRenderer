@@ -111,7 +111,7 @@ impl RtSharcMode {
         }
     }
 
-    /// 必须与 `api/pass/realtime_rt.slangi` 的 SHARC_MODE_* 保持一致。
+    /// 必须与 `app/shader/abi/realtime_rt/mod.slangi` 的 SHARC_MODE_* 保持一致。
     pub fn shader_mode(self) -> u32 {
         match self {
             Self::Off => 0,

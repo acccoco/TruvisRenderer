@@ -12,16 +12,16 @@ use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
 use truvis_render_foundation::handles::GfxImageViewHandle;
 
 #[derive(Copy, Clone)]
-pub struct BindlessSrvHandle(pub gpu::bindless::SrvHandle);
+pub struct BindlessSrvHandle(pub gpu::engine::bindless::SrvHandle);
 impl BindlessSrvHandle {
     #[inline]
     pub fn new(index: usize) -> Self {
-        Self(gpu::bindless::SrvHandle { index: index as i32 })
+        Self(gpu::engine::bindless::SrvHandle { index: index as i32 })
     }
     #[inline]
     pub fn null() -> Self {
-        Self(gpu::bindless::SrvHandle {
-            index: gpu::bindless::INVALID_TEX_ID,
+        Self(gpu::engine::bindless::SrvHandle {
+            index: gpu::engine::bindless::INVALID_TEX_ID,
         })
     }
     #[inline]

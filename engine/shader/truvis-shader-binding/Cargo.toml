@@ -11,5 +11,4 @@ glam = { workspace = true }
 
 [build-dependencies]
 truvis-path = { workspace = true }
-
-bindgen = { workspace = true }
+truvis-shader-binding-codegen = { workspace = true }

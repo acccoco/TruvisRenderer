@@ -70,22 +70,22 @@ static RAYCAST_SHADER_STAGES: LazyLock<EnumMap<RayCastShaderStages, GfxShaderSta
         RayCastShaderStages::RayGen => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::RAYGEN_KHR,
             entry_point: c"main_ray_gen",
-            path: TruvisPath::shader_build_path_str("raycast/raygen.slang"),
+            path: TruvisPath::shader_build_path_str("engine", "raycast/raygen.slang"),
         },
         RayCastShaderStages::Miss => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::MISS_KHR,
             entry_point: c"main_miss",
-            path: TruvisPath::shader_build_path_str("raycast/miss.slang"),
+            path: TruvisPath::shader_build_path_str("engine", "raycast/miss.slang"),
         },
         RayCastShaderStages::ClosestHit => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::CLOSEST_HIT_KHR,
             entry_point: c"main_closest_hit",
-            path: TruvisPath::shader_build_path_str("raycast/closest_hit.slang"),
+            path: TruvisPath::shader_build_path_str("engine", "raycast/closest_hit.slang"),
         },
         RayCastShaderStages::AnyHit => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::ANY_HIT_KHR,
             entry_point: c"main_any_hit",
-            path: TruvisPath::shader_build_path_str("raycast/any_hit.slang"),
+            path: TruvisPath::shader_build_path_str("engine", "raycast/any_hit.slang"),
         },
     }
 });
@@ -193,7 +193,7 @@ impl RayCastPass {
                     | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
             )
             .offset(0)
-            .size(size_of::<gpu::raycast::PushConstants>() as u32);
+            .size(size_of::<gpu::engine::raycast::PushConstants>() as u32);
 
         let descriptor_set_layout = GfxDescriptorSetLayout::<RayCastDescriptorBinding>::new(
             device_ctx,
@@ -285,7 +285,7 @@ impl RayCastPass {
         cmd.push_descriptor_set(
             vk::PipelineBindPoint::RAY_TRACING_KHR,
             self.pipeline.pipeline_layout,
-            gpu::RAYCAST_SET_NUM,
+            gpu::engine::raycast::SET_NUM,
             &[
                 RayCastDescriptorBinding::tlas().write_tals(vk::DescriptorSet::null(), 0, vec![tlas]),
                 RayCastDescriptorBinding::rays().write_buffer(
@@ -309,7 +309,7 @@ impl RayCastPass {
             None,
         );
 
-        let push_constant = gpu::raycast::PushConstants {
+        let push_constant = gpu::engine::raycast::PushConstants {
             ray_count,
             _padding_0: 0,
             _padding_1: 0,

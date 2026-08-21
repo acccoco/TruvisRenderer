@@ -1,0 +1,80 @@
+#pragma once
+
+#include "abi/engine/mod.slangi"
+
+/// GeometryEval 只承载 shader 侧几何读取与插值逻辑。
+/// abi/geometry/mod.slangi 保持纯 ABI 数据，避免 CPU 绑定同时暴露运行时代码。
+///
+/// DXR/Slang 提供的 barycentrics 只包含第二、第三个顶点权重；第一个权重需要按
+/// `1 - x - y` 重建。所有插值都保持在 object/local space，world transform 由 entry shader
+/// 根据 pass 需求显式执行。
+struct GeometryEval
+{
+    [ForceInline]
+    static float3* position(engine::geometry::Geometry* geom, uint vertex_idx)
+    {
+        return geom.position_buffer + vertex_idx;
+    }
+
+    [ForceInline]
+    static float3* normal(engine::geometry::Geometry* geom, uint vertex_idx)
+    {
+        return geom.normal_buffer + vertex_idx;
+    }
+
+    [ForceInline]
+    static float3* tangent(engine::geometry::Geometry* geom, uint vertex_idx)
+    {
+        return geom.tangent_buffer + vertex_idx;
+    }
+
+    [ForceInline]
+    static float2* uv(engine::geometry::Geometry* geom, uint vertex_idx)
+    {
+        return geom.uv_buffer + vertex_idx;
+    }
+
+    [ForceInline]
+    static uint3 triangle(engine::geometry::Geometry* geom, uint primitive_id)
+    {
+        return uint3(
+            geom.index_buffer[primitive_id * 3 + 0],
+            geom.index_buffer[primitive_id * 3 + 1],
+            geom.index_buffer[primitive_id * 3 + 2]
+        );
+    }
+
+    static float3 interp_position(engine::geometry::Geometry* geom, uint3 tri, float2 barycentrics)
+    {
+        // DXR triangle barycentrics 约定为 (b, c)，第一个顶点权重 a 需要显式补回。
+        const float a = 1.f - barycentrics.x - barycentrics.y;
+        const float b = barycentrics.x;
+        const float c = barycentrics.y;
+        return (*position(geom, tri.x)) * a + (*position(geom, tri.y)) * b + (*position(geom, tri.z)) * c;
+    }
+
+    static float3 interp_normal(engine::geometry::Geometry* geom, uint3 tri, float2 barycentrics)
+    {
+        // 法线插值后必须归一化，否则非均匀三角形上的 BRDF / GBuffer normal 会随面积变化。
+        const float a = 1.f - barycentrics.x - barycentrics.y;
+        const float b = barycentrics.x;
+        const float c = barycentrics.y;
+        return normalize((*normal(geom, tri.x)) * a + (*normal(geom, tri.y)) * b + (*normal(geom, tri.z)) * c);
+    }
+
+    static float3 interp_tangent(engine::geometry::Geometry* geom, uint3 tri, float2 barycentrics)
+    {
+        const float a = 1.f - barycentrics.x - barycentrics.y;
+        const float b = barycentrics.x;
+        const float c = barycentrics.y;
+        return normalize((*tangent(geom, tri.x)) * a + (*tangent(geom, tri.y)) * b + (*tangent(geom, tri.z)) * c);
+    }
+
+    static float2 interp_uv(engine::geometry::Geometry* geom, uint3 tri, float2 barycentrics)
+    {
+        const float a = 1.f - barycentrics.x - barycentrics.y;
+        const float b = barycentrics.x;
+        const float c = barycentrics.y;
+        return (*uv(geom, tri.x)) * a + (*uv(geom, tri.y)) * b + (*uv(geom, tri.z)) * c;
+    }
+};

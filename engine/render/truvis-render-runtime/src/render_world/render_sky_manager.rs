@@ -35,13 +35,13 @@ struct FallbackSkyTexture {
 /// fallback 体积极小且整个 runtime 常驻，继续使用同步创建；大型真实 HDRI distribution
 /// 则必须通过 worker + shared transfer timeline 异步发布。
 struct FallbackSkyDistribution {
-    entries: GfxStructuredBuffer<gpu::scene::SkyDistributionEntry>,
+    entries: GfxStructuredBuffer<gpu::engine::scene::SkyDistributionEntry>,
     version: u32,
 }
 
 impl FallbackSkyDistribution {
     fn new(resource_ctx: GfxResourceCtx<'_>, immediate_ctx: GfxImmediateCtx<'_>) -> Self {
-        let entry = gpu::scene::SkyDistributionEntry {
+        let entry = gpu::engine::scene::SkyDistributionEntry {
             alias_probability: 1.0,
             solid_angle_pdf: 1.0 / (4.0 * std::f32::consts::PI),
             alias_index: 0,
@@ -325,7 +325,7 @@ impl RenderSkyManager {
             self.state_changed_pending = true;
 
             let entry_count = completed.width as u64 * completed.height as u64;
-            let gpu_bytes = entry_count * std::mem::size_of::<gpu::scene::SkyDistributionEntry>() as u64;
+            let gpu_bytes = entry_count * std::mem::size_of::<gpu::engine::scene::SkyDistributionEntry>() as u64;
             log::info!(
                 "RenderSkyManager: published sky distribution request={} source={}x{} distribution={}x{} entries={} GPU={} bytes CPU={:.2} ms upload={:.2} ms version={}",
                 completed.request_id,
@@ -374,7 +374,7 @@ impl RenderSkyManager {
             );
             EnvironmentSkyBinding {
                 srv_handle: texture.srv_handle,
-                sampler: gpu::bindless::ESamplerType_LinearRepeatClamp,
+                sampler: gpu::engine::bindless::ESamplerType_LinearRepeatClamp,
                 distribution_device_address: distribution.device_address,
                 distribution_width: distribution.width,
                 distribution_height: distribution.height,
@@ -464,7 +464,7 @@ impl RenderSkyManager {
     fn fallback_binding(&self, distribution: SkyDistributionBinding) -> EnvironmentSkyBinding {
         EnvironmentSkyBinding {
             srv_handle: self.fallback.srv_handle,
-            sampler: gpu::bindless::ESamplerType_LinearRepeatClamp,
+            sampler: gpu::engine::bindless::ESamplerType_LinearRepeatClamp,
             distribution_device_address: distribution.device_address,
             distribution_width: distribution.width,
             distribution_height: distribution.height,

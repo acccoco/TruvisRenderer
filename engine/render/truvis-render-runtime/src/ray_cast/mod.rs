@@ -61,9 +61,9 @@ pub(crate) struct RayCastService {
     pass: Option<RayCastPass>,
     command_pool: Option<GfxCommandPool>,
     fence: Option<GfxFence>,
-    ray_buffer: Option<GfxStructuredBuffer<gpu::raycast::Ray>>,
-    raw_hit_buffer: Option<GfxStructuredBuffer<gpu::raycast::RawHit>>,
-    readback_buffer: Option<GfxStructuredBuffer<gpu::raycast::RawHit>>,
+    ray_buffer: Option<GfxStructuredBuffer<gpu::engine::raycast::Ray>>,
+    raw_hit_buffer: Option<GfxStructuredBuffer<gpu::engine::raycast::RawHit>>,
+    readback_buffer: Option<GfxStructuredBuffer<gpu::engine::raycast::RawHit>>,
     capacity: usize,
     destroyed: bool,
 }
@@ -123,8 +123,8 @@ impl RayCastService {
         self.ensure_capacity(resource_ctx, rays.len());
         self.write_ray_buffer(resource_ctx, rays);
 
-        let ray_bytes = (rays.len() * size_of::<gpu::raycast::Ray>()) as vk::DeviceSize;
-        let raw_hit_bytes = (rays.len() * size_of::<gpu::raycast::RawHit>()) as vk::DeviceSize;
+        let ray_bytes = (rays.len() * size_of::<gpu::engine::raycast::Ray>()) as vk::DeviceSize;
+        let raw_hit_bytes = (rays.len() * size_of::<gpu::engine::raycast::RawHit>()) as vk::DeviceSize;
         let command_pool = self.command_pool.as_ref().expect("RayCastService command pool missing");
         let fence = self.fence.as_ref().expect("RayCastService fence missing");
         let ray_buffer = self.ray_buffer.as_ref().expect("RayCastService ray buffer missing");
@@ -240,21 +240,21 @@ impl RayCastService {
             buffer.destroy_mut(resource_ctx, DestroyReason::ImmediateRelease);
         }
 
-        self.ray_buffer = Some(GfxStructuredBuffer::<gpu::raycast::Ray>::new(
+        self.ray_buffer = Some(GfxStructuredBuffer::<gpu::engine::raycast::Ray>::new(
             resource_ctx,
             "raycast-rays",
             new_capacity,
             vk::BufferUsageFlags::STORAGE_BUFFER,
             true,
         ));
-        self.raw_hit_buffer = Some(GfxStructuredBuffer::<gpu::raycast::RawHit>::new(
+        self.raw_hit_buffer = Some(GfxStructuredBuffer::<gpu::engine::raycast::RawHit>::new(
             resource_ctx,
             "raycast-raw-hits",
             new_capacity,
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC,
             false,
         ));
-        self.readback_buffer = Some(GfxStructuredBuffer::<gpu::raycast::RawHit>::new_readback_buffer(
+        self.readback_buffer = Some(GfxStructuredBuffer::<gpu::engine::raycast::RawHit>::new_readback_buffer(
             resource_ctx,
             new_capacity,
             "raycast-readback",
@@ -265,20 +265,20 @@ impl RayCastService {
     fn write_ray_buffer(&mut self, resource_ctx: GfxResourceCtx<'_>, rays: &[RayCastRay]) {
         let ray_buffer = self.ray_buffer.as_mut().expect("RayCastService ray buffer missing");
         for (dst, src) in ray_buffer.mapped_slice()[..rays.len()].iter_mut().zip(rays.iter()) {
-            *dst = gpu::raycast::Ray {
+            *dst = gpu::engine::raycast::Ray {
                 origin_ws: src.origin_ws.into(),
                 t_min: src.t_min,
                 direction_ws: src.direction_ws.into(),
                 t_max: src.t_max,
             };
         }
-        ray_buffer.flush(resource_ctx, 0, (rays.len() * size_of::<gpu::raycast::Ray>()) as vk::DeviceSize);
+        ray_buffer.flush(resource_ctx, 0, (rays.len() * size_of::<gpu::engine::raycast::Ray>()) as vk::DeviceSize);
     }
 
     fn convert_raw_hits(
         &self,
         render_instance_manager: &RenderInstanceManager,
-        raw_hits: &[gpu::raycast::RawHit],
+        raw_hits: &[gpu::engine::raycast::RawHit],
     ) -> Result<Vec<RayCastResult>> {
         raw_hits
             .iter()

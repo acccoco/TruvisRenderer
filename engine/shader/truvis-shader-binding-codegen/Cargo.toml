@@ -1,0 +1,10 @@
+[package]
+name = "truvis-shader-binding-codegen"
+version = "0.1.0"
+edition = "2024"
+description = "Truvis shader Rust binding generation support"
+
+[dependencies]
+truvis-path = { workspace = true }
+
+bindgen = { workspace = true }

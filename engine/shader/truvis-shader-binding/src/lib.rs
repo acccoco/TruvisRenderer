@@ -5,7 +5,7 @@
 //!
 //! # 使用示例
 //! ```ignore
-//! use truvis_shader_binding::gpu::frame::PerFrameData;
+//! use truvis_shader_binding::gpu::engine::frame::PerFrameData;
 //!
 //! let data = PerFrameData {
 //!     projection: glam::Mat4::IDENTITY.into(),

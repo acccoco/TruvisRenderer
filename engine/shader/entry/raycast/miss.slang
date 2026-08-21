@@ -1,4 +1,4 @@
-#include "./payload.slangi"
+#include "lib/engine/raycast/payload.slangi"
 
 /// raycast miss 只标记未命中。
 ///

@@ -12,7 +12,7 @@ use crate::bindings::bindless_manager::BindlessSrvHandle;
 #[derive(Clone, Copy)]
 pub struct TextureBinding {
     pub srv_handle: BindlessSrvHandle,
-    pub sampler: gpu::bindless::ESamplerType,
+    pub sampler: gpu::engine::bindless::ESamplerType,
 }
 
 impl TextureBinding {
@@ -23,7 +23,7 @@ impl TextureBinding {
     pub fn null() -> Self {
         Self {
             srv_handle: BindlessSrvHandle::null(),
-            sampler: gpu::bindless::ESamplerType_LinearRepeat,
+            sampler: gpu::engine::bindless::ESamplerType_LinearRepeat,
         }
     }
 }

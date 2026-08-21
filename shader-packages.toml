@@ -1,0 +1,33 @@
+# 会被 truvis-path 解析
+
+[[package]]
+id = "engine"
+entry_root = "engine/shader/entry"
+include_roots = ["engine/shader"]
+shared_input_roots = ["engine/shader/abi/engine", "engine/shader/lib/engine"]
+depends_on = []
+output_prefix = "engine"
+
+[[package]]
+id = "app"
+entry_root = "app/shader/entry/app"
+include_roots = ["engine/shader", "app/shader"]
+shared_input_roots = ["app/shader/abi/app", "app/shader/lib/app"]
+depends_on = ["engine"]
+output_prefix = "app"
+
+[[package]]
+id = "sample-hello-triangle"
+entry_root = "app/shader/entry/sample-hello-triangle"
+include_roots = ["engine/shader"]
+shared_input_roots = []
+depends_on = ["engine"]
+output_prefix = "samples/hello-triangle"
+
+[[package]]
+id = "sample-shader-toy"
+entry_root = "app/shader/entry/sample-shader-toy"
+include_roots = ["app/shader"]
+shared_input_roots = ["app/shader/lib/sample-shader-toy"]
+depends_on = []
+output_prefix = "samples/shader-toy"

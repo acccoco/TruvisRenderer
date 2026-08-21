@@ -61,6 +61,44 @@ GUI 属于 app 层集成能力：`app_kit::gui_plugin` 持有 imgui context、Re
 `app-render-passes` 承载主体 app 与 samples 共享的具体 RT / 后处理 / shading pass，不属于 engine core。其中 `GBuffer` 定义
 RT 管线的 GBuffer 通道布局和 per-FIF 纹理资源管理，由 `RtPipeline` 持有生命周期。
 
+## Shader 源码与 ABI 依赖边界
+
+Shader package 按依赖、include roots、增量失效范围和发布边界组织；全部 App 源码集中在
+`app/shader`，不再跟随 Rust crate 目录拆散：
+
+```mermaid
+flowchart LR
+    EngineSource["engine/shader<br/>abi/engine + lib/engine + runtime entry"]
+    EngineBinding["truvis-shader-binding<br/>engine canonical Rust ABI"]
+    AppSource["app/shader<br/>abi/app + lib/app + pass/GUI entry"]
+    AppBinding["truvis-app-shader-binding<br/>app::*"]
+    HelloSource["sample-hello-triangle<br/>Engine-only include roots"]
+    ToySource["sample-shader-toy<br/>独立 lib + entry，无 Engine 依赖"]
+
+    AppSource --> EngineSource
+    HelloSource --> EngineSource
+    AppBinding --> EngineBinding
+```
+
+- `abi/<owner>/` 是 Rust/Slang 共享的内存与 binding 契约；每个 ABI 类型只有一个 Slang 定义和一个 Rust binding owner。
+- `lib/<owner>/` 只承载 Slang 算法，不生成 Rust binding。依赖 App pass descriptor/resource 的算法属于 App-local `lib/app/`，
+  不能以“算法通用”为由放入 Engine。
+- `entry/` 只生成最终 SPIR-V，不作为其它 package 的共享接口，也不生成 Rust binding。
+- Engine namespace 为 `engine::*`；App namespace 为 `app::<owner>::*`。统一 App binding
+  只 allowlist `app::*`，并通过 `truvis-shader-binding` 显式复用 canonical Engine/base 类型。
+  generator 固定 `allowlist_recursively(false)`，缺少映射时让构建 fail-closed，不维护定义黑名单。
+- 根目录 `shader-packages.toml` 是源码 package、include root、依赖传播和输出前缀的唯一清单；运行时
+  `TruvisPath` 也按 package id 解析 namespaced SPIR-V 路径。
+- `.vscode/settings.json` 只声明编辑器搜索根 `engine/shader` 与 `app/shader`；构建配置显式镜像相同根或其
+  严格子集，不读取编辑器配置。include 必须使用 `abi/engine`、`lib/engine`、`abi/app`、`lib/app` 或
+  `lib/sample-shader-toy` 前缀并唯一解析。
+- 源码方向为 `abi/<owner> <- lib/<owner> <- entry`，owner 方向为 `engine <- app`。构建器同时通过源码
+  预检和 compiler depfile 强制边界，任何未声明 shared input、其它 entry 或 workspace 外依赖都 fail-closed。
+- 当前 package 固定为 `engine`、`app`、`sample-hello-triangle`、`sample-shader-toy`；ShaderToy 的
+  `depends_on = []` 且 include roots 不包含 Engine。
+- 允许 `App shader/binding -> Engine shader/binding`；禁止 Engine 源码、binding crate 或 package 配置引用任何 App。
+- 当前 Slang 源码仍以 include 为主；可选 `.slang-module` 只属于后续编译性能优化，不改变最终 SPIR-V 自包含语义。
+
 ## 物理目录约定
 
 - `engine/app-frame/truvis-app-frame`：平台无关的 App 契约、shell 与 render loop。

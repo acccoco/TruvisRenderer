@@ -2,6 +2,15 @@
 
 `app-kit` 保存主体 app 与 samples 共享的 app 层组件。
 
+## Shader 所有权
+
+- GUI shader 源码统一位于 `app/shader/`：ABI 是 `abi/app/kit/`，entry 是
+  `entry/app/ui/imgui.slang`。
+- `app/shader/truvis-app-shader-binding` 统一生成全部 App ABI；`app::kit::*` namespace 不变，
+  canonical Engine/base 类型从 `truvis-shader-binding` 复用。
+- GUI 与 render pass 共用 `app` package，产物位于 `build/shader/app/`；完整 include roots 与
+  增量边界见 `app/shader/README.md`。
+
 ## 主要职责
 
 - `GuiPlugin`：ImGui context、输入转发、字体资源、GUI mesh 上传、私有 Vulkan 后端和 RenderGraph pass 注入。
@@ -26,6 +35,7 @@
 
 - 不持有具体 app state，不提供可执行入口。
 - 不保存 Triangle / ShaderToy 等 sample 专用 pass。
+- shader 可以引用 Engine ABI/lib；Engine shader、binding 与构建配置禁止反向引用 App Kit shader root 或 binding crate。
 - 依赖 render runtime 与 render graph，定位是 app 集成层公共库，不是 engine core；GUI backend 是本 crate 的私有实现细节。
 - `render_pipeline::targets` 只保存 `GfxResourceManager` image/view handle，不保存 `Gfx`、device、
   allocator 或 command allocator 引用；创建、resize 和 shutdown 必须通过对应生命周期 Ctx 显式传入

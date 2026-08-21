@@ -27,7 +27,7 @@ pub(crate) struct SkyDistributionBuild {
     pub(crate) source_height: u32,
     pub(crate) width: u32,
     pub(crate) height: u32,
-    pub(crate) entries: Vec<gpu::scene::SkyDistributionEntry>,
+    pub(crate) entries: Vec<gpu::engine::scene::SkyDistributionEntry>,
     pub(crate) cpu_build_elapsed: Duration,
 }
 
@@ -225,7 +225,7 @@ fn build_distribution(request: SkyDistributionBuildRequest) -> SkyDistributionBu
         let cell_solid_angle = lat_long_texel_solid_angle(row, width, height);
         let solid_angle_pdf =
             if cell_solid_angle > 0.0 { (weight / total_weight / cell_solid_angle) as f32 } else { 0.0 };
-        entries.push(gpu::scene::SkyDistributionEntry {
+        entries.push(gpu::engine::scene::SkyDistributionEntry {
             alias_probability: 1.0,
             solid_angle_pdf,
             alias_index: index as u32,

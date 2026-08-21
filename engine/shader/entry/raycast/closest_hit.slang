@@ -1,6 +1,6 @@
-#include "./payload.slangi"
-#include "lib/scene/geometry_eval.slangi"
-#include "lib/scene/scene_access.slangi"
+#include "lib/engine/raycast/payload.slangi"
+#include "lib/engine/scene/geometry_eval.slangi"
+#include "lib/engine/scene/scene_access.slangi"
 
 /// 同步 raycast closest-hit。
 ///
@@ -13,7 +13,7 @@ void main_closest_hit(inout RayCastPayload payload, in BuiltInTriangleIntersecti
     const uint geometry_id = GeometryIndex();
     const uint primitive_id = PrimitiveIndex();
 
-    geometry::Geometry* geometry = SceneAccess::get_geometry(instance_id, geometry_id);
+    engine::geometry::Geometry* geometry = SceneAccess::get_geometry(instance_id, geometry_id);
     const uint3 triangle = GeometryEval::triangle(geometry, primitive_id);
     const float3 interp_pos = GeometryEval::interp_position(geometry, triangle, attr.barycentrics);
     const float3 interp_normal = GeometryEval::interp_normal(geometry, triangle, attr.barycentrics);
@@ -21,7 +21,7 @@ void main_closest_hit(inout RayCastPayload payload, in BuiltInTriangleIntersecti
 
     const float3 world_pos = mul(ObjectToWorld3x4(), float4(interp_pos, 1.f));
 
-    scene::Instance* instance = SceneAccess::instance(instance_id);
+    engine::scene::Instance* instance = SceneAccess::instance(instance_id);
     const float4x4 normal_matrix = transpose(instance.inv_model);
     const float3 origin_world_normal = normalize(mul(normal_matrix, float4(interp_normal, 0.f)).xyz);
     // 与 realtime RT 一致，返回朝向 ray 来向的 forward normal，便于 UI/pivot 使用稳定表面方向。

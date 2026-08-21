@@ -1,7 +1,8 @@
 {
     "rust-analyzer.trace.server": "verbose",
     "slang.additionalSearchPaths": [
-        "${workspaceFolder}\\engine\\shader"
+        "${workspaceFolder}\\engine\\shader",
+        "${workspaceFolder}\\app\\shader"
     ],
     "slang.searchInAllWorkspaceDirectories": false,
     "cmake.ignoreCMakeListsMissing": true,

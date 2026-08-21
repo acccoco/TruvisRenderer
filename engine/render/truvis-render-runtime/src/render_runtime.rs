@@ -813,7 +813,7 @@ impl RenderRuntime {
         let previous_view = self.dlss_sr_state.motion_vector_previous_view().unwrap_or(*render_view);
         // shader 只接收采样方向的 jitter；Streamline 的回正 jitterOffset 保留在 DLSS constants 中。
         let temporal_jitter_px = self.dlss_sr_state.constants().sampling_jitter_offset;
-        let per_frame_data = gpu::frame::PerFrameData {
+        let per_frame_data = gpu::engine::frame::PerFrameData {
             projection: render_view.projection.into(),
             view: render_view.view.into(),
             inv_view: render_view.inv_view.into(),
@@ -998,7 +998,7 @@ impl RenderRuntime {
 
     /// 刷新当前 FIF per-frame descriptor set。
     ///
-    /// descriptor 指向刚写入的 per-frame UBO 和 shader ABI `gpu::scene::GpuScene` root buffer；render pass
+    /// descriptor 指向刚写入的 per-frame UBO 和 shader ABI `gpu::engine::scene::GpuScene` root buffer；render pass
     /// 通过全局 descriptor set 读取本帧相机、时间与 scene device address。
     fn update_perframe_descriptor_set(&mut self) {
         let frame_label = self.frame_timing.frame_label();

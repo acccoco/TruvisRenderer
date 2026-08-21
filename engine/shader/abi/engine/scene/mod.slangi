@@ -1,0 +1,120 @@
+#pragma once
+#include "abi/engine/bindless/mod.slangi"
+#include "abi/engine/geometry/mod.slangi"
+#include "abi/engine/light/mod.slangi"
+#include "abi/engine/material/mod.slangi"
+#include "abi/engine/ptr.slangi"
+
+namespace engine
+{
+namespace scene
+{
+
+/// 单个 runtime instance 的 shader-visible 间接索引。
+///
+/// `RenderInstanceManager` 保证 instance slot 稳定；shader 使用该 slot 访问 geometry/material 间接表。
+/// 这里不保存 CPU handle，raycast readback 会在 runtime 侧把 slot 转回应用可理解的 handle。
+struct Instance
+{
+    /// 指向 `GpuScene::instance_geometry_map` 的起始位置。
+    uint geometry_indirect_idx;
+    /// 当前 instance 拥有的 submesh/geometry 数量。
+    uint geometry_count;
+    /// 指向 `GpuScene::instance_material_map` 的起始位置。
+    uint material_indirect_idx;
+    /// 当前 instance 可用的 material slot 数量。
+    uint material_count;
+
+    /// 当前帧 object/local -> world 矩阵。
+    float4x4 model;
+    /// 当前帧 world -> object/local 矩阵；法线变换使用它的转置。
+    float4x4 inv_model;
+    /// 上一帧用于 motion vector 回溯的模型矩阵。
+    ///
+    /// 新激活实例或 history reset 帧会写为当前 model，避免旧 slot / 旧 history
+    /// 污染 DLSS motion vector。
+    float4x4 prev_model;
+};
+
+/// 单个 sky importance alias table entry。
+///
+/// 表按 lat-long texel 展平保存。`alias_probability` / `alias_index` 用于 O(1)
+/// 离散 texel 采样，`solid_angle_pdf` 是该 texel 内按 solid angle 均匀采样后的 PDF；
+/// NEE 与 BRDF sky miss 必须读取同一字段，避免环境光 MIS 使用两套概率度量。
+struct SkyDistributionEntry
+{
+    float alias_probability;
+    float solid_angle_pdf;
+    uint alias_index;
+    uint _padding_0;
+};
+
+/// 当前帧 GPU scene 的根间接表。
+///
+/// 这是 `RenderRuntime::prepare` 后的只读快照。entry shader 只能通过 `SceneAccess` 消费这些表，
+/// 避免各 pass 重复维护 instance -> geometry/material 的映射规则。
+struct GpuScene
+{
+    /// 全局 material 数组，slot 由 `MaterialManager` 分配。
+    PTR(engine::material::PbrMaterial, all_mats);
+    /// 全局 geometry 数组，slot 来自 mesh manager 的 GPU-ready 缓存。
+    PTR(engine::geometry::Geometry, all_geometries);
+
+    /// instance-local material index -> global material slot。
+    PTR(uint, instance_material_map);
+    /// instance-local geometry index -> global geometry slot。
+    PTR(uint, instance_geometry_map);
+
+    /// 预留的点光源数组。
+    PTR(engine::light::PointLight, point_lights);
+    /// 预留的 spot light 数组。
+    PTR(engine::light::SpotLight, spot_lights);
+    /// 矩形单面 analytic area light 数组。
+    PTR(engine::light::AreaLight, area_lights);
+    /// 按 active instance-submesh 展开的自发光三角形 record。
+    ///
+    /// `instance_emissive_triangle_base_map[instance.geometry_indirect_idx + geometry_id]`
+    /// 给出该 instance-submesh 在本数组中的 base；再加 `PrimitiveIndex()` 可直接得到
+    /// 当前命中的三角形 record。非自发光 submesh 写入 `UINT_MAX`。
+    PTR(engine::light::EmissiveTriangleLight, emissive_triangle_lights);
+    /// 只包含有效可采样 record 的 power alias table，用于 emissive NEE O(1) 抽样。
+    PTR(engine::light::EmissiveLightAliasEntry, emissive_light_alias_table);
+    /// instance-local submesh -> emissive triangle base 的间接表，顺序与 instance_geometry_map 一致。
+    PTR(uint, instance_emissive_triangle_base_map);
+
+    /// 稳定 instance slot 数组。
+    PTR(Instance, all_instances);
+    uint point_light_count;
+    uint spot_light_count;
+    uint area_light_count;
+    /// analytic light 快照版本；point/spot/area 任一语义变化都会推进，用于 ReSTIR history 拒绝。
+    /// 该版本不参与采样概率或 radiance 计算，只判断旧 reservoir key 是否仍能安全重建。
+    uint analytic_light_version;
+    /// alias table entry 数量；record 数量通过 direct indexing 契约隐含，不用于采样。
+    uint emissive_light_count;
+    /// 非 0 表示 emissive alias table 可用于 NEE；hit MIS 仍可读取零 PDF record。
+    uint emissive_light_enabled;
+    /// 自发光表重建版本号，只用于 runtime/debug 判断历史或 UI 状态是否匹配当前 scene。
+    uint emissive_light_version;
+    /// `emissive_triangle_lights` record 数量；ReSTIR key 重建前用它防止旧 index 越界。
+    /// 它不是 alias table 的采样 entry 数，不能替代 `emissive_light_count` 参与 NEE 抽样。
+    uint emissive_light_record_count;
+
+    /// 默认 sky 的 bindless SRV；真实贴图未 ready 时 runtime 写入 fallback。
+    engine::bindless::SrvHandle sky;
+    /// sky 采样器类型。
+    engine::bindless::ESamplerType sky_sampler_type;
+    /// sky importance alias table。fallback sky 也提供 1x1 表，因此启用时始终可安全下标。
+    PTR(SkyDistributionEntry, sky_distribution);
+    /// sky distribution 的 lat-long 宽高；为 0 表示不可用。
+    uint sky_distribution_width;
+    uint sky_distribution_height;
+    /// 非 0 表示 shader 可使用 importance distribution；否则回退 uniform sphere。
+    uint sky_distribution_enabled;
+    /// 分布重建版本号，只用于 runtime/debug 识别历史是否仍匹配当前 sky。
+    uint sky_distribution_version;
+};
+
+}
+
+}

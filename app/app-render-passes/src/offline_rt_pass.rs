@@ -4,6 +4,7 @@ use itertools::Itertools;
 use std::mem::size_of;
 use std::sync::LazyLock;
 
+use truvis_app_shader_binding::gpu;
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::descriptors::descriptor::GfxDescriptorSetLayout;
@@ -21,12 +22,12 @@ use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
-use truvis_shader_binding::gpu;
 
 use crate::realtime_rt_pass::GfxRtPipeline;
 
 // Offline RT stage 列表必须和 `engine/shader/entry/offline_rt/*` 入口保持一致。
-// 这些 shader 共享 offline payload，并通过 `api/pass/offline_rt.slangi` 定义 push constant ABI。
+// 这些 shader 共享 offline payload，并通过
+// `app/shader/abi/offline_rt/mod.slangi` 定义 push constant ABI。
 // enum variant 声明顺序就是 VkPipelineShaderStageCreateInfo 数组顺序；
 // shader group 表通过这个顺序写入 stage index。
 #[derive(Debug, Clone, Copy, Enum)]
@@ -49,27 +50,27 @@ static OFFLINE_SHADER_STAGES: LazyLock<EnumMap<OfflineShaderStages, GfxShaderSta
         OfflineShaderStages::RayGen => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::RAYGEN_KHR,
             entry_point: c"main_ray_gen",
-            path: TruvisPath::shader_build_path_str("offline_rt/raygen.slang"),
+            path: TruvisPath::shader_build_path_str("app", "offline_rt/raygen.slang"),
         },
         OfflineShaderStages::SkyMiss => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::MISS_KHR,
             entry_point: c"sky_miss",
-            path: TruvisPath::shader_build_path_str("offline_rt/miss_sky.slang"),
+            path: TruvisPath::shader_build_path_str("app", "offline_rt/miss_sky.slang"),
         },
         OfflineShaderStages::ShadowMiss => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::MISS_KHR,
             entry_point: c"shadow_miss",
-            path: TruvisPath::shader_build_path_str("offline_rt/miss_shadow.slang"),
+            path: TruvisPath::shader_build_path_str("app", "offline_rt/miss_shadow.slang"),
         },
         OfflineShaderStages::ClosestHit => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::CLOSEST_HIT_KHR,
             entry_point: c"main_closest_hit",
-            path: TruvisPath::shader_build_path_str("offline_rt/closest_hit.slang"),
+            path: TruvisPath::shader_build_path_str("app", "offline_rt/closest_hit.slang"),
         },
         OfflineShaderStages::TransAny => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::ANY_HIT_KHR,
             entry_point: c"trans_any",
-            path: TruvisPath::shader_build_path_str("offline_rt/any_hit.slang"),
+            path: TruvisPath::shader_build_path_str("app", "offline_rt/any_hit.slang"),
         },
     }
 });
@@ -121,7 +122,7 @@ static OFFLINE_SHADER_GROUPS: LazyLock<EnumMap<OfflineShaderGroups, GfxShaderGro
 /// Offline RT pass 的 render-graph 执行参数。
 ///
 /// 这里聚合的是 CPU 侧资源 handle 和离线 sample 状态；真正的 shader ABI 由
-/// `gpu::offline_rt::PushConstants` 生成类型承载，避免 Rust 手写布局和 Slang drift。
+/// `gpu::app::render_passes::offline_rt::PushConstants` 生成类型承载，避免 Rust 手写布局和 Slang drift。
 pub struct OfflineRtPassData {
     pub single_frame_output: GfxImageHandle,
     pub single_frame_output_view: GfxImageViewHandle,
@@ -200,7 +201,7 @@ impl OfflineRtPass {
                     | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
             )
             .offset(0)
-            .size(size_of::<gpu::offline_rt::PushConstants>() as u32);
+            .size(size_of::<gpu::app::render_passes::offline_rt::PushConstants>() as u32);
 
         let rt_descriptor_set_layout = GfxDescriptorSetLayout::<OfflineRtDescriptorBinding>::new(
             device_ctx,
@@ -211,7 +212,7 @@ impl OfflineRtPass {
         let pipeline_layout = {
             let mut descriptor_set_layouts = render_descriptor_sets.global_set_layouts();
             // 离线 RT 额外追加一个 push descriptor set，set number 正好等于 GLOBAL_SETS_COUNT。
-            // shader 侧使用 `gpu::OFFLINE_RT_SET_NUM` 访问该集合，避免和全局 set 编号重叠。
+            // shader 侧使用 `gpu::app::render_passes::offline_rt::SET_NUM` 访问该集合，避免和全局 set 编号重叠。
             descriptor_set_layouts.push(rt_descriptor_set_layout.handle());
             let pipeline_layout_ci = vk::PipelineLayoutCreateInfo::default()
                 .set_layouts(&descriptor_set_layouts)
@@ -319,7 +320,7 @@ impl OfflineRtPass {
         cmd.push_descriptor_set(
             vk::PipelineBindPoint::RAY_TRACING_KHR,
             self.pipeline.pipeline_layout,
-            gpu::OFFLINE_RT_SET_NUM,
+            gpu::app::render_passes::offline_rt::SET_NUM,
             &[
                 OfflineRtDescriptorBinding::tlas().write_tals(vk::DescriptorSet::null(), 0, vec![tlas]),
                 OfflineRtDescriptorBinding::rt_single_frame_output().write_image(
@@ -338,9 +339,10 @@ impl OfflineRtPass {
             None,
         );
 
-        // 生成的 PushConstants 对应 `api/pass/offline_rt.slangi`。spp_idx 与 sample_jitter_px
+        // 生成的 PushConstants 对应 `app/shader/abi/offline_rt/mod.slangi`。
+        // spp_idx 与 sample_jitter_px
         // 都来自 OfflineAccumState，使离线采样和 realtime/DLSS frame state 解耦。
-        let push_constant = gpu::offline_rt::PushConstants {
+        let push_constant = gpu::app::render_passes::offline_rt::PushConstants {
             spp_idx: pass_data.spp_idx,
             channel: pass_data.debug_channel,
             sky_sampling_mode: pass_data.sky_sampling_mode,

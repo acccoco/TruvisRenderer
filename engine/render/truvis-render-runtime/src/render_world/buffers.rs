@@ -11,13 +11,13 @@ use truvis_shader_binding::gpu;
 /// 避免 CPU 准备下一帧数据时覆盖 GPU 仍在读取的上一帧 buffer。
 pub(super) struct RenderWorldBuffers {
     /// scene root UBO，保存 shader 访问其它 scene buffer 的 device address 与 bindless handle。
-    pub(super) scene_buffer: GfxStructuredBuffer<gpu::scene::GpuScene>,
+    pub(super) scene_buffer: GfxStructuredBuffer<gpu::engine::scene::GpuScene>,
     /// geometry table device buffer，元素只保存 vertex/index buffer device address。
-    pub(super) geometry_buffer: GfxStructuredBuffer<gpu::geometry::Geometry>,
-    pub(super) geometry_stage_buffer: GfxStructuredBuffer<gpu::geometry::Geometry>,
+    pub(super) geometry_buffer: GfxStructuredBuffer<gpu::engine::geometry::Geometry>,
+    pub(super) geometry_stage_buffer: GfxStructuredBuffer<gpu::engine::geometry::Geometry>,
     /// 稳定 instance slot 索引的 device buffer，TLAS custom index 与它共享同一语义。
-    pub(super) instance_buffer: GfxStructuredBuffer<gpu::scene::Instance>,
-    pub(super) instance_stage_buffer: GfxStructuredBuffer<gpu::scene::Instance>,
+    pub(super) instance_buffer: GfxStructuredBuffer<gpu::engine::scene::Instance>,
+    pub(super) instance_stage_buffer: GfxStructuredBuffer<gpu::engine::scene::Instance>,
     /// instance -> material slot 的间接索引表，按本帧 active instance/submesh 紧凑写入。
     pub(super) material_indirect_buffer: GfxStructuredBuffer<u32>,
     pub(super) material_indirect_stage_buffer: GfxStructuredBuffer<u32>,

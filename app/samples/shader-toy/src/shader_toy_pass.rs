@@ -30,12 +30,12 @@ static SHADER_STAGES: LazyLock<EnumMap<ShaderStage, GfxShaderStageInfo>> = LazyL
         ShaderStage::Vertex => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::VERTEX,
             entry_point: c"main",
-            path: TruvisPath::shader_build_path_str("samples/shadertoy/main.vert"),
+            path: TruvisPath::shader_build_path_str("sample-shader-toy", "main.vert"),
         },
         ShaderStage::Fragment => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::FRAGMENT,
             entry_point: c"main",
-            path: TruvisPath::shader_build_path_str("samples/shadertoy/main.frag"),
+            path: TruvisPath::shader_build_path_str("sample-shader-toy", "main.frag"),
         },
     }
 });

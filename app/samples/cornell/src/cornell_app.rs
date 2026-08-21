@@ -36,25 +36,25 @@ impl CornellApp {
         camera.euler_yaw_deg = 330.0;
         camera.euler_pitch_deg = -27.0;
 
-        world.register_point_light(gpu::light::PointLight {
+        world.register_point_light(gpu::engine::light::PointLight {
             pos: glam::vec3(-20.0, 40.0, 0.0).into(),
             color: (glam::vec3(5.0, 6.0, 1.0) * 2.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
-        world.register_point_light(gpu::light::PointLight {
+        world.register_point_light(gpu::engine::light::PointLight {
             pos: glam::vec3(40.0, 40.0, -30.0).into(),
             color: (glam::vec3(1.0, 6.0, 7.0) * 3.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
-        world.register_point_light(gpu::light::PointLight {
+        world.register_point_light(gpu::engine::light::PointLight {
             pos: glam::vec3(40.0, 40.0, 30.0).into(),
             color: (glam::vec3(5.0, 1.0, 8.0) * 3.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
-        world.register_spot_light(gpu::light::SpotLight {
+        world.register_spot_light(gpu::engine::light::SpotLight {
             pos: glam::vec3(0.0, 320.0, 180.0).into(),
             inner_angle: 12.0_f32.to_radians(),
             color: (glam::vec3(8.0, 6.0, 3.0) * 8.0).into(),
@@ -62,7 +62,7 @@ impl CornellApp {
             dir: glam::vec3(0.0, -0.85, -0.35).normalize().into(),
             _dir_padding: Default::default(),
         });
-        world.register_area_light(gpu::light::AreaLight {
+        world.register_area_light(gpu::engine::light::AreaLight {
             center: glam::vec3(0.0, 380.0, 0.0).into(),
             half_u: glam::vec3(80.0, 0.0, 0.0).into(),
             half_v: glam::vec3(0.0, 0.0, 80.0).into(),
