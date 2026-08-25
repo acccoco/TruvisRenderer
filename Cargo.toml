@@ -1,28 +1,28 @@
 [workspace]
 resolver = "3"
 members = [
-    # utils
-    "engine/utils/truvis-fetch-res",
-    "engine/utils/truvis-path",
-    # foundation
-    "engine/foundation/truvis-utils",
-    "engine/foundation/truvis-logs",
-    # gfx
-    "engine/gfx/truvis-gfx",
-    "engine/gfx/truvis-descriptor-layout-macro",
-    "engine/gfx/truvis-descriptor-layout-trait",
-    # render
-    "engine/render/truvis-render-foundation",
-    "engine/render/truvis-render-graph",
-    "engine/render/truvis-render-runtime",
-    # world
-    "engine/world/truvis-asset",
-    "engine/world/truvis-world",
-    # frame
-    "engine/app-frame/truvis-app-frame",
-    # platform
-    "engine/platform/truvis-render-thread",
-    "engine/platform/truvis-winit-host",
+    # e00-utils
+    "engine/e00-utils/truvis-fetch-res",
+    "engine/e00-utils/truvis-path",
+    # e00-foundation
+    "engine/e00-foundation/truvis-utils",
+    "engine/e00-foundation/truvis-logs",
+    # e10-gfx
+    "engine/e10-gfx/truvis-gfx",
+    "engine/e10-gfx/truvis-descriptor-layout-macro",
+    "engine/e10-gfx/truvis-descriptor-layout-trait",
+    # e40-render
+    "engine/e40-render/truvis-render-foundation",
+    "engine/e40-render/truvis-render-graph",
+    "engine/e40-render/truvis-render-runtime",
+    # e30-world
+    "engine/e30-world/truvis-asset",
+    "engine/e30-world/truvis-world",
+    # e50-app-frame
+    "engine/e50-app-frame/truvis-app-frame",
+    # e60-platform
+    "engine/e60-platform/truvis-render-thread",
+    "engine/e60-platform/truvis-winit-host",
     # shader 绑定相关
     "engine/shader/truvis-shader-binding",
     "engine/shader/truvis-shader-binding-codegen",
@@ -56,28 +56,28 @@ panic = 'abort'    # panic 时直接终止，进一步减小体积
 
 
 [workspace.dependencies]
-# utils
-truvis-fetch-res = { path = "engine/utils/truvis-fetch-res" }
-truvis-path = { path = "engine/utils/truvis-path" }
-# foundation
-truvis-logs = { path = "engine/foundation/truvis-logs" }
-truvis-utils = { path = "engine/foundation/truvis-utils" }
-# gfx
-truvis-gfx = { path = "engine/gfx/truvis-gfx" }
-truvis-descriptor-layout-macro = { path = "engine/gfx/truvis-descriptor-layout-macro" }
-truvis-descriptor-layout-trait = { path = "engine/gfx/truvis-descriptor-layout-trait" }
-# render
-truvis-render-foundation = { path = "engine/render/truvis-render-foundation" }
-truvis-render-graph = { path = "engine/render/truvis-render-graph" }
-truvis-render-runtime = { path = "engine/render/truvis-render-runtime" }
-# world
-truvis-asset = { path = "engine/world/truvis-asset" }
-truvis-world = { path = "engine/world/truvis-world" }
-# frame
-truvis-app-frame = { path = "engine/app-frame/truvis-app-frame" }
-# platform
-truvis-render-thread = { path = "engine/platform/truvis-render-thread" }
-truvis-winit-host = { path = "engine/platform/truvis-winit-host" }
+# e00-utils
+truvis-fetch-res = { path = "engine/e00-utils/truvis-fetch-res" }
+truvis-path = { path = "engine/e00-utils/truvis-path" }
+# e00-foundation
+truvis-logs = { path = "engine/e00-foundation/truvis-logs" }
+truvis-utils = { path = "engine/e00-foundation/truvis-utils" }
+# e10-gfx
+truvis-gfx = { path = "engine/e10-gfx/truvis-gfx" }
+truvis-descriptor-layout-macro = { path = "engine/e10-gfx/truvis-descriptor-layout-macro" }
+truvis-descriptor-layout-trait = { path = "engine/e10-gfx/truvis-descriptor-layout-trait" }
+# e40-render
+truvis-render-foundation = { path = "engine/e40-render/truvis-render-foundation" }
+truvis-render-graph = { path = "engine/e40-render/truvis-render-graph" }
+truvis-render-runtime = { path = "engine/e40-render/truvis-render-runtime" }
+# e30-world
+truvis-asset = { path = "engine/e30-world/truvis-asset" }
+truvis-world = { path = "engine/e30-world/truvis-world" }
+# e50-app-frame
+truvis-app-frame = { path = "engine/e50-app-frame/truvis-app-frame" }
+# e60-platform
+truvis-render-thread = { path = "engine/e60-platform/truvis-render-thread" }
+truvis-winit-host = { path = "engine/e60-platform/truvis-winit-host" }
 # app
 app-kit = { path = "app/app-kit" }
 app-render-passes = { path = "app/app-render-passes" }

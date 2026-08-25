@@ -27,7 +27,7 @@ flowchart TB
 - 物理目录用于导航，真实约束以 crate 职责与 Cargo 依赖方向为准。
 - platform 层内部保持 `truvis-winit-host -> truvis-render-thread -> truvis-app-frame`；winit host 可直接消费 frame
   契约，线程宿主不依赖 winit、Windows API、Tauri 或具体 app。
-- `engine/render/` 是渲染域目录，只承载通用渲染基础设施：`truvis-render-foundation` 是跨 crate 契约层，
+- `engine/e40-render/` 是渲染域目录，只承载通用渲染基础设施：`truvis-render-foundation` 是跨 crate 契约层，
   `truvis-render-graph` 只依赖 foundation 中的句柄和 `GfxResourceAccess`，`truvis-render-runtime` 负责集成 runtime-owned
   GPU resource/binding/cmd/per-frame 能力。
 - 具体 app 复用的 RT / 后处理 pass 位于 `app/app-render-passes`，GUI backend 位于 `app/app-kit` 私有模块。
@@ -39,7 +39,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    Foundation["foundation / utils<br/>utils、logs、path"]
+    Foundation["e00-foundation / e00-utils<br/>utils、logs、path"]
     Gfx["gfx + shader/cxx bindings<br/>RHI、descriptor-layout、FFI/binding"]
     Core["render-foundation + world<br/>渲染契约、CPU scene/assets 聚合"]
     RenderDomain["render-graph<br/>pass 编排基础<br/>通过 GfxResourceAccess 查询 imported image"]
@@ -107,9 +107,12 @@ flowchart LR
 
 ## 物理目录约定
 
-- `engine/app-frame/truvis-app-frame`：平台无关的 App 契约、统一 Runner 和最小线程控制契约。
-- `engine/platform/truvis-render-thread`：独立于窗口 backend 的 OS RenderThread、完成状态、panic 传播与 App factory。
-- `engine/platform/truvis-winit-host`：winit 窗口 backend；`StandaloneWinitHost` 服务独立顶层窗口，`EmbeddedWinitHost`
+Engine 一级 Rust 职责目录使用 `eNN-` 前缀标识 Engine 归属和主要架构阶段；同一目录可以包含多个实际 crate 层级。
+`engine/shader/` 与 `engine/cxx/` 保持稳定的横切工具链根目录。
+
+- `engine/e50-app-frame/truvis-app-frame`：平台无关的 App 契约、统一 Runner 和最小线程控制契约。
+- `engine/e60-platform/truvis-render-thread`：独立于窗口 backend 的 OS RenderThread、完成状态、panic 传播与 App factory。
+- `engine/e60-platform/truvis-winit-host`：winit 窗口 backend；`StandaloneWinitHost` 服务独立顶层窗口，`EmbeddedWinitHost`
   在专用线程服务 Windows child HWND，两者复用 `truvis-render-thread` 启动和回收渲染线程。
 - `app/app-kit`：app 层公共组件，包含 GUI、输入/相机、overlay 和 RT pipeline glue。
 - `app/app-render-passes`：主体 app 与 samples 共享的具体 pass。

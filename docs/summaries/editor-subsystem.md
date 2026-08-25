@@ -7,7 +7,7 @@
 
 Truvis Editor 由 Tauri/Tao 顶层窗口、React WebView、Windows child HWND 中的 Vulkan viewport、
 EditorServer 和 RenderThread 内的主体 App 共同组成。Editor 属于 app 域，不进入 `engine/`；
-`engine/platform/truvis-winit-host` 提供平台窗口，`engine/platform/truvis-render-thread` 提供 backend-independent
+`engine/e60-platform/truvis-winit-host` 提供平台窗口，`engine/e60-platform/truvis-render-thread` 提供 backend-independent
 渲染线程宿主；两者都不依赖 Web、Tauri 或 Editor 协议。
 
 核心设计是让 UI、网络和 GPU scene 都不能成为第二份 CPU scene 权威状态：

@@ -25,8 +25,8 @@
 模块入口：
 
 - [`engine/README.md`](../engine/README.md)：Engine 目录与 crate 导航。
-- [`truvis-render-thread/README.md`](../engine/platform/truvis-render-thread/README.md)：窗口 backend 无关的渲染线程生命周期。
-- [`truvis-winit-host/README.md`](../engine/platform/truvis-winit-host/README.md)：standalone 与 embedded winit 窗口宿主。
+- [`truvis-render-thread/README.md`](../engine/e60-platform/truvis-render-thread/README.md)：窗口 backend 无关的渲染线程生命周期。
+- [`truvis-winit-host/README.md`](../engine/e60-platform/truvis-winit-host/README.md)：standalone 与 embedded winit 窗口宿主。
 - [`app/README.md`](../app/README.md)：App 域、公共组件、主体 App 与 samples。
 - [`app/truvis/README.md`](../app/truvis/README.md)：主体 App 的状态 owner 与 pipeline 编排。
 - [`app/editor/README.md`](../app/editor/README.md)：Editor 构建、协议源码和运行参数。
