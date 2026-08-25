@@ -72,7 +72,7 @@ Truvis 根据 `RenderMode` 选择一条 app-owned pipeline：
 realtime light candidate、MIS、ReSTIR 和 SHARC 的算法与 shader 数据契约由
 [`realtime-rt-raytracing-flow.md`](realtime-rt-raytracing-flow.md) 统一说明，本文不复制算法细节。
 
-主体 App 的 present 顺序由 `TruvisApp` 显式决定：先 resolve main view，再组合 selection outline、
+主体 App 的 present 顺序由 `TruvisRenderApp` 显式决定：先 resolve main view，再组合 selection outline、
 coordinate gizmo 和 GUI。具体 App owner 与编排入口见 [`app/truvis/README.md`](../../app/truvis/README.md)。
 
 离线累计 image 是 pipeline-owned 跨帧历史，不按 FIF 轮转；per-FIF output target 仍按当前 `FrameLabel` 使用。

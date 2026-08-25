@@ -8,8 +8,8 @@
 先建立跨层心智模型：
 
 1. [`layering-and-dependency-boundaries.md`](summaries/layering-and-dependency-boundaries.md)：总体分层、依赖方向与 app/engine 边界。
-2. [`frame-lifecycle.md`](summaries/frame-lifecycle.md)：启动、render loop，以及 Runtime/App/Plugin phase 顺序。
-3. [`runtime-app-plugin-boundaries.md`](summaries/runtime-app-plugin-boundaries.md)：状态所有权、Ctx 裁剪、`RenderAppShell` 与 Plugin 模型。
+2. [`frame-lifecycle.md`](summaries/frame-lifecycle.md)：启动、统一帧执行器，以及 Runtime/App/Plugin phase 顺序。
+3. [`runtime-app-plugin-boundaries.md`](summaries/runtime-app-plugin-boundaries.md)：状态所有权、Ctx 裁剪、`RenderAppRunner` 与 Plugin 模型。
 4. [`threading-and-resource-lifecycle.md`](summaries/threading-and-resource-lifecycle.md)：线程、GPU 同步和资源创建/重建/销毁契约。
 
 再按任务选择专题：
@@ -35,8 +35,8 @@
 - 项目保持无环依赖：上层可以依赖下层，下层不反向依赖上层业务；同层 crate 默认不互相依赖，
   除非 summaries 中明确记录。
 - 平台层只负责窗口、事件循环和渲染线程启动。主体 Tauri App、embedded child HWND 与独立 samples
-  都通过同一个 `RenderWorker` 在 RenderThread 创建具体 App，并安装进唯一 `RenderAppShell`；
-  所有 Vulkan 对象只在该线程创建、使用和销毁。
+  都由窗口 owner 持有统一的 `RenderThread` handle，并在其 OS 渲染线程内创建具体 App、进入唯一
+  `RenderAppRunner::run`；所有 Vulkan 对象只在该线程创建、使用和销毁。
 - `RenderRuntime` 拥有 `Gfx`、`World`、GPU resource/binding/timing owner、runtime render state、
   `RenderWorld`、present、command 和同步资源；App/Plugin 只通过 phase-appropriate Ctx 使用窄能力。
 - App state 持有 GUI、camera/input、overlay 和具体 pipeline，并显式决定 RenderGraph pass 顺序；

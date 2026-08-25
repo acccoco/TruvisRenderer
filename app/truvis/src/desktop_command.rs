@@ -67,7 +67,7 @@ impl DesktopCommandSender {
 
 /// 单帧处理 desktop command 后需要通知其他 App owner 的窄结果。
 ///
-/// Controller 不直接依赖 `EditorController`；`TruvisApp` 负责在同一 update 阶段把
+/// Controller 不直接依赖 `EditorController`；`TruvisRenderApp` 负责在同一 update 阶段把
 /// scene-version 变化广播给 WebSocket client。
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct DesktopCommandUpdate {

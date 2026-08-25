@@ -1,13 +1,13 @@
 # 帧生命周期与 Phase 关系
 
-> 状态：当前实现事实总结。本文只解释现有 `RenderRuntime`、`RenderAppShell`、
+> 状态：当前实现事实总结。本文只解释现有 `RenderRuntime`、`RenderAppRunner`、
 > `RenderApp` 和 `Plugin` 的 phase 边界。
 
 本文把一帧理解成三层协作：
 
 - `RenderRuntime` 提供底层阶段化能力，拥有 `World`、GPU resource/binding/timing owners、runtime-owned render state、
   `RenderWorld`、present、cmd 和同步资源。
-- `RenderAppShell` 固定一帧顺序，把 runtime phase 裁剪成 App / Plugin 可用的上下文。
+- `RenderAppRunner` 固定一帧顺序，把 runtime phase 裁剪成 App / Plugin 可用的上下文。
 - 具体 App 持有 camera、input、GUI、overlay 和具体渲染 Plugin，并决定这些能力如何组合。
 
 ## 整体心智模型
@@ -28,14 +28,14 @@ After Render  = present + end_frame
 ```mermaid
 flowchart TB
     Runtime["RenderRuntime<br/>资源与 GPU 快照 owner<br/>World / Resource+Binding+Timing / RenderWorld / Present / Sync"]
-    Shell["RenderAppShell<br/>一帧顺序编排者<br/>把 runtime phase 裁剪成 hook ctx"]
+    Runner["RenderAppRunner<br/>一帧顺序编排者<br/>把 runtime phase 裁剪成 hook ctx"]
     App["Concrete App<br/>业务状态 owner<br/>camera / input / GUI / overlay / pipeline plugin"]
     Plugin["Plugin<br/>App 持有的能力单元<br/>标准生命周期 + 具体特有能力"]
-    Shell -->|" 调用 begin_frame / update_phase / prepare / render_phase "| Runtime
-    Shell -->|" 回调 dyn RenderApp "| App
+    Runner -->|" 调用 begin_frame / update_phase / prepare / render_phase "| Runtime
+    Runner -->|" 回调 dyn RenderApp "| App
     App -->|" visit_plugins_mut / 显式调用具体能力 "| Plugin
-    Runtime -->|" RenderRuntime*Ctx "| Shell
-    Shell -->|" RenderApp*Ctx / Plugin*Ctx "| App
+    Runtime -->|" RenderRuntime*Ctx "| Runner
+    Runner -->|" RenderApp*Ctx / Plugin*Ctx "| App
 ```
 
 这张图里最重要的边界是：`RenderRuntime` 不感知 Plugin、GUI 或 App 编排；App / Plugin 也不长期保存完整 runtime owner，只在当前
@@ -43,8 +43,8 @@ phase 内使用窄化后的 ctx。
 
 ## 启动、Resize 与关闭入口
 
-渲染入口仍然唯一：平台层最终都通过 `RenderWorker` 创建渲染线程。App factory 在 RenderThread 内执行并返回
-`Box<dyn RenderApp>`，`RenderWorker` 随后统一构造 `RenderAppShell`，render loop 只驱动这个非泛型 Shell。
+渲染入口仍然唯一：平台层最终都通过 `RenderThread` 创建渲染线程。App factory 在 OS RenderThread 内执行并返回
+`Box<dyn RenderApp>`，随后进入 `RenderAppRunner::run(control, init, app)`，由 Runner 内部统一拥有 App、Runtime 和完整帧循环。
 主体应用的 Tauri 窗口与独立 sample 的 winit 顶层窗口只是在该入口之前采用不同的窗口 owner。
 
 ```mermaid
@@ -52,36 +52,36 @@ flowchart TD
     Entry["Tauri TruvisDesktop / standalone WinitApp"] --> CreateWindow["create child / top-level winit Window"]
     CreateWindow --> InitialSize{"embedded child?"}
     InitialSize -->|"yes"| AwaitDom["await first non-zero DOM rect<br/>SetWindowPos before renderer startup"]
-    InitialSize -->|"no"| Worker["RenderWorker::spawn<br/>create SharedState + raw handles"]
-    AwaitDom --> Worker
-    Worker --> SpawnThread["spawn RenderThread"]
+    InitialSize -->|"no"| ThreadOwner["RenderThread::spawn<br/>create RenderThreadControl + raw handles"]
+    AwaitDom --> ThreadOwner
+    ThreadOwner --> SpawnThread["spawn RenderThread"]
     SpawnThread --> AppFactory["app_factory() -> Box&lt;dyn RenderApp&gt;"]
-    AppFactory --> ShellFactory["RenderAppShell::new(app)"]
-    ShellFactory --> InitAfterWindow["shell.init_after_window(raw handles, scale_factor, initial_size)"]
+    AppFactory --> Runner["RenderAppRunner::run(control, init, app)"]
+    Runner --> InitAfterWindow["runner.init_after_window(raw handles, scale_factor, initial_size)"]
 ```
 
-render loop 的外层顺序先合并输入与窗口尺寸变化，再让 `RenderAppShell` 进入单帧 phase：
+`RenderAppRunner::run` 在内部循环中先合并输入与窗口尺寸变化，再进入单帧 phase：
 
 ```mermaid
 flowchart TD
-    RenderLoop["render_loop"] --> DrainInput["drain channel InputEvent"]
-    DrainInput --> PushInput["shell.push_input_event(event)"]
+    RenderLoop["RenderAppRunner::run"] --> DrainInput["drain channel InputEvent"]
+    DrainInput --> PushInput["runner.push_input_event(event)"]
     PushInput --> ReadSize["read latest window size"]
-    ReadSize --> RecreateSwapchain["shell.recreate_swapchain_if_needed(size)"]
-    RecreateSwapchain --> TimeToRender["shell.time_to_render()"]
-    TimeToRender --> RunFrame["shell.run_frame()"]
+    ReadSize --> RecreateSwapchain["runner.recreate_swapchain_if_needed(size)"]
+    RecreateSwapchain --> TimeToRender["runner.time_to_render()"]
+    TimeToRender --> RunFrame["runner.run_frame()"]
 ```
 
 resize 只在 render loop 的安全点处理。`RenderRuntime::handle_resize` 只有实际重建 swapchain / present 相关状态时才返回
-`Some(RenderRuntimeResizeCtx)`；随后 `RenderAppShell` 把它包装为 `RenderAppResizeCtx`，App 再通知需要重建窗口尺寸资源的
+`Some(RenderRuntimeResizeCtx)`；随后 `RenderAppRunner` 把它包装为 `RenderAppResizeCtx`，App 再通知需要重建窗口尺寸资源的
 Plugin。
 
 关闭流程：
 
-- 渲染线程观察到退出信号后调用 `RenderAppShell::shutdown(&mut self)`；Shell 再调用具体 `RenderApp::shutdown` hook。
-- `TruvisApp` 在 shutdown 中关闭 RenderThread 一侧的 `EditorController` endpoint；EditorServer 由 main thread 的
+- 渲染线程观察到退出信号后，由 `RenderAppRunner` 内部执行 shutdown，再调用具体 `RenderApp::shutdown` hook。
+- `TruvisRenderApp` 在 shutdown 中关闭 RenderThread 一侧的 `EditorController` endpoint；EditorServer 由 main thread 的
   `TruvisDesktopState` 持有，不参与 GPU idle 或资源销毁。
-- `RenderAppShell` 先调用 App hooks 的 `shutdown()`，再通过 App 提供的 shutdown visitor 调用 Plugin shutdown，最后销毁
+- `RenderAppRunner` 先调用 App hooks 的 `shutdown()`，再通过 App 提供的 shutdown visitor 调用 Plugin shutdown，最后销毁
   RenderRuntime。
 - `RenderRuntime` 拥有 `Gfx` root owner；runtime 销毁时先等待 GPU idle，释放所有子资源，最后销毁 `Gfx`。
 - 窗口 owner 等待渲染线程完成后再 drop winit `Window`；Tauri 主窗口关闭时继续等待 `RenderWindowThread` 和
@@ -126,7 +126,7 @@ flowchart LR
     R3 -->|" yes "| A3 --> R4 --> R5 --> A4 --> R6 --> A5 --> P2 --> R7 --> R8
 ```
 
-泳道图对应 `RenderAppShell::run_frame` 的主路径。`RenderAppShell` 先进入 runtime 的 frame
+泳道图对应 `RenderAppRunner::run_frame` 的主路径。`RenderAppRunner` 先进入 runtime 的 frame
 阶段，再调用 App hook；Plugin 的标准生命周期由 App 暴露的 visitor 批量驱动，Plugin 的特有渲染能力仍由 App 在 `render`
 中显式调用。
 
@@ -147,19 +147,19 @@ flowchart TB
     RuntimeCtx --> RenderCtx
     RuntimeCtx --> ResizeCtx
     RuntimeCtx --> ShutdownCtx
-    Shell["RenderAppShell<br/>裁剪标准生命周期 ctx"]
+    Runner["RenderAppRunner<br/>裁剪标准生命周期 ctx"]
     AppHooks["dyn RenderApp<br/>App 级 hook ctx"]
     PluginStd["Plugin 标准生命周期 ctx<br/>PluginInitCtx / PluginUpdateCtx / PluginResizeCtx / PluginShutdownCtx"]
     AppRender["App::render<br/>按具体能力构造 PluginRenderCtx"]
     PluginRender["具体 Plugin render 能力<br/>contribute_passes / prepare_render_data"]
-    InitCtx --> Shell
-    UpdateCtx --> Shell
-    ResizeCtx --> Shell
-    ShutdownCtx --> Shell
+    InitCtx --> Runner
+    UpdateCtx --> Runner
+    ResizeCtx --> Runner
+    ShutdownCtx --> Runner
     RayCtx --> AppHooks
     RenderCtx --> AppHooks
-    Shell --> AppHooks
-    Shell --> PluginStd
+    Runner --> AppHooks
+    Runner --> PluginStd
     RenderCtx --> AppRender --> PluginRender
 ```
 
@@ -188,21 +188,21 @@ Runtime phase 的核心意图是用借用和 ctx 限制能力：update 阶段可
 
 | Phase           | 由谁调用                                | 主要职责                                                         | 与 Runtime / Plugin 的关系                                         |
 |-----------------|-------------------------------------|--------------------------------------------------------------|----------------------------------------------------------------|
-| `init`          | `RenderAppShell::init_after_window` | 初始化 App 自有状态和资源                                              | 发生在 runtime window 绑定后、标准 Plugin `init` 前                      |
-| `on_input`      | `RenderAppShell::run_frame`         | 处理本帧累积输入，决定 GUI、camera、业务输入的消费策略                             | 标准 Plugin `on_input` 不自动批量调用，App 可显式调用具体 Plugin                |
-| `update`        | `RenderAppShell::run_frame`         | 更新 camera、overlay、UI frame state、editor 请求、`DlssOptions` 或 app-local pipeline 配置、CPU scene | 运行在 `RenderRuntimeUpdateCtx` 内，早于 `Plugin::update` 和 `prepare` |
-| `after_prepare` | `RenderAppShell::run_frame`         | 对已同步的 GPU scene 做同步查询                                        | 只拿 `RenderRuntimeRayCastCtx`，常见用途是拾取                           |
-| `render`        | `RenderAppShell::run_frame`         | 创建 RenderGraph，显式决定具体 Plugin pass 与 GUI pass 的加入顺序           | 读取 `RenderRuntimeRenderCtx`，通常在这里构造 `PluginRenderCtx`          |
-| `render_view`   | `RenderAppShell::run_frame`         | 提供当前 camera / view 的纯数据快照                                    | runtime 在 `prepare` 中读取，不拥有 App camera                         |
+| `init`          | `RenderAppRunner::init_after_window` | 初始化 App 自有状态和资源                                              | 发生在 runtime window 绑定后、标准 Plugin `init` 前                      |
+| `on_input`      | `RenderAppRunner::run_frame`         | 处理本帧累积输入，决定 GUI、camera、业务输入的消费策略                             | 标准 Plugin `on_input` 不自动批量调用，App 可显式调用具体 Plugin                |
+| `update`        | `RenderAppRunner::run_frame`         | 更新 camera、overlay、UI frame state、editor 请求、`DlssOptions` 或 app-local pipeline 配置、CPU scene | 运行在 `RenderRuntimeUpdateCtx` 内，早于 `Plugin::update` 和 `prepare` |
+| `after_prepare` | `RenderAppRunner::run_frame`         | 对已同步的 GPU scene 做同步查询                                        | 只拿 `RenderRuntimeRayCastCtx`，常见用途是拾取                           |
+| `render`        | `RenderAppRunner::run_frame`         | 创建 RenderGraph，显式决定具体 Plugin pass 与 GUI pass 的加入顺序           | 读取 `RenderRuntimeRenderCtx`，通常在这里构造 `PluginRenderCtx`          |
+| `render_view`   | `RenderAppRunner::run_frame`         | 提供当前 camera / view 的纯数据快照                                    | runtime 在 `prepare` 中读取，不拥有 App camera                         |
 | `on_resize`     | runtime 确认 resize 后                 | 更新 App-owned target 或窗口尺寸状态                                  | 早于标准 Plugin `on_resize`                                        |
-| `shutdown`      | `RenderAppShell::shutdown`          | 释放 App-owned GPU 资源                                          | 早于标准 Plugin shutdown，且早于 runtime destroy                       |
+| `shutdown`      | `RenderAppRunner::shutdown`          | 释放 App-owned GPU 资源                                          | 早于标准 Plugin shutdown，且早于 runtime destroy                       |
 
 App 是业务编排层。它既不拥有 runtime，也不把具体 Plugin 交给 runtime 发现，而是通过字段显式组合能力，并通过 visitor
 暴露标准生命周期。
 
 ## Plugin Phases
 
-| Phase       | 是否由 Shell 自动批量调用 | 主要职责                                            | 备注                                |
+| Phase       | 是否由 Runner 自动批量调用 | 主要职责                                            | 备注                                |
 |-------------|------------------|-------------------------------------------------|-----------------------------------|
 | `init`      | 是                | 初始化 Plugin-owned 长期资源                           | 使用 `PluginInitCtx`                |
 | `on_input`  | 否                | 处理单个输入事件并返回是否消费                                 | 输入消费顺序属于 App 策略                   |
@@ -217,7 +217,7 @@ App 是业务编排层。它既不拥有 runtime，也不把具体 Plugin 交给
 ## 关系与约束
 
 - `RenderRuntime` 是 phase 能力来源，但不是 App / Plugin 编排者；它只暴露当前阶段需要的 typed ctx。
-- `RenderAppShell` 是唯一固定帧骨架；render loop 只驱动 Shell，Shell 内部再通过 `dyn RenderApp` 调用具体 App hook。
+- `RenderAppRunner` 是唯一固定帧执行器，内部同时驱动完整循环与帧生命周期，再通过 `dyn RenderApp` 调用具体业务 hook。
 - `App` 是业务组合 owner；它持有具体 Plugin，并在 render 阶段决定 RenderGraph pass 顺序。
 - `Plugin` 是可复用能力单元；标准生命周期可以批量驱动，特有能力由 App 显式调用。
 - `World` 只应在 init / update / resize / shutdown 等允许可变借用的阶段修改；render 阶段不再修改 CPU scene。

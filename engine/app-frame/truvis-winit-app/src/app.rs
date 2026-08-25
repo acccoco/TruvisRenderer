@@ -1,5 +1,3 @@
-use std::sync::atomic::Ordering;
-
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
@@ -7,11 +5,11 @@ use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Window, WindowId};
 
 use truvis_app_frame::render_app_api::RenderApp;
-use truvis_app_frame::{init_env_with_log_file, pack_size};
+use truvis_app_frame::init_env_with_log_file;
 use truvis_logs::LogFilePath;
 use truvis_path::TruvisPath;
 
-use crate::render_worker::{RenderAppFactory, RenderWorker};
+use crate::render_thread::{RenderAppFactory, RenderThread};
 use crate::winit_event_adapter::WinitEventAdapter;
 
 enum UserEvent {
@@ -22,7 +20,7 @@ enum UserEvent {
 pub struct WinitApp {
     window: Option<Window>,
     app_factory: Option<RenderAppFactory>,
-    render_worker: Option<RenderWorker>,
+    render_thread: Option<RenderThread>,
     event_proxy: EventLoopProxy<UserEvent>,
 }
 
@@ -44,7 +42,7 @@ impl WinitApp {
         let mut app = Self {
             window: None,
             app_factory: Some(app_factory),
-            render_worker: None,
+            render_thread: None,
             event_proxy,
         };
 
@@ -83,17 +81,17 @@ impl WinitApp {
         let window = Self::create_window(event_loop, "Truvis".to_string(), [1200.0, 800.0]);
         let factory = self.app_factory.take().expect("app_factory already consumed");
         let event_proxy = self.event_proxy.clone();
-        let render_worker = RenderWorker::spawn(&window, factory, move || {
+        let render_thread = RenderThread::spawn(&window, factory, move || {
             let _ = event_proxy.send_event(UserEvent::RenderFinished);
         })
         .unwrap_or_else(|error| panic!("{error}"));
 
         self.window = Some(window);
-        self.render_worker = Some(render_worker);
+        self.render_thread = Some(render_thread);
     }
 
     fn destroy(mut self) {
-        let panic_payload = self.render_worker.take().and_then(RenderWorker::finish);
+        let panic_payload = self.render_thread.take().and_then(RenderThread::join);
         self.window = None;
         if let Some(payload) = panic_payload {
             std::panic::resume_unwind(payload);
@@ -117,18 +115,16 @@ impl ApplicationHandler<UserEvent> for WinitApp {
     }
 
     fn window_event(&mut self, _event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
-        let Some(worker) = self.render_worker.as_ref() else {
+        let Some(render_thread) = self.render_thread.as_ref() else {
             return;
         };
-        let shared = worker.shared();
 
         match &event {
             WindowEvent::CloseRequested => {
-                worker.request_exit();
+                render_thread.request_exit();
             }
             WindowEvent::Resized(size) => {
-                shared.size.store(pack_size(size.width, size.height), Ordering::Relaxed);
-                shared.resize_generation.fetch_add(1, Ordering::Release);
+                render_thread.publish_resize([size.width, size.height]);
             }
             WindowEvent::ScaleFactorChanged { .. } => {}
             _ => {}
@@ -139,7 +135,7 @@ impl ApplicationHandler<UserEvent> for WinitApp {
         match input_event {
             InputEvent::Other | InputEvent::Resized { .. } => {}
             _ => {
-                let _ = shared.event_sender.send(input_event);
+                render_thread.send_input(input_event);
             }
         }
     }
@@ -147,8 +143,8 @@ impl ApplicationHandler<UserEvent> for WinitApp {
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: DeviceId, _event: DeviceEvent) {}
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(worker) = self.render_worker.as_ref() {
-            if worker.shared().render_finished.load(Ordering::Acquire) {
+        if let Some(render_thread) = self.render_thread.as_ref() {
+            if render_thread.is_finished() {
                 event_loop.exit();
             }
         }

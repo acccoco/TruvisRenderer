@@ -12,7 +12,7 @@ EditorServer 和 RenderThread 内的主体 App 共同组成。Editor 属于 app 
 核心设计是让 UI、网络和 GPU scene 都不能成为第二份 CPU scene 权威状态：
 
 - `World` / `SceneStore` 是 scene、material、sky 与 light 的唯一 CPU 权威 owner。
-- 当前 selection 属于 `TruvisApp`，使用 CPU `InstanceHandle + submesh_index` 语义。
+- 当前 selection 属于 `TruvisRenderApp`，使用 CPU `InstanceHandle + submesh_index` 语义。
 - GPU scene 是 `RenderRuntime::prepare` 根据 CPU scene 生成的派生状态。
 - Web 页面只保存可丢弃的展示投影；刷新或建立新 client session 后通过查询重新构建。
 - EditorServer 和 EditorBridge 只短暂承载 owned DTO，不缓存场景快照或维护权威状态。
@@ -102,7 +102,7 @@ notification 队列满时允许丢弃；response 无法发送时由 Web timeout 
 
 - Tauri main thread：顶层窗口、WebView、文件对话框和 desktop state。
 - RenderWindowThread：winit event loop 与 Windows child HWND。
-- RenderThread：`RenderAppShell`、`TruvisApp`、`World` 与所有 Vulkan 对象。
+- RenderThread：`RenderAppRunner`、`TruvisRenderApp`、`World` 与所有 Vulkan 对象。
 - EditorServer thread：loopback HTTP/WebSocket 与 Web 静态文件。
 
 关闭时先停止 App 接收新的 desktop/editor 请求，再完成 App、Plugin、RenderRuntime 和 Vulkan 资源释放；

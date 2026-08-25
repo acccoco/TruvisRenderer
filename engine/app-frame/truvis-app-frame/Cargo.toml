@@ -2,7 +2,7 @@
 name = "truvis-app-frame"
 version = "0.1.0"
 edition = "2024"
-description = "App frame contracts, shell, and render thread loop"
+description = "App frame contracts and unified render app runner"
 
 [dependencies]
 truvis-gfx = { workspace = true }

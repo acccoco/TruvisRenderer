@@ -9,7 +9,7 @@
 ```mermaid
 flowchart TB
     L6["L6 app/truvis + samples<br/>Tauri 主体 app 与独立示例入口<br/><br/>L6 app/editor<br/>Tauri WebView UI、HTTP/WebSocket adapter、跨线程 editor 契约<br/><br/>L6 truvis-winit-app<br/>standalone / child HWND 窗口生命周期、winit 事件循环、渲染线程启动"]
-    L5["L5 app-kit<br/>GuiPlugin、私有 GUI backend、overlay plugin、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp / Plugin 契约与 Plugin Ctx<br/>唯一 RenderAppShell 帧骨架 + render loop"]
+    L5["L5 app-kit<br/>GuiPlugin、私有 GUI backend、overlay plugin、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp / Plugin 契约与 Plugin Ctx<br/>唯一 RenderAppRunner 完整生命周期"]
     L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GfxResourceManager / ShaderBindingSystem / CmdAllocator / PerFrameGpuData + timing owners + runtime render state + RenderWorld + RenderPassRecordCtx + swapchain/present 生命周期"]
     L3["L3 truvis-render-graph / truvis-world / truvis-asset<br/>按帧同步辅助、CPU 场景、资产加载"]
     L2["L2 truvis-render-foundation<br/>FrameCounter / FrameLabel、GPU 资源句柄、RenderView、RenderSceneView、GfxResourceAccess"]
@@ -40,7 +40,7 @@ flowchart LR
     Core["render-foundation + world<br/>渲染契约、CPU scene/assets 聚合"]
     RenderDomain["render-graph<br/>pass 编排基础<br/>通过 GfxResourceAccess 查询 imported image"]
     Runtime["render-runtime<br/>运行时集成、GPU owner、GPU 上传、present 生命周期"]
-    Frame["frame<br/>具体 RenderApp 契约、唯一 RenderAppShell、render loop"]
+    Frame["frame<br/>具体 RenderApp 契约、RenderAppRunner::run、线程控制契约"]
     AppKit["app-kit + app-render-passes<br/>GUI 集成与私有 backend、输入/相机、overlay、RT/后处理 pass 与 pipeline glue"]
     App["app / samples<br/>Truvis Tauri 桌面壳与独立示例"]
     Platform["truvis-winit-app<br/>standalone + embedded winit 平台入口"]
@@ -101,13 +101,13 @@ flowchart LR
 
 ## 物理目录约定
 
-- `engine/app-frame/truvis-app-frame`：平台无关的 App 契约、shell 与 render loop。
+- `engine/app-frame/truvis-app-frame`：平台无关的 App 契约、统一 Runner 和最小线程控制契约。
 - `engine/app-frame/truvis-winit-app`：winit 平台入口；`WinitApp` 服务独立顶层窗口，`EmbeddedWinitHost` 在专用线程服务
-  Windows child HWND，两者复用同一 `RenderWorker` 启动和回收渲染线程。
+  Windows child HWND，两者复用同一 `RenderThread` 启动和回收渲染线程。
 - `app/app-kit`：app 层公共组件，包含 GUI、输入/相机、overlay 和 RT pipeline glue。
 - `app/app-render-passes`：主体 app 与 samples 共享的具体 pass。
 - `app/truvis`：主体 app，提供 `truvis-app`；Tauri/Tao desktop owner 在 main thread 组装 WebView、EditorServer 与
-  embedded winit host，`TruvisApp` 仍只承载 RenderThread 上的场景和渲染业务。
+  embedded winit host，`TruvisRenderApp` 仍只承载 RenderThread 上的场景和渲染业务。
 - `app/editor/bridge`：editor 协议 DTO、transport envelope 和方向受限的有界 channel endpoint。
 - `app/editor/server`：独立线程上的 loopback HTTP / WebSocket adapter 和 Web 静态文件服务。
 - `app/editor/web`：作为 Tauri WebView 内容运行的 React / TypeScript 编辑器；中央 DOM slot 只发布 child HWND 的物理像素矩形，

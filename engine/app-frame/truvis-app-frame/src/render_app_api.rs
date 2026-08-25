@@ -1,6 +1,6 @@
-//! 渲染线程和 `RenderAppShell` 帧骨架使用的 App 契约。
+//! 渲染线程和 `RenderAppRunner` 帧骨架使用的 App 契约。
 //!
-//! [`RenderApp`] 表达具体 App 可以填充的业务阶段；[`RenderAppShell`](crate::RenderAppShell)
+//! [`RenderApp`] 表达具体 App 可以填充的业务阶段；[`RenderAppRunner`](crate::RenderAppRunner)
 //! 是唯一完整帧骨架，并负责把 `RenderRuntime` 的生命周期阶段裁剪成 hook ctx。
 
 use truvis_render_foundation::render_view::RenderView;
@@ -12,9 +12,9 @@ use truvis_render_runtime::render_runtime::{
 use crate::input_event::InputEvent;
 use crate::plugin_api::Plugin;
 
-/// `RenderAppShell` 传给 app hooks 的窗口绑定初始化上下文。
+/// `RenderAppRunner` 传给 app hooks 的窗口绑定初始化上下文。
 pub struct RenderAppInitCtx<'a> {
-    /// 初始化阶段的 runtime 能力集合，由 shell 从 `RenderRuntimeInitCtx` 直接转交。
+    /// 初始化阶段的 runtime 能力集合，由 Runner 从 `RenderRuntimeInitCtx` 直接转交。
     pub runtime: RenderRuntimeInitCtx<'a>,
     /// 平台窗口的缩放因子，用于 GUI 或输入系统建立 display scale。
     pub scale_factor: f64,
@@ -22,7 +22,7 @@ pub struct RenderAppInitCtx<'a> {
     pub window_size: [u32; 2],
 }
 
-/// swapchain 资源变化时，`RenderAppShell` 传给 app hooks 的 resize 上下文。
+/// swapchain 资源变化时，`RenderAppRunner` 传给 app hooks 的 resize 上下文。
 pub struct RenderAppResizeCtx<'a> {
     /// resize 阶段的 runtime 能力集合，只在本次 resize 回调内有效。
     pub runtime: RenderRuntimeResizeCtx<'a>,
@@ -30,16 +30,16 @@ pub struct RenderAppResizeCtx<'a> {
     pub window_size: [u32; 2],
 }
 
-/// `RenderAppShell` 传给 app hooks 的 shutdown 上下文。
+/// `RenderAppRunner` 传给 app hooks 的 shutdown 上下文。
 pub struct RenderAppShutdownCtx<'a> {
     /// shutdown 阶段的 runtime 能力集合，用于释放 App 自己持有的 GPU 资源。
     pub runtime: RenderRuntimeShutdownCtx<'a>,
 }
 
-/// 由 `RenderAppShell` 驱动的具体 App 契约。
+/// 由 `RenderAppRunner` 驱动的具体 App 契约。
 ///
 /// 具体 App 持有 GUI、camera/input state、overlay 和 render pipeline plugin。
-/// shell 持有 `RenderRuntime` 与输入队列，并通过这些 hook 交出生命周期和帧阶段
+/// Runner 持有 `RenderRuntime` 与输入队列，并通过这些 hook 交出生命周期和帧阶段
 /// 控制点。App 负责定义输入消费策略、render graph 构建顺序以及特有 Plugin
 /// 能力的调用位置。
 pub trait RenderApp {
@@ -51,7 +51,7 @@ pub trait RenderApp {
 
     /// 按 app 定义的稳定顺序访问标准生命周期 plugin。
     ///
-    /// `RenderAppShell` 使用该顺序批量调用 `Plugin::init`、`Plugin::update`
+    /// `RenderAppRunner` 使用该顺序批量调用 `Plugin::init`、`Plugin::update`
     /// 和 `Plugin::on_resize`。GUI UI 构建和 RenderGraph pass 贡献等特有能力
     /// 仍由具体 app 通过具体 plugin 类型显式调用。
     fn visit_plugins_mut(&mut self, _visit: &mut dyn FnMut(&mut dyn Plugin)) {}
@@ -59,7 +59,7 @@ pub trait RenderApp {
     /// 按 app 定义的 shutdown 顺序访问标准生命周期 plugin。
     ///
     /// 默认实现沿用正向顺序；持有依赖关系的 App 应覆盖为反向顺序，保证后创建或
-    /// 依赖上游资源的 Plugin 先释放。`RenderAppShell` 只在 shutdown 阶段使用它。
+    /// 依赖上游资源的 Plugin 先释放。`RenderAppRunner` 只在 shutdown 阶段使用它。
     fn visit_plugins_mut_rev(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
         self.visit_plugins_mut(visit);
     }
@@ -68,7 +68,7 @@ pub trait RenderApp {
     ///
     /// 输入消费策略属于 App 级职责，例如先让 GUI Plugin 判断是否消费事件，再把
     /// 未消费事件交给相机或 gameplay input state。标准 Plugin 的 `on_input` 不由
-    /// shell 自动批量调用。
+    /// Runner 自动批量调用。
     fn on_input(&mut self, events: &[InputEvent]);
 
     /// 更新 App 自己的 CPU 状态。
@@ -104,7 +104,7 @@ pub trait RenderApp {
 
     /// 释放 App 自己持有的 GPU 资源。
     ///
-    /// `RenderAppShell` 会先调用此 hook，再按 [`RenderApp::visit_plugins_mut_rev`]
+    /// `RenderAppRunner` 会先调用此 hook，再按 [`RenderApp::visit_plugins_mut_rev`]
     /// 通知标准 Plugin shutdown。实现中不要依赖 runtime destroy 之后仍可访问 GPU
     /// root owner。
     fn shutdown(&mut self, _ctx: &mut RenderAppShutdownCtx<'_>) {}

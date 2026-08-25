@@ -150,7 +150,7 @@ pub struct PluginShutdownCtx<'a> {
 
 /// 可复用、由 app 持有的能力单元标准生命周期。
 ///
-/// 该 trait 只覆盖 shell 能统一批量调用的 init / input / update / resize /
+/// 该 trait 只覆盖 Runner 能统一批量调用的 init / input / update / resize /
 /// shutdown 生命周期。`ui()`、`begin_frame()`、`contribute_passes()` 或
 /// `contribute_compute_passes()` 等特有能力保留在具体 Plugin 类型上，这样 App
 /// 可以用显式字段组合能力，而无需 downcast、注册表或消息总线。
@@ -162,7 +162,7 @@ pub trait Plugin {
 
     /// 处理单个输入事件，并返回该事件是否已被消费。
     ///
-    /// shell 不会自动批量调用此方法；具体 App 可在自己的输入策略中显式调用。
+    /// Runner 不会自动批量调用此方法；具体 App 可在自己的输入策略中显式调用。
     /// 返回 `true` 通常表示后续相机或业务输入不应再处理该事件。
     fn on_input(&mut self, _event: &InputEvent) -> bool {
         false
@@ -170,17 +170,17 @@ pub trait Plugin {
 
     /// 更新 Plugin 的 CPU 状态。
     ///
-    /// 该方法由 shell 在 App update 之后按 `visit_plugins_mut` 顺序调用。
+    /// 该方法由 Runner 在 App update 之后按 `visit_plugins_mut` 顺序调用。
     fn update(&mut self, _ctx: &mut PluginUpdateCtx) {}
 
     /// 响应 swapchain 或窗口尺寸相关资源重建。
     ///
-    /// 该方法由 shell 在 App resize hook 之后按 `visit_plugins_mut` 顺序调用。
+    /// 该方法由 Runner 在 App resize hook 之后按 `visit_plugins_mut` 顺序调用。
     fn on_resize(&mut self, _ctx: &mut PluginResizeCtx) {}
 
     /// 显式释放 Plugin-owned GPU 资源。
     ///
-    /// 该方法由 shell 在 App shutdown hook 之后按 `visit_plugins_mut_rev` 顺序调用，
+    /// 该方法由 Runner 在 App shutdown hook 之后按 `visit_plugins_mut_rev` 顺序调用，
     /// 并且必须早于 runtime root owner 销毁。
     fn shutdown(&mut self, _ctx: &mut PluginShutdownCtx<'_>) {}
 }

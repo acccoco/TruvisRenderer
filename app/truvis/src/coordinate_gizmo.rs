@@ -8,7 +8,7 @@ use truvis_render_runtime::render_runtime::RenderRuntimeRenderCtx;
 /// Truvis 主应用持有的右下角坐标轴 gizmo owner。
 ///
 /// gizmo 只有一条 graphics pipeline，没有窗口尺寸 image、几何 buffer 或跨帧状态。具体 pass
-/// 顺序仍由 `TruvisApp::render` 显式决定，本类型只负责 init / resize / shutdown 阶段内
+/// 顺序仍由 `TruvisRenderApp::render` 显式决定，本类型只负责 init / resize / shutdown 阶段内
 /// pipeline 与当前 present format 的生命周期对齐。
 #[derive(Default)]
 pub(crate) struct CoordinateGizmoRenderer {

@@ -28,7 +28,7 @@ SDR tone mapping、具体 RT pass 的 debug channel 和 legacy denoise 参数不
 | `dlss_sr_mode: DlssSrMode` | DLSS SR / DLAA 模式 | `RenderRuntime::sync_dlss_options_frame_state` 解析该 mode，必要时更新 `FrameRenderState`、触发 app-owned target rebuild，并重置 DLSS history |
 | `dlss_rr_enabled: bool` | 是否用 DLSS RR 替代普通 SR evaluate | 非 `Off` mode 下生效；切换时 runtime 等待 GPU idle，释放旧 DLSS feature resources，并重置 DLSS history |
 
-`TRUVIS_DLSS_SR_MODE` 和 `TRUVIS_DLSS_RR` 会在 runtime 初始化时作为启动默认值读取。运行中仍以 ImGui overlay 修改 `DlssOptions`，再由 shell 在 `prepare` 前调用同步入口使其生效。
+`TRUVIS_DLSS_SR_MODE` 和 `TRUVIS_DLSS_RR` 会在 runtime 初始化时作为启动默认值读取。运行中仍以 ImGui overlay 修改 `DlssOptions`，再由 `RenderAppRunner` 在 `prepare` 前调用同步入口使其生效。
 
 `DlssOptions` 同时承担配置输入和 feature 决策职责。它把 `dlss_sr_mode`
 与 `dlss_rr_enabled` 收敛成统一的 active feature 语义：`Off` 表示 native fallback，非 `Off` 且 RR 关闭表示
@@ -188,7 +188,7 @@ DLSS mode 的变化在一帧中按固定路径生效：
 
 ```text
 Overlay 修改 DlssOptions.dlss_sr_mode / dlss_rr_enabled
-  -> RenderAppShell 调用 RenderRuntime::sync_dlss_options_frame_state
+  -> RenderAppRunner 调用 RenderRuntime::sync_dlss_options_frame_state
   -> runtime 用 output extent + mode 按 active feature 查询 Streamline optimal settings
   -> 派生 FrameRenderState.render_extent / output_extent
   -> 如尺寸变化，返回 RenderRuntimeResizeCtx

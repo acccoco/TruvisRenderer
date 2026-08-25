@@ -1,6 +1,6 @@
 # truvis-render-runtime
 
-`truvis-render-runtime` 是被 `truvis-app-frame::RenderAppShell` 驱动的渲染运行时集成层。
+`truvis-render-runtime` 是被 `truvis-app-frame::RenderAppRunner` 驱动的渲染运行时集成层。
 它持有 `Gfx` root owner、CPU `World`、GPU resource/binding/timing owners 和 runtime 私有的 `RenderWorld`，
 并通过阶段化的 typed Ctx 向上层暴露初始化、更新、渲染、resize 与 shutdown 能力。
 
@@ -104,7 +104,7 @@
   跨过 FIF 窗口后由 `GfxResourceManager` 销毁。AssetHub 事件只在
   prepare 边界通过 `World::sync_for_render()` drain。
 - `update_phase` 同步 present extent 到 `FrameRenderState`、acquire 当前 swapchain image，并返回 CPU update Ctx。具体窗口尺寸 render target 由 app/plugin 在 init/resize/shutdown 阶段管理。
-- App / Plugin update 结束后，`RenderAppShell` 调用 `sync_dlss_options_frame_state`，把 `DlssOptions`
+- App / Plugin update 结束后，`RenderAppRunner` 调用 `sync_dlss_options_frame_state`，把 `DlssOptions`
   中的 DLSS SR mode 变化解析为新的 render/output extent；如果 target 尺寸变化，则返回 resize Ctx
   交给 app/plugin 重建自己持有的 RT target、GBuffer 和 main-view target。
 - `prepare(render_view)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 app 提供的 `RenderView`，

@@ -44,7 +44,7 @@ pub use crate::render_runtime_ctx::{
 /// 只通过返回类型化 Ctx 结构的生命周期方法暴露状态。
 /// 生命周期由外部代码驱动；RenderRuntime 不感知 Plugin、GUI 或 app 编排概念。
 ///
-/// 它位于 `RenderAppShell` 之下、`truvis-gfx` 与 foundation GPU owner 之上，是 CPU scene、
+/// 它位于 `RenderAppRunner` 之下、`truvis-gfx` 与 foundation GPU owner 之上，是 CPU scene、
 /// render-side 资产上传、GPU scene 翻译、swapchain/present 和 FIF 同步的聚合 owner。
 /// 上层只能在对应阶段拿到窄化后的 Ctx，不能长期保存完整 `Gfx` 或 runtime 内部字段。
 /// 这保证资源销毁顺序仍由 runtime 集中控制：plugin/app 可以在生命周期阶段创建或释放资源，

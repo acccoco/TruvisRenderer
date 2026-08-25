@@ -37,7 +37,7 @@ use crate::overlay_ui::{
 };
 use crate::selection_outline::SelectionOutlineRenderer;
 
-pub struct TruvisApp {
+pub struct TruvisRenderApp {
     gui: GuiPlugin,
     debug_image_selector: DebugImageSelector,
     rt_pipeline: RtPipeline,
@@ -61,7 +61,7 @@ pub struct TruvisApp {
     editor_controller: EditorController,
 }
 
-impl TruvisApp {
+impl TruvisRenderApp {
     /// 使用桌面壳预先创建的 App endpoint 构造渲染侧业务状态。
     ///
     /// EditorServer 生命周期属于 Tauri desktop；本 App 只拥有 Editor 协议和桌面特权
@@ -214,7 +214,7 @@ impl ClickRayCastProbe {
     }
 }
 
-impl TruvisApp {
+impl TruvisRenderApp {
     pub fn overlay_options(&self) -> &TruvisOverlayOptions {
         self.overlay_ui.options()
     }
@@ -494,7 +494,7 @@ impl TruvisApp {
     }
 }
 
-impl RenderApp for TruvisApp {
+impl RenderApp for TruvisRenderApp {
     fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
         self.render_mode = RenderMode::initial_from_env();
         self.gui.set_hidpi_factor(ctx.scale_factor);

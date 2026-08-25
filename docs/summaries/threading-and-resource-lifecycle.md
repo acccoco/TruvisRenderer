@@ -23,20 +23,22 @@ flowchart LR
 
     subgraph WindowThread["RenderWindowThread · winit"]
         Child["owns child HWND + EventLoop"]
+        ThreadHandle["owns RenderThread handle"]
         Input["translates native WindowEvent"]
         Size["writes latest size + generation"]
+        Child --> ThreadHandle
         Child --> Input
         Child --> Size
     end
 
     subgraph RenderThread["RenderThread"]
-        Shell["owns RenderAppShell"]
-        RenderApp["Shell owns Box&lt;dyn RenderApp&gt;"]
+        Runner["owns RenderAppRunner"]
+        RenderApp["Runner owns Box&lt;dyn RenderApp&gt;"]
         DesktopCommand["owns DesktopCommandController"]
         Runtime["owns RenderRuntime"]
         Vulkan["creates, uses, destroys all Vulkan objects"]
-        Shell --> RenderApp
-        Shell --> Runtime
+        Runner --> RenderApp
+        Runner --> Runtime
         RenderApp --> DesktopCommand
         Runtime --> Vulkan
     end
@@ -47,8 +49,8 @@ flowchart LR
 
     DomRect -- "EventLoopProxy / SetWindowPos" --> Child
     Sender -- "capacity-1 PathBuf command + oneshot reply" --> DesktopCommand
-    Input -- "bounded InputEvent channel" --> RenderApp
-    Size -- "AtomicU64 + resize generation" --> RenderApp
+    Input -- "unbounded InputEvent channel" --> Runner
+    Size -- "RenderThreadControl: latest size + generation" --> Runner
     Server <-- "bounded editor bridge DTO" --> RenderApp
 ```
 
@@ -63,7 +65,7 @@ flowchart LR
   Tao main thread 进入消息泵后异步创建；这避免 Windows 跨线程 `CreateWindowEx` 同步通知 parent 时形成互等。
   child ready 前到达的 viewport rect 只保留 latest 值。
 - child HWND 初始保持隐藏的 `1x1` 状态；`RenderWindowThread` 等待第一个非零 DOM rect，先用 `SetWindowPos` 应用真实
-  物理尺寸，再创建 `RenderWorker`。这样 `RenderInitMsg::initial_size`、App/Plugin display size 与初始 swapchain extent
+  物理尺寸，再创建 `RenderThread`。这样 `RenderThreadInit::initial_size`、App/Plugin display size 与初始 swapchain extent
   从启动时就是同一尺寸，不依赖第二次 resize 修正。
 - Tauri resize 先按 DOM 规则改变中央 slot；前端只提交相对 top-level client area 的物理像素矩形，平台宿主通过
   `SetWindowPos` 调整 child HWND。Windows 随后产生正常 `WM_SIZE`，winit 转为 `WindowEvent::Resized`，现有 latest-size、
@@ -76,7 +78,7 @@ flowchart LR
 - Tauri `select_hdri` 使用非阻塞原生 dialog；`TruvisDesktopState` 只持有 sender 和 dialog-open 原子状态，不持有 scene
   投影，也不在持有 desktop resources mutex 时打开 dialog 或等待 reply。
 - HDRI 的本地 `PathBuf` 只通过容量为 `1` 的私有 `DesktopCommandSender` 进入 RenderThread，不进入 Editor WebSocket。
-  `DesktopCommandController` 每帧最多处理一条，并且只在 `TruvisApp::update` 中短暂借用 `World`。
+  `DesktopCommandController` 每帧最多处理一条，并且只在 `TruvisRenderApp::update` 中短暂借用 `World`。
 - desktop oneshot reply 只确认 `World::request_sky_texture_from_path` 已接受 CPU scene mutation，不等待 asset decode、
   texture upload 或 sky distribution；Tauri main thread、WebView 和 EditorServer 仍不访问 Vulkan。
 - GPU 同步优先通过 RenderGraph、binary semaphore 和 frame timeline 表达。
@@ -134,15 +136,15 @@ flowchart LR
 - `RenderRuntime::new` 初始化 `Gfx`，创建 `World`、`GfxResourceManager`、`ShaderBindingSystem`、`FrameTiming`、
   `PerFrameGpuData` 与 runtime-owned render state。
 - `RenderRuntime::init_after_window` 创建 surface、swapchain 和 `SwapchainPresenter`。
-- `RenderAppShell` 创建 `RenderRuntime` 并把 `RenderRuntimeInitCtx` 包装为 `RenderAppInitCtx` 交给 App hooks。
+- `RenderAppRunner` 创建 `RenderRuntime` 并把 `RenderRuntimeInitCtx` 包装为 `RenderAppInitCtx` 交给 App hooks。
 - App state 从 `RenderAppInitCtx` 中的 RenderRuntime Ctx 构造 `PluginInitCtx`，依次初始化自己持有的 Plugin。
 
 ## 重建路径
 
-- render loop 调用 `RenderAppShell::recreate_swapchain_if_needed(size)`。
-- `RenderAppShell` 调用 `RenderRuntime::handle_resize(size)`。
+- `RenderAppRunner::run` 在循环安全点调用内部 `recreate_swapchain_if_needed(size)`。
+- `RenderAppRunner` 调用 `RenderRuntime::handle_resize(size)`。
 - RenderRuntime 只有实际重建时返回 `Some(RenderRuntimeResizeCtx)`。
-- `RenderAppShell` 把返回值包装为 `RenderAppResizeCtx` 交给 App hooks，App state 构造 `PluginResizeCtx` 并通知需要 resize
+- `RenderAppRunner` 把返回值包装为 `RenderAppResizeCtx` 交给 App hooks，App state 构造 `PluginResizeCtx` 并通知需要 resize
   的 Plugin。
 - 具体 app/plugin 在 resize 阶段重建自己持有的窗口尺寸 render target。
 
@@ -153,12 +155,12 @@ flowchart LR
 `RenderSkyManager` 已发布的 active/retired/fallback 资源与 `RenderTextureManager` ready images。
 这保证 CPU producer、transfer queue 和 shader-visible owner 不会交叉销毁。
 
-桌面窗口的外层销毁顺序固定为：RenderThread 上的 `TruvisApp` 先关闭并清空 desktop command receiver，使尚未处理的
+桌面窗口的外层销毁顺序固定为：RenderThread 上的 `TruvisRenderApp` 先关闭并清空 desktop command receiver，使尚未处理的
 oneshot reply 因 sender drop 退出 → App/runtime/Vulkan 销毁 → `RenderWindowThread` drop child HWND → 停止并 join
 EditorServer → Tauri/Tao drop WebView 与 top-level HWND。`TruvisDesktopState::shutting_down` 阻止新 dialog，
 `EmbeddedWinitHost::Drop` 为非正常 exit 提供相同顺序的兜底。
 
-- `RenderAppShell::shutdown(&mut self)`：Shell 等待 GPU idle 后，先用 `RenderAppShutdownCtx` 调用具体 `RenderApp` 的
+- `RenderAppRunner` 内部 shutdown：Runner 等待 GPU idle 后，先用 `RenderAppShutdownCtx` 调用具体 `RenderApp` 的
   shutdown，再用 `PluginShutdownCtx` 反向遍历 Plugin shutdown。
 - App / Plugin shutdown 必须在 `RenderRuntime::destroy()` 释放 runtime 子资源之前释放自己持有的 GPU 资源；需要 manager
   或 shader-visible binding 访问时通过 shutdown context 使用 `GfxResourceManager` 与 `ShaderBindingSystem`。

@@ -6,4 +6,4 @@ mod desktop_command;
 mod editor_controller;
 pub mod overlay_ui;
 mod selection_outline;
-pub mod truvis_app;
+pub mod truvis_render_app;

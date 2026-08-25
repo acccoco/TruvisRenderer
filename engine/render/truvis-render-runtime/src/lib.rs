@@ -1,4 +1,4 @@
-//! 被 `RenderAppShell` 驱动的渲染运行时集成层。
+//! 被 `RenderAppRunner` 驱动的渲染运行时集成层。
 //!
 //! 本 crate 持有 `Gfx` root owner、CPU `World`、GPU resource/binding/timing owner 和 runtime 私有
 //! `RenderWorld`，并通过阶段化的 typed Ctx 暴露初始化、更新、渲染、resize 与 shutdown 能力。

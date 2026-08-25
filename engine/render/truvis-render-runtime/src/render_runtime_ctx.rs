@@ -178,7 +178,7 @@ pub struct RenderRuntimeResizeCtx<'a> {
 
 /// Shutdown 阶段上下文，保证 app/plugin 可在 runtime 与 Gfx 存活时释放 GPU 资源。
 ///
-/// `RenderAppShell` 会在 runtime 自身销毁前把这个上下文交给 app/plugin，确保 plugin-owned
+/// `RenderAppRunner` 会在 runtime 自身销毁前把这个上下文交给 app/plugin，确保 plugin-owned
 /// pipeline、buffer、descriptor 等资源仍能通过 typed Ctx 显式释放。
 pub struct RenderRuntimeShutdownCtx<'a> {
     /// 释放 plugin/app-owned GPU 对象所需 device 上下文。

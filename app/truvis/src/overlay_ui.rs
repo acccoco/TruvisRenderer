@@ -18,7 +18,7 @@ use truvis_render_runtime::state::dlss_options::DlssOptions;
 use truvis_world::World;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
 
-use crate::truvis_app::ClickRayCastProbe;
+use crate::truvis_render_app::ClickRayCastProbe;
 
 const DEFAULT_WINDOW_MARGIN: f32 = 10.0;
 

@@ -5,7 +5,6 @@
 //! [`EmbeddedWinitHost::shutdown`] 返回前始终有效。
 
 use std::panic;
-use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
@@ -24,9 +23,9 @@ use winit::platform::windows::EventLoopBuilderExtWindows;
 use winit::window::{Window, WindowId};
 
 use truvis_app_frame::render_app_api::RenderApp;
-use truvis_app_frame::{SendWrapper, pack_size};
 
-use crate::render_worker::{RenderAppFactory, RenderWorker};
+use crate::SendWrapper;
+use crate::render_thread::{RenderAppFactory, RenderThread};
 use crate::winit_event_adapter::WinitEventAdapter;
 
 /// DOM viewport 在 Tauri parent client area 中对应的物理像素矩形。
@@ -132,14 +131,14 @@ impl Drop for EmbeddedWinitHost {
 
 /// `RenderWindowThread` 内部的 winit application handler。
 ///
-/// 本类型拥有 child `Window` 和 [`RenderWorker`]。它接收的 viewport rect 只是
+/// 本类型拥有 child `Window` 和 [`RenderThread`]。它接收的 viewport rect 只是
 /// 平台窗口几何命令；RenderThread 不接收该命令，而是继续通过 child HWND 产生的
-/// `WindowEvent::Resized` 与现有 `SharedState` resize generation 感知变化。
+/// `WindowEvent::Resized` 与现有 resize generation 感知变化。
 struct EmbeddedWinitApp {
     parent_window: RawWindowHandle,
     window: Option<Window>,
     app_factory: Option<RenderAppFactory>,
-    render_worker: Option<RenderWorker>,
+    render_thread: Option<RenderThread>,
     event_proxy: EventLoopProxy<EmbeddedUserEvent>,
     pending_viewport_rect: EmbeddedViewportRect,
 }
@@ -172,7 +171,7 @@ impl EmbeddedWinitApp {
             parent_window: parent_window.0,
             window: None,
             app_factory: Some(app_factory),
-            render_worker: None,
+            render_thread: None,
             event_proxy,
             pending_viewport_rect: EmbeddedViewportRect::default(),
         };
@@ -203,33 +202,33 @@ impl EmbeddedWinitApp {
             .map_err(|error| format!("failed to create embedded render child window: {error}"))?;
         Self::configure_child_style(&window)?;
         self.window = Some(window);
-        self.apply_viewport_rect_and_start_worker()
+        self.apply_viewport_rect_and_start_render_thread()
     }
 
     /// 把 DOM 首次给出的非零 rect 应用到 child 后再启动 RenderThread。
     ///
-    /// child 初始创建为隐藏的 1x1 窗口；若先启动 worker，`RenderInitMsg` 会把
+    /// child 初始创建为隐藏的 1x1 窗口；若先启动 RenderThread，初始化参数会把
     /// 1x1 传给 App/Plugin。即使 Vulkan surface 随后已经读到真实 extent，首次
     /// swapchain 也可能无需再次重建，从而不会补发完整 plugin resize。这里让
-    /// `Window::inner_size` 在 worker 创建前就反映 DOM 物理尺寸，确保 App、GUI、
+    /// `Window::inner_size` 在 RenderThread 创建前就反映 DOM 物理尺寸，确保 App、GUI、
     /// swapchain 从同一个初始 extent 开始。
-    fn apply_viewport_rect_and_start_worker(&mut self) -> Result<(), String> {
+    fn apply_viewport_rect_and_start_render_thread(&mut self) -> Result<(), String> {
         let window = self.window.as_ref().ok_or_else(|| "embedded child window is not available".to_string())?;
         Self::apply_viewport_rect(window, self.pending_viewport_rect)?;
 
         if self.pending_viewport_rect.width == 0
             || self.pending_viewport_rect.height == 0
-            || self.render_worker.is_some()
+            || self.render_thread.is_some()
         {
             return Ok(());
         }
 
         let factory = self.app_factory.take().ok_or_else(|| "render app factory already consumed".to_string())?;
         let event_proxy = self.event_proxy.clone();
-        let render_worker = RenderWorker::spawn(window, factory, move || {
+        let render_thread = RenderThread::spawn(window, factory, move || {
             let _ = event_proxy.send_event(EmbeddedUserEvent::RenderFinished);
         })?;
-        self.render_worker = Some(render_worker);
+        self.render_thread = Some(render_thread);
         Ok(())
     }
 
@@ -287,7 +286,7 @@ impl EmbeddedWinitApp {
     }
 
     fn destroy(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
-        let panic_payload = self.render_worker.take().and_then(RenderWorker::finish);
+        let panic_payload = self.render_thread.take().and_then(RenderThread::join);
         self.window = None;
         panic_payload
     }
@@ -316,7 +315,7 @@ impl ApplicationHandler<EmbeddedUserEvent> for EmbeddedWinitApp {
             EmbeddedUserEvent::SetViewportRect(rect) => {
                 self.pending_viewport_rect = rect;
                 if self.window.is_some() {
-                    if let Err(error) = self.apply_viewport_rect_and_start_worker() {
+                    if let Err(error) = self.apply_viewport_rect_and_start_render_thread() {
                         self.fail_startup(
                             event_loop,
                             format!("failed to update embedded viewport rect {rect:?}: {error}"),
@@ -325,8 +324,8 @@ impl ApplicationHandler<EmbeddedUserEvent> for EmbeddedWinitApp {
                 }
             }
             EmbeddedUserEvent::Shutdown => {
-                if let Some(worker) = self.render_worker.as_ref() {
-                    worker.request_exit();
+                if let Some(render_thread) = self.render_thread.as_ref() {
+                    render_thread.request_exit();
                 } else {
                     event_loop.exit();
                 }
@@ -336,13 +335,12 @@ impl ApplicationHandler<EmbeddedUserEvent> for EmbeddedWinitApp {
     }
 
     fn window_event(&mut self, _event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
-        let Some(worker) = self.render_worker.as_ref() else {
+        let Some(render_thread) = self.render_thread.as_ref() else {
             return;
         };
-        let shared = worker.shared();
 
         match &event {
-            WindowEvent::CloseRequested => worker.request_exit(),
+            WindowEvent::CloseRequested => render_thread.request_exit(),
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 ..
@@ -354,8 +352,7 @@ impl ApplicationHandler<EmbeddedUserEvent> for EmbeddedWinitApp {
                 }
             }
             WindowEvent::Resized(size) => {
-                shared.size.store(pack_size(size.width, size.height), Ordering::Relaxed);
-                shared.resize_generation.fetch_add(1, Ordering::Release);
+                render_thread.publish_resize([size.width, size.height]);
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 log::info!("embedded render viewport scale factor changed to {scale_factor}");
@@ -368,7 +365,7 @@ impl ApplicationHandler<EmbeddedUserEvent> for EmbeddedWinitApp {
         match input_event {
             InputEvent::Other | InputEvent::Resized { .. } => {}
             _ => {
-                let _ = shared.event_sender.send(input_event);
+                render_thread.send_input(input_event);
             }
         }
     }
@@ -376,7 +373,7 @@ impl ApplicationHandler<EmbeddedUserEvent> for EmbeddedWinitApp {
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: DeviceId, _event: DeviceEvent) {}
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.render_worker.as_ref().is_some_and(|worker| worker.shared().render_finished.load(Ordering::Acquire)) {
+        if self.render_thread.as_ref().is_some_and(RenderThread::is_finished) {
             event_loop.exit();
         }
     }
