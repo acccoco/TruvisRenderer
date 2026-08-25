@@ -6,75 +6,30 @@ use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppRes
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::render_view::RenderView;
-use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
-use truvis_render_runtime::render_runtime::{
-    RenderRuntimeInitCtx, RenderRuntimeRenderCtx, RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx,
-};
+use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
+use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 
-use crate::triangle_pass::TrianglePass;
+use app_imgui::{DebugInfoOverlay, ImGuiSubsystem};
 use app_kit::camera_controller::CameraController;
-use app_kit::gui_subsystem::GuiSubsystem;
 use app_kit::input_state::InputManager;
-use app_kit::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
-use app_kit::render_pipeline::RenderMode;
 use app_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 
-#[derive(Default)]
-pub struct TriangleRenderer {
-    triangle_pass: Option<TrianglePass>,
-}
-
-impl SubsystemLifecycle for TriangleRenderer {
-    fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
-        self.triangle_pass = Some(TrianglePass::new(ctx.device_ctx, ctx.swapchain_image_info.image_format));
-    }
-
-    fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
-        if let Some(pass) = self.triangle_pass.take() {
-            pass.destroy(ctx.device_ctx);
-        }
-    }
-}
-
-impl TriangleRenderer {
-    pub fn contribute_passes<'a>(
-        &'a self,
-        graph: &mut RenderGraphBuilder<'a>,
-        canvas_color: RgImageHandle,
-        canvas_extent: vk::Extent2D,
-    ) {
-        graph.add_pass_lambda(
-            "triangle",
-            move |builder| {
-                builder.read_write_image(canvas_color, RgImageState::COLOR_ATTACHMENT_READ_WRITE);
-            },
-            move |context| {
-                let canvas_view = context.get_image_view(canvas_color).unwrap();
-                self.triangle_pass.as_ref().expect("TriangleRenderer not initialized").draw(
-                    context.cmd,
-                    canvas_view,
-                    canvas_extent,
-                );
-            },
-        );
-    }
-}
+use crate::triangle_subsystem::TriangleSubsystem;
 
 #[derive(Default)]
 pub struct TriangleRenderApp {
-    gui: GuiSubsystem,
-    triangle: TriangleRenderer,
+    imgui: ImGuiSubsystem,
+    triangle: TriangleSubsystem,
     camera_controller: CameraController,
     input: InputManager,
     debug_overlay: DebugInfoOverlay,
-    pipeline_overlay: PipelineControlsOverlay,
     cmds: Vec<GfxCommandBuffer>,
 }
 
 impl RenderApp for TriangleRenderApp {
     fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
-        self.gui.set_hidpi_factor(ctx.scale_factor);
-        self.gui.set_display_size(ctx.window_size);
+        self.imgui.set_hidpi_factor(ctx.scale_factor);
+        self.imgui.set_display_size(ctx.window_size);
 
         let cmd_allocator = &mut *ctx.runtime.cmd_allocator;
         self.cmds = FrameLabel::ALL
@@ -83,13 +38,13 @@ impl RenderApp for TriangleRenderApp {
             .collect_vec();
 
         self.triangle.init(&mut ctx.runtime);
-        self.gui.init(&mut ctx.runtime);
+        self.imgui.init(&mut ctx.runtime);
     }
 
     fn on_input(&mut self, events: &[InputEvent]) {
         self.input.begin_frame();
         for event in events {
-            if !self.gui.on_input(event) {
+            if !self.imgui.on_input(event) {
                 self.input.process_event(event);
             }
         }
@@ -97,7 +52,7 @@ impl RenderApp for TriangleRenderApp {
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
         let delta = std::time::Duration::from_secs_f32(ctx.frame_timing.delta_time_s());
-        self.gui.build_frame(delta, |ui| {
+        self.imgui.build_frame(delta, |ui| {
             self.debug_overlay.build_overlay_ui(
                 ui,
                 self.camera_controller.camera(),
@@ -105,9 +60,6 @@ impl RenderApp for TriangleRenderApp {
                 ctx.view_accum.accum_frames_num(),
                 ctx.frame_timing.delta_time_s(),
             );
-            // Sample app 不持有 OfflinePipeline；临时 Realtime 只用于复用共享 Controls overlay 的签名。
-            let mut render_mode = RenderMode::Realtime;
-            self.pipeline_overlay.build_overlay_ui(ui, &mut render_mode, ctx.dlss_options, None, None, None, None);
         });
 
         self.camera_controller.update(
@@ -119,7 +71,7 @@ impl RenderApp for TriangleRenderApp {
 
     fn render(&mut self, ctx: &RenderRuntimeRenderCtx) {
         let subsystem_ctx = SubsystemRenderCtx::from_runtime(ctx);
-        self.gui.prepare_render_data(&subsystem_ctx);
+        self.imgui.prepare_render_data(&subsystem_ctx);
 
         let frame_label = ctx.record_ctx.frame_timing.frame_label();
         let frame_id = ctx.record_ctx.frame_timing.frame_id();
@@ -135,7 +87,7 @@ impl RenderApp for TriangleRenderApp {
         let swapchain_extent = present_target.image_info.image_extent;
 
         self.triangle.contribute_passes(&mut graph, swapchain_image, swapchain_extent);
-        self.gui.contribute_passes(&mut graph, &subsystem_ctx, swapchain_image, swapchain_extent);
+        self.imgui.contribute_passes(&mut graph, &subsystem_ctx, swapchain_image, swapchain_extent);
 
         let compiled_graph = graph.compile();
         if log::log_enabled!(log::Level::Debug) {
@@ -160,12 +112,12 @@ impl RenderApp for TriangleRenderApp {
 
     fn on_resize(&mut self, ctx: &mut RenderAppResizeCtx<'_>) {
         self.triangle.on_resize(&mut ctx.runtime);
-        self.gui.on_resize(&mut ctx.runtime);
+        self.imgui.on_resize(&mut ctx.runtime);
     }
 
     fn shutdown(&mut self, ctx: &mut RenderAppShutdownCtx<'_>) {
         self.cmds.clear();
+        self.imgui.shutdown(&mut ctx.runtime);
         self.triangle.shutdown(&mut ctx.runtime);
-        self.gui.shutdown(&mut ctx.runtime);
     }
 }

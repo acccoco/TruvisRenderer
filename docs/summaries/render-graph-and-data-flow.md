@@ -12,26 +12,26 @@
 RenderGraph 是按 App 指定顺序执行的命令录制与同步辅助，不是自动调度器：
 
 - `RenderGraphBuilder` 按 pass 添加顺序记录执行序列，不做拓扑排序或 pass 重排。
-- App 决定完整业务顺序；pipeline/子系统只贡献自己的 pass 或 sub-flow。
+- App 决定完整业务顺序；具体渲染子系统只贡献自己的 pass 或 sub-flow。
 - 当前 graph 只跟踪 imported image 的访问与状态，不创建或拥有 image。
 - graph compile 通过线性扫描生成 image barrier、layout transition、epilogue barrier 和 semaphore submit 信息。
 - execution 通过 `GfxResourceAccess` 解析 image/image-view handle，不依赖 concrete `GfxResourceManager`。
 
 ## 资源职责
 
-同一张固定管线 image 同时涉及三个不同职责，不能互相替代：
+同一张固定用途的渲染 image 同时涉及三个不同职责，不能互相替代：
 
-1. **Pipeline/Subsystem owner**：创建并持有 render target、GBuffer、DLSS 输入输出、累计图、selection mask 或 GUI font，
+1. **Subsystem owner**：创建并持有 render target、GBuffer、DLSS 输入输出、累计图、selection mask 或 ImGui font，
    并在 init/resize/shutdown 的 GPU-safe 时机释放。
 2. **Pass-local descriptor**：描述本次 draw/dispatch 使用哪个 image view；descriptor 不拥有 image，也不负责同步。
 3. **RenderGraph state declaration**：声明 sampled/storage/color attachment 等访问，负责 pass 间 barrier 和 layout transition。
 
 descriptor 中的 image layout 必须与执行该 pass 时 graph 推导出的状态一致。storage image 固定使用 `GENERAL`，
-sampled image 固定使用 `SHADER_READ_ONLY_OPTIMAL`；固定管线 image 通过 local push descriptor 引用，
+sampled image 固定使用 `SHADER_READ_ONLY_OPTIMAL`；固定用途的渲染 image 通过 local push descriptor 引用，
 不注册到全局 bindless table。
 
 全局 bindless set 只保存 Material/Scene 数据动态索引的 asset texture 与 sky sampled-image SRV。窗口 resize
-只重建具体 pipeline/subsystem owner 的 target 和 pass-local 引用，不产生全局 bindless slot 注册/回收压力。
+只重建具体 subsystem owner 的 target 和 pass-local 引用，不产生全局 bindless slot 注册/回收压力。
 
 ## Pass 顺序与状态推导
 
@@ -56,27 +56,27 @@ Triangle 与 ShaderToy 使用单个 present graph。主体 RT App 通常分成 c
 
 ```text
 prepare 后的 RenderSceneView
-  -> pipeline compute/RT passes
+  -> rendering subsystem compute/RT passes
   -> main view image
   -> present resolve
   -> App-owned overlays/effects
-  -> GUI pass
+  -> ImGui pass
   -> present
 ```
 
-Truvis 根据 `RenderMode` 选择一条 app-owned pipeline：
+Truvis 根据 `RenderMode` 选择一个 app-owned 渲染子系统：
 
-- Realtime：`RtPipeline` 贡献 realtime ray tracing、可选 DLSS SR/RR 与后处理；RT path 内部可启用 ReSTIR DI 和 SHARC。
-- Offline：`OfflinePipeline` 贡献独立 RT dispatch、累计和 output target，不复用 realtime temporal state。
+- Realtime：`RealtimeRenderSubsystem` 贡献 realtime ray tracing、可选 DLSS SR/RR 与后处理；RT path 内部可启用 ReSTIR DI 和 SHARC。
+- Offline：`OfflineRenderSubsystem` 贡献独立 RT dispatch、累计和 output target，不复用 realtime temporal state。
 
 realtime light candidate、MIS、ReSTIR 和 SHARC 的算法与 shader 数据契约由
 [`realtime-rt-raytracing-flow.md`](realtime-rt-raytracing-flow.md) 统一说明，本文不复制算法细节。
 
 主体 App 的 present 顺序由 `TruvisRenderApp` 显式决定：先 resolve main view，再组合 selection outline、
-coordinate gizmo 和 GUI。具体 App owner 与编排入口见 [`app/truvis/README.md`](../../app/truvis/README.md)。
+coordinate gizmo 和 ImGui。具体 App owner 与编排入口见 [`app/truvis/README.md`](../../app/truvis/README.md)。
 
-离线累计 image 是 pipeline-owned 跨帧历史，不按 FIF 轮转；per-FIF output target 仍按当前 `FrameLabel` 使用。
-没有 TLAS 时，OfflinePipeline 重置累计并把相关 target 清为确定黑色，避免展示未定义或过期结果。
+离线累计 image 是 offline subsystem-owned 跨帧历史，不按 FIF 轮转；per-FIF output target 仍按当前 `FrameLabel` 使用。
+没有 TLAS 时，OfflineRenderSubsystem 重置累计并把相关 target 清为确定黑色，避免展示未定义或过期结果。
 
 ## 调试与当前能力边界
 

@@ -1,5 +1,4 @@
 use ash::vk;
-use ash::vk::Handle;
 use enum_map::{Enum, EnumMap, enum_map};
 use itertools::Itertools;
 use std::sync::LazyLock;
@@ -26,32 +25,7 @@ use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgP
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 
-pub struct GfxRtPipeline {
-    pub pipeline: vk::Pipeline,
-    pub pipeline_layout: vk::PipelineLayout,
-}
-impl Drop for GfxRtPipeline {
-    fn drop(&mut self) {
-        debug_assert!(self.pipeline.is_null(), "GfxRtPipeline pipeline dropped without explicit destroy");
-        debug_assert!(self.pipeline_layout.is_null(), "GfxRtPipeline layout dropped without explicit destroy");
-    }
-}
-impl GfxRtPipeline {
-    pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>) {
-        if !self.pipeline.is_null() {
-            unsafe {
-                ctx.device().destroy_pipeline(self.pipeline, None);
-            }
-            self.pipeline = vk::Pipeline::null();
-        }
-        if !self.pipeline_layout.is_null() {
-            unsafe {
-                ctx.device().destroy_pipeline_layout(self.pipeline_layout, None);
-            }
-            self.pipeline_layout = vk::PipelineLayout::null();
-        }
-    }
-}
+use super::pipeline::GfxRtPipeline;
 
 // Shader stage 的 enum 声明顺序就是 VkPipelineShaderStageCreateInfo 数组顺序；
 // shader group 通过这个顺序写入 stage index，新增或移动变体时必须同步检查下方 group 表。

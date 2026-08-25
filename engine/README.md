@@ -112,8 +112,9 @@ C++ 子系统、CMake/vcpkg 构建和 Rust FFI binding 目录。
 - `truvis-streamline-binding/`：Streamline / DLSS Rust 绑定与最小 RAII runtime，负责 `slInit`/`slShutdown` 生命周期和日志桥；当前不负责
   RenderGraph pass、resource tagging 或 DLSS evaluate。
 
-应用层位于 workspace 顶层 `../app/`，其中 `app-kit/` 保存 GUI、私有 GUI backend、输入/相机、overlay 和 RT pipeline glue，
-`app-render-passes/` 保存主体 app 与 samples 共享的具体 pass，`truvis/` 与 `samples/` 保存可执行入口。
+应用层位于 workspace 顶层 `../app/`：`app-kit/` 保存生命周期契约、相机/输入和纯 CPU 状态；`app-imgui/`
+拥有 ImGui subsystem 与私有 backend；`app-render-passes/` 保存共享 GPU pass；`app-rendering/` 拥有 realtime/offline
+渲染子系统和长期资源；`app-render-ui/` 集成渲染设置与 ImGui。`truvis/` 与 `samples/` 保存可执行入口。
 
 ## 推荐阅读顺序
 

@@ -1,0 +1,9 @@
+//! ImGui 子系统私有的 Vulkan 后端。
+//!
+//! 这里只保存 `ImGuiSubsystem` 的底层 GPU 实现细节：GUI mesh buffer、
+//! imgui draw data 的 Vulkan 命令录制与 vertex layout。imgui context、
+//! 输入转发、字体资源注册和 RenderGraph 适配仍由上层 `ImGuiSubsystem` 持有。
+
+pub(super) mod gui_mesh;
+pub(super) mod gui_pass;
+pub(super) mod gui_vertex_layout;

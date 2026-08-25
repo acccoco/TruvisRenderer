@@ -28,7 +28,12 @@
 - [`truvis-render-thread/README.md`](../engine/e60-platform/truvis-render-thread/README.md)：窗口 backend 无关的渲染线程生命周期。
 - [`truvis-winit-host/README.md`](../engine/e60-platform/truvis-winit-host/README.md)：standalone 与 embedded winit 窗口宿主。
 - [`app/README.md`](../app/README.md)：App 域、公共组件、主体 App 与 samples。
-- [`app/truvis/README.md`](../app/truvis/README.md)：主体 App 的状态 owner 与 pipeline 编排。
+- [`app/app-kit/README.md`](../app/app-kit/README.md)：生命周期契约、相机/输入和纯 CPU 状态。
+- [`app/app-imgui/README.md`](../app/app-imgui/README.md)：ImGui 子系统、私有 Vulkan 后端和通用诊断控件。
+- [`app/app-render-passes/README.md`](../app/app-render-passes/README.md)：共享 GPU pass 与底层 pipeline。
+- [`app/app-rendering/README.md`](../app/app-rendering/README.md)：realtime/offline 渲染子系统与 GPU 资源 owner。
+- [`app/app-render-ui/README.md`](../app/app-render-ui/README.md)：渲染设置与 ImGui 的共享集成层。
+- [`app/truvis/README.md`](../app/truvis/README.md)：主体 App 的状态 owner 与渲染子系统编排。
 - [`app/editor/README.md`](../app/editor/README.md)：Editor 构建、协议源码和运行参数。
 - [`docs/brain-storm/README.md`](brain-storm/README.md)：仍未进入主线实现的活跃设计方向。
 
@@ -42,7 +47,7 @@
   `RenderAppRunner::run`；所有 Vulkan 对象只在该线程创建、使用和销毁。
 - `RenderRuntime` 拥有 `Gfx`、`World`、GPU resource/binding/timing owner、runtime render state、
   `RenderWorld`、present、command 和同步资源；App/子系统只通过 phase-appropriate Ctx 使用窄能力。
-- App state 持有 GUI、camera/input、overlay 和具体 pipeline，并显式决定 RenderGraph pass 顺序；
+- App state 持有 ImGui、camera/input、overlay 和具体渲染子系统，并显式决定 RenderGraph pass 顺序；
   `SubsystemLifecycle` 只约束 init / resize / shutdown，特有能力与调用顺序由具体 App 控制。
 - CPU scene 语义只由 `World`/`SceneStore` 拥有；GPU scene 是 prepare 后的派生状态，render pass 只读取
   `RenderSceneView`，不访问 CPU owner 或 render-side manager。

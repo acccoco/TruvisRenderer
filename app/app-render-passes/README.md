@@ -17,6 +17,9 @@ coordinate gizmo、selection outline 和 Phong shading。
 
 ## 主要职责
 
+- `ray_tracing`：realtime/offline RT pass 和两者共享的 `GfxRtPipeline`；offline 不引用 realtime 内部模块。
+- `post_process`：accum、image clear、resolve、SDR 和 DLSS SR/RR RenderGraph adapter。
+- `effects`：coordinate gizmo、selection outline 与 Phong 等产品效果。
 - 提供具体 GPU pass 的 pipeline、descriptor、dispatch/draw 逻辑。
 - 提供可接入 `truvis-render-graph` 的 pass adapter。
 - 使用 `RenderPassRecordCtx` 读取 GPU frame state、shader-visible bindings 和资源 manager。
@@ -37,7 +40,8 @@ coordinate gizmo、selection outline 和 Phong shading。
 - 本 crate 不负责 App 级 pass 顺序、GUI overlay 顺序或 demo pipeline 编排。
 - 本 crate 不持有 `RenderRuntime`，也不依赖 frame runtime 或 App hooks。
 - runtime-owned 同步 raycast pipeline 不在本 crate 中；它是 `truvis-render-runtime` 的私有实现细节。
-- `GuiPass` 不在本 crate 中；GUI Vulkan 后端是 `app/app-kit` 的私有实现细节，GUI RenderGraph 集成属于 `GuiSubsystem`。
+- `GBuffer` 不在本 crate 中；它属于 `app-rendering` 的 realtime subsystem 资源 owner。
+- GUI Vulkan backend 与 GUI RenderGraph adapter 是 `app-imgui::ImGuiSubsystem` 的私有实现细节，不在本 crate 中。
 - shader 源码可以引用 Engine ABI/lib；Engine shader、binding 与构建配置禁止引用本模块的 shader root 或 binding crate。
 - pass-local descriptor 只描述本次 draw/dispatch 使用哪个 image view，不拥有 image/view，也不替代 RenderGraph 的
   layout transition、访问同步或 pipeline owner 的 GPU-safe 释放责任。
@@ -45,6 +49,6 @@ coordinate gizmo、selection outline 和 Phong shading。
 ## 设计意图
 
 本 crate 只表达“如何录制 Truvis app 复用的具体 GPU 效果”。具体 App 在 `RenderApp::render`
-中创建 `RenderGraphBuilder`，再按业务顺序组合 `app/app-kit` 中的 render pipeline glue、
-post-process pass 和 GUI pass。这样新增 demo 或 pipeline 时优先复用 pass 实现，而不把
+中创建 `RenderGraphBuilder`，再按业务顺序组合 `app-rendering` 中的渲染子系统、
+post-process pass 和 `app-imgui` 提供的 GUI pass。这样新增 demo 或渲染能力时优先复用 pass 实现，而不把
 App 级编排逻辑下沉到 engine core。

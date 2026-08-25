@@ -42,15 +42,16 @@ RenderRuntime
 - 待处理 `InputEvent` 队列
 - 一次性构造注入的 `Box<dyn RenderApp>`
 
-`RenderAppRunner` 不持有 GUI、Camera、Overlay、InputState 或任何具体 render pipeline，也不访问 App 内部子系统。
+`RenderAppRunner` 不持有 ImGui、Camera、Overlay、InputState 或任何具体渲染子系统，也不访问 App 内部子系统。
 
 具体 App state 持有：
 
-- GUI、camera/input、overlay 和 debug 选择等 CPU 交互状态；
-- 具体 render pipeline / subsystem 及其窗口尺寸资源、历史状态和 pass-local target；
+- ImGui、camera/input、overlay 和 debug 选择等 CPU 交互状态；
+- 具体渲染 subsystem 及其窗口尺寸资源、历史状态和 pass-local target；
 - selection 等 App 业务语义，不保存由 runtime 私有 manager 分配的 GPU slot；
 - Editor、desktop command 等只服务具体 App 的 controller；
-- `GuiSubsystem`、`TriangleRenderer`、`ShaderToyRenderer`、`RtPipeline`、`OfflinePipeline` 等具体能力。
+- `ImGuiSubsystem`、`TriangleSubsystem`、`ShaderToySubsystem`、`RealtimeRenderSubsystem`、`OfflineRenderSubsystem`、
+  `SelectionOutlineSubsystem` 和 `CoordinateGizmoSubsystem` 等具体能力。
 
 主体 Truvis App 的具体组合、UI/selection owner 和 pass 顺序见 [`app/truvis/README.md`](../../app/truvis/README.md)；
 Editor 协议与线程边界见 [`editor-subsystem.md`](editor-subsystem.md)。
@@ -81,10 +82,10 @@ present owner 不直接暴露给 App / 子系统；render/init/resize ctx 只提
 RenderGraph 内的当前 present image 与 image info，acquire/render-complete semaphore 由
 `PresentView::import_current_target` 固定接入 RenderGraph。
 
-GUI draw data 不进入通用 ctx。`GuiSubsystem` 自行持有 imgui context、draw data、字体、GUI mesh 与私有 Vulkan backend；
+GUI draw data 不进入通用 ctx。`app-imgui::ImGuiSubsystem` 自行持有 imgui context、draw data、字体、GUI mesh 与私有 Vulkan backend；
 App 在 update 中调用 `build_frame(delta, |ui| ...)`，在 render 中显式调用 `prepare_render_data` 与
 `contribute_passes`，但不接触内部 GUI pass 或 GPU backend。App-owned debug 选择只保存稳定 CPU 语义；
-当前 pipeline 在 render phase 解析真实 image/view 与 layout。
+`app-kit::DebugImageSelection` 不依赖 ImGui；对应渲染 subsystem 在 render phase 解析真实 image/view 与 layout。
 
 selection outline 使用单独的 `WorldSubmeshRasterView` render ctx 能力。该能力只接受
 `WorldSubmeshSelection`，由 runtime 在当前 prepare 快照内解析 active instance slot 与 draw cache；App 不接触
@@ -143,11 +144,13 @@ Runner 只调用这些 App 阶段，不遍历、注册或发现 App 内部对象
 
 每个子系统的具体能力保留在自身类型上，可跨越多个 render loop phase。例如：
 
-- `GuiSubsystem::on_input` / `build_frame` / `prepare_render_data` / `contribute_passes`
-- `TriangleRenderer::contribute_passes`
-- `ShaderToyRenderer::contribute_passes`
-- `RtPipeline::contribute_compute_passes` / `contribute_present_passes`
-- `OfflinePipeline::contribute_compute_passes` / `contribute_present_passes`
+- `ImGuiSubsystem::on_input` / `build_frame` / `prepare_render_data` / `contribute_passes`
+- `TriangleSubsystem::contribute_passes`
+- `ShaderToySubsystem::contribute_passes`
+- `RealtimeRenderSubsystem::contribute_compute_passes` / `contribute_present_passes`
+- `OfflineRenderSubsystem::contribute_compute_passes` / `contribute_present_passes`
+- `SelectionOutlineSubsystem::contribute_passes`
+- `CoordinateGizmoSubsystem::contribute_passes`
 
 装配或拆卸一个子系统意味着修改具体 App 的字段及相关阶段调用，是编译期静态组合，不引入 visitor、
 `dyn SubsystemLifecycle`、registry、downcast 或运行时安装机制。
@@ -157,7 +160,8 @@ Runner 只调用这些 App 阶段，不遍历、注册或发现 App 内部对象
 - `RenderRuntime` 是 phase 能力来源，但不是 App / 子系统编排者。
 - `RenderAppRunner` 是唯一固定帧骨架，独占 runtime，并通过内部 `dyn RenderApp` 回调具体业务阶段和裁剪 ctx。
 - Runner 定义阶段边界；App 编排阶段内部；子系统只实现自己的具体能力。
-- App 是业务组合 owner，持有具体子系统，并在 render 阶段决定 RenderGraph pass 顺序与具体 pipeline 分支。
+- App 是业务组合 owner，持有具体子系统，并在 render 阶段决定 RenderGraph pass 顺序与 realtime/offline 分支。
+- `app-kit` 不依赖具体 subsystem；ImGui 与 rendering 分属独立 crate，设置 UI 只作为两者之间的集成层。
 - Tauri 文件对话框和私有 desktop command bridge 属于具体 App 的平台特权能力；本地路径不得进入 Editor WebSocket、
   `RenderRuntime` 或通用生命周期接口，Tauri main thread 也不得直接修改 `World`。
 - `SubsystemLifecycle` 只规范 init / resize / shutdown；特有能力和调用顺序始终由具体 App 显式控制。

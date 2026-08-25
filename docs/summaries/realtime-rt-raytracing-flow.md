@@ -99,7 +99,7 @@ hit 的反向 MIS 查询也使用同一套统一策略 PDF，避免 NEE 侧与 B
 ## Primary ReSTIR DI
 
 Primary ReSTIR DI 只服务 camera primary 第一次可见 surface 的直接光；secondary bounce 继续走普通统一 NEE。
-CPU 侧 `RtPipelineSettings.restir_di_mode` 暴露 `Off / InitialOnly / Temporal / TemporalSpatial` 四档，默认 `Off`。
+CPU 侧 `RealtimeRenderSettings.restir_di_mode` 暴露 `Off / InitialOnly / Temporal / TemporalSpatial` 四档，默认 `Off`。
 shader 侧通过 `push_const.restir_di_mode` 和 `push_const.restir_di_phase` 复用同一条 RT pipeline 分阶段执行：
 
 1. **Path phase**：raygen 写 primary GBuffer、DLSS motion vectors、ReSTIR surface key 和 initial reservoir；initial reservoir 从统一 Light Candidate System 抽取 8 个独立 proposal，以 `targetPdf / proposalPdf` streaming，再按 proposal 总数 finalize 成单个 reservoir，非 primary path 仍照常积分。surface key 只在 primary hit 是非 emissive、非 delta、且会由 ReSTIR 替换 direct NEE 的表面上有效。
@@ -111,7 +111,7 @@ reservoir 使用四张 image 打包 light sample identity、样本参数、targe
 A/D 为 `R32G32B32A32_UINT`，保存 candidate kind、light index、class mask、valid 以及 sky/emissive/analytic version；B/C 为
 `R32G32B32A32_SFLOAT`，保存 HDRI 方向、emissive barycentric、analytic light 局部样本参数和权重统计。
 current/previous primary surface key 使用三张 RGBA32F image 保存 position/depth、normal/roughness 与 base color/metallic，同时作为 ReSTIR eligibility 标记；miss、emissive primary、delta specular / delta transmission primary 都写 invalid key。temporal/spatial/final 的 surface 重建使用该高精度 key，避免把 RR/SR 输入用的压缩 GBuffer 当作 ReSTIR visibility 起点或 target 材质签名。所有这些资源属于
-RT pipeline 自有 target，按 `render_extent` 和 FIF frame label 轮转，不进入 DLSS state，也不读取 DLSS output。
+realtime 渲染子系统自有 target，按 `render_extent` 和 FIF frame label 轮转，不进入 DLSS state，也不读取 DLSS output。
 
 initial reservoir 复用统一 Light Candidate System 的 solid-angle PDF 契约。当前 path phase 抽取 8 个 proposal；被遮挡或背面的零 target 候选通过固定 finalize denominator 计入同一次 RIS 估计。ReSTIR target 评估使用当前 surface 可见的 light radiance、BRDF*cos 和 MIS 的 RGB 最大通道，不除以 proposal PDF；final shade 直接乘 finalized inverse PDF，不再额外除以 `target * M`，因此 `InitialOnly` 的单样本估计与旧 unified NEE 的能量契约一致。
 temporal/spatial 固定使用 RTXDI RayTraced bias correction 风格：combine 时把 source 的 finalized inverse PDF 还原为 `targetAtCurrent * sourceWeight * sourceM`，finalize 时使用 `rawWeightSum * numerator / (selectedTarget * denominator)`；normalization 的 numerator/denominator 会在当前、history 或邻域 source surface 上重算选中样本 target，并包含 visibility ray。final shade 仍重新 trace shadow ray，不复用历史 visibility。
@@ -127,8 +127,8 @@ version。resize、DLSS reset、mode 变化、sky/emissive/analytic light 变化
 
 HDRI 和 sky 的采样与 PDF 查询统一走 `EnvMap::sample` / `EnvMap::pdf`。
 
-- 默认 `RtSkySamplingMode::Importance`：使用 `RenderSkyManager` 异步构建并上传的 Alias table。
-- `RtSkySamplingMode::Uniform`：强制回退 uniform sphere，用于 A/B 对比。
+- 默认 `SkySamplingMode::Importance`：使用 `RenderSkyManager` 异步构建并上传的 Alias table。
+- `SkySamplingMode::Uniform`：强制回退 uniform sphere，用于 A/B 对比。
 - fallback sky：真实 sky GPU image 未 ready 前使用 1x1 均匀 distribution 和纯色 fallback 贴图。
 - 过渡态：真实 HDRI image 已 ready、Alias table 尚未 ready 时，继续显示真实 HDRI，但 PDF 使用 uniform sphere。
 - 无效 distribution：回退 uniform sphere，避免读取非法分布。
@@ -249,7 +249,7 @@ analytic light v1 不创建可命中的发光几何，因此 analytic NEE 固定
 
 SHARC（Spatially Hashed Radiance Cache）按路线图第八、九阶段接入。算法移植自 NVIDIA RTXGI SHARC v1.6
 （`tools/rtx-gi/Libraries/Sharc`），落在 `app/shader/lib/app/realtime_rt/sharc_hash_grid.slangi`、
-`sharc_common.slangi` 与接入层 `sharc_integration.slangi`。模式由 `RtPipelineSettings.sharc_mode` 控制：
+`sharc_common.slangi` 与接入层 `sharc_integration.slangi`。模式由 `RealtimeRenderSettings.sharc_mode` 控制：
 `Off` 完全旁路；`Update` 只维护缓存、不查询（画面与 Off 一致）；`On` 在维护基础上让后续 bounce 查询缓存。
 
 资源：app 层 `SharcTargets` 拥有三个世界空间持久 buffer（不随 FIF / render extent 轮转），初始全部清 0：
@@ -271,7 +271,7 @@ buffer 通过 RT pass-local push descriptor 绑定（binding 32-34），即使 S
 
 两个维护 sub-pass 与主渲染都在同一条 RT pipeline、同一 command buffer 内顺序执行；SHARC buffer 不进入只跟踪 image 的
 RenderGraph，Update→Resolve→主渲染查询 的可见性由 pass 内 RT-shader 读写 global memory barrier 保证。SHARC scene scale 由
-`RtPipelineSettings.sharc_scene_scale` 控制 voxel 物理尺寸；相机位置取自 `per_frame_data.camera_pos`，v1 把 resolve 的
+`RealtimeRenderSettings.sharc_scene_scale` 控制 voxel 物理尺寸；相机位置取自 `per_frame_data.camera_pos`，v1 把 resolve 的
 `cameraPositionPrev` 设为当前相机位置（等价关闭 adjacent-level blend）。
 
 **Query（`On` 模式，第九阶段）**：主 path loop 在每个**非 primary** hit 处用 `RtSharc::should_query` 判断后调用

@@ -4,20 +4,10 @@
 //! tone-mapping (SDR)、image clear、resolve、coordinate gizmo 和 Phong shading。
 //!
 //! 本 crate 表达 Truvis app / samples 复用的具体渲染效果，不属于
-//! engine core。Pipeline 编排和 GUI RenderGraph 集成保留在
-//! `app/app-kit` 及具体 App 中，由具体 App 组合渲染子系统并决定 pass 顺序。
+//! engine core。渲染子系统编排、ImGui 集成和业务效果顺序由各自 App 能力 crate 持有。
 
-pub mod accum_pass;
 mod compute_pass;
-pub mod coordinate_gizmo_pass;
-pub mod dlss_rr_pass;
-pub mod dlss_sr_pass;
-pub mod gbuffer;
-pub mod image_clear_pass;
-pub mod offline_rt_pass;
-pub mod phong_pass;
-pub mod realtime_rt_pass;
-pub mod resolve_pass;
-pub mod sdr_pass;
-pub mod selection_outline_pass;
+pub mod effects;
+pub mod post_process;
+pub mod ray_tracing;
 pub(crate) mod streamline_pass;

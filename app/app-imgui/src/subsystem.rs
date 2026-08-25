@@ -19,13 +19,14 @@ use truvis_render_graph::render_graph::{
 use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 
-use crate::gui_backend::gui_mesh::GuiMesh;
-use crate::gui_backend::gui_pass::GuiPass;
-use crate::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
+use app_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
+
+use crate::backend::gui_mesh::GuiMesh;
+use crate::backend::gui_pass::GuiPass;
 
 const FONT_TEXTURE_ID: usize = 0;
 
-pub struct GuiSubsystem {
+pub struct ImGuiSubsystem {
     imgui_ctx: imgui::Context,
     hidpi_factor: f64,
     draw_data: Option<*const DrawData>,
@@ -37,13 +38,13 @@ pub struct GuiSubsystem {
     fonts_image_view_handle: Option<GfxImageViewHandle>,
 }
 
-impl Default for GuiSubsystem {
+impl Default for ImGuiSubsystem {
     fn default() -> Self {
         Self::new(1.0)
     }
 }
 
-impl GuiSubsystem {
+impl ImGuiSubsystem {
     pub fn new(hidpi_factor: f64) -> Self {
         let mut imgui_ctx = imgui::Context::create();
         imgui_ctx.set_ini_filename(None);
@@ -131,9 +132,9 @@ impl GuiSubsystem {
         let draw_data = self
             .draw_data
             .map(|ptr| unsafe { &*ptr })
-            .expect("GuiSubsystem::prepare_render_data called before build_frame");
+            .expect("ImGuiSubsystem::prepare_render_data called before build_frame");
         let frame_label = ctx.record_ctx.frame_timing.frame_label();
-        let meshes = self.gui_meshes.as_mut().expect("GuiSubsystem not initialized");
+        let meshes = self.gui_meshes.as_mut().expect("ImGuiSubsystem not initialized");
 
         ctx.queue_ctx.gfx_queue().begin_label("[ui-pass]create-mesh", LabelColor::COLOR_STAGE);
         {
@@ -161,10 +162,10 @@ impl GuiSubsystem {
         graph.add_pass(
             "gui",
             GuiRenderGraphPass {
-                gui_pass: self.gui_pass.as_ref().expect("GuiSubsystem not initialized"),
+                gui_pass: self.gui_pass.as_ref().expect("ImGuiSubsystem not initialized"),
                 record_ctx: ctx.record_ctx,
                 ui_draw_data: self.draw_data(),
-                gui_mesh: &self.gui_meshes.as_ref().expect("GuiSubsystem not initialized")[*frame_label],
+                gui_mesh: &self.gui_meshes.as_ref().expect("ImGuiSubsystem not initialized")[*frame_label],
                 tex_map: &self.tex_map,
                 canvas_color,
                 canvas_extent,
@@ -174,7 +175,7 @@ impl GuiSubsystem {
 
     fn draw_data(&self) -> &DrawData {
         // draw data 属于当前 frame 的 imgui::Context，且仅在下一个 build_frame 前读取。
-        self.draw_data.map(|ptr| unsafe { &*ptr }).expect("GuiSubsystem draw data requested before build_frame")
+        self.draw_data.map(|ptr| unsafe { &*ptr }).expect("ImGuiSubsystem draw data requested before build_frame")
     }
 
     fn init_font(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
@@ -226,7 +227,7 @@ impl GuiSubsystem {
     }
 }
 
-impl SubsystemLifecycle for GuiSubsystem {
+impl SubsystemLifecycle for ImGuiSubsystem {
     fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
         self.gui_pass = Some(GuiPass::new(
             ctx.device_ctx,

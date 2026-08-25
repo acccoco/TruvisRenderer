@@ -17,9 +17,9 @@
 - `RenderAppRunner::run(control, init, app)` 在内部统一执行初始化、完整帧循环和 shutdown，保证所有具体 App 都经过同一个帧骨架。
 - App factory 在 OS RenderThread 内创建 `Box<dyn RenderApp>`，随后由 `truvis-render-thread::RenderThread` 调用统一 Runner
   入口；winit 窗口层不知道具体 App、内部子系统或 `RenderRuntime`。
-- Runner 定义阶段边界；具体 App 通过 `RenderApp` 暴露固定 hook 点，并自行持有、编排 GUI、camera/input、overlay 和 render pipeline。
+- Runner 定义阶段边界；具体 App 通过 `RenderApp` 暴露固定 hook 点，并自行持有、编排 ImGui、camera/input、overlay 和具体渲染子系统。
 - `after_prepare` 是 App 可选同步查询点，发生在 runtime prepare 完成后、render graph 组图前，用于调用同步 raycast 等依赖 GPU scene 快照的接口。
-- App 内部子系统及其 `SubsystemLifecycle` 属于 `app-kit` / 具体 App；本 crate 不知道它们的类型、顺序或数量。
+- `SubsystemLifecycle` 属于 `app-kit`；具体 subsystem 属于 `app-imgui`、`app-rendering` 或各自 App，本 crate 不知道它们的类型、顺序或数量。
 - GUI frame 构建、pass 贡献、overlay 和输入消费均通过具体类型由 App 显式调用，不进入 `RenderAppRunner`。
 - winit backend 只负责窗口、事件循环和事件适配；本 crate 不依赖 `winit`，也不反向依赖线程宿主。
 
@@ -38,4 +38,4 @@
 - 不创建平台窗口，不处理 winit lifecycle，不持有具体 App / 子系统业务状态
 - `RenderAppRunner` 是唯一完整帧骨架，不提供运行时 App 替换或注册表
 - 不定义子系统 trait、visitor 或子系统生命周期调度；这些属于具体 App 的阶段内部编排
-- GUI draw data 不进入 frame 或 runtime ctx，由 `app-kit` 的 `GuiSubsystem` 自行管理
+- GUI draw data 不进入 frame 或 runtime ctx，由 `app-imgui` 的 `ImGuiSubsystem` 自行管理

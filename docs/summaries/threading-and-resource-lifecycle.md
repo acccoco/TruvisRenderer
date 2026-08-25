@@ -111,7 +111,7 @@ flowchart LR
 - Persistent：pipeline、sampler、descriptor layout、shader binding。
 - Frame：command buffer、per-frame buffer、FrameLabel / timeline state。
 - Swapchain：swapchain image/view、present semaphore。
-- App / Pipeline targets：RT working target、main view target、GBuffer、selection outline mask 等窗口尺寸资源由具体
+- App / Subsystem targets：RT working target、main view target、GBuffer、selection outline mask 等窗口尺寸资源由具体
   App/子系统持有，并在 init / resize / shutdown 阶段通过 ctx 中的 `GfxResourceManager` 与
   `ShaderBindingSystem` 显式创建、注册或释放。
 - Asset：`AssetHub` 只持有 texture / model loader task handle、后台任务状态和完成事件队列，并负责 Assimp / glTF model 到 owned
@@ -133,8 +133,8 @@ flowchart LR
   `RenderSkyManager` 根据 scene sky state 提供 fallback、真实 sky binding 和 distribution，并拥有
   distribution worker、request generation 与 active/retired 状态。旧 distribution 交给
   `GfxResourceManager` 按退休 frame id 跨过 FIF 后销毁，stale 未发布 buffer 在 transfer timeline 完成后立即销毁。
-- GUI：imgui font texture、per-frame GUI mesh buffer、当前只包含 font view 的 texture map；debug image handle
-  不进入 GUI 生命周期，由 realtime/offline pipeline owner 持有并在当前 present graph 内短暂导入。
+- ImGui：font texture、per-frame GUI mesh buffer、当前只包含 font view 的 texture map 都由 `app-imgui::ImGuiSubsystem`
+  持有；debug image handle 不进入 ImGui 生命周期，由 `app-rendering` 的 realtime/offline subsystem 持有并在当前 present graph 内短暂导入。
 - RenderGraph：按帧导入的 image 状态引用与同步计划；图内 transient image/buffer 是未来能力，不作为当前资源生命周期类别。
 
 ## 创建路径

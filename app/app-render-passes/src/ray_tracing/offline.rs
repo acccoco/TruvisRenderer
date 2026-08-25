@@ -23,7 +23,7 @@ use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgP
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 
-use crate::realtime_rt_pass::GfxRtPipeline;
+use super::pipeline::GfxRtPipeline;
 
 // Offline RT stage 列表必须和 `engine/shader/entry/offline_rt/*` 入口保持一致。
 // 这些 shader 共享 offline payload，并通过
@@ -290,7 +290,7 @@ impl OfflineRtPass {
     ) {
         let frame_label = record_ctx.frame_timing.frame_label();
         let Some(tlas) = render_scene.tlas_handle(frame_label) else {
-            // 正常路径应由 OfflinePipeline 在 graph 构建阶段提前过滤无 TLAS 帧；这里保留 warning
+            // 正常路径应由 OfflineRenderSubsystem 在 graph 构建阶段提前过滤无 TLAS 帧；这里保留 warning
             // 作为防御性检查，避免 pass 被其他调用方直接执行时静默跳过。
             log::warn!("OfflineRtPass: TLAS is missing during execute for {}", frame_label);
             return;

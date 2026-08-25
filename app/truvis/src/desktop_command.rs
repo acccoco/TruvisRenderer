@@ -19,7 +19,7 @@ const DESKTOP_COMMAND_CAPACITY: usize = 1;
 /// RenderThread 已经把选中文件写入 CPU scene sky 语义状态。
 ///
 /// 该确认不表示 CPU decode、GPU upload 或 importance distribution 已完成；这些阶段仍由
-/// 现有异步 asset/render 管线推进。
+/// 现有异步 asset/render 流程推进。
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DesktopSkyAccepted;
 

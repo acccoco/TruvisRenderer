@@ -1,15 +1,18 @@
+//! Realtime 渲染子系统及其专属 ReSTIR、SHARC、DLSS 状态。
+
 use std::{cell::Cell, env};
 
 use slotmap::Key;
 
-use app_render_passes::dlss_rr_pass::{DlssRrPass, DlssRrRgPass};
-use app_render_passes::dlss_sr_pass::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
-use app_render_passes::gbuffer::GBuffer;
-use app_render_passes::realtime_rt_pass::{
+use app_kit::debug_image::DebugImageOption;
+use app_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
+use app_render_passes::post_process::dlss_rr::{DlssRrPass, DlssRrRgPass};
+use app_render_passes::post_process::dlss_sr::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
+use app_render_passes::post_process::resolve::{ResolveDebugImage, ResolvePass, ResolveRgPass};
+use app_render_passes::post_process::sdr::{SdrPass, SdrRgPass};
+use app_render_passes::ray_tracing::realtime::{
     RealtimeRtPass, RealtimeRtRgPass, RestirReservoirRgImages, RestirSurfaceKeyRgImages,
 };
-use app_render_passes::resolve_pass::{ResolveDebugImage, ResolvePass, ResolveRgPass};
-use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
@@ -17,15 +20,15 @@ use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgIma
 use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
 use truvis_render_runtime::state::dlss_options::DlssOptions;
 
-use crate::debug_image::DebugImageOption;
-use crate::render_pipeline::common_settings::PathTracingCommonSettings;
-use crate::render_pipeline::targets::{
-    DlssOutputTargets, DlssRrInputTargets, DlssSrExposureTarget, DlssSrInputTargets, ImageTarget, MainViewTargets,
-    RestirDiTargets, RestirReservoirTarget, RestirSurfaceKeyTarget, RtWorkingTargets, SharcTargets,
+use crate::realtime::gbuffer::GBuffer;
+use crate::realtime::resources::{
+    DlssOutputTargets, DlssRrInputTargets, DlssSrExposureTarget, DlssSrInputTargets, MainViewTargets, RestirDiTargets,
+    RestirReservoirTarget, RestirSurfaceKeyTarget, RtWorkingTargets, SharcTargets,
 };
-use crate::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
+use crate::shared::{ImageTarget, PathTracingCommonSettings, PathTracingDebugChannel};
 
-pub use crate::render_pipeline::common_settings::RtSkySamplingMode;
+mod gbuffer;
+mod resources;
 
 const RT_DEBUG_IMAGE_OPTIONS: [DebugImageOption; 11] = [
     DebugImageOption::new("single-frame-rt", "Single Frame RT"),
@@ -42,30 +45,30 @@ const RT_DEBUG_IMAGE_OPTIONS: [DebugImageOption; 11] = [
 ];
 
 #[derive(Default)]
-pub struct RtPipeline {
-    inner: Option<RtPipelineInner>,
+pub struct RealtimeRenderSubsystem {
+    resources: Option<RealtimeRenderResources>,
     /// RT app 自有的可调参数。
     ///
-    /// 生命周期跟随 `RtPipeline`，由 Truvis / Cornell 等 RT app 在 ImGui update 阶段修改，
+    /// 生命周期跟随 `RealtimeRenderSubsystem`，由 Truvis / Cornell 等 RT app 在 ImGui update 阶段修改，
     /// 再在构建 render graph 时显式传给相关 pass。
-    settings: RtPipelineSettings,
+    settings: RealtimeRenderSettings,
     /// ReSTIR DI 的最小 CPU history signature；用于 mode/reset 变化时切断上一帧 history。
     restir_last_mode: Cell<RtRestirDiMode>,
 }
 
-/// RT pipeline 自有配置。
+/// Realtime 渲染子系统自有配置。
 ///
 /// 这些选项只影响 app 层 RT pass 和后处理调试输出，不进入 engine runtime-owned render state。
 #[derive(Clone, Copy)]
-pub struct RtPipelineSettings {
+pub struct RealtimeRenderSettings {
     /// 当前 RT 调试输出通道。
     ///
     /// 这是 RT 主流程的 pass-local 配置，不影响 engine runtime 的 target 尺寸、DLSS history
     /// 或全局 per-frame UBO，因此不放入 engine runtime-owned render state。
-    pub debug_channel: RtDebugChannel,
+    pub debug_channel: PathTracingDebugChannel,
     /// Primary visible surface ReSTIR DI 模式。
     ///
-    /// 这是 RT pipeline 私有 temporal lighting 开关；默认 Off，确保现有 unified NEE
+    /// 这是 realtime 渲染子系统私有的 temporal lighting 开关；默认 Off，确保现有 unified NEE
     /// 路径可直接回退。reservoir history 不进入 DLSS state，也不读取 DLSS output。
     pub restir_di_mode: RtRestirDiMode,
     /// SHARC world-space radiance cache 模式。
@@ -78,10 +81,10 @@ pub struct RtPipelineSettings {
     pub sharc_scene_scale: f32,
 }
 
-impl Default for RtPipelineSettings {
+impl Default for RealtimeRenderSettings {
     fn default() -> Self {
         Self {
-            debug_channel: RtDebugChannel::Final,
+            debug_channel: PathTracingDebugChannel::Final,
             restir_di_mode: RtRestirDiMode::initial_mode_from_env(),
             sharc_mode: RtSharcMode::initial_mode_from_env(),
             sharc_scene_scale: 50.0,
@@ -219,136 +222,7 @@ impl RtRestirDiMode {
     }
 }
 
-/// 主 RT 流程支持的调试通道。
-///
-/// 数值由 RT/Sdr shader push constant 消费；这里用 enum 固定语义，避免 UI 直接暴露 magic number。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RtDebugChannel {
-    /// 标准最终颜色输出。
-    Final,
-    /// 显示 RT shading 当前实际使用的 world-space forward normal。
-    ///
-    /// 该法线经过 `faceforward` 翻面，会随入射 ray 保持同侧；这是旧 `normal` 通道的兼容语义。
-    ForwardNormal,
-    /// 显示未经过 `faceforward` 翻面的 world-space 几何法线。
-    WorldNormal,
-    /// 显示 mesh object/local space 中的插值顶点法线。
-    ObjectNormal,
-    /// 显示材质 base color / albedo。
-    BaseColor,
-    /// 显示 next-event estimation 中来自 HDRI 的直接光。
-    NeeHdri,
-    /// 显示自发光材质贡献。
-    Emission,
-    /// 显示 BRDF 采样到 HDRI 的间接贡献。
-    BrdfHdri,
-    /// 显示第 0 次 bounce 的 NEE 贡献。
-    NeeBounce0,
-    /// 显示第 1 次 bounce 的 NEE 贡献。
-    NeeBounce1,
-    /// 显示 next-event estimation 中来自自发光三角形的直接光。
-    NeeEmissive,
-    /// 显示 next-event estimation 中来自 analytic light 的直接光。
-    NeeAnalytic,
-    /// 显示 primary surface 的粗粒度材质分类。
-    MaterialType,
-    /// 显示 primary surface 是否属于 specular / transparent delta path。
-    DeltaMask,
-    /// 显示 DLSS RR 使用的 primary specular motion vector 长度。
-    SpecularMotionMagnitude,
-    /// 显示 ReSTIR DI initial reservoir 的权重强度。
-    RestirInitialWeight,
-    /// 显示 ReSTIR DI temporal reservoir 是否有效及 history age。
-    RestirTemporalValid,
-    /// 显示 ReSTIR DI final shade contribution。
-    RestirFinalContribution,
-    /// 显示 SHARC hash grid 在 primary hit 处的 voxel 着色，用于观察 grid 结构与 scene scale。
-    SharcHashGrid,
-    /// 显示 SHARC resolved 缓存在 primary hit 处的 radiance，用于确认 Update/Resolve 是否写入缓存。
-    SharcCache,
-    /// SHARC query 命中深度 heatmap（绿=depth1，黄=depth2，红=3+，黑=未命中），观察缓存使用与路径成本。
-    SharcQueryDepth,
-}
-
-impl RtDebugChannel {
-    pub const ALL: [Self; 21] = [
-        Self::Final,
-        Self::ForwardNormal,
-        Self::WorldNormal,
-        Self::ObjectNormal,
-        Self::BaseColor,
-        Self::NeeHdri,
-        Self::Emission,
-        Self::BrdfHdri,
-        Self::NeeBounce0,
-        Self::NeeBounce1,
-        Self::NeeEmissive,
-        Self::NeeAnalytic,
-        Self::MaterialType,
-        Self::DeltaMask,
-        Self::SpecularMotionMagnitude,
-        Self::RestirInitialWeight,
-        Self::RestirTemporalValid,
-        Self::RestirFinalContribution,
-        Self::SharcHashGrid,
-        Self::SharcCache,
-        Self::SharcQueryDepth,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Final => "final",
-            Self::ForwardNormal => "forward normal",
-            Self::WorldNormal => "world normal",
-            Self::ObjectNormal => "object normal",
-            Self::BaseColor => "base color",
-            Self::NeeHdri => "from NEE HDRI",
-            Self::Emission => "from emission",
-            Self::BrdfHdri => "from BRDF HDRI",
-            Self::NeeBounce0 => "NEE bounce 0",
-            Self::NeeBounce1 => "NEE bounce 1",
-            Self::NeeEmissive => "from NEE emissive",
-            Self::NeeAnalytic => "from NEE analytic",
-            Self::MaterialType => "material type",
-            Self::DeltaMask => "delta mask",
-            Self::SpecularMotionMagnitude => "specular motion magnitude",
-            Self::RestirInitialWeight => "ReSTIR initial weight",
-            Self::RestirTemporalValid => "ReSTIR temporal valid",
-            Self::RestirFinalContribution => "ReSTIR final contribution",
-            Self::SharcHashGrid => "SHARC hash grid",
-            Self::SharcCache => "SHARC cache radiance",
-            Self::SharcQueryDepth => "SHARC query depth",
-        }
-    }
-
-    pub fn shader_channel(self) -> u32 {
-        match self {
-            Self::Final => 0,
-            Self::ForwardNormal => 1,
-            Self::WorldNormal => 10,
-            Self::ObjectNormal => 11,
-            Self::BaseColor => 2,
-            Self::NeeHdri => 4,
-            Self::Emission => 5,
-            Self::BrdfHdri => 6,
-            Self::NeeBounce0 => 7,
-            Self::NeeBounce1 => 8,
-            Self::NeeEmissive => 9,
-            Self::NeeAnalytic => 12,
-            Self::MaterialType => 16,
-            Self::DeltaMask => 17,
-            Self::SpecularMotionMagnitude => 18,
-            Self::RestirInitialWeight => 13,
-            Self::RestirTemporalValid => 14,
-            Self::RestirFinalContribution => 15,
-            Self::SharcHashGrid => 19,
-            Self::SharcCache => 20,
-            Self::SharcQueryDepth => 21,
-        }
-    }
-}
-
-struct RtPipelineInner {
+struct RealtimeRenderResources {
     realtime_rt_pass: RealtimeRtPass,
     /// DLSS SR 是外部 opaque pass，不拥有 shader pipeline；只在 SR/DLAA 分支被加入 compute graph。
     dlss_sr_pass: DlssSrPass,
@@ -357,7 +231,7 @@ struct RtPipelineInner {
     sdr_pass: SdrPass,
     resolve_pass: ResolvePass,
     gbuffer: GBuffer,
-    /// RT 私有工作图像。它们的格式/用途由 RT pipeline 决定，因此不再放在 engine runtime state。
+    /// RT 私有工作图像。它们的格式/用途由 realtime 渲染子系统决定，因此不再放在 engine runtime state。
     rt_targets: RtWorkingTargets,
     /// Primary ReSTIR DI reservoir 与 surface-key history。
     restir_di_targets: RestirDiTargets,
@@ -384,7 +258,7 @@ pub struct RtPresentGraphTargets {
     pub present_image: RgImageHandle,
 }
 
-impl RtPipelineInner {
+impl RealtimeRenderResources {
     fn new(ctx: &mut RenderRuntimeInitCtx<'_>) -> Self {
         // SHARC 缓存 buffer 必须先于 RT pass 创建：pass 在 `new` 时把这些持久 buffer 一次性写入
         // 自己的 SHARC regular descriptor set。SharcTargets 不随 resize 重建，因此 set 始终有效。
@@ -560,18 +434,18 @@ impl RtPipelineInner {
     }
 }
 
-impl SubsystemLifecycle for RtPipeline {
+impl SubsystemLifecycle for RealtimeRenderSubsystem {
     fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
-        self.inner = Some(RtPipelineInner::new(ctx));
+        self.resources = Some(RealtimeRenderResources::new(ctx));
     }
 
     fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
-        if let Some(inner) = self.inner.as_mut() {
+        if let Some(resources) = self.resources.as_mut() {
             // resize ctx 来自 present 层实际重建后的安全点；旧 target 不会再被在飞命令引用。
             // 这里用 `PresentView` 再读一次 swapchain extent，避免 app-owned target 和
             // swapchain 在平台裁剪尺寸时出现细微不一致。
             let target_frame_state = *ctx.frame_state;
-            inner.rt_targets.rebuild(
+            resources.rt_targets.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
@@ -579,7 +453,7 @@ impl SubsystemLifecycle for RtPipeline {
                 &target_frame_state,
                 ctx.frame_timing.frame_id(),
             );
-            inner.restir_di_targets.rebuild(
+            resources.restir_di_targets.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
@@ -587,7 +461,7 @@ impl SubsystemLifecycle for RtPipeline {
                 &target_frame_state,
                 ctx.frame_timing.frame_id(),
             );
-            inner.dlss_sr_inputs.rebuild(
+            resources.dlss_sr_inputs.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
@@ -595,7 +469,7 @@ impl SubsystemLifecycle for RtPipeline {
                 &target_frame_state,
                 ctx.frame_timing.frame_id(),
             );
-            inner.dlss_rr_inputs.rebuild(
+            resources.dlss_rr_inputs.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
@@ -603,7 +477,7 @@ impl SubsystemLifecycle for RtPipeline {
                 &target_frame_state,
                 ctx.frame_timing.frame_id(),
             );
-            inner.dlss_outputs.rebuild(
+            resources.dlss_outputs.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
@@ -611,7 +485,7 @@ impl SubsystemLifecycle for RtPipeline {
                 &target_frame_state,
                 ctx.frame_timing.frame_id(),
             );
-            inner.main_view_targets.rebuild(
+            resources.main_view_targets.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
@@ -619,7 +493,7 @@ impl SubsystemLifecycle for RtPipeline {
                 &target_frame_state,
                 ctx.frame_timing.frame_id(),
             );
-            inner.gbuffer.rebuild(
+            resources.gbuffer.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
@@ -631,27 +505,27 @@ impl SubsystemLifecycle for RtPipeline {
     }
 
     fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
-        if let Some(inner) = self.inner.take() {
-            inner.destroy(ctx);
+        if let Some(resources) = self.resources.take() {
+            resources.destroy(ctx);
         }
     }
 }
 
-impl RtPipeline {
-    pub fn settings(&self) -> &RtPipelineSettings {
+impl RealtimeRenderSubsystem {
+    pub fn settings(&self) -> &RealtimeRenderSettings {
         &self.settings
     }
 
-    pub fn settings_mut(&mut self) -> &mut RtPipelineSettings {
+    pub fn settings_mut(&mut self) -> &mut RealtimeRenderSettings {
         &mut self.settings
     }
 
     pub fn compute_cmd(&self, frame_label: FrameLabel) -> &GfxCommandBuffer {
-        &self.inner().compute_cmds[*frame_label]
+        &self.resources().compute_cmds[*frame_label]
     }
 
     pub fn present_cmd(&self, frame_label: FrameLabel) -> &GfxCommandBuffer {
-        &self.inner().present_cmds[*frame_label]
+        &self.resources().present_cmds[*frame_label]
     }
 
     pub fn contribute_compute_passes<'a>(
@@ -660,16 +534,16 @@ impl RtPipeline {
         ctx: &'a SubsystemRenderCtx<'a>,
         common_settings: &PathTracingCommonSettings,
     ) {
-        let inner = self.inner();
+        let resources = self.resources();
         let record_ctx = ctx.record_ctx;
         let frame_label = record_ctx.frame_timing.frame_label();
-        let rt_targets = &inner.rt_targets;
-        let restir_di_targets = &inner.restir_di_targets;
-        let sharc_targets = &inner.sharc_targets;
-        let dlss_sr_inputs = &inner.dlss_sr_inputs;
-        let dlss_rr_inputs = &inner.dlss_rr_inputs;
-        let dlss_outputs = &inner.dlss_outputs;
-        let main_view_targets = &inner.main_view_targets;
+        let rt_targets = &resources.rt_targets;
+        let restir_di_targets = &resources.restir_di_targets;
+        let sharc_targets = &resources.sharc_targets;
+        let dlss_sr_inputs = &resources.dlss_sr_inputs;
+        let dlss_rr_inputs = &resources.dlss_rr_inputs;
+        let dlss_outputs = &resources.dlss_outputs;
+        let main_view_targets = &resources.main_view_targets;
         let debug_channel = self.settings.debug_channel.shader_channel();
         let sky_sampling_mode = common_settings.sky_sampling_mode.shader_mode();
         let sky_brightness = common_settings.sky_brightness;
@@ -683,7 +557,7 @@ impl RtPipeline {
             FrameLabel::from_usize((frame_id as usize + FrameLabel::COUNT - 1) % FrameLabel::COUNT);
         // CPU 侧只负责切断明显不连续的 history：首帧、mode 变化和 DLSS reset。
         // sky/emissive/analytic light 的版本拒绝在 shader reservoir metadata 中完成，
-        // 这样 resize/reset 语义留在 pipeline owner，scene 语义变化留在 GPU scene ABI。
+        // 这样 resize/reset 语义留在 realtime 渲染子系统，scene 语义变化留在 GPU scene ABI。
         let restir_history_valid = restir_di_mode.is_enabled()
             && frame_id > 0
             && self.restir_last_mode.get() == restir_di_mode
@@ -703,7 +577,7 @@ impl RtPipeline {
             None,
         );
 
-        let gbuffer = &inner.gbuffer;
+        let gbuffer = &resources.gbuffer;
         let (gbuffer_a_image_handle, gbuffer_a_view_handle) = gbuffer.a_handle(frame_label);
         let gbuffer_a = rg_builder.import_image(
             "gbuffer-a",
@@ -856,7 +730,7 @@ impl RtPipeline {
         rg_builder.add_pass(
             "ray-tracing",
             RealtimeRtRgPass {
-                rt_pass: &inner.realtime_rt_pass,
+                rt_pass: &resources.realtime_rt_pass,
                 record_ctx,
                 render_scene: ctx.render_scene,
                 single_frame_image,
@@ -894,7 +768,7 @@ impl RtPipeline {
                 .add_pass(
                     "dlss-rr",
                     DlssRrRgPass {
-                        dlss_rr_pass: &inner.dlss_rr_pass,
+                        dlss_rr_pass: &resources.dlss_rr_pass,
                         record_ctx,
                         resource_ctx: ctx.resource_ctx,
                         input_color: single_frame_image,
@@ -910,7 +784,7 @@ impl RtPipeline {
                 .add_pass(
                     "hdr-to-sdr",
                     SdrRgPass {
-                        sdr_pass: &inner.sdr_pass,
+                        sdr_pass: &resources.sdr_pass,
                         record_ctx,
                         src_image: dlss_output,
                         dst_image: render_target,
@@ -923,7 +797,7 @@ impl RtPipeline {
         } else if dlss_options.is_sr_active() {
             // SR/DLAA 分支用 Streamline output 进入 SDR；不再运行传统 denoise/accum，
             // 也不在 SR 后追加第二个 upscale pass。
-            let dlss_sr_exposure_target = inner.dlss_sr_exposure.exposure();
+            let dlss_sr_exposure_target = resources.dlss_sr_exposure.exposure();
             let dlss_sr_exposure = rg_builder.import_image(
                 "dlss-sr-exposure",
                 dlss_sr_exposure_target.image,
@@ -937,7 +811,7 @@ impl RtPipeline {
                 .add_pass(
                     "dlss-sr",
                     DlssSrRgPass {
-                        dlss_sr_pass: &inner.dlss_sr_pass,
+                        dlss_sr_pass: &resources.dlss_sr_pass,
                         record_ctx,
                         resource_ctx: ctx.resource_ctx,
                         input_color: single_frame_image,
@@ -950,7 +824,7 @@ impl RtPipeline {
                 .add_pass(
                     "hdr-to-sdr",
                     SdrRgPass {
-                        sdr_pass: &inner.sdr_pass,
+                        sdr_pass: &resources.sdr_pass,
                         record_ctx,
                         src_image: dlss_output,
                         dst_image: render_target,
@@ -966,7 +840,7 @@ impl RtPipeline {
             rg_builder.add_pass(
                 "hdr-to-sdr",
                 SdrRgPass {
-                    sdr_pass: &inner.sdr_pass,
+                    sdr_pass: &resources.sdr_pass,
                     record_ctx,
                     src_image: single_frame_image,
                     dst_image: render_target,
@@ -994,13 +868,13 @@ impl RtPipeline {
         dlss_options: DlssOptions,
         id: &str,
     ) -> Option<(ImageTarget, RgImageState)> {
-        let inner = self.inner();
-        let rt_targets = &inner.rt_targets;
-        let main_view_targets = &inner.main_view_targets;
-        let dlss_sr_inputs = &inner.dlss_sr_inputs;
-        let dlss_rr_inputs = &inner.dlss_rr_inputs;
-        let dlss_outputs = &inner.dlss_outputs;
-        let gbuffer = &inner.gbuffer;
+        let resources = self.resources();
+        let rt_targets = &resources.rt_targets;
+        let main_view_targets = &resources.main_view_targets;
+        let dlss_sr_inputs = &resources.dlss_sr_inputs;
+        let dlss_rr_inputs = &resources.dlss_rr_inputs;
+        let dlss_outputs = &resources.dlss_outputs;
+        let gbuffer = &resources.gbuffer;
 
         let single_frame = rt_targets.single_frame_rt(frame_label);
         let main_view_color = main_view_targets.color(frame_label);
@@ -1068,10 +942,10 @@ impl RtPipeline {
         _common_settings: &PathTracingCommonSettings,
         selected_debug_image_id: Option<&str>,
     ) -> RtPresentGraphTargets {
-        let inner = self.inner();
+        let resources = self.resources();
         let record_ctx = ctx.record_ctx;
         let frame_label = record_ctx.frame_timing.frame_label();
-        let main_view_targets = &inner.main_view_targets;
+        let main_view_targets = &resources.main_view_targets;
 
         // present graph 只读取 compute graph 导出的主视图 color，再 resolve 到当前 swapchain image。
         // 这里重新 import 同一个 app-owned image，让两个 graph 之间的边界保持显式。
@@ -1109,7 +983,7 @@ impl RtPipeline {
         rg_builder.add_pass(
             "resolve",
             ResolveRgPass {
-                resolve_pass: &inner.resolve_pass,
+                resolve_pass: &resources.resolve_pass,
                 record_ctx,
                 render_target,
                 debug_image,
@@ -1121,8 +995,8 @@ impl RtPipeline {
         RtPresentGraphTargets { present_image }
     }
 
-    fn inner(&self) -> &RtPipelineInner {
-        self.inner.as_ref().expect("RtPipeline not initialized")
+    fn resources(&self) -> &RealtimeRenderResources {
+        self.resources.as_ref().expect("RealtimeRenderSubsystem not initialized")
     }
 }
 
@@ -1206,8 +1080,8 @@ fn import_restir_surface_key<'a>(
     }
 }
 
-impl Drop for RtPipeline {
+impl Drop for RealtimeRenderSubsystem {
     fn drop(&mut self) {
-        log::info!("RtPipeline drop");
+        log::info!("RealtimeRenderSubsystem drop");
     }
 }

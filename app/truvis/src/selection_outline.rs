@@ -1,11 +1,11 @@
 use ash::vk;
 use slotmap::Key;
 
-use app_kit::render_pipeline::targets::ImageTarget;
 use app_kit::subsystem::SubsystemLifecycle;
-use app_render_passes::selection_outline_pass::{
+use app_render_passes::effects::selection_outline::{
     SelectionOutlineCompositeRgPass, SelectionOutlineMaskRgPass, SelectionOutlinePass,
 };
+use app_rendering::ImageTarget;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
@@ -26,11 +26,11 @@ use truvis_render_runtime::selection::WorldSubmeshSelection;
 /// mask 按 FIF 轮转，跟随 swapchain/output extent 在 init/resize 阶段创建或重建，
 /// composite pass 在录制时通过 pass-local descriptor 采样 mask；shutdown 只释放 manager-owned image。
 #[derive(Default)]
-pub(crate) struct SelectionOutlineRenderer {
-    inner: Option<SelectionOutlineRendererInner>,
+pub(crate) struct SelectionOutlineSubsystem {
+    resources: Option<SelectionOutlineResources>,
 }
 
-struct SelectionOutlineRendererInner {
+struct SelectionOutlineResources {
     pass: SelectionOutlinePass,
     present_format: vk::Format,
     masks: SelectionOutlineMasks,
@@ -46,7 +46,7 @@ struct SelectionOutlineMasks {
     extent: vk::Extent2D,
 }
 
-impl SelectionOutlineRenderer {
+impl SelectionOutlineSubsystem {
     pub(crate) fn contribute_passes<'a>(
         &'a self,
         graph: &mut RenderGraphBuilder<'a>,
@@ -58,12 +58,12 @@ impl SelectionOutlineRenderer {
         let Some(selection) = selection else {
             return;
         };
-        let Some(inner) = self.inner.as_ref() else {
+        let Some(resources) = self.resources.as_ref() else {
             return;
         };
 
         let frame_label = ctx.record_ctx.frame_timing.frame_label();
-        let mask_target = inner.masks.target(frame_label);
+        let mask_target = resources.masks.target(frame_label);
         let mask_image = graph.import_image(
             "selection-outline-mask",
             mask_target.image,
@@ -76,7 +76,7 @@ impl SelectionOutlineRenderer {
         graph.add_pass(
             "selection-outline-mask",
             SelectionOutlineMaskRgPass {
-                outline_pass: &inner.pass,
+                outline_pass: &resources.pass,
                 record_ctx: ctx.record_ctx,
                 selected_raster: ctx.world_submesh_raster,
                 selection,
@@ -87,7 +87,7 @@ impl SelectionOutlineRenderer {
         graph.add_pass(
             "selection-outline-composite",
             SelectionOutlineCompositeRgPass {
-                outline_pass: &inner.pass,
+                outline_pass: &resources.pass,
                 record_ctx: ctx.record_ctx,
                 mask_image,
                 present_image,
@@ -97,10 +97,10 @@ impl SelectionOutlineRenderer {
     }
 }
 
-impl SubsystemLifecycle for SelectionOutlineRenderer {
+impl SubsystemLifecycle for SelectionOutlineSubsystem {
     fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
         let image_info = ctx.present.swapchain_image_info();
-        let inner = SelectionOutlineRendererInner::new(
+        let resources = SelectionOutlineResources::new(
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.gfx_resource_manager,
@@ -109,13 +109,13 @@ impl SubsystemLifecycle for SelectionOutlineRenderer {
             image_info.image_format,
             ctx.frame_timing.frame_id(),
         );
-        self.inner = Some(inner);
+        self.resources = Some(resources);
     }
 
     fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
         let image_info = ctx.present.swapchain_image_info();
-        if let Some(inner) = self.inner.as_mut() {
-            inner.rebuild_masks(
+        if let Some(resources) = self.resources.as_mut() {
+            resources.rebuild_masks(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.gfx_resource_manager,
@@ -125,7 +125,7 @@ impl SubsystemLifecycle for SelectionOutlineRenderer {
                 ctx.frame_timing.frame_id(),
             );
         } else {
-            self.inner = Some(SelectionOutlineRendererInner::new(
+            self.resources = Some(SelectionOutlineResources::new(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.gfx_resource_manager,
@@ -138,13 +138,13 @@ impl SubsystemLifecycle for SelectionOutlineRenderer {
     }
 
     fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
-        if let Some(inner) = self.inner.take() {
-            inner.destroy(ctx.resource_ctx, ctx.device_ctx, ctx.gfx_resource_manager, DestroyReason::Shutdown);
+        if let Some(resources) = self.resources.take() {
+            resources.destroy(ctx.resource_ctx, ctx.device_ctx, ctx.gfx_resource_manager, DestroyReason::Shutdown);
         }
     }
 }
 
-impl SelectionOutlineRendererInner {
+impl SelectionOutlineResources {
     fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,

@@ -41,7 +41,7 @@ struct AccumDescriptorBinding {
 /// 累积 Pass - 将单帧 RT 结果累积到 accum_image 中。
 ///
 /// 两张 image 都由当前 dispatch 的 pass-local descriptor 绑定；历史 image 的所有权和有效性仍由
-/// OfflinePipeline 管理，RenderGraph 负责同一 image 的跨 dispatch 读写同步。
+/// OfflineRenderSubsystem 管理，RenderGraph 负责同一 image 的跨 dispatch 读写同步。
 pub struct AccumPass {
     accum_pass: ComputePass<gpu::app::render_passes::post_accum::PushConstant, AccumDescriptorBinding>,
 }

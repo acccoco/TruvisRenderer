@@ -11,7 +11,7 @@ flowchart TB
     L8["L8 app/truvis + samples<br/>Tauri 主体 app 与独立示例入口<br/><br/>L8 app/editor<br/>Tauri WebView UI、HTTP/WebSocket adapter、跨线程 editor 契约"]
     L7["L7 truvis-winit-host<br/>standalone / child HWND 窗口生命周期、winit 事件循环与输入适配"]
     L6["L6 truvis-render-thread<br/>backend-independent OS 渲染线程、App factory、完成与 panic 生命周期"]
-    L5["L5 app-kit<br/>GuiSubsystem、SubsystemLifecycle、私有 GUI backend、overlay、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp 阶段契约<br/>唯一 RenderAppRunner 完整生命周期"]
+    L5["L5 App capability crates<br/>app-kit foundation / app-imgui / app-rendering / app-render-ui / app-render-passes<br/><br/>L5 truvis-app-frame<br/>RenderApp 阶段契约<br/>唯一 RenderAppRunner 完整生命周期"]
     L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GfxResourceManager / ShaderBindingSystem / CmdAllocator / PerFrameGpuData + timing owners + runtime render state + RenderWorld + RenderPassRecordCtx + swapchain/present 生命周期"]
     L3["L3 truvis-render-graph / truvis-world / truvis-asset<br/>按帧同步辅助、CPU 场景、资产加载"]
     L2["L2 truvis-render-foundation<br/>FrameLabel、GPU 资源句柄、RenderView、RenderSceneView、GfxResourceAccess"]
@@ -30,7 +30,7 @@ flowchart TB
 - `engine/e40-render/` 是渲染域目录，只承载通用渲染基础设施：`truvis-render-foundation` 是跨 crate 契约层，
   `truvis-render-graph` 只依赖 foundation 中的句柄和 `GfxResourceAccess`，`truvis-render-runtime` 负责集成 runtime-owned
   GPU resource/binding/cmd/per-frame 能力。
-- 具体 app 复用的 RT / 后处理 pass 位于 `app/app-render-passes`，GUI backend 位于 `app/app-kit` 私有模块。
+- 具体 app 复用的 RT / 后处理 pass 位于 `app/app-render-passes`，GUI backend 属于 `app/app-imgui`，渲染子系统与长期资源属于 `app/app-rendering`。
 - Web editor 属于 app 域：`truvis-editor-bridge` 只包含协议 DTO 和有界 channel endpoint，
   `truvis-editor-server` 只依赖 bridge；两者都禁止依赖 `truvis-world`、render runtime 或 GPU 类型。
   `app/truvis::editor_controller` 是唯一把 editor DTO 适配到权威 `World` 的位置。
@@ -45,28 +45,42 @@ flowchart LR
     RenderDomain["render-graph<br/>pass 编排基础<br/>通过 GfxResourceAccess 查询 imported image"]
     Runtime["render-runtime<br/>运行时集成、GPU owner、GPU 上传、present 生命周期"]
     Frame["frame<br/>具体 RenderApp 契约、RenderAppRunner::run、线程控制契约"]
-    AppKit["app-kit + app-render-passes<br/>GUI 集成与私有 backend、输入/相机、overlay、RT/后处理 pass 与 pipeline glue"]
+    AppKit["app-kit<br/>SubsystemLifecycle、camera/input、纯 CPU 选择状态"]
+    AppImGui["app-imgui<br/>ImGui subsystem、私有 Vulkan backend、诊断控件"]
+    AppPasses["app-render-passes<br/>ray tracing / post-process / effects GPU pass"]
+    AppRendering["app-rendering<br/>realtime / offline subsystem、settings、长期 GPU 资源"]
+    AppRenderUi["app-render-ui<br/>渲染设置与 ImGui 的共享集成"]
     App["app / samples<br/>Truvis Tauri 桌面壳与独立示例"]
     WindowHost["truvis-winit-host<br/>standalone + embedded winit 窗口宿主"]
     RenderThread["truvis-render-thread<br/>backend-independent OS 渲染线程宿主"]
     App --> WindowHost --> RenderThread --> Frame --> Runtime --> RenderDomain --> Core --> Gfx --> Foundation
     WindowHost --> Frame
     App --> AppKit --> Frame
+    App --> AppImGui --> AppKit
+    App --> AppRendering --> AppKit
+    AppRendering --> AppPasses
+    App --> AppRenderUi --> AppImGui
+    AppRenderUi --> AppRendering
     AppKit --> Runtime
-    AppKit --> RenderDomain
+    AppImGui --> RenderDomain
+    AppPasses --> RenderDomain
 ```
 
-## GUI 与 App 层边界
+## App capability crate 边界
 
-GUI 属于 app 层集成能力：`app_kit::gui_subsystem` 持有 imgui context、RenderGraph 适配和私有 `gui_backend`，其中 `GuiMesh` /
-`GuiPass` 等底层 Vulkan 后端实现不作为 engine crate 暴露。
+`app-kit` 是最窄的 App 基础层，只提供 `SubsystemLifecycle`、`SubsystemRenderCtx`、camera/input，以及纯 CPU
+`DebugImageOption` / `DebugImageSelection`。它不依赖 `imgui`、`app-render-passes`、具体渲染子系统或 App shader binding。
 
-`app-kit` 提供 app 层公共组件，不承载具体 app state。`RtPipeline` 持有 RT working target、main view target 等 app-owned
-窗口尺寸资源；主体 app 和 samples 通过具体字段静态组合这些能力，并在各自 App 阶段内直接调用
-`SubsystemLifecycle` 与具体渲染接口。
+`app-imgui::ImGuiSubsystem` 拥有 imgui context、字体、draw data、mesh、RenderGraph adapter 和私有 Vulkan backend；
+诊断控件与 debug image 选择器视图同属于本 crate。`DebugImageSelection` 仍由 App 持有，视图只编辑可见性和稳定 ID。
 
-`app-render-passes` 承载主体 app 与 samples 共享的具体 RT / 后处理 / shading pass，不属于 engine core。其中 `GBuffer` 定义
-RT 管线的 GBuffer 通道布局和 per-FIF 纹理资源管理，由 `RtPipeline` 持有生命周期。
+`app-rendering` 拥有 `RealtimeRenderSubsystem`、`OfflineRenderSubsystem`、共享 path tracing 设置和长期 GPU 资源；
+GBuffer、ReSTIR、SHARC 和 DLSS target 属于 realtime，累计图与 sample count 属于 offline，`ImageTarget` 属于 shared。
+它依赖 `app-render-passes`，但不依赖 ImGui。pass crate 只组织 `ray_tracing`、`post_process`、`effects` 与共享底层 GPU pipeline。
+
+`app-render-ui` 同时依赖 `app-imgui`、`app-rendering` 和 `app-kit`，提供 realtime-only 控件窗口及 realtime/offline
+section；它通过 rendering shared API 使用 SDR 设置，不直接依赖 pass crate。Triangle / ShaderToy 只使用 kit + imgui，
+Cornell 增加 rendering + render-ui，主体 Truvis 额外直接使用 pass crate 中的产品效果。
 
 ## Shader 源码与 ABI 依赖边界
 
@@ -115,8 +129,11 @@ Engine 一级 Rust 职责目录使用 `eNN-` 前缀标识 Engine 归属和主要
 - `engine/e60-platform/truvis-render-thread`：独立于窗口 backend 的 OS RenderThread、完成状态、panic 传播与 App factory。
 - `engine/e60-platform/truvis-winit-host`：winit 窗口 backend；`StandaloneWinitHost` 服务独立顶层窗口，`EmbeddedWinitHost`
   在专用线程服务 Windows child HWND，两者复用 `truvis-render-thread` 启动和回收渲染线程。
-- `app/app-kit`：app 层公共组件，包含 GUI、输入/相机、overlay 和 RT pipeline glue。
-- `app/app-render-passes`：主体 app 与 samples 共享的具体 pass。
+- `app/app-kit`：生命周期契约、相机/输入、纯 CPU debug image 选择状态。
+- `app/app-imgui`：ImGui subsystem、私有 Vulkan backend 和通用诊断控件。
+- `app/app-render-passes`：ray tracing、post-process 与产品效果 GPU pass。
+- `app/app-rendering`：realtime/offline 渲染子系统、公共配置和长期 GPU 资源。
+- `app/app-render-ui`：渲染设置与 ImGui 的共享集成。
 - `app/truvis`：主体 app，提供 `truvis-app`；Tauri/Tao desktop owner 在 main thread 组装 WebView、EditorServer 与
   embedded winit host，`TruvisRenderApp` 仍只承载 RenderThread 上的场景和渲染业务。
 - `app/editor/bridge`：editor 协议 DTO、transport envelope 和方向受限的有界 channel endpoint。

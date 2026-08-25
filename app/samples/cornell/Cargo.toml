@@ -11,6 +11,9 @@ path = "src/main.rs"
 [dependencies]
 truvis-app-frame = { workspace = true }
 app-kit = { workspace = true }
+app-imgui = { workspace = true }
+app-rendering = { workspace = true }
+app-render-ui = { workspace = true }
 truvis-winit-host = { workspace = true }
 truvis-logs = { workspace = true }
 truvis-render-runtime = { workspace = true }

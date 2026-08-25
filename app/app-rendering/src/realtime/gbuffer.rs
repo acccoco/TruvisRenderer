@@ -1,4 +1,4 @@
-//! RT 管线的 GBuffer 资源管理。
+//! Realtime 渲染子系统持有的 GBuffer 资源管理。
 //!
 //! GBuffer 由三张 per-FIF storage 纹理组成，记录 RT 首次命中的几何与材质信息，
 //! 供降噪等后处理 pass 读取。通道布局与 shader 侧 `GBufferData`（`gbuffer.slangi`）对应：
@@ -9,7 +9,7 @@
 //! | B | R16G16B16A16_SFLOAT | world_position.xyz + linear_depth |
 //! | C | R8G8B8A8_UNORM | albedo.rgb + metallic |
 //!
-//! 生命周期由 `RtPipeline`（app-kit）管理：init 创建、on_resize 重建、shutdown 销毁。
+//! 生命周期由 `RealtimeRenderSubsystem` 管理：init 创建、on_resize 重建、shutdown 销毁。
 //! engine 层不再持有 GBuffer 资源。
 
 use ash::vk;
@@ -25,12 +25,12 @@ use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
 
-/// RT 管线使用的 GBuffer 资源集合。
+/// Realtime 渲染子系统使用的 GBuffer 资源集合。
 ///
 /// 持有三个通道（A/B/C）的 per-FIF storage image 和对应 image view。RT raygen pass 通过
 /// pass-local descriptor 写入；调试 UI 只在显示当前图像时通过自己的 descriptor 采样。
 ///
-/// 格式和通道语义是管线策略决策，由 app 层决定，不属于 engine 基础设施。
+/// 格式和通道语义是渲染策略决策，由 app 层决定，不属于 engine 基础设施。
 pub struct GBuffer {
     /// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness (R16G16B16A16_SFLOAT)
     a_images: [GfxImageHandle; FrameLabel::COUNT],

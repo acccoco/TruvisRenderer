@@ -1,0 +1,13 @@
+[package]
+name = "app-render-ui"
+version = "0.1.0"
+edition = "2024"
+description = "ImGui integration for realtime/offline rendering configuration"
+
+[dependencies]
+app-imgui = { workspace = true }
+app-kit = { workspace = true }
+app-rendering = { workspace = true }
+truvis-render-runtime = { workspace = true }
+
+imgui = { workspace = true }

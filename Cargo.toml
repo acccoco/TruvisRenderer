@@ -33,7 +33,10 @@ members = [
     "engine/cxx/truvis-cxx-build",
     # app
     "app/app-kit",
+    "app/app-imgui",
     "app/app-render-passes",
+    "app/app-rendering",
+    "app/app-render-ui",
     "app/shader/truvis-app-shader-binding",
     "app/editor/bridge",
     "app/editor/server",
@@ -80,7 +83,10 @@ truvis-render-thread = { path = "engine/e60-platform/truvis-render-thread" }
 truvis-winit-host = { path = "engine/e60-platform/truvis-winit-host" }
 # app
 app-kit = { path = "app/app-kit" }
+app-imgui = { path = "app/app-imgui" }
 app-render-passes = { path = "app/app-render-passes" }
+app-rendering = { path = "app/app-rendering" }
+app-render-ui = { path = "app/app-render-ui" }
 truvis-app-shader-binding = { path = "app/shader/truvis-app-shader-binding" }
 truvis-editor-bridge = { path = "app/editor/bridge" }
 truvis-editor-server = { path = "app/editor/server" }

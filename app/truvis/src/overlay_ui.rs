@@ -1,16 +1,14 @@
 //! Truvis App 级 ImGui overlay 编排。
 //!
-//! 本模块只决定“哪些 section 以什么布局绘制”。具体控件仍复用 app-kit 的
-//! `DebugInfoOverlay` / `PipelineControlsOverlay`，Debug Images 只在这里修改 App-owned
-//! `DebugImageSelector`。这里不接触 RenderGraph、GPU resource 生命周期或 GUI draw
-//! data 上传；调用方在 `GuiSubsystem::build_frame` 的闭包内调用 `TruvisOverlayUi::build`。
+//! 本模块只决定“哪些 section 以什么布局绘制”。具体控件复用独立的诊断和渲染设置 crate，
+//! `DebugInfoOverlay` / `RenderControlsOverlay`，Debug Images 只在这里修改 App-owned
+//! `DebugImageSelection`。这里不接触 RenderGraph、GPU resource 生命周期或 GUI draw
+//! data 上传；调用方在 `ImGuiSubsystem::build_frame` 的闭包内调用 `TruvisOverlayUi::build`。
 
-use app_kit::debug_image::{DebugImageOption, DebugImageSelector};
-use app_kit::overlay::{DebugInfoOverlay, FrameStatsOverlayData, PipelineControlsOverlay};
-use app_kit::render_pipeline::RenderMode;
-use app_kit::render_pipeline::common_settings::PathTracingCommonSettings;
-use app_kit::render_pipeline::offline_render_graph::OfflinePipelineSettings;
-use app_kit::render_pipeline::rt_render_graph::RtPipelineSettings;
+use app_imgui::{DebugImageSelectorView, DebugInfoOverlay, FrameStatsOverlayData};
+use app_kit::debug_image::{DebugImageOption, DebugImageSelection};
+use app_render_ui::RenderControlsOverlay;
+use app_rendering::{OfflineRenderSettings, PathTracingCommonSettings, RealtimeRenderSettings, RenderMode};
 use truvis_render_runtime::ray_cast::RayCastResult;
 use truvis_render_runtime::state::dlss_options::DlssOptions;
 use truvis_world::World;
@@ -195,7 +193,7 @@ impl TruvisOverlayUi {
         &mut self.options
     }
 
-    /// 绘制渲染视口内部的轻量 diagnostics / pipeline overlay。
+    /// 绘制渲染视口内部的轻量 diagnostics / render-controls overlay。
     ///
     /// 材质与场景编辑已经归属 Tauri 桌面壳，Overlay 不再提供外部浏览器入口，
     /// 避免同一编辑能力同时存在两套竞争入口。
@@ -210,7 +208,7 @@ impl TruvisOverlayUi {
         let TruvisOverlayFrame {
             ui,
             stats,
-            mut pipeline,
+            mut render_controls,
             raycast,
             mut debug_images,
         } = frame;
@@ -226,10 +224,10 @@ impl TruvisOverlayUi {
                 if self.section_visible(OverlayTag::Rendering) {
                     Self::draw_stack_section_header(ui, OverlayTag::Rendering);
                     // 默认 separate-style 布局把渲染选项与点选结果放进同一个 App 级主面板；
-                    // 控件本身仍复用 app-kit section，避免把 pipeline owner 状态迁入布局层。
+                    // 控件本身复用 app-render-ui section，避免把渲染子系统 owner 状态迁入布局层。
                     Self::draw_controls_contents(
                         ui,
-                        &mut pipeline,
+                        &mut render_controls,
                         self.section_visible(OverlayTag::Upscaling) && !upscaling_is_separate,
                     );
                 }
@@ -242,12 +240,16 @@ impl TruvisOverlayUi {
         }
         if upscaling_is_separate {
             self.build_window(ui, OverlayTag::Upscaling, || {
-                PipelineControlsOverlay::build_dlss_section_for_mode(ui, *pipeline.render_mode, pipeline.dlss_options);
+                RenderControlsOverlay::build_dlss_section_for_mode(
+                    ui,
+                    *render_controls.render_mode,
+                    render_controls.dlss_options,
+                );
             });
         }
         if self.section_visible(OverlayTag::Images) {
             self.build_right_aligned_image_window(ui, &stats, || {
-                debug_images.build_contents(ui, *pipeline.render_mode);
+                debug_images.build_contents(ui, *render_controls.render_mode);
             });
         }
     }
@@ -256,7 +258,7 @@ impl TruvisOverlayUi {
         let TruvisOverlayFrame {
             ui,
             stats,
-            mut pipeline,
+            mut render_controls,
             raycast,
             mut debug_images,
         } = frame;
@@ -273,14 +275,14 @@ impl TruvisOverlayUi {
                 Self::draw_stack_section_header(ui, tag);
                 match tag {
                     OverlayTag::Diagnostics => DebugInfoOverlay::build_frame_stats_section(ui, &stats),
-                    OverlayTag::Rendering => Self::draw_rendering_sections(ui, &mut pipeline),
-                    OverlayTag::Upscaling => PipelineControlsOverlay::build_dlss_section_for_mode(
+                    OverlayTag::Rendering => Self::draw_rendering_sections(ui, &mut render_controls),
+                    OverlayTag::Upscaling => RenderControlsOverlay::build_dlss_section_for_mode(
                         ui,
-                        *pipeline.render_mode,
-                        pipeline.dlss_options,
+                        *render_controls.render_mode,
+                        render_controls.dlss_options,
                     ),
                     OverlayTag::Picking => Self::draw_raycast_contents(ui, &raycast),
-                    OverlayTag::Images => debug_images.build_contents(ui, *pipeline.render_mode),
+                    OverlayTag::Images => debug_images.build_contents(ui, *render_controls.render_mode),
                 }
             }
         });
@@ -342,52 +344,34 @@ impl TruvisOverlayUi {
         ui.separator();
     }
 
-    fn draw_controls_contents(ui: &imgui::Ui, pipeline: &mut PipelineControlsData<'_>, include_dlss: bool) {
-        Self::normalize_render_mode(pipeline);
-        PipelineControlsOverlay::build_render_mode_section(
-            ui,
-            pipeline.render_mode,
-            pipeline.offline_mode_supported(),
-            pipeline.offline_sample_count,
-        );
+    fn draw_controls_contents(ui: &imgui::Ui, controls: &mut RenderControlsData<'_>, include_dlss: bool) {
+        RenderControlsOverlay::build_render_mode_section(ui, controls.render_mode, controls.offline_sample_count);
 
         if include_dlss {
             ui.separator();
-            PipelineControlsOverlay::build_dlss_section_for_mode(ui, *pipeline.render_mode, pipeline.dlss_options);
+            RenderControlsOverlay::build_dlss_section_for_mode(ui, *controls.render_mode, controls.dlss_options);
         }
 
         ui.separator();
-        PipelineControlsOverlay::build_mode_specific_sections(
+        RenderControlsOverlay::build_mode_specific_sections(
             ui,
-            *pipeline.render_mode,
-            pipeline.common_settings.as_deref_mut(),
-            pipeline.rt_settings.as_deref_mut(),
-            pipeline.offline_settings.as_deref_mut(),
+            *controls.render_mode,
+            controls.common_settings,
+            controls.realtime_settings,
+            controls.offline_settings,
         );
     }
 
-    fn draw_rendering_sections(ui: &imgui::Ui, pipeline: &mut PipelineControlsData<'_>) {
-        Self::normalize_render_mode(pipeline);
-        PipelineControlsOverlay::build_render_mode_section(
-            ui,
-            pipeline.render_mode,
-            pipeline.offline_mode_supported(),
-            pipeline.offline_sample_count,
-        );
+    fn draw_rendering_sections(ui: &imgui::Ui, controls: &mut RenderControlsData<'_>) {
+        RenderControlsOverlay::build_render_mode_section(ui, controls.render_mode, controls.offline_sample_count);
         ui.separator();
-        PipelineControlsOverlay::build_mode_specific_sections(
+        RenderControlsOverlay::build_mode_specific_sections(
             ui,
-            *pipeline.render_mode,
-            pipeline.common_settings.as_deref_mut(),
-            pipeline.rt_settings.as_deref_mut(),
-            pipeline.offline_settings.as_deref_mut(),
+            *controls.render_mode,
+            controls.common_settings,
+            controls.realtime_settings,
+            controls.offline_settings,
         );
-    }
-
-    fn normalize_render_mode(pipeline: &mut PipelineControlsData<'_>) {
-        if !pipeline.offline_mode_supported() {
-            *pipeline.render_mode = RenderMode::Realtime;
-        }
     }
 
     fn draw_raycast_contents(ui: &imgui::Ui, raycast: &RaycastOverlayData<'_>) {
@@ -483,24 +467,18 @@ impl TruvisOverlayUi {
 pub(crate) struct TruvisOverlayFrame<'a> {
     pub(crate) ui: &'a imgui::Ui,
     pub(crate) stats: FrameStatsOverlayData<'a>,
-    pub(crate) pipeline: PipelineControlsData<'a>,
+    pub(crate) render_controls: RenderControlsData<'a>,
     pub(crate) raycast: RaycastOverlayData<'a>,
-    pub(crate) debug_images: DebugImageSelectorData<'a>,
+    pub(crate) debug_images: DebugImageSelectionData<'a>,
 }
 
-pub(crate) struct PipelineControlsData<'a> {
+pub(crate) struct RenderControlsData<'a> {
     pub(crate) render_mode: &'a mut RenderMode,
     pub(crate) dlss_options: &'a mut DlssOptions,
-    pub(crate) common_settings: Option<&'a mut PathTracingCommonSettings>,
-    pub(crate) rt_settings: Option<&'a mut RtPipelineSettings>,
-    pub(crate) offline_settings: Option<&'a mut OfflinePipelineSettings>,
-    pub(crate) offline_sample_count: Option<u32>,
-}
-
-impl PipelineControlsData<'_> {
-    fn offline_mode_supported(&self) -> bool {
-        self.offline_settings.is_some()
-    }
+    pub(crate) common_settings: &'a mut PathTracingCommonSettings,
+    pub(crate) realtime_settings: &'a mut RealtimeRenderSettings,
+    pub(crate) offline_settings: &'a mut OfflineRenderSettings,
+    pub(crate) offline_sample_count: u32,
 }
 
 pub(crate) struct RaycastOverlayData<'a> {
@@ -508,18 +486,18 @@ pub(crate) struct RaycastOverlayData<'a> {
     pub(crate) world: &'a World,
 }
 
-pub(crate) struct DebugImageSelectorData<'a> {
-    pub(crate) selector: &'a mut DebugImageSelector,
+pub(crate) struct DebugImageSelectionData<'a> {
+    pub(crate) selection: &'a mut DebugImageSelection,
     pub(crate) realtime_options: &'static [DebugImageOption],
     pub(crate) offline_options: &'static [DebugImageOption],
 }
 
-impl DebugImageSelectorData<'_> {
+impl DebugImageSelectionData<'_> {
     fn build_contents(&mut self, ui: &imgui::Ui, render_mode: RenderMode) {
         let options = match render_mode {
             RenderMode::Realtime => self.realtime_options,
             RenderMode::Offline => self.offline_options,
         };
-        self.selector.build_contents(ui, options);
+        DebugImageSelectorView::build_contents(ui, self.selection, options);
     }
 }

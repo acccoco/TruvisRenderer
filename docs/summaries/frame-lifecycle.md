@@ -29,7 +29,7 @@ After Render  = present + end_frame
 flowchart TB
     Runtime["RenderRuntime<br/>资源与 GPU 快照 owner<br/>World / Resource+Binding+Timing / RenderWorld / Present / Sync"]
     Runner["RenderAppRunner<br/>一帧顺序编排者<br/>把 runtime phase 裁剪成 hook ctx"]
-    App["Concrete App<br/>业务状态 owner<br/>camera / input / GUI / overlay / pipeline"]
+    App["Concrete App<br/>业务状态 owner<br/>camera / input / ImGui / overlay / rendering subsystems"]
     Subsystem["Concrete Subsystem<br/>App 静态持有的能力对象<br/>可选 SubsystemLifecycle + 具体能力"]
     Runner -->|" 调用 begin_frame / update_phase / prepare / render_phase "| Runtime
     Runner -->|" 回调 dyn RenderApp "| App
@@ -91,7 +91,7 @@ resize 只在 render loop 的安全点处理。`RenderRuntime::handle_resize` �
 - 渲染线程观察到退出信号后，由 `RenderAppRunner` 内部执行 shutdown，再调用具体 `RenderApp::shutdown` hook。
 - `TruvisRenderApp` 在 shutdown 中关闭 RenderThread 一侧的 `EditorController` endpoint；EditorServer 由 main thread 的
   `TruvisDesktopState` 持有，不参与 GPU idle 或资源销毁。
-- `RenderAppRunner` 等待 GPU idle 后只调用 App hook 的 `shutdown()`；App 在该 hook 内按自身依赖顺序释放全部子系统，
+- `RenderAppRunner` 等待 GPU idle 后只调用 App hook 的 `shutdown()`；App 在该 hook 内按初始化逆序释放全部子系统，
   Runner 最后销毁 RenderRuntime。
 - `RenderRuntime` 拥有 `Gfx` root owner；runtime 销毁时先等待 GPU idle，释放所有子资源，最后销毁 `Gfx`。
 - 窗口 owner 等待渲染线程完成后再 drop winit `Window`；Tauri 主窗口关闭时继续等待 `RenderWindowThread` 和
@@ -199,9 +199,9 @@ Runtime phase 的核心意图是用借用和 ctx 限制能力：update 阶段可
 |-----------------|-------------------------------------|--------------------------------------------------------------|----------------------------------------------------------------|
 | `init`          | `RenderAppRunner::init_after_window` | 初始化 App 自有状态和资源                                              | 发生在 runtime window 绑定后，App 显式初始化各子系统                      |
 | `on_input`      | `RenderAppRunner::run_frame`         | 处理本帧累积输入，决定 GUI、camera、业务输入的消费策略                             | App 显式调用 GUI 输入处理并决定消费顺序                |
-| `update`        | `RenderAppRunner::run_frame`         | 更新 camera、overlay、UI frame state、editor 请求、`DlssOptions` 或 app-local pipeline 配置、CPU scene | 运行在 `RenderRuntimeUpdateCtx` 内，早于 `prepare` |
+| `update`        | `RenderAppRunner::run_frame`         | 更新 camera、overlay、UI frame state、editor 请求、`DlssOptions` 或 app-local subsystem 配置、CPU scene | 运行在 `RenderRuntimeUpdateCtx` 内，早于 `prepare` |
 | `after_prepare` | `RenderAppRunner::run_frame`         | 对已同步的 GPU scene 做同步查询                                        | 只拿 `RenderRuntimeRayCastCtx`，常见用途是拾取                           |
-| `render`        | `RenderAppRunner::run_frame`         | 创建 RenderGraph，显式决定具体渲染器 pass 与 GUI pass 的加入顺序           | 读取 `RenderRuntimeRenderCtx`，通常在这里构造 `SubsystemRenderCtx`          |
+| `render`        | `RenderAppRunner::run_frame`         | 创建 RenderGraph，显式决定渲染子系统 pass 与 ImGui pass 的加入顺序           | 读取 `RenderRuntimeRenderCtx`，通常在这里构造 `SubsystemRenderCtx`          |
 | `render_view`   | `RenderAppRunner::run_frame`         | 提供当前 camera / view 的纯数据快照                                    | runtime 在 `prepare` 中读取，不拥有 App camera                         |
 | `on_resize`     | runtime 确认 resize 后                 | 更新 App-owned target 或窗口尺寸状态                                  | App 在 hook 内调用具体子系统 `on_resize`                                        |
 | `shutdown`      | `RenderAppRunner::shutdown`          | 释放 App-owned GPU 资源                                          | App 在 hook 内按依赖顺序释放子系统，且早于 runtime destroy                       |
@@ -218,7 +218,7 @@ App 是业务编排层。它既不拥有 runtime，也不把具体子系统交�
 | `shutdown`  | 具体 App | 在 runtime destroy 之前显式释放 GPU 资源 | `&mut RenderRuntimeShutdownCtx` |
 
 `SubsystemLifecycle` 只属于 `app-kit`，不要求纯 UI overlay、camera 或 controller 实现。
-`GuiSubsystem::on_input` / `build_frame` / `prepare_render_data` / `contribute_passes` 以及 pipeline
+`app-imgui::ImGuiSubsystem::on_input` / `build_frame` / `prepare_render_data` / `contribute_passes` 以及渲染 subsystem 的
 `contribute_compute_passes` 都是具体类型能力，由 App 按业务顺序显式调用；不存在 visitor、注册表或运行时动态组合。
 
 ## 关系与约束

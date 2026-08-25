@@ -1,0 +1,20 @@
+[package]
+name = "app-rendering"
+version = "0.1.0"
+edition = "2024"
+description = "Realtime/offline render subsystems and their persistent GPU resources"
+
+[dependencies]
+app-kit = { workspace = true }
+app-render-passes = { workspace = true }
+truvis-gfx = { workspace = true }
+truvis-render-foundation = { workspace = true }
+truvis-render-graph = { workspace = true }
+truvis-render-runtime = { workspace = true }
+
+ash = { workspace = true }
+glam = { workspace = true }
+itertools = { workspace = true }
+log = { workspace = true }
+slotmap = { workspace = true }
+vk-mem = { workspace = true }

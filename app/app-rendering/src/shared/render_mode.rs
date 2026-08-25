@@ -1,11 +1,6 @@
 use std::env;
 
-pub mod common_settings;
-pub mod offline_render_graph;
-pub mod rt_render_graph;
-pub mod targets;
-
-/// App-kit 共享的渲染模式。
+/// realtime/offline 渲染子系统共享的模式选择。
 ///
 /// 该枚举只描述 app 选择哪条 sub RenderGraph 出图；实时/离线各自维护资源和 temporal state，
 /// 避免 UI 层把 DLSS、ReSTIR 或离线累计状态混在同一份 runtime state 中。

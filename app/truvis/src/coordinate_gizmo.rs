@@ -1,7 +1,7 @@
 use ash::vk;
 
 use app_kit::subsystem::SubsystemLifecycle;
-use app_render_passes::coordinate_gizmo_pass::{CoordinateGizmoPass, CoordinateGizmoRgPass};
+use app_render_passes::effects::coordinate_gizmo::{CoordinateGizmoPass, CoordinateGizmoRgPass};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle};
 use truvis_render_runtime::render_runtime::{
     RenderRuntimeInitCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx,
@@ -13,16 +13,16 @@ use truvis_render_runtime::render_runtime::{
 /// 顺序仍由 `TruvisRenderApp::render` 显式决定，本类型只负责 init / resize / shutdown 阶段内
 /// pipeline 与当前 present format 的生命周期对齐。
 #[derive(Default)]
-pub(crate) struct CoordinateGizmoRenderer {
-    inner: Option<CoordinateGizmoRendererInner>,
+pub(crate) struct CoordinateGizmoSubsystem {
+    resources: Option<CoordinateGizmoResources>,
 }
 
-struct CoordinateGizmoRendererInner {
+struct CoordinateGizmoResources {
     pass: CoordinateGizmoPass,
     present_format: vk::Format,
 }
 
-impl CoordinateGizmoRenderer {
+impl CoordinateGizmoSubsystem {
     pub(crate) fn contribute_passes<'a>(
         &'a self,
         graph: &mut RenderGraphBuilder<'a>,
@@ -30,14 +30,14 @@ impl CoordinateGizmoRenderer {
         present_image: RgImageHandle,
         present_extent: vk::Extent2D,
     ) {
-        let Some(inner) = self.inner.as_ref() else {
+        let Some(resources) = self.resources.as_ref() else {
             return;
         };
 
         graph.add_pass(
             "coordinate-gizmo",
             CoordinateGizmoRgPass {
-                gizmo_pass: &inner.pass,
+                gizmo_pass: &resources.pass,
                 record_ctx: ctx.record_ctx,
                 present_image,
                 extent: present_extent,
@@ -46,31 +46,31 @@ impl CoordinateGizmoRenderer {
     }
 }
 
-impl SubsystemLifecycle for CoordinateGizmoRenderer {
+impl SubsystemLifecycle for CoordinateGizmoSubsystem {
     fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
         let present_format = ctx.present.swapchain_image_info().image_format;
-        self.inner = Some(CoordinateGizmoRendererInner::new(ctx.device_ctx, present_format, ctx.shader_binding_system));
+        self.resources = Some(CoordinateGizmoResources::new(ctx.device_ctx, present_format, ctx.shader_binding_system));
     }
 
     fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
         let present_format = ctx.present.swapchain_image_info().image_format;
-        match self.inner.as_mut() {
-            Some(inner) => inner.rebuild_if_needed(ctx.device_ctx, present_format, ctx.shader_binding_system),
+        match self.resources.as_mut() {
+            Some(resources) => resources.rebuild_if_needed(ctx.device_ctx, present_format, ctx.shader_binding_system),
             None => {
-                self.inner =
-                    Some(CoordinateGizmoRendererInner::new(ctx.device_ctx, present_format, ctx.shader_binding_system));
+                self.resources =
+                    Some(CoordinateGizmoResources::new(ctx.device_ctx, present_format, ctx.shader_binding_system));
             }
         }
     }
 
     fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
-        if let Some(inner) = self.inner.take() {
-            inner.destroy(ctx.device_ctx);
+        if let Some(resources) = self.resources.take() {
+            resources.destroy(ctx.device_ctx);
         }
     }
 }
 
-impl CoordinateGizmoRendererInner {
+impl CoordinateGizmoResources {
     fn new(
         device_ctx: truvis_gfx::gfx::GfxDeviceCtx<'_>,
         present_format: vk::Format,

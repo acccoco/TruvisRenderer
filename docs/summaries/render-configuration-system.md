@@ -11,9 +11,9 @@
 | runtime DLSS 选项 | `DlssOptions` | `truvis-render-runtime` | 是 | 保存 DLSS SR mode 与 RR 开关，并提供统一 active feature 决策 |
 | runtime 派生帧状态 | `FrameRenderState` | `truvis-render-runtime` | 否 | 保存当前 main view 的格式、render extent 与 output extent |
 | main view temporal 状态 | `ViewAccumState`、`DlssSrState` | `truvis-render-runtime` | 否 | 追踪历史是否可复用，以及 DLSS common constants / reset |
-| app / pipeline 局部设置 | `PathTracingCommonSettings`、`RtPipelineSettings`、`OfflinePipelineSettings` | app 层 | 取决于 app | 保存具体 app / pipeline 自己理解的调试或实验参数 |
+| app / subsystem 局部设置 | `PathTracingCommonSettings`、`RealtimeRenderSettings`、`OfflineRenderSettings` | `app-rendering` | 取决于 app | 保存渲染子系统和具体 App 自己理解的调试或实验参数 |
 
-这次整理后的核心原则是：`truvis-render-runtime` 持有跨 pipeline 的渲染契约和 runtime 派生状态，
+这次整理后的核心原则是：`truvis-render-runtime` 持有跨渲染子系统的渲染契约和 runtime 派生状态，
 包括 `DlssOptions`、`FrameRenderState`、`ViewAccumState` 与 `DlssSrState` 等明确 owner；path tracing 公共采样参数、
 SDR tone mapping、具体 RT pass 的 debug channel 和 legacy denoise 参数不再伪装成 engine 全局配置。
 
@@ -39,7 +39,7 @@ RR evaluate 前会先设置 compatible DLSS SR options，再设置 RR options；
 
 不放入 `DlssOptions` 的内容：
 
-- RT debug channel：只属于 RT pipeline 的 shader 调试输出。
+- RT debug channel：只属于具体渲染子系统的 shader 调试输出。
 - SDR tone mapping：只属于 app-owned path tracing 显示映射，不影响 runtime target 尺寸或 DLSS history。
 - denoise 参数：当前主 RT 流程已旁路传统 denoise/accum pass；保留 pass 时只能作为 pass-local 实验设置。
 - 旧间接光缓存开关：相关 shader / ABI / GPU buffer 路径已从当前 realtime RT 主流程移除。
@@ -73,7 +73,7 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 | `output_extent` | swapchain / present extent | GUI、present、main-view output 与 DLSS output 尺寸 |
 
 `FrameRenderState` 不由用户直接改。App / 子系统在 init、resize 或 `sync_dlss_options_frame_state` 返回 resize ctx 时读取它，用来重建自己持有的窗口尺寸 target。
-`RenderRuntime::init_after_window` 会在子系统 init 前根据真实 swapchain extent 和启动时的 `DlssOptions` 解析一次 `FrameRenderState`。因此 RT / offline pipeline 初始化窗口尺寸 target 时应直接使用 `ctx.frame_state`，不得再把 `render_extent` 覆盖为 native extent；否则启动时通过 `TRUVIS_DLSS_SR_MODE` / `TRUVIS_DLSS_RR` 进入 SR/RR 会导致 RT、GBuffer、DLSS input 尺寸与 Streamline options 失配。
+`RenderRuntime::init_after_window` 会在子系统 init 前根据真实 swapchain extent 和启动时的 `DlssOptions` 解析一次 `FrameRenderState`。因此 realtime / offline 渲染子系统初始化窗口尺寸 target 时应直接使用 `ctx.frame_state`，不得再把 `render_extent` 覆盖为 native extent；否则启动时通过 `TRUVIS_DLSS_SR_MODE` / `TRUVIS_DLSS_RR` 进入 SR/RR 会导致 RT、GBuffer、DLSS input 尺寸与 Streamline options 失配。
 
 ## ViewAccumState
 
@@ -85,21 +85,21 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 
 ## PathTracingCommonSettings
 
-`PathTracingCommonSettings` 位于 app 层 `app-kit::render_pipeline::common_settings`，由需要 path tracing
-调试控件的具体 App 持有。Truvis 同时把同一份设置传给 realtime `RtPipeline` 和 `OfflinePipeline`，因此在 ImGui
-里切换 `Realtime / Offline` 时公共参数不会因为两套 pipeline-local state 而回退或分叉。
+`PathTracingCommonSettings` 位于 `app_rendering::shared`，由需要 path tracing
+调试控件的具体 App 持有。Truvis 同时把同一份设置传给 realtime `RealtimeRenderSubsystem` 和 `OfflineRenderSubsystem`，因此在 ImGui
+里切换 `Realtime / Offline` 时公共参数不会因为两套 subsystem-local state 而回退或分叉。
 
 当前包含：
 
 | 字段 | 含义 |
 |------|------|
-| `sky_sampling_mode: RtSkySamplingMode` | HDRI / sky 直接光采样模式，支持 importance 与 uniform A/B 对比 |
+| `sky_sampling_mode: SkySamplingMode` | HDRI / sky 直接光采样模式，支持 importance 与 uniform A/B 对比 |
 | `sky_brightness: f32` | sky radiance 倍率，同时作用于可见 sky miss 和 HDRI 直接光候选 |
 | `emissive_nee_enabled: bool` | 是否额外启用自发光三角形 NEE，关闭时仍保留直接命中 emissive surface 的旧语义 |
 | `analytic_nee_enabled: bool` | 是否额外启用 point / spot / area analytic light NEE，关闭时不影响 HDRI / emissive NEE |
 | `tone_mapping: SdrToneMappingSettings` | SDR 输出路径使用的手动曝光和 ACES fitted tone mapping 参数 |
 
-`RtSkySamplingMode` 是 path tracing 共享的 pass-local 调试/实验开关。默认 `Importance` 使用 `RenderSkyManager`
+`SkySamplingMode` 是 path tracing 共享的 pass-local 调试/实验开关。默认 `Importance` 使用 `RenderSkyManager`
 生成的 HDRI alias table；`Uniform` 强制 shader 走旧的 uniform sphere 采样，用于在相同场景下比较 HDRI NEE
 噪声与能量稳定性。该选项不改变 render extent、DLSS feature resource 或 runtime-owned temporal state。
 
@@ -115,11 +115,14 @@ class 纳入候选来源，但直接命中 emissive surface 的 hit emission 仍
 analytic class 纳入候选来源；该选项不改变 `SceneStore` / `RenderWorld` 的 light buffer 同步，也不改变 DLSS、
 GBuffer 或 runtime-owned temporal state。
 
-`SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道。当前使用实时渲染常用的 ACES fitted approximation，并提供 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display transform，也不做自动曝光或参数持久化。DLSS SR 的 manual exposure 由固定 1x1 `dlss-sr-exposure` 输入提供，当前不跟随这里的 `Exposure EV`。
+`SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道，并由 `app_rendering::shared` 对外 re-export；
+`app-render-ui` 因此无需直接依赖 pass crate。当前使用实时渲染常用的 ACES fitted approximation，并提供
+`Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display
+transform，也不做自动曝光或参数持久化。DLSS SR 的 manual exposure 由固定 1x1 `dlss-sr-exposure` 输入提供，当前不跟随这里的 `Exposure EV`。
 
-## RtPipelineSettings
+## RealtimeRenderSettings
 
-`RtPipelineSettings` 位于 app 层 `app-kit::render_pipeline::rt_render_graph`，由 `RtPipeline` 持有。
+`RealtimeRenderSettings` 位于 `app_rendering::realtime`，由 `RealtimeRenderSubsystem` 持有。
 它只保存 realtime RT 自有状态；和 offline 语义相同的 sky / NEE / tone mapping 参数由 App 持有的
 `PathTracingCommonSettings` 提供。
 
@@ -127,34 +130,35 @@ GBuffer 或 runtime-owned temporal state。
 
 | 字段 | 含义 |
 |------|------|
-| `debug_channel: RtDebugChannel` | 主 RT shader / SDR pass 使用的调试输出通道 |
+| `debug_channel: PathTracingDebugChannel` | 主 RT shader / SDR pass 使用的调试输出通道 |
 | `restir_di_mode: RtRestirDiMode` | primary visible surface direct lighting 的 ReSTIR DI 模式 |
 | `sharc_mode: RtSharcMode` | SHARC world-space radiance cache 模式（`Off` / `Update` / `On`） |
 | `sharc_scene_scale: f32` | SHARC voxel 物理尺寸控制参数，按场景单位调；只影响缓存粒度 |
 
-RT debug channel、ReSTIR DI 与 SHARC 只在 Truvis / Cornell 等 RT app 的 overlay 中显示；Hello Triangle / ShaderToy 只显示 DLSS SR mode，不暴露 RT 调试、path tracing 公共参数或 tone mapping 参数。
+RT debug channel、DLSS、ReSTIR DI 与 SHARC 只在 Truvis / Cornell 等实际持有 realtime subsystem 的 App 中显示；
+Hello Triangle / ShaderToy 只保留 FPS、相机等 ImGui 诊断，不显示 render mode、DLSS 或 path tracing controls。
 
-`sharc_mode` 是 RT pipeline 自有的 world-space radiance cache 开关，默认 `Off`；`TRUVIS_SHARC_MODE` 只在启动时读取一次用于复现实验配置（取值 `off` / `update` / `on`）。`Update` 只维护缓存（Update + Resolve）不查询，画面与 `Off` 一致（第八阶段）；`On` 在维护基础上让非 primary bounce 查询缓存并在命中处提前终止路径（第九阶段）。SHARC 缓存 buffer 由 app 层 `SharcTargets` 拥有，是世界空间持久资源，不随 render extent / FIF 轮转，也不进入 `DlssOptions`、`DlssSrState` 或 RenderGraph image 状态。`sharc_scene_scale` 只改变缓存 voxel 粒度；在 `On` 模式下它会通过查询守卫间接影响哪些 bounce 命中缓存，但不改变 `Off` 时的渲染结果。
+`sharc_mode` 是 realtime 渲染子系统自有的 world-space radiance cache 开关，默认 `Off`；`TRUVIS_SHARC_MODE` 只在启动时读取一次用于复现实验配置（取值 `off` / `update` / `on`）。`Update` 只维护缓存（Update + Resolve）不查询，画面与 `Off` 一致（第八阶段）；`On` 在维护基础上让非 primary bounce 查询缓存并在命中处提前终止路径（第九阶段）。SHARC 缓存 buffer 由 app 层 `SharcTargets` 拥有，是世界空间持久资源，不随 render extent / FIF 轮转，也不进入 `DlssOptions`、`DlssSrState` 或 RenderGraph image 状态。`sharc_scene_scale` 只改变缓存 voxel 粒度；在 `On` 模式下它会通过查询守卫间接影响哪些 bounce 命中缓存，但不改变 `Off` 时的渲染结果。
 
-`RtDebugChannel` 使用 enum 表达当前主 RT 流程支持的通道：final、forward normal、world normal、object normal、base color、NEE HDRI、emission、BRDF HDRI、NEE bounce 0/1、`NeeEmissive`、`NeeAnalytic`、`MaterialType`、`DeltaMask` 和 realtime-only 的 `SpecularMotionMagnitude`。forward normal 是当前 path tracing BRDF 和 DLSS RR `NormalRoughness` 输入使用的 world-space shading normal，会按 ray `faceforward`；world normal 是未翻转的 world-space 几何法线；object normal 是 mesh object/local space 的插值顶点法线。旧的 magic number “not accum” 通道不再通过 UI 暴露。
+`PathTracingDebugChannel` 使用 enum 表达当前主 RT 流程支持的通道：final、forward normal、world normal、object normal、base color、NEE HDRI、emission、BRDF HDRI、NEE bounce 0/1、`NeeEmissive`、`NeeAnalytic`、`MaterialType`、`DeltaMask` 和 realtime-only 的 `SpecularMotionMagnitude`。forward normal 是当前 path tracing BRDF 和 DLSS RR `NormalRoughness` 输入使用的 world-space shading normal，会按 ray `faceforward`；world normal 是未翻转的 world-space 几何法线；object normal 是 mesh object/local space 的插值顶点法线。旧的 magic number “not accum” 通道不再通过 UI 暴露。
 
-`restir_di_mode` 是 RT pipeline 自有的 primary direct lighting 模式，支持 `Off / InitialOnly / Temporal / TemporalSpatial`。
+`restir_di_mode` 是 realtime 渲染子系统自有的 primary direct lighting 模式，支持 `Off / InitialOnly / Temporal / TemporalSpatial`。
 默认值仍为 `Off`；`TRUVIS_RESTIR_DI_MODE` 只在启动时读取一次，用于复现实验配置，运行中仍由 overlay 直接修改
-`RtPipelineSettings`。该选项只管理 RT pipeline 自有的 reservoir / surface key temporal resources，不进入
+`RealtimeRenderSettings`。该选项只管理 realtime 渲染子系统自有的 reservoir / surface key temporal resources，不进入
 `DlssOptions`、`DlssSrState` 或 Streamline resource state。
 RTXDI-style RayTraced bias correction 是 shader 内部固定策略，不新增 UI mode 或配置枚举；用户可见的四档只决定是否运行 initial、temporal 和 spatial phase。
 
-## OfflinePipelineSettings
+## OfflineRenderSettings
 
-`OfflinePipelineSettings` 位于 app 层 `app-kit::render_pipeline::offline_render_graph`，由 `OfflinePipeline` 持有。
-它只保存 offline pipeline 自有状态；和 realtime 语义相同的 sky / NEE / tone mapping 参数由 App 持有的
+`OfflineRenderSettings` 位于 `app_rendering::offline`，由 `OfflineRenderSubsystem` 持有。
+它只保存 offline subsystem 自有状态；和 realtime 语义相同的 sky / NEE / tone mapping 参数由 App 持有的
 `PathTracingCommonSettings` 提供。
 
 当前包含：
 
 | 字段 | 含义 |
 |------|------|
-| `debug_channel: RtDebugChannel` | 离线 shader / SDR pass 使用的调试输出通道；不包含 realtime ReSTIR-only debug 通道 |
+| `debug_channel: PathTracingDebugChannel` | 离线 shader / SDR pass 使用的调试输出通道；不包含 realtime ReSTIR-only debug 通道 |
 | `ray_dispatch_count: u32` | 每帧添加多少组 `offline ray tracing -> accum` pass |
 
 `ray_dispatch_count` 控制离线模式每帧添加多少组 `offline ray tracing -> accum` pass，范围固定为 1-8，默认 1。

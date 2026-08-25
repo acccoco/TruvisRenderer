@@ -1,12 +1,16 @@
+//! Offline reference 渲染子系统及其独立累计状态。
+
 use std::cell::Cell;
 
 use slotmap::Key;
 
-use app_render_passes::accum_pass::{AccumPass, AccumRgPass};
-use app_render_passes::image_clear_pass::{ImageClearPass, ImageClearRgPass};
-use app_render_passes::offline_rt_pass::{OfflineRtPass, OfflineRtRgPass};
-use app_render_passes::resolve_pass::{ResolveDebugImage, ResolvePass, ResolveRgPass};
-use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
+use app_kit::debug_image::DebugImageOption;
+use app_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
+use app_render_passes::post_process::accum::{AccumPass, AccumRgPass};
+use app_render_passes::post_process::image_clear::{ImageClearPass, ImageClearRgPass};
+use app_render_passes::post_process::resolve::{ResolveDebugImage, ResolvePass, ResolveRgPass};
+use app_render_passes::post_process::sdr::{SdrPass, SdrRgPass};
+use app_render_passes::ray_tracing::offline::{OfflineRtPass, OfflineRtRgPass};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
@@ -15,11 +19,10 @@ use truvis_render_foundation::render_view::RenderViewAccumSignature;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
 
-use crate::debug_image::DebugImageOption;
-use crate::render_pipeline::common_settings::{PathTracingCommonSettings, RtSkySamplingMode};
-use crate::render_pipeline::rt_render_graph::RtDebugChannel;
-use crate::render_pipeline::targets::{ImageTarget, OfflineTargets};
-use crate::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
+use crate::offline::resources::OfflineTargets;
+use crate::shared::{ImageTarget, PathTracingCommonSettings, PathTracingDebugChannel, SkySamplingMode};
+
+mod resources;
 
 const OFFLINE_DEBUG_IMAGE_OPTIONS: [DebugImageOption; 3] = [
     DebugImageOption::new("offline-single-frame", "Offline Single Frame"),
@@ -27,36 +30,36 @@ const OFFLINE_DEBUG_IMAGE_OPTIONS: [DebugImageOption; 3] = [
     DebugImageOption::new("offline-render-target", "Offline Render Target"),
 ];
 
-/// 离线 ground truth 管线。
+/// 离线 ground truth 渲染子系统。
 ///
-/// 它和实时 `RtPipeline` 并列存在：资源、sample count 与 present input 都由本类型维护；
+/// 它和实时 `RealtimeRenderSubsystem` 并列存在：资源、sample count 与 present input 都由本类型维护；
 /// shader 侧只复用 path tracing 的 NEE/MIS helper，不绑定 DLSS 或 ReSTIR 资源。
 #[derive(Default)]
-pub struct OfflinePipeline {
-    inner: Option<OfflinePipelineInner>,
-    settings: OfflinePipelineSettings,
+pub struct OfflineRenderSubsystem {
+    resources: Option<OfflineRenderResources>,
+    settings: OfflineRenderSettings,
     accum_state: OfflineAccumState,
 }
 
-/// 离线管线自有设置。
+/// 离线渲染子系统自有设置。
 ///
 /// 这些参数只影响离线 path tracing、累计和显示映射，不写入 runtime-owned DLSS / ReSTIR state。
 #[derive(Clone, Copy)]
-pub struct OfflinePipelineSettings {
+pub struct OfflineRenderSettings {
     pub ray_dispatch_count: u32,
-    pub debug_channel: RtDebugChannel,
+    pub debug_channel: PathTracingDebugChannel,
 }
 
-impl Default for OfflinePipelineSettings {
+impl Default for OfflineRenderSettings {
     fn default() -> Self {
         Self {
             ray_dispatch_count: Self::MIN_RAY_DISPATCH_COUNT,
-            debug_channel: RtDebugChannel::Final,
+            debug_channel: PathTracingDebugChannel::Final,
         }
     }
 }
 
-impl OfflinePipelineSettings {
+impl OfflineRenderSettings {
     pub const MIN_RAY_DISPATCH_COUNT: u32 = 1;
     pub const MAX_RAY_DISPATCH_COUNT: u32 = 8;
 
@@ -88,8 +91,8 @@ impl OfflinePipelineSettings {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct OfflineSettingsAccumSignature {
-    debug_channel: RtDebugChannel,
-    sky_sampling_mode: RtSkySamplingMode,
+    debug_channel: PathTracingDebugChannel,
+    sky_sampling_mode: SkySamplingMode,
     sky_brightness_bits: u32,
     emissive_nee_enabled: bool,
     analytic_nee_enabled: bool,
@@ -108,7 +111,7 @@ struct OfflineSampleState {
     spp_idx: u32,
     /// 本次 sample 进入 accum pass 之前，`accum_image` 中已经融合的历史样本数。
     accum_frames: u32,
-    /// 离线管线自有的 primary ray sub-pixel jitter，单位保持 pixel。
+    /// 离线渲染子系统自有的 primary ray sub-pixel jitter，单位保持 pixel。
     sample_jitter_px: glam::Vec2,
 }
 
@@ -136,7 +139,7 @@ impl OfflineAccumState {
     }
 
     fn take_next_sample_batch(&self, dispatch_count: u32) -> Vec<OfflineSampleState> {
-        let dispatch_count = OfflinePipelineSettings::clamp_ray_dispatch_count(dispatch_count);
+        let dispatch_count = OfflineRenderSettings::clamp_ray_dispatch_count(dispatch_count);
         // 只有确定本帧会提交 RT + accum pass 后才调用本函数。sample_count 在这里按 batch 推进，
         // 能避免 TLAS 暂不可用或 graph 被清理分支截断时把跳过帧计入离线累计。
         let accum_frames = self.sample_count.get();
@@ -182,7 +185,7 @@ impl OfflineAccumState {
     }
 }
 
-struct OfflinePipelineInner {
+struct OfflineRenderResources {
     offline_rt_pass: OfflineRtPass,
     image_clear_pass: ImageClearPass,
     accum_pass: AccumPass,
@@ -197,7 +200,7 @@ pub struct OfflinePresentGraphTargets {
     pub present_image: RgImageHandle,
 }
 
-impl OfflinePipelineInner {
+impl OfflineRenderResources {
     fn new(ctx: &mut RenderRuntimeInitCtx<'_>) -> Self {
         let offline_rt_pass = OfflineRtPass::new(
             ctx.resource_ctx,
@@ -254,16 +257,16 @@ impl OfflinePipelineInner {
     }
 }
 
-impl SubsystemLifecycle for OfflinePipeline {
+impl SubsystemLifecycle for OfflineRenderSubsystem {
     fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
-        self.inner = Some(OfflinePipelineInner::new(ctx));
+        self.resources = Some(OfflineRenderResources::new(ctx));
     }
 
     fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
-        if let Some(inner) = self.inner.as_mut() {
+        if let Some(resources) = self.resources.as_mut() {
             let mut target_frame_state = *ctx.frame_state;
             target_frame_state.set_native_extent(ctx.present.swapchain_image_info().image_extent);
-            inner.targets.rebuild(
+            resources.targets.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
@@ -276,18 +279,18 @@ impl SubsystemLifecycle for OfflinePipeline {
     }
 
     fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
-        if let Some(inner) = self.inner.take() {
-            inner.destroy(ctx);
+        if let Some(resources) = self.resources.take() {
+            resources.destroy(ctx);
         }
     }
 }
 
-impl OfflinePipeline {
-    pub fn settings(&self) -> &OfflinePipelineSettings {
+impl OfflineRenderSubsystem {
+    pub fn settings(&self) -> &OfflineRenderSettings {
         &self.settings
     }
 
-    pub fn settings_mut(&mut self) -> &mut OfflinePipelineSettings {
+    pub fn settings_mut(&mut self) -> &mut OfflineRenderSettings {
         &mut self.settings
     }
 
@@ -311,11 +314,11 @@ impl OfflinePipeline {
     }
 
     pub fn compute_cmd(&self, frame_label: FrameLabel) -> &GfxCommandBuffer {
-        &self.inner().compute_cmds[*frame_label]
+        &self.resources().compute_cmds[*frame_label]
     }
 
     pub fn present_cmd(&self, frame_label: FrameLabel) -> &GfxCommandBuffer {
-        &self.inner().present_cmds[*frame_label]
+        &self.resources().present_cmds[*frame_label]
     }
 
     pub fn contribute_compute_passes<'a>(
@@ -324,13 +327,13 @@ impl OfflinePipeline {
         ctx: &'a SubsystemRenderCtx<'a>,
         common_settings: &PathTracingCommonSettings,
     ) {
-        let inner = self.inner();
+        let resources = self.resources();
         let record_ctx = ctx.record_ctx;
         let frame_label = record_ctx.frame_timing.frame_label();
-        // TLAS readiness 在 pipeline 层提前判断：没有 TLAS 时不创建 RT/accum pass，
+        // TLAS readiness 在渲染子系统层提前判断：没有 TLAS 时不创建 RT/accum pass，
         // 也不推进 OfflineAccumState，保证空场景或上传暂缺不会污染 sample count。
         let has_tlas = ctx.render_scene.tlas_handle(frame_label).is_some();
-        let targets = &inner.targets;
+        let targets = &resources.targets;
         let debug_channel = self.settings.debug_channel.shader_channel();
         let sky_sampling_mode = common_settings.sky_sampling_mode.shader_mode();
         let sky_brightness = common_settings.sky_brightness;
@@ -379,7 +382,7 @@ impl OfflinePipeline {
                 .add_pass(
                     "offline-clear-single-frame",
                     ImageClearRgPass {
-                        clear_pass: &inner.image_clear_pass,
+                        clear_pass: &resources.image_clear_pass,
                         record_ctx,
                         dst_image: single_frame_image,
                         image_extent: single_frame_target.extent,
@@ -389,7 +392,7 @@ impl OfflinePipeline {
                 .add_pass(
                     "offline-clear-accum",
                     ImageClearRgPass {
-                        clear_pass: &inner.image_clear_pass,
+                        clear_pass: &resources.image_clear_pass,
                         record_ctx,
                         dst_image: accum_image,
                         image_extent: accum_target.extent,
@@ -399,7 +402,7 @@ impl OfflinePipeline {
                 .add_pass(
                     "offline-clear-render-target",
                     ImageClearRgPass {
-                        clear_pass: &inner.image_clear_pass,
+                        clear_pass: &resources.image_clear_pass,
                         record_ctx,
                         dst_image: render_target,
                         image_extent: render_target_info.extent,
@@ -418,7 +421,7 @@ impl OfflinePipeline {
                 .add_pass(
                     format!("offline-ray-tracing-{dispatch_ordinal}"),
                     OfflineRtRgPass {
-                        rt_pass: &inner.offline_rt_pass,
+                        rt_pass: &resources.offline_rt_pass,
                         record_ctx,
                         render_scene: ctx.render_scene,
                         single_frame_image,
@@ -435,7 +438,7 @@ impl OfflinePipeline {
                 .add_pass(
                     format!("offline-accum-{dispatch_ordinal}"),
                     AccumRgPass {
-                        accum_pass: &inner.accum_pass,
+                        accum_pass: &resources.accum_pass,
                         record_ctx,
                         single_frame_image,
                         accum_image,
@@ -447,7 +450,7 @@ impl OfflinePipeline {
         rg_builder.add_pass(
             "offline-hdr-to-sdr",
             SdrRgPass {
-                sdr_pass: &inner.sdr_pass,
+                sdr_pass: &resources.sdr_pass,
                 record_ctx,
                 src_image: accum_image,
                 dst_image: render_target,
@@ -466,10 +469,10 @@ impl OfflinePipeline {
         _common_settings: &PathTracingCommonSettings,
         selected_debug_image_id: Option<&str>,
     ) -> OfflinePresentGraphTargets {
-        let inner = self.inner();
+        let resources = self.resources();
         let record_ctx = ctx.record_ctx;
         let frame_label = record_ctx.frame_timing.frame_label();
-        let color_target = inner.targets.render_target(frame_label);
+        let color_target = resources.targets.render_target(frame_label);
         let render_target = rg_builder.import_image(
             "offline-render-target",
             color_target.image,
@@ -499,7 +502,7 @@ impl OfflinePipeline {
         rg_builder.add_pass(
             "resolve",
             ResolveRgPass {
-                resolve_pass: &inner.resolve_pass,
+                resolve_pass: &resources.resolve_pass,
                 record_ctx,
                 render_target,
                 debug_image,
@@ -511,13 +514,13 @@ impl OfflinePipeline {
         OfflinePresentGraphTargets { present_image }
     }
 
-    /// 返回 ImGui 选择器可见的稳定元数据，不暴露 pipeline-owned GPU target。
+    /// 返回 ImGui 选择器可见的稳定元数据，不暴露 subsystem-owned GPU target。
     pub fn debug_image_options() -> &'static [DebugImageOption] {
         &OFFLINE_DEBUG_IMAGE_OPTIONS
     }
 
     fn debug_image_source(&self, frame_label: FrameLabel, id: &str) -> Option<(ImageTarget, RgImageState)> {
-        let targets = &self.inner().targets;
+        let targets = &self.resources().targets;
         let source = match id {
             "offline-single-frame" => (targets.single_frame_image(frame_label), RgImageState::GENERAL),
             "offline-accum" => (targets.accum_image(), RgImageState::GENERAL),
@@ -527,13 +530,13 @@ impl OfflinePipeline {
         (!source.0.image.is_null() && !source.0.view.is_null()).then_some(source)
     }
 
-    fn inner(&self) -> &OfflinePipelineInner {
-        self.inner.as_ref().expect("OfflinePipeline not initialized")
+    fn resources(&self) -> &OfflineRenderResources {
+        self.resources.as_ref().expect("OfflineRenderSubsystem not initialized")
     }
 }
 
-impl Drop for OfflinePipeline {
+impl Drop for OfflineRenderSubsystem {
     fn drop(&mut self) {
-        log::info!("OfflinePipeline drop");
+        log::info!("OfflineRenderSubsystem drop");
     }
 }

@@ -1,7 +1,7 @@
 # App Shader
 
 `app/shader/` 是所有 App 侧 shader 源码和 App Rust binding 的唯一物理根目录。Rust crate 仍按
-`app-render-passes`、`app-kit` 和 sample 分工，但 shader package 按相同依赖、include roots、增量失效
+`app-render-passes`、`app-imgui`、`app-rendering` 和 sample 分工，但 shader package 按相同依赖、include roots、增量失效
 范围和发布边界组织，不跟随 Rust crate 目录拆散。
 
 ## 目录职责
@@ -25,6 +25,7 @@ app/shader/
 
 - `abi/app/` 是 Rust / Slang 共享契约，保持 `app::render_passes::*` 与
   `app::kit::*` namespace；统一聚合入口是 `abi/app/mod.slangi`。
+- ImGui backend 虽然属于 Rust crate `app-imgui`，现有 GUI ABI 仍保持 `app::kit::ui_imgui`；crate 边界不决定 shader namespace。
 - `lib/app/` 保存依赖 App ABI/resource 的 RT、ReSTIR、SHARC、GBuffer、raster 与环境贴图
   算法，只在 Slang 侧共享，不生成 Rust binding。
 - `lib/sample-shader-toy/` 只对 ShaderToy 可见，不得引用 Engine 或 App。
