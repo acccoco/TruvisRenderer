@@ -1,0 +1,10 @@
+[package]
+name = "truvis-render-thread"
+version = "0.1.0"
+edition = "2024"
+description = "Window-backend-independent render thread lifecycle host"
+
+[dependencies]
+truvis-app-frame = { workspace = true }
+
+log = { workspace = true }

@@ -3,9 +3,11 @@ use winit::keyboard::PhysicalKey;
 
 use truvis_app_frame::input_event::{ElementState, InputEvent, KeyCode, MouseButton};
 
-pub struct WinitEventAdapter {}
-impl WinitEventAdapter {
-    pub fn from_winit_event(event: &WindowEvent) -> InputEvent {
+/// 将 winit WindowEvent 收敛为 frame 定义的 backend-independent 输入事件。
+pub(crate) struct WinitInputAdapter;
+
+impl WinitInputAdapter {
+    pub(crate) fn from_winit_event(event: &WindowEvent) -> InputEvent {
         match event {
             WindowEvent::CursorMoved { position, .. } => InputEvent::MouseMoved {
                 physical_position: [position.x, position.y],

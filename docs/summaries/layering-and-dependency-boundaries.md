@@ -8,14 +8,16 @@
 
 ```mermaid
 flowchart TB
-    L6["L6 app/truvis + samples<br/>Tauri 主体 app 与独立示例入口<br/><br/>L6 app/editor<br/>Tauri WebView UI、HTTP/WebSocket adapter、跨线程 editor 契约<br/><br/>L6 truvis-winit-app<br/>standalone / child HWND 窗口生命周期、winit 事件循环、渲染线程启动"]
+    L8["L8 app/truvis + samples<br/>Tauri 主体 app 与独立示例入口<br/><br/>L8 app/editor<br/>Tauri WebView UI、HTTP/WebSocket adapter、跨线程 editor 契约"]
+    L7["L7 truvis-winit-host<br/>standalone / child HWND 窗口生命周期、winit 事件循环与输入适配"]
+    L6["L6 truvis-render-thread<br/>backend-independent OS 渲染线程、App factory、完成与 panic 生命周期"]
     L5["L5 app-kit<br/>GuiPlugin、私有 GUI backend、overlay plugin、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp / Plugin 契约与 Plugin Ctx<br/>唯一 RenderAppRunner 完整生命周期"]
     L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GfxResourceManager / ShaderBindingSystem / CmdAllocator / PerFrameGpuData + timing owners + runtime render state + RenderWorld + RenderPassRecordCtx + swapchain/present 生命周期"]
     L3["L3 truvis-render-graph / truvis-world / truvis-asset<br/>按帧同步辅助、CPU 场景、资产加载"]
     L2["L2 truvis-render-foundation<br/>FrameCounter / FrameLabel、GPU 资源句柄、RenderView、RenderSceneView、GfxResourceAccess"]
     L1["L1 truvis-gfx<br/>Vulkan RHI 封装"]
     L0["L0 truvis-utils / truvis-logs / truvis-path / descriptor-layout"]
-    L6 --> L5 --> L4 --> L3 --> L2 --> L1 --> L0
+    L8 --> L7 --> L6 --> L5 --> L4 --> L3 --> L2 --> L1 --> L0
 ```
 
 ## 依赖方向约束
@@ -23,6 +25,8 @@ flowchart TB
 - 上层 crate 可以依赖下层 crate；下层 crate 禁止反向依赖上层业务。
 - 同层 crate 默认不互相依赖；只有本文档明确记录的方向才允许。
 - 物理目录用于导航，真实约束以 crate 职责与 Cargo 依赖方向为准。
+- platform 层内部保持 `truvis-winit-host -> truvis-render-thread -> truvis-app-frame`；winit host 可直接消费 frame
+  契约，线程宿主不依赖 winit、Windows API、Tauri 或具体 app。
 - `engine/render/` 是渲染域目录，只承载通用渲染基础设施：`truvis-render-foundation` 是跨 crate 契约层，
   `truvis-render-graph` 只依赖 foundation 中的句柄和 `GfxResourceAccess`，`truvis-render-runtime` 负责集成 runtime-owned
   GPU resource/binding/cmd/per-frame 能力。
@@ -43,8 +47,10 @@ flowchart LR
     Frame["frame<br/>具体 RenderApp 契约、RenderAppRunner::run、线程控制契约"]
     AppKit["app-kit + app-render-passes<br/>GUI 集成与私有 backend、输入/相机、overlay、RT/后处理 pass 与 pipeline glue"]
     App["app / samples<br/>Truvis Tauri 桌面壳与独立示例"]
-    Platform["truvis-winit-app<br/>standalone + embedded winit 平台入口"]
-    App --> Platform --> Frame --> Runtime --> RenderDomain --> Core --> Gfx --> Foundation
+    WindowHost["truvis-winit-host<br/>standalone + embedded winit 窗口宿主"]
+    RenderThread["truvis-render-thread<br/>backend-independent OS 渲染线程宿主"]
+    App --> WindowHost --> RenderThread --> Frame --> Runtime --> RenderDomain --> Core --> Gfx --> Foundation
+    WindowHost --> Frame
     App --> AppKit --> Frame
     AppKit --> Runtime
     AppKit --> RenderDomain
@@ -102,8 +108,9 @@ flowchart LR
 ## 物理目录约定
 
 - `engine/app-frame/truvis-app-frame`：平台无关的 App 契约、统一 Runner 和最小线程控制契约。
-- `engine/app-frame/truvis-winit-app`：winit 平台入口；`WinitApp` 服务独立顶层窗口，`EmbeddedWinitHost` 在专用线程服务
-  Windows child HWND，两者复用同一 `RenderThread` 启动和回收渲染线程。
+- `engine/platform/truvis-render-thread`：独立于窗口 backend 的 OS RenderThread、完成状态、panic 传播与 App factory。
+- `engine/platform/truvis-winit-host`：winit 窗口 backend；`StandaloneWinitHost` 服务独立顶层窗口，`EmbeddedWinitHost`
+  在专用线程服务 Windows child HWND，两者复用 `truvis-render-thread` 启动和回收渲染线程。
 - `app/app-kit`：app 层公共组件，包含 GUI、输入/相机、overlay 和 RT pipeline glue。
 - `app/app-render-passes`：主体 app 与 samples 共享的具体 pass。
 - `app/truvis`：主体 app，提供 `truvis-app`；Tauri/Tao desktop owner 在 main thread 组装 WebView、EditorServer 与

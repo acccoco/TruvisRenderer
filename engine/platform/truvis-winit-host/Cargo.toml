@@ -1,13 +1,12 @@
 [package]
-name = "truvis-winit-app"
+name = "truvis-winit-host"
 version = "0.1.0"
 edition = "2024"
-description = "winit platform entry for Truvis apps"
+description = "winit standalone and embedded window hosts"
 
 [dependencies]
 truvis-app-frame = { workspace = true }
-truvis-logs = { workspace = true }
-truvis-path = { workspace = true }
+truvis-render-thread = { workspace = true }
 
 log = { workspace = true }
 winit = { workspace = true }

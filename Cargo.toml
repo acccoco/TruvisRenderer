@@ -20,7 +20,9 @@ members = [
     "engine/world/truvis-world",
     # frame
     "engine/app-frame/truvis-app-frame",
-    "engine/app-frame/truvis-winit-app",
+    # platform
+    "engine/platform/truvis-render-thread",
+    "engine/platform/truvis-winit-host",
     # shader 绑定相关
     "engine/shader/truvis-shader-binding",
     "engine/shader/truvis-shader-binding-codegen",
@@ -73,7 +75,9 @@ truvis-asset = { path = "engine/world/truvis-asset" }
 truvis-world = { path = "engine/world/truvis-world" }
 # frame
 truvis-app-frame = { path = "engine/app-frame/truvis-app-frame" }
-truvis-winit-app = { path = "engine/app-frame/truvis-winit-app" }
+# platform
+truvis-render-thread = { path = "engine/platform/truvis-render-thread" }
+truvis-winit-host = { path = "engine/platform/truvis-winit-host" }
 # app
 app-kit = { path = "app/app-kit" }
 app-render-passes = { path = "app/app-render-passes" }

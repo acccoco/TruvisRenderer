@@ -16,7 +16,9 @@ workspace 顶层 `app/`。
 - L3 语义与编排辅助：`world/` 保存 CPU asset/scene 语义，`render/truvis-render-graph` 负责按 App 指定顺序推导 pass 同步。
 - L4 Runtime 集成层：`render/truvis-render-runtime` 持有 `Gfx`、`World`、GPU resource/binding/timing owners、runtime render state、`RenderWorld`、present、`RenderPassRecordCtx` 和 asset-to-GPU bridge。
 - L5 App 框架层：`app-frame/truvis-app-frame` 定义具体 `RenderApp` 契约、统一 `RenderAppRunner`、`Plugin` 和最小线程控制契约。
-- L6 平台与应用层：`app-frame/truvis-winit-app` 负责 winit 平台入口；具体应用和 samples 位于 `../app/`。
+- L6 渲染线程宿主：`platform/truvis-render-thread` 管理不依赖窗口 backend 的 OS RenderThread 生命周期。
+- L7 窗口平台层：`platform/truvis-winit-host` 管理 winit standalone / embedded 窗口与输入适配。
+- L8 具体应用层：主体应用、Editor 和 samples 位于 `../app/`。
 
 `shader/` 和 `cxx/` 是工具链与外部边界目录：其中 binding crate 会被运行时 crate 使用，build crate 主要由 `just`
 命令驱动生成产物。
@@ -71,12 +73,19 @@ CPU 侧语义层，负责 asset 身份、加载状态、scene runtime 身份与 
 
 ### `app-frame/`
 
-App 框架和平台入口目录，把平台无关的 App 契约与 winit 平台启动分开。
+平台无关的 App 框架目录，定义应用、固定帧执行器和 Runner 消费的跨线程契约。
 
 - `truvis-app-frame/`：定义具体 `RenderApp`、`Plugin`、phase Ctx、统一 `RenderAppRunner` 和最小线程控制契约；不依赖
   `winit`，也不持有具体 App/Plugin 业务状态。
-- `truvis-winit-app/`：winit 平台入口，负责窗口、事件循环、输入事件适配和渲染线程启动；通过 `Box<dyn RenderApp>` 注入具体
-  App，不依赖主体 app 或 samples。
+
+### `platform/`
+
+窗口和线程宿主目录，保持窗口 backend 与 OS 渲染线程生命周期独立。
+
+- `truvis-render-thread/`：backend-independent OS RenderThread owner，负责线程启动、App factory、完成/panic 握手与
+  join；只依赖 frame 契约，不依赖 winit、Tauri 或 Windows API。
+- `truvis-winit-host/`：winit standalone / embedded 窗口 owner，负责 EventLoop、输入适配、Win32 typed handle 交接和
+  child HWND；窗口标题、图标资源与日志初始化由具体 app 入口决定。
 
 ### `shader/`
 
@@ -109,7 +118,7 @@ C++ 子系统、CMake/vcpkg 构建和 Rust FFI binding 目录。
 2. `../docs/summaries/`：按主题阅读分层依赖、帧生命周期、Runtime/App/Plugin 边界、RenderGraph 数据流、线程与资源生命周期。
 3. 本文件：按目录和 crate 定位要阅读的模块。
 4. 各 crate 内 README：深入具体职责、生命周期和边界；重点可先看 `gfx/truvis-gfx/README.md`、`world/truvis-asset/README.md`、
-   `world/truvis-world/README.md`、`render/*/README.md`、`app-frame/*/README.md`。
+   `world/truvis-world/README.md`、`render/*/README.md`、`app-frame/*/README.md`、`platform/*/README.md`。
 5. `shader/README.md`、`cxx/README.md`：了解 shader/CXX 工具链与外部边界。
 
 ## 构建与工具入口

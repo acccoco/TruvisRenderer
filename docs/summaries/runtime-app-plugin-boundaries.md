@@ -8,7 +8,7 @@
 
 ```text
 Window Host
-  owns RenderThread handle
+  owns Window + backend-independent RenderThread handle
 
 OS RenderThread
   owns RenderAppRunner
@@ -103,9 +103,10 @@ RenderAppRunner::run(
 ```
 
 这个非泛型执行器在内部独占 `RenderRuntime`、输入事件队列和具体 App，统一驱动窗口绑定初始化、输入、resize、每帧阶段和 shutdown。
-`RenderThreadControl` 封装退出/完成状态、panic、无界输入队列，以及 latest-size 和 resize generation；`RenderThreadInit`
-只携带 raw window/display handle、scale factor 和初始尺寸。平台 `RenderThread` 使用 `SendWrapper<RenderThreadInit>`
-完成受控跨线程交接，只在目标 OS RenderThread 内解包并执行 App factory，因此 standalone 与 embedded 入口共享同一帧骨架。
+`RenderThreadControl` 只封装 Runner 消费的退出状态、无界输入队列，以及 latest-size 和 resize generation；线程完成标记、
+panic 传播与 join 归属于 `truvis-render-thread::RenderThread`。`RenderThreadInit` 只携带 raw window/display handle、
+scale factor 和初始尺寸。winit backend 只跨线程传递可 Send 的 `Win32WindowHandle` / `WindowsDisplayHandle`，
+在目标 OS RenderThread 内重建 raw enum、执行 App factory，并进入统一 Runner，因此 standalone 与 embedded 入口共享同一帧骨架。
 
 ## RenderApp 契约
 

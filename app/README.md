@@ -17,6 +17,7 @@
 
 - `app-kit` 只放可复用组件，不放具体 app state。
 - sample 专用 pass 留在对应 sample crate 内。
+- sample 入口自行初始化日志并提供窗口标题、尺寸、透明策略和图标内容；平台宿主不决定产品外观。
 - 主体 app 的顶层窗口和 WebView 由 Tauri/Tao main thread 持有，child render 窗口和独立 samples 的顶层窗口由
-  `engine/app-frame/truvis-winit-app` 提供；app crate 只向渲染入口注入具体 `Box<dyn RenderApp>`，平台 `RenderThread`
-  在 OS 渲染线程内执行 factory，并交给唯一的 `RenderAppRunner`。
+  `engine/platform/truvis-winit-host` 提供；`engine/platform/truvis-render-thread` 在 OS 渲染线程内执行具体
+  `Box<dyn RenderApp>` factory，并交给唯一的 `RenderAppRunner`。

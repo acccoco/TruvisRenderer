@@ -20,8 +20,7 @@ use truvis_editor_bridge::{EditorBridgeConfig, create_editor_bridge};
 use truvis_editor_server::{EditorServer, EditorServerConfig, EditorServerHandle};
 use truvis_logs::LogFilePath;
 use truvis_path::TruvisPath;
-use truvis_winit_app::SendWrapper;
-use truvis_winit_app::embedded::{EmbeddedViewportRect, EmbeddedWinitHost};
+use truvis_winit_host::{EmbeddedViewportRect, EmbeddedWinitHost};
 
 use crate::desktop_command::{DesktopCommandController, DesktopCommandSender};
 use crate::truvis_render_app::TruvisRenderApp;
@@ -285,7 +284,7 @@ impl TruvisDesktop {
                     .window_handle()
                     .map_err(|error| std::io::Error::other(format!("failed to get Tauri parent HWND: {error}")))?
                     .as_raw();
-                let render_host = EmbeddedWinitHost::spawn(SendWrapper(parent_window), move || {
+                let render_host = EmbeddedWinitHost::spawn(parent_window, move || {
                     Box::new(TruvisRenderApp::new(app_endpoint, desktop_command_controller))
                 })
                 .map_err(std::io::Error::other)?;

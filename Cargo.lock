@@ -1015,12 +1015,13 @@ dependencies = [
  "log",
  "truvis-app-frame",
  "truvis-asset",
+ "truvis-logs",
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-runtime",
  "truvis-shader-binding",
- "truvis-winit-app",
+ "truvis-winit-host",
  "truvis-world",
 ]
 
@@ -2161,11 +2162,12 @@ dependencies = [
  "log",
  "truvis-app-frame",
  "truvis-gfx",
+ "truvis-logs",
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-runtime",
- "truvis-winit-app",
+ "truvis-winit-host",
 ]
 
 [[package]]
@@ -4908,11 +4910,12 @@ dependencies = [
  "log",
  "truvis-app-frame",
  "truvis-gfx",
+ "truvis-logs",
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-runtime",
- "truvis-winit-app",
+ "truvis-winit-host",
 ]
 
 [[package]]
@@ -6101,7 +6104,7 @@ dependencies = [
  "truvis-render-graph",
  "truvis-render-runtime",
  "truvis-shader-binding",
- "truvis-winit-app",
+ "truvis-winit-host",
  "truvis-world",
  "vk-mem",
 ]
@@ -6321,6 +6324,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "truvis-render-thread"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "truvis-app-frame",
+]
+
+[[package]]
 name = "truvis-shader-binding"
 version = "0.1.0"
 dependencies = [
@@ -6367,15 +6378,14 @@ name = "truvis-utils"
 version = "0.1.0"
 
 [[package]]
-name = "truvis-winit-app"
+name = "truvis-winit-host"
 version = "0.1.0"
 dependencies = [
  "image",
  "log",
  "raw-window-handle",
  "truvis-app-frame",
- "truvis-logs",
- "truvis-path",
+ "truvis-render-thread",
  "windows-sys 0.61.2",
  "winit",
 ]

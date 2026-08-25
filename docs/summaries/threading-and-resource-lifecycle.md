@@ -58,6 +58,10 @@ flowchart LR
 
 - main thread 与 `RenderWindowThread` 都不调用 Vulkan、`ash` 或 `truvis-gfx` API。
 - 所有 Vulkan 对象在渲染线程创建、使用和销毁。
+- `truvis-winit-host` 只跨线程传递可 Send 的 `Win32WindowHandle` / `WindowsDisplayHandle`；raw handle enum 与
+  `RenderThreadInit` 只在目标 RenderThread 内重建，parent/child HWND 的 owner 必须保证窗口活到对应线程 join 完成。
+- `truvis-render-thread` 持有线程完成状态和 panic 结果，并先发布完成标记再唤醒窗口 EventLoop；frame 内
+  `RenderThreadControl` 只保存 Runner 使用的退出、输入和 resize 契约。
 - `truvis-asset` Rayon worker 只做文件读取与 HDR/EXR/普通图片 CPU decode；
   `SkyDistributionBuilder` 的独立单线程只读取共享 `TextureBytes` 并构建 CPU Alias entries。
   两类 worker 都不创建、提交或销毁 Vulkan 资源。

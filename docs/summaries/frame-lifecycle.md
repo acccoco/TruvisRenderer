@@ -43,19 +43,21 @@ phase 内使用窄化后的 ctx。
 
 ## 启动、Resize 与关闭入口
 
-渲染入口仍然唯一：平台层最终都通过 `RenderThread` 创建渲染线程。App factory 在 OS RenderThread 内执行并返回
-`Box<dyn RenderApp>`，随后进入 `RenderAppRunner::run(control, init, app)`，由 Runner 内部统一拥有 App、Runtime 和完整帧循环。
-主体应用的 Tauri 窗口与独立 sample 的 winit 顶层窗口只是在该入口之前采用不同的窗口 owner。
+渲染入口仍然唯一：`truvis-winit-host` 管理具体窗口并提取可 Send 的 Win32 typed handle，
+`truvis-render-thread` 创建 OS RenderThread。初始化 factory 与 App factory 都只在该线程执行，随后进入
+`RenderAppRunner::run(control, init, app)`，由 Runner 内部统一拥有 App、Runtime 和完整帧循环。
+主体应用的 Tauri child window 与独立 sample 的顶层窗口只是在该入口之前采用不同的窗口 owner。
 
 ```mermaid
 flowchart TD
-    Entry["Tauri TruvisDesktop / standalone WinitApp"] --> CreateWindow["create child / top-level winit Window"]
+    Entry["Tauri TruvisDesktop / StandaloneWinitHost"] --> CreateWindow["create child / top-level winit Window"]
     CreateWindow --> InitialSize{"embedded child?"}
     InitialSize -->|"yes"| AwaitDom["await first non-zero DOM rect<br/>SetWindowPos before renderer startup"]
-    InitialSize -->|"no"| ThreadOwner["RenderThread::spawn<br/>create RenderThreadControl + raw handles"]
+    InitialSize -->|"no"| ThreadOwner["RenderThread::spawn<br/>create RenderThreadControl + capture Win32 typed handles"]
     AwaitDom --> ThreadOwner
     ThreadOwner --> SpawnThread["spawn RenderThread"]
-    SpawnThread --> AppFactory["app_factory() -> Box&lt;dyn RenderApp&gt;"]
+    SpawnThread --> BuildInit["build_init(initial_size)<br/>rebuild raw handles on RenderThread"]
+    BuildInit --> AppFactory["app_factory() -> Box&lt;dyn RenderApp&gt;"]
     AppFactory --> Runner["RenderAppRunner::run(control, init, app)"]
     Runner --> InitAfterWindow["runner.init_after_window(raw handles, scale_factor, initial_size)"]
 ```

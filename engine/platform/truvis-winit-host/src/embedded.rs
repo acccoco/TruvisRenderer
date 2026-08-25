@@ -8,7 +8,7 @@ use std::panic;
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle, Win32WindowHandle};
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetFocus, SetFocus};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -23,10 +23,10 @@ use winit::platform::windows::EventLoopBuilderExtWindows;
 use winit::window::{Window, WindowId};
 
 use truvis_app_frame::render_app_api::RenderApp;
+use truvis_render_thread::{RenderAppFactory, RenderThread};
 
-use crate::SendWrapper;
-use crate::render_thread::{RenderAppFactory, RenderThread};
-use crate::winit_event_adapter::WinitEventAdapter;
+use crate::input_adapter::WinitInputAdapter;
+use crate::win32::Win32RenderSurface;
 
 /// DOM viewport 在 Tauri parent client area 中对应的物理像素矩形。
 ///
@@ -68,15 +68,16 @@ pub struct EmbeddedWinitHost {
 }
 
 impl EmbeddedWinitHost {
-    pub fn spawn<F>(parent_window: SendWrapper<RawWindowHandle>, app_factory: F) -> Result<Self, String>
+    pub fn spawn<F>(parent_window: RawWindowHandle, app_factory: F) -> Result<Self, String>
     where
         F: FnOnce() -> Box<dyn RenderApp> + Send + 'static,
     {
+        let parent_window = Win32RenderSurface::require_window_handle(parent_window)?;
         let (startup_sender, startup_receiver) = mpsc::sync_channel(1);
         let window_thread = thread::Builder::new()
             .name("RenderWindowThread".to_string())
             .spawn(move || {
-                EmbeddedWinitApp::run(parent_window, Box::new(app_factory), startup_sender);
+                EmbeddedWinitHandler::run(parent_window, Box::new(app_factory), startup_sender);
             })
             .map_err(|error| format!("failed to spawn RenderWindowThread: {error}"))?;
 
@@ -134,18 +135,21 @@ impl Drop for EmbeddedWinitHost {
 /// 本类型拥有 child `Window` 和 [`RenderThread`]。它接收的 viewport rect 只是
 /// 平台窗口几何命令；RenderThread 不接收该命令，而是继续通过 child HWND 产生的
 /// `WindowEvent::Resized` 与现有 resize generation 感知变化。
-struct EmbeddedWinitApp {
+struct EmbeddedWinitHandler {
     parent_window: RawWindowHandle,
-    window: Option<Window>,
     app_factory: Option<RenderAppFactory>,
+
+    /// 字段顺序保证异常展开时先触发 RenderThread 的 join fallback，再 drop child Window。
     render_thread: Option<RenderThread>,
+
+    window: Option<Window>,
     event_proxy: EventLoopProxy<EmbeddedUserEvent>,
     pending_viewport_rect: EmbeddedViewportRect,
 }
 
-impl EmbeddedWinitApp {
+impl EmbeddedWinitHandler {
     fn run(
-        parent_window: SendWrapper<RawWindowHandle>,
+        parent_window: Win32WindowHandle,
         app_factory: RenderAppFactory,
         startup_sender: mpsc::SyncSender<Result<EventLoopProxy<EmbeddedUserEvent>, String>>,
     ) {
@@ -167,19 +171,19 @@ impl EmbeddedWinitApp {
         if startup_sender.send(Ok(event_proxy.clone())).is_err() {
             return;
         }
-        let mut app = Self {
-            parent_window: parent_window.0,
-            window: None,
+        let mut handler = Self {
+            parent_window: RawWindowHandle::Win32(parent_window),
             app_factory: Some(app_factory),
             render_thread: None,
+            window: None,
             event_proxy,
             pending_viewport_rect: EmbeddedViewportRect::default(),
         };
 
-        if let Err(error) = event_loop.run_app(&mut app) {
+        if let Err(error) = event_loop.run_app(&mut handler) {
             log::error!("embedded winit event loop failed: {error}");
         }
-        let panic_payload = app.destroy();
+        let panic_payload = handler.destroy();
         if let Some(payload) = panic_payload {
             panic::resume_unwind(payload);
         }
@@ -187,7 +191,7 @@ impl EmbeddedWinitApp {
 
     fn init_after_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
         let attributes = Window::default_attributes()
-            .with_title("Truvis Render Viewport")
+            .with_title("Render Viewport")
             .with_decorations(false)
             .with_resizable(false)
             .with_transparent(false)
@@ -224,10 +228,17 @@ impl EmbeddedWinitApp {
         }
 
         let factory = self.app_factory.take().ok_or_else(|| "render app factory already consumed".to_string())?;
+        let surface = Win32RenderSurface::from_window(window)?;
+        let initial_size = surface.initial_size();
         let event_proxy = self.event_proxy.clone();
-        let render_thread = RenderThread::spawn(window, factory, move || {
-            let _ = event_proxy.send_event(EmbeddedUserEvent::RenderFinished);
-        })?;
+        let render_thread = RenderThread::spawn(
+            initial_size,
+            move |size| surface.into_render_thread_init(size),
+            factory,
+            move || {
+                let _ = event_proxy.send_event(EmbeddedUserEvent::RenderFinished);
+            },
+        )?;
         self.render_thread = Some(render_thread);
         Ok(())
     }
@@ -247,7 +258,7 @@ impl EmbeddedWinitApp {
     /// 从 WebView sibling 转给 render child。winit 的 Windows backend 会消费
     /// `WM_*BUTTONDOWN` 并发送 `MouseInput`，但嵌入式 child 不会因此自动获得焦点；
     /// 只有在持有 child HWND 的窗口线程调用 `SetFocus`，后续键盘消息才会沿现有
-    /// `WinitEventAdapter` 输入链路进入相机控制。用户点击周围 WebView 控件时，
+    /// `WinitInputAdapter` 输入链路进入相机控制。用户点击周围 WebView 控件时，
     /// WebView 会按 Windows 默认行为重新取得焦点，因此字符输入无需额外转发。
     fn focus_child_window(window: &Window) -> Result<(), String> {
         let hwnd = Self::window_hwnd(window)?;
@@ -297,7 +308,7 @@ impl EmbeddedWinitApp {
     }
 }
 
-impl ApplicationHandler<EmbeddedUserEvent> for EmbeddedWinitApp {
+impl ApplicationHandler<EmbeddedUserEvent> for EmbeddedWinitHandler {
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: StartCause) {}
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -360,7 +371,7 @@ impl ApplicationHandler<EmbeddedUserEvent> for EmbeddedWinitApp {
             _ => {}
         }
 
-        let input_event = WinitEventAdapter::from_winit_event(&event);
+        let input_event = WinitInputAdapter::from_winit_event(&event);
         use truvis_app_frame::input_event::InputEvent;
         match input_event {
             InputEvent::Other | InputEvent::Resized { .. } => {}

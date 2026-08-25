@@ -6,7 +6,7 @@
 ## 主要职责
 
 - `desktop`：Tauri/Tao main-thread owner，组装 WebView、EditorServer、desktop command 与
-  `EmbeddedWinitHost`，并保证 parent window 最后销毁。
+  `truvis-winit-host::EmbeddedWinitHost`，并保证 parent window 最后销毁。
 - `TruvisRenderApp`：RenderThread 上的具体 `RenderApp`，持有 camera/input、GUI、overlay、selection、Editor controller
   和 realtime/offline pipeline，并显式决定 update 与 RenderGraph pass 顺序。
 - `EditorController`：把 Editor 协议 DTO 适配到权威 `World` 查询与 edit API。

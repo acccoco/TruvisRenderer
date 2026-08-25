@@ -25,6 +25,8 @@
 模块入口：
 
 - [`engine/README.md`](../engine/README.md)：Engine 目录与 crate 导航。
+- [`truvis-render-thread/README.md`](../engine/platform/truvis-render-thread/README.md)：窗口 backend 无关的渲染线程生命周期。
+- [`truvis-winit-host/README.md`](../engine/platform/truvis-winit-host/README.md)：standalone 与 embedded winit 窗口宿主。
 - [`app/README.md`](../app/README.md)：App 域、公共组件、主体 App 与 samples。
 - [`app/truvis/README.md`](../app/truvis/README.md)：主体 App 的状态 owner 与 pipeline 编排。
 - [`app/editor/README.md`](../app/editor/README.md)：Editor 构建、协议源码和运行参数。
@@ -34,8 +36,9 @@
 
 - 项目保持无环依赖：上层可以依赖下层，下层不反向依赖上层业务；同层 crate 默认不互相依赖，
   除非 summaries 中明确记录。
-- 平台层只负责窗口、事件循环和渲染线程启动。主体 Tauri App、embedded child HWND 与独立 samples
-  都由窗口 owner 持有统一的 `RenderThread` handle，并在其 OS 渲染线程内创建具体 App、进入唯一
+- 平台层拆分为 winit 窗口宿主与 backend-independent 渲染线程宿主，依赖方向为
+  `truvis-winit-host -> truvis-render-thread -> truvis-app-frame`。主体 Tauri App、embedded child HWND 与独立
+  samples 都由窗口 owner 持有统一的 `RenderThread` handle，并在其 OS 渲染线程内创建具体 App、进入唯一
   `RenderAppRunner::run`；所有 Vulkan 对象只在该线程创建、使用和销毁。
 - `RenderRuntime` 拥有 `Gfx`、`World`、GPU resource/binding/timing owner、runtime render state、
   `RenderWorld`、present、command 和同步资源；App/Plugin 只通过 phase-appropriate Ctx 使用窄能力。
