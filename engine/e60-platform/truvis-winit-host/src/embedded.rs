@@ -7,6 +7,7 @@
 use std::panic;
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle, Win32WindowHandle};
 use windows_sys::Win32::Foundation::HWND;
@@ -19,6 +20,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, DeviceId, ElementState, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
+use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
 use winit::platform::windows::EventLoopBuilderExtWindows;
 use winit::window::{Window, WindowId};
 
@@ -157,7 +159,7 @@ impl EmbeddedWinitHandler {
         // Tauri/Tao 已经拥有进程级 DPI 策略；embedded winit 只消费窗口 DPI 事件，
         // 避免两个 UI runtime 重复修改 process-wide DPI awareness。
         event_loop_builder.with_any_thread(true).with_dpi_aware(false);
-        let event_loop = match event_loop_builder.build() {
+        let mut event_loop = match event_loop_builder.build() {
             Ok(event_loop) => event_loop,
             Err(error) => {
                 let _ = startup_sender.send(Err(format!("failed to create embedded winit EventLoop: {error}")));
@@ -167,7 +169,7 @@ impl EmbeddedWinitHandler {
         let event_proxy = event_loop.create_proxy();
         // Windows 在跨线程 parent 上创建 child HWND 时会向 parent thread 同步发送
         // 窗口消息。这里必须先把 proxy 交还 Tauri setup，让 main thread 离开同步等待
-        // 并进入 Tao 消息泵，再由 run_app/resumed 创建 child，否则会形成跨线程死锁。
+        // 并进入 Tao 消息泵，再由 pump_app_events/resumed 创建 child，否则会形成跨线程死锁。
         if startup_sender.send(Ok(event_proxy.clone())).is_err() {
             return;
         }
@@ -180,9 +182,18 @@ impl EmbeddedWinitHandler {
             pending_viewport_rect: EmbeddedViewportRect::default(),
         };
 
-        if let Err(error) = event_loop.run_app(&mut handler) {
-            log::error!("embedded winit event loop failed: {error}");
+        loop {
+            match event_loop.pump_app_events(Some(Duration::from_millis(8)), &mut handler) {
+                PumpStatus::Continue => {}
+                PumpStatus::Exit(exit_code) => {
+                    if exit_code != 0 {
+                        log::error!("embedded winit event loop exited with a non-zero code: {exit_code}");
+                    }
+                    break;
+                }
+            }
         }
+        drop(event_loop);
         let panic_payload = handler.destroy();
         if let Some(payload) = panic_payload {
             panic::resume_unwind(payload);

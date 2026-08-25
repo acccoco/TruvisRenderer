@@ -1,7 +1,10 @@
+use std::time::Duration;
+
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
+use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Icon, Window, WindowId};
 
@@ -44,7 +47,7 @@ impl StandaloneWinitHost {
     where
         F: FnOnce() -> Box<dyn RenderApp> + Send + 'static,
     {
-        let event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event().build().unwrap();
+        let mut event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event().build().unwrap();
         let event_proxy = event_loop.create_proxy();
 
         let mut host = Self {
@@ -55,7 +58,16 @@ impl StandaloneWinitHost {
             event_proxy,
         };
 
-        event_loop.run_app(&mut host).unwrap();
+        loop {
+            match event_loop.pump_app_events(Some(Duration::from_millis(8)), &mut host) {
+                PumpStatus::Continue => {}
+                PumpStatus::Exit(exit_code) => {
+                    assert_eq!(exit_code, 0, "standalone winit event loop exited with a non-zero code");
+                    break;
+                }
+            }
+        }
+        drop(event_loop);
         log::info!("standalone winit event loop finished");
         host.destroy();
     }
