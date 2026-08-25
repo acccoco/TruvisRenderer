@@ -1,4 +1,4 @@
-use std::{env, ffi::CStr};
+use std::{env, ffi::CStr, num::NonZeroU32, time::Duration};
 
 use ash::vk::{self, Handle};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -136,7 +136,10 @@ impl RenderRuntime {
 
             // 初始值应该是 1，因为 timeline semaphore 初始值是 0
             let init_frame_id = 1;
-            let frame_timing = FrameTiming::new(init_frame_id, None);
+            let frame_rate_limit_fps = NonZeroU32::new(DefaultRenderRuntimeSettings::DEFAULT_FRAME_RATE_LIMIT_FPS)
+                .expect("default frame rate limit must be non-zero");
+            let min_frame_interval = Duration::from_secs_f64(1.0 / f64::from(frame_rate_limit_fps.get()));
+            let frame_timing = FrameTiming::new(init_frame_id, Some(min_frame_interval));
             let shader_binding_system = ShaderBindingSystem::new(gfx.device_ctx(), frame_timing.frame_id());
 
             (gfx_resource_manager, cmd_allocator, frame_timing, shader_binding_system)

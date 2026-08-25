@@ -34,7 +34,7 @@
 - `FrameTiming` 是 runtime-owned 帧状态，统一承载 frame id、FIF label、delta/total time 和可选最小帧间隔；`PerFrameGpuData` 承载 per-FIF `PerFrameData` UBO。
 - `FrameRenderState`、`DlssOptions`、`ViewAccumState` 和 `DlssSrState` 定义在本 crate，
   并由 `RenderRuntime` 持有；`DlssOptions` 同时提供 SR/RR active feature 决策。
-- runtime 内部拥有默认 surface format、present mode 与 depth format 候选顺序；这些默认策略不放入
+- runtime 内部拥有默认 120 FPS 软件上限、surface format、present mode 与 depth format 候选顺序；这些默认策略不放入
   foundation 公共配置契约。
 - `RenderWorld` 是 runtime 私有的 scene GPU 翻译层，内部持有 `RenderTextureManager`、`RenderMeshManager`、
   `RenderMaterialManager`、`RenderInstanceManager`、`RenderSkyManager`、`RenderAnalyticLightManager`、
@@ -99,6 +99,8 @@
   texture/mesh/material/instance/sky/emissive/TLAS owners 在 `RenderWorld::new` 内部初始化。
 - `RenderRuntime::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
   swapchain 与 `SwapchainPresenter`，并返回 init Ctx 供 app/plugin 创建长期 GPU 资源。
+- `time_to_render` 读取 `FrameTiming` 的最小帧间隔；默认 120 FPS 对应约 `8.333333 ms`。外层 Runner 未到时机时
+  `park_timeout(1 ms)` 后继续轮询，重负载超过间隔时不额外睡眠、不补帧。
 - `begin_frame` 是每帧资源回收入口：由 `FrameTiming` 一次采样更新 delta/total time、等待当前 FIF slot、重置 frame command pool、
   清理延迟释放队列，并把当前 frame id 传给 bindless 与 `RenderWorld` 内部 managers；旧 sky distribution
   跨过 FIF 窗口后由 `GfxResourceManager` 销毁。AssetHub 事件只在

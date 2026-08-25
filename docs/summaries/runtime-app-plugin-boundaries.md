@@ -28,7 +28,7 @@ RenderRuntime
   -> World       CPU scene + assets
   -> GfxResourceManager manager-owned GPU image/buffer/view
   -> ShaderBindingSystem global descriptors + bindless + sampler
-  -> FrameTiming frame id + delta/total time + optional minimum frame interval
+  -> FrameTiming frame id + delta/total time + default 120 FPS minimum frame interval
   -> PerFrameGpuData per-FIF PerFrameData UBO
   -> FrameRenderState / DlssOptions / ViewAccumState / DlssSrState runtime render state
   -> RenderWorld runtime 私有 render managers / GPU scene buffer / raster draw cache / RenderTlasManager

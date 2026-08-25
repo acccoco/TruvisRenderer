@@ -71,8 +71,16 @@ flowchart TD
     PushInput --> ReadSize["read latest window size"]
     ReadSize --> RecreateSwapchain["runner.recreate_swapchain_if_needed(size)"]
     RecreateSwapchain --> TimeToRender["runner.time_to_render()"]
-    TimeToRender --> RunFrame["runner.run_frame()"]
+    TimeToRender -->|"true"| RunFrame["runner.run_frame()"]
+    TimeToRender -->|"false"| ShortPoll["park_timeout(1 ms)"]
+    ShortPoll --> RenderLoop
 ```
+
+`FrameTiming` 默认把相邻帧开始时间限制为至少 `1 / 120 s`（约 `8.333333 ms`）。Runner 仍按现有
+`park_timeout(1 ms)` 短周期轮询：它不会忙等，也不增加主动唤醒协议。输入 drain、窗口尺寸读取和 resize 安全点位于
+限帧判断之前，因此等待期间仍按该轮询周期处理控制状态。渲染本身超过最小间隔时下一轮直接开始，不补帧、不追赶，
+也不再追加固定睡眠；120 FPS 只表示上限，实际轻负载帧率会受 1 ms 轮询和 OS 调度影响而略低。首帧使用
+`FrameTiming` 构造时刻作为锚点，runtime/window/App 初始化通常已经覆盖一个帧间隔。
 
 resize 只在 render loop 的安全点处理。`RenderRuntime::handle_resize` 只有实际重建 swapchain / present 相关状态时才返回
 `Some(RenderRuntimeResizeCtx)`；随后 `RenderAppRunner` 把它包装为 `RenderAppResizeCtx`，App 再通知需要重建窗口尺寸资源的
@@ -94,7 +102,7 @@ Plugin。
 ```mermaid
 flowchart LR
     subgraph R["RenderRuntime"]
-        R0["begin_frame<br/>时间快照 / FIF 等待 / 命令池重置 / 延迟释放 / frame id 推进"]
+        R0["begin_frame<br/>时间快照 / FIF 等待 / 命令池重置 / 延迟释放 / current frame id 下发"]
         R1["update_phase<br/>同步 FrameRenderState<br/>acquire present target"]
         R2["sync_dlss_options_frame_state<br/>必要时同步 render/output extent"]
         R3{"has present target?"}
@@ -173,7 +181,7 @@ pass，再叠加 GUI；如果把所有 render 能力都放进统一 trait，App 
 | Phase                          | 调用点                          | 主要职责                                                                                         | 对上层暴露                            |
 |--------------------------------|------------------------------|----------------------------------------------------------------------------------------------|----------------------------------|
 | `init_after_window`            | 窗口 raw handle 就绪后            | 创建 surface、swapchain、present owner                                                           | `RenderRuntimeInitCtx`           |
-| `begin_frame`                  | 每帧开始                         | 等待 FIF timeline、重置 frame command pool、清理延迟释放、推进 bindless/material/instance token | 不直接暴露 ctx                        |
+| `begin_frame`                  | 每帧开始                         | 采样 `FrameTiming`、等待 FIF timeline、重置 frame command pool、清理延迟释放并下发当前 frame id | 不直接暴露 ctx                        |
 | `update_phase`                 | input 后、App update 前         | 同步 present extent 到 `FrameRenderState`，acquire 当前 present target，提供 CPU 更新能力                   | `RenderRuntimeUpdateCtx`         |
 | `sync_dlss_options_frame_state` | App / Plugin update 后        | 当 `DlssOptions` 改变 DLSS SR mode 或 render extent 时同步 `FrameRenderState`，并触发上层 resize          | `Option<RenderRuntimeResizeCtx>` |
 | `prepare(render_view)`         | update / resize 后、render 前   | 读取 App 的 `RenderView` 快照，把 `World`、asset、material、instance 同步成 GPU scene 与 descriptor 数据     | 不直接暴露 ctx                        |

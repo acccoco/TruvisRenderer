@@ -164,11 +164,13 @@ RTXDI-style RayTraced bias correction 是 shader 内部固定策略，不新增 
 
 `DefaultRenderRuntimeSettings` 已从 foundation 移到 `truvis-render-runtime` 内部模块。它只描述 runtime 初始化策略：
 
+- 默认软件帧率上限为 120 FPS；`FrameTiming` 将其转换为约 `8.333333 ms` 的最小帧间隔。
 - 默认 surface format。
 - 默认 present mode。
 - depth format 候选顺序。
 
-这些默认值不是公共配置契约。App 不应该依赖 runtime 必定选择某个 depth format 或 present fallback。
+软件限帧与 swapchain present mode 是两层独立策略：前者限制 CPU 帧开始频率，后者仍默认请求 MAILBOX 并按设备能力
+fallback。上述默认值不是公共配置契约；App 不应该依赖 runtime 必定选择某个 depth format 或 present fallback。
 
 ## 不是配置的内容
 
@@ -177,7 +179,7 @@ RTXDI-style RayTraced bias correction 是 shader 内部固定策略，不新增 
 | 内容 | 为什么不是配置 |
 |------|----------------|
 | `FrameLabel` | 它只是 FIF A/B/C slot 索引，用于选择当前帧 command buffer、descriptor、per-frame image |
-| per-frame UBO | 它是每帧由 `RenderView`、scene、timer 和 `FrameRenderState` 写出的 GPU 数据快照 |
+| per-frame UBO | 它是每帧由 `RenderView`、scene、`FrameTiming` 和 `FrameRenderState` 写出的 GPU 数据快照 |
 | RenderGraph image state | 它描述单帧 graph 内的读写状态与同步计划，不是长期配置 |
 | resource handles | 它们是 manager-owned GPU resource 的索引或句柄，不表达策略 |
 | `PresentView` / swapchain image wrapper | 它们是 WSI 资源访问视图，不是渲染质量或 pass 行为配置 |
