@@ -5,7 +5,7 @@
 //! `RtPipeline` 通过生命周期 ctx 显式传入 manager 与 typed Gfx ctx。
 //!
 //! 设计边界：
-//! - `FrameCounter` / `FrameLabel` 仍来自 engine，用来表达当前使用哪个在飞帧槽位。
+//! - `FrameLabel` 仍来自 engine，用来表达当前使用哪个在飞帧槽位。
 //! - 具体图像的用途、格式和 resize 生命周期属于 app 层管线策略；shader 可见性由消费它的 pass-local descriptor 表达。
 //! - 本模块不保存 `Gfx` / device / allocator 引用，避免长期资源 owner 反向持有 runtime 能力。
 
@@ -18,7 +18,6 @@ use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
@@ -47,8 +46,8 @@ pub struct ImageTarget {
 /// runtime 的 FIF timeline 已经保证上一轮提交完成。因此它适合放置单帧 RT 输出、
 /// main view color 等“每个在飞帧各一份”的图像。
 struct PerFrameImageSet {
-    images: [GfxImageHandle; FrameCounter::fif_count()],
-    views: [GfxImageViewHandle; FrameCounter::fif_count()],
+    images: [GfxImageHandle; FrameLabel::COUNT],
+    views: [GfxImageViewHandle; FrameLabel::COUNT],
     format: vk::Format,
     extent: vk::Extent2D,
 }
@@ -60,7 +59,7 @@ impl PerFrameImageSet {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         desc: TargetImageDesc<'_>,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) -> Self {
         // image 先创建为未注册的 Vulkan wrapper，方便在同一批 immediate 命令中做初始 layout 转换；
         // 转换完成后再注册到 manager，后续只通过 handle 暴露给 RenderGraph 和具体 pass。
@@ -70,22 +69,22 @@ impl PerFrameImageSet {
                 desc.extent,
                 desc.format,
                 desc.usage,
-                format!("{}-{}-{}", desc.name_prefix, frame_label, frame_counter.frame_id()),
+                format!("{}-{}-{}", desc.name_prefix, frame_label, frame_id),
             )
         };
-        let images = FrameCounter::frame_labes().map(create_one_image);
+        let images = FrameLabel::ALL.map(create_one_image);
 
         transition_images_to_general(immediate_ctx, &images, &format!("transfer-{}-layout", desc.name_prefix));
 
         // view 生命周期由 `GfxResourceManager` 跟随 image 释放。owner 只保存 view handle；
         // pass-local descriptor 在 command recording 时按值写入，不形成额外的长期资源 owner。
         let image_handles = images.map(|image| gfx_resource_manager.register_image(image));
-        let image_view_handles = FrameCounter::frame_labes().map(|frame_label| {
+        let image_view_handles = FrameLabel::ALL.map(|frame_label| {
             gfx_resource_manager.get_or_create_image_view(
                 device_ctx,
                 image_handles[*frame_label],
                 GfxImageViewDesc::new_2d(desc.format, vk::ImageAspectFlags::COLOR),
-                format!("{}-{}-{}", desc.name_prefix, frame_label, frame_counter.frame_id()),
+                format!("{}-{}-{}", desc.name_prefix, frame_label, frame_id),
             )
         });
 
@@ -146,14 +145,14 @@ impl SingleImageTarget {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         desc: TargetImageDesc<'_>,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) -> Self {
         let image = create_image(
             resource_ctx,
             desc.extent,
             desc.format,
             desc.usage,
-            format!("{}-{}", desc.name_prefix, frame_counter.frame_id()),
+            format!("{}-{}", desc.name_prefix, frame_id),
         );
         transition_images_to_general(
             immediate_ctx,
@@ -166,7 +165,7 @@ impl SingleImageTarget {
             device_ctx,
             image_handle,
             GfxImageViewDesc::new_2d(desc.format, vk::ImageAspectFlags::COLOR),
-            format!("{}-{}", desc.name_prefix, frame_counter.frame_id()),
+            format!("{}-{}", desc.name_prefix, frame_id),
         );
 
         Self {
@@ -221,7 +220,7 @@ impl RtWorkingTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) -> Self {
         // RT working targets 既要作为 storage image 被 compute/ray tracing pass 写入，
         // 也可能被后续 pass 读取或 copy，因此统一保留 STORAGE / SAMPLED / TRANSFER_SRC 能力。
@@ -238,7 +237,7 @@ impl RtWorkingTargets {
                 extent: frame_state.render_extent,
                 usage: storage_usage,
             },
-            frame_counter,
+            frame_id,
         );
 
         Self { single_frame_rt }
@@ -251,12 +250,12 @@ impl RtWorkingTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) {
         // resize 走 destroy + new，而不是在原 handle 上复用；RenderGraph 下一帧只看到新尺寸 target，
         // 各 pass 在录制时直接把新 view 写入自己的 local descriptor。
         self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
     }
 
     pub fn destroy(
@@ -297,7 +296,7 @@ impl OfflineTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) -> Self {
         // 三张离线图像都必须可被 compute/RT 作为 storage image 写入，并可作为 SRV
         // 暴露给 debug viewer / present path。render_target 额外带 COLOR_ATTACHMENT，是为了兼容
@@ -317,7 +316,7 @@ impl OfflineTargets {
                 extent: frame_state.render_extent,
                 usage: storage_usage,
             },
-            frame_counter,
+            frame_id,
         );
         let accum_image = SingleImageTarget::new(
             resource_ctx,
@@ -330,7 +329,7 @@ impl OfflineTargets {
                 extent: frame_state.render_extent,
                 usage: storage_usage,
             },
-            frame_counter,
+            frame_id,
         );
         let render_target = PerFrameImageSet::new(
             resource_ctx,
@@ -343,7 +342,7 @@ impl OfflineTargets {
                 extent: frame_state.output_extent,
                 usage: present_usage,
             },
-            frame_counter,
+            frame_id,
         );
 
         Self {
@@ -360,10 +359,10 @@ impl OfflineTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) {
         self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
     }
 
     pub fn destroy(
@@ -466,7 +465,7 @@ impl RestirDiTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) -> Self {
         let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC;
         let mut make_set = |name_prefix: &'static str, format: vk::Format| {
@@ -481,7 +480,7 @@ impl RestirDiTargets {
                     extent: frame_state.render_extent,
                     usage,
                 },
-                frame_counter,
+                frame_id,
             )
         };
 
@@ -514,10 +513,10 @@ impl RestirDiTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) {
         self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
     }
 
     pub fn destroy(
@@ -734,7 +733,7 @@ impl DlssSrInputTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) -> Self {
         // raygen 和 Debug Viewer 分别通过自己的 pass-local descriptor 写入/采样；Streamline evaluate
         // 直接使用原始 image/view handle 做 resource tag。
@@ -750,7 +749,7 @@ impl DlssSrInputTargets {
                 extent: frame_state.render_extent,
                 usage,
             },
-            frame_counter,
+            frame_id,
         );
         let motion_vectors = PerFrameImageSet::new(
             resource_ctx,
@@ -763,7 +762,7 @@ impl DlssSrInputTargets {
                 extent: frame_state.render_extent,
                 usage,
             },
-            frame_counter,
+            frame_id,
         );
 
         Self { depth, motion_vectors }
@@ -776,10 +775,10 @@ impl DlssSrInputTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) {
         self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
     }
 
     pub fn destroy(
@@ -830,9 +829,9 @@ impl DlssSrExposureTarget {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) -> Self {
-        let name = format!("dlss-sr-exposure-{}", frame_counter.frame_id());
+        let name = format!("dlss-sr-exposure-{}", frame_id);
         let image = create_image(
             resource_ctx,
             Self::EXTENT,
@@ -912,7 +911,7 @@ impl DlssRrInputTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) -> Self {
         let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
         let diffuse_albedo = PerFrameImageSet::new(
@@ -926,7 +925,7 @@ impl DlssRrInputTargets {
                 extent: frame_state.render_extent,
                 usage,
             },
-            frame_counter,
+            frame_id,
         );
         let specular_albedo = PerFrameImageSet::new(
             resource_ctx,
@@ -939,7 +938,7 @@ impl DlssRrInputTargets {
                 extent: frame_state.render_extent,
                 usage,
             },
-            frame_counter,
+            frame_id,
         );
         let specular_motion_vectors = PerFrameImageSet::new(
             resource_ctx,
@@ -952,7 +951,7 @@ impl DlssRrInputTargets {
                 extent: frame_state.render_extent,
                 usage,
             },
-            frame_counter,
+            frame_id,
         );
 
         Self {
@@ -969,10 +968,10 @@ impl DlssRrInputTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) {
         self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
     }
 
     pub fn destroy(
@@ -1027,7 +1026,7 @@ impl DlssOutputTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) -> Self {
         // DLSS output 后续作为 storage image 被 SDR pass 读取，也会在 debug viewer 中被采样。
         // TRANSFER_DST 用于 validation/debug 清理路径，TRANSFER_SRC 保留给截图或后续 copy 诊断。
@@ -1045,7 +1044,7 @@ impl DlssOutputTargets {
                     | vk::ImageUsageFlags::TRANSFER_DST
                     | vk::ImageUsageFlags::SAMPLED,
             },
-            frame_counter,
+            frame_id,
         );
 
         Self { color }
@@ -1058,10 +1057,10 @@ impl DlssOutputTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) {
         self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
     }
 
     pub fn destroy(
@@ -1103,7 +1102,7 @@ impl MainViewTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) -> Self {
         let color = PerFrameImageSet::new(
             resource_ctx,
@@ -1119,9 +1118,9 @@ impl MainViewTargets {
                     | vk::ImageUsageFlags::SAMPLED
                     | vk::ImageUsageFlags::COLOR_ATTACHMENT,
             },
-            frame_counter,
+            frame_id,
         );
-        let depth = create_depth_target(resource_ctx, device_ctx, gfx_resource_manager, frame_state, frame_counter);
+        let depth = create_depth_target(resource_ctx, device_ctx, gfx_resource_manager, frame_state, frame_id);
 
         Self { color, depth }
     }
@@ -1133,10 +1132,10 @@ impl MainViewTargets {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         frame_state: &FrameRenderState,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) {
         self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_counter);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
     }
 
     pub fn destroy(
@@ -1196,21 +1195,21 @@ fn create_depth_target(
     device_ctx: GfxDeviceCtx<'_>,
     gfx_resource_manager: &mut GfxResourceManager,
     frame_state: &FrameRenderState,
-    frame_counter: &FrameCounter,
+    frame_id: u64,
 ) -> ImageTarget {
     let image = create_image(
         resource_ctx,
         frame_state.output_extent,
         frame_state.depth_format,
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-        format!("main-view-depth-{}", frame_counter.frame_id()),
+        format!("main-view-depth-{}", frame_id),
     );
     let image_handle = gfx_resource_manager.register_image(image);
     let view_handle = gfx_resource_manager.get_or_create_image_view(
         device_ctx,
         image_handle,
         GfxImageViewDesc::new_2d(frame_state.depth_format, vk::ImageAspectFlags::DEPTH),
-        format!("main-view-depth-{}", frame_counter.frame_id()),
+        format!("main-view-depth-{}", frame_id),
     );
 
     ImageTarget {

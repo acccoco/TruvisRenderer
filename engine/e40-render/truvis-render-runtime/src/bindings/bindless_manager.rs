@@ -8,7 +8,7 @@ use truvis_shader_binding::gpu;
 
 use crate::bindings::descriptor_bindings::{BindlessDescriptorBinding, BindlessDescriptorTarget};
 use crate::resources::gfx_resource_manager::GfxResourceManager;
-use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
+use truvis_render_foundation::frame_counter::{FrameLabel, FrameToken};
 use truvis_render_foundation::handles::GfxImageViewHandle;
 
 #[derive(Copy, Clone)]
@@ -116,7 +116,7 @@ impl BindlessManager {
         let _span = tracy_client::span!("BindlessManager::prepare_render_data");
 
         let bindless_set = bindless_target.set;
-        let fif = FrameCounter::fif_count() as u64;
+        let fif = FrameLabel::COUNT as u64;
         let mut writes = Vec::new();
 
         // 处理 SRV dirty 条目

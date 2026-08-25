@@ -5,7 +5,6 @@ use truvis_gfx::{
     gfx::{GfxDeviceCtx, GfxDeviceInfoCtx},
 };
 
-use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::frame_counter::FrameLabel;
 
 /// 命令缓冲分配器
@@ -19,11 +18,11 @@ use truvis_render_foundation::frame_counter::FrameLabel;
 /// - 命令缓冲自动添加帧标签：`[F42A]my-pass`
 pub struct CmdAllocator {
     /// 为每个 frame 分配一个 command pool
-    graphics_command_pools: [GfxCommandPool; FrameCounter::fif_count()],
+    graphics_command_pools: [GfxCommandPool; FrameLabel::COUNT],
 
     /// 每个 command pool 已经分配出去的 command buffer，用于集中 free
     /// 或其他操作
-    allocated_command_buffers: [Vec<GfxCommandBuffer>; FrameCounter::fif_count()],
+    allocated_command_buffers: [Vec<GfxCommandBuffer>; FrameLabel::COUNT],
 
     destroyed: bool,
 }
@@ -41,7 +40,7 @@ impl CmdAllocator {
 
         let graphics_command_pools = {
             let _span = tracy_client::span!("CmdAllocator::new/graphics_command_pools");
-            FrameCounter::frame_labes().map(|i| {
+            FrameLabel::ALL.map(|i| {
                 GfxCommandPool::new(
                     device_ctx,
                     device_info_ctx.gfx_queue_family(),
@@ -52,7 +51,7 @@ impl CmdAllocator {
         };
         let allocated_command_buffers = {
             let _span = tracy_client::span!("CmdAllocator::new/allocated_command_buffers");
-            FrameCounter::frame_labes().map(|_| Vec::new())
+            FrameLabel::ALL.map(|_| Vec::new())
         };
 
         Self {
@@ -78,7 +77,7 @@ impl CmdAllocator {
             return;
         }
 
-        for frame_label in 0..FrameCounter::fif_count() {
+        for frame_label in 0..FrameLabel::COUNT {
             let commands = std::mem::take(&mut self.allocated_command_buffers[frame_label]);
             if !commands.is_empty() {
                 self.graphics_command_pools[frame_label].free_command_buffers(ctx, commands);

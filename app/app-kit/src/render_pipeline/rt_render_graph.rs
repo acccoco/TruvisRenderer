@@ -13,7 +13,7 @@ use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
+use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 use truvis_render_runtime::state::dlss_options::DlssOptions;
 
@@ -374,8 +374,8 @@ struct RtPipelineInner {
     dlss_outputs: DlssOutputTargets,
     /// 主视图离屏目标。compute graph 写入 color，present graph 再 resolve 到 swapchain。
     main_view_targets: MainViewTargets,
-    compute_cmds: [GfxCommandBuffer; FrameCounter::fif_count()],
-    present_cmds: [GfxCommandBuffer; FrameCounter::fif_count()],
+    compute_cmds: [GfxCommandBuffer; FrameLabel::COUNT],
+    present_cmds: [GfxCommandBuffer; FrameLabel::COUNT],
 }
 
 /// RT present graph 暴露给 App 后续 overlay 的当前 present image。
@@ -417,7 +417,7 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
             &target_frame_state,
-            ctx.frame_timing.frame_counter(),
+            ctx.frame_timing.frame_id(),
         );
         let restir_di_targets = RestirDiTargets::new(
             ctx.resource_ctx,
@@ -425,7 +425,7 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
             &target_frame_state,
-            ctx.frame_timing.frame_counter(),
+            ctx.frame_timing.frame_id(),
         );
         let main_view_targets = MainViewTargets::new(
             ctx.resource_ctx,
@@ -433,7 +433,7 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
             &target_frame_state,
-            ctx.frame_timing.frame_counter(),
+            ctx.frame_timing.frame_id(),
         );
         let dlss_sr_inputs = DlssSrInputTargets::new(
             ctx.resource_ctx,
@@ -441,14 +441,14 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
             &target_frame_state,
-            ctx.frame_timing.frame_counter(),
+            ctx.frame_timing.frame_id(),
         );
         let dlss_sr_exposure = DlssSrExposureTarget::new(
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
-            ctx.frame_timing.frame_counter(),
+            ctx.frame_timing.frame_id(),
         );
         let dlss_rr_inputs = DlssRrInputTargets::new(
             ctx.resource_ctx,
@@ -456,7 +456,7 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
             &target_frame_state,
-            ctx.frame_timing.frame_counter(),
+            ctx.frame_timing.frame_id(),
         );
         let dlss_outputs = DlssOutputTargets::new(
             ctx.resource_ctx,
@@ -464,7 +464,7 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
             &target_frame_state,
-            ctx.frame_timing.frame_counter(),
+            ctx.frame_timing.frame_id(),
         );
 
         let gbuffer = GBuffer::new(
@@ -473,13 +473,13 @@ impl RtPipelineInner {
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
             target_frame_state.render_extent,
-            ctx.frame_timing.frame_counter(),
+            ctx.frame_timing.frame_id(),
         );
 
-        let compute_cmds = FrameCounter::frame_labes().map(|frame_label| {
+        let compute_cmds = FrameLabel::ALL.map(|frame_label| {
             ctx.cmd_allocator.alloc_command_buffer(ctx.device_ctx, frame_label, "rt-compute-subgraph")
         });
-        let present_cmds = FrameCounter::frame_labes().map(|frame_label| {
+        let present_cmds = FrameLabel::ALL.map(|frame_label| {
             ctx.cmd_allocator.alloc_command_buffer(ctx.device_ctx, frame_label, "rt-present-subgraph")
         });
 
@@ -576,7 +576,7 @@ impl Plugin for RtPipeline {
                 ctx.immediate_ctx,
                 &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
-                ctx.frame_timing.frame_counter(),
+                ctx.frame_timing.frame_id(),
             );
             inner.restir_di_targets.rebuild(
                 ctx.resource_ctx,
@@ -584,7 +584,7 @@ impl Plugin for RtPipeline {
                 ctx.immediate_ctx,
                 &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
-                ctx.frame_timing.frame_counter(),
+                ctx.frame_timing.frame_id(),
             );
             inner.dlss_sr_inputs.rebuild(
                 ctx.resource_ctx,
@@ -592,7 +592,7 @@ impl Plugin for RtPipeline {
                 ctx.immediate_ctx,
                 &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
-                ctx.frame_timing.frame_counter(),
+                ctx.frame_timing.frame_id(),
             );
             inner.dlss_rr_inputs.rebuild(
                 ctx.resource_ctx,
@@ -600,7 +600,7 @@ impl Plugin for RtPipeline {
                 ctx.immediate_ctx,
                 &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
-                ctx.frame_timing.frame_counter(),
+                ctx.frame_timing.frame_id(),
             );
             inner.dlss_outputs.rebuild(
                 ctx.resource_ctx,
@@ -608,7 +608,7 @@ impl Plugin for RtPipeline {
                 ctx.immediate_ctx,
                 &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
-                ctx.frame_timing.frame_counter(),
+                ctx.frame_timing.frame_id(),
             );
             inner.main_view_targets.rebuild(
                 ctx.resource_ctx,
@@ -616,7 +616,7 @@ impl Plugin for RtPipeline {
                 ctx.immediate_ctx,
                 &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
-                ctx.frame_timing.frame_counter(),
+                ctx.frame_timing.frame_id(),
             );
             inner.gbuffer.rebuild(
                 ctx.resource_ctx,
@@ -624,7 +624,7 @@ impl Plugin for RtPipeline {
                 ctx.immediate_ctx,
                 &mut *ctx.gfx_resource_manager,
                 target_frame_state.render_extent,
-                ctx.frame_timing.frame_counter(),
+                ctx.frame_timing.frame_id(),
             );
         }
     }
@@ -679,7 +679,7 @@ impl RtPipeline {
         let sharc_scene_scale = self.settings.sharc_scene_scale;
         let frame_id = record_ctx.frame_timing.frame_id();
         let previous_frame_label =
-            FrameLabel::from_usize((frame_id as usize + FrameCounter::fif_count() - 1) % FrameCounter::fif_count());
+            FrameLabel::from_usize((frame_id as usize + FrameLabel::COUNT - 1) % FrameLabel::COUNT);
         // CPU 侧只负责切断明显不连续的 history：首帧、mode 变化和 DLSS reset。
         // sky/emissive/analytic light 的版本拒绝在 shader reservoir metadata 中完成，
         // 这样 resize/reset 语义留在 pipeline owner，scene 语义变化留在 GPU scene ABI。

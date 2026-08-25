@@ -10,7 +10,6 @@ use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::swapchain::surface::GfxSurface;
 use truvis_gfx::swapchain::swapchain::{GfxSwapchain, GfxSwapchainAcquireResult, GfxSwapchainImageInfo};
-use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
@@ -93,7 +92,7 @@ pub(crate) struct SwapchainPresenter {
     swapchain_image_views: Vec<GfxImageViewHandle>,
 
     /// 数量和 FIF 数相同；acquire 当前 frame label 的 image 时 signal。
-    present_complete_semaphores: [GfxSemaphore; FrameCounter::fif_count()],
+    present_complete_semaphores: [GfxSemaphore; FrameLabel::COUNT],
 
     /// 数量和 swapchain image 数相同；render graph 提交完成后 signal，present 当前 image 时 wait。
     render_complete_semaphores: Vec<GfxSemaphore>,
@@ -142,7 +141,7 @@ impl SwapchainPresenter {
 
         let swapchain_image_infos = swapchain.image_infos();
 
-        let present_complete_semaphores = FrameCounter::frame_labes()
+        let present_complete_semaphores = FrameLabel::ALL
             .map(|frame_label| GfxSemaphore::new(device_ctx, &format!("window-present-complete-{}", frame_label)));
         let render_complete_semaphores = (0..swapchain_image_infos.image_cnt)
             .map(|i| GfxSemaphore::new(device_ctx, &format!("window-render-complete-{}", i)))

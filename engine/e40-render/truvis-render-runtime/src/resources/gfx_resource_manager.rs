@@ -10,7 +10,7 @@ use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::handles::{GfxBufferHandle, GfxImageHandle, GfxImageViewHandle};
 use truvis_render_foundation::resource_access::GfxResourceAccess;
 
@@ -142,7 +142,7 @@ impl GfxResourceManager {
     pub fn cleanup(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>, current_frame_id: u64) {
         let _span = tracy_client::span!("ResourceManager::cleanup");
 
-        const FIF: u64 = FrameCounter::fif_count() as u64;
+        const FIF: u64 = FrameLabel::COUNT as u64;
 
         // 清理 buffers
         let mut buffers_to_destroy = Vec::new();

@@ -35,7 +35,10 @@ impl Display for FrameLabel {
 }
 
 impl FrameLabel {
-    const INDEX: [usize; 3] = [0, 1, 2];
+    pub const COUNT: usize = 3;
+    pub const ALL: [Self; Self::COUNT] = [Self::A, Self::B, Self::C];
+
+    const INDEX: [usize; Self::COUNT] = [0, 1, 2];
 
     #[inline]
     pub fn from_usize(idx: usize) -> Self {
@@ -45,6 +48,11 @@ impl FrameLabel {
             2 => Self::C,
             _ => panic!("Invalid frame index: {idx}"),
         }
+    }
+
+    #[inline]
+    pub fn from_frame_id(frame_id: u64) -> Self {
+        Self::from_usize(frame_id as usize % Self::COUNT)
     }
 }
 
@@ -96,7 +104,6 @@ impl FrameCounter {
 
 // 访问器
 impl FrameCounter {
-    const FIF_COUNT: usize = 3;
     #[inline]
     pub fn frame_id(&self) -> u64 {
         self.frame_id
@@ -110,16 +117,8 @@ impl FrameCounter {
         1000.0 * 1000.0 / self.frame_limit()
     }
     #[inline]
-    pub const fn fif_count() -> usize {
-        Self::FIF_COUNT
-    }
-    #[inline]
-    pub const fn frame_labes() -> [FrameLabel; Self::FIF_COUNT] {
-        [FrameLabel::A, FrameLabel::B, FrameLabel::C]
-    }
-    #[inline]
     pub fn frame_label(&self) -> FrameLabel {
-        FrameLabel::from_usize(self.frame_id as usize % Self::fif_count())
+        FrameLabel::from_frame_id(self.frame_id)
     }
     #[inline]
     pub fn frame_name(&self) -> String {

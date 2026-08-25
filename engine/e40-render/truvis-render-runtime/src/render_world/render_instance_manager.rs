@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use slotmap::SecondaryMap;
 
-use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
+use truvis_render_foundation::frame_counter::{FrameLabel, FrameToken};
 use truvis_world::SceneReadView;
 use truvis_world::components::instance::Instance;
 use truvis_world::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle};
@@ -404,7 +404,7 @@ impl RenderInstanceManager {
 
     fn reclaim_retired_slots(&mut self) {
         let current_frame_id = self.frame_token.frame_id();
-        let fif_count = FrameCounter::fif_count() as u64;
+        let fif_count = FrameLabel::COUNT as u64;
         let mut retained = Vec::new();
 
         for retired in self.retired_slots.drain(..) {

@@ -21,7 +21,6 @@ use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
@@ -34,14 +33,14 @@ use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
 /// 格式和通道语义是管线策略决策，由 app 层决定，不属于 engine 基础设施。
 pub struct GBuffer {
     /// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness (R16G16B16A16_SFLOAT)
-    a_images: [GfxImageHandle; FrameCounter::fif_count()],
-    a_views: [GfxImageViewHandle; FrameCounter::fif_count()],
+    a_images: [GfxImageHandle; FrameLabel::COUNT],
+    a_views: [GfxImageViewHandle; FrameLabel::COUNT],
     /// GBufferB：世界位置 world_position.xyz + 线性深度 linear_depth (R16G16B16A16_SFLOAT)
-    b_images: [GfxImageHandle; FrameCounter::fif_count()],
-    b_views: [GfxImageViewHandle; FrameCounter::fif_count()],
+    b_images: [GfxImageHandle; FrameLabel::COUNT],
+    b_views: [GfxImageViewHandle; FrameLabel::COUNT],
     /// GBufferC：反照率 albedo.rgb + 金属度 metallic (R8G8B8A8_UNORM)
-    c_images: [GfxImageHandle; FrameCounter::fif_count()],
-    c_views: [GfxImageViewHandle; FrameCounter::fif_count()],
+    c_images: [GfxImageHandle; FrameLabel::COUNT],
+    c_views: [GfxImageViewHandle; FrameLabel::COUNT],
     extent: vk::Extent2D,
 }
 
@@ -52,7 +51,7 @@ impl GBuffer {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         extent: vk::Extent2D,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) -> Self {
         let (a_images, a_views) = Self::create_channel_images(
             resource_ctx,
@@ -61,7 +60,7 @@ impl GBuffer {
             gfx_resource_manager,
             Self::A_FORMAT,
             extent,
-            frame_counter,
+            frame_id,
             "gbuffer-a",
         );
         let (b_images, b_views) = Self::create_channel_images(
@@ -71,7 +70,7 @@ impl GBuffer {
             gfx_resource_manager,
             Self::B_FORMAT,
             extent,
-            frame_counter,
+            frame_id,
             "gbuffer-b",
         );
         let (c_images, c_views) = Self::create_channel_images(
@@ -81,7 +80,7 @@ impl GBuffer {
             gfx_resource_manager,
             Self::C_FORMAT,
             extent,
-            frame_counter,
+            frame_id,
             "gbuffer-c",
         );
 
@@ -104,10 +103,10 @@ impl GBuffer {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         extent: vk::Extent2D,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) {
         self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, extent, frame_counter);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, extent, frame_id);
     }
 
     /// 释放所有 GBuffer GPU 资源。
@@ -174,11 +173,11 @@ impl GBuffer {
         gfx_resource_manager: &mut GfxResourceManager,
         format: vk::Format,
         extent: vk::Extent2D,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
         name_prefix: &str,
-    ) -> ([GfxImageHandle; FrameCounter::fif_count()], [GfxImageViewHandle; FrameCounter::fif_count()]) {
+    ) -> ([GfxImageHandle; FrameLabel::COUNT], [GfxImageViewHandle; FrameLabel::COUNT]) {
         let create_one_image = |frame_label: FrameLabel| {
-            let name = format!("{}-{}-{}", name_prefix, frame_label, frame_counter.frame_id());
+            let name = format!("{}-{}-{}", name_prefix, frame_label, frame_id);
             let image_create_info = GfxImageCreateInfo::new_image_2d_info(
                 extent,
                 format,
@@ -194,7 +193,7 @@ impl GBuffer {
                 &name,
             )
         };
-        let images = FrameCounter::frame_labes().map(create_one_image);
+        let images = FrameLabel::ALL.map(create_one_image);
 
         immediate_ctx.one_time_exec(
             |cmd| {
@@ -215,12 +214,12 @@ impl GBuffer {
         );
 
         let image_handles = images.map(|image| gfx_resource_manager.register_image(image));
-        let image_view_handles = FrameCounter::frame_labes().map(|frame_label| {
+        let image_view_handles = FrameLabel::ALL.map(|frame_label| {
             gfx_resource_manager.get_or_create_image_view(
                 device_ctx,
                 image_handles[*frame_label],
                 GfxImageViewDesc::new_2d(format, vk::ImageAspectFlags::COLOR),
-                format!("{}-{}-{}", name_prefix, frame_label, frame_counter.frame_id()),
+                format!("{}-{}-{}", name_prefix, frame_label, frame_id),
             )
         });
 

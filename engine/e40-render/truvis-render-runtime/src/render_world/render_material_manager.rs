@@ -8,8 +8,7 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_foundation::frame_counter::FrameLabel;
-use truvis_render_foundation::frame_counter::{FrameCounter, FrameToken};
+use truvis_render_foundation::frame_counter::{FrameLabel, FrameToken};
 use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
@@ -24,7 +23,7 @@ const MAX_MATERIAL_COUNT: usize = 1024;
 /// 单个 material slot 在 dirty 列表中的 FIF 写入与回收状态。
 struct SlotDirtyInfo {
     /// 各 FIF buffer 是否需要更新；true 表示需要写入该帧对应的 GPU buffer。
-    fif_dirty: [bool; FrameCounter::fif_count()],
+    fif_dirty: [bool; FrameLabel::COUNT],
     /// 本次 dirty 或 unregister 发生时的 frame id，用于延迟回收计时。
     dirty_frame_id: u64,
 }
@@ -105,7 +104,7 @@ pub struct RenderMaterialManager {
     dirty_slots: HashMap<usize, SlotDirtyInfo>,
 
     /// FIF 套 GPU buffer，避免 CPU 覆盖 GPU 仍在读取的 material buffer。
-    buffers: [MaterialBuffers; FrameCounter::fif_count()],
+    buffers: [MaterialBuffers; FrameLabel::COUNT],
 
     frame_token: FrameToken,
     /// 影响 CPU 材质参数语义的单调 revision。
@@ -126,7 +125,7 @@ impl RenderMaterialManager {
             slot_to_handle: (0..MAX_MATERIAL_COUNT).map(|_| None).collect(),
             free_slots,
             dirty_slots: HashMap::new(),
-            buffers: FrameCounter::frame_labes().map(|frame_label| MaterialBuffers::new(ctx, frame_label)),
+            buffers: FrameLabel::ALL.map(|frame_label| MaterialBuffers::new(ctx, frame_label)),
             frame_token,
             material_revision: 0,
         }
@@ -201,7 +200,7 @@ impl RenderMaterialManager {
         self.dirty_slots.insert(
             slot,
             SlotDirtyInfo {
-                fif_dirty: [true; FrameCounter::fif_count()],
+                fif_dirty: [true; FrameLabel::COUNT],
                 dirty_frame_id: self.frame_token.frame_id(),
             },
         );
@@ -222,11 +221,11 @@ impl RenderMaterialManager {
         self.dirty_slots
             .entry(slot)
             .and_modify(|info| {
-                info.fif_dirty = [true; FrameCounter::fif_count()];
+                info.fif_dirty = [true; FrameLabel::COUNT];
                 info.dirty_frame_id = frame_id;
             })
             .or_insert(SlotDirtyInfo {
-                fif_dirty: [true; FrameCounter::fif_count()],
+                fif_dirty: [true; FrameLabel::COUNT],
                 dirty_frame_id: frame_id,
             });
 
@@ -257,11 +256,11 @@ impl RenderMaterialManager {
         self.dirty_slots
             .entry(slot)
             .and_modify(|info| {
-                info.fif_dirty = [false; FrameCounter::fif_count()];
+                info.fif_dirty = [false; FrameLabel::COUNT];
                 info.dirty_frame_id = frame_id;
             })
             .or_insert(SlotDirtyInfo {
-                fif_dirty: [false; FrameCounter::fif_count()],
+                fif_dirty: [false; FrameLabel::COUNT],
                 dirty_frame_id: frame_id,
             });
 
@@ -293,7 +292,7 @@ impl RenderMaterialManager {
         texture_resolver: &dyn TextureResolver,
     ) {
         let fif_idx = *frame_label;
-        let fif_count = FrameCounter::fif_count() as u64;
+        let fif_count = FrameLabel::COUNT as u64;
         let current_frame_id = self.frame_token.frame_id();
 
         let dirty_slot_indices: Vec<usize> = self.dirty_slots.keys().copied().collect();

@@ -11,7 +11,6 @@ pub use crate::bindings::descriptor_bindings::{
     BindlessDescriptorBinding, BindlessDescriptorTarget, PerFrameDescriptorBinding, StaticDescriptorBinding,
     StaticSamplerDescriptorTarget,
 };
-use truvis_render_foundation::frame_counter::FrameCounter;
 use truvis_render_foundation::frame_counter::FrameLabel;
 
 pub struct GlobalDescriptorSets {
@@ -23,7 +22,7 @@ pub struct GlobalDescriptorSets {
     set_1_bindless: GfxDescriptorSet<BindlessDescriptorBinding>,
 
     layout_2_perframe: GfxDescriptorSetLayout<PerFrameDescriptorBinding>,
-    set_2_perframe: [GfxDescriptorSet<PerFrameDescriptorBinding>; FrameCounter::fif_count()],
+    set_2_perframe: [GfxDescriptorSet<PerFrameDescriptorBinding>; FrameLabel::COUNT],
 
     _descriptor_pool: GfxDescriptorPool,
 }
@@ -76,7 +75,7 @@ impl GlobalDescriptorSets {
                 vk::DescriptorSetLayoutCreateFlags::empty(),
                 "perframe-layout",
             );
-            let set_2_perframe = FrameCounter::frame_labes().map(|frame_label| {
+            let set_2_perframe = FrameLabel::ALL.map(|frame_label| {
                 GfxDescriptorSet::<PerFrameDescriptorBinding>::new(
                     ctx,
                     &descriptor_pool,

@@ -10,7 +10,7 @@ use truvis_gfx::commands::submit_info::GfxSubmitInfo;
 use truvis_gfx::gfx::{Gfx, GfxDeviceInfoCtx};
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_path::TruvisPath;
-use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
 use truvis_render_foundation::render_view::RenderView;
 use truvis_shader_binding::gpu;
 use truvis_streamline_binding::dlss;
@@ -190,7 +190,7 @@ impl RenderRuntime {
 
         let cmds = {
             let _span = tracy_client::span!("RenderRuntime::new/render_world_update_cmds");
-            FrameCounter::frame_labes()
+            FrameLabel::ALL
                 .into_iter()
                 .map(|frame_label| {
                     cmd_allocator.alloc_command_buffer(gfx.device_ctx(), frame_label, "render-world-update")
@@ -381,7 +381,7 @@ impl RenderRuntime {
         {
             let _span = tracy_client::span!("wait fif timeline");
             let current_frame_id = self.frame_timing.frame_id();
-            let fif_count = FrameCounter::fif_count();
+            let fif_count = FrameLabel::COUNT;
             let wait_frame_id = current_frame_id.saturating_sub(fif_count as u64);
             const WAIT_SEMAPHORE_TIMEOUT_NS: u64 = 30 * 1000 * 1000 * 1000;
             // 等待当前 frame label 上一次被使用的提交完成。这个等待是后续 reset command pool、
@@ -799,7 +799,8 @@ impl RenderRuntime {
             self.gfx.immediate_ctx(),
             &cmd,
             transfer_barrier_mask,
-            self.frame_timing.frame_counter(),
+            self.frame_timing.frame_id(),
+            self.frame_timing.frame_label(),
             scene_view,
             asset_sync_result.dirty_dispatch_plan,
         );

@@ -10,7 +10,7 @@ use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
+use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::render_scene_view::RenderSceneAccumSignature;
 use truvis_render_foundation::render_view::RenderViewAccumSignature;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
@@ -188,8 +188,8 @@ struct OfflinePipelineInner {
     sdr_pass: SdrPass,
     resolve_pass: ResolvePass,
     targets: OfflineTargets,
-    compute_cmds: [GfxCommandBuffer; FrameCounter::fif_count()],
-    present_cmds: [GfxCommandBuffer; FrameCounter::fif_count()],
+    compute_cmds: [GfxCommandBuffer; FrameLabel::COUNT],
+    present_cmds: [GfxCommandBuffer; FrameLabel::COUNT],
 }
 
 pub struct OfflinePresentGraphTargets {
@@ -221,13 +221,13 @@ impl OfflinePipelineInner {
             ctx.immediate_ctx,
             &mut *ctx.gfx_resource_manager,
             &target_frame_state,
-            ctx.frame_timing.frame_counter(),
+            ctx.frame_timing.frame_id(),
         );
 
-        let compute_cmds = FrameCounter::frame_labes().map(|frame_label| {
+        let compute_cmds = FrameLabel::ALL.map(|frame_label| {
             ctx.cmd_allocator.alloc_command_buffer(ctx.device_ctx, frame_label, "offline-compute-subgraph")
         });
-        let present_cmds = FrameCounter::frame_labes().map(|frame_label| {
+        let present_cmds = FrameLabel::ALL.map(|frame_label| {
             ctx.cmd_allocator.alloc_command_buffer(ctx.device_ctx, frame_label, "offline-present-subgraph")
         });
 
@@ -268,7 +268,7 @@ impl Plugin for OfflinePipeline {
                 ctx.immediate_ctx,
                 &mut *ctx.gfx_resource_manager,
                 &target_frame_state,
-                ctx.frame_timing.frame_counter(),
+                ctx.frame_timing.frame_id(),
             );
             self.accum_state.reset();
         }

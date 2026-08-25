@@ -7,19 +7,19 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_shader_binding::gpu;
 
-use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
+use truvis_render_foundation::frame_counter::FrameLabel;
 
 /// 每个 FIF slot 一份的 `PerFrameData` UBO owner。
 ///
 /// runtime 在 prepare 阶段写入当前 frame label，pass 只读取当前 buffer 的
 /// device address 或通过全局 per-frame descriptor set 访问它。
 pub struct PerFrameGpuData {
-    buffers: [GfxStructuredBuffer<gpu::engine::frame::PerFrameData>; FrameCounter::fif_count()],
+    buffers: [GfxStructuredBuffer<gpu::engine::frame::PerFrameData>; FrameLabel::COUNT],
 }
 
 impl PerFrameGpuData {
     pub fn new(ctx: GfxResourceCtx<'_>) -> Self {
-        let buffers = FrameCounter::frame_labes().map(|frame_label| {
+        let buffers = FrameLabel::ALL.map(|frame_label| {
             GfxStructuredBuffer::<gpu::engine::frame::PerFrameData>::new_ubo(
                 ctx,
                 1,

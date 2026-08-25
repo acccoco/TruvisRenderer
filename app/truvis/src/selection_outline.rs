@@ -10,7 +10,7 @@ use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
+use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
@@ -39,8 +39,8 @@ struct SelectionOutlineRendererInner {
 /// mask 是 app-owned 窗口尺寸资源，只用于最终主视图合成；它不会注册成 GUI debug image。
 /// 每帧 mask pass 会 clear 当前 frame label 的 image，因此跨帧内容不承担语义。
 struct SelectionOutlineMasks {
-    images: [GfxImageHandle; FrameCounter::fif_count()],
-    views: [GfxImageViewHandle; FrameCounter::fif_count()],
+    images: [GfxImageHandle; FrameLabel::COUNT],
+    views: [GfxImageViewHandle; FrameLabel::COUNT],
     extent: vk::Extent2D,
 }
 
@@ -105,7 +105,7 @@ impl Plugin for SelectionOutlineRenderer {
             ctx.shader_binding_system.global_descriptor_sets(),
             image_info.image_extent,
             image_info.image_format,
-            ctx.frame_timing.frame_counter(),
+            ctx.frame_timing.frame_id(),
         );
         self.inner = Some(inner);
     }
@@ -120,7 +120,7 @@ impl Plugin for SelectionOutlineRenderer {
                 ctx.shader_binding_system.global_descriptor_sets(),
                 image_info.image_extent,
                 image_info.image_format,
-                ctx.frame_timing.frame_counter(),
+                ctx.frame_timing.frame_id(),
             );
         } else {
             self.inner = Some(SelectionOutlineRendererInner::new(
@@ -130,7 +130,7 @@ impl Plugin for SelectionOutlineRenderer {
                 ctx.shader_binding_system.global_descriptor_sets(),
                 image_info.image_extent,
                 image_info.image_format,
-                ctx.frame_timing.frame_counter(),
+                ctx.frame_timing.frame_id(),
             ));
         }
     }
@@ -150,10 +150,10 @@ impl SelectionOutlineRendererInner {
         global_descriptor_sets: &GlobalDescriptorSets,
         extent: vk::Extent2D,
         present_format: vk::Format,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) -> Self {
         let pass = SelectionOutlinePass::new(device_ctx, present_format, global_descriptor_sets);
-        let masks = SelectionOutlineMasks::new(resource_ctx, device_ctx, gfx_resource_manager, extent, frame_counter);
+        let masks = SelectionOutlineMasks::new(resource_ctx, device_ctx, gfx_resource_manager, extent, frame_id);
         Self {
             pass,
             present_format,
@@ -169,7 +169,7 @@ impl SelectionOutlineRendererInner {
         global_descriptor_sets: &GlobalDescriptorSets,
         extent: vk::Extent2D,
         present_format: vk::Format,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) {
         if self.present_format != present_format {
             // composite pipeline 的 color attachment format 必须和当前 swapchain/present format 对齐。
@@ -180,7 +180,7 @@ impl SelectionOutlineRendererInner {
         }
 
         self.masks.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        self.masks = SelectionOutlineMasks::new(resource_ctx, device_ctx, gfx_resource_manager, extent, frame_counter);
+        self.masks = SelectionOutlineMasks::new(resource_ctx, device_ctx, gfx_resource_manager, extent, frame_id);
     }
 
     fn destroy(
@@ -206,22 +206,22 @@ impl SelectionOutlineMasks {
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         extent: vk::Extent2D,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
     ) -> Self {
-        let images = FrameCounter::frame_labes().map(|frame_label| {
+        let images = FrameLabel::ALL.map(|frame_label| {
             let image = Self::create_mask_image(
                 resource_ctx,
                 extent,
-                format!("selection-outline-mask-{}-{}", frame_label, frame_counter.frame_id()),
+                format!("selection-outline-mask-{}-{}", frame_label, frame_id),
             );
             gfx_resource_manager.register_image(image)
         });
-        let views = FrameCounter::frame_labes().map(|frame_label| {
+        let views = FrameLabel::ALL.map(|frame_label| {
             gfx_resource_manager.get_or_create_image_view(
                 device_ctx,
                 images[*frame_label],
                 GfxImageViewDesc::new_2d(SelectionOutlinePass::MASK_FORMAT, vk::ImageAspectFlags::COLOR),
-                format!("selection-outline-mask-{}-{}", frame_label, frame_counter.frame_id()),
+                format!("selection-outline-mask-{}-{}", frame_label, frame_id),
             )
         });
 

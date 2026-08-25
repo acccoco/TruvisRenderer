@@ -6,7 +6,7 @@ use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
+use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
 
@@ -109,8 +109,8 @@ pub(crate) struct RenderAnalyticLightUpdateResult {
 /// 读取只读快照并上传对应 FIF buffer。dirty 会标记全部 FIF，保证每个 frame label
 /// 在重新被使用前都能写入最新 light snapshot。
 pub(crate) struct RenderAnalyticLightManager {
-    frames: [AnalyticLightFrameBuffers; FrameCounter::fif_count()],
-    fif_dirty: [bool; FrameCounter::fif_count()],
+    frames: [AnalyticLightFrameBuffers; FrameLabel::COUNT],
+    fif_dirty: [bool; FrameLabel::COUNT],
     point_light_count: u32,
     spot_light_count: u32,
     area_light_count: u32,
@@ -120,9 +120,8 @@ pub(crate) struct RenderAnalyticLightManager {
 impl RenderAnalyticLightManager {
     pub(crate) fn new(resource_ctx: GfxResourceCtx<'_>) -> Self {
         Self {
-            frames: FrameCounter::frame_labes()
-                .map(|frame_label| AnalyticLightFrameBuffers::new(resource_ctx, frame_label)),
-            fif_dirty: [false; FrameCounter::fif_count()],
+            frames: FrameLabel::ALL.map(|frame_label| AnalyticLightFrameBuffers::new(resource_ctx, frame_label)),
+            fif_dirty: [false; FrameLabel::COUNT],
             point_light_count: 0,
             spot_light_count: 0,
             area_light_count: 0,
@@ -131,7 +130,7 @@ impl RenderAnalyticLightManager {
     }
 
     pub(crate) fn mark_dirty(&mut self) {
-        self.fif_dirty = [true; FrameCounter::fif_count()];
+        self.fif_dirty = [true; FrameLabel::COUNT];
     }
 
     pub(crate) fn update_and_upload(

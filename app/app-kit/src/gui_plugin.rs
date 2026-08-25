@@ -12,7 +12,7 @@ use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_path::TruvisPath;
-use truvis_render_foundation::frame_counter::FrameCounter;
+use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_graph::render_graph::{
     RenderGraphBuilder, RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext,
@@ -31,7 +31,7 @@ pub struct GuiPlugin {
     draw_data: Option<*const DrawData>,
 
     gui_pass: Option<GuiPass>,
-    gui_meshes: Option<[GuiMesh; FrameCounter::fif_count()]>,
+    gui_meshes: Option<[GuiMesh; FrameLabel::COUNT]>,
     tex_map: HashMap<TextureId, GfxImageViewHandle>,
     fonts_image_handle: Option<GfxImageHandle>,
     fonts_image_view_handle: Option<GfxImageViewHandle>,
@@ -199,8 +199,7 @@ impl Plugin for GuiPlugin {
             ctx.shader_binding_system.global_descriptor_sets(),
             ctx.swapchain_image_info.image_format,
         ));
-        self.gui_meshes =
-            Some(FrameCounter::frame_labes().map(|frame_label| GuiMesh::new(ctx.resource_ctx, frame_label)));
+        self.gui_meshes = Some(FrameLabel::ALL.map(|frame_label| GuiMesh::new(ctx.resource_ctx, frame_label)));
         self.init_font(ctx);
     }
 

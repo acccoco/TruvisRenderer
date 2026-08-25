@@ -4,7 +4,7 @@ use itertools::Itertools;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::raytracing::acceleration::GfxAcceleration;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
+use truvis_render_foundation::frame_counter::FrameLabel;
 
 use crate::render_world::render_data::{InstanceRenderData, RenderData};
 
@@ -14,7 +14,7 @@ use crate::render_world::render_data::{InstanceRenderData, RenderData};
 /// 仍可能读取的上一轮 acceleration structure。它只消费 `RenderData` 中已经
 /// active 的 instance，不重新判断 instance 是否可见。
 pub(crate) struct RenderTlasManager {
-    frames: [RenderTlasFrame; FrameCounter::fif_count()],
+    frames: [RenderTlasFrame; FrameLabel::COUNT],
     scene_revision: u64,
 }
 
@@ -26,7 +26,7 @@ struct RenderTlasFrame {
 impl RenderTlasManager {
     pub(crate) fn new() -> Self {
         Self {
-            frames: FrameCounter::frame_labes().map(|_| RenderTlasFrame {
+            frames: FrameLabel::ALL.map(|_| RenderTlasFrame {
                 tlas: None,
                 tlas_revision: 0,
             }),
@@ -69,10 +69,11 @@ impl RenderTlasManager {
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         scene_data: &RenderData<'_>,
-        frame_counter: &FrameCounter,
+        frame_id: u64,
+        frame_label: FrameLabel,
     ) {
         let _span = tracy_client::span!("RenderTlasManager::build_or_update");
-        let frame_index = *frame_counter.frame_label();
+        let frame_index = *frame_label;
         let frame = &mut self.frames[frame_index];
         let tlas_revision = self.scene_revision;
         if scene_data.all_instances.is_empty() {
@@ -115,7 +116,7 @@ impl RenderTlasManager {
             immediate_ctx,
             &instance_infos,
             vk::BuildAccelerationStructureFlagsKHR::empty(),
-            format!("scene2-{}-{}", frame_counter.frame_label(), frame_counter.frame_id()),
+            format!("scene2-{}-{}", frame_label, frame_id),
         );
 
         frame.tlas = Some(tlas);

@@ -5,7 +5,7 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
+use truvis_render_foundation::frame_counter::FrameLabel;
 use truvis_shader_binding::gpu;
 use truvis_world::{SceneMaterialEmissiveView, SceneReadView};
 
@@ -210,7 +210,7 @@ impl EmissiveLightFrameBuffers {
 /// 不访问 `World` 或 pass 资源。GPU buffer 按 FIF 拆分，避免 CPU 更新当前帧表时覆盖
 /// 上一帧仍可能被 raygen 读取的 table。
 pub(crate) struct RenderEmissiveLightTable {
-    frames: [EmissiveLightFrameBuffers; FrameCounter::fif_count()],
+    frames: [EmissiveLightFrameBuffers; FrameLabel::COUNT],
     triangle_lights: Vec<gpu::engine::light::EmissiveTriangleLight>,
     alias_table: Vec<gpu::engine::light::EmissiveLightAliasEntry>,
     base_map: Vec<u32>,
@@ -221,8 +221,7 @@ pub(crate) struct RenderEmissiveLightTable {
 impl RenderEmissiveLightTable {
     pub(crate) fn new(resource_ctx: GfxResourceCtx<'_>) -> Self {
         Self {
-            frames: FrameCounter::frame_labes()
-                .map(|frame_label| EmissiveLightFrameBuffers::new(resource_ctx, frame_label)),
+            frames: FrameLabel::ALL.map(|frame_label| EmissiveLightFrameBuffers::new(resource_ctx, frame_label)),
             triangle_lights: Vec::new(),
             alias_table: Vec::new(),
             base_map: Vec::new(),
@@ -240,7 +239,7 @@ impl RenderEmissiveLightTable {
         resource_ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
-        frame_counter: &FrameCounter,
+        frame_label: FrameLabel,
         render_data: &RenderData<'_>,
         scene: SceneReadView<'_>,
     ) -> EmissiveLightBinding {
@@ -250,7 +249,6 @@ impl RenderEmissiveLightTable {
             self.version = self.version.saturating_add(1).max(1);
         }
 
-        let frame_label = frame_counter.frame_label();
         let frame = &mut self.frames[*frame_label];
         frame.ensure_capacity(resource_ctx, self.triangle_lights.len(), self.alias_table.len(), self.base_map.len());
         frame.upload(resource_ctx, cmd, barrier_mask, &self.triangle_lights, &self.alias_table, &self.base_map);
