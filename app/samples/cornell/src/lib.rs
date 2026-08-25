@@ -1,3 +1,3 @@
 //! Cornell Box sample。
 
-pub mod cornell_app;
+pub mod cornell_render_app;

@@ -19,7 +19,7 @@ use app_kit::render_pipeline::common_settings::PathTracingCommonSettings;
 use app_kit::render_pipeline::rt_render_graph::RtPipeline;
 
 #[derive(Default)]
-pub struct CornellApp {
+pub struct CornellRenderApp {
     gui: GuiPlugin,
     debug_image_selector: DebugImageSelector,
     rt_pipeline: RtPipeline,
@@ -30,7 +30,7 @@ pub struct CornellApp {
     pipeline_overlay: PipelineControlsOverlay,
 }
 
-impl CornellApp {
+impl CornellRenderApp {
     fn request_model(world: &mut World, camera: &mut Camera) {
         camera.position = glam::vec3(-400.0, 1000.0, 1000.0);
         camera.euler_yaw_deg = 330.0;
@@ -78,7 +78,7 @@ impl CornellApp {
     }
 }
 
-impl RenderApp for CornellApp {
+impl RenderApp for CornellRenderApp {
     fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
         self.gui.set_hidpi_factor(ctx.scale_factor);
         self.gui.set_display_size(ctx.window_size);
