@@ -18,7 +18,7 @@
   降低人工协议风险。
 - 简化 adapter 层：给 `RgPassContext` 增加更窄的 image/buffer resolve helper，减少每个 pass 重复查 handle、
   view、format 和 extent 的样板代码。
-- 引入 FrameGraph 原型：在不改变线性执行的前提下，让 pipeline / plugin 贡献 scope 或 subgraph，并通过 typed output
+- 引入 FrameGraph 原型：在不改变线性执行的前提下，让 pipeline / 子系统贡献 scope 或 subgraph，并通过 typed output
   连接主视图、present 和 GUI。
 - 评估异步 readback：把低频异步 picking 或 debug readback 表达为 graph output ticket；同步交互查询继续保留为 runtime 特例。
 

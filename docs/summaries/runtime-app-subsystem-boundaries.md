@@ -1,6 +1,6 @@
-# Runtime / App / Plugin 边界
+# Runtime / App / Subsystem 边界
 
-> 状态：当前实现事实总结。本文记录状态所有权、`RenderAppRunner` 适配层、App hooks 与 Plugin 的职责边界。
+> 状态：当前实现事实总结。本文记录状态所有权、`RenderAppRunner` 阶段边界、App hooks 与静态组合子系统的职责边界。
 
 ## 状态所有权
 
@@ -42,15 +42,15 @@ RenderRuntime
 - 待处理 `InputEvent` 队列
 - 一次性构造注入的 `Box<dyn RenderApp>`
 
-`RenderAppRunner` 不持有 GUI、Camera、Overlay、InputState 或任何具体 render pipeline plugin。
+`RenderAppRunner` 不持有 GUI、Camera、Overlay、InputState 或任何具体 render pipeline，也不访问 App 内部子系统。
 
 具体 App state 持有：
 
 - GUI、camera/input、overlay 和 debug 选择等 CPU 交互状态；
-- 具体 render pipeline/plugin 及其窗口尺寸资源、历史状态和 pass-local target；
+- 具体 render pipeline / subsystem 及其窗口尺寸资源、历史状态和 pass-local target；
 - selection 等 App 业务语义，不保存由 runtime 私有 manager 分配的 GPU slot；
 - Editor、desktop command 等只服务具体 App 的 controller；
-- `TrianglePlugin`、`ShaderToyPlugin`、`RtPipeline`、`OfflinePipeline` 等具体渲染能力。
+- `GuiSubsystem`、`TriangleRenderer`、`ShaderToyRenderer`、`RtPipeline`、`OfflinePipeline` 等具体能力。
 
 主体 Truvis App 的具体组合、UI/selection owner 和 pass 顺序见 [`app/truvis/README.md`](../../app/truvis/README.md)；
 Editor 协议与线程边界见 [`editor-subsystem.md`](editor-subsystem.md)。
@@ -66,24 +66,24 @@ RenderRuntime 通过 lifecycle Ctx 借出内部字段：
 - `RenderRuntimeResizeCtx`
 - `RenderRuntimeShutdownCtx`
 
-`RenderAppRunner` 从 RenderRuntime Ctx 裁剪标准生命周期需要的 Plugin Ctx，App 在 render hook 中为特有 render 能力裁剪
-`PluginRenderCtx`：
+`RenderAppRunner` 只将 init / resize / shutdown runtime ctx 包装为对应 `RenderApp*Ctx`，附带窗口尺寸或缩放因子；
+update / after_prepare / render 直接传递对应 `RenderRuntime*Ctx`。具体 App 在生命周期 hook 内把
+`&mut ctx.runtime` 直接交给自己持有的子系统，不重新构造等价的生命周期 ctx。
 
-- `PluginInitCtx`
-- `PluginUpdateCtx`
-- `PluginRenderCtx`
-- `PluginResizeCtx`
-- `PluginShutdownCtx`
+render hook 需要向通用渲染子系统缩窄能力时，通过 `app_kit::subsystem::SubsystemRenderCtx::from_runtime`
+从 `RenderRuntimeRenderCtx` 创建只读视图。它包含 typed `Gfx` ctx、`RenderPassRecordCtx`、`RenderSceneView`、
+`PresentView` 与 timeline，刻意不包含 `world_submesh_raster` 这类 App 专属能力。
 
 这些 Ctx 携带 phase-appropriate 的 typed `Gfx` Ctx（如
 device、resource、queue、surface、immediate、device-info），调用点只获得当前阶段需要的能力，不持有完整 `&Gfx`。
 
-present owner 不直接暴露给 app/plugin；render/init/resize Ctx 只提供 `PresentView`。上层通过 `ImportedPresentTarget` 获取
+present owner 不直接暴露给 App / 子系统；render/init/resize ctx 只提供 `PresentView`。上层通过 `ImportedPresentTarget` 获取
 RenderGraph 内的当前 present image 与 image info，acquire/render-complete semaphore 由
 `PresentView::import_current_target` 固定接入 RenderGraph。
 
-GUI draw data 不进入通用 Ctx。`GuiPlugin` 自行持有 imgui context、draw data 和 GUI GPU 资源，
-并通过自己的 prepare/contribute 接口接入 render hook。App-owned debug 选择只保存稳定 CPU 语义；
+GUI draw data 不进入通用 ctx。`GuiSubsystem` 自行持有 imgui context、draw data、字体、GUI mesh 与私有 Vulkan backend；
+App 在 update 中调用 `build_frame(delta, |ui| ...)`，在 render 中显式调用 `prepare_render_data` 与
+`contribute_passes`，但不接触内部 GUI pass 或 GPU backend。App-owned debug 选择只保存稳定 CPU 语义；
 当前 pipeline 在 render phase 解析真实 image/view 与 layout。
 
 selection outline 使用单独的 `WorldSubmeshRasterView` render ctx 能力。该能力只接受
@@ -113,49 +113,52 @@ scale factor 和初始尺寸。winit backend 只跨线程传递可 Send 的 `Win
 `RenderApp` 是 `RenderAppRunner` 内部持有的 object-safe 具体 App 契约：
 
 - `init`
-- `visit_plugins_mut`
-- `visit_plugins_mut_rev`
 - `on_input`
 - `update`
 - `after_prepare`
 - `render`
-- `camera`
+- `render_view`
 - `on_resize`
 - `shutdown`
 
-`RenderAppRunner` 使用 `visit_plugins_mut` 批量调用 `Plugin::init`、`Plugin::update` 和 `Plugin::on_resize`，使用
-`visit_plugins_mut_rev` 调用 `Plugin::shutdown`。
+Runner 只调用这些 App 阶段，不遍历、注册或发现 App 内部对象。具体 App 在 `init`、`on_resize` 和 `shutdown`
+中显式调用各子系统的生命周期，并自行保证初始化依赖、两条 resize 路径与 GPU 资源销毁顺序。
 
 输入事件目前仍由 App hooks 显式处理，因为 GUI 事件消费和 App 自有 `InputManager` 之间存在 App 级策略。Editor request
 与 Tauri desktop command 同样由 `TruvisRenderApp::update` 显式编排：它们需要访问 App 选择状态或权威 `World`，但没有标准
-Plugin 生命周期或可复用 GPU 能力。
+子系统生命周期或可复用 GPU 能力。
 
-## Plugin 模型
+## 静态组合与 SubsystemLifecycle
 
-`Plugin` 是可复用能力单元的标准生命周期：
+具体 App 通过字段静态组合编译期已知的能力对象。只有确实拥有需要显式管理的长期资源的类型才实现
+`app_kit::subsystem::SubsystemLifecycle`：
 
 - `init`
-- `on_input`
-- `update`
-- `on_resize`
+- `on_resize`：可选默认空实现
 - `shutdown`
 
-Plugin 的特有能力不放进统一 trait。例如：
+`init` 与 `shutdown` 必须显式实现，分别接收 `RenderRuntimeInitCtx` 和 `RenderRuntimeShutdownCtx`；
+可选 `on_resize` 接收 `RenderRuntimeResizeCtx`。trait 不承担注册、动态组合、事件派发、update 或 render 调度，
+也不要求纯 CPU overlay、controller、camera 或 input object 实现生命周期。
 
-- `GuiPlugin::begin_frame` / `ui` / `end_frame` / `prepare_render_data` / `contribute_passes`
-- `TrianglePlugin::contribute_passes`
-- `ShaderToyPlugin::contribute_passes`
+每个子系统的具体能力保留在自身类型上，可跨越多个 render loop phase。例如：
+
+- `GuiSubsystem::on_input` / `build_frame` / `prepare_render_data` / `contribute_passes`
+- `TriangleRenderer::contribute_passes`
+- `ShaderToyRenderer::contribute_passes`
 - `RtPipeline::contribute_compute_passes` / `contribute_present_passes`
 - `OfflinePipeline::contribute_compute_passes` / `contribute_present_passes`
 
-App 通过持有具体类型来组合这些能力，并通过 visitor 暴露标准生命周期 Plugin，不使用 downcast、注册表或消息总线。
+装配或拆卸一个子系统意味着修改具体 App 的字段及相关阶段调用，是编译期静态组合，不引入 visitor、
+`dyn SubsystemLifecycle`、registry、downcast 或运行时安装机制。
 
 ## 边界不变量
 
-- `RenderRuntime` 是 phase 能力来源，但不是 App / Plugin 编排者。
+- `RenderRuntime` 是 phase 能力来源，但不是 App / 子系统编排者。
 - `RenderAppRunner` 是唯一固定帧骨架，独占 runtime，并通过内部 `dyn RenderApp` 回调具体业务阶段和裁剪 ctx。
-- App 是业务组合 owner，持有具体 Plugin，并在 render 阶段决定 RenderGraph pass 顺序与具体 pipeline 分支。
+- Runner 定义阶段边界；App 编排阶段内部；子系统只实现自己的具体能力。
+- App 是业务组合 owner，持有具体子系统，并在 render 阶段决定 RenderGraph pass 顺序与具体 pipeline 分支。
 - Tauri 文件对话框和私有 desktop command bridge 属于具体 App 的平台特权能力；本地路径不得进入 Editor WebSocket、
-  `RenderRuntime` 或通用 Plugin 接口，Tauri main thread 也不得直接修改 `World`。
-- Plugin 是可复用能力单元；标准生命周期可以批量驱动，特有能力由 App 显式调用。
-- App / Plugin 不长期保存完整 runtime owner、typed `Gfx` Ctx 或底层 Vulkan/VMA 依赖。
+  `RenderRuntime` 或通用生命周期接口，Tauri main thread 也不得直接修改 `World`。
+- `SubsystemLifecycle` 只规范 init / resize / shutdown；特有能力和调用顺序始终由具体 App 显式控制。
+- App / 子系统不长期保存完整 runtime owner、typed `Gfx` ctx 或底层 Vulkan/VMA 依赖。

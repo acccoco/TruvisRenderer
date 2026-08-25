@@ -1,9 +1,11 @@
 use ash::vk;
 
+use app_kit::subsystem::SubsystemLifecycle;
 use app_render_passes::coordinate_gizmo_pass::{CoordinateGizmoPass, CoordinateGizmoRgPass};
-use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle};
-use truvis_render_runtime::render_runtime::RenderRuntimeRenderCtx;
+use truvis_render_runtime::render_runtime::{
+    RenderRuntimeInitCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx,
+};
 
 /// Truvis 主应用持有的右下角坐标轴 gizmo owner。
 ///
@@ -44,13 +46,13 @@ impl CoordinateGizmoRenderer {
     }
 }
 
-impl Plugin for CoordinateGizmoRenderer {
-    fn init(&mut self, ctx: &mut PluginInitCtx) {
+impl SubsystemLifecycle for CoordinateGizmoRenderer {
+    fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
         let present_format = ctx.present.swapchain_image_info().image_format;
         self.inner = Some(CoordinateGizmoRendererInner::new(ctx.device_ctx, present_format, ctx.shader_binding_system));
     }
 
-    fn on_resize(&mut self, ctx: &mut PluginResizeCtx) {
+    fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
         let present_format = ctx.present.swapchain_image_info().image_format;
         match self.inner.as_mut() {
             Some(inner) => inner.rebuild_if_needed(ctx.device_ctx, present_format, ctx.shader_binding_system),
@@ -61,7 +63,7 @@ impl Plugin for CoordinateGizmoRenderer {
         }
     }
 
-    fn shutdown(&mut self, ctx: &mut PluginShutdownCtx<'_>) {
+    fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
         if let Some(inner) = self.inner.take() {
             inner.destroy(ctx.device_ctx);
         }

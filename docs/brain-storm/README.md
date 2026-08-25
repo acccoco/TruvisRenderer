@@ -12,8 +12,8 @@
   runtime phase、main view、surface/headless 和 `Gfx` owner 边界的后续收敛。
 - [`render-graph-evolution.md`](render-graph-evolution.md)：
   RenderGraph resource model、跨 graph 状态校验、adapter helper 与 FrameGraph 方向。
-- [`plugin-and-app-kit-evolution.md`](plugin-and-app-kit-evolution.md)：
-  PluginGroup、PipelineFeature、app-kit builtin feature 和分层事件模型。
+- [`app-kit-subsystem-evolution.md`](app-kit-subsystem-evolution.md)：
+  App-owned 子系统静态装配、pipeline owner 边界、app-kit builtin subsystem 和分层事件模型。
 - [`asset-upload-and-scene-evolution.md`](asset-upload-and-scene-evolution.md)：
   asset upload、热重载、跨场景卸载和 scene invalidation 的后续能力。
 - [`realtime-lighting-evolution.md`](realtime-lighting-evolution.md)：

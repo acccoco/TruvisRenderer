@@ -10,7 +10,7 @@
 //!
 //! - **两层 Handle**：`RgImageHandle`（graph 内部虚拟引用）→ `GfxImageHandle`（物理 GPU 资源），
 //!   在 compile 阶段建立映射，execute 阶段解引用。
-//! - **Pass 添加顺序即执行顺序**：App 和 Plugin 决定渲染管线顺序，RenderGraph 不做拓扑重排。
+//! - **Pass 添加顺序即执行顺序**：App 编排具体渲染器并决定管线顺序，RenderGraph 不做拓扑重排。
 //! - **自动 Barrier**：compile 阶段按线性 pass 序列跟踪 image 状态，自动计算 layout transition 和 memory barrier。
 
 mod barrier;

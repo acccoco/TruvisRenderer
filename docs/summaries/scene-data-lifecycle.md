@@ -9,7 +9,7 @@
 `AssetHub` 把硬盘文件变成 owned CPU payload，`World` 把 payload 变成 CPU scene 语义；
 `RenderWorld` 再把 CPU scene 语义变成 shader 可读取的 GPU cache、buffer、bindless handle 和 TLAS。
 
-`World` 是 App / Plugin 在 update 阶段面对的 CPU 语义入口。它内部持有 `SceneStore`、
+`World` 是 App / 子系统在 update 阶段面对的 CPU 语义入口。它内部持有 `SceneStore`、
 `AssetHub` 和 `SceneAssetIngestor`，但不持有 Vulkan image、buffer、BLAS、TLAS 或 GPU slot。
 `RenderWorld` 是 `RenderRuntime` 内部的 render-side prepared world，持有 texture / mesh /
 material / instance / sky / emissive / TLAS 等 GPU 派生状态。

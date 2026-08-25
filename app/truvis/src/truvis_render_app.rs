@@ -1,6 +1,5 @@
 use truvis_app_frame::input_event::InputEvent;
-use truvis_app_frame::plugin_api::{Plugin, PluginRenderCtx};
-use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppShutdownCtx};
+use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx};
 use truvis_editor_bridge::AppEndpoint;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
@@ -20,13 +19,14 @@ use truvis_world::{
 use app_kit::camera::Camera;
 use app_kit::camera_controller::CameraController;
 use app_kit::debug_image::DebugImageSelector;
-use app_kit::gui_plugin::GuiPlugin;
+use app_kit::gui_subsystem::GuiSubsystem;
 use app_kit::input_state::InputManager;
 use app_kit::overlay::FrameStatsOverlayData;
 use app_kit::render_pipeline::RenderMode;
 use app_kit::render_pipeline::common_settings::PathTracingCommonSettings;
 use app_kit::render_pipeline::offline_render_graph::OfflinePipeline;
 use app_kit::render_pipeline::rt_render_graph::RtPipeline;
+use app_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 
 use crate::coordinate_gizmo::CoordinateGizmoRenderer;
 use crate::desktop_command::DesktopCommandController;
@@ -38,7 +38,7 @@ use crate::overlay_ui::{
 use crate::selection_outline::SelectionOutlineRenderer;
 
 pub struct TruvisRenderApp {
-    gui: GuiPlugin,
+    gui: GuiSubsystem,
     debug_image_selector: DebugImageSelector,
     rt_pipeline: RtPipeline,
     offline_pipeline: OfflinePipeline,
@@ -502,22 +502,13 @@ impl RenderApp for TruvisRenderApp {
 
         Self::spawn_material_test_cubes(&mut *ctx.runtime.world);
         Self::request_model(&mut *ctx.runtime.world, self.camera_controller.camera_mut());
-    }
 
-    fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
-        visit(&mut self.rt_pipeline);
-        visit(&mut self.offline_pipeline);
-        visit(&mut self.selection_outline);
-        visit(&mut self.coordinate_gizmo);
-        visit(&mut self.gui);
-    }
-
-    fn visit_plugins_mut_rev(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
-        visit(&mut self.gui);
-        visit(&mut self.coordinate_gizmo);
-        visit(&mut self.selection_outline);
-        visit(&mut self.offline_pipeline);
-        visit(&mut self.rt_pipeline);
+        // App 持有初始化顺序：场景 CPU 状态先就绪，再依次创建具体渲染资源。
+        self.rt_pipeline.init(&mut ctx.runtime);
+        self.offline_pipeline.init(&mut ctx.runtime);
+        self.selection_outline.init(&mut ctx.runtime);
+        self.coordinate_gizmo.init(&mut ctx.runtime);
+        self.gui.init(&mut ctx.runtime);
     }
 
     fn on_input(&mut self, events: &[InputEvent]) {
@@ -556,9 +547,7 @@ impl RenderApp for TruvisRenderApp {
             self.click_ray_cast_probe.request_cast(screen_pos, ray);
         }
 
-        self.gui.begin_frame(delta);
-        {
-            let ui = self.gui.ui();
+        self.gui.build_frame(delta, |ui| {
             let offline_sample_count = self.offline_pipeline.sample_count();
             let frame = TruvisOverlayFrame {
                 ui,
@@ -587,14 +576,14 @@ impl RenderApp for TruvisRenderApp {
                 },
             };
             self.overlay_ui.build(frame);
-        }
-        let debug_image_options = match self.render_mode {
-            RenderMode::Realtime => RtPipeline::debug_image_options(),
-            RenderMode::Offline => OfflinePipeline::debug_image_options(),
-        };
-        // 选择归一化属于 App 状态维护，不能依赖 Debug Images window/section 当前是否可见。
-        self.debug_image_selector.normalize_options(debug_image_options);
-        self.gui.end_frame();
+
+            let debug_image_options = match self.render_mode {
+                RenderMode::Realtime => RtPipeline::debug_image_options(),
+                RenderMode::Offline => OfflinePipeline::debug_image_options(),
+            };
+            // 选择归一化属于 App 状态维护，不能依赖 Debug Images window/section 当前是否可见。
+            self.debug_image_selector.normalize_options(debug_image_options);
+        });
     }
 
     fn after_prepare(&mut self, ctx: &mut RenderRuntimeRayCastCtx<'_>) {
@@ -628,22 +617,28 @@ impl RenderApp for TruvisRenderApp {
         }
     }
 
-    fn shutdown(&mut self, _ctx: &mut RenderAppShutdownCtx<'_>) {
+    fn on_resize(&mut self, ctx: &mut RenderAppResizeCtx<'_>) {
+        self.rt_pipeline.on_resize(&mut ctx.runtime);
+        self.offline_pipeline.on_resize(&mut ctx.runtime);
+        self.selection_outline.on_resize(&mut ctx.runtime);
+        self.coordinate_gizmo.on_resize(&mut ctx.runtime);
+        self.gui.on_resize(&mut ctx.runtime);
+    }
+
+    fn shutdown(&mut self, ctx: &mut RenderAppShutdownCtx<'_>) {
         self.desktop_command_controller.shutdown();
         self.editor_controller.shutdown();
+
+        // 与资源创建顺序相反释放，且始终早于 runtime root owner 销毁。
+        self.gui.shutdown(&mut ctx.runtime);
+        self.coordinate_gizmo.shutdown(&mut ctx.runtime);
+        self.selection_outline.shutdown(&mut ctx.runtime);
+        self.offline_pipeline.shutdown(&mut ctx.runtime);
+        self.rt_pipeline.shutdown(&mut ctx.runtime);
     }
 
     fn render(&mut self, ctx: &RenderRuntimeRenderCtx) {
-        let plugin_ctx = PluginRenderCtx {
-            device_ctx: ctx.device_ctx,
-            resource_ctx: ctx.resource_ctx,
-            queue_ctx: ctx.queue_ctx,
-            device_info_ctx: ctx.device_info_ctx,
-            record_ctx: ctx.record_ctx,
-            render_scene: ctx.render_scene,
-            present: ctx.present,
-            timeline: ctx.timeline,
-        };
+        let subsystem_ctx = SubsystemRenderCtx::from_runtime(ctx);
         let frame_label = ctx.record_ctx.frame_timing.frame_label();
         let frame_id = ctx.record_ctx.frame_timing.frame_id();
 
@@ -655,7 +650,7 @@ impl RenderApp for TruvisRenderApp {
             &self.path_tracing_common_settings,
         );
 
-        self.gui.prepare_render_data(&plugin_ctx);
+        self.gui.prepare_render_data(&subsystem_ctx);
         let selected_debug_image_id = self.debug_image_selector.selected_id();
 
         // App 持有实时/离线模式选择；具体 pipeline 只负责向 RenderGraph 贡献自己的 compute subgraph。
@@ -663,7 +658,11 @@ impl RenderApp for TruvisRenderApp {
         let compute_submit = match self.render_mode {
             RenderMode::Realtime => {
                 let mut graph = RenderGraphBuilder::new();
-                self.rt_pipeline.contribute_compute_passes(&mut graph, &plugin_ctx, &self.path_tracing_common_settings);
+                self.rt_pipeline.contribute_compute_passes(
+                    &mut graph,
+                    &subsystem_ctx,
+                    &self.path_tracing_common_settings,
+                );
                 let compiled_graph = graph.compile();
                 if log::log_enabled!(log::Level::Debug) {
                     static PRINT_RT_COMPUTE_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
@@ -682,7 +681,7 @@ impl RenderApp for TruvisRenderApp {
                 let mut graph = RenderGraphBuilder::new();
                 self.offline_pipeline.contribute_compute_passes(
                     &mut graph,
-                    &plugin_ctx,
+                    &subsystem_ctx,
                     &self.path_tracing_common_settings,
                 );
                 let compiled_graph = graph.compile();
@@ -713,7 +712,7 @@ impl RenderApp for TruvisRenderApp {
                 ));
                 let present_targets = self.rt_pipeline.contribute_present_passes(
                     &mut graph,
-                    &plugin_ctx,
+                    &subsystem_ctx,
                     &self.path_tracing_common_settings,
                     selected_debug_image_id,
                 );
@@ -732,7 +731,7 @@ impl RenderApp for TruvisRenderApp {
                 );
                 self.gui.contribute_passes(
                     &mut graph,
-                    &plugin_ctx,
+                    &subsystem_ctx,
                     present_targets.present_image,
                     ctx.present.swapchain_image_info().image_extent,
                 );
@@ -760,7 +759,7 @@ impl RenderApp for TruvisRenderApp {
                 ));
                 let present_targets = self.offline_pipeline.contribute_present_passes(
                     &mut graph,
-                    &plugin_ctx,
+                    &subsystem_ctx,
                     &self.path_tracing_common_settings,
                     selected_debug_image_id,
                 );
@@ -779,7 +778,7 @@ impl RenderApp for TruvisRenderApp {
                 );
                 self.gui.contribute_passes(
                     &mut graph,
-                    &plugin_ctx,
+                    &subsystem_ctx,
                     present_targets.present_image,
                     ctx.present.swapchain_image_info().image_extent,
                 );

@@ -1,13 +1,12 @@
 //! App 框架层。
 //!
-//! 本 crate 位于 frame 层，集中定义 `RenderAppRunner`、具体 App 和 Plugin
-//! 之间如何交接生命周期与阶段上下文。Runner 合并固定帧骨架与渲染线程主循环，
-//! 但不创建平台窗口，也不决定具体 App 如何组合 GUI、相机、overlay 或 render pipeline plugin。
+//! 本 crate 位于 frame 层，集中定义 `RenderAppRunner` 和具体 App 之间如何交接
+//! 生命周期与阶段上下文。Runner 合并固定帧骨架与渲染线程主循环，但不创建平台窗口，
+//! 也不感知具体 App 如何静态组合 GUI、相机、overlay 或 render pipeline。
 //!
 //! 主要抽象：
 //! - [`RenderAppRunner`]：唯一完整帧执行器，统一拥有 App、Runtime 和 render loop。
 //! - [`RenderApp`](render_app_api::RenderApp)：Runner 内部持有的具体 App 契约。
-//! - [`Plugin`](plugin_api::Plugin)：App 持有的可复用能力单元的标准生命周期契约。
 //! - [`InputEvent`](input_event::InputEvent)：平台输入事件转换后的引擎侧表示。
 //! - [`RenderThreadControl`] / [`RenderThreadInit`]：平台与 Runner 之间的线程控制契约。
 //!
@@ -15,7 +14,6 @@
 //! 调用方不应从这些上下文中长期保存 typed `Gfx` ctx 或 runtime 内部引用。
 
 pub mod input_event;
-pub mod plugin_api;
 pub mod render_app_api;
 
 mod render_app_runner;

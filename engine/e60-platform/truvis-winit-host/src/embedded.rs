@@ -223,8 +223,8 @@ impl EmbeddedWinitHandler {
     /// 把 DOM 首次给出的非零 rect 应用到 child 后再启动 RenderThread。
     ///
     /// child 初始创建为隐藏的 1x1 窗口；若先启动 RenderThread，初始化参数会把
-    /// 1x1 传给 App/Plugin。即使 Vulkan surface 随后已经读到真实 extent，首次
-    /// swapchain 也可能无需再次重建，从而不会补发完整 plugin resize。这里让
+    /// 1x1 传给 App/子系统。即使 Vulkan surface 随后已经读到真实 extent，首次
+    /// swapchain 也可能无需再次重建，从而不会补发完整 resize。这里让
     /// `Window::inner_size` 在 RenderThread 创建前就反映 DOM 物理尺寸，确保 App、GUI、
     /// swapchain 从同一个初始 extent 开始。
     fn apply_viewport_rect_and_start_render_thread(&mut self) -> Result<(), String> {

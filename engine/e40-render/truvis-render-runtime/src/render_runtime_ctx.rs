@@ -41,7 +41,7 @@ pub struct RenderPassRecordCtx<'a> {
 /// 在 app 执行 update 工作期间保持存活；drop 前 RenderRuntime 会保持借用锁定。
 /// 这个阶段允许修改 `World` 与 runtime DLSS 选项，但还没有把 CPU 语义数据翻译到 GPU scene。
 pub struct RenderRuntimeUpdateCtx<'a> {
-    /// CPU 语义世界；update 阶段允许 app/plugin 修改 scene、asset 请求和运行时实例。
+    /// CPU 语义世界；update 阶段允许 App/子系统修改 scene、asset 请求和运行时实例。
     pub world: &'a mut World,
     /// 可变 DLSS 选项；修改后由 runtime 在 prepare/render 前统一同步派生状态。
     pub dlss_options: &'a mut DlssOptions,
@@ -117,7 +117,7 @@ impl RenderRuntimeRayCastCtx<'_> {
 /// Init 阶段上下文，用于 window/surface 创建后的一次性设置。
 ///
 /// 不包含 camera；camera 属于具体 app。
-/// 这里暴露 `World`、GPU 资源/binding owner 和 `CmdAllocator` 的可变借用，供 app/plugin 创建长期 GPU 资源；
+/// 这里暴露 `World`、GPU 资源/binding owner 和 `CmdAllocator` 的可变借用，供 App/子系统创建长期 GPU 资源；
 /// 初始化完成后这些能力会重新收敛回 runtime 的阶段化生命周期。
 pub struct RenderRuntimeInitCtx<'a> {
     /// 初始化长期 GPU 资源所需的 device 上下文。
@@ -132,7 +132,7 @@ pub struct RenderRuntimeInitCtx<'a> {
     pub immediate_ctx: GfxImmediateCtx<'a>,
     /// surface/swapchain 相关操作所需上下文。
     pub surface_ctx: GfxSurfaceCtx<'a>,
-    /// CPU 语义世界，供 app/plugin 注册初始 scene、asset 和实例。
+    /// CPU 语义世界，供 App/子系统注册初始 scene、asset 和实例。
     pub world: &'a mut World,
     /// manager-owned buffer/image/view 资源生命周期 owner。
     pub gfx_resource_manager: &'a mut GfxResourceManager,
@@ -174,14 +174,14 @@ pub struct RenderRuntimeResizeCtx<'a> {
     pub present: PresentView<'a>,
 }
 
-/// Shutdown 阶段上下文，保证 app/plugin 可在 runtime 与 Gfx 存活时释放 GPU 资源。
+/// Shutdown 阶段上下文，保证 App/子系统可在 runtime 与 Gfx 存活时释放 GPU 资源。
 ///
-/// `RenderAppRunner` 会在 runtime 自身销毁前把这个上下文交给 app/plugin，确保 plugin-owned
-/// pipeline、buffer、descriptor 等资源仍能通过 typed Ctx 显式释放。
+/// `RenderAppRunner` 会在 runtime 自身销毁前把这个上下文交给 App，由 App 确保
+/// subsystem-owned pipeline、buffer、descriptor 等资源仍能通过 typed Ctx 显式释放。
 pub struct RenderRuntimeShutdownCtx<'a> {
-    /// 释放 plugin/app-owned GPU 对象所需 device 上下文。
+    /// 释放 subsystem/app-owned GPU 对象所需 device 上下文。
     pub device_ctx: GfxDeviceCtx<'a>,
-    /// 释放 plugin/app-owned GPU 对象所需资源上下文。
+    /// 释放 subsystem/app-owned GPU 对象所需资源上下文。
     pub resource_ctx: GfxResourceCtx<'a>,
     /// 某些上层资源需要显式队列上下文完成 shutdown。
     pub queue_ctx: GfxQueueCtx<'a>,

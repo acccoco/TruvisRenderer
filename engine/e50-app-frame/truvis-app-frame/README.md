@@ -7,8 +7,7 @@
 
 - `RenderAppRunner`：非泛型的唯一完整帧执行器，持有 `RenderRuntime`、输入队列和 `Box<dyn RenderApp>`，仅公开 `run` 入口。
 - `RenderApp`：`RenderAppRunner` 在 init / input / update / after_prepare / render / resize / shutdown 阶段回调具体 App 的 object-safe 契约。
-- `Plugin`：可复用能力单元的标准生命周期契约，覆盖 init / input / update / resize / shutdown。
-- `PluginInitCtx` / `PluginUpdateCtx` / `PluginRenderCtx` / `PluginResizeCtx` / `PluginShutdownCtx`：从 `RenderRuntime*Ctx` 裁剪出的 plugin-facing context。
+- `RenderAppInitCtx` / `RenderAppResizeCtx` / `RenderAppShutdownCtx`：包装对应 runtime 阶段能力并提供 App 需要的窗口元数据。
 - `InputEvent`：平台输入事件的引擎侧表示
 - `RenderThreadControl` / `RenderThreadInit`：帧执行器消费的退出、输入、resize 和窗口初始化契约；线程完成与 panic 归属于
   `truvis-render-thread`。
@@ -17,25 +16,26 @@
 
 - `RenderAppRunner::run(control, init, app)` 在内部统一执行初始化、完整帧循环和 shutdown，保证所有具体 App 都经过同一个帧骨架。
 - App factory 在 OS RenderThread 内创建 `Box<dyn RenderApp>`，随后由 `truvis-render-thread::RenderThread` 调用统一 Runner
-  入口；winit 窗口层不知道具体 App、Plugin 或 `RenderRuntime`。
-- 具体 App 通过 `RenderApp` 暴露固定 hook 点，同时继续自行持有 GUI、camera/input state、overlay 和 render pipeline plugin。
+  入口；winit 窗口层不知道具体 App、内部子系统或 `RenderRuntime`。
+- Runner 定义阶段边界；具体 App 通过 `RenderApp` 暴露固定 hook 点，并自行持有、编排 GUI、camera/input、overlay 和 render pipeline。
 - `after_prepare` 是 App 可选同步查询点，发生在 runtime prepare 完成后、render graph 组图前，用于调用同步 raycast 等依赖 GPU scene 快照的接口。
-- `RenderApp::visit_plugins_mut` / `visit_plugins_mut_rev` 只暴露标准生命周期 Plugin，方便 Runner 批量调用 init / update / resize / shutdown。
-- Plugin 的特有能力不放进统一 trait，例如 `GuiPlugin::ui`、`GuiPlugin::contribute_passes`、`RtPipeline::contribute_compute_passes` 仍由 App 通过具体类型显式调用。
+- App 内部子系统及其 `SubsystemLifecycle` 属于 `app-kit` / 具体 App；本 crate 不知道它们的类型、顺序或数量。
+- GUI frame 构建、pass 贡献、overlay 和输入消费均通过具体类型由 App 显式调用，不进入 `RenderAppRunner`。
 - winit backend 只负责窗口、事件循环和事件适配；本 crate 不依赖 `winit`，也不反向依赖线程宿主。
 
 ## Ctx 边界
 
-- `PluginInitCtx` 同时携带 `World`、`GfxResourceManager`、`ShaderBindingSystem` 和初始化所需的 typed `Gfx` Ctx，用于创建 App/Plugin 持有的 GPU 资源。
-- `PluginUpdateCtx` 面向 CPU 更新，提供 `World` 和帧设置相关状态，不承担 command recording。
-- `RenderRuntimeRayCastCtx` 只在 App `after_prepare` hook 中出现，不进入通用 Plugin Ctx。
-- `PluginRenderCtx` 面向渲染录制，提供只读 `RenderPassRecordCtx` 与 command/queue 相关能力，不包含 GUI draw data。
-- `PluginResizeCtx` 和 `PluginShutdownCtx` 用于重建或释放 Plugin-owned GPU 资源，manager-owned image/view 必须通过 ctx 中的 `GfxResourceManager` 释放，shader-visible view 必须通过 `ShaderBindingSystem` 注销。
+- `RenderAppInitCtx` 包装 `RenderRuntimeInitCtx` 并附带窗口 size / scale factor；App 直接用 `&mut ctx.runtime`
+  初始化自己持有的长期资源。
+- `RenderRuntimeUpdateCtx` 面向 CPU 更新，提供 `World`、帧设置和 `DlssOptions`，不承担 command recording。
+- `RenderRuntimeRayCastCtx` 只在 App `after_prepare` hook 中出现。
+- `RenderRuntimeRenderCtx` 面向渲染录制；具体 App 可在 `app-kit` 内进一步裁剪为 `SubsystemRenderCtx`，该类型不属于 frame 层。
+- `RenderAppResizeCtx` 和 `RenderAppShutdownCtx` 分别包装对应 runtime ctx；App 直接用它们重建或释放自有子系统资源。
+  manager-owned image/view 必须通过 `GfxResourceManager` 释放，shader-visible view 必须通过 `ShaderBindingSystem` 注销。
 
 ## 边界约束
 
-- 不创建平台窗口，不处理 winit lifecycle，不持有具体 app/plugin 业务状态
+- 不创建平台窗口，不处理 winit lifecycle，不持有具体 App / 子系统业务状态
 - `RenderAppRunner` 是唯一完整帧骨架，不提供运行时 App 替换或注册表
-- `Plugin` trait 不包含 `ui`、`build_ui`、`contribute_passes` 等特有能力
-- `RenderApp::visit_plugins_mut` 只暴露标准生命周期 Plugin；特有能力仍通过具体 Plugin 类型显式调用
-- GUI draw data 不进入通用 Plugin Ctx，由具体 `GuiPlugin` 自行管理
+- 不定义子系统 trait、visitor 或子系统生命周期调度；这些属于具体 App 的阶段内部编排
+- GUI draw data 不进入 frame 或 runtime ctx，由 `app-kit` 的 `GuiSubsystem` 自行管理

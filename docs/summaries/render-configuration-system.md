@@ -72,8 +72,8 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 | `render_extent` | swapchain extent 与 DLSS mode 派生 | RT、GBuffer、motion vector、DLSS input 等内部渲染尺寸 |
 | `output_extent` | swapchain / present extent | GUI、present、main-view output 与 DLSS output 尺寸 |
 
-`FrameRenderState` 不由用户直接改。App / Plugin 在 init、resize 或 `sync_dlss_options_frame_state` 返回 resize ctx 时读取它，用来重建自己持有的窗口尺寸 target。
-`RenderRuntime::init_after_window` 会在 Plugin init 前根据真实 swapchain extent 和启动时的 `DlssOptions` 解析一次 `FrameRenderState`。因此 RT / offline pipeline 初始化窗口尺寸 target 时应直接使用 `ctx.frame_state`，不得再把 `render_extent` 覆盖为 native extent；否则启动时通过 `TRUVIS_DLSS_SR_MODE` / `TRUVIS_DLSS_RR` 进入 SR/RR 会导致 RT、GBuffer、DLSS input 尺寸与 Streamline options 失配。
+`FrameRenderState` 不由用户直接改。App / 子系统在 init、resize 或 `sync_dlss_options_frame_state` 返回 resize ctx 时读取它，用来重建自己持有的窗口尺寸 target。
+`RenderRuntime::init_after_window` 会在子系统 init 前根据真实 swapchain extent 和启动时的 `DlssOptions` 解析一次 `FrameRenderState`。因此 RT / offline pipeline 初始化窗口尺寸 target 时应直接使用 `ctx.frame_state`，不得再把 `render_extent` 覆盖为 native extent；否则启动时通过 `TRUVIS_DLSS_SR_MODE` / `TRUVIS_DLSS_RR` 进入 SR/RR 会导致 RT、GBuffer、DLSS input 尺寸与 Streamline options 失配。
 
 ## ViewAccumState
 
@@ -194,7 +194,7 @@ Overlay 修改 DlssOptions.dlss_sr_mode / dlss_rr_enabled
   -> runtime 用 output extent + mode 按 active feature 查询 Streamline optimal settings
   -> 派生 FrameRenderState.render_extent / output_extent
   -> 如尺寸变化，返回 RenderRuntimeResizeCtx
-  -> App / Plugin 重建 RT target、GBuffer、DLSS input/output、main view target
+  -> App / 子系统重建 RT target、GBuffer、DLSS input/output、main view target
   -> 如 SR/RR feature 分支变化，runtime 等待 GPU idle 并释放旧 feature resources
   -> runtime 重置 ViewAccumState 与 DlssSrState history
   -> 下一帧 prepare/render graph 使用新的 render/output extent 和 DlssOptions

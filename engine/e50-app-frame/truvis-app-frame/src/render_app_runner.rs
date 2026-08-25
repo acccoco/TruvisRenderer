@@ -7,7 +7,6 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use truvis_render_runtime::render_runtime::RenderRuntime;
 
 use crate::input_event::InputEvent;
-use crate::plugin_api::{PluginInitCtx, PluginResizeCtx, PluginShutdownCtx, PluginUpdateCtx};
 use crate::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx};
 use crate::render_thread_control::{RenderThreadControl, RenderThreadInit};
 
@@ -15,7 +14,7 @@ use crate::render_thread_control::{RenderThreadControl, RenderThreadInit};
 ///
 /// Runner 独占 `RenderRuntime`、待处理输入事件队列和一次性注入的具体 App，
 /// 同时统一驱动外层 loop 与 init、frame、resize、shutdown 顺序。具体 App 仍自行
-/// 持有 GUI、camera/input、overlay 和 render plugin。
+/// 持有 GUI、camera/input、overlay 和具体渲染子系统，并编排各阶段内部顺序。
 pub struct RenderAppRunner {
     render_runtime: Option<RenderRuntime>,
     input_events: Vec<InputEvent>,
@@ -125,27 +124,6 @@ impl RenderAppRunner {
                 window_size,
             };
             self.app.init(&mut app_ctx);
-
-            let RenderAppInitCtx { runtime, .. } = app_ctx;
-            let mut plugin_ctx = PluginInitCtx {
-                device_ctx: runtime.device_ctx,
-                resource_ctx: runtime.resource_ctx,
-                queue_ctx: runtime.queue_ctx,
-                device_info_ctx: runtime.device_info_ctx,
-                immediate_ctx: runtime.immediate_ctx,
-                surface_ctx: runtime.surface_ctx,
-                world: runtime.world,
-                gfx_resource_manager: runtime.gfx_resource_manager,
-                shader_binding_system: runtime.shader_binding_system,
-                frame_timing: runtime.frame_timing,
-                frame_state: runtime.frame_state,
-                cmd_allocator: runtime.cmd_allocator,
-                swapchain_image_info: runtime.swapchain_image_info,
-                present: runtime.present,
-            };
-            self.app.visit_plugins_mut(&mut |plugin| {
-                plugin.init(&mut plugin_ctx);
-            });
         }
         self.render_runtime = Some(render_runtime);
     }
@@ -174,17 +152,6 @@ impl RenderAppRunner {
             let _span = tracy_client::span!("RenderAppRunner::update");
             let mut update_ctx = render_runtime.update_phase();
             app.update(&mut update_ctx);
-
-            let delta_time_s = update_ctx.frame_timing.delta_time_s();
-            let mut plugin_ctx = PluginUpdateCtx {
-                world: update_ctx.world,
-                dlss_options: update_ctx.dlss_options,
-                frame_state: update_ctx.frame_state,
-                delta_time_s,
-            };
-            app.visit_plugins_mut(&mut |plugin| {
-                plugin.update(&mut plugin_ctx);
-            });
         }
 
         // DlssOptions 可能在 update/UI 阶段改变 DLSS SR mode。必须在 prepare/render graph 之前
@@ -199,22 +166,6 @@ impl RenderAppRunner {
                     window_size: new_size,
                 };
                 app.on_resize(&mut app_ctx);
-
-                let RenderAppResizeCtx { runtime, .. } = app_ctx;
-                let mut plugin_ctx = PluginResizeCtx {
-                    device_ctx: runtime.device_ctx,
-                    resource_ctx: runtime.resource_ctx,
-                    immediate_ctx: runtime.immediate_ctx,
-                    surface_ctx: runtime.surface_ctx,
-                    gfx_resource_manager: runtime.gfx_resource_manager,
-                    shader_binding_system: runtime.shader_binding_system,
-                    frame_timing: runtime.frame_timing,
-                    frame_state: runtime.frame_state,
-                    present: runtime.present,
-                };
-                app.visit_plugins_mut(&mut |plugin| {
-                    plugin.on_resize(&mut plugin_ctx);
-                });
             }
         }
 
@@ -283,22 +234,6 @@ impl RenderAppRunner {
             window_size: new_size,
         };
         app.on_resize(&mut app_ctx);
-
-        let RenderAppResizeCtx { runtime, .. } = app_ctx;
-        let mut plugin_ctx = PluginResizeCtx {
-            device_ctx: runtime.device_ctx,
-            resource_ctx: runtime.resource_ctx,
-            immediate_ctx: runtime.immediate_ctx,
-            surface_ctx: runtime.surface_ctx,
-            gfx_resource_manager: runtime.gfx_resource_manager,
-            shader_binding_system: runtime.shader_binding_system,
-            frame_timing: runtime.frame_timing,
-            frame_state: runtime.frame_state,
-            present: runtime.present,
-        };
-        app.visit_plugins_mut(&mut |plugin| {
-            plugin.on_resize(&mut plugin_ctx);
-        });
     }
 
     fn time_to_render(&self) -> bool {
@@ -320,24 +255,6 @@ impl RenderAppRunner {
                 let runtime = render_runtime.shutdown_phase();
                 let mut app_ctx = RenderAppShutdownCtx { runtime };
                 self.app.shutdown(&mut app_ctx);
-            }
-            {
-                let runtime = render_runtime.shutdown_phase();
-                let mut plugin_ctx = PluginShutdownCtx {
-                    device_ctx: runtime.device_ctx,
-                    resource_ctx: runtime.resource_ctx,
-                    queue_ctx: runtime.queue_ctx,
-                    immediate_ctx: runtime.immediate_ctx,
-                    surface_ctx: runtime.surface_ctx,
-                    gfx_resource_manager: runtime.gfx_resource_manager,
-                    shader_binding_system: runtime.shader_binding_system,
-                    frame_timing: runtime.frame_timing,
-                    frame_state: runtime.frame_state,
-                    cmd_allocator: runtime.cmd_allocator,
-                };
-                self.app.visit_plugins_mut_rev(&mut |plugin| {
-                    plugin.shutdown(&mut plugin_ctx);
-                });
             }
         }
         if let Some(render_runtime) = self.render_runtime.take() {

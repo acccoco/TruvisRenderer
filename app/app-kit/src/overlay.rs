@@ -1,5 +1,4 @@
 use ash::vk;
-use truvis_app_frame::plugin_api::Plugin;
 use truvis_render_runtime::state::dlss_options::DlssOptions;
 use truvis_render_runtime::state::dlss_sr::DlssSrMode;
 
@@ -18,8 +17,6 @@ pub struct FrameStatsOverlayData<'a> {
 
 #[derive(Default)]
 pub struct DebugInfoOverlay;
-
-impl Plugin for DebugInfoOverlay {}
 
 impl DebugInfoOverlay {
     pub fn build_overlay_ui(
@@ -94,8 +91,6 @@ impl DebugInfoOverlay {
 
 #[derive(Default)]
 pub struct PipelineControlsOverlay;
-
-impl Plugin for PipelineControlsOverlay {}
 
 impl PipelineControlsOverlay {
     pub fn build_overlay_ui(

@@ -11,7 +11,7 @@ flowchart TB
     L8["L8 app/truvis + samples<br/>Tauri 主体 app 与独立示例入口<br/><br/>L8 app/editor<br/>Tauri WebView UI、HTTP/WebSocket adapter、跨线程 editor 契约"]
     L7["L7 truvis-winit-host<br/>standalone / child HWND 窗口生命周期、winit 事件循环与输入适配"]
     L6["L6 truvis-render-thread<br/>backend-independent OS 渲染线程、App factory、完成与 panic 生命周期"]
-    L5["L5 app-kit<br/>GuiPlugin、私有 GUI backend、overlay plugin、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp / Plugin 契约与 Plugin Ctx<br/>唯一 RenderAppRunner 完整生命周期"]
+    L5["L5 app-kit<br/>GuiSubsystem、SubsystemLifecycle、私有 GUI backend、overlay、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp 阶段契约<br/>唯一 RenderAppRunner 完整生命周期"]
     L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GfxResourceManager / ShaderBindingSystem / CmdAllocator / PerFrameGpuData + timing owners + runtime render state + RenderWorld + RenderPassRecordCtx + swapchain/present 生命周期"]
     L3["L3 truvis-render-graph / truvis-world / truvis-asset<br/>按帧同步辅助、CPU 场景、资产加载"]
     L2["L2 truvis-render-foundation<br/>FrameLabel、GPU 资源句柄、RenderView、RenderSceneView、GfxResourceAccess"]
@@ -58,11 +58,12 @@ flowchart LR
 
 ## GUI 与 App 层边界
 
-GUI 属于 app 层集成能力：`app_kit::gui_plugin` 持有 imgui context、RenderGraph 适配和私有 `gui_backend`，其中 `GuiMesh` /
+GUI 属于 app 层集成能力：`app_kit::gui_subsystem` 持有 imgui context、RenderGraph 适配和私有 `gui_backend`，其中 `GuiMesh` /
 `GuiPass` 等底层 Vulkan 后端实现不作为 engine crate 暴露。
 
 `app-kit` 提供 app 层公共组件，不承载具体 app state。`RtPipeline` 持有 RT working target、main view target 等 app-owned
-窗口尺寸资源；主体 app 和 samples 通过具体字段组合这些能力。
+窗口尺寸资源；主体 app 和 samples 通过具体字段静态组合这些能力，并在各自 App 阶段内直接调用
+`SubsystemLifecycle` 与具体渲染接口。
 
 `app-render-passes` 承载主体 app 与 samples 共享的具体 RT / 后处理 / shading pass，不属于 engine core。其中 `GBuffer` 定义
 RT 管线的 GBuffer 通道布局和 per-FIF 纹理资源管理，由 `RtPipeline` 持有生命周期。

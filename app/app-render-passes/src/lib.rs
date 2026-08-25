@@ -5,7 +5,7 @@
 //!
 //! 本 crate 表达 Truvis app / samples 复用的具体渲染效果，不属于
 //! engine core。Pipeline 编排和 GUI RenderGraph 集成保留在
-//! `app/app-kit` 及具体 app 中，由具体 app 组合 plugin 并决定 pass 顺序。
+//! `app/app-kit` 及具体 App 中，由具体 App 组合渲染子系统并决定 pass 顺序。
 
 pub mod accum_pass;
 mod compute_pass;

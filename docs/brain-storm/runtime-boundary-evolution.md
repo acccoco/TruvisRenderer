@@ -7,9 +7,9 @@
 
 ## 当前基线
 
-当前 runtime / app / plugin phase、状态 owner 和资源生命周期见
+当前 runtime / App / subsystem phase、状态 owner 和资源生命周期见
 [`../summaries/frame-lifecycle.md`](../summaries/frame-lifecycle.md)、
-[`../summaries/runtime-app-plugin-boundaries.md`](../summaries/runtime-app-plugin-boundaries.md) 和
+[`../summaries/runtime-app-subsystem-boundaries.md`](../summaries/runtime-app-subsystem-boundaries.md) 和
 [`../summaries/threading-and-resource-lifecycle.md`](../summaries/threading-and-resource-lifecycle.md)。
 本文件只记录这些边界之后的演进方向。
 

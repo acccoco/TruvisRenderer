@@ -107,7 +107,7 @@ notification 队列满时允许丢弃；response 无法发送时由 Web timeout 
 - RenderThread：`RenderAppRunner`、`TruvisRenderApp`、`World` 与所有 Vulkan 对象。
 - EditorServer thread：loopback HTTP/WebSocket 与 Web 静态文件。
 
-关闭时先停止 App 接收新的 desktop/editor 请求，再完成 App、Plugin、RenderRuntime 和 Vulkan 资源释放；
+关闭时先停止 App 接收新的 desktop/editor 请求，再完成 App、具体子系统、RenderRuntime 和 Vulkan 资源释放；
 RenderThread 退出后才能销毁 child HWND，最后停止 EditorServer 并销毁 Tauri parent window。Server、WebView 和
 Tauri main thread 在整个生命周期中都不得访问 `World` 或 Vulkan/VMA/WSI 对象。
 

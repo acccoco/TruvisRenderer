@@ -21,7 +21,7 @@
 
 - 不拥有 `GfxResourceManager`、`ShaderBindingSystem`、`GlobalDescriptorSets`、`BindlessManager`、`CmdAllocator` 或 `PerFrameGpuData`。
 - 不创建、注册、释放 Vulkan/VMA/WSI 资源。
-- 不依赖 App、Plugin、scene loading、窗口平台或 runtime render state 语义。
+- 不依赖 App、具体子系统、scene loading、窗口平台或 runtime render state 语义。
 
 ## 依赖原则
 

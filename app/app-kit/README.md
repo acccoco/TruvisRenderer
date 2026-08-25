@@ -13,7 +13,11 @@
 
 ## 主要职责
 
-- `GuiPlugin`：ImGui context、输入转发、字体资源、GUI mesh 上传、私有 Vulkan 后端和 RenderGraph pass 注入。
+- `SubsystemLifecycle`：只规范需要显式资源管理的子系统 `init` / 可选 `on_resize` / `shutdown`；具体 App 直接调用，
+  不引入注册表、动态分发或 Runner 调度。
+- `SubsystemRenderCtx`：从 `RenderRuntimeRenderCtx` 裁剪出具体渲染子系统需要的只读能力，不扩散
+  `world_submesh_raster` 等 App 专属接口。
+- `GuiSubsystem`：ImGui context、输入转发、闭包式 `build_frame`、字体资源、GUI mesh 上传、私有 Vulkan 后端和 RenderGraph pass 注入。
 - `DebugImageSelector`：App-owned 的 CPU 选择状态，只保存显示开关、稳定 ID 和候选项标签；不保存或注册 GPU image/view。
 - `Camera` / `CameraController` / `InputManager`：示例级相机与输入状态，`Camera` 可生成
   runtime prepare 使用的 `RenderView` 快照；控制器包含右键视角、
@@ -40,7 +44,8 @@
 - `render_pipeline::targets` 只保存 `GfxResourceManager` image/view handle，不保存 `Gfx`、device、
   allocator 或 command allocator 引用；创建、resize 和 shutdown 必须通过对应生命周期 Ctx 显式传入
   manager 和 typed Gfx Ctx。
-- RT working target、main view target、GBuffer 等窗口尺寸资源属于具体 pipeline/plugin owner，
+- 纯 UI overlay、camera 和 input object 不需要实现 `SubsystemLifecycle`；只有实际拥有长期 GPU 资源的类型实现该 trait。
+- RT working target、main view target、GBuffer 等窗口尺寸资源属于具体 pipeline/subsystem owner，
   不进入 engine runtime-owned render state，也不注册到全局 bindless。resize 时通过 `GfxResourceManager` 释放
   manager-owned image，image view 由 manager 跟随 image 按顺序释放；GPU-safe 时机仍由现有 resize/shutdown 生命周期保证。
 - 离线 `single_frame_image`、`accum_image`、`render_target` 同样属于 `OfflinePipeline` owner；

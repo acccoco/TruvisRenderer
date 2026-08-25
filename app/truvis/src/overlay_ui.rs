@@ -2,10 +2,8 @@
 //!
 //! 本模块只决定“哪些 section 以什么布局绘制”。具体控件仍复用 app-kit 的
 //! `DebugInfoOverlay` / `PipelineControlsOverlay`，Debug Images 只在这里修改 App-owned
-//! `DebugImageSelector`。这里不接触 RenderGraph、GPU resource
-//! 生命周期或 GUI draw data 上传，调用方必须在 `GuiPlugin::begin_frame` 与
-//! `GuiPlugin::end_frame` 之间调用 `TruvisOverlayUi::build`，并在 UI frame 结束后
-//! 消费其返回的一次性 Web Editor 打开请求。
+//! `DebugImageSelector`。这里不接触 RenderGraph、GPU resource 生命周期或 GUI draw
+//! data 上传；调用方在 `GuiSubsystem::build_frame` 的闭包内调用 `TruvisOverlayUi::build`。
 
 use app_kit::debug_image::{DebugImageOption, DebugImageSelector};
 use app_kit::overlay::{DebugInfoOverlay, FrameStatsOverlayData, PipelineControlsOverlay};

@@ -37,9 +37,9 @@ GUI/input/overlay 组件位于 `app-kit`；本 crate 只负责主体 App 的业�
 - 不把 Tauri、Editor DTO、App overlay 或具体 pipeline 策略下沉到 engine crate。
 - 不让 WebView、EditorServer 或 Tauri main thread 直接访问 `World` 或 Vulkan 对象。
 - 不把本机文件路径放入 Editor WebSocket DTO。
-- 不绕过唯一 `RenderAppRunner` 帧骨架，也不让 App/Plugin 长期持有完整 runtime 或 typed `Gfx` Ctx。
-- 主体 App 的 pass 顺序、selection/overlay 策略和 realtime/offline 模式选择不进入通用 `Plugin` trait。
+- 不绕过唯一 `RenderAppRunner` 帧骨架，也不让 App/子系统长期持有完整 runtime 或 typed `Gfx` Ctx。
+- 主体 App 的 pass 顺序、selection/overlay 策略和 realtime/offline 模式选择不进入 `SubsystemLifecycle`。
 
 跨线程 Editor、协议与一致性边界见 [`docs/summaries/editor-subsystem.md`](../../docs/summaries/editor-subsystem.md)。
-Runtime/App/Plugin 的通用契约见
-[`docs/summaries/runtime-app-plugin-boundaries.md`](../../docs/summaries/runtime-app-plugin-boundaries.md)。
+Runtime/App/Subsystem 的通用契约见
+[`docs/summaries/runtime-app-subsystem-boundaries.md`](../../docs/summaries/runtime-app-subsystem-boundaries.md)。

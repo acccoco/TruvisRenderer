@@ -69,7 +69,7 @@ flowchart LR
   Tao main thread 进入消息泵后异步创建；这避免 Windows 跨线程 `CreateWindowEx` 同步通知 parent 时形成互等。
   child ready 前到达的 viewport rect 只保留 latest 值。
 - child HWND 初始保持隐藏的 `1x1` 状态；`RenderWindowThread` 等待第一个非零 DOM rect，先用 `SetWindowPos` 应用真实
-  物理尺寸，再创建 `RenderThread`。这样 `RenderThreadInit::initial_size`、App/Plugin display size 与初始 swapchain extent
+  物理尺寸，再创建 `RenderThread`。这样 `RenderThreadInit::initial_size`、App/子系统 display size 与初始 swapchain extent
   从启动时就是同一尺寸，不依赖第二次 resize 修正。
 - Tauri resize 先按 DOM 规则改变中央 slot；前端只提交相对 top-level client area 的物理像素矩形，平台宿主通过
   `SetWindowPos` 调整 child HWND。Windows 随后产生正常 `WM_SIZE`，winit 转为 `WindowEvent::Resized`，现有 latest-size、
@@ -101,7 +101,7 @@ flowchart LR
 - 叶子 Vulkan/VMA/WSI wrapper 通过 `destroy(self, ctx, reason)` 或 `destroy_mut(&mut self, ctx, reason)` 释放，释放所需依赖由
   owner 在调用点传入 typed `Gfx` Ctx。
 - `Drop` 不调用 Vulkan/VMA/WSI release API，只通过 debug assertion 暴露遗漏的显式销毁。
-- Runtime owner、manager、plugin 字段和长期资源 wrapper 不保存 typed `Gfx` Ctx、`&Gfx`、`&GfxDevice` 或
+- Runtime owner、manager、子系统字段和长期资源 wrapper 不保存 typed `Gfx` Ctx、`&Gfx`、`&GfxDevice` 或
   `&VMemAllocator` 引用。
 - manager 更新 descriptor 时只接收自身所需的窄 target；`GlobalDescriptorSets` 保持为全局 pipeline 绑定聚合，不作为下层
   manager 的更新入口。
@@ -112,7 +112,7 @@ flowchart LR
 - Frame：command buffer、per-frame buffer、FrameLabel / timeline state。
 - Swapchain：swapchain image/view、present semaphore。
 - App / Pipeline targets：RT working target、main view target、GBuffer、selection outline mask 等窗口尺寸资源由具体
-  app/plugin 持有，并在 init / resize / shutdown 阶段通过 ctx 中的 `GfxResourceManager` 与
+  App/子系统持有，并在 init / resize / shutdown 阶段通过 ctx 中的 `GfxResourceManager` 与
   `ShaderBindingSystem` 显式创建、注册或释放。
 - Asset：`AssetHub` 只持有 texture / model loader task handle、后台任务状态和完成事件队列，并负责 Assimp / glTF model 到 owned
   CPU payload 的导入；HDR/EXR texture payload 以共享 RGBA16F 保存，普通图片以共享 RGBA8 保存。
@@ -143,16 +143,16 @@ flowchart LR
   `PerFrameGpuData` 与 runtime-owned render state。
 - `RenderRuntime::init_after_window` 创建 surface、swapchain 和 `SwapchainPresenter`。
 - `RenderAppRunner` 创建 `RenderRuntime` 并把 `RenderRuntimeInitCtx` 包装为 `RenderAppInitCtx` 交给 App hooks。
-- App state 从 `RenderAppInitCtx` 中的 RenderRuntime Ctx 构造 `PluginInitCtx`，依次初始化自己持有的 Plugin。
+- App state 直接将 `&mut RenderAppInitCtx::runtime` 传给各具体子系统，按自身顺序初始化长期资源。
 
 ## 重建路径
 
 - `RenderAppRunner::run` 在循环安全点调用内部 `recreate_swapchain_if_needed(size)`。
 - `RenderAppRunner` 调用 `RenderRuntime::handle_resize(size)`。
 - RenderRuntime 只有实际重建时返回 `Some(RenderRuntimeResizeCtx)`。
-- `RenderAppRunner` 把返回值包装为 `RenderAppResizeCtx` 交给 App hooks，App state 构造 `PluginResizeCtx` 并通知需要 resize
-  的 Plugin。
-- 具体 app/plugin 在 resize 阶段重建自己持有的窗口尺寸 render target。
+- `RenderAppRunner` 把返回值包装为 `RenderAppResizeCtx` 交给 App hook；App 直接用 `&mut ctx.runtime`
+  通知需要 resize 的具体子系统。
+- 具体 App/子系统在 resize 阶段重建自己持有的窗口尺寸 render target。
 
 ## 销毁路径
 
@@ -166,12 +166,12 @@ oneshot reply 因 sender drop 退出 → App/runtime/Vulkan 销毁 → `RenderWi
 EditorServer → Tauri/Tao drop WebView 与 top-level HWND。`TruvisDesktopState::shutting_down` 阻止新 dialog，
 `EmbeddedWinitHost::Drop` 为非正常 exit 提供相同顺序的兜底。
 
-- `RenderAppRunner` 内部 shutdown：Runner 等待 GPU idle 后，先用 `RenderAppShutdownCtx` 调用具体 `RenderApp` 的
-  shutdown，再用 `PluginShutdownCtx` 反向遍历 Plugin shutdown。
-- App / Plugin shutdown 必须在 `RenderRuntime::destroy()` 释放 runtime 子资源之前释放自己持有的 GPU 资源；需要 manager
+- `RenderAppRunner` 内部 shutdown：Runner 等待 GPU idle 后，用 `RenderAppShutdownCtx` 调用具体 `RenderApp`；
+  App 在该 hook 内按自己的资源依赖顺序完成所有子系统 shutdown。
+- App / 子系统 shutdown 必须在 `RenderRuntime::destroy()` 释放 runtime 子资源之前释放自己持有的 GPU 资源；需要 manager
   或 shader-visible binding 访问时通过 shutdown context 使用 `GfxResourceManager` 与 `ShaderBindingSystem`。
 - manager-owned image/view 只能通过 `GfxResourceManager` 释放，manager 负责 image-view-before-image、延迟销毁队列与
   `DestroyReason` 诊断。
 - runtime destroy：`gfx.wait_idel()` -> release present/assets/GPU scene/cmd/runtime resources -> `gfx.destroy()`。
 - `gfx.destroy()` 会先释放内部 device child，再在 Vulkan device/instance/root 销毁前关闭 Streamline runtime。
-- `gfx.destroy()` 开始后，剩余 App / Plugin 字段的 `Drop` 不得再调用 Vulkan/VMA/WSI 销毁 API。
+- `gfx.destroy()` 开始后，剩余 App / 子系统字段的 `Drop` 不得再调用 Vulkan/VMA/WSI 销毁 API。

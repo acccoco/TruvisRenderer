@@ -10,11 +10,11 @@ use app_render_passes::realtime_rt_pass::{
 };
 use app_render_passes::resolve_pass::{ResolveDebugImage, ResolvePass, ResolveRgPass};
 use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
-use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
+use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
 use truvis_render_runtime::state::dlss_options::DlssOptions;
 
 use crate::debug_image::DebugImageOption;
@@ -23,6 +23,7 @@ use crate::render_pipeline::targets::{
     DlssOutputTargets, DlssRrInputTargets, DlssSrExposureTarget, DlssSrInputTargets, ImageTarget, MainViewTargets,
     RestirDiTargets, RestirReservoirTarget, RestirSurfaceKeyTarget, RtWorkingTargets, SharcTargets,
 };
+use crate::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 
 pub use crate::render_pipeline::common_settings::RtSkySamplingMode;
 
@@ -384,7 +385,7 @@ pub struct RtPresentGraphTargets {
 }
 
 impl RtPipelineInner {
-    fn new(ctx: &mut PluginInitCtx) -> Self {
+    fn new(ctx: &mut RenderRuntimeInitCtx<'_>) -> Self {
         // SHARC 缓存 buffer 必须先于 RT pass 创建：pass 在 `new` 时把这些持久 buffer 一次性写入
         // 自己的 SHARC regular descriptor set。SharcTargets 不随 resize 重建，因此 set 始终有效。
         let sharc_targets = SharcTargets::new(ctx.resource_ctx, ctx.immediate_ctx);
@@ -405,7 +406,7 @@ impl RtPipelineInner {
             ctx.shader_binding_system.global_descriptor_sets(),
             ctx.present.swapchain_image_info().image_format,
         );
-        // runtime 在 Plugin init 前已经根据 swapchain extent 和当前 DLSS options 解析好
+        // runtime 在子系统 init 前已经根据 swapchain extent 和当前 DLSS options 解析好
         // `FrameRenderState`。这里不能再把 render extent 覆盖为 native extent，否则
         // SR/RR 的低分辨率 RT/GBuffer/DLSS 输入会和 Streamline options 失配。
         debug_assert_eq!(ctx.frame_state.output_extent, ctx.swapchain_image_info.image_extent);
@@ -503,7 +504,7 @@ impl RtPipelineInner {
         }
     }
 
-    fn destroy(mut self, ctx: &mut PluginShutdownCtx<'_>) {
+    fn destroy(mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
         // pass pipeline 本身只依赖 device；target image/view 依赖 resource manager。
         // shutdown 阶段 runtime 已经 wait idle，先销毁 pipeline 再释放 target 不会影响 GPU 引用安全，
         // 但 target 仍必须在 runtime `GfxResourceManager` 销毁前显式释放。
@@ -559,12 +560,12 @@ impl RtPipelineInner {
     }
 }
 
-impl Plugin for RtPipeline {
-    fn init(&mut self, ctx: &mut PluginInitCtx) {
+impl SubsystemLifecycle for RtPipeline {
+    fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
         self.inner = Some(RtPipelineInner::new(ctx));
     }
 
-    fn on_resize(&mut self, ctx: &mut PluginResizeCtx) {
+    fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
         if let Some(inner) = self.inner.as_mut() {
             // resize ctx 来自 present 层实际重建后的安全点；旧 target 不会再被在飞命令引用。
             // 这里用 `PresentView` 再读一次 swapchain extent，避免 app-owned target 和
@@ -629,7 +630,7 @@ impl Plugin for RtPipeline {
         }
     }
 
-    fn shutdown(&mut self, ctx: &mut PluginShutdownCtx<'_>) {
+    fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
         if let Some(inner) = self.inner.take() {
             inner.destroy(ctx);
         }
@@ -656,7 +657,7 @@ impl RtPipeline {
     pub fn contribute_compute_passes<'a>(
         &'a self,
         rg_builder: &mut RenderGraphBuilder<'a>,
-        ctx: &'a PluginRenderCtx<'a>,
+        ctx: &'a SubsystemRenderCtx<'a>,
         common_settings: &PathTracingCommonSettings,
     ) {
         let inner = self.inner();
@@ -1063,7 +1064,7 @@ impl RtPipeline {
     pub fn contribute_present_passes<'a>(
         &'a self,
         rg_builder: &mut RenderGraphBuilder<'a>,
-        ctx: &'a PluginRenderCtx<'a>,
+        ctx: &'a SubsystemRenderCtx<'a>,
         _common_settings: &PathTracingCommonSettings,
         selected_debug_image_id: Option<&str>,
     ) -> RtPresentGraphTargets {

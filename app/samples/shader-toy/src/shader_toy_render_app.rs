@@ -2,43 +2,45 @@ use ash::vk;
 use itertools::Itertools;
 
 use truvis_app_frame::input_event::InputEvent;
-use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
-use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppShutdownCtx};
+use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
-use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
+use truvis_render_runtime::render_runtime::{
+    RenderRuntimeInitCtx, RenderRuntimeRenderCtx, RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx,
+};
 
 use crate::shader_toy_pass::ShaderToyPass;
 use app_kit::camera_controller::CameraController;
-use app_kit::gui_plugin::GuiPlugin;
+use app_kit::gui_subsystem::GuiSubsystem;
 use app_kit::input_state::InputManager;
 use app_kit::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
 use app_kit::render_pipeline::RenderMode;
+use app_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 
 #[derive(Default)]
-pub struct ShaderToyPlugin {
+pub struct ShaderToyRenderer {
     shader_toy_pass: Option<ShaderToyPass>,
 }
 
-impl Plugin for ShaderToyPlugin {
-    fn init(&mut self, ctx: &mut PluginInitCtx) {
+impl SubsystemLifecycle for ShaderToyRenderer {
+    fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
         self.shader_toy_pass = Some(ShaderToyPass::new(ctx.device_ctx, ctx.swapchain_image_info.image_format));
     }
 
-    fn shutdown(&mut self, ctx: &mut PluginShutdownCtx<'_>) {
+    fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
         if let Some(pass) = self.shader_toy_pass.take() {
             pass.destroy(ctx.device_ctx);
         }
     }
 }
 
-impl ShaderToyPlugin {
+impl ShaderToyRenderer {
     pub fn contribute_passes<'a>(
         &'a self,
         graph: &mut RenderGraphBuilder<'a>,
-        ctx: &'a PluginRenderCtx<'a>,
+        ctx: &'a SubsystemRenderCtx<'a>,
         canvas_color: RgImageHandle,
         canvas_extent: vk::Extent2D,
     ) {
@@ -49,7 +51,7 @@ impl ShaderToyPlugin {
             },
             move |context| {
                 let canvas_view = context.get_image_view(canvas_color).unwrap();
-                self.shader_toy_pass.as_ref().expect("ShaderToyPlugin not initialized").draw(
+                self.shader_toy_pass.as_ref().expect("ShaderToyRenderer not initialized").draw(
                     &ctx.record_ctx,
                     context.cmd,
                     canvas_view,
@@ -62,8 +64,8 @@ impl ShaderToyPlugin {
 
 #[derive(Default)]
 pub struct ShaderToyRenderApp {
-    gui: GuiPlugin,
-    shader_toy: ShaderToyPlugin,
+    gui: GuiSubsystem,
+    shader_toy: ShaderToyRenderer,
     camera_controller: CameraController,
     input: InputManager,
     debug_overlay: DebugInfoOverlay,
@@ -81,20 +83,9 @@ impl RenderApp for ShaderToyRenderApp {
             .iter()
             .map(|label| cmd_allocator.alloc_command_buffer(ctx.runtime.device_ctx, *label, "shader-toy-app"))
             .collect_vec();
-    }
 
-    fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
-        visit(&mut self.shader_toy);
-        visit(&mut self.gui);
-        visit(&mut self.debug_overlay);
-        visit(&mut self.pipeline_overlay);
-    }
-
-    fn visit_plugins_mut_rev(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
-        visit(&mut self.pipeline_overlay);
-        visit(&mut self.debug_overlay);
-        visit(&mut self.shader_toy);
-        visit(&mut self.gui);
+        self.shader_toy.init(&mut ctx.runtime);
+        self.gui.init(&mut ctx.runtime);
     }
 
     fn on_input(&mut self, events: &[InputEvent]) {
@@ -108,9 +99,7 @@ impl RenderApp for ShaderToyRenderApp {
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
         let delta = std::time::Duration::from_secs_f32(ctx.frame_timing.delta_time_s());
-        self.gui.begin_frame(delta);
-        {
-            let ui = self.gui.ui();
+        self.gui.build_frame(delta, |ui| {
             ui.text_wrapped("Hello world!");
             ui.text_wrapped("こんにちは世界！");
             self.debug_overlay.build_overlay_ui(
@@ -123,8 +112,7 @@ impl RenderApp for ShaderToyRenderApp {
             // Sample app 不持有 OfflinePipeline；临时 Realtime 只用于复用共享 Controls overlay 的签名。
             let mut render_mode = RenderMode::Realtime;
             self.pipeline_overlay.build_overlay_ui(ui, &mut render_mode, ctx.dlss_options, None, None, None, None);
-        }
-        self.gui.end_frame();
+        });
 
         self.camera_controller.update(
             self.input.state(),
@@ -134,17 +122,8 @@ impl RenderApp for ShaderToyRenderApp {
     }
 
     fn render(&mut self, ctx: &RenderRuntimeRenderCtx) {
-        let plugin_ctx = PluginRenderCtx {
-            device_ctx: ctx.device_ctx,
-            resource_ctx: ctx.resource_ctx,
-            queue_ctx: ctx.queue_ctx,
-            device_info_ctx: ctx.device_info_ctx,
-            record_ctx: ctx.record_ctx,
-            render_scene: ctx.render_scene,
-            present: ctx.present,
-            timeline: ctx.timeline,
-        };
-        self.gui.prepare_render_data(&plugin_ctx);
+        let subsystem_ctx = SubsystemRenderCtx::from_runtime(ctx);
+        self.gui.prepare_render_data(&subsystem_ctx);
 
         let frame_label = ctx.record_ctx.frame_timing.frame_label();
         let frame_id = ctx.record_ctx.frame_timing.frame_id();
@@ -159,8 +138,8 @@ impl RenderApp for ShaderToyRenderApp {
         let swapchain_image = present_target.image;
         let swapchain_extent = present_target.image_info.image_extent;
 
-        self.shader_toy.contribute_passes(&mut graph, &plugin_ctx, swapchain_image, swapchain_extent);
-        self.gui.contribute_passes(&mut graph, &plugin_ctx, swapchain_image, swapchain_extent);
+        self.shader_toy.contribute_passes(&mut graph, &subsystem_ctx, swapchain_image, swapchain_extent);
+        self.gui.contribute_passes(&mut graph, &subsystem_ctx, swapchain_image, swapchain_extent);
 
         let compiled_graph = graph.compile();
         if log::log_enabled!(log::Level::Debug) {
@@ -183,7 +162,14 @@ impl RenderApp for ShaderToyRenderApp {
         self.camera_controller.camera().render_view()
     }
 
-    fn shutdown(&mut self, _ctx: &mut RenderAppShutdownCtx<'_>) {
+    fn on_resize(&mut self, ctx: &mut RenderAppResizeCtx<'_>) {
+        self.shader_toy.on_resize(&mut ctx.runtime);
+        self.gui.on_resize(&mut ctx.runtime);
+    }
+
+    fn shutdown(&mut self, ctx: &mut RenderAppShutdownCtx<'_>) {
         self.cmds.clear();
+        self.shader_toy.shutdown(&mut ctx.runtime);
+        self.gui.shutdown(&mut ctx.runtime);
     }
 }

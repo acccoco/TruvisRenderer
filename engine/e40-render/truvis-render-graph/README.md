@@ -14,7 +14,7 @@
 
 ## 顺序执行模型
 
-- App 在 `RenderApp::render` 中创建 per-frame graph，并按业务语义调用具体 Plugin 的 `contribute_passes`。
+- App 在 `RenderApp::render` 中创建 per-frame graph，并按业务语义调用具体渲染器的 `contribute_passes`。
 - pass 的添加顺序就是 command recording 顺序，也是最终执行顺序。
 - `read_image` / `write_image` / `read_write_image` 声明只用于 barrier 推导、资源校验和调试输出，不参与 pass 调度。
 - image 初始状态来自 `import_image`；后续线性扫描会处理 write-after-read、read-after-write、write-after-write、layout transition 和连续只读访问。
@@ -27,6 +27,6 @@
 
 - 仅关注 imported image 的状态跟踪、同步和命令录制辅助，不依赖 scene/asset 等领域模块
 - 不依赖 `truvis-render-runtime`，也不持有 `GfxResourceManager`、descriptor 或 bindless owner
-- App 和具体 Plugin 显式决定 pass 添加顺序，RenderGraph 不重排 pass
+- App 和具体渲染器显式决定 pass 添加顺序，RenderGraph 不重排 pass
 - transient image/buffer、buffer barrier 录制、多队列调度和资源 aliasing 暂不属于当前能力
 - 业务 pass 逻辑在上层模块组织（如 `truvis-app`）

@@ -1,6 +1,5 @@
 use truvis_app_frame::input_event::InputEvent;
-use truvis_app_frame::plugin_api::{Plugin, PluginRenderCtx};
-use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx};
+use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx};
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
@@ -11,16 +10,17 @@ use truvis_world::World;
 use app_kit::camera::Camera;
 use app_kit::camera_controller::CameraController;
 use app_kit::debug_image::DebugImageSelector;
-use app_kit::gui_plugin::GuiPlugin;
+use app_kit::gui_subsystem::GuiSubsystem;
 use app_kit::input_state::InputManager;
 use app_kit::overlay::{DebugInfoOverlay, PipelineControlsOverlay};
 use app_kit::render_pipeline::RenderMode;
 use app_kit::render_pipeline::common_settings::PathTracingCommonSettings;
 use app_kit::render_pipeline::rt_render_graph::RtPipeline;
+use app_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 
 #[derive(Default)]
 pub struct CornellRenderApp {
-    gui: GuiPlugin,
+    gui: GuiSubsystem,
     debug_image_selector: DebugImageSelector,
     rt_pipeline: RtPipeline,
     path_tracing_common_settings: PathTracingCommonSettings,
@@ -84,20 +84,9 @@ impl RenderApp for CornellRenderApp {
         self.gui.set_display_size(ctx.window_size);
 
         Self::request_model(&mut *ctx.runtime.world, self.camera_controller.camera_mut());
-    }
 
-    fn visit_plugins_mut(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
-        visit(&mut self.rt_pipeline);
-        visit(&mut self.gui);
-        visit(&mut self.debug_overlay);
-        visit(&mut self.pipeline_overlay);
-    }
-
-    fn visit_plugins_mut_rev(&mut self, visit: &mut dyn FnMut(&mut dyn Plugin)) {
-        visit(&mut self.pipeline_overlay);
-        visit(&mut self.debug_overlay);
-        visit(&mut self.rt_pipeline);
-        visit(&mut self.gui);
+        self.rt_pipeline.init(&mut ctx.runtime);
+        self.gui.init(&mut ctx.runtime);
     }
 
     fn on_input(&mut self, events: &[InputEvent]) {
@@ -111,9 +100,7 @@ impl RenderApp for CornellRenderApp {
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
         let delta = std::time::Duration::from_secs_f32(ctx.frame_timing.delta_time_s());
-        self.gui.begin_frame(delta);
-        {
-            let ui = self.gui.ui();
+        self.gui.build_frame(delta, |ui| {
             self.debug_overlay.build_overlay_ui(
                 ui,
                 self.camera_controller.camera(),
@@ -133,8 +120,7 @@ impl RenderApp for CornellRenderApp {
                 None,
             );
             self.debug_image_selector.build_window(ui, RtPipeline::debug_image_options());
-        }
-        self.gui.end_frame();
+        });
 
         self.camera_controller.update(
             self.input.state(),
@@ -144,24 +130,15 @@ impl RenderApp for CornellRenderApp {
     }
 
     fn render(&mut self, ctx: &RenderRuntimeRenderCtx) {
-        let plugin_ctx = PluginRenderCtx {
-            device_ctx: ctx.device_ctx,
-            resource_ctx: ctx.resource_ctx,
-            queue_ctx: ctx.queue_ctx,
-            device_info_ctx: ctx.device_info_ctx,
-            record_ctx: ctx.record_ctx,
-            render_scene: ctx.render_scene,
-            present: ctx.present,
-            timeline: ctx.timeline,
-        };
+        let subsystem_ctx = SubsystemRenderCtx::from_runtime(ctx);
         let frame_label = ctx.record_ctx.frame_timing.frame_label();
         let frame_id = ctx.record_ctx.frame_timing.frame_id();
 
-        self.gui.prepare_render_data(&plugin_ctx);
+        self.gui.prepare_render_data(&subsystem_ctx);
 
         let compute_submit = {
             let mut graph = RenderGraphBuilder::new();
-            self.rt_pipeline.contribute_compute_passes(&mut graph, &plugin_ctx, &self.path_tracing_common_settings);
+            self.rt_pipeline.contribute_compute_passes(&mut graph, &subsystem_ctx, &self.path_tracing_common_settings);
             let compiled_graph = graph.compile();
             if log::log_enabled!(log::Level::Debug) {
                 static PRINT_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
@@ -186,13 +163,13 @@ impl RenderApp for CornellRenderApp {
             ));
             let present_targets = self.rt_pipeline.contribute_present_passes(
                 &mut graph,
-                &plugin_ctx,
+                &subsystem_ctx,
                 &self.path_tracing_common_settings,
                 self.debug_image_selector.selected_id(),
             );
             self.gui.contribute_passes(
                 &mut graph,
-                &plugin_ctx,
+                &subsystem_ctx,
                 present_targets.present_image,
                 ctx.present.swapchain_image_info().image_extent,
             );
@@ -217,5 +194,15 @@ impl RenderApp for CornellRenderApp {
 
     fn render_view(&self) -> RenderView {
         self.camera_controller.camera().render_view()
+    }
+
+    fn on_resize(&mut self, ctx: &mut RenderAppResizeCtx<'_>) {
+        self.rt_pipeline.on_resize(&mut ctx.runtime);
+        self.gui.on_resize(&mut ctx.runtime);
+    }
+
+    fn shutdown(&mut self, ctx: &mut RenderAppShutdownCtx<'_>) {
+        self.rt_pipeline.shutdown(&mut ctx.runtime);
+        self.gui.shutdown(&mut ctx.runtime);
     }
 }

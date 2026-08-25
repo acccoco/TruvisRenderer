@@ -7,18 +7,19 @@ use app_render_passes::image_clear_pass::{ImageClearPass, ImageClearRgPass};
 use app_render_passes::offline_rt_pass::{OfflineRtPass, OfflineRtRgPass};
 use app_render_passes::resolve_pass::{ResolveDebugImage, ResolvePass, ResolveRgPass};
 use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
-use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::render_scene_view::RenderSceneAccumSignature;
 use truvis_render_foundation::render_view::RenderViewAccumSignature;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
+use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
 
 use crate::debug_image::DebugImageOption;
 use crate::render_pipeline::common_settings::{PathTracingCommonSettings, RtSkySamplingMode};
 use crate::render_pipeline::rt_render_graph::RtDebugChannel;
 use crate::render_pipeline::targets::{ImageTarget, OfflineTargets};
+use crate::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 
 const OFFLINE_DEBUG_IMAGE_OPTIONS: [DebugImageOption; 3] = [
     DebugImageOption::new("offline-single-frame", "Offline Single Frame"),
@@ -197,7 +198,7 @@ pub struct OfflinePresentGraphTargets {
 }
 
 impl OfflinePipelineInner {
-    fn new(ctx: &mut PluginInitCtx) -> Self {
+    fn new(ctx: &mut RenderRuntimeInitCtx<'_>) -> Self {
         let offline_rt_pass = OfflineRtPass::new(
             ctx.resource_ctx,
             ctx.device_ctx,
@@ -243,7 +244,7 @@ impl OfflinePipelineInner {
         }
     }
 
-    fn destroy(mut self, ctx: &mut PluginShutdownCtx<'_>) {
+    fn destroy(mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
         self.offline_rt_pass.destroy(ctx.resource_ctx, ctx.device_ctx);
         self.image_clear_pass.destroy(ctx.device_ctx);
         self.accum_pass.destroy(ctx.device_ctx);
@@ -253,12 +254,12 @@ impl OfflinePipelineInner {
     }
 }
 
-impl Plugin for OfflinePipeline {
-    fn init(&mut self, ctx: &mut PluginInitCtx) {
+impl SubsystemLifecycle for OfflinePipeline {
+    fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
         self.inner = Some(OfflinePipelineInner::new(ctx));
     }
 
-    fn on_resize(&mut self, ctx: &mut PluginResizeCtx) {
+    fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
         if let Some(inner) = self.inner.as_mut() {
             let mut target_frame_state = *ctx.frame_state;
             target_frame_state.set_native_extent(ctx.present.swapchain_image_info().image_extent);
@@ -274,7 +275,7 @@ impl Plugin for OfflinePipeline {
         }
     }
 
-    fn shutdown(&mut self, ctx: &mut PluginShutdownCtx<'_>) {
+    fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
         if let Some(inner) = self.inner.take() {
             inner.destroy(ctx);
         }
@@ -320,7 +321,7 @@ impl OfflinePipeline {
     pub fn contribute_compute_passes<'a>(
         &'a self,
         rg_builder: &mut RenderGraphBuilder<'a>,
-        ctx: &'a PluginRenderCtx<'a>,
+        ctx: &'a SubsystemRenderCtx<'a>,
         common_settings: &PathTracingCommonSettings,
     ) {
         let inner = self.inner();
@@ -461,7 +462,7 @@ impl OfflinePipeline {
     pub fn contribute_present_passes<'a>(
         &'a self,
         rg_builder: &mut RenderGraphBuilder<'a>,
-        ctx: &'a PluginRenderCtx<'a>,
+        ctx: &'a SubsystemRenderCtx<'a>,
         _common_settings: &PathTracingCommonSettings,
         selected_debug_image_id: Option<&str>,
     ) -> OfflinePresentGraphTargets {

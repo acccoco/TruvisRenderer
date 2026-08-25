@@ -1,4 +1,4 @@
-//! 作为由 app 持有的 plugin 提供 ImGui 集成。
+//! 由具体 App 直接持有的 ImGui 子系统与私有 RenderGraph 集成。
 
 use std::collections::HashMap;
 
@@ -6,7 +6,6 @@ use ash::vk;
 use imgui::{DrawData, TextureId, Ui};
 
 use truvis_app_frame::input_event::{ElementState, InputEvent, MouseButton};
-use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::basic::color::LabelColor;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
@@ -17,17 +16,18 @@ use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_graph::render_graph::{
     RenderGraphBuilder, RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext,
 };
+use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 
 use crate::gui_backend::gui_mesh::GuiMesh;
 use crate::gui_backend::gui_pass::GuiPass;
+use crate::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 
 const FONT_TEXTURE_ID: usize = 0;
 
-pub struct GuiPlugin {
+pub struct GuiSubsystem {
     imgui_ctx: imgui::Context,
     hidpi_factor: f64,
-    current_ui: Option<*mut Ui>,
     draw_data: Option<*const DrawData>,
 
     gui_pass: Option<GuiPass>,
@@ -37,13 +37,13 @@ pub struct GuiPlugin {
     fonts_image_view_handle: Option<GfxImageViewHandle>,
 }
 
-impl Default for GuiPlugin {
+impl Default for GuiSubsystem {
     fn default() -> Self {
         Self::new(1.0)
     }
 }
 
-impl GuiPlugin {
+impl GuiSubsystem {
     pub fn new(hidpi_factor: f64) -> Self {
         let mut imgui_ctx = imgui::Context::create();
         imgui_ctx.set_ini_filename(None);
@@ -59,7 +59,6 @@ impl GuiPlugin {
         Self {
             imgui_ctx,
             hidpi_factor,
-            current_ui: None,
             draw_data: None,
             gui_pass: None,
             gui_meshes: None,
@@ -77,30 +76,64 @@ impl GuiPlugin {
         self.imgui_ctx.io_mut().display_size = [physical_size[0] as f32, physical_size[1] as f32];
     }
 
-    pub fn begin_frame(&mut self, delta_time: std::time::Duration) {
-        self.imgui_ctx.io_mut().update_delta_time(delta_time);
-        let ui = self.imgui_ctx.new_frame() as *mut Ui;
-        self.current_ui = Some(ui);
+    /// 将平台输入交给 ImGui，并由拥有该子系统的 App 决定后续消费策略。
+    pub fn on_input(&mut self, event: &InputEvent) -> bool {
+        let io = self.imgui_ctx.io_mut();
+        match event {
+            InputEvent::Resized {
+                physical_width,
+                physical_height,
+            } => {
+                io.display_size = [*physical_width as f32, *physical_height as f32];
+                false
+            }
+            InputEvent::MouseMoved { physical_position } => {
+                io.add_mouse_pos_event([physical_position[0] as f32, physical_position[1] as f32]);
+                io.want_capture_mouse
+            }
+            InputEvent::MouseButtonInput { button, state } => {
+                if let Some(mouse_button) = match button {
+                    MouseButton::Left => Some(imgui::MouseButton::Left),
+                    MouseButton::Right => Some(imgui::MouseButton::Right),
+                    MouseButton::Middle => Some(imgui::MouseButton::Middle),
+                    _ => None,
+                } {
+                    io.add_mouse_button_event(mouse_button, *state == ElementState::Pressed);
+                }
+                io.want_capture_mouse
+            }
+            InputEvent::MouseWheel { delta } => {
+                io.add_mouse_wheel_event([0.0, *delta as f32]);
+                io.want_capture_mouse
+            }
+            InputEvent::KeyboardInput { .. } => io.want_capture_keyboard,
+            InputEvent::Other => false,
+        }
+    }
+
+    /// 在闭包内构建完整 ImGui frame，并保留仅供本子系统 render 阶段使用的 draw data。
+    ///
+    /// `Ui` 借用不会逃逸出闭包，因此外部无需配对 begin/end，也不能在 frame 结束后
+    /// 继续访问 ImGui 的临时状态。
+    pub fn build_frame(&mut self, delta_time: std::time::Duration, build_ui: impl FnOnce(&Ui)) {
+        // 上一帧 draw data 属于 imgui::Context；开始新 frame 之前先使旧指针失效。
         self.draw_data = None;
-    }
-
-    pub fn ui(&self) -> &Ui {
-        let ui = self.current_ui.expect("GuiPlugin::ui called outside begin_frame/end_frame");
-        // 指针由 imgui::Context::new_frame 生成，在 end_frame 调用
-        // Context::render 之前保持有效。
-        unsafe { &*ui }
-    }
-
-    pub fn end_frame(&mut self) {
-        self.current_ui = None;
+        self.imgui_ctx.io_mut().update_delta_time(delta_time);
+        let ui = self.imgui_ctx.new_frame();
+        build_ui(ui);
+        // imgui::Context::render 返回借用其内部缓冲区的 draw data。该指针只在
+        // 下一次 build_frame/shutdown 之前由本子系统读取，不对外暴露引用或所有权。
         self.draw_data = Some(self.imgui_ctx.render() as *const DrawData);
     }
 
-    pub fn prepare_render_data(&mut self, ctx: &PluginRenderCtx) {
-        let draw_data =
-            self.draw_data.map(|ptr| unsafe { &*ptr }).expect("GuiPlugin::prepare_render_data called before end_frame");
+    pub fn prepare_render_data(&mut self, ctx: &SubsystemRenderCtx) {
+        // build_frame 已完成 Context::render；下一次 build_frame 会先清空此指针。
+        let draw_data = self
+            .draw_data
+            .map(|ptr| unsafe { &*ptr })
+            .expect("GuiSubsystem::prepare_render_data called before build_frame");
         let frame_label = ctx.record_ctx.frame_timing.frame_label();
-        let meshes = self.gui_meshes.as_mut().expect("GuiPlugin not initialized");
+        let meshes = self.gui_meshes.as_mut().expect("GuiSubsystem not initialized");
 
         ctx.queue_ctx.gfx_queue().begin_label("[ui-pass]create-mesh", LabelColor::COLOR_STAGE);
         {
@@ -120,7 +153,7 @@ impl GuiPlugin {
     pub fn contribute_passes<'a>(
         &'a self,
         graph: &mut RenderGraphBuilder<'a>,
-        ctx: &'a PluginRenderCtx<'a>,
+        ctx: &'a SubsystemRenderCtx<'a>,
         canvas_color: RgImageHandle,
         canvas_extent: vk::Extent2D,
     ) {
@@ -128,10 +161,10 @@ impl GuiPlugin {
         graph.add_pass(
             "gui",
             GuiRenderGraphPass {
-                gui_pass: self.gui_pass.as_ref().expect("GuiPlugin not initialized"),
+                gui_pass: self.gui_pass.as_ref().expect("GuiSubsystem not initialized"),
                 record_ctx: ctx.record_ctx,
                 ui_draw_data: self.draw_data(),
-                gui_mesh: &self.gui_meshes.as_ref().expect("GuiPlugin not initialized")[*frame_label],
+                gui_mesh: &self.gui_meshes.as_ref().expect("GuiSubsystem not initialized")[*frame_label],
                 tex_map: &self.tex_map,
                 canvas_color,
                 canvas_extent,
@@ -140,10 +173,11 @@ impl GuiPlugin {
     }
 
     fn draw_data(&self) -> &DrawData {
-        self.draw_data.map(|ptr| unsafe { &*ptr }).expect("GuiPlugin draw data requested before end_frame")
+        // draw data 属于当前 frame 的 imgui::Context，且仅在下一个 build_frame 前读取。
+        self.draw_data.map(|ptr| unsafe { &*ptr }).expect("GuiSubsystem draw data requested before build_frame")
     }
 
-    fn init_font(&mut self, ctx: &mut PluginInitCtx) {
+    fn init_font(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
         let font_size = (10.0 * self.hidpi_factor) as f32;
         let font_data = std::fs::read(TruvisPath::resources_path_str("mplus-1p-regular.ttf")).unwrap();
 
@@ -192,8 +226,8 @@ impl GuiPlugin {
     }
 }
 
-impl Plugin for GuiPlugin {
-    fn init(&mut self, ctx: &mut PluginInitCtx) {
+impl SubsystemLifecycle for GuiSubsystem {
+    fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
         self.gui_pass = Some(GuiPass::new(
             ctx.device_ctx,
             ctx.shader_binding_system.global_descriptor_sets(),
@@ -203,47 +237,12 @@ impl Plugin for GuiPlugin {
         self.init_font(ctx);
     }
 
-    fn on_input(&mut self, event: &InputEvent) -> bool {
-        let io = self.imgui_ctx.io_mut();
-        match event {
-            InputEvent::Resized {
-                physical_width,
-                physical_height,
-            } => {
-                io.display_size = [*physical_width as f32, *physical_height as f32];
-                false
-            }
-            InputEvent::MouseMoved { physical_position } => {
-                io.add_mouse_pos_event([physical_position[0] as f32, physical_position[1] as f32]);
-                io.want_capture_mouse
-            }
-            InputEvent::MouseButtonInput { button, state } => {
-                if let Some(mouse_button) = match button {
-                    MouseButton::Left => Some(imgui::MouseButton::Left),
-                    MouseButton::Right => Some(imgui::MouseButton::Right),
-                    MouseButton::Middle => Some(imgui::MouseButton::Middle),
-                    _ => None,
-                } {
-                    io.add_mouse_button_event(mouse_button, *state == ElementState::Pressed);
-                }
-                io.want_capture_mouse
-            }
-            InputEvent::MouseWheel { delta } => {
-                io.add_mouse_wheel_event([0.0, *delta as f32]);
-                io.want_capture_mouse
-            }
-            InputEvent::KeyboardInput { .. } => io.want_capture_keyboard,
-            InputEvent::Other => false,
-        }
-    }
-
-    fn on_resize(&mut self, ctx: &mut PluginResizeCtx) {
+    fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
         let extent = ctx.present.swapchain_image_info().image_extent;
         self.set_display_size([extent.width, extent.height]);
     }
 
-    fn shutdown(&mut self, ctx: &mut PluginShutdownCtx<'_>) {
-        self.current_ui = None;
+    fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
         self.draw_data = None;
         self.tex_map.clear();
 

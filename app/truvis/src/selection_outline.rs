@@ -2,10 +2,10 @@ use ash::vk;
 use slotmap::Key;
 
 use app_kit::render_pipeline::targets::ImageTarget;
+use app_kit::subsystem::SubsystemLifecycle;
 use app_render_passes::selection_outline_pass::{
     SelectionOutlineCompositeRgPass, SelectionOutlineMaskRgPass, SelectionOutlinePass,
 };
-use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
@@ -14,7 +14,9 @@ use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
-use truvis_render_runtime::render_runtime::RenderRuntimeRenderCtx;
+use truvis_render_runtime::render_runtime::{
+    RenderRuntimeInitCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx,
+};
 use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 
@@ -95,8 +97,8 @@ impl SelectionOutlineRenderer {
     }
 }
 
-impl Plugin for SelectionOutlineRenderer {
-    fn init(&mut self, ctx: &mut PluginInitCtx) {
+impl SubsystemLifecycle for SelectionOutlineRenderer {
+    fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
         let image_info = ctx.present.swapchain_image_info();
         let inner = SelectionOutlineRendererInner::new(
             ctx.resource_ctx,
@@ -110,7 +112,7 @@ impl Plugin for SelectionOutlineRenderer {
         self.inner = Some(inner);
     }
 
-    fn on_resize(&mut self, ctx: &mut PluginResizeCtx) {
+    fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
         let image_info = ctx.present.swapchain_image_info();
         if let Some(inner) = self.inner.as_mut() {
             inner.rebuild_masks(
@@ -135,7 +137,7 @@ impl Plugin for SelectionOutlineRenderer {
         }
     }
 
-    fn shutdown(&mut self, ctx: &mut PluginShutdownCtx<'_>) {
+    fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
         if let Some(inner) = self.inner.take() {
             inner.destroy(ctx.resource_ctx, ctx.device_ctx, ctx.gfx_resource_manager, DestroyReason::Shutdown);
         }

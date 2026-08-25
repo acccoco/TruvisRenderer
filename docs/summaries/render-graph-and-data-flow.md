@@ -12,7 +12,7 @@
 RenderGraph 是按 App 指定顺序执行的命令录制与同步辅助，不是自动调度器：
 
 - `RenderGraphBuilder` 按 pass 添加顺序记录执行序列，不做拓扑排序或 pass 重排。
-- App 决定完整业务顺序；pipeline/plugin 只贡献自己的 pass 或 sub-flow。
+- App 决定完整业务顺序；pipeline/子系统只贡献自己的 pass 或 sub-flow。
 - 当前 graph 只跟踪 imported image 的访问与状态，不创建或拥有 image。
 - graph compile 通过线性扫描生成 image barrier、layout transition、epilogue barrier 和 semaphore submit 信息。
 - execution 通过 `GfxResourceAccess` 解析 image/image-view handle，不依赖 concrete `GfxResourceManager`。
@@ -21,7 +21,7 @@ RenderGraph 是按 App 指定顺序执行的命令录制与同步辅助，不是
 
 同一张固定管线 image 同时涉及三个不同职责，不能互相替代：
 
-1. **Pipeline/Plugin owner**：创建并持有 render target、GBuffer、DLSS 输入输出、累计图、selection mask 或 GUI font，
+1. **Pipeline/Subsystem owner**：创建并持有 render target、GBuffer、DLSS 输入输出、累计图、selection mask 或 GUI font，
    并在 init/resize/shutdown 的 GPU-safe 时机释放。
 2. **Pass-local descriptor**：描述本次 draw/dispatch 使用哪个 image view；descriptor 不拥有 image，也不负责同步。
 3. **RenderGraph state declaration**：声明 sampled/storage/color attachment 等访问，负责 pass 间 barrier 和 layout transition。
@@ -31,7 +31,7 @@ sampled image 固定使用 `SHADER_READ_ONLY_OPTIMAL`；固定管线 image 通�
 不注册到全局 bindless table。
 
 全局 bindless set 只保存 Material/Scene 数据动态索引的 asset texture 与 sky sampled-image SRV。窗口 resize
-只重建具体 pipeline/plugin owner 的 target 和 pass-local 引用，不产生全局 bindless slot 注册/回收压力。
+只重建具体 pipeline/subsystem owner 的 target 和 pass-local 引用，不产生全局 bindless slot 注册/回收压力。
 
 ## Pass 顺序与状态推导
 
@@ -45,7 +45,7 @@ pass 使用 `read_image`、`write_image` 或 `read_write_image` 声明资源访�
 - imported image 的 wait semaphore 与 exported image 的 signal semaphore。
 
 present image 通过 `PresentView::import_current_target` 接入 graph。acquire 和 render-complete semaphore 由
-present adapter 固定提供，App/Plugin 不直接访问 `SwapchainPresenter` owner 或同步对象。
+present adapter 固定提供，App/子系统不直接访问 `SwapchainPresenter` owner 或同步对象。
 
 同步 raycast 不进入 RenderGraph。它在 prepare 后、render graph 组图前通过 runtime-owned pipeline、command pool 和
 fence 提交，阻塞读取当前 GPU scene snapshot，再把 GPU instance slot/submesh 转回 CPU scene handle。
@@ -95,7 +95,7 @@ semaphore 数量，用于核对声明与实际录制顺序。
 
 ## 与帧生命周期的关系
 
-- update：App/Plugin 可以修改 CPU scene 与 app-owned 设置。
+- update：App/子系统可以修改 CPU scene 与 app-owned 设置。
 - prepare：runtime 把 CPU scene、asset 和 view 快照同步为 GPU 可见状态。
 - after_prepare：只处理依赖当前 prepared scene 的同步查询。
 - render：App 构造 RenderGraph，pass 只读取 prepared GPU scene 和 app/runtime render state。

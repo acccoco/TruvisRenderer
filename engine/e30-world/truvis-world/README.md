@@ -29,7 +29,7 @@
 
 - `World` 不持有 Vulkan、`Gfx`、GPU resource/binding owner 或 swapchain 资源。
 - `World` 不持有 GPU buffer、image、BLAS、material slot 或 frame state。
-- `World` 不依赖 `truvis-render-runtime`、`truvis-app-frame` 或 App/Plugin 契约。
+- `World` 不依赖 `truvis-render-runtime`、`truvis-app-frame` 或 App/子系统契约。
 - `World` facade 对 model import 暴露 `ModelImportHandle`；内部 loader handle 只由
   `SceneAssetIngestor` 用于事件翻译，不把 loader 身份扩散到 App、`SceneStore` 或 render-side manager。
 - `SceneStore`、`Instance`、raycast hit 和 `RenderWorld` manager 的长期引用使用 `TextureHandle` /
@@ -43,8 +43,8 @@
 - `SceneStore` 与 `AssetHub` 字段对外保持私有；只有 `World` 方法可以组合二者。
 - `SceneStore` owner 不作为跨 crate 构造参数暴露；`World::new()` 负责创建内部 `SceneStore`、
   `AssetHub` 和 `SceneAssetIngestor`。
-- GPU frame state、bindless、global descriptor 和 manager-owned image/view 属于 render-side runtime owner；具体窗口尺寸 render target 由 app 层 pipeline/plugin 持有。
+- GPU frame state、bindless、global descriptor 和 manager-owned image/view 属于 render-side runtime owner；具体窗口尺寸 render target 由 app 层 pipeline/子系统持有。
 
 ## 设计意图
 
-`World` / render-side GPU owner 的拆分让 CPU 语义数据和 GPU 执行状态有清晰边界。App 和 Plugin 在 update 阶段修改 CPU 世界；runtime 在 prepare 阶段把需要的 scene/asset 数据同步到 GPU resources 和 shader-visible bindings；render 阶段主要读取 `RenderPassRecordCtx` 录制命令。
+`World` / render-side GPU owner 的拆分让 CPU 语义数据和 GPU 执行状态有清晰边界。App 和具体子系统在 update 阶段修改 CPU 世界；runtime 在 prepare 阶段把需要的 scene/asset 数据同步到 GPU resources 和 shader-visible bindings；render 阶段主要读取 `RenderPassRecordCtx` 录制命令。

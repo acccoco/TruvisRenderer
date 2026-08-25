@@ -33,8 +33,8 @@ pub use crate::scene_store::{
 
 /// CPU 侧场景状态的聚合容器。
 ///
-/// 与 GPU-facing 状态物理分离，建立 CPU/GPU 数据的所有权边界。App /
-/// Plugin 在 update 阶段通过这里修改 CPU state；`RenderRuntime::prepare` 再读取这些数据，
+/// 与 GPU-facing 状态物理分离，建立 CPU/GPU 数据的所有权边界。App 及其具体
+/// 子系统在 update 阶段通过这里修改 CPU state；`RenderRuntime::prepare` 再读取这些数据，
 /// 同步到 render-side manager、bridge、`RenderWorld` 和 shader-visible bindings。
 pub struct World {
     /// runtime scene 语义数据，包括 live instance 和 light。

@@ -18,7 +18,7 @@ workspace 顶层 `app/`。
   `RenderSceneView` 和 `GfxResourceAccess`。
 - L3 语义与编排辅助：`e30-world/` 保存 CPU asset/scene 语义，`e40-render/truvis-render-graph` 负责按 App 指定顺序推导 pass 同步。
 - L4 Runtime 集成层：`e40-render/truvis-render-runtime` 持有 `Gfx`、`World`、GPU resource/binding/timing owners、runtime render state、`RenderWorld`、present、`RenderPassRecordCtx` 和 asset-to-GPU bridge。
-- L5 App 框架层：`e50-app-frame/truvis-app-frame` 定义具体 `RenderApp` 契约、统一 `RenderAppRunner`、`Plugin` 和最小线程控制契约。
+- L5 App 框架层：`e50-app-frame/truvis-app-frame` 定义具体 `RenderApp` 阶段契约、统一 `RenderAppRunner` 和最小线程控制契约。
 - L6 渲染线程宿主：`e60-platform/truvis-render-thread` 管理不依赖窗口 backend 的 OS RenderThread 生命周期。
 - L7 窗口平台层：`e60-platform/truvis-winit-host` 管理 winit standalone / embedded 窗口与输入适配。
 - L8 具体应用层：主体应用、Editor 和 samples 位于 `../app/`。
@@ -78,8 +78,8 @@ CPU 侧语义层，负责 asset 身份、加载状态、scene runtime 身份与 
 
 平台无关的 App 框架目录，定义应用、固定帧执行器和 Runner 消费的跨线程契约。
 
-- `truvis-app-frame/`：定义具体 `RenderApp`、`Plugin`、phase Ctx、统一 `RenderAppRunner` 和最小线程控制契约；不依赖
-  `winit`，也不持有具体 App/Plugin 业务状态。
+- `truvis-app-frame/`：定义具体 `RenderApp`、phase Ctx、统一 `RenderAppRunner` 和最小线程控制契约；不依赖
+  `winit`，也不持有具体 App/子系统业务状态。
 
 ### `e60-platform/`
 
@@ -118,7 +118,7 @@ C++ 子系统、CMake/vcpkg 构建和 Rust FFI binding 目录。
 ## 推荐阅读顺序
 
 1. `../docs/ARCHITECTURE.md`：先确认当前架构入口、阅读顺序与最高优先级约束。
-2. `../docs/summaries/`：按主题阅读分层依赖、帧生命周期、Runtime/App/Plugin 边界、RenderGraph 数据流、线程与资源生命周期。
+2. `../docs/summaries/`：按主题阅读分层依赖、帧生命周期、Runtime/App/Subsystem 边界、RenderGraph 数据流、线程与资源生命周期。
 3. 本文件：按目录和 crate 定位要阅读的模块。
 4. 各 crate 内 README：深入具体职责、生命周期和边界；重点可先看 `e10-gfx/truvis-gfx/README.md`、`e30-world/truvis-asset/README.md`、
    `e30-world/truvis-world/README.md`、`e40-render/*/README.md`、`e50-app-frame/*/README.md`、`e60-platform/*/README.md`。

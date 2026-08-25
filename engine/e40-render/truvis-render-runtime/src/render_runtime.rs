@@ -41,23 +41,23 @@ pub use crate::render_runtime_ctx::{
 /// 渲染运行时核心。
 ///
 /// 只通过返回类型化 Ctx 结构的生命周期方法暴露状态。
-/// 生命周期由外部代码驱动；RenderRuntime 不感知 Plugin、GUI 或 app 编排概念。
+/// 生命周期由外部代码驱动；RenderRuntime 不感知 GUI、子系统或 App 内部编排概念。
 ///
 /// 它位于 `RenderAppRunner` 之下、`truvis-gfx` 与 foundation GPU owner 之上，是 CPU scene、
 /// render-side 资产上传、GPU scene 翻译、swapchain/present 和 FIF 同步的聚合 owner。
 /// 上层只能在对应阶段拿到窄化后的 Ctx，不能长期保存完整 `Gfx` 或 runtime 内部字段。
-/// 这保证资源销毁顺序仍由 runtime 集中控制：plugin/app 可以在生命周期阶段创建或释放资源，
+/// 这保证资源销毁顺序仍由 runtime 集中控制：App/子系统可以在生命周期阶段创建或释放资源，
 /// 但不能越过 Ctx 长期持有内部 owner。
 ///
 /// # 生命周期调用顺序
 /// ```ignore
 /// render_runtime.begin_frame();
 /// let update_ctx = render_runtime.update_phase();
-/// // ... 使用 update_ctx 执行 app/plugin CPU 更新 ...
+/// // ... 使用 update_ctx 执行 App/子系统 CPU 更新 ...
 /// drop(update_ctx);
 /// render_runtime.prepare(render_view);
 /// let render_ctx = render_runtime.render_phase();
-/// // ... 执行 app/plugin render graph 工作 ...
+/// // ... 执行 App/子系统 render graph 工作 ...
 /// drop(render_ctx);
 /// render_runtime.present();
 /// render_runtime.end_frame();
@@ -108,7 +108,7 @@ impl RenderRuntime {
         let frame_state = {
             let _span = tracy_client::span!("RenderRuntime::new/frame_state");
             // runtime 创建时还没有 surface/swapchain，只能先保存格式和一个占位 extent。
-            // 真实窗口尺寸会在 `init_after_window` 创建 present 后同步，并交给 app/plugin
+            // 真实窗口尺寸会在 `init_after_window` 创建 present 后同步，并交给 App/子系统
             // 初始化自己的 window-sized render targets。
             FrameRenderState {
                 hdr_color_format: vk::Format::R32G32B32A32_SFLOAT,
@@ -315,7 +315,7 @@ impl RenderRuntime {
 
     /// 等待当前 device 上已提交的 GPU 工作完成。
     ///
-    /// runtime 在 app/plugin shutdown 前调用它，确保上层持有的 pipeline、descriptor、buffer
+    /// runtime 在 App/子系统 shutdown 前调用它，确保上层持有的 pipeline、descriptor、buffer
     /// 等资源被释放时，不会仍被上一帧 command buffer 引用。
     pub fn wait_idle(&self) {
         self.gfx.wait_idel();
@@ -323,7 +323,7 @@ impl RenderRuntime {
 
     /// 销毁 runtime 拥有的所有 GPU/CPU 子资源，并最后销毁 `Gfx` root owner。
     ///
-    /// 调用前应已经完成 app/plugin shutdown。销毁顺序刻意从依赖 `Gfx` 的子资源开始，
+    /// 调用前应已经完成 App/子系统 shutdown。销毁顺序刻意从依赖 `Gfx` 的子资源开始，
     /// 先释放 present/asset/RenderWorld/command/descriptor 等对象，最后销毁 `Gfx`，
     /// 这样所有 Vulkan wrapper 都能通过有效的 typed Ctx 显式释放。
     pub fn destroy(mut self) {
@@ -508,7 +508,7 @@ impl RenderRuntime {
     /// 根据当前 DLSS options 同步 frame render state。
     ///
     /// DLSS mode 变化可能只影响 pass 分支，也可能改变低分辨率 render extent。前者只需要
-    /// 重置 DLSS history，后者必须让 app/plugin 重建 RT/GBuffer/DLSS input targets。
+    /// 重置 DLSS history，后者必须让 App/子系统重建 RT/GBuffer/DLSS input targets。
     pub fn sync_dlss_options_frame_state(&mut self) -> Option<RenderRuntimeResizeCtx<'_>> {
         let old_state = self.frame_state;
         let old_options = self.last_applied_dlss_options;
@@ -649,7 +649,7 @@ impl RenderRuntime {
             &mut self.gfx_resource_manager,
         );
         // runtime 只同步 frame state；具体 RT / main-view / GBuffer target 的重建由随后
-        // 返回的 resize ctx 交给 app/plugin 完成，避免 engine 反向持有管线策略资源。
+        // 返回的 resize ctx 交给 App/子系统完成，避免 engine 反向持有管线策略资源。
         self.sync_frame_extent_after_present_resize();
 
         Some(RenderRuntimeResizeCtx {
@@ -665,7 +665,7 @@ impl RenderRuntime {
         })
     }
 
-    /// 生成 shutdown 阶段上下文，供 app/plugin 在 runtime 子资源销毁前释放自己持有的 GPU 资源。
+    /// 生成 shutdown 阶段上下文，供 App/子系统在 runtime 子资源销毁前释放自己持有的 GPU 资源。
     ///
     /// 这个阶段仍暴露 GPU 资源/binding owner 与 `CmdAllocator` 的可变借用，但不再允许继续进入 update/render
     /// 帧流程；调用者应在 `wait_idle` 后使用它清理长期资源，再让 `destroy` 接管 runtime-owned 资源。
@@ -684,7 +684,7 @@ impl RenderRuntime {
         }
     }
 
-    /// window/surface 创建后的一次性初始化。返回用于 plugin 初始化的上下文。
+    /// window/surface 创建后的一次性初始化。返回用于 App/子系统初始化的上下文。
     ///
     /// `RenderRuntime::new` 不触碰窗口系统对象；surface/swapchain 必须等平台层提供 raw handle 后
     /// 才能创建。这样可以保持 runtime 初始化和窗口生命周期之间的清晰边界。
@@ -707,7 +707,7 @@ impl RenderRuntime {
             },
         ));
         // surface 创建后才能知道平台裁剪后的实际 swapchain extent。这里先同步到
-        // `frame_state`，让后续 PluginInitCtx 创建 app-owned target 时拿到真实尺寸。
+        // `frame_state`，让后续 App 子系统创建 app-owned target 时拿到真实尺寸。
         self.sync_frame_extent_after_present_resize();
 
         RenderRuntimeInitCtx {
@@ -862,7 +862,7 @@ impl RenderRuntime {
     /// 同步 swapchain extent 到 `FrameRenderState`。
     ///
     /// present 层负责判断 swapchain 是否需要重建；具体窗口尺寸 render target
-    /// 属于 app/plugin owner，这里只维护 runtime 的 frame state。
+    /// 属于 App/子系统 owner，这里只维护 runtime 的 frame state。
     fn update_frame_state(&mut self) {
         self.sync_frame_extent_after_present_resize();
     }
@@ -876,7 +876,7 @@ impl RenderRuntime {
 
         // 尺寸变化会让历史累积图像的内容语义失效，但图像本身属于 app-owned target。
         // runtime 只更新 shader/per-frame data 会读取的 extent，并清零累积帧计数；
-        // 具体 image 重建在 Plugin::on_resize 中发生。
+        // 具体 image 重建由 App 在自身 on_resize 阶段显式编排。
         let old_options = self.last_applied_dlss_options;
         let old_feature = old_options.active_feature();
         self.frame_state = self.resolve_frame_state_for_output(swapchain_extent);

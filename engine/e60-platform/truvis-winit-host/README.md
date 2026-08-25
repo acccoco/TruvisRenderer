@@ -40,4 +40,4 @@ truvis-winit-host
   -> truvis-app-frame
 ```
 
-`RenderAppRunner` 和 App/Plugin 契约属于 `truvis-app-frame`；具体 App、日志、产品标题、图标路径与渲染管线属于 `app/`。
+`RenderAppRunner` 和 `RenderApp` 阶段契约属于 `truvis-app-frame`；具体 App、子系统、日志、产品标题、图标路径与渲染管线属于 `app/`。
