@@ -6,7 +6,7 @@ use crate::bindings::bindless_manager::{BindlessManager, BindlessSrvHandle};
 use crate::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use crate::bindings::sampler_manager::RenderSamplerManager;
 use crate::resources::gfx_resource_manager::GfxResourceManager;
-use truvis_render_foundation::frame_counter::{FrameLabel, FrameToken};
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::GfxImageViewHandle;
 
 /// shader-visible binding 系统的长期 owner。
@@ -21,11 +21,11 @@ pub struct ShaderBindingSystem {
 }
 
 impl ShaderBindingSystem {
-    pub fn new(ctx: GfxDeviceCtx<'_>, initial_frame_token: FrameToken) -> Self {
+    pub fn new(ctx: GfxDeviceCtx<'_>, initial_frame_id: u64) -> Self {
         let _span = tracy_client::span!("ShaderBindingSystem::new");
         let global_descriptor_sets = GlobalDescriptorSets::new(ctx);
         let sampler_manager = RenderSamplerManager::new(ctx, global_descriptor_sets.static_sampler_target());
-        let bindless_manager = BindlessManager::new(initial_frame_token);
+        let bindless_manager = BindlessManager::new(initial_frame_id);
 
         Self {
             global_descriptor_sets,
@@ -45,8 +45,8 @@ impl ShaderBindingSystem {
     }
 
     #[inline]
-    pub fn begin_frame(&mut self, frame_token: FrameToken) {
-        self.bindless_manager.begin_frame(frame_token);
+    pub fn begin_frame(&mut self, current_frame_id: u64) {
+        self.bindless_manager.begin_frame(current_frame_id);
     }
 
     #[inline]

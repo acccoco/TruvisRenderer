@@ -5,7 +5,7 @@ use truvis_app_frame::input_event::InputEvent;
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginShutdownCtx};
 use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
-use truvis_render_foundation::frame_counter::FrameLabel;
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
 use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
@@ -105,7 +105,7 @@ impl RenderApp for TriangleRenderApp {
     }
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
-        let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
+        let delta = std::time::Duration::from_secs_f32(ctx.frame_timing.delta_time_s());
         self.gui.begin_frame(delta);
         {
             let ui = self.gui.ui();
@@ -114,7 +114,7 @@ impl RenderApp for TriangleRenderApp {
                 self.camera_controller.camera(),
                 ctx.swapchain_extent,
                 ctx.view_accum.accum_frames_num(),
-                ctx.delta_time_s,
+                ctx.frame_timing.delta_time_s(),
             );
             // Sample app 不持有 OfflinePipeline；临时 Realtime 只用于复用共享 Controls overlay 的签名。
             let mut render_mode = RenderMode::Realtime;

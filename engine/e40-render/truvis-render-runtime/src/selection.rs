@@ -5,7 +5,7 @@
 //! 依赖 RenderWorld 的私有数据结构。
 
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
-use truvis_render_foundation::frame_counter::FrameLabel;
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_world::guid_new_type::InstanceHandle;
 
 /// CPU `World` 语义下的单个 submesh 选择。

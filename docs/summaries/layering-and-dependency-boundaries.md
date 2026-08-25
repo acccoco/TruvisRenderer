@@ -14,7 +14,7 @@ flowchart TB
     L5["L5 app-kit<br/>GuiPlugin、私有 GUI backend、overlay plugin、camera/input、RT pipeline glue<br/><br/>L5 truvis-app-frame<br/>RenderApp / Plugin 契约与 Plugin Ctx<br/>唯一 RenderAppRunner 完整生命周期"]
     L4["L4 truvis-render-runtime<br/>RenderRuntime：World + GfxResourceManager / ShaderBindingSystem / CmdAllocator / PerFrameGpuData + timing owners + runtime render state + RenderWorld + RenderPassRecordCtx + swapchain/present 生命周期"]
     L3["L3 truvis-render-graph / truvis-world / truvis-asset<br/>按帧同步辅助、CPU 场景、资产加载"]
-    L2["L2 truvis-render-foundation<br/>FrameCounter / FrameLabel、GPU 资源句柄、RenderView、RenderSceneView、GfxResourceAccess"]
+    L2["L2 truvis-render-foundation<br/>FrameLabel、GPU 资源句柄、RenderView、RenderSceneView、GfxResourceAccess"]
     L1["L1 truvis-gfx<br/>Vulkan RHI 封装"]
     L0["L0 truvis-utils / truvis-logs / truvis-path / descriptor-layout"]
     L8 --> L7 --> L6 --> L5 --> L4 --> L3 --> L2 --> L1 --> L0

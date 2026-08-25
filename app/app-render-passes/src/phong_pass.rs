@@ -16,7 +16,7 @@ use truvis_gfx::{
     },
 };
 use truvis_path::TruvisPath;
-use truvis_render_foundation::frame_counter::FrameLabel;
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;

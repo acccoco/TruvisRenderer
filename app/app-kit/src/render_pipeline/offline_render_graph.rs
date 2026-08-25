@@ -10,7 +10,7 @@ use app_render_passes::sdr_pass::{SdrPass, SdrRgPass};
 use truvis_app_frame::plugin_api::{Plugin, PluginInitCtx, PluginRenderCtx, PluginResizeCtx, PluginShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::frame_counter::FrameLabel;
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::render_scene_view::RenderSceneAccumSignature;
 use truvis_render_foundation::render_view::RenderViewAccumSignature;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};

@@ -53,8 +53,6 @@ pub struct RenderRuntimeUpdateCtx<'a> {
     pub swapchain_extent: vk::Extent2D,
     /// 当前帧序号、FIF label 和时间快照。
     pub frame_timing: &'a FrameTiming,
-    /// `begin_frame` 计算出的上一帧 delta time，单位秒。
-    pub delta_time_s: f32,
 }
 
 /// Render 阶段上下文，对 GPU 命令录制需要的 RenderRuntime 状态进行只读共享借用。

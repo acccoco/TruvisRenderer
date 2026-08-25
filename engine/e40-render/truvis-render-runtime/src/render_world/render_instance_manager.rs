@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use slotmap::SecondaryMap;
 
-use truvis_render_foundation::frame_counter::{FrameLabel, FrameToken};
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_world::SceneReadView;
 use truvis_world::components::instance::Instance;
 use truvis_world::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle};
@@ -60,7 +60,7 @@ pub struct RenderInstanceManager {
     bindings: SecondaryMap<InstanceHandle, InstanceBinding>,
     free_slots: Vec<GpuInstanceSlot>,
     retired_slots: Vec<RetiredSlot>,
-    frame_token: FrameToken,
+    current_frame_id: u64,
     revision: u64,
     ray_cast_records: Vec<Option<RayCastInstanceRecord>>,
     motion_history_reset_pending: bool,
@@ -80,23 +80,23 @@ impl RenderInstanceManager {
     ///
     /// slot 数量当前与 `RenderWorld` instance buffer 容量保持一致；耗尽表示 CPU scene 中可渲染实例
     /// 已超过 runtime 当前固定容量。
-    pub fn new(frame_token: FrameToken) -> Self {
+    pub fn new(current_frame_id: u64) -> Self {
         let free_slots = (0..MAX_INSTANCE_COUNT).rev().map(GpuInstanceSlot::new).collect();
         Self {
             bindings: SecondaryMap::new(),
             free_slots,
             retired_slots: Vec::new(),
-            frame_token,
+            current_frame_id,
             revision: 0,
             ray_cast_records: vec![None; MAX_INSTANCE_COUNT as usize],
             motion_history_reset_pending: true,
         }
     }
 
-    /// 帧开始时推进 frame token，并回收已经跨过 FIF 窗口的 retired slot。
-    pub fn begin_frame(&mut self, frame_token: FrameToken) {
+    /// 帧开始时推进 frame id，并回收已经跨过 FIF 窗口的 retired slot。
+    pub fn begin_frame(&mut self, current_frame_id: u64) {
         // slot 回收以 frame id 为准推进；每帧开始时回收已经跨过 FIF 窗口的旧 slot。
-        self.frame_token = frame_token;
+        self.current_frame_id = current_frame_id;
         self.reclaim_retired_slots();
     }
 
@@ -390,7 +390,7 @@ impl RenderInstanceManager {
             }
             self.retired_slots.push(RetiredSlot {
                 slot: binding.slot,
-                retired_frame_id: self.frame_token.frame_id(),
+                retired_frame_id: self.current_frame_id,
             });
             log::debug!(
                 "RenderInstanceManager: retire handle={:?} stable_slot={}; reclaim delayed by FIF",
@@ -403,7 +403,7 @@ impl RenderInstanceManager {
     }
 
     fn reclaim_retired_slots(&mut self) {
-        let current_frame_id = self.frame_token.frame_id();
+        let current_frame_id = self.current_frame_id;
         let fif_count = FrameLabel::COUNT as u64;
         let mut retained = Vec::new();
 

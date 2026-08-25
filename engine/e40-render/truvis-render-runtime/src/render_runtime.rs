@@ -10,7 +10,7 @@ use truvis_gfx::commands::submit_info::GfxSubmitInfo;
 use truvis_gfx::gfx::{Gfx, GfxDeviceInfoCtx};
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_path::TruvisPath;
-use truvis_render_foundation::frame_counter::{FrameCounter, FrameLabel};
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_shader_binding::gpu;
 use truvis_streamline_binding::dlss;
@@ -30,7 +30,6 @@ use crate::runtime_defaults::DefaultRenderRuntimeSettings;
 use crate::state::dlss_options::{DlssFeature, DlssOptions};
 use crate::state::dlss_sr::{DlssSrMode, DlssSrState};
 use crate::state::frame_state::FrameRenderState;
-use crate::state::frame_timer::FrameTimer;
 use crate::state::frame_timing::FrameTiming;
 use crate::state::view_accum::ViewAccumState;
 
@@ -80,7 +79,6 @@ pub struct RenderRuntime {
 
     cmd_allocator: CmdAllocator,
 
-    timer: FrameTimer,
     fif_timeline_semaphore: GfxSemaphore,
 
     render_world_update_cmds: Vec<GfxCommandBuffer>,
@@ -126,13 +124,9 @@ impl RenderRuntime {
             }
         };
 
-        let (timer, view_accum, fif_timeline_semaphore) = {
+        let (view_accum, fif_timeline_semaphore) = {
             let _span = tracy_client::span!("RenderRuntime::new/sync");
-            (
-                FrameTimer::default(),
-                ViewAccumState::default(),
-                GfxSemaphore::new_timeline(gfx.device_ctx(), 0, "render-timeline"),
-            )
+            (ViewAccumState::default(), GfxSemaphore::new_timeline(gfx.device_ctx(), 0, "render-timeline"))
         };
 
         let (mut gfx_resource_manager, mut cmd_allocator, frame_timing, mut shader_binding_system) = {
@@ -142,8 +136,8 @@ impl RenderRuntime {
 
             // 初始值应该是 1，因为 timeline semaphore 初始值是 0
             let init_frame_id = 1;
-            let frame_timing = FrameTiming::new(FrameCounter::new(init_frame_id, 60.0));
-            let shader_binding_system = ShaderBindingSystem::new(gfx.device_ctx(), frame_timing.frame_token());
+            let frame_timing = FrameTiming::new(init_frame_id, None);
+            let shader_binding_system = ShaderBindingSystem::new(gfx.device_ctx(), frame_timing.frame_id());
 
             (gfx_resource_manager, cmd_allocator, frame_timing, shader_binding_system)
         };
@@ -168,7 +162,7 @@ impl RenderRuntime {
                 gfx.queue_ctx(),
                 &mut gfx_resource_manager,
                 &mut shader_binding_system,
-                frame_timing.frame_token(),
+                frame_timing.frame_id(),
             )
         };
 
@@ -203,7 +197,6 @@ impl RenderRuntime {
             Self {
                 gfx,
                 cmd_allocator,
-                timer,
                 fif_timeline_semaphore,
                 render_world_update_cmds: cmds,
                 swapchain_presenter: None,
@@ -370,13 +363,13 @@ impl RenderRuntime {
 // 生命周期方法（public API）
 // ---------------------------------------------------------------------------
 impl RenderRuntime {
-    /// 自包含的帧开始流程：帧计时器推进、FIF 等待、资源清理和 bindless / RenderWorld frame token 推进。
+    /// 自包含的帧开始流程：时间快照更新、FIF 等待、资源清理和 manager frame id 推进。
     ///
     /// 这里是 runtime 每帧唯一的资源回收入口。先等待当前 FIF 槽位不再被 GPU 使用，
     /// 再重置命令池和延迟释放队列；`World::sync_for_render` 在 update 之后的 prepare 边界执行。
     pub fn begin_frame(&mut self) {
         let _span = tracy_client::span!("RenderRuntime::begin_frame");
-        self.timer.tick();
+        self.frame_timing.begin_frame();
 
         {
             let _span = tracy_client::span!("wait fif timeline");
@@ -400,13 +393,11 @@ impl RenderRuntime {
             );
         }
 
-        self.frame_timing.update_time(self.timer.delta_time_s(), self.timer.total_time_s());
-
-        let frame_token = self.frame_timing.frame_token();
-        // bindless 与 RenderWorld 内部 managers 都使用同一个 frame token 推进延迟回收窗口，
+        let current_frame_id = self.frame_timing.frame_id();
+        // bindless 与 RenderWorld 内部 managers 都使用同一个 frame id 推进延迟回收窗口，
         // 保持 shader-visible slot 与 handle 的复用节奏一致。
-        self.shader_binding_system.begin_frame(frame_token);
-        self.render_world.begin_frame(frame_token);
+        self.shader_binding_system.begin_frame(current_frame_id);
+        self.render_world.begin_frame(current_frame_id);
     }
 
     /// 执行内部 frame state 同步并获取 swapchain image，
@@ -427,7 +418,6 @@ impl RenderRuntime {
             view_accum: &self.view_accum,
             swapchain_extent: self.frame_state.output_extent,
             frame_timing: &self.frame_timing,
-            delta_time_s: self.frame_timing.delta_time_s(),
         }
     }
 
@@ -609,7 +599,7 @@ impl RenderRuntime {
     /// 为没有 GPU render graph 的帧补齐 FIF timeline signal。
     ///
     /// resize/out-of-date 期间可能 acquire 不到 swapchain image。此时本帧不会录制
-    /// render graph，但 frame counter 仍需要前进；提交一个空 signal 可以保持后续
+    /// render graph，但 frame id 仍需要前进；提交一个空 signal 可以保持后续
     /// `begin_frame` 对 timeline 的等待不会落到永远无人 signal 的 frame id 上。
     pub fn signal_current_frame_complete(&self) {
         let frame_id = self.frame_timing.frame_id();
@@ -623,7 +613,7 @@ impl RenderRuntime {
 
     /// 推进帧计数器。
     ///
-    /// 所有按 `FrameCounter` 轮转的资源都在此之后切到下一帧标签；因此必须放在
+    /// 所有按 `FrameLabel` 轮转的资源都在此之后切到下一帧标签；因此必须放在
     /// present 之后，作为本帧生命周期的最后一步。
     pub fn end_frame(&mut self) {
         let _span = tracy_client::span!("RenderRuntime::end_frame");
@@ -632,10 +622,9 @@ impl RenderRuntime {
 
     /// 查询是否已经到达下一帧的渲染时间。
     ///
-    /// 该方法只做时间判断，不推进 frame counter，也不会等待 GPU。
+    /// 该方法只做时间判断，不推进 frame id，也不会等待 GPU。
     pub fn time_to_render(&self) -> bool {
-        true
-        // self.frame_timing.frame_delta_time_limit_us() < self.timer.elapsed_since_tick().as_micros() as f32
+        self.frame_timing.time_to_render()
     }
 
     /// 处理窗口 resize。只有 present 层实际重建 swapchain 时才返回 `Some(ctx)`。
@@ -823,8 +812,8 @@ impl RenderRuntime {
             prev_projection: previous_view.projection.into(),
             camera_pos: render_view.position_ws.into(),
             camera_forward: render_view.forward_ws.into(),
-            time_ms: self.timer.total_time_ms(),
-            delta_time_ms: self.timer.delta_time_ms(),
+            time_ms: self.frame_timing.total_time_ms(),
+            delta_time_ms: self.frame_timing.delta_time_ms(),
             frame_id: self.frame_timing.frame_id(),
             resolution: gpu::Float2 {
                 x: frame_extent.width as f32,

@@ -1,7 +1,7 @@
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_foundation::frame_counter::FrameLabel;
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::render_scene_view::RenderSceneAccumSignature;
 use truvis_shader_binding::gpu;
 

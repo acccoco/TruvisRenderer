@@ -4,7 +4,7 @@ use itertools::Itertools;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::raytracing::acceleration::GfxAcceleration;
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::frame_counter::FrameLabel;
+use truvis_render_foundation::frame_label::FrameLabel;
 
 use crate::render_world::render_data::{InstanceRenderData, RenderData};
 

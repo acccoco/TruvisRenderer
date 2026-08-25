@@ -175,11 +175,12 @@ impl RenderAppRunner {
             let mut update_ctx = render_runtime.update_phase();
             app.update(&mut update_ctx);
 
+            let delta_time_s = update_ctx.frame_timing.delta_time_s();
             let mut plugin_ctx = PluginUpdateCtx {
                 world: update_ctx.world,
                 dlss_options: update_ctx.dlss_options,
                 frame_state: update_ctx.frame_state,
-                delta_time_s: update_ctx.delta_time_s,
+                delta_time_s,
             };
             app.visit_plugins_mut(&mut |plugin| {
                 plugin.update(&mut plugin_ctx);

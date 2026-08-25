@@ -7,7 +7,7 @@ use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_foundation::frame_counter::{FrameLabel, FrameToken};
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::{GfxBufferHandle, GfxImageHandle, GfxImageViewHandle};
 use truvis_shader_binding::gpu;
 use truvis_world::SceneSkyState;
@@ -146,7 +146,7 @@ impl RenderSkyManager {
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         shader_binding_system: &mut ShaderBindingSystem,
-        frame_token: FrameToken,
+        current_frame_id: u64,
     ) -> Self {
         let _span = tracy_client::span!("RenderSkyManager::new");
         let fallback = Self::create_fallback_sky(
@@ -172,7 +172,7 @@ impl RenderSkyManager {
             latest_request: None,
             next_distribution_version: 2,
             last_active_distribution_version: 1,
-            current_frame_id: frame_token.frame_id(),
+            current_frame_id,
             using_real_sky: false,
             state_changed_pending: false,
             worker_stopped: false,
@@ -180,8 +180,8 @@ impl RenderSkyManager {
     }
 
     /// 在 RenderRuntime 已等待当前 FIF slot 后推进 frame id，并收敛 retired bookkeeping。
-    pub(crate) fn begin_frame(&mut self, frame_token: FrameToken) {
-        self.current_frame_id = frame_token.frame_id();
+    pub(crate) fn begin_frame(&mut self, current_frame_id: u64) {
+        self.current_frame_id = current_frame_id;
         let fif = FrameLabel::COUNT as u64;
         self.retired_distributions
             .retain(|retired| retired.retired_frame_id.saturating_add(fif) > self.current_frame_id);

@@ -8,7 +8,7 @@ use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_foundation::frame_counter::{FrameLabel, FrameToken};
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
@@ -106,7 +106,7 @@ pub struct RenderMaterialManager {
     /// FIF 套 GPU buffer，避免 CPU 覆盖 GPU 仍在读取的 material buffer。
     buffers: [MaterialBuffers; FrameLabel::COUNT],
 
-    frame_token: FrameToken,
+    current_frame_id: u64,
     /// 影响 CPU 材质参数语义的单调 revision。
     ///
     /// 自发光 light table 只关心 base color / emissive / texture 引用等 CPU 参数变化；
@@ -118,7 +118,7 @@ pub struct RenderMaterialManager {
 // 创建与初始化
 impl RenderMaterialManager {
     /// 创建 FIF 套材质 buffer，并初始化可分配 slot 池。
-    pub fn new(ctx: GfxResourceCtx<'_>, frame_token: FrameToken) -> Self {
+    pub fn new(ctx: GfxResourceCtx<'_>, current_frame_id: u64) -> Self {
         let free_slots: Vec<usize> = (0..MAX_MATERIAL_COUNT).rev().collect();
         Self {
             handle_to_slot: SecondaryMap::new(),
@@ -126,7 +126,7 @@ impl RenderMaterialManager {
             free_slots,
             dirty_slots: HashMap::new(),
             buffers: FrameLabel::ALL.map(|frame_label| MaterialBuffers::new(ctx, frame_label)),
-            frame_token,
+            current_frame_id,
             material_revision: 0,
         }
     }
@@ -201,7 +201,7 @@ impl RenderMaterialManager {
             slot,
             SlotDirtyInfo {
                 fif_dirty: [true; FrameLabel::COUNT],
-                dirty_frame_id: self.frame_token.frame_id(),
+                dirty_frame_id: self.current_frame_id,
             },
         );
         self.material_revision = self.material_revision.saturating_add(1);
@@ -217,7 +217,7 @@ impl RenderMaterialManager {
 
         self.slot_to_handle[slot] = Some(handle);
 
-        let frame_id = self.frame_token.frame_id();
+        let frame_id = self.current_frame_id;
         self.dirty_slots
             .entry(slot)
             .and_modify(|info| {
@@ -252,7 +252,7 @@ impl RenderMaterialManager {
 
         self.slot_to_handle[slot] = None;
         // fif_dirty 全设为 false：不再需要上传，仅保留 dirty_frame_id 用于回收计时
-        let frame_id = self.frame_token.frame_id();
+        let frame_id = self.current_frame_id;
         self.dirty_slots
             .entry(slot)
             .and_modify(|info| {
@@ -272,10 +272,10 @@ impl RenderMaterialManager {
 
 // 帧生命周期
 impl RenderMaterialManager {
-    /// 帧开始时调用，更新后续 dirty/回收判断使用的 frame token。
-    pub fn begin_frame(&mut self, frame_token: FrameToken) {
+    /// 帧开始时调用，更新后续 dirty/回收判断使用的 frame id。
+    pub fn begin_frame(&mut self, current_frame_id: u64) {
         // 实际回收发生在 upload 中，因为回收判断需要和当前 FIF dirty 状态处理保持同一处。
-        self.frame_token = frame_token;
+        self.current_frame_id = current_frame_id;
     }
 
     /// 将 dirty slot 写入当前帧对应的 GPU buffer，或者回收 slot 到 free list 中
@@ -293,7 +293,7 @@ impl RenderMaterialManager {
     ) {
         let fif_idx = *frame_label;
         let fif_count = FrameLabel::COUNT as u64;
-        let current_frame_id = self.frame_token.frame_id();
+        let current_frame_id = self.current_frame_id;
 
         let dirty_slot_indices: Vec<usize> = self.dirty_slots.keys().copied().collect();
 

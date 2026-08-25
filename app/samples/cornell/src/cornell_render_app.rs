@@ -110,7 +110,7 @@ impl RenderApp for CornellRenderApp {
     }
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
-        let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
+        let delta = std::time::Duration::from_secs_f32(ctx.frame_timing.delta_time_s());
         self.gui.begin_frame(delta);
         {
             let ui = self.gui.ui();
@@ -119,7 +119,7 @@ impl RenderApp for CornellRenderApp {
                 self.camera_controller.camera(),
                 ctx.swapchain_extent,
                 ctx.view_accum.accum_frames_num(),
-                ctx.delta_time_s,
+                ctx.frame_timing.delta_time_s(),
             );
             // Sample app 不持有 OfflinePipeline；临时 Realtime 只用于复用共享 Controls overlay 的签名。
             let mut render_mode = RenderMode::Realtime;

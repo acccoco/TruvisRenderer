@@ -10,7 +10,7 @@ use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::swapchain::surface::GfxSurface;
 use truvis_gfx::swapchain::swapchain::{GfxSwapchain, GfxSwapchainAcquireResult, GfxSwapchainImageInfo};
-use truvis_render_foundation::frame_counter::FrameLabel;
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
 

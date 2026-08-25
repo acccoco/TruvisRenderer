@@ -10,7 +10,7 @@ use truvis_gfx::descriptors::descriptor::GfxDescriptorSetLayout;
 use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_gfx::pipelines::shader::GfxShaderModule;
 use truvis_gfx::utilities::descriptor_cursor::GfxWriteDescriptorSet;
-use truvis_render_foundation::frame_counter::FrameLabel;
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 
 /// 带单个 pass-local push descriptor set 的通用 compute pipeline。

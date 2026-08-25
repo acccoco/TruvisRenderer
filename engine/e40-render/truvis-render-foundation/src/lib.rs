@@ -1,4 +1,4 @@
-pub mod frame_counter;
+pub mod frame_label;
 pub mod handles;
 pub mod render_scene_view;
 pub mod render_view;

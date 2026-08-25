@@ -94,7 +94,7 @@ Plugin。
 ```mermaid
 flowchart LR
     subgraph R["RenderRuntime"]
-        R0["begin_frame<br/>FIF 等待 / 命令池重置 / 延迟释放 / frame token 推进"]
+        R0["begin_frame<br/>时间快照 / FIF 等待 / 命令池重置 / 延迟释放 / frame id 推进"]
         R1["update_phase<br/>同步 FrameRenderState<br/>acquire present target"]
         R2["sync_dlss_options_frame_state<br/>必要时同步 render/output extent"]
         R3{"has present target?"}
@@ -102,7 +102,7 @@ flowchart LR
         R5["ray_cast_phase<br/>只暴露同步 raycast"]
         R6["render_phase<br/>只读 GPU render ctx"]
         R7["present"]
-        R8["end_frame<br/>推进 frame counter"]
+        R8["end_frame<br/>推进 FrameTiming frame id"]
         R9["signal_current_frame_complete<br/>无 present target 时补齐 timeline"]
     end
 
@@ -180,7 +180,7 @@ pass，再叠加 GUI；如果把所有 render 能力都放进统一 trait，App 
 | `ray_cast_phase`               | prepare 后、render graph 前     | 允许 App 对刚准备好的 GPU scene 做同步 raycast                                                          | `RenderRuntimeRayCastCtx`        |
 | `render_phase`                 | App render 前                 | 提供只读 render ctx，供 RenderGraph/pass 读取 GPU scene、present view 与 timeline                      | `RenderRuntimeRenderCtx`         |
 | `present`                      | render graph 提交后             | 把当前 swapchain image 交给 present queue                                                         | 不直接暴露 ctx                        |
-| `end_frame`                    | 每帧最后                         | 推进 frame counter，切换下一帧 FIF label                                                             | 不直接暴露 ctx                        |
+| `end_frame`                    | 每帧最后                         | 推进 `FrameTiming` frame id，切换下一帧 FIF label                                                    | 不直接暴露 ctx                        |
 | `handle_resize`                | render loop 安全点              | 重建 swapchain / present 相关状态，并通知上层重建窗口尺寸资源                                                    | `Option<RenderRuntimeResizeCtx>` |
 | `shutdown_phase`               | shutdown 中、runtime destroy 前 | 让 App / Plugin 在 `Gfx` 存活时释放自己持有的 GPU 资源                                                     | `RenderRuntimeShutdownCtx`       |
 

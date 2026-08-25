@@ -8,7 +8,7 @@ use truvis_shader_binding::gpu;
 
 use crate::bindings::descriptor_bindings::{BindlessDescriptorBinding, BindlessDescriptorTarget};
 use crate::resources::gfx_resource_manager::GfxResourceManager;
-use truvis_render_foundation::frame_counter::{FrameLabel, FrameToken};
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::GfxImageViewHandle;
 
 #[derive(Copy, Clone)]
@@ -69,12 +69,12 @@ pub struct BindlessManager {
     /// 当前帧的 token，用于计算 dirty 条目的 age
     ///
     /// 在 begin frame 时传入
-    frame_token: FrameToken,
+    current_frame_id: u64,
 }
 
 // 创建与初始化
 impl BindlessManager {
-    pub fn new(frame_token: FrameToken) -> Self {
+    pub fn new(current_frame_id: u64) -> Self {
         let _span = tracy_client::span!("BindlessManager::new");
 
         let bindless_count = BindlessDescriptorBinding::descriptor_count();
@@ -85,7 +85,7 @@ impl BindlessManager {
             srvs_free_slots: free_slots,
             srvs_handle_to_slot: SecondaryMap::new(),
             dirty_srvs: HashMap::new(),
-            frame_token,
+            current_frame_id,
         }
     }
 }
@@ -98,8 +98,8 @@ impl Drop for BindlessManager {
 
 // 更新
 impl BindlessManager {
-    pub fn begin_frame(&mut self, frame_token: FrameToken) {
-        self.frame_token = frame_token;
+    pub fn begin_frame(&mut self, current_frame_id: u64) {
+        self.current_frame_id = current_frame_id;
     }
 
     /// # 阶段：Before Render
@@ -139,7 +139,7 @@ impl BindlessManager {
                 }
                 None => {
                     // 已注销的 slot：等 GPU 不再访问后归还
-                    let age = self.frame_token.frame_id().saturating_sub(dirty_frame_id);
+                    let age = self.current_frame_id.saturating_sub(dirty_frame_id);
                     if age >= fif {
                         srvs_to_remove.push(slot);
                         srvs_to_reclaim.push(slot);
@@ -174,7 +174,7 @@ impl BindlessManager {
         let slot = self.srvs_free_slots.pop().expect("Bindless SRV slots exhausted");
         self.srvs_slots[slot] = Some(image_view_handle);
         self.srvs_handle_to_slot.insert(image_view_handle, slot);
-        self.dirty_srvs.insert(slot, self.frame_token.frame_id());
+        self.dirty_srvs.insert(slot, self.current_frame_id);
     }
 
     pub fn unregister_srv(&mut self, image_view_handle: GfxImageViewHandle) {
@@ -182,7 +182,7 @@ impl BindlessManager {
         let slot = self.srvs_handle_to_slot.remove(image_view_handle).unwrap();
         self.srvs_slots[slot] = None;
         // 不立即归还 free_list，等 dirty 清除（age >= FIF_COUNT）后再归还
-        self.dirty_srvs.insert(slot, self.frame_token.frame_id());
+        self.dirty_srvs.insert(slot, self.current_frame_id);
     }
 
     #[inline]

@@ -2,7 +2,7 @@ use ash::vk;
 
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 
-use crate::frame_counter::FrameLabel;
+use crate::frame_label::FrameLabel;
 
 /// 影响离线 progressive accumulation 是否可以继续复用历史结果的场景签名。
 ///

@@ -7,7 +7,7 @@ use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx
 use truvis_gfx::raytracing::acceleration::GfxAcceleration;
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_foundation::frame_counter::{FrameLabel, FrameToken};
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::render_scene_view::{RenderSceneAccumSignature, RenderSceneView};
 use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
@@ -85,7 +85,7 @@ impl RenderWorld {
         queue_ctx: GfxQueueCtx<'_>,
         gfx_resource_manager: &mut GfxResourceManager,
         shader_binding_system: &mut ShaderBindingSystem,
-        frame_token: FrameToken,
+        current_frame_id: u64,
     ) -> Self {
         let _span = tracy_client::span!("RenderWorld::new");
         let asset_upload_queue = {
@@ -108,11 +108,11 @@ impl RenderWorld {
         };
         let render_material_manager = {
             let _span = tracy_client::span!("RenderWorld::new/render_material_manager");
-            RenderMaterialManager::new(resource_ctx, frame_token)
+            RenderMaterialManager::new(resource_ctx, current_frame_id)
         };
         let render_instance_manager = {
             let _span = tracy_client::span!("RenderWorld::new/render_instance_manager");
-            RenderInstanceManager::new(frame_token)
+            RenderInstanceManager::new(current_frame_id)
         };
         let render_sky_manager = {
             let _span = tracy_client::span!("RenderWorld::new/render_sky_manager");
@@ -122,7 +122,7 @@ impl RenderWorld {
                 immediate_ctx,
                 gfx_resource_manager,
                 shader_binding_system,
-                frame_token,
+                current_frame_id,
             )
         };
         let render_emissive_light_table = {
@@ -189,10 +189,10 @@ impl RenderWorld {
 
 // Runtime 内部阶段入口：`RenderRuntime` 只负责提供阶段上下文，具体 render-side scene 状态在这里推进。
 impl RenderWorld {
-    pub(crate) fn begin_frame(&mut self, frame_token: FrameToken) {
-        self.render_sky_manager.begin_frame(frame_token);
-        self.render_material_manager.begin_frame(frame_token);
-        self.render_instance_manager.begin_frame(frame_token);
+    pub(crate) fn begin_frame(&mut self, current_frame_id: u64) {
+        self.render_sky_manager.begin_frame(current_frame_id);
+        self.render_material_manager.begin_frame(current_frame_id);
+        self.render_instance_manager.begin_frame(current_frame_id);
     }
 
     pub(crate) fn request_motion_history_reset(&mut self) {

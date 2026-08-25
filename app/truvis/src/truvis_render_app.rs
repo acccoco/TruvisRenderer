@@ -530,7 +530,7 @@ impl RenderApp for TruvisRenderApp {
     }
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
-        self.click_ray_cast_probe.update_time(ctx.delta_time_s);
+        self.click_ray_cast_probe.update_time(ctx.frame_timing.delta_time_s());
         if self.clear_stale_selection(ctx.world) {
             self.editor_controller.notify_selection_changed(None);
         }
@@ -540,7 +540,7 @@ impl RenderApp for TruvisRenderApp {
         }
         self.editor_controller.process_requests(ctx.world, self.selected_submesh);
 
-        let delta = std::time::Duration::from_secs_f32(ctx.delta_time_s);
+        let delta = std::time::Duration::from_secs_f32(ctx.frame_timing.delta_time_s());
         let viewport_size = glam::vec2(ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32);
         self.camera_controller.update_with_wheel_zoom(self.input.state(), viewport_size, delta);
 
@@ -566,7 +566,7 @@ impl RenderApp for TruvisRenderApp {
                     camera: self.camera_controller.camera(),
                     swapchain_extent: ctx.swapchain_extent,
                     accum_frames_num: ctx.view_accum.accum_frames_num(),
-                    delta_time_s: ctx.delta_time_s,
+                    delta_time_s: ctx.frame_timing.delta_time_s(),
                 },
                 pipeline: PipelineControlsData {
                     render_mode: &mut self.render_mode,

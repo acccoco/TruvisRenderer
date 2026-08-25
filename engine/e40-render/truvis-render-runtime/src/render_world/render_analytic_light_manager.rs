@@ -6,7 +6,7 @@ use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
-use truvis_render_foundation::frame_counter::FrameLabel;
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
 
