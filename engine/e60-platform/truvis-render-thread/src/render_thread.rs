@@ -4,18 +4,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
-use truvis_app_frame::input_event::InputEvent;
-use truvis_app_frame::render_app_api::RenderApp;
-use truvis_app_frame::{RenderAppRunner, RenderThreadControl, RenderThreadInit};
+use truvis_render_loop::input_event::InputEvent;
+use truvis_render_loop::renderer::Renderer;
+use truvis_render_loop::{RenderLoop, RenderThreadControl, RenderThreadInit};
 
-/// 只在 OS RenderThread 内调用一次的具体 App 构造入口。
-pub type RenderAppFactory = Box<dyn FnOnce() -> Box<dyn RenderApp> + Send + 'static>;
+/// 只在 OS RenderThread 内调用一次的具体 Renderer 构造入口。
+pub type RendererFactory = Box<dyn FnOnce() -> Box<dyn Renderer> + Send + 'static>;
 
 type RenderThreadResult = Result<(), Box<dyn Any + Send>>;
 
 /// standalone / embedded 窗口 owner 共用的 backend-independent 渲染线程宿主。
 ///
-/// 本类型持有 OS thread handle、Runner 控制契约和线程完成状态，但不接触任何
+/// 本类型持有 OS thread handle、RenderLoop 控制契约和线程完成状态，但不接触任何
 /// 具体窗口类型。窗口 owner 必须保证平台窗口在 [`Self::join`] 返回前保持存活。
 pub struct RenderThread {
     control: Arc<RenderThreadControl>,
@@ -23,19 +23,19 @@ pub struct RenderThread {
     /// 必须在线程发送完成通知前发布，避免 EventLoop 收到通知时线程尚未返回。
     finished: Arc<AtomicBool>,
 
-    /// 内层 Result 保存 Runner/App panic，外层 JoinHandle::join 处理线程自身 panic。
+    /// 内层 Result 保存 RenderLoop/Renderer panic，外层 JoinHandle::join 处理线程自身 panic。
     join_handle: Option<JoinHandle<RenderThreadResult>>,
 }
 
 impl RenderThread {
-    /// 启动独立 OS 渲染线程，并在线程内依次构造窗口初始化参数与具体 App。
+    /// 启动独立 OS 渲染线程，并在线程内依次构造窗口初始化参数与具体 Renderer。
     ///
     /// `build_init` 只能捕获 backend 已确认可跨线程传递的具体平台句柄；原始
     /// `RawWindowHandle` / `RawDisplayHandle` 在目标线程中重建，不跨线程移动。
     pub fn spawn<I, C>(
         initial_size: [u32; 2],
         build_init: I,
-        app_factory: RenderAppFactory,
+        renderer_factory: RendererFactory,
         on_finished: C,
     ) -> Result<Self, String>
     where
@@ -52,8 +52,8 @@ impl RenderThread {
             .spawn(move || {
                 let result = panic::catch_unwind(AssertUnwindSafe(|| {
                     let init = build_init(initial_size);
-                    let app = app_factory();
-                    RenderAppRunner::run(Arc::clone(&control_for_thread), init, app);
+                    let renderer = renderer_factory();
+                    RenderLoop::run(Arc::clone(&control_for_thread), init, renderer);
                 }));
 
                 if result.is_err() {
@@ -74,7 +74,7 @@ impl RenderThread {
         })
     }
 
-    /// 非阻塞通知 Runner 退出；窗口 owner 通过单独的完成事件和 join 完成回收。
+    /// 非阻塞通知 RenderLoop 退出；窗口 owner 通过单独的完成事件和 join 完成回收。
     pub fn request_exit(&self) {
         self.control.request_exit();
     }
@@ -84,7 +84,7 @@ impl RenderThread {
         self.control.publish_resize(size);
     }
 
-    /// 将 backend 已转换的输入事件交给 Runner 的现有无界队列。
+    /// 将 backend 已转换的输入事件交给 RenderLoop 的现有无界队列。
     pub fn send_input(&self, event: InputEvent) {
         self.control.send_input(event);
     }

@@ -9,7 +9,7 @@ name = "rt-cornell"
 path = "src/main.rs"
 
 [dependencies]
-truvis-app-frame = { workspace = true }
+truvis-render-loop = { workspace = true }
 app-kit = { workspace = true }
 app-imgui = { workspace = true }
 app-rendering = { workspace = true }

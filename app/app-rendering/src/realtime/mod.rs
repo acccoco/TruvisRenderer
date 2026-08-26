@@ -58,7 +58,7 @@ pub struct RealtimeRenderSubsystem {
 
 /// Realtime 渲染子系统自有配置。
 ///
-/// 这些选项只影响 app 层 RT pass 和后处理调试输出，不进入 engine runtime-owned render state。
+/// 这些选项只影响 Renderer-owned RT pass 和后处理调试输出，不进入 engine runtime-owned render state。
 #[derive(Clone, Copy)]
 pub struct RealtimeRenderSettings {
     /// 当前 RT 调试输出通道。
@@ -253,7 +253,7 @@ struct RealtimeRenderResources {
     present_cmds: [GfxCommandBuffer; FrameLabel::COUNT],
 }
 
-/// RT present graph 暴露给 App 后续 overlay 的当前 present image。
+/// RT present graph 暴露给 Renderer 后续 overlay 的当前 present image。
 pub struct RtPresentGraphTargets {
     pub present_image: RgImageHandle,
 }
@@ -442,7 +442,7 @@ impl SubsystemLifecycle for RealtimeRenderSubsystem {
     fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
         if let Some(resources) = self.resources.as_mut() {
             // resize ctx 来自 present 层实际重建后的安全点；旧 target 不会再被在飞命令引用。
-            // 这里用 `PresentView` 再读一次 swapchain extent，避免 app-owned target 和
+            // 这里用 `PresentView` 再读一次 swapchain extent，避免 renderer-owned target 和
             // swapchain 在平台裁剪尺寸时出现细微不一致。
             let target_frame_state = *ctx.frame_state;
             resources.rt_targets.rebuild(
@@ -565,7 +565,7 @@ impl RealtimeRenderSubsystem {
         self.restir_last_mode.set(restir_di_mode);
         let tone_mapping = common_settings.tone_mapping;
 
-        // compute graph 导入的是 app-owned 外部图像；RenderGraph 只接管本图内的状态转换，
+        // compute graph 导入的是 renderer-owned 外部图像；RenderGraph 只接管本图内的状态转换，
         // 不拥有图像生命周期。owner 必须活到 graph 录制与提交完成之后。
         let single_frame_target = rt_targets.single_frame_rt(frame_label);
         let single_frame_image = rg_builder.import_image(
@@ -948,7 +948,7 @@ impl RealtimeRenderSubsystem {
         let main_view_targets = &resources.main_view_targets;
 
         // present graph 只读取 compute graph 导出的主视图 color，再 resolve 到当前 swapchain image。
-        // 这里重新 import 同一个 app-owned image，让两个 graph 之间的边界保持显式。
+        // 这里重新 import 同一个 renderer-owned image，让两个 graph 之间的边界保持显式。
         let color_target = main_view_targets.color(frame_label);
         let render_target = rg_builder.import_image(
             "render-target",

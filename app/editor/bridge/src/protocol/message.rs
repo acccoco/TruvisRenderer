@@ -55,7 +55,7 @@ pub struct EditorClientMessage {
     pub request: EditorRequest,
 }
 
-/// Render/App 对指定请求返回的领域结果。
+/// Renderer 对指定请求返回的领域结果。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 #[ts(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -73,7 +73,7 @@ pub enum EditorResponse {
     Error(EditorError),
 }
 
-/// Render/App 主动发送的 best-effort 通知。
+/// Renderer 主动发送的 best-effort 通知。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 #[ts(tag = "type", content = "payload", rename_all = "snake_case")]

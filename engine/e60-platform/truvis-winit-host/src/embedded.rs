@@ -1,7 +1,7 @@
 //! Windows 原生 child HWND 的 winit 宿主。
 //!
 //! 本模块只负责平台窗口、输入事件和 RenderThread 生命周期，不感知 Tauri、DOM、
-//! WebView 或具体 App。调用方提供 parent raw handle，并保证 parent HWND 在
+//! WebView 或具体 Renderer。调用方提供 parent raw handle，并保证 parent HWND 在
 //! [`EmbeddedWinitHost::shutdown`] 返回前始终有效。
 
 use std::panic;
@@ -24,8 +24,8 @@ use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
 use winit::platform::windows::EventLoopBuilderExtWindows;
 use winit::window::{Window, WindowId};
 
-use truvis_app_frame::render_app_api::RenderApp;
-use truvis_render_thread::{RenderAppFactory, RenderThread};
+use truvis_render_loop::renderer::Renderer;
+use truvis_render_thread::{RenderThread, RendererFactory};
 
 use crate::input_adapter::WinitInputAdapter;
 use crate::win32::Win32RenderSurface;
@@ -70,16 +70,16 @@ pub struct EmbeddedWinitHost {
 }
 
 impl EmbeddedWinitHost {
-    pub fn spawn<F>(parent_window: RawWindowHandle, app_factory: F) -> Result<Self, String>
+    pub fn spawn<F>(parent_window: RawWindowHandle, renderer_factory: F) -> Result<Self, String>
     where
-        F: FnOnce() -> Box<dyn RenderApp> + Send + 'static,
+        F: FnOnce() -> Box<dyn Renderer> + Send + 'static,
     {
         let parent_window = Win32RenderSurface::require_window_handle(parent_window)?;
         let (startup_sender, startup_receiver) = mpsc::sync_channel(1);
         let window_thread = thread::Builder::new()
             .name("RenderWindowThread".to_string())
             .spawn(move || {
-                EmbeddedWinitHandler::run(parent_window, Box::new(app_factory), startup_sender);
+                EmbeddedWinitHandler::run(parent_window, Box::new(renderer_factory), startup_sender);
             })
             .map_err(|error| format!("failed to spawn RenderWindowThread: {error}"))?;
 
@@ -139,7 +139,7 @@ impl Drop for EmbeddedWinitHost {
 /// `WindowEvent::Resized` 与现有 resize generation 感知变化。
 struct EmbeddedWinitHandler {
     parent_window: RawWindowHandle,
-    app_factory: Option<RenderAppFactory>,
+    renderer_factory: Option<RendererFactory>,
 
     /// 字段顺序保证异常展开时先触发 RenderThread 的 join fallback，再 drop child Window。
     render_thread: Option<RenderThread>,
@@ -152,7 +152,7 @@ struct EmbeddedWinitHandler {
 impl EmbeddedWinitHandler {
     fn run(
         parent_window: Win32WindowHandle,
-        app_factory: RenderAppFactory,
+        renderer_factory: RendererFactory,
         startup_sender: mpsc::SyncSender<Result<EventLoopProxy<EmbeddedUserEvent>, String>>,
     ) {
         let mut event_loop_builder = winit::event_loop::EventLoop::<EmbeddedUserEvent>::with_user_event();
@@ -175,7 +175,7 @@ impl EmbeddedWinitHandler {
         }
         let mut handler = Self {
             parent_window: RawWindowHandle::Win32(parent_window),
-            app_factory: Some(app_factory),
+            renderer_factory: Some(renderer_factory),
             render_thread: None,
             window: None,
             event_proxy,
@@ -223,9 +223,9 @@ impl EmbeddedWinitHandler {
     /// 把 DOM 首次给出的非零 rect 应用到 child 后再启动 RenderThread。
     ///
     /// child 初始创建为隐藏的 1x1 窗口；若先启动 RenderThread，初始化参数会把
-    /// 1x1 传给 App/子系统。即使 Vulkan surface 随后已经读到真实 extent，首次
+    /// 1x1 传给 Renderer/子系统。即使 Vulkan surface 随后已经读到真实 extent，首次
     /// swapchain 也可能无需再次重建，从而不会补发完整 resize。这里让
-    /// `Window::inner_size` 在 RenderThread 创建前就反映 DOM 物理尺寸，确保 App、GUI、
+    /// `Window::inner_size` 在 RenderThread 创建前就反映 DOM 物理尺寸，确保 Renderer、GUI、
     /// swapchain 从同一个初始 extent 开始。
     fn apply_viewport_rect_and_start_render_thread(&mut self) -> Result<(), String> {
         let window = self.window.as_ref().ok_or_else(|| "embedded child window is not available".to_string())?;
@@ -238,7 +238,7 @@ impl EmbeddedWinitHandler {
             return Ok(());
         }
 
-        let factory = self.app_factory.take().ok_or_else(|| "render app factory already consumed".to_string())?;
+        let factory = self.renderer_factory.take().ok_or_else(|| "renderer factory already consumed".to_string())?;
         let surface = Win32RenderSurface::from_window(window)?;
         let initial_size = surface.initial_size();
         let event_proxy = self.event_proxy.clone();
@@ -383,7 +383,7 @@ impl ApplicationHandler<EmbeddedUserEvent> for EmbeddedWinitHandler {
         }
 
         let input_event = WinitInputAdapter::from_winit_event(&event);
-        use truvis_app_frame::input_event::InputEvent;
+        use truvis_render_loop::input_event::InputEvent;
         match input_event {
             InputEvent::Other | InputEvent::Resized { .. } => {}
             _ => {

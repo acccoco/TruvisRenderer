@@ -11,7 +11,7 @@
 | runtime DLSS 选项 | `DlssOptions` | `truvis-render-runtime` | 是 | 保存 DLSS SR mode 与 RR 开关，并提供统一 active feature 决策 |
 | runtime 派生帧状态 | `FrameRenderState` | `truvis-render-runtime` | 否 | 保存当前 main view 的格式、render extent 与 output extent |
 | main view temporal 状态 | `ViewAccumState`、`DlssSrState` | `truvis-render-runtime` | 否 | 追踪历史是否可复用，以及 DLSS common constants / reset |
-| app / subsystem 局部设置 | `PathTracingCommonSettings`、`RealtimeRenderSettings`、`OfflineRenderSettings` | `app-rendering` | 取决于 app | 保存渲染子系统和具体 App 自己理解的调试或实验参数 |
+| Renderer / subsystem 局部设置 | `PathTracingCommonSettings`、`RealtimeRenderSettings`、`OfflineRenderSettings` | `app-rendering` | 取决于 Renderer | 保存渲染子系统和具体 Renderer 自己理解的调试或实验参数 |
 
 这次整理后的核心原则是：`truvis-render-runtime` 持有跨渲染子系统的渲染契约和 runtime 派生状态，
 包括 `DlssOptions`、`FrameRenderState`、`ViewAccumState` 与 `DlssSrState` 等明确 owner；path tracing 公共采样参数、
@@ -25,10 +25,10 @@ SDR tone mapping、具体 RT pass 的 debug channel 和 legacy denoise 参数不
 
 | 字段 | 含义 | 修改后如何生效 |
 |------|------|----------------|
-| `dlss_sr_mode: DlssSrMode` | DLSS SR / DLAA 模式 | `RenderRuntime::sync_dlss_options_frame_state` 解析该 mode，必要时更新 `FrameRenderState`、触发 app-owned target rebuild，并重置 DLSS history |
+| `dlss_sr_mode: DlssSrMode` | DLSS SR / DLAA 模式 | `RenderRuntime::sync_dlss_options_frame_state` 解析该 mode，必要时更新 `FrameRenderState`、触发 renderer-owned target rebuild，并重置 DLSS history |
 | `dlss_rr_enabled: bool` | 是否用 DLSS RR 替代普通 SR evaluate | 非 `Off` mode 下生效；切换时 runtime 等待 GPU idle，释放旧 DLSS feature resources，并重置 DLSS history |
 
-`TRUVIS_DLSS_SR_MODE` 和 `TRUVIS_DLSS_RR` 会在 runtime 初始化时作为启动默认值读取。运行中仍以 ImGui overlay 修改 `DlssOptions`，再由 `RenderAppRunner` 在 `prepare` 前调用同步入口使其生效。
+`TRUVIS_DLSS_SR_MODE` 和 `TRUVIS_DLSS_RR` 会在 runtime 初始化时作为启动默认值读取。运行中仍以 ImGui overlay 修改 `DlssOptions`，再由 `RenderLoop` 在 `prepare` 前调用同步入口使其生效。
 
 `DlssOptions` 同时承担配置输入和 feature 决策职责。它把 `dlss_sr_mode`
 与 `dlss_rr_enabled` 收敛成统一的 active feature 语义：`Off` 表示 native fallback，非 `Off` 且 RR 关闭表示
@@ -40,7 +40,7 @@ RR evaluate 前会先设置 compatible DLSS SR options，再设置 RR options；
 不放入 `DlssOptions` 的内容：
 
 - RT debug channel：只属于具体渲染子系统的 shader 调试输出。
-- SDR tone mapping：只属于 app-owned path tracing 显示映射，不影响 runtime target 尺寸或 DLSS history。
+- SDR tone mapping：只属于 renderer-owned path tracing 显示映射，不影响 runtime target 尺寸或 DLSS history。
 - denoise 参数：当前主 RT 流程已旁路传统 denoise/accum pass；保留 pass 时只能作为 pass-local 实验设置。
 - 旧间接光缓存开关：相关 shader / ABI / GPU buffer 路径已从当前 realtime RT 主流程移除。
 
@@ -67,12 +67,12 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 
 | 字段 | 来源 | 用途 |
 |------|------|------|
-| `hdr_color_format` | runtime 默认 HDR 中间格式 | app-owned RT target、main view target、DLSS input/output 等 HDR 图像格式契约 |
+| `hdr_color_format` | runtime 默认 HDR 中间格式 | renderer-owned RT target、main view target、DLSS input/output 等 HDR 图像格式契约 |
 | `depth_format` | runtime 按设备能力选择 | depth attachment 与 depth image view 创建 |
 | `render_extent` | swapchain extent 与 DLSS mode 派生 | RT、GBuffer、motion vector、DLSS input 等内部渲染尺寸 |
 | `output_extent` | swapchain / present extent | GUI、present、main-view output 与 DLSS output 尺寸 |
 
-`FrameRenderState` 不由用户直接改。App / 子系统在 init、resize 或 `sync_dlss_options_frame_state` 返回 resize ctx 时读取它，用来重建自己持有的窗口尺寸 target。
+`FrameRenderState` 不由用户直接改。Renderer / 子系统在 init、resize 或 `sync_dlss_options_frame_state` 返回 resize ctx 时读取它，用来重建自己持有的窗口尺寸 target。
 `RenderRuntime::init_after_window` 会在子系统 init 前根据真实 swapchain extent 和启动时的 `DlssOptions` 解析一次 `FrameRenderState`。因此 realtime / offline 渲染子系统初始化窗口尺寸 target 时应直接使用 `ctx.frame_state`，不得再把 `render_extent` 覆盖为 native extent；否则启动时通过 `TRUVIS_DLSS_SR_MODE` / `TRUVIS_DLSS_RR` 进入 SR/RR 会导致 RT、GBuffer、DLSS input 尺寸与 Streamline options 失配。
 
 ## ViewAccumState
@@ -86,7 +86,7 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 ## PathTracingCommonSettings
 
 `PathTracingCommonSettings` 位于 `app_rendering::shared`，由需要 path tracing
-调试控件的具体 App 持有。Truvis 同时把同一份设置传给 realtime `RealtimeRenderSubsystem` 和 `OfflineRenderSubsystem`，因此在 ImGui
+调试控件的具体 Renderer 持有。Truvis 同时把同一份设置传给 realtime `RealtimeRenderSubsystem` 和 `OfflineRenderSubsystem`，因此在 ImGui
 里切换 `Realtime / Offline` 时公共参数不会因为两套 subsystem-local state 而回退或分叉。
 
 当前包含：
@@ -123,7 +123,7 @@ transform，也不做自动曝光或参数持久化。DLSS SR 的 manual exposur
 ## RealtimeRenderSettings
 
 `RealtimeRenderSettings` 位于 `app_rendering::realtime`，由 `RealtimeRenderSubsystem` 持有。
-它只保存 realtime RT 自有状态；和 offline 语义相同的 sky / NEE / tone mapping 参数由 App 持有的
+它只保存 realtime RT 自有状态；和 offline 语义相同的 sky / NEE / tone mapping 参数由 Renderer 持有的
 `PathTracingCommonSettings` 提供。
 
 当前包含：
@@ -135,10 +135,10 @@ transform，也不做自动曝光或参数持久化。DLSS SR 的 manual exposur
 | `sharc_mode: RtSharcMode` | SHARC world-space radiance cache 模式（`Off` / `Update` / `On`） |
 | `sharc_scene_scale: f32` | SHARC voxel 物理尺寸控制参数，按场景单位调；只影响缓存粒度 |
 
-RT debug channel、DLSS、ReSTIR DI 与 SHARC 只在 Truvis / Cornell 等实际持有 realtime subsystem 的 App 中显示；
+RT debug channel、DLSS、ReSTIR DI 与 SHARC 只在 Truvis / Cornell 等实际持有 realtime subsystem 的 Renderer 中显示；
 Hello Triangle / ShaderToy 只保留 FPS、相机等 ImGui 诊断，不显示 render mode、DLSS 或 path tracing controls。
 
-`sharc_mode` 是 realtime 渲染子系统自有的 world-space radiance cache 开关，默认 `Off`；`TRUVIS_SHARC_MODE` 只在启动时读取一次用于复现实验配置（取值 `off` / `update` / `on`）。`Update` 只维护缓存（Update + Resolve）不查询，画面与 `Off` 一致（第八阶段）；`On` 在维护基础上让非 primary bounce 查询缓存并在命中处提前终止路径（第九阶段）。SHARC 缓存 buffer 由 app 层 `SharcTargets` 拥有，是世界空间持久资源，不随 render extent / FIF 轮转，也不进入 `DlssOptions`、`DlssSrState` 或 RenderGraph image 状态。`sharc_scene_scale` 只改变缓存 voxel 粒度；在 `On` 模式下它会通过查询守卫间接影响哪些 bounce 命中缓存，但不改变 `Off` 时的渲染结果。
+`sharc_mode` 是 realtime 渲染子系统自有的 world-space radiance cache 开关，默认 `Off`；`TRUVIS_SHARC_MODE` 只在启动时读取一次用于复现实验配置（取值 `off` / `update` / `on`）。`Update` 只维护缓存（Update + Resolve）不查询，画面与 `Off` 一致（第八阶段）；`On` 在维护基础上让非 primary bounce 查询缓存并在命中处提前终止路径（第九阶段）。SHARC 缓存 buffer 由 Renderer-owned `SharcTargets` 拥有，是世界空间持久资源，不随 render extent / FIF 轮转，也不进入 `DlssOptions`、`DlssSrState` 或 RenderGraph image 状态。`sharc_scene_scale` 只改变缓存 voxel 粒度；在 `On` 模式下它会通过查询守卫间接影响哪些 bounce 命中缓存，但不改变 `Off` 时的渲染结果。
 
 `PathTracingDebugChannel` 使用 enum 表达当前主 RT 流程支持的通道：final、forward normal、world normal、object normal、base color、NEE HDRI、emission、BRDF HDRI、NEE bounce 0/1、`NeeEmissive`、`NeeAnalytic`、`MaterialType`、`DeltaMask` 和 realtime-only 的 `SpecularMotionMagnitude`。forward normal 是当前 path tracing BRDF 和 DLSS RR `NormalRoughness` 输入使用的 world-space shading normal，会按 ray `faceforward`；world normal 是未翻转的 world-space 几何法线；object normal 是 mesh object/local space 的插值顶点法线。旧的 magic number “not accum” 通道不再通过 UI 暴露。
 
@@ -151,7 +151,7 @@ RTXDI-style RayTraced bias correction 是 shader 内部固定策略，不新增 
 ## OfflineRenderSettings
 
 `OfflineRenderSettings` 位于 `app_rendering::offline`，由 `OfflineRenderSubsystem` 持有。
-它只保存 offline subsystem 自有状态；和 realtime 语义相同的 sky / NEE / tone mapping 参数由 App 持有的
+它只保存 offline subsystem 自有状态；和 realtime 语义相同的 sky / NEE / tone mapping 参数由 Renderer 持有的
 `PathTracingCommonSettings` 提供。
 
 当前包含：
@@ -174,7 +174,7 @@ RTXDI-style RayTraced bias correction 是 shader 内部固定策略，不新增 
 - depth format 候选顺序。
 
 软件限帧与 swapchain present mode 是两层独立策略：前者限制 CPU 帧开始频率，后者仍默认请求 MAILBOX 并按设备能力
-fallback。上述默认值不是公共配置契约；App 不应该依赖 runtime 必定选择某个 depth format 或 present fallback。
+fallback。上述默认值不是公共配置契约；Renderer 不应该依赖 runtime 必定选择某个 depth format 或 present fallback。
 
 ## 不是配置的内容
 
@@ -194,11 +194,11 @@ DLSS mode 的变化在一帧中按固定路径生效：
 
 ```text
 Overlay 修改 DlssOptions.dlss_sr_mode / dlss_rr_enabled
-  -> RenderAppRunner 调用 RenderRuntime::sync_dlss_options_frame_state
+  -> RenderLoop 调用 RenderRuntime::sync_dlss_options_frame_state
   -> runtime 用 output extent + mode 按 active feature 查询 Streamline optimal settings
   -> 派生 FrameRenderState.render_extent / output_extent
   -> 如尺寸变化，返回 RenderRuntimeResizeCtx
-  -> App / 子系统重建 RT target、GBuffer、DLSS input/output、main view target
+  -> Renderer / 子系统重建 RT target、GBuffer、DLSS input/output、main view target
   -> 如 SR/RR feature 分支变化，runtime 等待 GPU idle 并释放旧 feature resources
   -> runtime 重置 ViewAccumState 与 DlssSrState history
   -> 下一帧 prepare/render graph 使用新的 render/output extent 和 DlssOptions

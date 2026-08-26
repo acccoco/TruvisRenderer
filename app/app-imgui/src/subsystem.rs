@@ -1,11 +1,10 @@
-//! 由具体 App 直接持有的 ImGui 子系统与私有 RenderGraph 集成。
+//! 由具体 Renderer 直接持有的 ImGui 子系统与私有 RenderGraph 集成。
 
 use std::collections::HashMap;
 
 use ash::vk;
 use imgui::{DrawData, TextureId, Ui};
 
-use truvis_app_frame::input_event::{ElementState, InputEvent, MouseButton};
 use truvis_gfx::basic::color::LabelColor;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
@@ -16,6 +15,7 @@ use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_graph::render_graph::{
     RenderGraphBuilder, RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext,
 };
+use truvis_render_loop::input_event::{ElementState, InputEvent, MouseButton};
 use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 
@@ -77,7 +77,7 @@ impl ImGuiSubsystem {
         self.imgui_ctx.io_mut().display_size = [physical_size[0] as f32, physical_size[1] as f32];
     }
 
-    /// 将平台输入交给 ImGui，并由拥有该子系统的 App 决定后续消费策略。
+    /// 将平台输入交给 ImGui，并由拥有该子系统的 Renderer 决定后续消费策略。
     pub fn on_input(&mut self, event: &InputEvent) -> bool {
         let io = self.imgui_ctx.io_mut();
         match event {

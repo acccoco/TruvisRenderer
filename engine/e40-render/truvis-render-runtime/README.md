@@ -1,6 +1,6 @@
 # truvis-render-runtime
 
-`truvis-render-runtime` 是被 `truvis-app-frame::RenderAppRunner` 驱动的渲染运行时集成层。
+`truvis-render-runtime` 是被 `truvis-render-loop::RenderLoop` 驱动的渲染运行时集成层。
 它持有 `Gfx` root owner、CPU `World`、GPU resource/binding/timing owners 和 runtime 私有的 `RenderWorld`，
 并通过阶段化的 typed Ctx 向上层暴露初始化、更新、渲染、resize 与 shutdown 能力。
 
@@ -15,15 +15,15 @@
   material slot、instance slot、GPU scene buffer、BLAS/TLAS 和 raster draw cache。
 - 在 `prepare` 完成后提供 runtime-owned 同步 raycast 服务，把 GPU hit 的 instance slot
   与 submesh index 转回 CPU `InstanceHandle` / `MeshHandle` / `MaterialHandle`。
-- 提供 `WorldSubmeshSelection` 与只读 selection raster view，把 App 提供的 CPU
+- 提供 `WorldSubmeshSelection` 与只读 selection raster view，把 Renderer 提供的 CPU
   `InstanceHandle + submesh_index` 解析到当前 prepare 快照中的 active raster draw；pending、stale
   或 submesh 越界选择只会跳过绘制，不向上层暴露 GPU slot。
 - 负责 surface/swapchain/present image wrapper、acquire/present semaphore 与窗口 resize 重建。
-- 不负责窗口事件循环、具体 App/子系统编排、GUI RenderGraph 适配、Assimp 文件导入或具体 pass 逻辑。
+- 不负责窗口事件循环、具体 Renderer/子系统编排、GUI RenderGraph 适配、Assimp 文件导入或具体 pass 逻辑。
 
 ## 状态所有权
 
-- `World` 承载 CPU 侧 `SceneStore` 与 `AssetHub`，供 update/prepare 阶段读取或修改；App-facing
+- `World` 承载 CPU 侧 `SceneStore` 与 `AssetHub`，供 update/prepare 阶段读取或修改；Renderer-facing
   model import、procedural mesh/material、runtime instance 和 analytic light 注册通过 `World` facade 进入，
   render runtime 只通过 `World::sync_for_render` 产出的 `WorldRenderSync` typed payload、`SceneChanges` 和
   `World::scene_view()` 只读 scene snapshot 访问这些 CPU owner。
@@ -68,7 +68,7 @@
 - `RayCastService` 持有 runtime 私有的专用 ray tracing pipeline/SBT、可增长 ray/result/readback buffer、
   command pool 和 fence；它由 runtime 拥有，不进入 RenderGraph，也不通过 app 层 pass crate 暴露。
 - `SwapchainPresenter` 拥有 surface、swapchain wrapper、swapchain image/view handle 和 present 同步对象；
-  App/子系统只通过 `PresentView` 查询 swapchain 信息，并通过 `ImportedPresentTarget` 接入 RenderGraph，不直接访问 owner 字段或 semaphore。
+  Renderer/子系统只通过 `PresentView` 查询 swapchain 信息，并通过 `ImportedPresentTarget` 接入 RenderGraph，不直接访问 owner 字段或 semaphore。
 
 ## 对外接口
 
@@ -87,10 +87,10 @@
   不暴露 texture/mesh manager owner，pass 不能绕过 runtime 私有 bridge 读取上传缓存。
 - render 阶段的 `ShaderBindingView` 只暴露 global set layouts/sets；固定管线 image 由各 pass 解析 view handle 并写入
   自己的 local descriptor，不能反查或依赖全局 bindless slot。
-- `RenderRuntimeRayCastCtx` 只暴露同步批量 raycast 调用；App 应在 `after_prepare`
+- `RenderRuntimeRayCastCtx` 只暴露同步批量 raycast 调用；Renderer 应在 `after_prepare`
   阶段使用它，update/input 阶段不提供该接口。
 - `RenderRuntimeRenderCtx` 除普通 `RenderSceneView` 外，还暴露 `WorldSubmeshRasterView` trait
-  object，供 App-owned selection outline 等效果以 World 选择语义录制单个 submesh raster draw。
+  object，供 Renderer-owned selection outline 等效果以 World 选择语义录制单个 submesh raster draw。
 
 ## 生命周期
 
@@ -98,17 +98,17 @@
   `ShaderBindingSystem`、`FrameTiming`、`PerFrameGpuData`、runtime render state 和 `RenderWorld`；
   texture/mesh/material/instance/sky/emissive/TLAS owners 在 `RenderWorld::new` 内部初始化。
 - `RenderRuntime::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
-  swapchain 与 `SwapchainPresenter`，并返回 init Ctx 供 App/子系统创建长期 GPU 资源。
-- `time_to_render` 读取 `FrameTiming` 的最小帧间隔；默认 120 FPS 对应约 `8.333333 ms`。外层 Runner 未到时机时
+  swapchain 与 `SwapchainPresenter`，并返回 init Ctx 供 Renderer/子系统创建长期 GPU 资源。
+- `time_to_render` 读取 `FrameTiming` 的最小帧间隔；默认 120 FPS 对应约 `8.333333 ms`。外层 RenderLoop 未到时机时
   `park_timeout(1 ms)` 后继续轮询，重负载超过间隔时不额外睡眠、不补帧。
 - `begin_frame` 是每帧资源回收入口：由 `FrameTiming` 一次采样更新 delta/total time、等待当前 FIF slot、重置 frame command pool、
   清理延迟释放队列，并把当前 frame id 传给 bindless 与 `RenderWorld` 内部 managers；旧 sky distribution
   跨过 FIF 窗口后由 `GfxResourceManager` 销毁。AssetHub 事件只在
   prepare 边界通过 `World::sync_for_render()` drain。
-- `update_phase` 同步 present extent 到 `FrameRenderState`、acquire 当前 swapchain image，并返回 CPU update Ctx。具体窗口尺寸 render target 由 App/子系统在 init/resize/shutdown 阶段管理。
-- App update 结束后，`RenderAppRunner` 调用 `sync_dlss_options_frame_state`，把 `DlssOptions`
+- `update_phase` 同步 present extent 到 `FrameRenderState`、acquire 当前 swapchain image，并返回 CPU update Ctx。具体窗口尺寸 render target 由 Renderer/子系统在 init/resize/shutdown 阶段管理。
+- Renderer update 结束后，`RenderLoop` 调用 `sync_dlss_options_frame_state`，把 `DlssOptions`
   中的 DLSS SR mode 变化解析为新的 render/output extent；如果 target 尺寸变化，则返回 resize Ctx
-  交给 App 直接编排各子系统重建自己持有的 RT target、GBuffer 和 main-view target。
+  交给 Renderer 直接编排各子系统重建自己持有的 RT target、GBuffer 和 main-view target。
 - `prepare(render_view)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 app 提供的 `RenderView`，
   在 `RenderRuntime` 内部同步 material/instance/mesh/texture 状态、上传 RenderWorld
   和 per-frame data，再刷新 per-frame descriptor。
@@ -119,7 +119,7 @@
   present target 和 timeline，不再修改 CPU scene 或接触 manager owner。
 - `present` 只提交当前 swapchain image 到 present queue；渲染命令提交由上层 render graph 完成。
 - `end_frame` 推进 `FrameTiming` frame id，切换下一帧的 FIF label。
-- `wait_idle` 在 App/子系统 shutdown 前调用，确保上层资源释放时不再被 GPU command 引用。
+- `wait_idle` 在 Renderer/子系统 shutdown 前调用，确保上层资源释放时不再被 GPU command 引用。
 - `destroy` 等待 GPU idle，依次释放 present、scene/assets、`RenderWorld` 内部 render-side scene resources、
   command allocator、resource manager、sync、sampler、descriptor 等资源，最后销毁 `Gfx`。
 

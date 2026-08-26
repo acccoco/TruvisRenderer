@@ -3,6 +3,6 @@ import type { SceneVersion } from "./SceneVersion";
 import type { SelectionDto } from "./SelectionDto";
 
 /**
- * Render/App 主动发送的 best-effort 通知。
+ * Renderer 主动发送的 best-effort 通知。
  */
 export type EditorNotification = { "type": "selection_changed", "payload": SelectionDto | null } | { "type": "scene_version_changed", "payload": SceneVersion };

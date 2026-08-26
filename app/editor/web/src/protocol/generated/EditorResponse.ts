@@ -8,6 +8,6 @@ import type { SceneVersion } from "./SceneVersion";
 import type { SelectionDto } from "./SelectionDto";
 
 /**
- * Render/App 对指定请求返回的领域结果。
+ * Renderer 对指定请求返回的领域结果。
  */
 export type EditorResponse = { "type": "capabilities", "payload": EditorCapabilities } | { "type": "scene_version", "payload": SceneVersion } | { "type": "selection", "payload": SelectionDto | null } | { "type": "scene_objects", "payload": SceneObjectsPage } | { "type": "instance_details", "payload": InstanceDetailsDto } | { "type": "material", "payload": MaterialDto } | { "type": "command_applied", "payload": { scene_version: SceneVersion, material: MaterialDto, } } | { "type": "error", "payload": EditorError };

@@ -1,4 +1,4 @@
-use truvis_app_frame::input_event::KeyCode;
+use truvis_render_loop::input_event::KeyCode;
 use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
 
 use crate::camera::Camera;
@@ -15,23 +15,23 @@ pub struct CameraController {
     active_wheel_zoom: Option<WheelZoomState>,
 }
 
-/// 中键按下后交给 App 在 after_prepare 阶段执行的 pivot 查询。
+/// 中键按下后交给 Renderer 在 after_prepare 阶段执行的 pivot 查询。
 #[derive(Clone, Copy, Debug)]
 pub struct PivotRayCastRequest {
     pub ray: RayCastRay,
     anchor_screen_pos: glam::Vec2,
 }
 
-/// Shift + 中键按下后交给 App 在 after_prepare 阶段执行的拖拽锚点查询。
+/// Shift + 中键按下后交给 Renderer 在 after_prepare 阶段执行的拖拽锚点查询。
 #[derive(Clone, Copy, Debug)]
 pub struct DragPanRayCastRequest {
     pub ray: RayCastRay,
 }
 
-/// 滚轮连续缩放开始时交给 App 在 after_prepare 阶段执行的锚点查询。
+/// 滚轮连续缩放开始时交给 Renderer 在 after_prepare 阶段执行的锚点查询。
 ///
-/// 请求保存首个滚轮事件所在的屏幕锚点和 fallback 锚点。App 只负责执行 `ray`，
-/// 命中、未命中和累计滚轮量的解释都留在控制器内部，避免把相机交互策略泄漏到具体 App。
+/// 请求保存首个滚轮事件所在的屏幕锚点和 fallback 锚点。Renderer 只负责执行 `ray`，
+/// 命中、未命中和累计滚轮量的解释都留在控制器内部，避免把相机交互策略泄漏到具体 Renderer。
 #[derive(Clone, Copy, Debug)]
 pub struct WheelZoomRayCastRequest {
     pub ray: RayCastRay,
@@ -203,7 +203,7 @@ impl CameraController {
 
     /// 更新相机控制，并允许 Shift+中键拖拽和滚轮通过 after_prepare 阶段的 raycast 建立屏幕锚点。
     ///
-    /// 未接入拖拽/滚轮 pending raycast 的 App 应继续调用 [`CameraController::update`]，
+    /// 未接入拖拽/滚轮 pending raycast 的 Renderer 应继续调用 [`CameraController::update`]，
     /// 避免产生无人消费的同步查询请求。
     pub fn update_with_wheel_zoom(
         &mut self,

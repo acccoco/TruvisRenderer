@@ -60,7 +60,7 @@ impl StageBufferManager {
     /// 清理当前 frame label 持有的 staging buffers。
     ///
     /// 这里的 “current frame” 指当前 `FrameLabel` 槽位已经通过 timeline 等待确认安全复用；
-    /// 它不是 render target 意义上的 app-owned FIF resources，因此命名避免继续使用
+    /// 它不是 render target 意义上的 renderer-owned FIF resources，因此命名避免继续使用
     /// `fif_buffers`，防止和窗口尺寸图像 owner 混淆。
     pub fn clear_current_frame_buffers(&mut self, ctx: GfxResourceCtx<'_>, frame_label: FrameLabel) {
         let frame_idx = *frame_label;

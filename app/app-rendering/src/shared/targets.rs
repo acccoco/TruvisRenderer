@@ -6,7 +6,7 @@
 //!
 //! 设计边界：
 //! - `FrameLabel` 仍来自 engine，用来表达当前使用哪个在飞帧槽位。
-//! - 具体图像的用途、格式和 resize 生命周期属于 app 层渲染策略；shader 可见性由消费它的 pass-local descriptor 表达。
+//! - 具体图像的用途、格式和 resize 生命周期属于 Renderer 渲染策略；shader 可见性由消费它的 pass-local descriptor 表达。
 //! - 本模块不保存 `Gfx` / device / allocator 引用，避免长期资源 owner 反向持有 runtime 能力。
 
 use ash::vk;

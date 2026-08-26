@@ -18,7 +18,7 @@ use crate::runtime_defaults::DefaultRenderRuntimeSettings;
 /// 已导入 RenderGraph 的当前窗口 present target。
 ///
 /// 该类型只暴露 graph 内部 image handle 和 swapchain 信息；acquire/render-complete
-/// semaphore 由 `PresentView::import_current_target` 固定接入 graph，不泄漏给 App/子系统。
+/// semaphore 由 `PresentView::import_current_target` 固定接入 graph，不泄漏给 Renderer/子系统。
 pub struct ImportedPresentTarget {
     /// RenderGraph 内部的当前 present image handle。
     pub image: RgImageHandle,
@@ -28,7 +28,7 @@ pub struct ImportedPresentTarget {
 
 /// `SwapchainPresenter` 的阶段化只读视图。
 ///
-/// 该 view 是 App/子系统能看到的窗口输出边界。它只暴露 swapchain 信息和导入当前
+/// 该 view 是 Renderer/子系统能看到的窗口输出边界。它只暴露 swapchain 信息和导入当前
 /// present target 的稳定方法，不暴露 swapchain、image wrapper 列表或 semaphore owner。
 #[derive(Copy, Clone)]
 pub struct PresentView<'a> {
@@ -81,7 +81,7 @@ impl<'a> PresentView<'a> {
 
 /// 窗口 surface、swapchain image/view 和 present 同步对象的 owner。
 ///
-/// `RenderRuntime` 只通过它 acquire/present 当前窗口图像；App/子系统看到的是
+/// `RenderRuntime` 只通过它 acquire/present 当前窗口图像；Renderer/子系统看到的是
 /// `PresentView` 和 graph 内的 `ImportedPresentTarget`，而不是直接操作 `GfxSwapchain`。
 pub(crate) struct SwapchainPresenter {
     surface: GfxSurface,

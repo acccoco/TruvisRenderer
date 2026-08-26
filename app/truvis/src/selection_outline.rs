@@ -20,7 +20,7 @@ use truvis_render_runtime::render_runtime::{
 use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 
-/// Truvis app 拥有的 selection outline 资源 owner。
+/// `TruvisRenderer` 拥有的 selection outline 资源 owner。
 ///
 /// 本类型只持有窗口尺寸 mask image 和 outline pass pipeline，不进入 engine runtime。
 /// mask 按 FIF 轮转，跟随 swapchain/output extent 在 init/resize 阶段创建或重建，
@@ -38,7 +38,7 @@ struct SelectionOutlineResources {
 
 /// selection outline 的 per-FIF mask image 集合。
 ///
-/// mask 是 app-owned 窗口尺寸资源，只用于最终主视图合成；它不会注册成 GUI debug image。
+/// mask 是 renderer-owned 窗口尺寸资源，只用于最终主视图合成；它不会注册成 GUI debug image。
 /// 每帧 mask pass 会 clear 当前 frame label 的 image，因此跨帧内容不承担语义。
 struct SelectionOutlineMasks {
     images: [GfxImageHandle; FrameLabel::COUNT],

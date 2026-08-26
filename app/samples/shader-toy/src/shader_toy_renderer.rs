@@ -1,12 +1,12 @@
 use ash::vk;
 use itertools::Itertools;
 
-use truvis_app_frame::input_event::InputEvent;
-use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
+use truvis_render_loop::input_event::InputEvent;
+use truvis_render_loop::renderer::{Renderer, RendererInitCtx, RendererResizeCtx, RendererShutdownCtx};
 use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 
 use app_imgui::{DebugInfoOverlay, ImGuiSubsystem};
@@ -17,7 +17,7 @@ use app_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 use crate::shader_toy_subsystem::ShaderToySubsystem;
 
 #[derive(Default)]
-pub struct ShaderToyRenderApp {
+pub struct ShaderToyRenderer {
     imgui: ImGuiSubsystem,
     shader_toy: ShaderToySubsystem,
     camera_controller: CameraController,
@@ -26,8 +26,8 @@ pub struct ShaderToyRenderApp {
     cmds: Vec<GfxCommandBuffer>,
 }
 
-impl RenderApp for ShaderToyRenderApp {
-    fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
+impl Renderer for ShaderToyRenderer {
+    fn init(&mut self, ctx: &mut RendererInitCtx<'_>) {
         self.imgui.set_hidpi_factor(ctx.scale_factor);
         self.imgui.set_display_size(ctx.window_size);
 
@@ -112,12 +112,12 @@ impl RenderApp for ShaderToyRenderApp {
         self.camera_controller.camera().render_view()
     }
 
-    fn on_resize(&mut self, ctx: &mut RenderAppResizeCtx<'_>) {
+    fn on_resize(&mut self, ctx: &mut RendererResizeCtx<'_>) {
         self.shader_toy.on_resize(&mut ctx.runtime);
         self.imgui.on_resize(&mut ctx.runtime);
     }
 
-    fn shutdown(&mut self, ctx: &mut RenderAppShutdownCtx<'_>) {
+    fn shutdown(&mut self, ctx: &mut RendererShutdownCtx<'_>) {
         self.cmds.clear();
         self.imgui.shutdown(&mut ctx.runtime);
         self.shader_toy.shutdown(&mut ctx.runtime);

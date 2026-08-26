@@ -9,7 +9,7 @@
 `AssetHub` 把硬盘文件变成 owned CPU payload，`World` 把 payload 变成 CPU scene 语义；
 `RenderWorld` 再把 CPU scene 语义变成 shader 可读取的 GPU cache、buffer、bindless handle 和 TLAS。
 
-`World` 是 App / 子系统在 update 阶段面对的 CPU 语义入口。它内部持有 `SceneStore`、
+`World` 是 Renderer / 子系统在 update 阶段面对的 CPU 语义入口。它内部持有 `SceneStore`、
 `AssetHub` 和 `SceneAssetIngestor`，但不持有 Vulkan image、buffer、BLAS、TLAS 或 GPU slot。
 `RenderWorld` 是 `RenderRuntime` 内部的 render-side prepared world，持有 texture / mesh /
 material / instance / sky / emissive / TLAS 等 GPU 派生状态。
@@ -90,14 +90,14 @@ glTF 导入规则是：`alphaMode = MASK` 只导入为 `CoverageMode::AlphaMask`
   -> RenderWorld GPU identity        // bindless SRV / material slot / instance slot / BLAS / TLAS
 ```
 
-loader handle 只服务后台任务完成事件回收；CPU resource handle 是 App 可编辑、可查询的 CPU 语义身份；
+loader handle 只服务后台任务完成事件回收；CPU resource handle 是 Renderer 可编辑、可查询的 CPU 语义身份；
 GPU identity 是 prepare 后的派生状态，只在 render-side manager 内部稳定。CPU ready 不代表 GPU ready：
 `RawSceneData`、`TextureBytes` 或 `MeshData` 到达后，仍要等 texture / mesh upload 和 BLAS build 完成，
 instance 才能通过 ready gate 进入 active render list。
 
 ## 一帧中的推进顺序
 
-update 阶段，App 只表达意图：请求 model import，注册 texture / mesh / material / instance，
+update 阶段，Renderer 只表达意图：请求 model import，注册 texture / mesh / material / instance，
 或修改 material、instance transform、sky、light 等 CPU 语义。此时不会提交 GPU upload。
 
 prepare 开始时，`World::sync_for_render()` 先调用 `AssetHub::update()` drain 后台 loader 事件。

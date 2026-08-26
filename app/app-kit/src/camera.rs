@@ -2,7 +2,7 @@ use truvis_render_foundation::render_view::RenderView;
 
 /// app 层默认相机数据结构。
 ///
-/// 相机由 app 层持有和更新；runtime 只通过 [`Camera::render_view`] 读取本帧渲染视图快照。
+/// 相机由 Renderer 持有和更新；runtime 只通过 [`Camera::render_view`] 读取本帧渲染视图快照。
 /// 坐标约定为右手系、Y 轴向上，未旋转时朝向 -Z；投影矩阵的 NDC 细节保持在 `glam` 投影函数约定内。
 pub struct Camera {
     pub position: glam::Vec3,

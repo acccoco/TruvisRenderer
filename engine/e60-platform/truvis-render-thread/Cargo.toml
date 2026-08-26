@@ -5,6 +5,6 @@ edition = "2024"
 description = "Window-backend-independent render thread lifecycle host"
 
 [dependencies]
-truvis-app-frame = { workspace = true }
+truvis-render-loop = { workspace = true }
 
 log = { workspace = true }

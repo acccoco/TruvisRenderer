@@ -20,7 +20,7 @@ impl DebugImageOption {
     }
 }
 
-/// App 持有的 debug image 显示选择状态。
+/// Renderer 持有的 debug image 显示选择状态。
 ///
 /// 该状态只在 render thread 的 ImGui update 与 render hook 之间传递稳定 ID。渲染子系统切换后，
 /// 候选集变化时可把失效选择归一化为第一项；`visible` 关闭时保留选择，但

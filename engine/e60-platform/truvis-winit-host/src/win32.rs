@@ -3,7 +3,7 @@ use raw_window_handle::{
 };
 use winit::window::Window;
 
-use truvis_app_frame::RenderThreadInit;
+use truvis_render_loop::RenderThreadInit;
 
 /// 可跨线程传递的 Windows surface 参数；只保存 raw-window-handle 明确标记为 Send 的具体变体。
 ///

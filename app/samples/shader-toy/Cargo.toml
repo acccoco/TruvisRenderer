@@ -9,7 +9,7 @@ name = "shader-toy"
 path = "src/main.rs"
 
 [dependencies]
-truvis-app-frame = { workspace = true }
+truvis-render-loop = { workspace = true }
 app-kit = { workspace = true }
 app-imgui = { workspace = true }
 truvis-winit-host = { workspace = true }

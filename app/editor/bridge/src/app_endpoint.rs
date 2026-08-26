@@ -3,9 +3,9 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::{EditorNotificationEnvelope, EditorRequestEnvelope, EditorResponseEnvelope};
 
-/// Render/App 线程独占的跨线程 endpoint。
+/// RenderThread 上 Renderer 独占的跨线程 endpoint。
 ///
-/// App 每帧通过 `try_receive_request` 按预算消费请求，通过 `try_send_*` 非阻塞返回结果。
+/// Renderer 每帧通过 `try_receive_request` 按预算消费请求，通过 `try_send_*` 非阻塞返回结果。
 /// 任何方法都不会等待 Server 或持有跨线程锁。
 pub struct AppEndpoint {
     request_receiver: Receiver<EditorRequestEnvelope>,
@@ -47,7 +47,7 @@ impl AppEndpoint {
         self.notification_sender.try_send(notification)
     }
 
-    /// 关闭 request receiver，阻止 Server 继续排入新请求，同时允许 App 丢弃剩余请求后退出。
+    /// 关闭 request receiver，阻止 Server 继续排入新请求，同时允许 Renderer 丢弃剩余请求后退出。
     pub fn close_requests(&mut self) {
         self.request_receiver.close();
     }

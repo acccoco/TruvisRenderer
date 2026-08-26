@@ -1,7 +1,7 @@
-use hello_triangle::triangle_render_app::TriangleRenderApp;
-use truvis_app_frame::init_env_with_log_file;
+use hello_triangle::triangle_renderer::TriangleRenderer;
 use truvis_logs::LogFilePath;
 use truvis_path::TruvisPath;
+use truvis_render_loop::init_env_with_log_file;
 use truvis_winit_host::{StandaloneWindowOptions, StandaloneWinitHost};
 
 fn main() {
@@ -13,5 +13,5 @@ fn main() {
         transparent: true,
         icon_bytes: Some(std::fs::read(TruvisPath::resources_path("DruvisIII.png")).expect("failed to read icon file")),
     };
-    StandaloneWinitHost::run(options, || Box::new(TriangleRenderApp::default()));
+    StandaloneWinitHost::run(options, || Box::new(TriangleRenderer::default()));
 }

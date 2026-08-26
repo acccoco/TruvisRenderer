@@ -193,7 +193,6 @@ dependencies = [
  "imgui",
  "itertools 0.10.5",
  "log",
- "truvis-app-frame",
  "truvis-app-shader-binding",
  "truvis-descriptor-layout-macro",
  "truvis-descriptor-layout-trait",
@@ -201,6 +200,7 @@ dependencies = [
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
+ "truvis-render-loop",
  "truvis-render-runtime",
 ]
 
@@ -210,9 +210,9 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "log",
- "truvis-app-frame",
  "truvis-gfx",
  "truvis-render-foundation",
+ "truvis-render-loop",
  "truvis-render-runtime",
 ]
 
@@ -1055,12 +1055,12 @@ dependencies = [
  "ash",
  "glam",
  "log",
- "truvis-app-frame",
  "truvis-asset",
  "truvis-logs",
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
+ "truvis-render-loop",
  "truvis-render-runtime",
  "truvis-shader-binding",
  "truvis-winit-host",
@@ -2203,12 +2203,12 @@ dependencies = [
  "glam",
  "itertools 0.10.5",
  "log",
- "truvis-app-frame",
  "truvis-gfx",
  "truvis-logs",
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
+ "truvis-render-loop",
  "truvis-render-runtime",
  "truvis-winit-host",
 ]
@@ -4952,12 +4952,12 @@ dependencies = [
  "glam",
  "itertools 0.10.5",
  "log",
- "truvis-app-frame",
  "truvis-gfx",
  "truvis-logs",
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
+ "truvis-render-loop",
  "truvis-render-runtime",
  "truvis-winit-host",
 ]
@@ -6140,7 +6140,6 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tokio",
- "truvis-app-frame",
  "truvis-asset",
  "truvis-editor-bridge",
  "truvis-editor-server",
@@ -6149,27 +6148,12 @@ dependencies = [
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
+ "truvis-render-loop",
  "truvis-render-runtime",
  "truvis-shader-binding",
  "truvis-winit-host",
  "truvis-world",
  "vk-mem",
-]
-
-[[package]]
-name = "truvis-app-frame"
-version = "0.1.0"
-dependencies = [
- "ash-window",
- "crossbeam-channel",
- "log",
- "raw-window-handle",
- "tracy-client",
- "truvis-gfx",
- "truvis-logs",
- "truvis-render-foundation",
- "truvis-render-runtime",
- "truvis-world",
 ]
 
 [[package]]
@@ -6342,6 +6326,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "truvis-render-loop"
+version = "0.1.0"
+dependencies = [
+ "ash-window",
+ "crossbeam-channel",
+ "log",
+ "raw-window-handle",
+ "tracy-client",
+ "truvis-gfx",
+ "truvis-logs",
+ "truvis-render-foundation",
+ "truvis-render-runtime",
+ "truvis-world",
+]
+
+[[package]]
 name = "truvis-render-runtime"
 version = "0.1.0"
 dependencies = [
@@ -6375,7 +6375,7 @@ name = "truvis-render-thread"
 version = "0.1.0"
 dependencies = [
  "log",
- "truvis-app-frame",
+ "truvis-render-loop",
 ]
 
 [[package]]
@@ -6431,7 +6431,7 @@ dependencies = [
  "image",
  "log",
  "raw-window-handle",
- "truvis-app-frame",
+ "truvis-render-loop",
  "truvis-render-thread",
  "windows-sys 0.61.2",
  "winit",

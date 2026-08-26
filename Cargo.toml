@@ -18,8 +18,8 @@ members = [
     # e30-world
     "engine/e30-world/truvis-asset",
     "engine/e30-world/truvis-world",
-    # e50-app-frame
-    "engine/e50-app-frame/truvis-app-frame",
+    # e50-render-loop
+    "engine/e50-render-loop/truvis-render-loop",
     # e60-platform
     "engine/e60-platform/truvis-render-thread",
     "engine/e60-platform/truvis-winit-host",
@@ -76,8 +76,8 @@ truvis-render-runtime = { path = "engine/e40-render/truvis-render-runtime" }
 # e30-world
 truvis-asset = { path = "engine/e30-world/truvis-asset" }
 truvis-world = { path = "engine/e30-world/truvis-world" }
-# e50-app-frame
-truvis-app-frame = { path = "engine/e50-app-frame/truvis-app-frame" }
+# e50-render-loop
+truvis-render-loop = { path = "engine/e50-render-loop/truvis-render-loop" }
 # e60-platform
 truvis-render-thread = { path = "engine/e60-platform/truvis-render-thread" }
 truvis-winit-host = { path = "engine/e60-platform/truvis-winit-host" }

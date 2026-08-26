@@ -7,9 +7,9 @@
 
 ## 当前基线
 
-当前 runtime / App / subsystem phase、状态 owner 和资源生命周期见
+当前 runtime / Renderer / subsystem phase、状态 owner 和资源生命周期见
 [`../summaries/frame-lifecycle.md`](../summaries/frame-lifecycle.md)、
-[`../summaries/runtime-app-subsystem-boundaries.md`](../summaries/runtime-app-subsystem-boundaries.md) 和
+[`../summaries/runtime-renderer-subsystem-boundaries.md`](../summaries/runtime-renderer-subsystem-boundaries.md) 和
 [`../summaries/threading-and-resource-lifecycle.md`](../summaries/threading-and-resource-lifecycle.md)。
 本文件只记录这些边界之后的演进方向。
 
@@ -26,7 +26,7 @@
 
 ## 边界与非目标
 
-- 不把 App camera controller、GUI、overlay 或具体 pipeline 状态移入 runtime。
+- 不把 Renderer camera controller、GUI、overlay 或具体 pipeline 状态移入 runtime。
 - 不在第一轮引入重型 view family、shadow atlas 或多 surface 调度器。
 - 不改变所有 Vulkan 对象在渲染线程创建、使用和销毁的线程边界。
 - 不把当前 runtime phase 事实重复写入本文件；事实变更应同步到 summaries。

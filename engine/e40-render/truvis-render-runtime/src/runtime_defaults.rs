@@ -6,7 +6,7 @@ use ash::vk;
 pub(crate) struct DefaultRenderRuntimeSettings;
 
 impl DefaultRenderRuntimeSettings {
-    /// 软件帧率上限；Runner 仍使用 1 ms 短周期轮询等待下一个渲染时机。
+    /// 软件帧率上限；RenderLoop 仍使用 1 ms 短周期轮询等待下一个渲染时机。
     pub const DEFAULT_FRAME_RATE_LIMIT_FPS: u32 = 120;
     pub const DEFAULT_SURFACE_FORMAT: vk::SurfaceFormatKHR = vk::SurfaceFormatKHR {
         // shader 线性输出经过 sRGB swapchain 时会由硬件转换到显示空间。

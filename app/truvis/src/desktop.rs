@@ -15,15 +15,15 @@ use tauri::{Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 use tokio::sync::oneshot;
 
-use truvis_app_frame::init_env_with_log_file;
 use truvis_editor_bridge::{EditorBridgeConfig, create_editor_bridge};
 use truvis_editor_server::{EditorServer, EditorServerConfig, EditorServerHandle};
 use truvis_logs::LogFilePath;
 use truvis_path::TruvisPath;
+use truvis_render_loop::init_env_with_log_file;
 use truvis_winit_host::{EmbeddedViewportRect, EmbeddedWinitHost};
 
 use crate::desktop_command::{DesktopCommandController, DesktopCommandSender};
-use crate::truvis_render_app::TruvisRenderApp;
+use crate::truvis_renderer::TruvisRenderer;
 
 /// Tauri command 使用的 DOM viewport 物理像素矩形。
 ///
@@ -285,7 +285,7 @@ impl TruvisDesktop {
                     .map_err(|error| std::io::Error::other(format!("failed to get Tauri parent HWND: {error}")))?
                     .as_raw();
                 let render_host = EmbeddedWinitHost::spawn(parent_window, move || {
-                    Box::new(TruvisRenderApp::new(app_endpoint, desktop_command_controller))
+                    Box::new(TruvisRenderer::new(app_endpoint, desktop_command_controller))
                 })
                 .map_err(std::io::Error::other)?;
 

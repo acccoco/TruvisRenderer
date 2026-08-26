@@ -2,7 +2,7 @@ use std::env;
 
 /// realtime/offline 渲染子系统共享的模式选择。
 ///
-/// 该枚举只描述 app 选择哪条 sub RenderGraph 出图；实时/离线各自维护资源和 temporal state，
+/// 该枚举只描述 Renderer 选择哪条 sub RenderGraph 出图；实时/离线各自维护资源和 temporal state，
 /// 避免 UI 层把 DLSS、ReSTIR 或离线累计状态混在同一份 runtime state 中。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RenderMode {

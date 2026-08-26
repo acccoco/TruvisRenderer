@@ -8,9 +8,9 @@ use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Icon, Window, WindowId};
 
-use truvis_app_frame::input_event::InputEvent;
-use truvis_app_frame::render_app_api::RenderApp;
-use truvis_render_thread::{RenderAppFactory, RenderThread};
+use truvis_render_loop::input_event::InputEvent;
+use truvis_render_loop::renderer::Renderer;
+use truvis_render_thread::{RenderThread, RendererFactory};
 
 use crate::input_adapter::WinitInputAdapter;
 use crate::win32::Win32RenderSurface;
@@ -19,7 +19,7 @@ enum UserEvent {
     RenderFinished,
 }
 
-/// 由具体 App 入口决定的 standalone 窗口策略；平台宿主不读取产品资源或路径。
+/// 由具体 sample 入口决定的 standalone 窗口策略；平台宿主不读取产品资源或路径。
 pub struct StandaloneWindowOptions {
     pub title: String,
     pub logical_size: [f64; 2],
@@ -32,7 +32,7 @@ pub struct StandaloneWindowOptions {
 /// 本类型始终先等待 RenderThread 完整销毁 Vulkan surface，再允许对应 Window drop。
 pub struct StandaloneWinitHost {
     options: StandaloneWindowOptions,
-    app_factory: Option<RenderAppFactory>,
+    renderer_factory: Option<RendererFactory>,
 
     /// 字段顺序保证异常展开时先触发 RenderThread 的 join fallback，再 drop Window。
     render_thread: Option<RenderThread>,
@@ -42,17 +42,17 @@ pub struct StandaloneWinitHost {
 }
 
 impl StandaloneWinitHost {
-    /// 启动窗口事件循环；具体 App 只会在 OS RenderThread 内构造一次。
-    pub fn run<F>(options: StandaloneWindowOptions, app_factory: F)
+    /// 启动窗口事件循环；具体 Renderer 只会在 OS RenderThread 内构造一次。
+    pub fn run<F>(options: StandaloneWindowOptions, renderer_factory: F)
     where
-        F: FnOnce() -> Box<dyn RenderApp> + Send + 'static,
+        F: FnOnce() -> Box<dyn Renderer> + Send + 'static,
     {
         let mut event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event().build().unwrap();
         let event_proxy = event_loop.create_proxy();
 
         let mut host = Self {
             options,
-            app_factory: Some(Box::new(app_factory)),
+            renderer_factory: Some(Box::new(renderer_factory)),
             render_thread: None,
             window: None,
             event_proxy,
@@ -97,7 +97,7 @@ impl StandaloneWinitHost {
         let window = self.create_window(event_loop);
         let surface = Win32RenderSurface::from_window(&window).unwrap_or_else(|error| panic!("{error}"));
         let initial_size = surface.initial_size();
-        let factory = self.app_factory.take().expect("app_factory already consumed");
+        let factory = self.renderer_factory.take().expect("renderer_factory already consumed");
         let event_proxy = self.event_proxy.clone();
         let render_thread = RenderThread::spawn(
             initial_size,

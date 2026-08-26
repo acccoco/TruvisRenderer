@@ -1,7 +1,7 @@
-//! Truvis App 级 ImGui overlay 编排。
+//! Truvis Renderer 级 ImGui overlay 编排。
 //!
 //! 本模块只决定“哪些 section 以什么布局绘制”。具体控件复用独立的诊断和渲染设置 crate，
-//! `DebugInfoOverlay` / `RenderControlsOverlay`，Debug Images 只在这里修改 App-owned
+//! `DebugInfoOverlay` / `RenderControlsOverlay`，Debug Images 只在这里修改 Renderer-owned
 //! `DebugImageSelection`。这里不接触 RenderGraph、GPU resource 生命周期或 GUI draw
 //! data 上传；调用方在 `ImGuiSubsystem::build_frame` 的闭包内调用 `TruvisOverlayUi::build`。
 
@@ -14,7 +14,7 @@ use truvis_render_runtime::state::dlss_options::DlssOptions;
 use truvis_world::World;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
 
-use crate::truvis_render_app::ClickRayCastProbe;
+use crate::truvis_renderer::ClickRayCastProbe;
 
 const DEFAULT_WINDOW_MARGIN: f32 = 10.0;
 
@@ -223,7 +223,7 @@ impl TruvisOverlayUi {
             Self::build_window_with_options(ui, self.options.windows.stack, || {
                 if self.section_visible(OverlayTag::Rendering) {
                     Self::draw_stack_section_header(ui, OverlayTag::Rendering);
-                    // 默认 separate-style 布局把渲染选项与点选结果放进同一个 App 级主面板；
+                    // 默认 separate-style 布局把渲染选项与点选结果放进同一个 Renderer 级主面板；
                     // 控件本身复用 app-render-ui section，避免把渲染子系统 owner 状态迁入布局层。
                     Self::draw_controls_contents(
                         ui,

@@ -49,7 +49,7 @@ pub struct InstanceMaterialBindingDto {
 
 /// Web 右侧栏按需读取的完整 CPU scene instance 投影。
 ///
-/// DTO 在一次 Render/App update 查询中从同一个 `SceneReadView` 构造，Web 只把它作为
+/// DTO 在一次 Renderer update 查询中从同一个 `SceneReadView` 构造，Web 只把它作为
 /// 可丢弃投影。`transform` 使用 row-major 行数组，避免页面误解 glam 的 column-major
 /// 内存表达；它不属于 shader ABI，也不表示 GPU scene 已经 ready。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]

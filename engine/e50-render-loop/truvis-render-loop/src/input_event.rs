@@ -1,6 +1,6 @@
 //! 平台输入事件的引擎侧表示。
 //!
-//! 平台层负责把 winit 等后端事件转换成这些窄类型，渲染线程和 App hooks 只处理
+//! 平台层负责把 winit 等后端事件转换成这些窄类型，渲染线程和 Renderer hooks 只处理
 //! 这里定义的稳定输入模型。该模型当前只覆盖引擎 demo 已使用的键鼠输入；未知或
 //! 暂未建模的平台事件通过 `Other` 保留兼容入口。
 
@@ -61,7 +61,7 @@ pub enum KeyCode {
 /// render thread 接收的输入事件。
 ///
 /// 坐标和尺寸均使用平台窗口的物理像素坐标。滚轮 delta 已由平台适配层规整为
-/// 垂直滚动量，当前不保留水平滚动分量。resize 事件用于 App/input 状态观察；
+/// 垂直滚动量，当前不保留水平滚动分量。resize 事件用于 Renderer/input 状态观察；
 /// swapchain 重建仍由 render loop 的 latest-size 路径驱动。
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputEvent {
@@ -75,6 +75,6 @@ pub enum InputEvent {
     MouseWheel { delta: f64 },
     /// 窗口物理尺寸变化事件。
     Resized { physical_width: u32, physical_height: u32 },
-    /// 暂未建模或 App 当前不关心的平台事件。
+    /// 暂未建模或 Renderer 当前不关心的平台事件。
     Other,
 }

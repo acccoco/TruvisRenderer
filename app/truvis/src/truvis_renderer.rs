@@ -1,9 +1,9 @@
-use truvis_app_frame::input_event::InputEvent;
-use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx};
 use truvis_editor_bridge::AppEndpoint;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
+use truvis_render_loop::input_event::InputEvent;
+use truvis_render_loop::renderer::{Renderer, RendererInitCtx, RendererResizeCtx, RendererShutdownCtx};
 use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
 use truvis_render_runtime::render_runtime::{RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 use truvis_render_runtime::selection::WorldSubmeshSelection;
@@ -33,7 +33,7 @@ use crate::overlay_ui::{
 };
 use crate::selection_outline::SelectionOutlineSubsystem;
 
-pub struct TruvisRenderApp {
+pub struct TruvisRenderer {
     imgui: ImGuiSubsystem,
     debug_image_selection: DebugImageSelection,
     realtime: RealtimeRenderSubsystem,
@@ -57,10 +57,10 @@ pub struct TruvisRenderApp {
     editor_controller: EditorController,
 }
 
-impl TruvisRenderApp {
-    /// 使用桌面壳预先创建的 App endpoint 构造渲染侧业务状态。
+impl TruvisRenderer {
+    /// 使用桌面壳预先创建的 [`AppEndpoint`] 构造渲染侧业务状态。
     ///
-    /// EditorServer 生命周期属于 Tauri desktop；本 App 只拥有 Editor 协议和桌面特权
+    /// EditorServer 生命周期属于 Tauri desktop；本 Renderer 只拥有 Editor 协议和桌面特权
     /// command 到权威 `World` 的非阻塞 controller，避免 RenderThread 同时承担窗口壳和
     /// 网络 owner 职责。
     pub(crate) fn new(app_endpoint: AppEndpoint, desktop_command_controller: DesktopCommandController) -> Self {
@@ -210,7 +210,7 @@ impl ClickRayCastProbe {
     }
 }
 
-impl TruvisRenderApp {
+impl TruvisRenderer {
     pub fn overlay_options(&self) -> &TruvisOverlayOptions {
         self.overlay_ui.options()
     }
@@ -490,8 +490,8 @@ impl TruvisRenderApp {
     }
 }
 
-impl RenderApp for TruvisRenderApp {
-    fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
+impl Renderer for TruvisRenderer {
+    fn init(&mut self, ctx: &mut RendererInitCtx<'_>) {
         self.render_mode = RenderMode::initial_from_env();
         self.imgui.set_hidpi_factor(ctx.scale_factor);
         self.imgui.set_display_size(ctx.window_size);
@@ -499,7 +499,7 @@ impl RenderApp for TruvisRenderApp {
         Self::spawn_material_test_cubes(&mut *ctx.runtime.world);
         Self::request_model(&mut *ctx.runtime.world, self.camera_controller.camera_mut());
 
-        // App 持有初始化顺序：场景 CPU 状态先就绪，再依次创建具体渲染资源。
+        // Renderer 持有初始化顺序：场景 CPU 状态先就绪，再依次创建具体渲染资源。
         self.realtime.init(&mut ctx.runtime);
         self.offline.init(&mut ctx.runtime);
         self.selection_outline.init(&mut ctx.runtime);
@@ -577,7 +577,7 @@ impl RenderApp for TruvisRenderApp {
                 RenderMode::Realtime => RealtimeRenderSubsystem::debug_image_options(),
                 RenderMode::Offline => OfflineRenderSubsystem::debug_image_options(),
             };
-            // 选择归一化属于 App 状态维护，不能依赖 Debug Images window/section 当前是否可见。
+            // 选择归一化属于 Renderer 状态维护，不能依赖 Debug Images window/section 当前是否可见。
             self.debug_image_selection.normalize_options(debug_image_options);
         });
     }
@@ -613,7 +613,7 @@ impl RenderApp for TruvisRenderApp {
         }
     }
 
-    fn on_resize(&mut self, ctx: &mut RenderAppResizeCtx<'_>) {
+    fn on_resize(&mut self, ctx: &mut RendererResizeCtx<'_>) {
         self.realtime.on_resize(&mut ctx.runtime);
         self.offline.on_resize(&mut ctx.runtime);
         self.selection_outline.on_resize(&mut ctx.runtime);
@@ -621,7 +621,7 @@ impl RenderApp for TruvisRenderApp {
         self.imgui.on_resize(&mut ctx.runtime);
     }
 
-    fn shutdown(&mut self, ctx: &mut RenderAppShutdownCtx<'_>) {
+    fn shutdown(&mut self, ctx: &mut RendererShutdownCtx<'_>) {
         self.desktop_command_controller.shutdown();
         self.editor_controller.shutdown();
 
@@ -638,7 +638,7 @@ impl RenderApp for TruvisRenderApp {
         let frame_label = ctx.record_ctx.frame_timing.frame_label();
         let frame_id = ctx.record_ctx.frame_timing.frame_id();
 
-        // 离线累计失效由 App 在每帧 render 前统一判断：相机、场景和离线设置都已经进入
+        // 离线累计失效由 Renderer 在每帧 render 前统一判断：相机、场景和离线设置都已经进入
         // 本帧确定状态，离线渲染子系统只保存历史签名并在变化时清空自己的 accum_image。
         self.offline.update_accum_signature(
             self.camera_controller.camera().render_view().accum_signature(),
@@ -649,7 +649,7 @@ impl RenderApp for TruvisRenderApp {
         self.imgui.prepare_render_data(&subsystem_ctx);
         let selected_debug_image_id = self.debug_image_selection.selected_id();
 
-        // App 持有实时/离线模式选择；具体渲染子系统只负责向 RenderGraph 贡献自己的 compute subgraph。
+        // Renderer 持有实时/离线模式选择；具体渲染子系统只负责向 RenderGraph 贡献自己的 compute subgraph。
         // 两条分支都生成同一队列上的第一段 submit，保证后续 present graph 可按统一顺序消费结果。
         let compute_submit = match self.render_mode {
             RenderMode::Realtime => {

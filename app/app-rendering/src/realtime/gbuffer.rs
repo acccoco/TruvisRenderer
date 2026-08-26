@@ -30,7 +30,7 @@ use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
 /// 持有三个通道（A/B/C）的 per-FIF storage image 和对应 image view。RT raygen pass 通过
 /// pass-local descriptor 写入；调试 UI 只在显示当前图像时通过自己的 descriptor 采样。
 ///
-/// 格式和通道语义是渲染策略决策，由 app 层决定，不属于 engine 基础设施。
+/// 格式和通道语义是渲染策略决策，由 Renderer 决定，不属于 engine 基础设施。
 pub struct GBuffer {
     /// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness (R16G16B16A16_SFLOAT)
     a_images: [GfxImageHandle; FrameLabel::COUNT],

@@ -6,7 +6,7 @@ description = "App-owned ImGui subsystem, private Vulkan backend and diagnostic 
 
 [dependencies]
 app-kit = { workspace = true }
-truvis-app-frame = { workspace = true }
+truvis-render-loop = { workspace = true }
 truvis-gfx = { workspace = true }
 truvis-render-foundation = { workspace = true }
 truvis-render-graph = { workspace = true }

@@ -20,7 +20,7 @@ pub struct DlssOptions {
     /// DLSS SR / DLAA 模式。
     ///
     /// 修改后由 `RenderRuntime::sync_dlss_options_frame_state` 统一解析，必要时会更新
-    /// `FrameRenderState`、触发 app-owned target rebuild，并重置 DLSS history。
+    /// `FrameRenderState`、触发 renderer-owned target rebuild，并重置 DLSS history。
     pub dlss_sr_mode: DlssSrMode,
     /// DLSS Ray Reconstruction 开关。
     ///

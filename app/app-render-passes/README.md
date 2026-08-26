@@ -25,9 +25,9 @@ coordinate gizmo、selection outline 和 Phong shading。
 - 使用 `RenderPassRecordCtx` 读取 GPU frame state、shader-visible bindings 和资源 manager。
 - 在需要场景数据的 pass 中通过 `RenderSceneView` 读取 scene buffer / TLAS / raster draw 能力，不在 render phase 访问 `World` 或重新 prepare scene。
 - `SelectionOutlinePass` 只负责录制 R8 mask 光栅化与 present composite；mask image 生命周期、selection
-  状态和 pass 插入顺序属于具体 App。
+  状态和 pass 插入顺序属于具体 Renderer。
 - `CoordinateGizmoPass` 只负责在 present image 右下角叠加当前相机朝向下的三轴 gizmo；它不持有几何 buffer
-  或中间 image，pass 插入顺序属于具体 App。
+  或中间 image，pass 插入顺序属于具体 Renderer。
 - `ImageClearPass` 只负责通过 pass-local storage image descriptor 把目标写成确定颜色；具体 pipeline 必须通过
   RenderGraph 声明目标图像写状态，并决定何时清理历史。
 - `ResolvePass` 在同一个 dynamic rendering scope 内先绘制全屏 main image，再按需重新绑定 sampled image
@@ -37,8 +37,8 @@ coordinate gizmo、selection outline 和 Phong shading。
 
 ## 边界约束
 
-- 本 crate 不负责 App 级 pass 顺序、GUI overlay 顺序或 demo pipeline 编排。
-- 本 crate 不持有 `RenderRuntime`，也不依赖 frame runtime 或 App hooks。
+- 本 crate 不负责 Renderer 级 pass 顺序、GUI overlay 顺序或 demo pipeline 编排。
+- 本 crate 不持有 `RenderRuntime`，也不依赖 frame runtime 或 Renderer hooks。
 - runtime-owned 同步 raycast pipeline 不在本 crate 中；它是 `truvis-render-runtime` 的私有实现细节。
 - `GBuffer` 不在本 crate 中；它属于 `app-rendering` 的 realtime subsystem 资源 owner。
 - GUI Vulkan backend 与 GUI RenderGraph adapter 是 `app-imgui::ImGuiSubsystem` 的私有实现细节，不在本 crate 中。
@@ -48,7 +48,7 @@ coordinate gizmo、selection outline 和 Phong shading。
 
 ## 设计意图
 
-本 crate 只表达“如何录制 Truvis app 复用的具体 GPU 效果”。具体 App 在 `RenderApp::render`
+本 crate 只表达“如何录制 Truvis app 复用的具体 GPU 效果”。具体 Renderer 在 `Renderer::render`
 中创建 `RenderGraphBuilder`，再按业务顺序组合 `app-rendering` 中的渲染子系统、
 post-process pass 和 `app-imgui` 提供的 GUI pass。这样新增 demo 或渲染能力时优先复用 pass 实现，而不把
-App 级编排逻辑下沉到 engine core。
+Renderer 级编排逻辑下沉到 engine core。

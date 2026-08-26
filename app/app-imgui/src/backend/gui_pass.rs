@@ -216,7 +216,7 @@ impl GuiPass {
                         cmd_params:
                             imgui::DrawCmdParams {
                                 clip_rect,
-                                texture_id, // 当前绘制命令用到的 texture，这个 id 是 app 决定的
+                                texture_id, // 当前绘制命令用到的 texture，这个 id 是 Renderer 决定的
                                 vtx_offset,
                                 idx_offset,
                             },

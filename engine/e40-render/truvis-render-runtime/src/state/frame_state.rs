@@ -3,7 +3,7 @@ use ash::vk;
 /// 当前 main view / frame 的渲染目标状态。
 ///
 /// 这是运行时根据窗口、present、DLSS SR mode 和设备能力推导出的状态，不是用户直接配置。
-/// App-owned RT target、GBuffer、DLSS input/output 和 main-view target 都以它作为尺寸与格式契约。
+/// Renderer-owned RT target、GBuffer、DLSS input/output 和 main-view target 都以它作为尺寸与格式契约。
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct FrameRenderState {
     /// app 层 HDR 中间图像使用的颜色格式；不同于 swapchain surface format。

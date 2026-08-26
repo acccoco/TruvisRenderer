@@ -34,9 +34,9 @@ impl Default for EditorControllerConfig {
     }
 }
 
-/// Truvis App 内的 Editor 协议适配器。
+/// `TruvisRenderer` 内的 Editor 协议适配器。
 ///
-/// Controller 只在 Render/App 线程的 update 阶段借用 `World`，把协议 DTO 转换成现有
+/// Controller 只在 RenderThread 的 Renderer update 阶段借用 `World`，把协议 DTO 转换成现有
 /// World 查询或 mutation。它不保存 selection、scene/material cache，也不拥有 Server connection。
 pub(crate) struct EditorController {
     endpoint: AppEndpoint,
@@ -386,7 +386,7 @@ impl EditorController {
 }
 
 impl EditorController {
-    /// 广播由 Editor WebSocket 之外的 App-local mutation 产生的 scene version 变化。
+    /// 广播由 Editor WebSocket 之外的 Renderer-local mutation 产生的 scene version 变化。
     ///
     /// 本方法只复用现有失效通知，不携带本地文件路径或新的领域 DTO。notification
     /// outbox 是 best-effort；发送失败时 Web 仍会通过既有一秒 polling 收敛。

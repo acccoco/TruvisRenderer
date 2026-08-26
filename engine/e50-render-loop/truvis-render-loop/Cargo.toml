@@ -1,8 +1,8 @@
 [package]
-name = "truvis-app-frame"
+name = "truvis-render-loop"
 version = "0.1.0"
 edition = "2024"
-description = "App frame contracts and unified render app runner"
+description = "Renderer contracts and unified render loop"
 
 [dependencies]
 truvis-gfx = { workspace = true }

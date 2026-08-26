@@ -467,7 +467,7 @@ impl RenderSceneView for RenderWorld {
     }
 }
 
-// 选择轮廓使用的窄接口：App 提供 CPU World 语义，runtime 负责解析当前 GPU draw。
+// 选择轮廓使用的窄接口：Renderer 提供 CPU World 语义，runtime 负责解析当前 GPU draw。
 impl WorldSubmeshRasterView for RenderWorld {
     fn draw_selected_submesh_raster(
         &self,

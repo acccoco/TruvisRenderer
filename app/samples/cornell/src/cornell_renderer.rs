@@ -1,8 +1,8 @@
-use truvis_app_frame::input_event::InputEvent;
-use truvis_app_frame::render_app_api::{RenderApp, RenderAppInitCtx, RenderAppResizeCtx, RenderAppShutdownCtx};
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
+use truvis_render_loop::input_event::InputEvent;
+use truvis_render_loop::renderer::{Renderer, RendererInitCtx, RendererResizeCtx, RendererShutdownCtx};
 use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 use truvis_shader_binding::gpu;
 use truvis_world::World;
@@ -17,7 +17,7 @@ use app_render_ui::RenderControlsOverlay;
 use app_rendering::{PathTracingCommonSettings, RealtimeRenderSubsystem};
 
 #[derive(Default)]
-pub struct CornellRenderApp {
+pub struct CornellRenderer {
     imgui: ImGuiSubsystem,
     debug_image_selection: DebugImageSelection,
     realtime: RealtimeRenderSubsystem,
@@ -28,7 +28,7 @@ pub struct CornellRenderApp {
     render_controls: RenderControlsOverlay,
 }
 
-impl CornellRenderApp {
+impl CornellRenderer {
     fn request_model(world: &mut World, camera: &mut Camera) {
         camera.position = glam::vec3(-400.0, 1000.0, 1000.0);
         camera.euler_yaw_deg = 330.0;
@@ -76,8 +76,8 @@ impl CornellRenderApp {
     }
 }
 
-impl RenderApp for CornellRenderApp {
-    fn init(&mut self, ctx: &mut RenderAppInitCtx<'_>) {
+impl Renderer for CornellRenderer {
+    fn init(&mut self, ctx: &mut RendererInitCtx<'_>) {
         self.imgui.set_hidpi_factor(ctx.scale_factor);
         self.imgui.set_display_size(ctx.window_size);
 
@@ -193,12 +193,12 @@ impl RenderApp for CornellRenderApp {
         self.camera_controller.camera().render_view()
     }
 
-    fn on_resize(&mut self, ctx: &mut RenderAppResizeCtx<'_>) {
+    fn on_resize(&mut self, ctx: &mut RendererResizeCtx<'_>) {
         self.realtime.on_resize(&mut ctx.runtime);
         self.imgui.on_resize(&mut ctx.runtime);
     }
 
-    fn shutdown(&mut self, ctx: &mut RenderAppShutdownCtx<'_>) {
+    fn shutdown(&mut self, ctx: &mut RendererShutdownCtx<'_>) {
         self.imgui.shutdown(&mut ctx.runtime);
         self.realtime.shutdown(&mut ctx.runtime);
     }

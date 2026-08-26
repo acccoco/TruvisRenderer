@@ -4,7 +4,7 @@ use truvis_render_foundation::frame_label::FrameLabel;
 
 /// `RenderRuntime` 独占的帧序号、时间快照与限帧状态。
 ///
-/// App 和 render pass 只读取同一帧在 `begin_frame` 采样出的稳定快照；帧号只在
+/// Renderer 和 render pass 只读取同一帧在 `begin_frame` 采样出的稳定快照；帧号只在
 /// present 或空帧 timeline signal 完成后由 `next_frame` 推进。
 pub struct FrameTiming {
     frame_id: u64,

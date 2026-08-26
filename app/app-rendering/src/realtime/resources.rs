@@ -775,7 +775,7 @@ impl Drop for DlssOutputTargets {
 ///
 /// color target 是 per-frame 的，因为 compute graph 与 present graph 会围绕当前 frame label
 /// 读写它；depth target 目前是单张窗口尺寸资源，作为 raster pass 的 depth attachment。
-/// 它们属于 app 的主视图策略，不进入 engine runtime-owned render state。
+/// 它们属于 Renderer 的主视图策略，不进入 engine runtime-owned render state。
 pub struct MainViewTargets {
     color: PerFrameImageSet,
     depth: ImageTarget,

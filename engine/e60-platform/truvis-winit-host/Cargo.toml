@@ -5,7 +5,7 @@ edition = "2024"
 description = "winit standalone and embedded window hosts"
 
 [dependencies]
-truvis-app-frame = { workspace = true }
+truvis-render-loop = { workspace = true }
 truvis-render-thread = { workspace = true }
 
 log = { workspace = true }

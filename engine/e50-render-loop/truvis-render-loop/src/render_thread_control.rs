@@ -7,13 +7,13 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::input_event::InputEvent;
 
-/// 窗口 owner 与 [`crate::RenderAppRunner`] 共享的线程控制状态。
+/// 窗口 owner 与 [`crate::RenderLoop`] 共享的线程控制状态。
 ///
 /// 平台层只能通过窄方法发布输入、窗口尺寸和退出状态；渲染循环读取同一份
-/// control，但不会获得平台窗口或具体 App。尺寸写入与 generation 的 Release / Acquire
+/// control，但不会获得平台窗口或具体 Renderer。尺寸写入与 generation 的 Release / Acquire
 /// 配合保持现有 latest-size 和 debounce 语义。
 pub struct RenderThreadControl {
-    /// 窗口 owner 发布退出请求；Runner 每轮循环开始时读取。
+    /// 窗口 owner 发布退出请求；RenderLoop 每轮循环开始时读取。
     exit: AtomicBool,
 
     /// 最新物理尺寸，按照高 32 位 width、低 32 位 height 压入单个原子值。
@@ -48,7 +48,7 @@ impl RenderThreadControl {
         self.exit.load(Ordering::Acquire)
     }
 
-    /// 先写入最新尺寸，再用 Release generation 发布，保持窗口事件与 Runner 的可见性顺序。
+    /// 先写入最新尺寸，再用 Release generation 发布，保持窗口事件与 RenderLoop 的可见性顺序。
     pub fn publish_resize(&self, size: [u32; 2]) {
         self.size.store(Self::pack_size(size), Ordering::Relaxed);
         self.resize_generation.fetch_add(1, Ordering::Release);
@@ -85,7 +85,7 @@ impl RenderThreadControl {
 /// 固定帧执行器使用的一次性窗口初始化参数。
 ///
 /// 本类型本身不声明 Send；平台 owner 只跨线程传递具体可 Send 的平台句柄，
-/// 并在 OS RenderThread 内构造本类型、交给 [`crate::RenderAppRunner`] 创建 Vulkan surface。
+/// 并在 OS RenderThread 内构造本类型、交给 [`crate::RenderLoop`] 创建 Vulkan surface。
 pub struct RenderThreadInit {
     pub raw_display: RawDisplayHandle,
     pub raw_window: RawWindowHandle,

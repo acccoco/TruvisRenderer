@@ -2,7 +2,7 @@ pub use app_render_passes::post_process::sdr::SdrToneMappingSettings;
 
 /// realtime / offline path tracing 共享的 app 层调试参数。
 ///
-/// 这些字段会同时改变两条 path tracing 分支的 shader 输入或最终显示映射。由具体 App 持有
+/// 这些字段会同时改变两条 path tracing 分支的 shader 输入或最终显示映射。由具体 Renderer 持有
 /// 单一实例，避免 ImGui 在 realtime / offline 切换时分别修改两套 subsystem-local 状态。
 #[derive(Clone, Copy)]
 pub struct PathTracingCommonSettings {

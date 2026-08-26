@@ -11,7 +11,7 @@
 
 ## 生命周期与依赖
 
-- 具体 App 静态持有 `ImGuiSubsystem`，显式调用 `on_input`、`build_frame`、`prepare_render_data` 和 `contribute_passes`。
-- 字体和 mesh 在 RenderThread 的 `init` / `shutdown` 阶段创建和显式释放；GUI pass 顺序由 App 决定。
+- 具体 Renderer 静态持有 `ImGuiSubsystem`，显式调用 `on_input`、`build_frame`、`prepare_render_data` 和 `contribute_passes`。
+- 字体和 mesh 在 RenderThread 的 `init` / `shutdown` 阶段创建和显式释放；GUI pass 顺序由 Renderer 决定。
 - 依赖 `app-kit`、Engine runtime/render graph 和统一的 `truvis-app-shader-binding`，不依赖 `app-rendering` 或 `app-render-passes`。
 - GUI shader 仍位于 `app/shader/entry/app/ui/imgui.slang`，ABI namespace 保持 `app::kit::ui_imgui`；Rust crate 拆分不改变 shader package 或生成 binding。

@@ -22,7 +22,7 @@ use truvis_render_runtime::selection::{WorldSubmeshRasterView, WorldSubmeshSelec
 ///
 /// 该 pass 拥有两条 graphics pipeline：mask pipeline 把选中 submesh 光栅化到 R8 mask；
 /// composite pipeline 再用全屏 quad 采样 mask 邻域并叠加到 present image。它不拥有
-/// mask image，也不注册 debug image；窗口尺寸 mask 资源由具体 App 持有。
+/// mask image，也不注册 debug image；窗口尺寸 mask 资源由具体 Renderer 持有。
 #[derive(DescriptorBinding)]
 struct SelectionOutlineCompositeDescriptorBinding {
     #[binding = 0]

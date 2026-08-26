@@ -11,7 +11,7 @@
 
 ## 生命周期与依赖
 
-- 每个 subsystem 实现 `app-kit::SubsystemLifecycle`，由具体 App 显式调用 `init` / `on_resize` / `shutdown` 并决定 RenderGraph pass 顺序。
+- 每个 subsystem 实现 `app-kit::SubsystemLifecycle`，由具体 Renderer 显式调用 `init` / `on_resize` / `shutdown` 并决定 RenderGraph pass 顺序。
 - `settings()` / `settings_mut()`、`compute_cmd()` / `present_cmd()`、`contribute_compute_passes()` / `contribute_present_passes()` 和 `debug_image_options()` 保持 subsystem 自身接口。
 - 窗口尺寸资源只保存 manager-owned handle；resize/shutdown 在 GPU safe point 通过 phase ctx 显式释放，不能长期保存 `Gfx`、allocator 或 runtime owner。
 - offline `accum_image` 不按 FIF 轮转，不复用 realtime GBuffer、DLSS 或 ReSTIR history；只有累计签名匹配且存在 TLAS 时才推进 sample。

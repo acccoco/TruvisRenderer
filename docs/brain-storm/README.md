@@ -13,7 +13,7 @@
 - [`render-graph-evolution.md`](render-graph-evolution.md)：
   RenderGraph resource model、跨 graph 状态校验、adapter helper 与 FrameGraph 方向。
 - [`app-subsystem-and-interaction-evolution.md`](app-subsystem-and-interaction-evolution.md)：
-  App-owned 子系统静态装配、能力边界与后续分层事件模型。
+  Renderer-owned 子系统静态装配、能力边界与后续分层事件模型。
 - [`asset-upload-and-scene-evolution.md`](asset-upload-and-scene-evolution.md)：
   asset upload、热重载、跨场景卸载和 scene invalidation 的后续能力。
 - [`realtime-lighting-evolution.md`](realtime-lighting-evolution.md)：

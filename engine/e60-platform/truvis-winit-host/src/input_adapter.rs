@@ -1,7 +1,7 @@
 use winit::event::{KeyEvent, WindowEvent};
 use winit::keyboard::PhysicalKey;
 
-use truvis_app_frame::input_event::{ElementState, InputEvent, KeyCode, MouseButton};
+use truvis_render_loop::input_event::{ElementState, InputEvent, KeyCode, MouseButton};
 
 /// 将 winit WindowEvent 收敛为 frame 定义的 backend-independent 输入事件。
 pub(crate) struct WinitInputAdapter;

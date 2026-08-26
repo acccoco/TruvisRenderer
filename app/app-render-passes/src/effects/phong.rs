@@ -129,7 +129,7 @@ impl PhongPass {
         let frame_label = record_ctx.frame_timing.frame_label();
 
         // target 由调用方显式传入，使 raster pass 与具体 main-view target owner 解耦。
-        // 这样同一个 pass 后续可以绘制到不同 app-owned target，而不需要读全局 record ctx 字段。
+        // 这样同一个 pass 后续可以绘制到不同 renderer-owned target，而不需要读全局 record ctx 字段。
         let rendering_info = GfxRenderingInfo::new(
             vec![target.color_view],
             Some(target.depth_view),

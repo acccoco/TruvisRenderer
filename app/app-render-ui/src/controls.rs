@@ -10,7 +10,7 @@ use truvis_render_runtime::state::dlss_sr::DlssSrMode;
 pub struct RenderControlsOverlay;
 
 impl RenderControlsOverlay {
-    /// Cornell 等只有 realtime owner 的 App 使用专用窗口，不虚构不存在的 offline 状态。
+    /// Cornell 等只有 realtime owner 的 Renderer 使用专用窗口，不虚构不存在的 offline 状态。
     pub fn build_realtime_window(
         &mut self,
         ui: &imgui::Ui,

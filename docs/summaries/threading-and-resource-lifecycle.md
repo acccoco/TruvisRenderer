@@ -32,14 +32,14 @@ flowchart LR
     end
 
     subgraph RenderThread["RenderThread"]
-        Runner["owns RenderAppRunner"]
-        RenderApp["Runner owns Box&lt;dyn RenderApp&gt;"]
+        RenderLoop["owns RenderLoop"]
+        Renderer["RenderLoop owns Box&lt;dyn Renderer&gt;"]
         DesktopCommand["owns DesktopCommandController"]
         Runtime["owns RenderRuntime"]
         Vulkan["creates, uses, destroys all Vulkan objects"]
-        Runner --> RenderApp
-        Runner --> Runtime
-        RenderApp --> DesktopCommand
+        RenderLoop --> Renderer
+        RenderLoop --> Runtime
+        Renderer --> DesktopCommand
         Runtime --> Vulkan
     end
 
@@ -49,9 +49,9 @@ flowchart LR
 
     DomRect -- "EventLoopProxy / SetWindowPos" --> Child
     Sender -- "capacity-1 PathBuf command + oneshot reply" --> DesktopCommand
-    Input -- "unbounded InputEvent channel" --> Runner
-    Size -- "RenderThreadControl: latest size + generation" --> Runner
-    Server <-- "bounded editor bridge DTO" --> RenderApp
+    Input -- "unbounded InputEvent channel" --> RenderLoop
+    Size -- "RenderThreadControl: latest size + generation" --> RenderLoop
+    Server <-- "bounded editor bridge DTO" --> Renderer
 ```
 
 ## 同步约束
@@ -61,7 +61,7 @@ flowchart LR
 - `truvis-winit-host` 只跨线程传递可 Send 的 `Win32WindowHandle` / `WindowsDisplayHandle`；raw handle enum 与
   `RenderThreadInit` 只在目标 RenderThread 内重建，parent/child HWND 的 owner 必须保证窗口活到对应线程 join 完成。
 - `truvis-render-thread` 持有线程完成状态和 panic 结果，并先发布完成标记再唤醒窗口 EventLoop；frame 内
-  `RenderThreadControl` 只保存 Runner 使用的退出、输入和 resize 契约。
+  `RenderThreadControl` 只保存 RenderLoop 使用的退出、输入和 resize 契约。
 - `truvis-asset` Rayon worker 只做文件读取与 HDR/EXR/普通图片 CPU decode；
   `SkyDistributionBuilder` 的独立单线程只读取共享 `TextureBytes` 并构建 CPU Alias entries。
   两类 worker 都不创建、提交或销毁 Vulkan 资源。
@@ -69,7 +69,7 @@ flowchart LR
   Tao main thread 进入消息泵后异步创建；这避免 Windows 跨线程 `CreateWindowEx` 同步通知 parent 时形成互等。
   child ready 前到达的 viewport rect 只保留 latest 值。
 - child HWND 初始保持隐藏的 `1x1` 状态；`RenderWindowThread` 等待第一个非零 DOM rect，先用 `SetWindowPos` 应用真实
-  物理尺寸，再创建 `RenderThread`。这样 `RenderThreadInit::initial_size`、App/子系统 display size 与初始 swapchain extent
+  物理尺寸，再创建 `RenderThread`。这样 `RenderThreadInit::initial_size`、Renderer/子系统 display size 与初始 swapchain extent
   从启动时就是同一尺寸，不依赖第二次 resize 修正。
 - Tauri resize 先按 DOM 规则改变中央 slot；前端只提交相对 top-level client area 的物理像素矩形，平台宿主通过
   `SetWindowPos` 调整 child HWND。Windows 随后产生正常 `WM_SIZE`，winit 转为 `WindowEvent::Resized`，现有 latest-size、
@@ -78,19 +78,19 @@ flowchart LR
 - render child 位于 WebView sibling 的 Z-order 顶部并直接接收鼠标消息。winit 的 Windows backend 消费
   `WM_*BUTTONDOWN` 后不会替嵌入式 child 自动切换 keyboard focus，因此 `RenderWindowThread` 在任意鼠标按下时对 child
   调用 `SetFocus`；点击周围 WebView 控件后焦点按 Windows 默认行为返回 WebView。Web UI 不转发 viewport 键盘输入。
-- DOM rect 命令只改变平台窗口几何，不进入 `RenderApp`，也不携带场景、材质或 swapchain 语义。
+- DOM rect 命令只改变平台窗口几何，不进入 `Renderer`，也不携带场景、材质或 swapchain 语义。
 - Tauri `select_hdri` 使用非阻塞原生 dialog；`TruvisDesktopState` 只持有 sender 和 dialog-open 原子状态，不持有 scene
   投影，也不在持有 desktop resources mutex 时打开 dialog 或等待 reply。
 - HDRI 的本地 `PathBuf` 只通过容量为 `1` 的私有 `DesktopCommandSender` 进入 RenderThread，不进入 Editor WebSocket。
-  `DesktopCommandController` 每帧最多处理一条，并且只在 `TruvisRenderApp::update` 中短暂借用 `World`。
+  `DesktopCommandController` 每帧最多处理一条，并且只在 `TruvisRenderer::update` 中短暂借用 `World`。
 - desktop oneshot reply 只确认 `World::request_sky_texture_from_path` 已接受 CPU scene mutation，不等待 asset decode、
   texture upload 或 sky distribution；Tauri main thread、WebView 和 EditorServer 仍不访问 Vulkan。
 - GPU 同步优先通过 RenderGraph、binary semaphore 和 frame timeline 表达。
-- `RenderAppRunner` 的默认 120 FPS 软件限帧仍在 RenderThread 内使用 `park_timeout(1 ms)` 短周期轮询；
+- `RenderLoop` 的默认 120 FPS 软件限帧仍在 RenderThread 内使用 `park_timeout(1 ms)` 短周期轮询；
   它不新增跨线程主动唤醒协议，也不改变输入、resize、退出状态在每轮限帧判断前被检查的顺序。
 - `after_prepare` 中的同步 raycast 是显式例外：它使用 runtime-owned `RayCastService` 提交独立 graphics command buffer，并用
   fence 阻塞等待 GPU trace、copy 和 readback。
-- App 只应在 `after_prepare` 阶段调用同步 raycast，避免 update/input 阶段读取尚未同步的 GPU scene。
+- Renderer 只应在 `after_prepare` 阶段调用同步 raycast，避免 update/input 阶段读取尚未同步的 GPU scene。
 
 ## 资源生命周期契约
 
@@ -111,8 +111,8 @@ flowchart LR
 - Persistent：pipeline、sampler、descriptor layout、shader binding。
 - Frame：command buffer、per-frame buffer、FrameLabel / timeline state。
 - Swapchain：swapchain image/view、present semaphore。
-- App / Subsystem targets：RT working target、main view target、GBuffer、selection outline mask 等窗口尺寸资源由具体
-  App/子系统持有，并在 init / resize / shutdown 阶段通过 ctx 中的 `GfxResourceManager` 与
+- Renderer / Subsystem targets：RT working target、main view target、GBuffer、selection outline mask 等窗口尺寸资源由具体
+  Renderer/子系统持有，并在 init / resize / shutdown 阶段通过 ctx 中的 `GfxResourceManager` 与
   `ShaderBindingSystem` 显式创建、注册或释放。
 - Asset：`AssetHub` 只持有 texture / model loader task handle、后台任务状态和完成事件队列，并负责 Assimp / glTF model 到 owned
   CPU payload 的导入；HDR/EXR texture payload 以共享 RGBA16F 保存，普通图片以共享 RGBA8 保存。
@@ -121,7 +121,7 @@ flowchart LR
   `RenderTextureManager` 持有完成后的 texture GPU image/view/bindless 绑定；
   `SceneStore` 保存 mesh 的 submesh metadata 和 instance material 对齐约束；`RenderMeshManager` 持有每个 submesh 的 vertex/index buffer、
   `RtGeometry`、mesh 级 BLAS 和 GPU ready 状态；`RenderMaterialManager` 管理 material
-  GPU buffer、稳定 slot 以及 `MaterialHandle -> stable slot` 映射；App 通过
+  GPU buffer、稳定 slot 以及 `MaterialHandle -> stable slot` 映射；Renderer 通过
   `World::request_model_import` 拿到 `ModelImportHandle`，ready model CPU payload 在 `World::sync_for_render`
   内部由 `SceneAssetIngestor` 自动变为 runtime instances；facade 内部通过 `SceneAssetIngestor` 把 prefab 引用解析为 CPU resource handle；`RenderInstanceManager`
   持有 runtime instance 到稳定 GPU instance slot 的映射。CPU scene 删除 texture/mesh/material 后，对应 render manager
@@ -142,17 +142,17 @@ flowchart LR
 - `RenderRuntime::new` 初始化 `Gfx`，创建 `World`、`GfxResourceManager`、`ShaderBindingSystem`、`FrameTiming`、
   `PerFrameGpuData` 与 runtime-owned render state。
 - `RenderRuntime::init_after_window` 创建 surface、swapchain 和 `SwapchainPresenter`。
-- `RenderAppRunner` 创建 `RenderRuntime` 并把 `RenderRuntimeInitCtx` 包装为 `RenderAppInitCtx` 交给 App hooks。
-- App state 直接将 `&mut RenderAppInitCtx::runtime` 传给各具体子系统，按自身顺序初始化长期资源。
+- `RenderLoop` 创建 `RenderRuntime` 并把 `RenderRuntimeInitCtx` 包装为 `RendererInitCtx` 交给 Renderer hooks。
+- Renderer state 直接将 `&mut RendererInitCtx::runtime` 传给各具体子系统，按自身顺序初始化长期资源。
 
 ## 重建路径
 
-- `RenderAppRunner::run` 在循环安全点调用内部 `recreate_swapchain_if_needed(size)`。
-- `RenderAppRunner` 调用 `RenderRuntime::handle_resize(size)`。
+- `RenderLoop::run` 在循环安全点调用内部 `recreate_swapchain_if_needed(size)`。
+- `RenderLoop` 调用 `RenderRuntime::handle_resize(size)`。
 - RenderRuntime 只有实际重建时返回 `Some(RenderRuntimeResizeCtx)`。
-- `RenderAppRunner` 把返回值包装为 `RenderAppResizeCtx` 交给 App hook；App 直接用 `&mut ctx.runtime`
+- `RenderLoop` 把返回值包装为 `RendererResizeCtx` 交给 Renderer hook；Renderer 直接用 `&mut ctx.runtime`
   通知需要 resize 的具体子系统。
-- 具体 App/子系统在 resize 阶段重建自己持有的窗口尺寸 render target。
+- 具体 Renderer/子系统在 resize 阶段重建自己持有的窗口尺寸 render target。
 
 ## 销毁路径
 
@@ -161,17 +161,17 @@ flowchart LR
 `RenderSkyManager` 已发布的 active/retired/fallback 资源与 `RenderTextureManager` ready images。
 这保证 CPU producer、transfer queue 和 shader-visible owner 不会交叉销毁。
 
-桌面窗口的外层销毁顺序固定为：RenderThread 上的 `TruvisRenderApp` 先关闭并清空 desktop command receiver，使尚未处理的
-oneshot reply 因 sender drop 退出 → App/runtime/Vulkan 销毁 → `RenderWindowThread` drop child HWND → 停止并 join
+桌面窗口的外层销毁顺序固定为：RenderThread 上的 `TruvisRenderer` 先关闭并清空 desktop command receiver，使尚未处理的
+oneshot reply 因 sender drop 退出 → Renderer/runtime/Vulkan 销毁 → `RenderWindowThread` drop child HWND → 停止并 join
 EditorServer → Tauri/Tao drop WebView 与 top-level HWND。`TruvisDesktopState::shutting_down` 阻止新 dialog，
 `EmbeddedWinitHost::Drop` 为非正常 exit 提供相同顺序的兜底。
 
-- `RenderAppRunner` 内部 shutdown：Runner 等待 GPU idle 后，用 `RenderAppShutdownCtx` 调用具体 `RenderApp`；
-  App 在该 hook 内按自己的资源依赖顺序完成所有子系统 shutdown。
-- App / 子系统 shutdown 必须在 `RenderRuntime::destroy()` 释放 runtime 子资源之前释放自己持有的 GPU 资源；需要 manager
+- `RenderLoop` 内部 shutdown：RenderLoop 等待 GPU idle 后，用 `RendererShutdownCtx` 调用具体 `Renderer`；
+  Renderer 在该 hook 内按自己的资源依赖顺序完成所有子系统 shutdown。
+- Renderer / 子系统 shutdown 必须在 `RenderRuntime::destroy()` 释放 runtime 子资源之前释放自己持有的 GPU 资源；需要 manager
   或 shader-visible binding 访问时通过 shutdown context 使用 `GfxResourceManager` 与 `ShaderBindingSystem`。
 - manager-owned image/view 只能通过 `GfxResourceManager` 释放，manager 负责 image-view-before-image、延迟销毁队列与
   `DestroyReason` 诊断。
 - runtime destroy：`gfx.wait_idel()` -> release present/assets/GPU scene/cmd/runtime resources -> `gfx.destroy()`。
 - `gfx.destroy()` 会先释放内部 device child，再在 Vulkan device/instance/root 销毁前关闭 Streamline runtime。
-- `gfx.destroy()` 开始后，剩余 App / 子系统字段的 `Drop` 不得再调用 Vulkan/VMA/WSI 销毁 API。
+- `gfx.destroy()` 开始后，剩余 Renderer / 子系统字段的 `Drop` 不得再调用 Vulkan/VMA/WSI 销毁 API。

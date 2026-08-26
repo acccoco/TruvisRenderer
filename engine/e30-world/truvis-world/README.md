@@ -8,9 +8,9 @@
 - `SceneStore` 持有单调递增的 `u64 scene_version`；只有成功且非 no-op 的场景语义修改才推进版本，
   `SceneReadView::scene_version()` 为 editor 等只读 consumer 提供当前版本。
 - `World` 持有 `AssetHub`，负责 asset 数据入口。
-- `World` 持有 `SceneAssetIngestor`，负责把 App-facing scene import 请求映射到内部 asset
+- `World` 持有 `SceneAssetIngestor`，负责把 Renderer-facing scene import 请求映射到内部 asset
   loader 状态。
-- `World` 提供 App-facing facade：App 通过它请求 model import、注册 texture/procedural mesh/material、
+- `World` 提供 Renderer-facing facade：Renderer 通过它请求 model import、注册 texture/procedural mesh/material、
   注册 runtime instance、更新 sky state 和 analytic light，不直接组合 `AssetHub` 与 `SceneStore` 的内部调用顺序。
 - `World::request_sky_texture_from_path` 组合 canonicalize、普通 scene texture 注册和
   `SceneSkyState.texture` 更新，立即返回 `TextureHandle`，不等待 CPU decode、GPU upload 或天空分布构建；
@@ -23,15 +23,15 @@
   CPU resource handle 的 `WorldRenderSync` typed payload 和 `SceneChanges`，通过只读 `scene_view()` 快照同步
   instance/light，不直接访问 `SceneStore` owner 或 `World` 内部字段。
 - 上层 update / prepare 阶段通过 `World` 访问 CPU 数据，再由 `RenderRuntime::prepare` 同步到 GPU 可见资源。
-- `SceneStore` 中的 handle 是 CPU runtime 身份；`AssetHub` 中的 handle 只作为 loader 内部身份，不表示 GPU slot 或 bindless index，也不扩散到 App / render-side manager。
+- `SceneStore` 中的 handle 是 CPU runtime 身份；`AssetHub` 中的 handle 只作为 loader 内部身份，不表示 GPU slot 或 bindless index，也不扩散到 Renderer / render-side manager。
 
 ## 边界约束
 
 - `World` 不持有 Vulkan、`Gfx`、GPU resource/binding owner 或 swapchain 资源。
 - `World` 不持有 GPU buffer、image、BLAS、material slot 或 frame state。
-- `World` 不依赖 `truvis-render-runtime`、`truvis-app-frame` 或 App/子系统契约。
+- `World` 不依赖 `truvis-render-runtime`、`truvis-render-loop` 或 Renderer/子系统契约。
 - `World` facade 对 model import 暴露 `ModelImportHandle`；内部 loader handle 只由
-  `SceneAssetIngestor` 用于事件翻译，不把 loader 身份扩散到 App、`SceneStore` 或 render-side manager。
+  `SceneAssetIngestor` 用于事件翻译，不把 loader 身份扩散到 Renderer、`SceneStore` 或 render-side manager。
 - `SceneStore`、`Instance`、raycast hit 和 `RenderWorld` manager 的长期引用使用 `TextureHandle` /
   `MeshHandle` / `MaterialHandle`，不使用 `Asset*Handle` 作为兼容层。
 - `SceneStore` 内部维护 texture -> material、material -> instance 和 mesh -> instance 反向依赖索引；
@@ -47,4 +47,4 @@
 
 ## 设计意图
 
-`World` / render-side GPU owner 的拆分让 CPU 语义数据和 GPU 执行状态有清晰边界。App 和具体子系统在 update 阶段修改 CPU 世界；runtime 在 prepare 阶段把需要的 scene/asset 数据同步到 GPU resources 和 shader-visible bindings；render 阶段主要读取 `RenderPassRecordCtx` 录制命令。
+`World` / render-side GPU owner 的拆分让 CPU 语义数据和 GPU 执行状态有清晰边界。Renderer 和具体子系统在 update 阶段修改 CPU 世界；runtime 在 prepare 阶段把需要的 scene/asset 数据同步到 GPU resources 和 shader-visible bindings；render 阶段主要读取 `RenderPassRecordCtx` 录制命令。

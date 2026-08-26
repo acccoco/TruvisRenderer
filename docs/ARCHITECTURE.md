@@ -8,8 +8,8 @@
 先建立跨层心智模型：
 
 1. [`layering-and-dependency-boundaries.md`](summaries/layering-and-dependency-boundaries.md)：总体分层、依赖方向与 app/engine 边界。
-2. [`frame-lifecycle.md`](summaries/frame-lifecycle.md)：启动、统一帧执行器，以及 Runtime/App/Subsystem phase 顺序。
-3. [`runtime-app-subsystem-boundaries.md`](summaries/runtime-app-subsystem-boundaries.md)：状态所有权、Ctx 裁剪、`RenderAppRunner` 与静态子系统组合。
+2. [`frame-lifecycle.md`](summaries/frame-lifecycle.md)：启动、统一帧执行器，以及 Runtime/Renderer/Subsystem phase 顺序。
+3. [`runtime-renderer-subsystem-boundaries.md`](summaries/runtime-renderer-subsystem-boundaries.md)：状态所有权、Ctx 裁剪、`RenderLoop` 与静态子系统组合。
 4. [`threading-and-resource-lifecycle.md`](summaries/threading-and-resource-lifecycle.md)：线程、GPU 同步和资源创建/重建/销毁契约。
 
 再按任务选择专题：
@@ -18,7 +18,7 @@
 | --- | --- |
 | CPU Scene、asset identity、GPU scene 与 prepare | [`scene-data-lifecycle.md`](summaries/scene-data-lifecycle.md) |
 | RenderGraph、pass 顺序、image 状态与提交 | [`render-graph-and-data-flow.md`](summaries/render-graph-and-data-flow.md) |
-| Runtime/App/Subsystem 配置与派生状态 | [`render-configuration-system.md`](summaries/render-configuration-system.md) |
+| Runtime/Renderer/Subsystem 配置与派生状态 | [`render-configuration-system.md`](summaries/render-configuration-system.md) |
 | Realtime RT、NEE、MIS、ReSTIR 与 SHARC | [`realtime-rt-raytracing-flow.md`](summaries/realtime-rt-raytracing-flow.md) |
 | Tauri Web Editor、协议、背压与一致性 | [`editor-subsystem.md`](summaries/editor-subsystem.md) |
 
@@ -33,7 +33,7 @@
 - [`app/app-render-passes/README.md`](../app/app-render-passes/README.md)：共享 GPU pass 与底层 pipeline。
 - [`app/app-rendering/README.md`](../app/app-rendering/README.md)：realtime/offline 渲染子系统与 GPU 资源 owner。
 - [`app/app-render-ui/README.md`](../app/app-render-ui/README.md)：渲染设置与 ImGui 的共享集成层。
-- [`app/truvis/README.md`](../app/truvis/README.md)：主体 App 的状态 owner 与渲染子系统编排。
+- [`app/truvis/README.md`](../app/truvis/README.md)：主体 `Renderer` 的状态 owner 与渲染子系统编排。
 - [`app/editor/README.md`](../app/editor/README.md)：Editor 构建、协议源码和运行参数。
 - [`docs/brain-storm/README.md`](brain-storm/README.md)：仍未进入主线实现的活跃设计方向。
 
@@ -42,13 +42,13 @@
 - 项目保持无环依赖：上层可以依赖下层，下层不反向依赖上层业务；同层 crate 默认不互相依赖，
   除非 summaries 中明确记录。
 - 平台层拆分为 winit 窗口宿主与 backend-independent 渲染线程宿主，依赖方向为
-  `truvis-winit-host -> truvis-render-thread -> truvis-app-frame`。主体 Tauri App、embedded child HWND 与独立
-  samples 都由窗口 owner 持有统一的 `RenderThread` handle，并在其 OS 渲染线程内创建具体 App、进入唯一
-  `RenderAppRunner::run`；所有 Vulkan 对象只在该线程创建、使用和销毁。
+  `truvis-winit-host -> truvis-render-thread -> truvis-render-loop`。主体 Tauri App、embedded child HWND 与独立
+  samples 都由窗口 owner 持有统一的 `RenderThread` handle，并在其 OS 渲染线程内创建具体 Renderer、进入唯一
+  `RenderLoop::run`；所有 Vulkan 对象只在该线程创建、使用和销毁。
 - `RenderRuntime` 拥有 `Gfx`、`World`、GPU resource/binding/timing owner、runtime render state、
-  `RenderWorld`、present、command 和同步资源；App/子系统只通过 phase-appropriate Ctx 使用窄能力。
-- App state 持有 ImGui、camera/input、overlay 和具体渲染子系统，并显式决定 RenderGraph pass 顺序；
-  `SubsystemLifecycle` 只约束 init / resize / shutdown，特有能力与调用顺序由具体 App 控制。
+  `RenderWorld`、present、command 和同步资源；Renderer/子系统只通过 phase-appropriate Ctx 使用窄能力。
+- Renderer state 持有 ImGui、camera/input、overlay 和具体渲染子系统，并显式决定 RenderGraph pass 顺序；
+  `SubsystemLifecycle` 只约束 init / resize / shutdown，特有能力与调用顺序由具体 Renderer 控制。
 - CPU scene 语义只由 `World`/`SceneStore` 拥有；GPU scene 是 prepare 后的派生状态，render pass 只读取
   `RenderSceneView`，不访问 CPU owner 或 render-side manager。
 - GPU 资源以显式 owner 为生命周期边界；Vulkan/VMA/WSI wrapper 通过显式 `destroy` 路径释放，

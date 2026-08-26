@@ -22,7 +22,7 @@ mod pass;
 
 use self::pass::RayCastPass;
 
-/// App 在 after_prepare 阶段提交的 world-space ray。
+/// Renderer 在 after_prepare 阶段提交的 world-space ray。
 #[derive(Clone, Copy, Debug)]
 pub struct RayCastRay {
     pub origin_ws: glam::Vec3,
@@ -56,7 +56,7 @@ pub struct RayCastHit {
 ///
 /// 该服务只在 after_prepare 阶段由 `RenderRuntimeRayCastCtx` 暴露。它复用 prepare
 /// 已上传完成的 GPU scene/TLAS，使用独立 command pool 与 fence 提交并阻塞读回，
-/// 不进入 RenderGraph，避免 App 在 render graph 组图阶段之外持有 pass 资源。
+/// 不进入 RenderGraph，避免 Renderer 在 render graph 组图阶段之外持有 pass 资源。
 pub(crate) struct RayCastService {
     pass: Option<RayCastPass>,
     command_pool: Option<GfxCommandPool>,
