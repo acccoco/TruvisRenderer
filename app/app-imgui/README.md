@@ -5,7 +5,7 @@
 ## 主要职责
 
 - `ImGuiSubsystem`：ImGui context、输入适配、闭包式 `build_frame`、字体 image/view、per-FIF mesh、draw data 上传和 GUI RenderGraph pass。
-- `DebugInfoOverlay` / `FrameStatsOverlayData`：FPS、相机、窗口尺寸和累计帧数等通用诊断显示。
+- `DebugInfoOverlay` / `FrameStatsOverlayData`：使用 ImGui 内建滚动估算的 FPS，以及相机、窗口尺寸和累计帧数等通用诊断显示。
 - `DebugImageSelectorView`：把 `app-kit::DebugImageSelection` 渲染为独立窗口或可嵌入 section；视图不保存 GPU image/view。
 - `backend`：GUI graphics pipeline、mesh 和 vertex layout；底层 pass 与 draw data 不作为公共接口暴露。
 

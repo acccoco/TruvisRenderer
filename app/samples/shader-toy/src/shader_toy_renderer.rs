@@ -60,7 +60,6 @@ impl Renderer for ShaderToyRenderer {
                 self.camera_controller.camera(),
                 ctx.swapchain_extent,
                 ctx.view_accum.accum_frames_num(),
-                ctx.frame_timing.delta_time_s(),
             );
         });
 

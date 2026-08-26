@@ -551,7 +551,6 @@ impl Renderer for TruvisRenderer {
                     camera: self.camera_controller.camera(),
                     swapchain_extent: ctx.swapchain_extent,
                     accum_frames_num: ctx.view_accum.accum_frames_num(),
-                    delta_time_s: ctx.frame_timing.delta_time_s(),
                 },
                 render_controls: RenderControlsData {
                     render_mode: &mut self.render_mode,

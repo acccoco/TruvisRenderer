@@ -6,7 +6,6 @@ pub struct FrameStatsOverlayData<'a> {
     pub camera: &'a Camera,
     pub swapchain_extent: vk::Extent2D,
     pub accum_frames_num: usize,
-    pub delta_time_s: f32,
 }
 
 #[derive(Default)]
@@ -19,13 +18,11 @@ impl DebugInfoOverlay {
         camera: &Camera,
         swapchain_extent: vk::Extent2D,
         accum_frames_num: usize,
-        delta_time_s: f32,
     ) {
         let stats = FrameStatsOverlayData {
             camera,
             swapchain_extent,
             accum_frames_num,
-            delta_time_s,
         };
         Self::build_frame_stats_hud(ui, &stats);
     }
@@ -63,7 +60,7 @@ impl DebugInfoOverlay {
 
     pub fn build_frame_stats_section(ui: &imgui::Ui, stats: &FrameStatsOverlayData<'_>) {
         let camera = stats.camera;
-        ui.text(format!("FPS: {:.2}", 1.0 / stats.delta_time_s));
+        ui.text(format!("FPS: {:.2}", ui.io().framerate));
         ui.text(format!("swapchain: {:.0}x{:.0}", stats.swapchain_extent.width, stats.swapchain_extent.height));
         ui.text(format!("CameraPos: ({:.2}, {:.2}, {:.2})", camera.position.x, camera.position.y, camera.position.z));
         ui.text(format!(
