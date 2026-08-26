@@ -623,11 +623,12 @@ impl RenderRuntime {
         self.frame_timing.next_frame();
     }
 
-    /// 查询是否已经到达下一帧的渲染时间。
+    /// 查询距离下一帧渲染时机的剩余时间。
     ///
-    /// 该方法只做时间判断，不推进 frame id，也不会等待 GPU。
-    pub fn time_to_render(&self) -> bool {
-        self.frame_timing.time_to_render()
+    /// `None` 表示未启用软件限帧，`Some(Duration::ZERO)` 表示已经到达时机。
+    /// 该方法只做时间计算，不推进 frame id，也不会等待 GPU。
+    pub fn remaining_until_render(&self) -> Option<Duration> {
+        self.frame_timing.remaining_until_render()
     }
 
     /// 处理窗口 resize。只有 present 层实际重建 swapchain 时才返回 `Some(ctx)`。

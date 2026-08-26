@@ -70,17 +70,20 @@ flowchart TD
     DrainInput --> PushInput["render_loop.push_input_event(event)"]
     PushInput --> ReadSize["read latest window size"]
     ReadSize --> RecreateSwapchain["render_loop.recreate_swapchain_if_needed(size)"]
-    RecreateSwapchain --> TimeToRender["render_loop.time_to_render()"]
-    TimeToRender -->|"true"| RunFrame["render_loop.run_frame()"]
-    TimeToRender -->|"false"| ShortPoll["park_timeout(1 ms)"]
+    RecreateSwapchain --> Remaining["render_loop.remaining_until_render()"]
+    Remaining -->|"ready / uncapped"| RunFrame["render_loop.run_frame()"]
+    Remaining -->|"> 1 ms"| ShortPoll["park_timeout(1 ms)"]
+    Remaining -->|"0-1 ms"| BoundedSpin["spin_loop until deadline"]
     ShortPoll --> RenderLoop
+    BoundedSpin --> RenderLoop
 ```
 
-`FrameTiming` 默认把相邻帧开始时间限制为至少 `1 / 120 s`（约 `8.333333 ms`）。RenderLoop 仍按现有
-`park_timeout(1 ms)` 短周期轮询：它不会忙等，也不增加主动唤醒协议。输入 drain、窗口尺寸读取和 resize 安全点位于
-限帧判断之前，因此等待期间仍按该轮询周期处理控制状态。渲染本身超过最小间隔时下一轮直接开始，不补帧、不追赶，
-也不再追加固定睡眠；120 FPS 只表示上限，实际轻负载帧率会受 1 ms 轮询和 OS 调度影响而略低。首帧使用
-`FrameTiming` 构造时刻作为锚点，runtime/window/Renderer 初始化通常已经覆盖一个帧间隔。
+`FrameTiming` 默认把相邻帧开始时间限制为至少 `1 / 120 s`（约 `8.333333 ms`）。RenderLoop 在剩余时间大于 1 ms 时
+按现有 `park_timeout(1 ms)` 短周期轮询，最后 1 ms 内使用有界 `spin_loop` 等到 deadline；park 与 spin 都由 Tracy span
+单独标记。输入 drain、窗口尺寸读取和 resize 安全点位于限帧判断之前，spin 完成后也会先返回外层循环重新经过这些安全点，
+因此不新增跨线程主动唤醒协议，也不改变控制状态检查顺序。渲染本身超过最小间隔时下一轮直接开始，不补帧、不追赶，
+也不再追加固定等待；120 FPS 只表示上限，实际帧率仍会受 OS 调度影响。首帧使用 `FrameTiming` 构造时刻作为锚点，
+runtime/window/Renderer 初始化通常已经覆盖一个帧间隔。
 
 resize 只在 render loop 的安全点处理。`RenderRuntime::handle_resize` 只有实际重建 swapchain / present 相关状态时才返回
 `Some(RenderRuntimeResizeCtx)`；随后 `RenderLoop` 把它包装为 `RendererResizeCtx`，Renderer 再通知需要重建窗口尺寸资源的

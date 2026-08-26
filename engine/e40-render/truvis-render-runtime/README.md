@@ -99,8 +99,8 @@
   texture/mesh/material/instance/sky/emissive/TLAS owners 在 `RenderWorld::new` 内部初始化。
 - `RenderRuntime::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
   swapchain 与 `SwapchainPresenter`，并返回 init Ctx 供 Renderer/子系统创建长期 GPU 资源。
-- `time_to_render` 读取 `FrameTiming` 的最小帧间隔；默认 120 FPS 对应约 `8.333333 ms`。外层 RenderLoop 未到时机时
-  `park_timeout(1 ms)` 后继续轮询，重负载超过间隔时不额外睡眠、不补帧。
+- `remaining_until_render` 读取 `FrameTiming` 的最小帧间隔；默认 120 FPS 对应约 `8.333333 ms`。外层 RenderLoop
+  在剩余时间大于 1 ms 时短周期 `park_timeout(1 ms)`，最后 1 ms 内有界自旋；重负载超过间隔时不额外等待、不补帧。
 - `begin_frame` 是每帧资源回收入口：由 `FrameTiming` 一次采样更新 delta/total time、等待当前 FIF slot、重置 frame command pool、
   清理延迟释放队列，并把当前 frame id 传给 bindless 与 `RenderWorld` 内部 managers；旧 sky distribution
   跨过 FIF 窗口后由 `GfxResourceManager` 销毁。AssetHub 事件只在

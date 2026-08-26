@@ -1,4 +1,5 @@
 use std::ffi::CStr;
+use std::hint;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -44,6 +45,8 @@ impl RenderLoop {
         let mut last_seen_resize_generation = control.resize_generation();
         let mut pending_resize_since: Option<Instant> = None;
         const RESIZE_DEBOUNCE: Duration = Duration::from_millis(80);
+        const FRAME_LIMIT_POLL_INTERVAL: Duration = Duration::from_millis(1);
+        const FRAME_LIMIT_SPIN_THRESHOLD: Duration = Duration::from_millis(1);
 
         while !control.exit_requested() {
             while let Some(event) = control.try_receive_input() {
@@ -82,9 +85,22 @@ impl RenderLoop {
                 last_built_size = [width, height];
             }
 
-            if !render_loop.time_to_render() {
-                std::thread::park_timeout(Duration::from_millis(1));
-                continue;
+            if let Some(remaining) = render_loop.remaining_until_render() {
+                if remaining > FRAME_LIMIT_SPIN_THRESHOLD {
+                    let _span = tracy_client::span!("RenderLoop::frame_limit_park");
+                    std::thread::park_timeout(FRAME_LIMIT_POLL_INTERVAL);
+                    continue;
+                }
+
+                if !remaining.is_zero() {
+                    let _span = tracy_client::span!("RenderLoop::frame_limit_spin");
+                    while render_loop.remaining_until_render().is_some_and(|remaining| !remaining.is_zero()) {
+                        hint::spin_loop();
+                    }
+
+                    // 自旋期间可能到达退出、输入或 resize；回到外层重新经过全部安全点后才能开始帧。
+                    continue;
+                }
             }
 
             render_loop.run_frame();
@@ -236,8 +252,11 @@ impl RenderLoop {
         renderer.on_resize(&mut renderer_ctx);
     }
 
-    fn time_to_render(&self) -> bool {
-        self.render_runtime.as_ref().expect("RenderRuntime missing in RenderLoop::time_to_render").time_to_render()
+    fn remaining_until_render(&self) -> Option<Duration> {
+        self.render_runtime
+            .as_ref()
+            .expect("RenderRuntime missing in RenderLoop::remaining_until_render")
+            .remaining_until_render()
     }
 
     fn has_pending_swapchain_recreate(&self) -> bool {

@@ -86,8 +86,9 @@ flowchart LR
 - desktop oneshot reply 只确认 `World::request_sky_texture_from_path` 已接受 CPU scene mutation，不等待 asset decode、
   texture upload 或 sky distribution；Tauri main thread、WebView 和 EditorServer 仍不访问 Vulkan。
 - GPU 同步优先通过 RenderGraph、binary semaphore 和 frame timeline 表达。
-- `RenderLoop` 的默认 120 FPS 软件限帧仍在 RenderThread 内使用 `park_timeout(1 ms)` 短周期轮询；
-  它不新增跨线程主动唤醒协议，也不改变输入、resize、退出状态在每轮限帧判断前被检查的顺序。
+- `RenderLoop` 的默认 120 FPS 软件限帧仍在 RenderThread 内执行：剩余时间大于 1 ms 时使用
+  `park_timeout(1 ms)` 短周期轮询，最后 1 ms 内有界自旋；spin 完成后返回外层循环重新检查输入、resize 与退出状态，
+  因此不新增跨线程主动唤醒协议，也不改变这些控制状态先于每帧执行被检查的顺序。
 - `after_prepare` 中的同步 raycast 是显式例外：它使用 runtime-owned `RayCastService` 提交独立 graphics command buffer，并用
   fence 阻塞等待 GPU trace、copy 和 readback。
 - Renderer 只应在 `after_prepare` 阶段调用同步 raycast，避免 update/input 阶段读取尚未同步的 GPU scene。

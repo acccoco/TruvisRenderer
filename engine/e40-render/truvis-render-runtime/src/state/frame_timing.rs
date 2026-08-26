@@ -42,9 +42,9 @@ impl FrameTiming {
     }
 
     #[inline]
-    pub(crate) fn time_to_render(&self) -> bool {
+    pub(crate) fn remaining_until_render(&self) -> Option<Duration> {
         self.min_frame_interval
-            .is_none_or(|min_frame_interval| self.last_frame_started_at.elapsed() >= min_frame_interval)
+            .map(|min_frame_interval| min_frame_interval.saturating_sub(self.last_frame_started_at.elapsed()))
     }
 
     #[inline]
