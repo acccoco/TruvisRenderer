@@ -3,20 +3,22 @@ use std::path::PathBuf;
 
 use ts_rs::{Config, TS};
 
-use truvis_editor_bridge::protocol::{EditorClientMessage, EditorServerMessage};
+use truvis_editor_bridge::protocol::{EditorNotification, EditorRequest, EditorResponse};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../web/src/protocol/generated");
+    if output_dir.is_dir() {
+        fs::remove_dir_all(&output_dir)?;
+    }
     fs::create_dir_all(&output_dir)?;
     let config = Config::new().with_out_dir(&output_dir);
 
-    EditorClientMessage::export_all(&config)?;
-    EditorServerMessage::export_all(&config)?;
+    EditorRequest::export_all(&config)?;
+    EditorResponse::export_all(&config)?;
+    EditorNotification::export_all(&config)?;
 
     let exports = [
         "CoverageModeDto",
-        "EditorCapabilities",
-        "EditorClientMessage",
         "EditorCommand",
         "EditorError",
         "EditorErrorCode",
@@ -24,7 +26,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "EditorQuery",
         "EditorRequest",
         "EditorResponse",
-        "EditorServerMessage",
         "InstanceDetailsDto",
         "InstanceId",
         "InstanceMaterialBindingDto",
@@ -34,7 +35,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "MaterialPatch",
         "MeshId",
         "MeshSummaryDto",
-        "RequestId",
         "SceneObjectSummary",
         "SceneObjectsPage",
         "SceneVersion",

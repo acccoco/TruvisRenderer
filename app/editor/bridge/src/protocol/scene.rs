@@ -3,14 +3,6 @@ use ts_rs::TS;
 
 use crate::protocol::{InstanceId, MaterialId, MeshId, SceneVersion};
 
-/// Web 初次连接时读取的 Editor 能力声明。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct EditorCapabilities {
-    pub protocol_version: u32,
-    pub max_scene_page_size: u16,
-    pub editable_material_fields: Vec<String>,
-}
-
 /// 场景对象列表中的轻量 instance 摘要。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SceneObjectSummary {

@@ -9,7 +9,6 @@ use ts_rs::TS;
 #[ts(rename_all = "snake_case")]
 pub enum EditorErrorCode {
     InvalidRequest,
-    UnsupportedProtocol,
     Busy,
     Timeout,
     NotFound,

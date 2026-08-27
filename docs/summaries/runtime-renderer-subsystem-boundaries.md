@@ -163,6 +163,6 @@ RenderLoop 只调用这些 Renderer 阶段，不遍历、注册或发现 Rendere
 - Renderer 是业务组合 owner，持有具体子系统，并在 render 阶段决定 RenderGraph pass 顺序与 realtime/offline 分支。
 - `app-kit` 不依赖具体 subsystem；ImGui 与 rendering 分属独立 crate，设置 UI 只作为两者之间的集成层。
 - Tauri 文件对话框由 `TruvisDesktop` 持有，私有 desktop command receiver/controller 由 `TruvisRenderer` 持有；本地路径不得进入
-  Editor WebSocket、`RenderRuntime` 或通用生命周期接口，Tauri main thread 也不得直接修改 `World`。
+  通用 Editor DTO、`RenderRuntime` 或通用生命周期接口，Tauri main thread 也不得直接修改 `World`。
 - `SubsystemLifecycle` 只规范 init / resize / shutdown；特有能力和调用顺序始终由具体 Renderer 显式控制。
 - Renderer / 子系统不长期保存完整 runtime owner、typed `Gfx` ctx 或底层 Vulkan/VMA 依赖。

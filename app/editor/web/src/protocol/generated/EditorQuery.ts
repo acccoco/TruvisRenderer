@@ -6,4 +6,4 @@ import type { SceneVersion } from "./SceneVersion";
 /**
  * 不修改 World 的 Editor 查询。
  */
-export type EditorQuery = { "type": "get_capabilities" } | { "type": "get_scene_version" } | { "type": "get_selection" } | { "type": "get_scene_objects", offset: number, limit: number, expected_scene_version: SceneVersion | null, } | { "type": "get_instance_details", instance_id: InstanceId, } | { "type": "get_material", material_id: MaterialId, };
+export type EditorQuery = { "type": "get_scene_version" } | { "type": "get_selection" } | { "type": "get_scene_objects", offset: number, limit: number, expected_scene_version: SceneVersion | null, } | { "type": "get_instance_details", instance_id: InstanceId, } | { "type": "get_material", material_id: MaterialId, };

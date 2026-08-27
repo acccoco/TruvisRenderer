@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::protocol::{
-    EditorCapabilities, EditorError, InstanceDetailsDto, InstanceId, MaterialDto, MaterialId, MaterialPatch, RequestId,
-    SceneObjectsPage, SceneVersion, SelectionDto,
+    EditorError, InstanceDetailsDto, InstanceId, MaterialDto, MaterialId, MaterialPatch, SceneObjectsPage,
+    SceneVersion, SelectionDto,
 };
 
 /// 不修改 World 的 Editor 查询。
@@ -11,7 +11,6 @@ use crate::protocol::{
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(tag = "type", rename_all = "snake_case")]
 pub enum EditorQuery {
-    GetCapabilities,
     GetSceneVersion,
     GetSelection,
     GetSceneObjects {
@@ -47,20 +46,11 @@ pub enum EditorRequest {
     Command(EditorCommand),
 }
 
-/// WebSocket client 发出的完整消息 envelope。
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-pub struct EditorClientMessage {
-    pub protocol_version: u32,
-    pub request_id: RequestId,
-    pub request: EditorRequest,
-}
-
 /// Renderer 对指定请求返回的领域结果。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 #[ts(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum EditorResponse {
-    Capabilities(EditorCapabilities),
     SceneVersion(SceneVersion),
     Selection(Option<SelectionDto>),
     SceneObjects(SceneObjectsPage),
@@ -80,18 +70,4 @@ pub enum EditorResponse {
 pub enum EditorNotification {
     SelectionChanged(Option<SelectionDto>),
     SceneVersionChanged(SceneVersion),
-}
-
-/// Server 发给 WebSocket client 的完整消息。
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[ts(tag = "kind", rename_all = "snake_case")]
-pub enum EditorServerMessage {
-    Response {
-        request_id: RequestId,
-        response: EditorResponse,
-    },
-    Notification {
-        notification: EditorNotification,
-    },
 }

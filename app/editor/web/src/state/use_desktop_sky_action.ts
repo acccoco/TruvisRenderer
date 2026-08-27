@@ -11,7 +11,7 @@ type SelectHdriResult =
 /**
  * Tauri-only HDRI 文件选择动作的页面状态。
  *
- * 该状态与 Editor WebSocket session 分离：文件系统授权和原生 dialog 属于桌面壳，
+ * 该状态与通用 Editor DTO 分离：文件系统授权和原生 dialog 属于桌面壳，
  * Web 只接收文件名与 CPU scene 接受结果，不持有或传输本机路径。
  */
 export interface DesktopSkyActionState {

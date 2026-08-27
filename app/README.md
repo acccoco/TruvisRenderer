@@ -9,8 +9,8 @@
 - [`app-render-passes/`](app-render-passes/README.md)：ray tracing、post-process 和产品效果的共享 GPU pass。
 - [`app-rendering/`](app-rendering/README.md)：realtime/offline 渲染子系统、配置和长期 GPU 资源。
 - [`app-render-ui/`](app-render-ui/README.md)：渲染设置与 ImGui 的共享集成，既提供 realtime-only 窗口也提供可组合 section。
-- `editor/`：Web editor 子系统；`bridge` 定义协议与跨线程 endpoint，`server` 提供本地 HTTP / WebSocket，`web`
-  是 React / TypeScript 页面。场景协议到 `World` 的适配保留在 `truvis/src/editor_controller.rs`。
+- `editor/`：Tauri WebView editor 子系统；`bridge` 定义协议与跨线程 endpoint，`web` 是 React / TypeScript 页面。
+  Tauri IPC 与场景协议适配分别保留在 `truvis/src/editor_ipc.rs` 和 `truvis/src/editor_controller.rs`。
 - [`truvis/`](truvis/README.md)：主体 Tauri app crate，组合 WebView、embedded viewport、Editor controller、
   selection/overlay 和 realtime/offline 渲染子系统，并显式决定 Renderer 业务顺序。
 - `samples/hello-triangle/`：Triangle 示例，提供 `triangle`。

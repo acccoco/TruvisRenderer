@@ -15,7 +15,7 @@ export function App() {
   return (
     <div className="app-shell">
       <TopBar
-        connection={state.connection}
+        backendState={state.backendState}
         sceneVersion={state.sceneVersion}
         pendingRequests={state.pendingRequests}
         desktopSkySupported={desktopSky.state.supported}
@@ -50,7 +50,7 @@ export function App() {
         )}
       />
       <StatusBar
-        connected={state.connection === 'connected'}
+        ready={state.backendState === 'ready'}
         pendingRequests={state.pendingRequests}
         selectingSky={desktopSky.state.selecting}
         lastRequestMs={state.lastRequestMs}

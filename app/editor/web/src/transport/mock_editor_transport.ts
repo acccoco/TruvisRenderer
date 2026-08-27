@@ -7,12 +7,12 @@ import type {
   SceneObjectSummary,
   SelectionDto,
 } from '../protocol/generated';
-import type { ConnectionState, EditorTransport } from './editor_transport';
+import type { EditorBackendState, EditorTransport } from './editor_transport';
 
 const MOCK_INSTANCE_ID = 'instance:00000001000003ec';
 const MOCK_MATERIAL_ID = 'material:000000010000da0c';
 
-/** 仅供 Vite 开发视觉验收使用，不参与生产 Server/World 语义。 */
+/** 仅供 Vite 开发视觉验收使用，不参与生产 Tauri IPC/World 语义。 */
 export class MockEditorTransport implements EditorTransport {
   private sceneVersion = 24;
   private material: MaterialDto = {
@@ -36,17 +36,17 @@ export class MockEditorTransport implements EditorTransport {
     name: index === 3 ? 'Sponza_Curtain_West' : `Sponza_Instance_${String(index + 1).padStart(2, '0')}`,
     material_count: index % 4 === 3 ? 3 : (index % 2) + 1,
   }));
-  private readonly connectionListeners = new Set<(state: ConnectionState) => void>();
+  private readonly stateListeners = new Set<(state: EditorBackendState) => void>();
   private readonly notificationListeners = new Set<(notification: EditorNotification) => void>();
 
   async connect(): Promise<void> {
-    this.emitConnectionState('connecting');
+    this.emitState('starting');
     await new Promise((resolve) => window.setTimeout(resolve, 80));
-    this.emitConnectionState('connected');
+    this.emitState('ready');
   }
 
   close(): void {
-    this.emitConnectionState('disconnected');
+    this.emitState('unavailable');
   }
 
   async request(request: EditorRequest): Promise<EditorResponse> {
@@ -67,15 +67,6 @@ export class MockEditorTransport implements EditorTransport {
     }
 
     switch (request.payload.type) {
-      case 'get_capabilities':
-        return {
-          type: 'capabilities',
-          payload: {
-            protocol_version: 1,
-            max_scene_page_size: 256,
-            editable_material_fields: ['name', 'base_color', 'metallic', 'roughness', 'class', 'coverage'],
-          },
-        };
       case 'get_scene_version':
         return { type: 'scene_version', payload: String(this.sceneVersion) };
       case 'get_selection':
@@ -130,9 +121,9 @@ export class MockEditorTransport implements EditorTransport {
     }
   }
 
-  onConnectionState(listener: (state: ConnectionState) => void): () => void {
-    this.connectionListeners.add(listener);
-    return () => this.connectionListeners.delete(listener);
+  onState(listener: (state: EditorBackendState) => void): () => void {
+    this.stateListeners.add(listener);
+    return () => this.stateListeners.delete(listener);
   }
 
   onNotification(listener: (notification: EditorNotification) => void): () => void {
@@ -140,8 +131,8 @@ export class MockEditorTransport implements EditorTransport {
     return () => this.notificationListeners.delete(listener);
   }
 
-  private emitConnectionState(state: ConnectionState): void {
-    for (const listener of this.connectionListeners) {
+  private emitState(state: EditorBackendState): void {
+    for (const listener of this.stateListeners) {
       listener(state);
     }
   }

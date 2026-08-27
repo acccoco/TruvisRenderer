@@ -1,8 +1,8 @@
-import type { ConnectionState } from '../transport/editor_transport';
+import type { EditorBackendState } from '../transport/editor_transport';
 import { EnvironmentIcon, RefreshIcon, TruvisMark } from './icons';
 
 interface TopBarProps {
-  connection: ConnectionState;
+  backendState: EditorBackendState;
   sceneVersion: string;
   pendingRequests: number;
   desktopSkySupported: boolean;
@@ -13,7 +13,7 @@ interface TopBarProps {
 }
 
 export function TopBar({
-  connection,
+  backendState,
   sceneVersion,
   pendingRequests,
   desktopSkySupported,
@@ -33,9 +33,9 @@ export function TopBar({
         <h1>Truvis Editor</h1>
       </div>
       <div className="top-bar__status">
-        <span className={`connection connection--${connection}`}>
+        <span className={`backend-state backend-state--${backendState}`}>
           <span className="status-dot" />
-          {connection === 'connected' ? 'Connected' : connection === 'connecting' ? 'Connecting' : 'Disconnected'}
+          {backendState === 'ready' ? 'Ready' : backendState === 'starting' ? 'Starting' : 'Unavailable'}
         </span>
         <span className="scene-version">
           Scene version <strong>{sceneVersion}</strong>
@@ -55,7 +55,7 @@ export function TopBar({
           <EnvironmentIcon />
           {selectingSky ? 'Choosing…' : 'Choose HDRI'}
         </button>
-        <button className="icon-button icon-button--labeled" type="button" onClick={onRefresh} disabled={connection !== 'connected'}>
+        <button className="icon-button icon-button--labeled" type="button" onClick={onRefresh} disabled={backendState !== 'ready'}>
           <RefreshIcon className={pendingRequests > 0 ? 'is-spinning' : undefined} />
           Refresh
         </button>

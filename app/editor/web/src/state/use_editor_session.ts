@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import type {
-  EditorCapabilities,
   EditorErrorCode,
   EditorNotification,
   EditorQuery,
@@ -14,13 +13,12 @@ import type {
   SelectionDto,
 } from '../protocol/generated';
 import { createEditorTransport } from '../transport/create_editor_transport';
-import type { ConnectionState, EditorTransport } from '../transport/editor_transport';
+import type { EditorBackendState, EditorTransport } from '../transport/editor_transport';
 
 export type InstanceDetailsStatus = 'idle' | 'loading' | 'ready' | 'stale' | 'error';
 
 export interface EditorSessionState {
-  connection: ConnectionState;
-  capabilities: EditorCapabilities | null;
+  backendState: EditorBackendState;
   sceneVersion: string;
   selection: SelectionDto | null;
   objects: SceneObjectSummary[];
@@ -38,8 +36,7 @@ export interface EditorSessionState {
 }
 
 type Action =
-  | { type: 'connection'; value: ConnectionState }
-  | { type: 'capabilities'; value: EditorCapabilities }
+  | { type: 'backendState'; value: EditorBackendState }
   | { type: 'sceneVersion'; value: string }
   | { type: 'selection'; value: SelectionDto | null }
   | { type: 'objects'; value: { objects: SceneObjectSummary[]; offset: number; nextOffset: number | null } }
@@ -54,8 +51,7 @@ type Action =
   | { type: 'error'; value: string | null };
 
 const initialState: EditorSessionState = {
-  connection: 'disconnected',
-  capabilities: null,
+  backendState: 'unavailable',
   sceneVersion: '—',
   selection: null,
   objects: [],
@@ -74,10 +70,8 @@ const initialState: EditorSessionState = {
 
 function reducer(state: EditorSessionState, action: Action): EditorSessionState {
   switch (action.type) {
-    case 'connection':
-      return { ...state, connection: action.value };
-    case 'capabilities':
-      return { ...state, capabilities: action.value };
+    case 'backendState':
+      return { ...state, backendState: action.value };
     case 'sceneVersion':
       return { ...state, sceneVersion: action.value };
     case 'selection': {
@@ -265,15 +259,11 @@ export function useEditorSession(): EditorSession {
 
   const refreshProjection = useCallback(async () => {
     try {
-      const [capabilities, version, selection, objects] = await Promise.all([
-        query({ type: 'get_capabilities' }),
+      const [version, selection, objects] = await Promise.all([
         query({ type: 'get_scene_version' }),
         query({ type: 'get_selection' }),
         query({ type: 'get_scene_objects', offset: 0, limit: 128, expected_scene_version: null }),
       ]);
-      if (capabilities.type === 'capabilities') {
-        dispatch({ type: 'capabilities', value: capabilities.payload });
-      }
       if (version.type === 'scene_version') {
         dispatch({ type: 'sceneVersion', value: version.payload });
       }
@@ -313,9 +303,9 @@ export function useEditorSession(): EditorSession {
 
   useEffect(() => {
     let active = true;
-    const removeConnectionListener = transport.onConnectionState((connection) => {
+    const removeStateListener = transport.onState((backendState) => {
       if (active) {
-        dispatch({ type: 'connection', value: connection });
+        dispatch({ type: 'backendState', value: backendState });
       }
     });
     const removeNotificationListener = transport.onNotification((notification: EditorNotification) => {
@@ -336,19 +326,23 @@ export function useEditorSession(): EditorSession {
 
     void transport
       .connect()
-      .then(() => refreshProjection())
-      .catch((error) => dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) }));
+      .then(() => (active ? refreshProjection() : undefined))
+      .catch((error) => {
+        if (active) {
+          dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
+        }
+      });
 
     return () => {
       active = false;
-      removeConnectionListener();
+      removeStateListener();
       removeNotificationListener();
       transport.close();
     };
   }, [loadMaterial, refresh, refreshProjection, transport]);
 
   useEffect(() => {
-    if (state.connection !== 'connected') {
+    if (state.backendState !== 'ready') {
       return;
     }
 
@@ -379,7 +373,7 @@ export function useEditorSession(): EditorSession {
       active = false;
       window.clearInterval(timer);
     };
-  }, [query, refresh, state.connection]);
+  }, [query, refresh, state.backendState]);
 
   const nextPage = useCallback(async () => {
     if (state.nextOffset === null) {

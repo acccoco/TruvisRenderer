@@ -1,11 +1,11 @@
 # 线程同步与资源生命周期
 
-> 状态：当前实现事实总结。本文记录桌面主线程、窗口线程、渲染线程、EditorServer 线程边界，GPU 同步例外和 Vulkan 资源显式销毁契约。
+> 状态：当前实现事实总结。本文记录桌面主线程、窗口线程、渲染线程、Editor IPC 边界，GPU 同步例外和 Vulkan 资源显式销毁契约。
 
 ## 线程模型
 
-主体 Tauri 应用使用四个职责明确的线程；独立 samples 不启动 Tauri 和 EditorServer，并让 winit main thread 直接承担
-下图前两个窗口角色。
+主体 Tauri 应用使用三个职责明确的线程 owner；独立 samples 不启动 Tauri，并让 winit main thread 直接承担
+下图前两个窗口角色。Editor notification dispatcher 是 Tauri async runtime task，不是独立 OS 线程 owner。
 
 ```mermaid
 flowchart LR
@@ -15,10 +15,12 @@ flowchart LR
         DomRect["receives latest DOM viewport rect"]
         Dialog["native HDRI dialog"]
         Sender["owns DesktopCommandSender"]
+        EditorIpc["owns EditorIpc request sender"]
         Parent --> Desktop
         Desktop --> DomRect
         Desktop --> Dialog
         Desktop --> Sender
+        Desktop --> EditorIpc
     end
 
     subgraph WindowThread["RenderWindowThread · winit"]
@@ -35,23 +37,27 @@ flowchart LR
         RenderLoop["owns RenderLoop"]
         Renderer["RenderLoop owns Box&lt;dyn Renderer&gt;"]
         DesktopCommand["owns DesktopCommandController"]
+        EditorController["owns EditorController"]
         Runtime["owns RenderRuntime"]
         Vulkan["creates, uses, destroys all Vulkan objects"]
         RenderLoop --> Renderer
         RenderLoop --> Runtime
         Renderer --> DesktopCommand
+        Renderer --> EditorController
         Runtime --> Vulkan
     end
 
-    subgraph ServerThread["EditorServer thread"]
-        Server["Axum + Tokio current-thread<br/>loopback HTTP/WebSocket"]
+    subgraph TauriAsync["Tauri async runtime task"]
+        NotificationDispatcher["Editor notification dispatcher"]
     end
 
     DomRect -- "EventLoopProxy / SetWindowPos" --> Child
     Sender -- "capacity-1 PathBuf command + oneshot reply" --> DesktopCommand
+    EditorIpc -- "capacity-256 EditorRequest + oneshot reply" --> EditorController
+    EditorController -- "capacity-64 best-effort notification" --> NotificationDispatcher
+    NotificationDispatcher -- "Tauri event to main WebView" --> Parent
     Input -- "unbounded InputEvent channel" --> RenderLoop
     Size -- "RenderThreadControl: latest size + generation" --> RenderLoop
-    Server <-- "bounded editor bridge DTO" --> Renderer
 ```
 
 ## 同步约束
@@ -81,10 +87,10 @@ flowchart LR
 - DOM rect 命令只改变平台窗口几何，不进入 `Renderer`，也不携带场景、材质或 swapchain 语义。
 - Tauri `select_hdri` 使用非阻塞原生 dialog；`TruvisDesktopState` 只持有 sender 和 dialog-open 原子状态，不持有 scene
   投影，也不在持有 desktop resources mutex 时打开 dialog 或等待 reply。
-- HDRI 的本地 `PathBuf` 只通过容量为 `1` 的私有 `DesktopCommandSender` 进入 RenderThread，不进入 Editor WebSocket。
+- HDRI 的本地 `PathBuf` 只通过容量为 `1` 的私有 `DesktopCommandSender` 进入 RenderThread，不进入通用 Editor DTO。
   `DesktopCommandController` 每帧最多处理一条，并且只在 `TruvisRenderer::update` 中短暂借用 `World`。
 - desktop oneshot reply 只确认 `World::request_sky_texture_from_path` 已接受 CPU scene mutation，不等待 asset decode、
-  texture upload 或 sky distribution；Tauri main thread、WebView 和 EditorServer 仍不访问 Vulkan。
+  texture upload 或 sky distribution；Tauri main thread、WebView 和 Editor IPC owner 仍不访问 Vulkan。
 - GPU 同步优先通过 RenderGraph、binary semaphore 和 frame timeline 表达。
 - `RenderLoop` 的默认 120 FPS 软件限帧仍在 RenderThread 内执行：剩余时间大于 1 ms 时使用
   `park_timeout(1 ms)` 短周期轮询，最后 1 ms 内有界自旋；spin 完成后返回外层循环重新检查输入、resize 与退出状态，
@@ -162,9 +168,10 @@ flowchart LR
 `RenderSkyManager` 已发布的 active/retired/fallback 资源与 `RenderTextureManager` ready images。
 这保证 CPU producer、transfer queue 和 shader-visible owner 不会交叉销毁。
 
-桌面窗口的外层销毁顺序固定为：RenderThread 上的 `TruvisRenderer` 先关闭并清空 desktop command receiver，使尚未处理的
-oneshot reply 因 sender drop 退出 → Renderer/runtime/Vulkan 销毁 → `RenderWindowThread` drop child HWND → 停止并 join
-EditorServer → Tauri/Tao drop WebView 与 top-level HWND。`TruvisDesktopState::shutting_down` 阻止新 dialog，
+桌面窗口的外层销毁顺序固定为：`TruvisDesktopState::shutting_down` 先阻止新 dialog 和 Editor invoke → RenderThread 上的
+`TruvisRenderer` 关闭并清空 desktop/editor request receiver，使尚未处理的 oneshot reply 因 sender drop 退出 →
+Renderer/runtime/Vulkan 销毁 → `RenderWindowThread` drop child HWND → 停止 Editor notification task →
+Tauri/Tao drop WebView 与 top-level HWND。
 `EmbeddedWinitHost::Drop` 为非正常 exit 提供相同顺序的兜底。
 
 - `RenderLoop` 内部 shutdown：RenderLoop 等待 GPU idle 后，用 `RendererShutdownCtx` 调用具体 `Renderer`；

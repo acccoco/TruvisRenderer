@@ -92,13 +92,13 @@ resize 只在 render loop 的安全点处理。`RenderRuntime::handle_resize` �
 关闭流程：
 
 - 渲染线程观察到退出信号后，由 `RenderLoop` 内部执行 shutdown，再调用具体 `Renderer::shutdown` hook。
-- `TruvisRenderer` 在 shutdown 中关闭 RenderThread 一侧的 `EditorController` endpoint；EditorServer 由 main thread 的
-  `TruvisDesktopState` 持有，不参与 GPU idle 或资源销毁。
+- `TruvisRenderer` 在 shutdown 中关闭并清空 RenderThread 一侧的 `EditorController` endpoint，使等待中的
+  Tauri invoke 通过 reply sender drop 结束；desktop notification task 不参与 GPU idle 或资源销毁。
 - `RenderLoop` 等待 GPU idle 后只调用 Renderer hook 的 `shutdown()`；Renderer 在该 hook 内按初始化逆序释放全部子系统，
   RenderLoop 最后销毁 RenderRuntime。
 - `RenderRuntime` 拥有 `Gfx` root owner；runtime 销毁时先等待 GPU idle，释放所有子资源，最后销毁 `Gfx`。
-- 窗口 owner 等待渲染线程完成后再 drop winit `Window`；Tauri 主窗口关闭时继续等待 `RenderWindowThread` 和
-  EditorServer，最后才允许 parent HWND drop。
+- 窗口 owner 等待渲染线程完成后再 drop winit `Window`；Tauri 主窗口关闭时继续等待 `RenderWindowThread`，
+  随后停止 Editor notification task，最后才允许 parent HWND drop。
 
 ## 一帧三泳道图
 
@@ -232,7 +232,7 @@ Renderer 是业务编排层。它既不拥有 runtime，也不把具体子系统
 - 子系统只实现自己的具体能力；生命周期、输入消费与渲染顺序均由拥有它的 Renderer 显式控制。
 - `World` 只应在 init / update / resize / shutdown 等允许可变借用的阶段修改；render 阶段不再修改 CPU scene。
 - `EditorController` 只在 Renderer `update` 中以非阻塞、预算受限方式处理 Query / Command；selection 在 `after_prepare`
-  拾取完成后通过 best-effort notification 发布，不把 Web/Server 引入 render 或 GPU 同步边界。
+  拾取完成后通过 best-effort notification 发布，不把 Tauri WebView 或 desktop owner 引入 render / GPU 同步边界。
 - `prepare` 是 update 与 render 之间的语义翻译边界；它生成本帧 GPU scene、通过 runtime 私有
   `RenderTlasManager` 更新 TLAS、刷新 per-frame data 和 descriptor 状态。
 - `after_prepare` 是显式例外窗口；它可以同步查询刚准备好的 GPU scene，但普通渲染工作仍应进入 `render` hook 和 RenderGraph。

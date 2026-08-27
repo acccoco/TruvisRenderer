@@ -1,17 +1,17 @@
 interface StatusBarProps {
-  connected: boolean;
+  ready: boolean;
   pendingRequests: number;
   selectingSky: boolean;
   lastRequestMs: number | null;
   error: string | null;
 }
 
-export function StatusBar({ connected, pendingRequests, selectingSky, lastRequestMs, error }: StatusBarProps) {
+export function StatusBar({ ready, pendingRequests, selectingSky, lastRequestMs, error }: StatusBarProps) {
   return (
     <footer className="status-bar">
-      <span className={connected ? 'status-bar__ready' : 'status-bar__offline'}>
+      <span className={ready ? 'status-bar__ready' : 'status-bar__offline'}>
         <span className="status-dot" />
-        {connected ? 'Renderer ready' : 'Renderer offline'}
+        {ready ? 'Renderer ready' : 'Renderer unavailable'}
       </span>
       <span>
         {selectingSky

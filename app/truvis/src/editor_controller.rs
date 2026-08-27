@@ -3,14 +3,12 @@ use std::time::{Duration, Instant};
 use slotmap::{Key, KeyData};
 
 use truvis_editor_bridge::protocol::{
-    CoverageModeDto, DEFAULT_SCENE_PAGE_SIZE, EDITOR_PROTOCOL_VERSION, EditorCapabilities, EditorCommand, EditorError,
-    EditorErrorCode, EditorNotification, EditorQuery, EditorRequest, EditorResponse, InstanceDetailsDto, InstanceId,
-    InstanceMaterialBindingDto, MAX_SCENE_PAGE_SIZE, MaterialClassDto, MaterialDto, MaterialId, MaterialPatch, MeshId,
-    MeshSummaryDto, SceneObjectSummary, SceneObjectsPage, SceneVersion, SelectionDto, TextureId,
+    CoverageModeDto, DEFAULT_SCENE_PAGE_SIZE, EditorCommand, EditorError, EditorErrorCode, EditorNotification,
+    EditorQuery, EditorRequest, EditorResponse, InstanceDetailsDto, InstanceId, InstanceMaterialBindingDto,
+    MAX_SCENE_PAGE_SIZE, MaterialClassDto, MaterialDto, MaterialId, MaterialPatch, MeshId, MeshSummaryDto,
+    SceneObjectSummary, SceneObjectsPage, SceneVersion, SelectionDto, TextureId,
 };
-use truvis_editor_bridge::{
-    AppEndpoint, EditorNotificationEnvelope, EditorNotificationTarget, EditorRequestEnvelope, EditorResponseEnvelope,
-};
+use truvis_editor_bridge::{AppEndpoint, EditorRequestEnvelope};
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_world::World;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
@@ -37,7 +35,7 @@ impl Default for EditorControllerConfig {
 /// `TruvisRenderer` 内的 Editor 协议适配器。
 ///
 /// Controller 只在 RenderThread 的 Renderer update 阶段借用 `World`，把协议 DTO 转换成现有
-/// World 查询或 mutation。它不保存 selection、scene/material cache，也不拥有 Server connection。
+/// World 查询或 mutation。它不保存 selection、scene/material cache，也不拥有 Desktop IPC 生命周期。
 pub(crate) struct EditorController {
     endpoint: AppEndpoint,
     config: EditorControllerConfig,
@@ -70,45 +68,22 @@ impl EditorController {
         selection: Option<WorldSubmeshSelection>,
         envelope: EditorRequestEnvelope,
     ) {
-        let EditorRequestEnvelope {
-            client_id,
-            request_id,
-            request,
-        } = envelope;
+        let EditorRequestEnvelope { request, reply } = envelope;
         let (response, notification) = match request {
             EditorRequest::Query(query) => (Self::handle_query(world, selection, query), None),
             EditorRequest::Command(command) => Self::handle_command(world, command),
         };
 
-        if let Err(error) = self.endpoint.try_send_response(EditorResponseEnvelope {
-            client_id,
-            request_id,
-            response,
-        }) {
-            log::warn!("Editor response outbox rejected response: {error}");
-        }
+        // WebView 可能已刷新、timeout 或进入 shutdown；reply receiver 消失不能回滚已经
+        // 完成的 World mutation，因此 send 失败只表示结果无人接收。
+        let _ = reply.send(response);
         if let Some(notification) = notification {
-            let _ = self.endpoint.try_send_notification(EditorNotificationEnvelope {
-                target: EditorNotificationTarget::Broadcast,
-                notification,
-            });
+            let _ = self.endpoint.try_send_notification(notification);
         }
     }
 
     fn handle_query(world: &World, selection: Option<WorldSubmeshSelection>, query: EditorQuery) -> EditorResponse {
         match query {
-            EditorQuery::GetCapabilities => EditorResponse::Capabilities(EditorCapabilities {
-                protocol_version: EDITOR_PROTOCOL_VERSION,
-                max_scene_page_size: MAX_SCENE_PAGE_SIZE,
-                editable_material_fields: vec![
-                    "name".to_string(),
-                    "base_color".to_string(),
-                    "metallic".to_string(),
-                    "roughness".to_string(),
-                    "class".to_string(),
-                    "coverage".to_string(),
-                ],
-            }),
             EditorQuery::GetSceneVersion => {
                 EditorResponse::SceneVersion(SceneVersion::from_u64(world.scene_view().scene_version()))
             }
@@ -386,25 +361,21 @@ impl EditorController {
 }
 
 impl EditorController {
-    /// 广播由 Editor WebSocket 之外的 Renderer-local mutation 产生的 scene version 变化。
+    /// 广播由 Editor command 之外的 Renderer-local mutation 产生的 scene version 变化。
     ///
     /// 本方法只复用现有失效通知，不携带本地文件路径或新的领域 DTO。notification
     /// outbox 是 best-effort；发送失败时 Web 仍会通过既有一秒 polling 收敛。
     pub(crate) fn notify_scene_version_changed(&self, scene_version: u64) {
-        let _ = self.endpoint.try_send_notification(EditorNotificationEnvelope {
-            target: EditorNotificationTarget::Broadcast,
-            notification: EditorNotification::SceneVersionChanged(SceneVersion::from_u64(scene_version)),
-        });
+        let _ = self
+            .endpoint
+            .try_send_notification(EditorNotification::SceneVersionChanged(SceneVersion::from_u64(scene_version)));
     }
 
     pub(crate) fn notify_selection_changed(&self, selection: Option<(InstanceHandle, u32, MaterialHandle)>) {
         let selection = selection.map(|(instance, submesh_index, material)| {
             Self::selection_dto_from_handles(instance, submesh_index, material)
         });
-        let _ = self.endpoint.try_send_notification(EditorNotificationEnvelope {
-            target: EditorNotificationTarget::Broadcast,
-            notification: EditorNotification::SelectionChanged(selection),
-        });
+        let _ = self.endpoint.try_send_notification(EditorNotification::SelectionChanged(selection));
     }
 
     fn selection_dto_from_handles(
@@ -420,7 +391,7 @@ impl EditorController {
     }
 
     pub(crate) fn shutdown(&mut self) {
-        self.endpoint.close_requests();
+        self.endpoint.shutdown();
     }
 }
 

@@ -39,7 +39,6 @@ members = [
     "app/app-render-ui",
     "app/shader/truvis-app-shader-binding",
     "app/editor/bridge",
-    "app/editor/server",
     "app/truvis",
     "app/samples/hello-triangle",
     "app/samples/shader-toy",
@@ -89,7 +88,6 @@ app-rendering = { path = "app/app-rendering" }
 app-render-ui = { path = "app/app-render-ui" }
 truvis-app-shader-binding = { path = "app/shader/truvis-app-shader-binding" }
 truvis-editor-bridge = { path = "app/editor/bridge" }
-truvis-editor-server = { path = "app/editor/server" }
 # shader
 truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
 truvis-shader-binding-codegen = { path = "engine/shader/truvis-shader-binding-codegen" }
@@ -187,8 +185,5 @@ chrono = "0.4.38"
 rand = "0.8.5"
 rand_derive = "0.5.0"
 reqwest = { version = "0.11", features = ["blocking"] }
-axum = { version = "0.8", features = ["ws"] }
-futures-util = "0.3"
-tower-http = { version = "0.7", features = ["fs"] }
 zip = "0.6"
 toml = "0.8"

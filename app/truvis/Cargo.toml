@@ -16,7 +16,6 @@ app-render-passes = { workspace = true }
 app-rendering = { workspace = true }
 app-render-ui = { workspace = true }
 truvis-editor-bridge = { workspace = true }
-truvis-editor-server = { workspace = true }
 truvis-winit-host = { workspace = true }
 truvis-gfx = { workspace = true }
 truvis-render-runtime = { workspace = true }

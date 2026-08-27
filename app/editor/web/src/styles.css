@@ -95,7 +95,7 @@ select:focus-visible {
 
 .brand,
 .top-bar__status,
-.connection,
+.backend-state,
 .scene-version,
 .sky-request,
 .icon-button--labeled {
@@ -133,19 +133,19 @@ select:focus-visible {
   font-size: 13px;
 }
 
-.connection {
+.backend-state {
   gap: 8px;
 }
 
-.connection--connected {
+.backend-state--ready {
   color: var(--green);
 }
 
-.connection--connecting {
+.backend-state--starting {
   color: var(--amber);
 }
 
-.connection--disconnected {
+.backend-state--unavailable {
   color: var(--red);
 }
 

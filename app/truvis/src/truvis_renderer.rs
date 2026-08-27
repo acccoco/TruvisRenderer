@@ -51,7 +51,7 @@ pub struct TruvisRenderer {
     /// RenderThread 独占的 Tauri 桌面特权命令消费者。
     ///
     /// 它只在 update 阶段短暂借用 `World`，确保文件选择结果不会让 Tauri 主线程、
-    /// WebView 或 EditorServer 越过 CPU scene 权威边界。
+    /// WebView 或 Tauri IPC owner 越过 CPU scene 权威边界。
     desktop_command_controller: DesktopCommandController,
 
     editor_controller: EditorController,
@@ -60,7 +60,7 @@ pub struct TruvisRenderer {
 impl TruvisRenderer {
     /// 使用桌面壳预先创建的 [`AppEndpoint`] 构造渲染侧业务状态。
     ///
-    /// EditorServer 生命周期属于 Tauri desktop；本 Renderer 只拥有 Editor 协议和桌面特权
+    /// Editor IPC 生命周期属于 Tauri desktop；本 Renderer 只拥有 Editor 协议和桌面特权
     /// command 到权威 `World` 的非阻塞 controller，避免 RenderThread 同时承担窗口壳和
     /// 网络 owner 职责。
     pub(crate) fn new(app_endpoint: AppEndpoint, desktop_command_controller: DesktopCommandController) -> Self {

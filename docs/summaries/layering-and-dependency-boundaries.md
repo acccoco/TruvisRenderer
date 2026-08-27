@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TB
-    L8["L8 app/truvis + samples<br/>Tauri 主体 app 与独立示例入口<br/><br/>L8 app/editor<br/>Tauri WebView UI、HTTP/WebSocket adapter、跨线程 editor 契约"]
+    L8["L8 app/truvis + samples<br/>Tauri 主体 app 与独立示例入口<br/><br/>L8 app/editor<br/>Tauri WebView UI、IPC adapter、跨线程 editor 契约"]
     L7["L7 truvis-winit-host<br/>standalone / child HWND 窗口生命周期、winit 事件循环与输入适配"]
     L6["L6 truvis-render-thread<br/>backend-independent OS 渲染线程、Renderer factory、完成与 panic 生命周期"]
     L5["L5 App capability crates<br/>app-kit foundation / app-imgui / app-rendering / app-render-ui / app-render-passes<br/><br/>L5 truvis-render-loop<br/>Renderer 阶段契约<br/>唯一 RenderLoop 完整生命周期"]
@@ -31,8 +31,8 @@ flowchart TB
   `truvis-render-graph` 只依赖 foundation 中的句柄和 `GfxResourceAccess`，`truvis-render-runtime` 负责集成 runtime-owned
   GPU resource/binding/cmd/per-frame 能力。
 - 具体 app 复用的 RT / 后处理 pass 位于 `app/app-render-passes`，GUI backend 属于 `app/app-imgui`，渲染子系统与长期资源属于 `app/app-rendering`。
-- Web editor 属于 app 域：`truvis-editor-bridge` 只包含协议 DTO 和有界 channel endpoint，
-  `truvis-editor-server` 只依赖 bridge；两者都禁止依赖 `truvis-world`、render runtime 或 GPU 类型。
+- Web editor 属于 app 域：`truvis-editor-bridge` 只包含协议 DTO、每请求 oneshot reply 和有界 channel endpoint，
+  禁止依赖 Tauri、`truvis-world`、render runtime 或 GPU 类型。`app/truvis::editor_ipc` 适配 Tauri，
   `app/truvis::editor_controller` 是唯一把 editor DTO 适配到权威 `World` 的位置。
 
 当前允许的主依赖方向：
@@ -134,10 +134,9 @@ Engine 一级 Rust 职责目录使用 `eNN-` 前缀标识 Engine 归属和主要
 - `app/app-render-passes`：ray tracing、post-process 与产品效果 GPU pass。
 - `app/app-rendering`：realtime/offline 渲染子系统、公共配置和长期 GPU 资源。
 - `app/app-render-ui`：渲染设置与 ImGui 的共享集成。
-- `app/truvis`：主体 app，提供 `truvis-app`；Tauri/Tao desktop owner 在 main thread 组装 WebView、EditorServer 与
+- `app/truvis`：主体 app，提供 `truvis-app`；Tauri/Tao desktop owner 组装 WebView、Editor IPC 与
   embedded winit host，`TruvisRenderer` 仍只承载 RenderThread 上的场景和渲染业务。
-- `app/editor/bridge`：editor 协议 DTO、transport envelope 和方向受限的有界 channel endpoint。
-- `app/editor/server`：独立线程上的 loopback HTTP / WebSocket adapter 和 Web 静态文件服务。
+- `app/editor/bridge`：editor 协议 DTO、每请求 reply 和方向受限的有界 channel endpoint。
 - `app/editor/web`：作为 Tauri WebView 内容运行的 React / TypeScript 编辑器；中央 DOM slot 只发布 child HWND 的物理像素矩形，
   页面状态仍只是可丢弃投影，不属于 CPU scene 权威状态。
 - `app/samples/*`：独立 sample crate，提供 triangle、shader-toy 和 Cornell 入口。

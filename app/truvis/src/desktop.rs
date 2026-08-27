@@ -1,6 +1,6 @@
 //! Truvis 主体应用的 Tauri 桌面壳。
 //!
-//! 本模块拥有顶层 Tauri window、EditorServer 与 embedded winit host 的组装和关闭
+//! 本模块拥有顶层 Tauri window、Editor IPC 与 embedded winit host 的组装和关闭
 //! 顺序。它不处理材质领域命令，也不访问 Vulkan；editor DTO 与本地桌面特权命令
 //! 都只能在 RenderThread 上各自的 controller 中进入权威 `World`。
 
@@ -15,14 +15,15 @@ use tauri::{Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 use tokio::sync::oneshot;
 
+use truvis_editor_bridge::protocol::{EditorRequest, EditorResponse};
 use truvis_editor_bridge::{EditorBridgeConfig, create_editor_bridge};
-use truvis_editor_server::{EditorServer, EditorServerConfig, EditorServerHandle};
 use truvis_logs::LogFilePath;
 use truvis_path::TruvisPath;
 use truvis_render_loop::init_env_with_log_file;
 use truvis_winit_host::{EmbeddedViewportRect, EmbeddedWinitHost};
 
 use crate::desktop_command::{DesktopCommandController, DesktopCommandSender};
+use crate::editor_ipc::EditorIpc;
 use crate::truvis_renderer::TruvisRenderer;
 
 /// Tauri command 使用的 DOM viewport 物理像素矩形。
@@ -50,25 +51,24 @@ impl From<RenderViewportRect> for EmbeddedViewportRect {
 
 /// 需要严格按顺序关闭的桌面资源集合。
 ///
-/// `render_host` 必须先退出，使 Vulkan surface 与 child HWND 都在 Tauri parent
-/// HWND 存活期间销毁；随后才停止 EditorServer。字段只在持有外层 mutex 时 take，
-/// 实际 join 在锁外执行，避免 Tauri command 因长时间持锁而阻塞。
+/// `render_host` 必须先退出，使 Vulkan surface 与 child HWND 都在 Tauri parent HWND
+/// 存活期间销毁。字段只在持有外层 mutex 时 take，实际 join 在锁外执行，避免
+/// Tauri command 因长时间持锁而阻塞。
 struct TruvisDesktopResources {
     render_host: Option<EmbeddedWinitHost>,
-    editor_server: Option<EditorServerHandle>,
 }
 
 /// Tauri 主线程和 command handler 共享的桌面生命周期状态。
 ///
-/// 本状态只保存窗口宿主、Server handle、网络入口和进程内 command sender，不保存
+/// 本状态只保存窗口宿主、Editor IPC 和进程内 command sender，不保存
 /// scene/material/selection 投影。`shutting_down` 保证重复 close/exit 事件不会重复
 /// join 同一线程。
 struct TruvisDesktopState {
-    /// 严格按 RenderThread、EditorServer 顺序关闭的桌面资源集合。
+    /// 需要在 Tauri parent HWND 存活期间关闭的窗口/渲染资源。
     resources: Mutex<TruvisDesktopResources>,
 
-    /// WebView 建立 Editor WebSocket 时读取的 loopback 地址。
-    editor_websocket_url: String,
+    /// Tauri invoke request sender 与 notification dispatcher 的统一 owner。
+    editor_ipc: EditorIpc,
 
     /// Tauri command 向 RenderThread 提交本地特权命令的进程内 sender。
     desktop_command_sender: DesktopCommandSender,
@@ -83,16 +83,14 @@ struct TruvisDesktopState {
 impl TruvisDesktopState {
     fn new(
         render_host: EmbeddedWinitHost,
-        editor_server: EditorServerHandle,
-        editor_websocket_url: String,
+        editor_ipc: EditorIpc,
         desktop_command_sender: DesktopCommandSender,
     ) -> Self {
         Self {
             resources: Mutex::new(TruvisDesktopResources {
                 render_host: Some(render_host),
-                editor_server: Some(editor_server),
             }),
-            editor_websocket_url,
+            editor_ipc,
             desktop_command_sender,
             hdri_dialog_open: Arc::new(AtomicBool::new(false)),
             shutting_down: AtomicBool::new(false),
@@ -116,7 +114,6 @@ impl TruvisDesktopState {
         let mut resources = self.resources.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         Some(TruvisDesktopResources {
             render_host: resources.render_host.take(),
-            editor_server: resources.editor_server.take(),
         })
     }
 
@@ -157,7 +154,7 @@ impl TruvisDesktopState {
     }
 
     /// 关闭顺序是本集成最重要的生命周期不变量：RenderThread → child HWND →
-    /// EditorServer → Tauri parent HWND。
+    /// Editor notification task → Tauri parent HWND。
     fn shutdown(&self) {
         let Some(mut resources) = self.take_resources() else {
             return;
@@ -167,9 +164,7 @@ impl TruvisDesktopState {
                 log::error!("failed to shut down embedded render host cleanly: {error}");
             }
         }
-        if let Some(mut editor_server) = resources.editor_server.take() {
-            editor_server.shutdown();
-        }
+        self.editor_ipc.shutdown();
     }
 }
 
@@ -214,8 +209,16 @@ fn set_render_viewport_rect(
 }
 
 #[tauri::command]
-fn editor_websocket_url(state: State<'_, TruvisDesktopState>) -> String {
-    state.editor_websocket_url.clone()
+async fn editor_request(
+    request: EditorRequest,
+    state: State<'_, TruvisDesktopState>,
+) -> std::result::Result<EditorResponse, String> {
+    if state.shutting_down.load(Ordering::Acquire) {
+        return Ok(EditorIpc::unavailable("Truvis desktop is shutting down"));
+    }
+    let request_sender = state.editor_ipc.request_sender();
+    drop(state);
+    Ok(EditorIpc::request(request_sender, request).await)
 }
 
 /// 打开原生 HDRI 文件选择器，并等待 RenderThread 接受 scene mutation。
@@ -259,23 +262,20 @@ async fn select_hdri(
 /// 主体应用的 Tauri/Tao 进程入口。
 ///
 /// Tauri 保持在进程 main thread；`EmbeddedWinitHost` 创建独立
-/// `RenderWindowThread`，后者再启动现有 `RenderThread`。EditorServer 在 WebView
-/// 显示前完成 bind，因此嵌入页面首次连接不会与 Server 启动竞争。
+/// `RenderWindowThread`，后者再启动现有 `RenderThread`。Editor IPC 在 WebView
+/// 显示前进入 managed state，因此页面首次 invoke 不会观察到半初始化的 desktop owner。
 pub struct TruvisDesktop;
 
 impl TruvisDesktop {
     pub fn run() -> Result<()> {
         init_env_with_log_file(LogFilePath::current_exe(TruvisPath::temp_dir()));
 
-        let (server_endpoint, app_endpoint) = create_editor_bridge(EditorBridgeConfig::default());
+        let (desktop_endpoint, app_endpoint) = create_editor_bridge(EditorBridgeConfig::default());
         let (desktop_command_sender, desktop_command_controller) = DesktopCommandController::create();
-        let editor_server = EditorServer::start(EditorServerConfig::default(), server_endpoint)
-            .context("failed to start embedded EditorServer")?;
-        let websocket_url = format!("ws://{}/api/editor/v1/ws", editor_server.bound_addr());
 
         let app = tauri::Builder::default()
             .plugin(tauri_plugin_dialog::init())
-            .invoke_handler(tauri::generate_handler![set_render_viewport_rect, editor_websocket_url, select_hdri])
+            .invoke_handler(tauri::generate_handler![set_render_viewport_rect, editor_request, select_hdri])
             .setup(move |app| {
                 let window = app
                     .get_webview_window("main")
@@ -288,8 +288,9 @@ impl TruvisDesktop {
                     Box::new(TruvisRenderer::new(app_endpoint, desktop_command_controller))
                 })
                 .map_err(std::io::Error::other)?;
+                let editor_ipc = EditorIpc::start(app.handle().clone(), desktop_endpoint);
 
-                app.manage(TruvisDesktopState::new(render_host, editor_server, websocket_url, desktop_command_sender));
+                app.manage(TruvisDesktopState::new(render_host, editor_ipc, desktop_command_sender));
                 window.show()?;
                 Ok(())
             })

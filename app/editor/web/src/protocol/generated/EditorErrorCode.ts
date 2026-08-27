@@ -5,4 +5,4 @@
  *
  * Web 应根据 code 决定可恢复行为，`message` 只用于向用户展示和诊断。
  */
-export type EditorErrorCode = "invalid_request" | "unsupported_protocol" | "busy" | "timeout" | "not_found" | "stale_object" | "conflict" | "internal";
+export type EditorErrorCode = "invalid_request" | "busy" | "timeout" | "not_found" | "stale_object" | "conflict" | "internal";

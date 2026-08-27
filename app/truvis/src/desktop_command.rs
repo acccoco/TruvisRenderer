@@ -1,8 +1,8 @@
 //! Tauri 桌面壳到 RenderThread 的进程内特权命令桥。
 //!
-//! 本模块只传递不能进入 Editor WebSocket 的本地桌面能力。sender 属于 Tauri
+//! 本模块只传递不能进入通用 Editor DTO 的本地桌面能力。sender 属于 Tauri
 //! `TruvisDesktopState`，receiver 由 RenderThread 上的 `DesktopCommandController`
-//! 独占；路径不会序列化到 Web，也不会让主线程或 EditorServer 接触 `World`。
+//! 独占；路径不会序列化到 Web，也不会让 Tauri IPC owner 接触 `World`。
 
 use std::path::PathBuf;
 
@@ -25,7 +25,7 @@ pub(crate) struct DesktopSkyAccepted;
 
 /// Tauri 主线程可以提交的 App-local 特权命令。
 ///
-/// 此 enum 不进入 `truvis-editor-bridge`，避免把本机绝对路径提升为 WebSocket 协议能力。
+/// 此 enum 不进入 `truvis-editor-bridge`，避免把本机绝对路径提升为 WebView Editor 能力。
 enum DesktopCommand {
     /// 请求 RenderThread 把本地文件注册为 scene texture 并设为 sky。
     RequestSkyTexture {
@@ -68,7 +68,7 @@ impl DesktopCommandSender {
 /// 单帧处理 desktop command 后需要通知其他 App owner 的窄结果。
 ///
 /// Controller 不直接依赖 `EditorController`；`TruvisRenderer` 负责在同一 update 阶段把
-/// scene-version 变化广播给 WebSocket client。
+/// scene-version 变化广播给 Tauri WebView。
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct DesktopCommandUpdate {
     /// CPU scene version 确实变化时携带新版本；同路径去重或失败时为 `None`。
