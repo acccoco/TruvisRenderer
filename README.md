@@ -89,15 +89,17 @@ just truvis imgui no-validation
 
 ```mermaid
 flowchart LR
-    Editor["Truvis Editor<br/>Tauri + React"] --> App["Truvis App / App Kit"]
-    Samples["Standalone Samples"] --> Frame["App Frame / Render Loop"]
-    App --> Frame
-    Frame --> Runtime["RenderRuntime"]
+    Editor["Truvis Editor<br/>Tauri + React"] --> Renderer["TruvisRenderer"]
+    Samples["Standalone Samples"] --> Renderer
+    Renderer --> Loop["RenderLoop"]
+    Loop --> Runtime["RenderRuntime"]
     Runtime --> Graph["RenderGraph + World"]
     Graph --> Gfx["Vulkan Gfx + Shader / CXX Bindings"]
 ```
 
-主体编辑器由 Tauri / React 页面与嵌入式原生 Vulkan viewport 组成；App 层决定具体渲染管线和 RenderGraph pass 顺序，`RenderRuntime` 负责 GPU 资源、场景同步、帧生命周期与 present。详细的依赖方向、线程边界和资源契约请阅读 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)。
+主体编辑器由 Tauri / React 页面与嵌入式原生 Vulkan viewport 组成；Renderer 层决定具体渲染管线和
+RenderGraph pass 顺序，`RenderRuntime` 负责 GPU 资源、场景同步、帧生命周期与 present。详细的依赖方向、
+线程边界和资源契约请阅读 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)。
 
 ## 坐标系约定
 
@@ -119,7 +121,7 @@ flowchart LR
 - [CPU Scene 到 GPU Scene 同步机制](./docs/summaries/scene-data-lifecycle.md)
 - [RenderGraph 与帧内数据流](./docs/summaries/render-graph-and-data-flow.md)
 - [Realtime RT 采样流程](./docs/summaries/realtime-rt-raytracing-flow.md)
-- [App 模块说明](./app/README.md)
-- [主体 Truvis App](./app/truvis/README.md)
+- [应用壳模块说明](./app/README.md)
+- [主体 Truvis Renderer](./renderer/truvis/README.md)
 - [Shader 模块说明](./engine/shader/README.md)
 - [活跃设计方向](./docs/brain-storm/README.md)

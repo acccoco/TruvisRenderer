@@ -11,7 +11,7 @@
 | runtime DLSS 选项 | `DlssOptions` | `truvis-render-runtime` | 是 | 保存 DLSS SR mode 与 RR 开关，并提供统一 active feature 决策 |
 | runtime 派生帧状态 | `FrameRenderState` | `truvis-render-runtime` | 否 | 保存当前 main view 的格式、render extent 与 output extent |
 | main view temporal 状态 | `ViewAccumState`、`DlssSrState` | `truvis-render-runtime` | 否 | 追踪历史是否可复用，以及 DLSS common constants / reset |
-| Renderer / subsystem 局部设置 | `PathTracingCommonSettings`、`RealtimeRenderSettings`、`OfflineRenderSettings` | `app-rendering` | 取决于 Renderer | 保存渲染子系统和具体 Renderer 自己理解的调试或实验参数 |
+| Renderer / subsystem 局部设置 | `PathTracingCommonSettings`、`RealtimeRenderSettings`、`OfflineRenderSettings` | `renderer-rendering` | 取决于 Renderer | 保存渲染子系统和具体 Renderer 自己理解的调试或实验参数 |
 
 这次整理后的核心原则是：`truvis-render-runtime` 持有跨渲染子系统的渲染契约和 runtime 派生状态，
 包括 `DlssOptions`、`FrameRenderState`、`ViewAccumState` 与 `DlssSrState` 等明确 owner；path tracing 公共采样参数、
@@ -85,7 +85,7 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 
 ## PathTracingCommonSettings
 
-`PathTracingCommonSettings` 位于 `app_rendering::shared`，由需要 path tracing
+`PathTracingCommonSettings` 位于 `renderer_rendering::shared`，由需要 path tracing
 调试控件的具体 Renderer 持有。Truvis 同时把同一份设置传给 realtime `RealtimeRenderSubsystem` 和 `OfflineRenderSubsystem`，因此在 ImGui
 里切换 `Realtime / Offline` 时公共参数不会因为两套 subsystem-local state 而回退或分叉。
 
@@ -103,7 +103,7 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 生成的 HDRI alias table；`Uniform` 强制 shader 走旧的 uniform sphere 采样，用于在相同场景下比较 HDRI NEE
 噪声与能量稳定性。该选项不改变 render extent、DLSS feature resource 或 runtime-owned temporal state。
 
-`sky_brightness` 是 app 层 path tracing 运行时调参，默认值 `8.0` 保持旧 shader 硬编码亮度。它只在 shader
+`sky_brightness` 是 Renderer 层 path tracing 运行时调参，默认值 `8.0` 保持旧 shader 硬编码亮度。它只在 shader
 采样 sky 贴图后统一缩放可见 sky miss 与 HDRI 直接光候选 radiance；因为这是所有方向共享的均匀倍率，不改变
 `RenderSkyManager` importance distribution 的相对权重，也不需要重建 alias table 或改写环境光 PDF。
 
@@ -115,14 +115,14 @@ class 纳入候选来源，但直接命中 emissive surface 的 hit emission 仍
 analytic class 纳入候选来源；该选项不改变 `SceneStore` / `RenderWorld` 的 light buffer 同步，也不改变 DLSS、
 GBuffer 或 runtime-owned temporal state。
 
-`SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道，并由 `app_rendering::shared` 对外 re-export；
-`app-render-ui` 因此无需直接依赖 pass crate。当前使用实时渲染常用的 ACES fitted approximation，并提供
+`SdrToneMappingSettings` 只作用于 `hdr-to-sdr` pass 的 Final 通道，并由 `renderer_rendering::shared` 对外 re-export；
+`renderer-render-ui` 因此无需直接依赖 pass crate。当前使用实时渲染常用的 ACES fitted approximation，并提供
 `Exposure EV`、`ACES Strength` 与 `White Point` 三个 ImGui 调节项；它不是完整 ACES / OCIO / HDR10 display
 transform，也不做自动曝光或参数持久化。DLSS SR 的 manual exposure 由固定 1x1 `dlss-sr-exposure` 输入提供，当前不跟随这里的 `Exposure EV`。
 
 ## RealtimeRenderSettings
 
-`RealtimeRenderSettings` 位于 `app_rendering::realtime`，由 `RealtimeRenderSubsystem` 持有。
+`RealtimeRenderSettings` 位于 `renderer_rendering::realtime`，由 `RealtimeRenderSubsystem` 持有。
 它只保存 realtime RT 自有状态；和 offline 语义相同的 sky / NEE / tone mapping 参数由 Renderer 持有的
 `PathTracingCommonSettings` 提供。
 
@@ -150,7 +150,7 @@ RTXDI-style RayTraced bias correction 是 shader 内部固定策略，不新增 
 
 ## OfflineRenderSettings
 
-`OfflineRenderSettings` 位于 `app_rendering::offline`，由 `OfflineRenderSubsystem` 持有。
+`OfflineRenderSettings` 位于 `renderer_rendering::offline`，由 `OfflineRenderSubsystem` 持有。
 它只保存 offline subsystem 自有状态；和 realtime 语义相同的 sky / NEE / tone mapping 参数由 Renderer 持有的
 `PathTracingCommonSettings` 提供。
 

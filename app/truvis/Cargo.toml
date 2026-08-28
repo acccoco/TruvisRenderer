@@ -1,8 +1,8 @@
 [package]
-name = "truvis"
+name = "truvis-app"
 version = "0.1.0"
 edition = "2024"
-description = "Main Truvis application"
+description = "Truvis Tauri Editor application shell"
 
 [[bin]]
 name = "truvis-app"

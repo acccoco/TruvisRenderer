@@ -23,7 +23,7 @@ const DESKTOP_COMMAND_CAPACITY: usize = 1;
 #[derive(Clone, Copy, Debug)]
 pub struct DesktopSkyAccepted;
 
-/// Tauri 主线程可以提交的 App-local 特权命令。
+/// Desktop frontend 可以提交的本机特权命令。
 ///
 /// 此 enum 不进入 `truvis-editor-bridge`，避免把本机绝对路径提升为 WebView Editor 能力。
 enum DesktopCommand {
@@ -65,7 +65,7 @@ impl DesktopCommandSender {
     }
 }
 
-/// 单帧处理 desktop command 后需要通知其他 App owner 的窄结果。
+/// 单帧处理 desktop command 后需要通知其他 Renderer owner 的窄结果。
 ///
 /// Controller 不直接依赖 `EditorController`；`TruvisRenderer` 负责在同一 update 阶段把
 /// scene-version 变化广播给 Tauri WebView。

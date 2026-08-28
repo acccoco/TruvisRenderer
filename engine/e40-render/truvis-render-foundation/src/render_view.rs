@@ -1,6 +1,6 @@
 /// runtime prepare 阶段读取的渲染视图快照。
 ///
-/// `RenderView` 是 app 层相机状态和 render runtime 之间的窄边界：runtime 不关心相机
+/// `RenderView` 是 Renderer 层相机状态和 render runtime 之间的窄边界：runtime 不关心相机
 /// 如何被输入控制、如何存储欧拉角或轨道状态，只消费本帧 shader 与累积渲染需要的矩阵和方向。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RenderView {

@@ -22,9 +22,9 @@ Truvis Editor 由 Tauri/Tao 顶层窗口、React WebView、Windows child HWND �
 ```text
 React WebView
   -> Tauri invoke
-truvis::editor_ipc
+truvis_app::editor_ipc
   -> truvis-editor-bridge
-       <- truvis::editor_controller
+       <- truvis_renderer::editor_controller
             -> truvis-world
 
 Editor notification
@@ -33,7 +33,8 @@ Editor notification
   -> React WebView
 
 Tauri desktop command
-  -> truvis::desktop_command
+  -> TruvisFrontendPorts::desktop_commands
+       <- truvis_renderer::desktop_command
        -> truvis-world
 
 DOM viewport rect
@@ -46,11 +47,13 @@ DOM viewport rect
 
 - `truvis-editor-bridge` 定义协议 DTO、每请求 oneshot reply 和方向受限的有界 endpoint；它不依赖
   `truvis-world`、render runtime、Tauri 或 GPU 类型。
-- `truvis::editor_ipc` 只负责 invoke、通知转发、背压和 timeout，不解释领域请求。
+- `truvis_app::editor_ipc` 只负责 invoke、通知转发、背压和 timeout，不解释领域请求。
 - `app/truvis/capabilities/main-editor.json` 只授予 `main` WebView 注册和移除 Tauri event listener 的权限；
   页面不能通过 Tauri event API 向 native 侧发送业务消息。
-- `truvis::editor_controller` 是协议 DTO 到 `World` handle、查询和 edit API 的唯一适配点。
-- `truvis::desktop_command` 只处理 Tauri 本地特权命令。本机 `PathBuf` 不进入通用 Editor DTO。
+- `truvis_renderer::editor_controller` 是协议 DTO 到 `World` handle、查询和 edit API 的唯一适配点。
+- `truvis_renderer::desktop_command` 只处理 Tauri 本地特权命令。本机 `PathBuf` 不进入通用 Editor DTO。
+- `create_truvis_ports` 在 Tauri main thread 创建端口。App 保留 `TruvisFrontendPorts`，
+  RenderThread factory 只移入 `TruvisRendererPorts`。
 - Web 只提交 child viewport 的物理像素矩形，不转发 viewport 鼠标或键盘输入；原生 child HWND 直接接收输入。
 
 ## 协议与身份
@@ -90,7 +93,7 @@ CPU scene 请求，不表示 decode、GPU upload 或 Alias distribution 已完�
 
 ## 并发与背压
 
-Desktop 到 Renderer 的 request inbox 容量为 `256`，Renderer 到 Desktop 的 notification outbox 容量为 `64`。
+Frontend 到 Renderer 的 request inbox 容量为 `256`，Renderer 到 Frontend 的 notification outbox 容量为 `64`。
 每个 request 携带独立 oneshot reply，不存在共享 response queue。Tauri command 使用 `try_send`，队列满返回 `busy`，
 等待超过两秒返回 `timeout`；Renderer 关闭时 reply sender drop，使等待者立即结束。
 
@@ -121,9 +124,9 @@ RenderThread 退出后销毁 child HWND，随后停止 notification dispatcher�
 
 ## 代码与操作入口
 
-- 协议与 endpoint：`app/editor/bridge/src/`
+- 协议与 endpoint：`renderer/editor/bridge/src/`
 - Tauri IPC owner：`app/truvis/src/editor_ipc.rs`
 - WebView event capability：`app/truvis/capabilities/main-editor.json`
-- RenderThread 协议适配：`app/truvis/src/editor_controller.rs`
+- Renderer ports 与 controller：`renderer/truvis/src/renderer_ports.rs`、`renderer/truvis/src/editor_controller.rs`
 - 页面 transport：`app/editor/web/src/transport/`
 - 开发、构建和运行参数：`app/editor/README.md`

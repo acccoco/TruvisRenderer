@@ -34,6 +34,6 @@
 ## 完成标准
 
 - prepare 内部职责可以从命名和调用关系上区分，并能说明每个子阶段读写的 owner。
-- render hook 能读取 runtime 准备好的 main view 语义，而不是在 app 层重新拼装 frame/view 含义。
+- render hook 能读取 runtime 准备好的 main view 语义，而不是在 Renderer 层重新拼装 frame/view 含义。
 - surface/headless 方向有清晰的 owner、生命周期和非目标说明。
 - 相关事实沉淀到 summaries 后，本文件只保留下一批尚未推进的 runtime 边界问题。

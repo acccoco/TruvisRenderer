@@ -27,7 +27,7 @@
 - 不让底层 Gfx pipeline 直接依赖 graph handle。
 - 不把 runtime prepare、asset upload 或 present owner 强行塞进 graph。
 - 不在第一轮做 pass culling、transient aliasing、async queue scheduler 或完整可视化工具。
-- 不改变 App 显式决定 pass 顺序的策略，除非 FrameGraph 原型已经能保持同等可读性。
+- 不改变 Renderer 显式决定 pass 顺序的策略，除非 FrameGraph 原型已经能保持同等可读性。
 
 ## 完成标准
 

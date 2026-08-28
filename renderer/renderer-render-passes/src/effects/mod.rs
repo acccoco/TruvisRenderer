@@ -1,4 +1,4 @@
-//! App 产品效果与可复用 raster pass。
+//! Renderer 产品效果与可复用 raster pass。
 
 pub mod coordinate_gizmo;
 pub mod phong;

@@ -53,7 +53,8 @@ RenderRuntime
 - `ImGuiSubsystem`、`TriangleSubsystem`、`ShaderToySubsystem`、`RealtimeRenderSubsystem`、`OfflineRenderSubsystem`、
   `SelectionOutlineSubsystem` 和 `CoordinateGizmoSubsystem` 等具体能力。
 
-主体 Truvis Renderer 的具体组合、UI/selection owner 和 pass 顺序见 [`app/truvis/README.md`](../../app/truvis/README.md)；
+主体 Truvis Renderer 的具体组合、UI/selection owner 和 pass 顺序见
+[`renderer/truvis/README.md`](../../renderer/truvis/README.md)；
 Editor 协议与线程边界见 [`editor-subsystem.md`](editor-subsystem.md)。
 
 ## Ctx 裁剪契约
@@ -71,7 +72,7 @@ RenderRuntime 通过 lifecycle Ctx 借出内部字段：
 update / after_prepare / render 直接传递对应 `RenderRuntime*Ctx`。具体 Renderer 在生命周期 hook 内把
 `&mut ctx.runtime` 直接交给自己持有的子系统，不重新构造等价的生命周期 ctx。
 
-render hook 需要向通用渲染子系统缩窄能力时，通过 `app_kit::subsystem::SubsystemRenderCtx::from_runtime`
+render hook 需要向通用渲染子系统缩窄能力时，通过 `renderer_kit::subsystem::SubsystemRenderCtx::from_runtime`
 从 `RenderRuntimeRenderCtx` 创建只读视图。它包含 typed `Gfx` ctx、`RenderPassRecordCtx`、`RenderSceneView`、
 `PresentView` 与 timeline，刻意不包含 `world_submesh_raster` 这类 Renderer 专属能力。
 
@@ -82,10 +83,10 @@ present owner 不直接暴露给 Renderer / 子系统；render/init/resize ctx �
 RenderGraph 内的当前 present image 与 image info，acquire/render-complete semaphore 由
 `PresentView::import_current_target` 固定接入 RenderGraph。
 
-GUI draw data 不进入通用 ctx。`app-imgui::ImGuiSubsystem` 自行持有 imgui context、draw data、字体、GUI mesh 与私有 Vulkan backend；
+GUI draw data 不进入通用 ctx。`renderer-imgui::ImGuiSubsystem` 自行持有 imgui context、draw data、字体、GUI mesh 与私有 Vulkan backend；
 Renderer 在 update 中调用 `build_frame(delta, |ui| ...)`，在 render 中显式调用 `prepare_render_data` 与
 `contribute_passes`，但不接触内部 GUI pass 或 GPU backend。Renderer-owned debug 选择只保存稳定 CPU 语义；
-`app-kit::DebugImageSelection` 不依赖 ImGui；对应渲染 subsystem 在 render phase 解析真实 image/view 与 layout。
+`renderer-kit::DebugImageSelection` 不依赖 ImGui；对应渲染 subsystem 在 render phase 解析真实 image/view 与 layout。
 
 selection outline 使用单独的 `WorldSubmeshRasterView` render ctx 能力。该能力只接受
 `WorldSubmeshSelection`，由 runtime 在当前 prepare 快照内解析 active instance slot 与 draw cache；Renderer 不接触
@@ -132,7 +133,7 @@ RenderLoop 只调用这些 Renderer 阶段，不遍历、注册或发现 Rendere
 ## 静态组合与 SubsystemLifecycle
 
 具体 Renderer 通过字段静态组合编译期已知的能力对象。只有确实拥有需要显式管理的长期资源的类型才实现
-`app_kit::subsystem::SubsystemLifecycle`：
+`renderer_kit::subsystem::SubsystemLifecycle`：
 
 - `init`
 - `on_resize`：可选默认空实现
@@ -161,7 +162,7 @@ RenderLoop 只调用这些 Renderer 阶段，不遍历、注册或发现 Rendere
 - `RenderLoop` 是唯一固定帧骨架，独占 runtime，并通过内部 `dyn Renderer` 回调具体业务阶段和裁剪 ctx。
 - RenderLoop 定义阶段边界；Renderer 编排阶段内部；子系统只实现自己的具体能力。
 - Renderer 是业务组合 owner，持有具体子系统，并在 render 阶段决定 RenderGraph pass 顺序与 realtime/offline 分支。
-- `app-kit` 不依赖具体 subsystem；ImGui 与 rendering 分属独立 crate，设置 UI 只作为两者之间的集成层。
+- `renderer-kit` 不依赖具体 subsystem；ImGui 与 rendering 分属独立 crate，设置 UI 只作为两者之间的集成层。
 - Tauri 文件对话框由 `TruvisDesktop` 持有，私有 desktop command receiver/controller 由 `TruvisRenderer` 持有；本地路径不得进入
   通用 Editor DTO、`RenderRuntime` 或通用生命周期接口，Tauri main thread 也不得直接修改 `World`。
 - `SubsystemLifecycle` 只规范 init / resize / shutdown；特有能力和调用顺序始终由具体 Renderer 显式控制。

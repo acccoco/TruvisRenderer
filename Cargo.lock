@@ -6012,7 +6012,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "truvis"
+name = "truvis-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",

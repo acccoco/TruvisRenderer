@@ -9,9 +9,9 @@ coordinate gizmo、selection outline 和 Phong shading。
 - shader 源码统一位于 `renderer/shader/`；`abi/renderer/render_passes/` 保存
   `renderer::render_passes::*` CPU/GPU 契约，`lib/renderer/` 保存依赖 pass ABI/resource 的算法，
   `entry/renderer/` 保存最终入口。
-- `renderer/shader/truvis-renderer-shader-binding` 统一生成全部 App ABI，只 allowlist `renderer::*`，并依赖
+- `renderer/shader/truvis-renderer-shader-binding` 统一生成全部 Renderer ABI，只 allowlist `renderer::*`，并依赖
   Engine canonical `truvis-shader-binding`。
-- 本 crate 使用 `app` package，产物位于 `build/shader/app/`；Engine ABI/lib 通过
+- 本 crate 使用 `renderer` package，产物位于 `build/shader/renderer/`；Engine ABI/lib 通过
   `depends_on = ["engine"]` 单向引用。
 - 完整目录、include roots 与增量边界见 `renderer/shader/README.md`。
 

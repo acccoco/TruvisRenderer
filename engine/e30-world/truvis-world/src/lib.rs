@@ -33,7 +33,7 @@ pub use crate::scene_store::{
 
 /// CPU 侧场景状态的聚合容器。
 ///
-/// 与 GPU-facing 状态物理分离，建立 CPU/GPU 数据的所有权边界。App 及其具体
+/// 与 GPU-facing 状态物理分离，建立 CPU/GPU 数据的所有权边界。Renderer 及其具体
 /// 子系统在 update 阶段通过这里修改 CPU state；`RenderRuntime::prepare` 再读取这些数据，
 /// 同步到 render-side manager、bridge、`RenderWorld` 和 shader-visible bindings。
 pub struct World {
@@ -49,8 +49,8 @@ pub struct World {
     assets: AssetHub,
     /// CPU resource-facing asset ingest 状态。
     ///
-    /// 该对象负责把 App 看到的 scene import 请求映射到内部 asset loader 状态，避免
-    /// `ModelLoadHandle` 等 loader 细节扩散到 App 层。
+    /// 该对象负责把 Renderer 看到的 scene import 请求映射到内部 asset loader 状态，避免
+    /// `ModelLoadHandle` 等 loader 细节扩散到 Renderer 层。
     scene_assets: SceneAssetIngestor,
 }
 
@@ -102,13 +102,13 @@ impl World {
     /// 返回 CPU scene 的只读视图。
     ///
     /// 当前 render-side `RenderInstanceManager` 仍需要读取 `SceneStore` 的 live instance / light
-    /// 快照。该 accessor 不暴露 `SceneStore` owner，避免 render runtime 或 App 修改 CPU scene 语义。
+    /// 快照。该 accessor 不暴露 `SceneStore` owner，避免 render runtime 或 Renderer 绕过 facade 修改 CPU scene 语义。
     pub fn scene_view(&self) -> SceneReadView<'_> {
         SceneReadView::new(&self.scene)
     }
 }
 
-// App 侧 facade
+// Renderer 侧 facade
 impl World {
     /// 请求导入 model / prefab。
     ///
@@ -140,7 +140,7 @@ impl World {
 
     /// 查询 model import 的 CPU 加载状态。
     ///
-    /// App 只用它显示或驱动 UI，不直接读取 `AssetHub` 的 loader state。
+    /// Renderer 只用它显示或驱动 UI，不直接读取 `AssetHub` 的 loader state。
     pub fn model_import_status(&self, handle: ModelImportHandle) -> LoadStatus {
         self.scene_assets.model_import_status(handle)
     }
@@ -204,7 +204,7 @@ impl World {
 
     /// 查询当前 CPU material 参数。
     ///
-    /// 这是 App/debug UI 的只读 facade；返回数据属于 CPU scene 参数，不表示 GPU material slot
+    /// 这是 Renderer/debug UI 的只读 facade；返回数据属于 CPU scene 参数，不表示 GPU material slot
     /// 已经 ready，也不暴露 loader owner 给调用方。
     pub fn material_data(&self, handle: MaterialHandle) -> Option<&MaterialData> {
         self.scene.material_data(handle)

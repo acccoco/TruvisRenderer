@@ -29,7 +29,7 @@
 - 不维护统一 C++ interface target；C API 留在拥有对应生命周期与业务语义的 C++ 模块内。
 - C++ 模块重复的路径、UTF-16/UTF-8 转换和目录创建逻辑归 `truvixx-utils`，业务模块不复制 helper。
 - Streamline C API 负责 `slInit`/`slShutdown`、feature query/options、resource tagging/evaluate 与 resource free；
-  RenderGraph pass 顺序和 Vulkan 资源生命周期仍由 Rust/app 层负责。
+  RenderGraph pass 顺序和 Vulkan 资源生命周期仍由 Rust Renderer 层负责。
 - Streamline callback 只复制消息并入队，最终日志输出由 Rust `streamline-logger` 线程完成。
 - Assimp scene 加载失败时 C API 可能返回可查询错误的非空句柄；调用方必须先检查 loaded 状态，再读取错误并释放句柄。
 - Streamline 接入当前只面向 Windows x64，不保留没有真实实现的跨平台 cfg 分支。

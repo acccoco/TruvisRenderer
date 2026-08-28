@@ -1,7 +1,7 @@
-//! App 层公共组件。
+//! Renderer 层公共组件。
 //!
 //! 本 crate 只保存生命周期契约、相机/输入和与界面、渲染实现无关的纯 CPU 状态。
-//! ImGui、GPU pass 和具体渲染子系统位于各自独立的 App crate，避免基础层反向依赖具体能力。
+//! ImGui、GPU pass 和具体渲染子系统位于各自独立的 Renderer crate，避免基础层反向依赖具体能力。
 
 pub mod camera;
 pub mod camera_controller;

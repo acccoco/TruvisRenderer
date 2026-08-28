@@ -11,10 +11,10 @@ realtime RT 的 path 积分状态集中在 raygen 侧推进。closest-hit 和 mi
 主要入口：
 
 - `engine/shader/entry/realtime_rt/raygen.slang`：每像素初始化、path loop、`TraceRay` 顺序和最终输出。
-- `renderer/shader/lib/app/realtime_rt/raygen_direct_lighting.slangi`：统一 Light Candidate System、visibility 和 shade。
-- `renderer/shader/lib/app/realtime_rt/restir_di.slangi`：primary ReSTIR DI reservoir 打包、temporal/spatial reuse 和 final shade。
-- `renderer/shader/lib/app/realtime_rt/raygen_material.slangi`：BRDF / delta 材质采样和 BRDF PDF。
-- `renderer/shader/lib/app/realtime_rt/raygen_path_state.slangi`：radiance、throughput、上一段 BRDF PDF、Russian roulette。
+- `renderer/shader/lib/renderer/realtime_rt/raygen_direct_lighting.slangi`：统一 Light Candidate System、visibility 和 shade。
+- `renderer/shader/lib/renderer/realtime_rt/restir_di.slangi`：primary ReSTIR DI reservoir 打包、temporal/spatial reuse 和 final shade。
+- `renderer/shader/lib/renderer/realtime_rt/raygen_material.slangi`：BRDF / delta 材质采样和 BRDF PDF。
+- `renderer/shader/lib/renderer/realtime_rt/raygen_path_state.slangi`：radiance、throughput、上一段 BRDF PDF、Russian roulette。
 
 ## Raygen 主循环
 
@@ -248,11 +248,11 @@ analytic light v1 不创建可命中的发光几何，因此 analytic NEE 固定
 ## SHARC world-space radiance cache（Update / Resolve / Query）
 
 SHARC（Spatially Hashed Radiance Cache）按路线图第八、九阶段接入。算法移植自 NVIDIA RTXGI SHARC v1.6
-（`tools/rtx-gi/Libraries/Sharc`），落在 `renderer/shader/lib/app/realtime_rt/sharc_hash_grid.slangi`、
+（`tools/rtx-gi/Libraries/Sharc`），落在 `renderer/shader/lib/renderer/realtime_rt/sharc_hash_grid.slangi`、
 `sharc_common.slangi` 与接入层 `sharc_integration.slangi`。模式由 `RealtimeRenderSettings.sharc_mode` 控制：
 `Off` 完全旁路；`Update` 只维护缓存、不查询（画面与 Off 一致）；`On` 在维护基础上让后续 bounce 查询缓存。
 
-资源：app 层 `SharcTargets` 拥有三个世界空间持久 buffer（不随 FIF / render extent 轮转），初始全部清 0：
+资源：Renderer 层 `SharcTargets` 拥有三个世界空间持久 buffer（不随 FIF / render extent 轮转），初始全部清 0：
 
 - `sharc_hash_entries`：每 entry 一个 uint64 spatial hash key（0 表示空槽），slot 抢占用 64-bit `InterlockedCompareExchange`。
 - `sharc_accumulation`：`SharcAccumulationData`(uint4)，本帧按 `radianceScale` 量化为 u32 的原子累积 radiance + sample 数。

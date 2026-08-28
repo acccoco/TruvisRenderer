@@ -1,4 +1,4 @@
-//! Tauri WebView / Desktop / App 共享的 Editor 协议 DTO。
+//! Frontend / Renderer 共享的 Editor 协议 DTO。
 //!
 //! Rust 类型是协议权威来源；Web 侧 TypeScript 由这些类型生成。所有 World handle 都只以
 //! session-local opaque string 表达，协议不会暴露 SlotMap 或 GPU slot 结构。

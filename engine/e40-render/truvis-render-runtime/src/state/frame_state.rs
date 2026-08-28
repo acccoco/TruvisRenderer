@@ -6,9 +6,9 @@ use ash::vk;
 /// Renderer-owned RT target、GBuffer、DLSS input/output 和 main-view target 都以它作为尺寸与格式契约。
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct FrameRenderState {
-    /// app 层 HDR 中间图像使用的颜色格式；不同于 swapchain surface format。
+    /// Renderer 层 HDR 中间图像使用的颜色格式；不同于 swapchain surface format。
     pub hdr_color_format: vk::Format,
-    /// app 层 depth attachment 使用的格式，由 runtime 按设备能力选择。
+    /// Renderer 层 depth attachment 使用的格式，由 runtime 按设备能力选择。
     pub depth_format: vk::Format,
     /// RT、GBuffer、motion vector 等内部渲染资源的尺寸。
     ///

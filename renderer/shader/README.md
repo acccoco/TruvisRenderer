@@ -58,7 +58,7 @@ ShaderToy 即使物理上位于 `renderer/shader`，也不能访问 Renderer 或
 Renderer ABI 若引用具名 Engine 类型，必须通过 `ModuleRawLine` 注入到 bindgen 实际生成的 Engine namespace。
 缺失映射时允许 Rust 编译失败，以 fail-closed 暴露依赖错误。
 
-Engine 类型只由 `truvis-shader-binding` 定义；不使用禁止定义黑名单，也不为旧 App binding crate 或旧
+Engine 类型只由 `truvis-shader-binding` 定义；不使用禁止定义黑名单，也不为旧命名的 Renderer binding crate 或旧
 shader 路径保留兼容层。
 
 ## 增量边界

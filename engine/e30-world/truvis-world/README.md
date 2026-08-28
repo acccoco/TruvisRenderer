@@ -43,7 +43,7 @@
 - `SceneStore` 与 `AssetHub` 字段对外保持私有；只有 `World` 方法可以组合二者。
 - `SceneStore` owner 不作为跨 crate 构造参数暴露；`World::new()` 负责创建内部 `SceneStore`、
   `AssetHub` 和 `SceneAssetIngestor`。
-- GPU frame state、bindless、global descriptor 和 manager-owned image/view 属于 render-side runtime owner；具体窗口尺寸 render target 由 app 层 pipeline/子系统持有。
+- GPU frame state、bindless、global descriptor 和 manager-owned image/view 属于 render-side runtime owner；具体窗口尺寸 render target 由 Renderer 层 pipeline/子系统持有。
 
 ## 设计意图
 

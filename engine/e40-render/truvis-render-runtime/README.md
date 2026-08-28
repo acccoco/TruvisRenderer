@@ -66,14 +66,14 @@
   dirty 时标记全部 FIF，当前 frame label 使用前上传最新 `SceneReadView` light snapshot，并向 scene root 提供
   device address、count 和 analytic light version。
 - `RayCastService` 持有 runtime 私有的专用 ray tracing pipeline/SBT、可增长 ray/result/readback buffer、
-  command pool 和 fence；它由 runtime 拥有，不进入 RenderGraph，也不通过 app 层 pass crate 暴露。
+  command pool 和 fence；它由 runtime 拥有，不进入 RenderGraph，也不通过 Renderer 层 pass crate 暴露。
 - `SwapchainPresenter` 拥有 surface、swapchain wrapper、swapchain image/view handle 和 present 同步对象；
   Renderer/子系统只通过 `PresentView` 查询 swapchain 信息，并通过 `ImportedPresentTarget` 接入 RenderGraph，不直接访问 owner 字段或 semaphore。
 
 ## 对外接口
 
 - crate 生命周期入口保持在 `present`、`render_runtime_ctx` 和 `render_runtime`；
-  app 层相机不属于 runtime 公共 API，prepare 阶段只接收 `RenderView` 快照。
+  Renderer 层相机不属于 runtime 公共 API，prepare 阶段只接收 `RenderView` 快照。
 - runtime-owned render state 通过 `state::{frame_state, dlss_options, view_accum, frame_timing, dlss_sr}` 模块公开；
   其中 `dlss_options` 提供 `DlssOptions`，作为 SR/RR active 判断、旧 feature 比较和资源释放的统一 owner；foundation 只保留 FIF 基础索引、资源句柄、view trait 和 `GfxResourceAccess` 契约。
 - GPU resource owner 通过 `resources` 模块公开，包括 `GfxResourceManager`、`CmdAllocator` 和 `StageBufferManager`。

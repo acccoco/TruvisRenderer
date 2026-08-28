@@ -2,7 +2,7 @@
 
 ## 目标
 
-在已经拆分的 App capability crate 基础上，继续收敛输入事件、业务交互与静态装配边界；保持资源 owner、
+在已经拆分的 Renderer capability crate 基础上，继续收敛输入事件、业务交互与静态装配边界；保持资源 owner、
 生命周期顺序和 RenderGraph 编排在具体 Renderer 中显式可见。
 
 ## 当前基线
@@ -30,4 +30,4 @@
 - 每个可选子系统的静态装配位置与拆卸影响可从具体 Renderer 字段和 phase 调用点直接看出。
 - 渲染子系统的初始化、resize、graph 贡献和 shutdown 顺序可由具体 Renderer 代码直接看出。
 - GUI/input/overlay 的消费顺序仍由 Renderer 策略明确控制。
-- App capability crate 中可复用能力的 owner、非职责和依赖方向能写入模块 README 或 summaries。
+- Renderer capability crate 中可复用能力的 owner、非职责和依赖方向能写入模块 README 或 summaries。

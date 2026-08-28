@@ -126,7 +126,7 @@ StreamlineRuntime::drop
 - Rust callback 不能直接做最终 IO。
 - C++ 不负责最终日志输出。
 - C++ wrapper 不静态链接 `sl.interposer.lib`，只能通过 Rust 传入的绝对路径加载 SL DLL。
-- SR/RR evaluate 是 opaque external command；Rust/app 层负责 RenderGraph resource state、
+- SR/RR evaluate 是 opaque external command；Rust Renderer 层负责 RenderGraph resource state、
   pass 顺序和 GPU idle 后再释放旧 feature resources。
 - Streamline 初始化失败是启动失败，不做同进程 runtime retry。
 - 业务侧统一通过 `log` facade 接收日志，具体输出格式由 `truvis-logs` 维护。

@@ -185,7 +185,7 @@ impl CameraController {
         self.apply_wheel_zoom_delta(request.pending_wheel_delta, request.viewport_size);
     }
 
-    /// 根据窗口物理像素坐标生成世界空间射线，供 app 层在 after_prepare 阶段执行同步查询。
+    /// 根据窗口物理像素坐标生成世界空间射线，供 Renderer 在 after_prepare 阶段执行同步查询。
     pub fn make_screen_raycast(&self, mouse_position: [f64; 2], viewport_size: glam::Vec2) -> Option<RayCastRay> {
         let screen_pos = glam::vec2(mouse_position[0] as f32, mouse_position[1] as f32);
         let direction_ws = Self::screen_ray_direction(&self.camera, screen_pos, viewport_size)?;

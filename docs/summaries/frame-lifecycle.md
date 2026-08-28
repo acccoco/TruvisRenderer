@@ -174,7 +174,7 @@ flowchart TB
     RenderCtx --> RendererRender --> Subsystem
 ```
 
-`SubsystemRenderCtx` 位于 `app-kit`，只由 Renderer 在 render 阶段构造，不由 RenderLoop 或
+`SubsystemRenderCtx` 位于 `renderer-kit`，只由 Renderer 在 render 阶段构造，不由 RenderLoop 或
 `SubsystemLifecycle` 自动派发。render 阶段需要 Renderer 决定完整 pass 顺序，例如先贡献 RT / raster pass，再叠加 GUI；
 `world_submesh_raster` 等 Renderer 专属能力不会进入所有子系统共享的视图。
 
@@ -220,8 +220,8 @@ Renderer 是业务编排层。它既不拥有 runtime，也不把具体子系统
 | `on_resize` | 具体 Renderer | 按需重建窗口尺寸或 render extent 相关资源；默认空实现 | `&mut RenderRuntimeResizeCtx` |
 | `shutdown`  | 具体 Renderer | 在 runtime destroy 之前显式释放 GPU 资源 | `&mut RenderRuntimeShutdownCtx` |
 
-`SubsystemLifecycle` 只属于 `app-kit`，不要求纯 UI overlay、camera 或 controller 实现。
-`app-imgui::ImGuiSubsystem::on_input` / `build_frame` / `prepare_render_data` / `contribute_passes` 以及渲染 subsystem 的
+`SubsystemLifecycle` 只属于 `renderer-kit`，不要求纯 UI overlay、camera 或 controller 实现。
+`renderer-imgui::ImGuiSubsystem::on_input` / `build_frame` / `prepare_render_data` / `contribute_passes` 以及渲染 subsystem 的
 `contribute_compute_passes` 都是具体类型能力，由 Renderer 按业务顺序显式调用；不存在 visitor、注册表或运行时动态组合。
 
 ## 关系与约束

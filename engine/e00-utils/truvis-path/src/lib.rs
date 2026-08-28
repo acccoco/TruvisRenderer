@@ -71,8 +71,8 @@ fn shader_packages() -> &'static ShaderPackageFile {
 /// ```ignore
 /// let model   = TruvisPath::assets("sponza.fbx");
 /// let texture = TruvisPath::resources("sky.jpg"); // assets/resources/sky.jpg
-/// let spv = TruvisPath::shader_build_spv("app", "realtime_rt/raygen.slang");
-/// // build/shader/app/realtime_rt/raygen.slang.spv
+/// let spv = TruvisPath::shader_build_spv("renderer", "realtime_rt/raygen.slang");
+/// // build/shader/renderer/realtime_rt/raygen.slang.spv
 /// ```
 pub struct TruvisPath;
 

@@ -30,5 +30,5 @@
 ## 边界约束
 
 - 业务 crate 继续使用 `log` facade，不在每个 `log::info!` / `log::debug!` 调用点手动拼接线程信息。
-- 本 crate 位于基础层，不依赖 winit、render backend、frame runtime 或 App 业务模块。
+- 本 crate 位于基础层，不依赖 winit、render backend、frame runtime 或 Renderer/App 业务模块。
 - 线程上下文按线程缓存；如果线程创建后再改名，缓存不会自动更新。

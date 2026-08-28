@@ -222,7 +222,7 @@ struct SceneMaterialRecord {
 
 /// CPU scene 中的 sky / environment 权威状态。
 ///
-/// 这里仅保存 App 可编辑的语义状态：是否启用、亮度参数、引用的 scene texture 以及语义版本。
+/// 这里仅保存 Renderer 可编辑的语义状态：是否启用、亮度参数、引用的 scene texture 以及语义版本。
 /// GPU SRV、fallback texture、importance distribution 和 retired buffer 都属于 render-side
 /// `RenderSkyManager`，不会进入 `SceneStore`。
 #[derive(Clone, Copy, Debug, PartialEq)]

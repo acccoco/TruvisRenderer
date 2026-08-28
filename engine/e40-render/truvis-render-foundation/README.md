@@ -21,8 +21,8 @@
 
 - 不拥有 `GfxResourceManager`、`ShaderBindingSystem`、`GlobalDescriptorSets`、`BindlessManager`、`CmdAllocator` 或 `PerFrameGpuData`。
 - 不创建、注册、释放 Vulkan/VMA/WSI 资源。
-- 不依赖 App、具体子系统、scene loading、窗口平台或 runtime render state 语义。
+- 不依赖 Renderer/App、具体子系统、scene loading、窗口平台或 runtime render state 语义。
 
 ## 依赖原则
 
-foundation 位于 `truvis-gfx` 之上、`truvis-render-graph` 和 `truvis-render-runtime` 之下。它可以引用 RHI 资源类型以定义只读契约，但不能反向依赖 runtime 或 app 层实现。
+foundation 位于 `truvis-gfx` 之上、`truvis-render-graph` 和 `truvis-render-runtime` 之下。它可以引用 RHI 资源类型以定义只读契约，但不能反向依赖 runtime 或 Renderer/App 层实现。

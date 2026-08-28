@@ -27,7 +27,7 @@ pub struct PhongPass {
 
 /// Phong pass 本帧绘制目标，由调用方显式提供。
 ///
-/// 目标资源属于 app 层具体管线；pass 只消费已经解析好的 Vulkan image view，
+/// 目标资源属于 Renderer 层具体管线；pass 只消费已经解析好的 Vulkan image view，
 /// 不从全局 record ctx 中假定某个 render target owner。
 #[derive(Clone, Copy)]
 pub struct PhongPassTarget {

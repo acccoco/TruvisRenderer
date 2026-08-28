@@ -1,6 +1,6 @@
 #pragma once
 
-/// `app-render-passes` 拥有的 shader-visible ABI 聚合入口。
+/// `renderer-render-passes` 拥有的 shader-visible ABI 聚合入口。
 #include "abi/renderer/render_passes/image_clear/mod.slangi"
 #include "abi/renderer/render_passes/offline_rt/mod.slangi"
 #include "abi/renderer/render_passes/post_accum/mod.slangi"

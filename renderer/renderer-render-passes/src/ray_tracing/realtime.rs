@@ -138,7 +138,7 @@ pub struct RestirSurfaceKeyRgImages {
 /// ReSTIR DI reservoir pass image handles。
 ///
 /// renderer-kit 负责资源生命周期；render-pass crate 只关心当前 descriptor 绑定需要的
-/// Vulkan image/view handle，避免把 app 层 target owner 类型反向暴露到 pass 实现里。
+/// Vulkan image/view handle，避免把 Renderer 层 target owner 类型反向暴露到 pass 实现里。
 #[derive(Clone, Copy)]
 pub struct RestirReservoirPassImages {
     pub a: GfxImageHandle,
@@ -171,7 +171,7 @@ pub struct RealtimeRtPassData {
     pub single_frame_output: GfxImageHandle,
     pub single_frame_output_view: GfxImageViewHandle,
     pub single_frame_extent: vk::Extent2D,
-    /// App 层 RT pipeline 设置转换后的 shader 调试通道。
+    /// Renderer 层 RT pipeline 设置转换后的 shader 调试通道。
     pub debug_channel: u32,
     /// HDRI / sky 直接光采样模式。
     pub sky_sampling_mode: u32,
@@ -581,7 +581,7 @@ impl RealtimeRtPass {
         );
 
         // SHARC regular descriptor set：分配一次并写入持久 buffer，之后每帧只 bind 不再更新。
-        // SHARC buffer 由 app 层 SharcTargets 拥有，不随帧/resize 变化，所以这种「一次写入」是安全的。
+        // SHARC buffer 由 Renderer 层 SharcTargets 拥有，不随帧/resize 变化，所以这种「一次写入」是安全的。
         let sharc_descriptor_pool = GfxDescriptorPool::new(
             device_ctx,
             Rc::new(GfxDescriptorPoolCreateInfo::new(

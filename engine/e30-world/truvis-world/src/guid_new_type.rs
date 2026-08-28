@@ -3,7 +3,7 @@ use slotmap::new_key_type;
 new_key_type! {
     /// `World` 内一次 model import 请求的 runtime 身份。
     ///
-    /// 该 handle 只属于 scene asset ingest 流程，用来让 App 查询或消费 model 导入结果。
+    /// 该 handle 只属于 scene asset ingest 流程，用来让 Renderer 查询或消费 model 导入结果。
     /// 它不等同于 `AssetHub` 内部的 model asset handle，也不表示已经写入 `SceneStore` 的
     /// live instance。
     pub struct ModelImportHandle;

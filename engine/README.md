@@ -2,7 +2,7 @@
 
 `engine/` 是渲染引擎核心实现、Shader 工具链与 C++ FFI 边界目录。这里的 Rust crate 覆盖基础工具、Vulkan
 RHI、CPU scene/assets、RenderGraph、RenderRuntime、RenderLoop 框架和平台入口；具体 Renderer、GUI 集成和业务 pass 位于
-workspace 顶层 `app/`。
+workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
 
 ## 分层速览
 
@@ -21,7 +21,8 @@ workspace 顶层 `app/`。
 - L5 RenderLoop 框架层：`e50-render-loop/truvis-render-loop` 定义具体 `Renderer` 阶段契约、统一 `RenderLoop` 和最小线程控制契约。
 - L6 渲染线程宿主：`e60-platform/truvis-render-thread` 管理不依赖窗口 backend 的 OS RenderThread 生命周期。
 - L7 窗口平台层：`e60-platform/truvis-winit-host` 管理 winit standalone / embedded 窗口与输入适配。
-- L8 具体应用层：主体应用、Editor 和 samples 位于 `../app/`。
+- L8 Renderer 层：具体 Renderer、Subsystem、pass、shader 和 typed ports 位于 `../renderer/`。
+- L9 应用壳层：Tauri Editor 与 standalone sample 启动入口位于 `../app/`。
 
 `shader/` 和 `cxx/` 是工具链与外部边界目录：其中 binding crate 会被运行时 crate 使用，build crate 主要由 `just`
 命令驱动生成产物。
@@ -30,9 +31,9 @@ workspace 顶层 `app/`。
 
 ### `e00-foundation/`
 
-基础工具层，不依赖窗口、渲染运行时或 App 业务语义。
+基础工具层，不依赖窗口、渲染运行时或 Renderer/App 业务语义。
 
-- `truvis-utils/`：通用小工具 crate，提供带索引常量数组、基础配置解析等 helper；不承载 Vulkan、asset 或 App
+- `truvis-utils/`：通用小工具 crate，提供带索引常量数组、基础配置解析等 helper；不承载 Vulkan、asset 或 Renderer/App
   生命周期语义。
 - `truvis-logs/`：项目统一日志初始化和 formatter；业务 crate 继续使用 `log` facade，不在调用点手工拼接线程上下文。
 
@@ -47,7 +48,7 @@ workspace 顶层 `app/`。
 
 ### `e10-gfx/`
 
-Vulkan RHI 与 descriptor-layout 辅助层，提供底层 GPU 能力，不包含 scene、App 或具体 pass 编排。
+Vulkan RHI 与 descriptor-layout 辅助层，提供底层 GPU 能力，不包含 scene、Renderer/App 或具体 pass 编排。
 
 - `truvis-gfx/`：`Gfx` root owner、typed Gfx Ctx、Vulkan device/queue/resource/sync/swapchain/pipeline
   wrapper；不依赖更高层渲染或业务语义。
@@ -112,9 +113,9 @@ C++ 子系统、CMake/vcpkg 构建和 Rust FFI binding 目录。
 - `truvis-streamline-binding/`：Streamline / DLSS Rust 绑定与最小 RAII runtime，负责 `slInit`/`slShutdown` 生命周期和日志桥；当前不负责
   RenderGraph pass、resource tagging 或 DLSS evaluate。
 
-应用层位于 workspace 顶层 `../app/`：`app-kit/` 保存生命周期契约、相机/输入和纯 CPU 状态；`app-imgui/`
-拥有 ImGui subsystem 与私有 backend；`app-render-passes/` 保存共享 GPU pass；`app-rendering/` 拥有 realtime/offline
-渲染子系统和长期资源；`app-render-ui/` 集成渲染设置与 ImGui。`truvis/` 与 `samples/` 保存可执行入口。
+Renderer 层位于 workspace 顶层 `../renderer/`：它保存具体 Renderer、capability crates、Subsystem、
+GPU pass、shader 和传输无关的 typed ports，只能单向依赖 Engine。应用壳位于 `../app/`，只保留
+Tauri Editor 和 standalone sample 启动入口。Engine 不得依赖这两个顶层业务目录。
 
 ## 推荐阅读顺序
 
