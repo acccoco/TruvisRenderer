@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use truvis_logs::{LogFilePath, TruvisLogger};
+use truvis_path::TruvisPath;
 use truvis_shader_build::ShaderBuildRunner;
 use truvis_shader_manifest::ShaderManifest;
 
@@ -34,6 +35,6 @@ impl CliOptions {
 fn main() -> Result<(), String> {
     let options = CliOptions::parse()?;
     let manifest = ShaderManifest::load(&options.manifest_path).map_err(|err| err.to_string())?;
-    TruvisLogger::init_with_file(LogFilePath::current_exe(manifest.log_root()));
+    TruvisLogger::init_with_file(LogFilePath::current_exe(TruvisPath::temp_dir()));
     ShaderBuildRunner::new(manifest, options.force)?.run()
 }

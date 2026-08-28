@@ -5,7 +5,6 @@ use std::{
 };
 
 use serde::Deserialize;
-use truvis_shader_manifest::ShaderManifest;
 
 mod path_utils;
 pub use path_utils::PathUtils;
@@ -19,6 +18,8 @@ struct Dirs {
     tools: String,
     target: String,
     temp: String,
+    shader_build: String,
+    binding_build: String,
     cxx: String,
 }
 
@@ -31,7 +32,6 @@ struct MapConfig {
 const WORKSPACE_ROOT: &str = env!("TRUVIS_WORKSPACE_ROOT");
 
 static CONFIG: OnceLock<MapConfig> = OnceLock::new();
-static SHADER_MANIFEST: OnceLock<ShaderManifest> = OnceLock::new();
 
 fn config() -> &'static MapConfig {
     CONFIG.get_or_init(|| {
@@ -39,13 +39,6 @@ fn config() -> &'static MapConfig {
         let content =
             fs::read_to_string(&map_path).unwrap_or_else(|e| panic!("无法读取 map.toml（{map_path:?}）: {e}"));
         toml::from_str(&content).unwrap_or_else(|e| panic!("map.toml 解析失败: {e}"))
-    })
-}
-
-fn shader_manifest() -> &'static ShaderManifest {
-    SHADER_MANIFEST.get_or_init(|| {
-        ShaderManifest::load(TruvisPath::shader_manifest_path())
-            .unwrap_or_else(|error| panic!("shader-packages.toml 加载失败: {error:#}"))
     })
 }
 
@@ -58,8 +51,7 @@ fn shader_manifest() -> &'static ShaderManifest {
 /// ```ignore
 /// let model   = TruvisPath::assets("sponza.fbx");
 /// let texture = TruvisPath::resources("sky.jpg"); // assets/resources/sky.jpg
-/// let spv = TruvisPath::shader_build_spv("renderer", "realtime_rt/raygen.slang");
-/// // build/shader/renderer/realtime_rt/raygen.slang.spv
+/// let shader_root = TruvisPath::shader_build_dir(); // build/shader/
 /// ```
 pub struct TruvisPath;
 
@@ -168,7 +160,7 @@ impl TruvisPath {
 impl TruvisPath {
     /// 编译后的 shader 产物目录（`build/shader/`）。
     pub fn shader_build_dir() -> PathBuf {
-        shader_manifest().shader_output_root()
+        Self::workspace().join(&config().dirs.shader_build)
     }
 
     /// shader package manifest 路径。
@@ -182,23 +174,7 @@ impl TruvisPath {
     /// 一样属于 workspace 级构建产物；具体 crate 需要继续按 target 和模块名拆分子目录，
     /// 避免不同 FFI / shader binding 互相覆盖。
     pub fn rust_binding_build_dir() -> PathBuf {
-        Self::target().join("bindings")
-    }
-
-    /// 按 package id 解析编译后的 SPIR-V 路径。
-    pub fn shader_build_spv(package_id: &str, filename: &str) -> String {
-        shader_manifest()
-            .shader_output_path(package_id, filename)
-            .unwrap_or_else(|error| panic!("shader 输出路径解析失败: {error:#}"))
-            .to_str()
-            .unwrap()
-            .to_string()
-    }
-
-    /// 编译后的 SPIR-V 路径（字符串形式）。
-    #[inline]
-    pub fn shader_build_path_str(package_id: &str, filename: &str) -> String {
-        Self::shader_build_spv(package_id, filename)
+        Self::workspace().join(&config().dirs.binding_build)
     }
 
     /// cxx 根目录（`engine/cxx/`）

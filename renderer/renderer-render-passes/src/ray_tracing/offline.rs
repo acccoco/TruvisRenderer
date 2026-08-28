@@ -15,13 +15,13 @@ use truvis_gfx::{
     pipelines::shader::{GfxShaderGroupInfo, GfxShaderModuleCache, GfxShaderStageInfo},
     resources::special_buffers::sbt_buffer::GfxSBTBuffer,
 };
-use truvis_path::TruvisPath;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_renderer_shader_binding::gpu;
+use truvis_shader_manifest::ShaderArtifactPath;
 
 use super::pipeline::GfxRtPipeline;
 
@@ -50,27 +50,27 @@ static OFFLINE_SHADER_STAGES: LazyLock<EnumMap<OfflineShaderStages, GfxShaderSta
         OfflineShaderStages::RayGen => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::RAYGEN_KHR,
             entry_point: c"main_ray_gen",
-            path: TruvisPath::shader_build_path_str("renderer", "offline_rt/raygen.slang"),
+            path: ShaderArtifactPath::resolve("renderer", "offline_rt/raygen.slang"),
         },
         OfflineShaderStages::SkyMiss => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::MISS_KHR,
             entry_point: c"sky_miss",
-            path: TruvisPath::shader_build_path_str("renderer", "offline_rt/miss_sky.slang"),
+            path: ShaderArtifactPath::resolve("renderer", "offline_rt/miss_sky.slang"),
         },
         OfflineShaderStages::ShadowMiss => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::MISS_KHR,
             entry_point: c"shadow_miss",
-            path: TruvisPath::shader_build_path_str("renderer", "offline_rt/miss_shadow.slang"),
+            path: ShaderArtifactPath::resolve("renderer", "offline_rt/miss_shadow.slang"),
         },
         OfflineShaderStages::ClosestHit => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::CLOSEST_HIT_KHR,
             entry_point: c"main_closest_hit",
-            path: TruvisPath::shader_build_path_str("renderer", "offline_rt/closest_hit.slang"),
+            path: ShaderArtifactPath::resolve("renderer", "offline_rt/closest_hit.slang"),
         },
         OfflineShaderStages::TransAny => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::ANY_HIT_KHR,
             entry_point: c"trans_any",
-            path: TruvisPath::shader_build_path_str("renderer", "offline_rt/any_hit.slang"),
+            path: ShaderArtifactPath::resolve("renderer", "offline_rt/any_hit.slang"),
         },
     }
 });

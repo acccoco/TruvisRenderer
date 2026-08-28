@@ -7,6 +7,7 @@ description = "build shader"
 
 [dependencies]
 truvis-logs = { workspace = true }
+truvis-path = { workspace = true }
 truvis-shader-manifest = { workspace = true }
 
 log = { workspace = true }

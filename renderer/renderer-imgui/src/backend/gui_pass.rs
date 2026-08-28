@@ -20,12 +20,12 @@ use truvis_gfx::{
         shader::GfxShaderStageInfo,
     },
 };
-use truvis_path::TruvisPath;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_foundation::resource_access::GfxResourceAccess;
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_renderer_shader_binding::gpu;
+use truvis_shader_manifest::ShaderArtifactPath;
 
 use super::gui_mesh::GuiMesh;
 use super::gui_vertex_layout::ImGuiVertexLayoutAoS;
@@ -41,12 +41,12 @@ static SHADER_STAGES: LazyLock<EnumMap<ShaderStage, GfxShaderStageInfo>> = LazyL
         ShaderStage::Vertex => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::VERTEX,
             entry_point: c"vsmain",
-            path: TruvisPath::shader_build_path_str("renderer", "ui/imgui.slang"),
+            path: ShaderArtifactPath::resolve("renderer", "ui/imgui.slang"),
         },
         ShaderStage::Fragment => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::FRAGMENT,
             entry_point: c"psmain",
-            path: TruvisPath::shader_build_path_str("renderer", "ui/imgui.slang"),
+            path: ShaderArtifactPath::resolve("renderer", "ui/imgui.slang"),
         },
     }
 });

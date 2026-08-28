@@ -5,6 +5,8 @@ edition = "2024"
 description = "Shader package、编译器与 binding 构建配置"
 
 [dependencies]
+truvis-path = { workspace = true }
+
 anyhow = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }

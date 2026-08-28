@@ -10,13 +10,13 @@ use truvis_gfx::descriptors::descriptor::GfxDescriptorSetLayout;
 use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_gfx::pipelines::graphics_pipeline::{GfxGraphicsPipeline, GfxGraphicsPipelineCreateInfo, GfxPipelineLayout};
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
-use truvis_path::TruvisPath;
 use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_render_runtime::selection::{WorldSubmeshRasterView, WorldSubmeshSelection};
 use truvis_renderer_shader_binding::gpu;
+use truvis_shader_manifest::ShaderArtifactPath;
 
 /// selection outline 的共享 pass 实现。
 ///
@@ -99,14 +99,8 @@ impl SelectionOutlinePass {
         global_descriptor_sets: &GlobalDescriptorSets,
     ) -> GfxGraphicsPipeline {
         let mut ci = GfxGraphicsPipelineCreateInfo::default();
-        ci.vertex_shader_stage(
-            &TruvisPath::shader_build_path_str("renderer", "selection_outline/mask.vs.slang"),
-            c"main",
-        );
-        ci.fragment_shader_stage(
-            &TruvisPath::shader_build_path_str("renderer", "selection_outline/mask.ps.slang"),
-            c"main",
-        );
+        ci.vertex_shader_stage(&ShaderArtifactPath::resolve("renderer", "selection_outline/mask.vs.slang"), c"main");
+        ci.fragment_shader_stage(&ShaderArtifactPath::resolve("renderer", "selection_outline/mask.ps.slang"), c"main");
         ci.vertex_binding(vec![vk::VertexInputBindingDescription {
             binding: 0,
             stride: size_of::<glam::Vec3>() as u32,
@@ -151,11 +145,11 @@ impl SelectionOutlinePass {
     ) -> GfxGraphicsPipeline {
         let mut ci = GfxGraphicsPipelineCreateInfo::default();
         ci.vertex_shader_stage(
-            &TruvisPath::shader_build_path_str("renderer", "selection_outline/composite.slang"),
+            &ShaderArtifactPath::resolve("renderer", "selection_outline/composite.slang"),
             c"vsmain",
         );
         ci.fragment_shader_stage(
-            &TruvisPath::shader_build_path_str("renderer", "selection_outline/composite.slang"),
+            &ShaderArtifactPath::resolve("renderer", "selection_outline/composite.slang"),
             c"psmain",
         );
         ci.vertex_binding(vec![]);

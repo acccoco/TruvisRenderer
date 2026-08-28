@@ -15,7 +15,7 @@ use truvis_gfx::{
         shader::GfxShaderStageInfo,
     },
 };
-use truvis_path::TruvisPath;
+use truvis_shader_manifest::ShaderArtifactPath;
 
 #[derive(Debug, Clone, Copy, Enum)]
 enum ShaderStage {
@@ -28,12 +28,12 @@ static SHADER_STAGES: LazyLock<EnumMap<ShaderStage, GfxShaderStageInfo>> = LazyL
         ShaderStage::Vertex => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::VERTEX,
             entry_point: c"vsmain",
-            path: TruvisPath::shader_build_path_str("sample-hello-triangle", "triangle.slang"),
+            path: ShaderArtifactPath::resolve("sample-hello-triangle", "triangle.slang"),
         },
         ShaderStage::Fragment => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::FRAGMENT,
             entry_point: c"psmain",
-            path: TruvisPath::shader_build_path_str("sample-hello-triangle", "triangle.slang"),
+            path: ShaderArtifactPath::resolve("sample-hello-triangle", "triangle.slang"),
         },
     }
 });

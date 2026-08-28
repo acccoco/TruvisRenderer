@@ -36,12 +36,12 @@ Engine binding、shader 源码和 package 配置禁止依赖任何 Renderer crat
 
 当前只保留四个 package：
 
-| package | 依赖 | 产物前缀 |
+| package | 依赖 | 相对 `shader_build` 的产物前缀 |
 | --- | --- | --- |
-| `engine` | 无 | `build/shader/engine/` |
-| `renderer` | `engine` | `build/shader/renderer/` |
-| `sample-hello-triangle` | `engine` | `build/shader/samples/hello-triangle/` |
-| `sample-shader-toy` | 无 | `build/shader/samples/shader-toy/` |
+| `engine` | 无 | `engine/` |
+| `renderer` | `engine` | `renderer/` |
+| `sample-hello-triangle` | `engine` | `samples/hello-triangle/` |
+| `sample-shader-toy` | 无 | `samples/shader-toy/` |
 
 四个 package 的 include roots 只使用 `.vscode/settings.json` 声明的 `engine/shader`、`renderer/shader` 或其严格
 子集，不使用 workspace 根目录 `.`。当前 manifest 因此要求源码 include 写成 `abi/engine/...`、
@@ -56,16 +56,18 @@ just shader-force
 ```
 
 `just shader` 先运行 package-aware 编译器，再构建 Engine 与 Renderer 两个 binding crate。运行时通过
-`TruvisPath::shader_build_path_str(package_id, entry_relative_path)` 解析同一份 manifest，调用点不手写
-输出前缀。
+`ShaderArtifactPath::resolve(package_id, entry_relative_path)` 解析同一份 manifest，调用点不手写输出前缀。
+`map.toml` 的 `dirs.shader_build`、`dirs.binding_build` 和 `dirs.temp` 是产物物理根的唯一配置源；
+`shader-packages.toml` 只声明 package/compiler/binding 及 package id 到输出前缀的逻辑映射。
 
-`build/shader/.state/shader-build.json` 使用版本 5 记录 package、compiler、输出、共享输入和任务，
+`build/shader/.state/shader-build.json` 使用版本 6 记录 package、compiler、输出、共享输入和任务，
 `build/shader/.deps/` 保存编译器 depfile。构建前检查 canonical include、唯一解析和层级方向，编译后再验证
 真实传递依赖。单个 entry 变化只重编该
 任务；Renderer shared input 只失效 Renderer；Engine shared input 会传播到声明依赖 Engine 的 Renderer 和 Hello Triangle；
 ShaderToy shared input 只失效自身。
 
-binding 源码生成到 `build/bindings/{TARGET}/shader/<binding-crate>/`，源码树不保存
+binding 源码生成到 `dirs.binding_build/{TARGET}/shader/<binding-crate>/`（当前为
+`build/bindings/{TARGET}/shader/<binding-crate>/`），源码树不保存
 `_shader_bindings.rs`。两个 owner 的 `build.rs` 按 binding id 读取 `[[binding]]`，只补充各自 allowlist 与
 跨 crate Rust re-export policy。
 

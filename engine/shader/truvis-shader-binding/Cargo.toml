@@ -10,6 +10,5 @@ bytemuck = { workspace = true }
 glam = { workspace = true }
 
 [build-dependencies]
-truvis-path = { workspace = true }
 truvis-shader-binding-codegen = { workspace = true }
 truvis-shader-manifest = { workspace = true }

@@ -1,10 +1,8 @@
-use truvis_path::TruvisPath;
 use truvis_shader_binding_codegen::{BindingGenerator, BindingSpec, ModuleRawLine};
 use truvis_shader_manifest::ShaderManifest;
 
 fn main() {
-    let manifest =
-        ShaderManifest::load(TruvisPath::shader_manifest_path()).expect("Unable to load shader package manifest");
+    let manifest = ShaderManifest::load_default().expect("Unable to load shader package manifest");
     let target = std::env::var("TARGET").expect("TARGET must be set by Cargo build scripts");
     let binding = manifest.resolved_binding("renderer", &target).expect("Unable to resolve renderer shader binding");
     let module_raw_lines = [ModuleRawLine {

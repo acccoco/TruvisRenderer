@@ -4,12 +4,12 @@ use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
-use truvis_path::TruvisPath;
 use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_renderer_shader_binding::gpu;
+use truvis_shader_manifest::ShaderArtifactPath;
 
 use crate::compute_pass::ComputePass;
 
@@ -54,7 +54,7 @@ impl AccumPass {
                 render_descriptor_sets,
                 gpu::renderer::render_passes::post_accum::SET_NUM,
                 c"main",
-                TruvisPath::shader_build_path_str("renderer", "post/accum.slang").as_str(),
+                ShaderArtifactPath::resolve("renderer", "post/accum.slang").as_str(),
             );
 
         Self { accum_pass }

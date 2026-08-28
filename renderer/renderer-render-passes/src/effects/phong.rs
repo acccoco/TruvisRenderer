@@ -14,12 +14,12 @@ use truvis_gfx::{
         rendering_info::GfxRenderingInfo,
     },
 };
-use truvis_path::TruvisPath;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_renderer_shader_binding::gpu;
+use truvis_shader_manifest::ShaderArtifactPath;
 
 pub struct PhongPass {
     pipeline: GfxGraphicsPipeline,
@@ -47,8 +47,8 @@ impl PhongPass {
         render_descriptor_sets: &GlobalDescriptorSets,
     ) -> Self {
         let mut ci = GfxGraphicsPipelineCreateInfo::default();
-        ci.vertex_shader_stage(&TruvisPath::shader_build_path_str("renderer", "raster/phong3d.vs.slang"), c"main");
-        ci.fragment_shader_stage(&TruvisPath::shader_build_path_str("renderer", "raster/phong.ps.slang"), c"main");
+        ci.vertex_shader_stage(&ShaderArtifactPath::resolve("renderer", "raster/phong3d.vs.slang"), c"main");
+        ci.fragment_shader_stage(&ShaderArtifactPath::resolve("renderer", "raster/phong.ps.slang"), c"main");
 
         ci.vertex_binding(VertexLayoutSoA3D::vertex_input_bindings());
         ci.vertex_attribute(VertexLayoutSoA3D::vertex_input_attributes());

@@ -41,12 +41,12 @@ workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
 
 引擎工具层，面向 workspace 路径和资源准备，不等同于运行时 asset 系统。
 
-- `truvis-path/`：基于根目录 `map.toml` 的统一路径入口，提供 workspace、assets、resources、shader build、CXX、
-  运行时路径编码和词法路径归一化等 helper；不负责下载或加载资源内容。
+- `truvis-path/`：基于根目录 `map.toml` 的统一物理路径入口，提供 workspace、assets、resources、shader/binding
+  build、CXX、运行时路径编码和词法路径归一化等 helper；不理解 shader package schema，也不负责下载或加载资源内容。
 - `truvis-fetch-res/`：`fetch_res` 工具 crate，读取 `resources.toml` 并下载模型资产、外部工具、SDK 或参考源码资源；不参与渲染线程的
   asset loading。
-- `truvis-shader-manifest/`：统一解析和校验 `shader-packages.toml` 的 package、compiler、输出与 binding 配置；
-  不依赖 Engine/Renderer 运行时结构，也不检查构建环境是否完整。
+- `truvis-shader-manifest/`：依赖 `truvis-path` 提供的产物根，统一解析和校验 `shader-packages.toml` 的
+  package、compiler、输出前缀与 binding 配置；不依赖 Engine/Renderer 运行时结构，也不检查构建环境是否完整。
 - `truvis-shader-build/`：`shader-build` 工具 crate，负责把 manifest 声明的 shader 源码编译到
   `build/shader/`；推荐通过 `just shader` 调用。
 - `truvis-shader-binding-codegen/`：消费 manifest 已解析的 binding 路径，提供共用 bindgen 参数、类型重命名、

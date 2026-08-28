@@ -1,17 +1,21 @@
 //! Shader 构建配置的唯一解析入口。
 //!
-//! 路径都以 manifest 所在目录为根。该 crate 只验证 schema、词法路径和 package 图，
-//! 不要求 shader 源码、编译器或输出目录已经存在，因此运行时路径查询也可以复用同一模型。
+//! package 源码、header 和带分隔符的 compiler 路径以 manifest 所在目录为根；shader、binding
+//! 产物根由 `truvis-path` 从 workspace `map.toml` 提供。该 crate 只验证 shader schema、词法路径和
+//! package 图，不要求源码、编译器或输出目录已经存在，因此运行时路径查询也可以复用同一模型。
 
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsString,
     fs,
     path::{Component, Path, PathBuf},
+    sync::OnceLock,
 };
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+
+use truvis_path::TruvisPath;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -22,7 +26,6 @@ pub struct ShaderManifest {
     #[serde(skip)]
     root_dir: PathBuf,
 
-    build: ShaderBuildConfig,
     compiler: ShaderCompilerConfig,
 
     #[serde(rename = "package")]
@@ -30,14 +33,6 @@ pub struct ShaderManifest {
 
     #[serde(default, rename = "binding")]
     bindings: Vec<ShaderBinding>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct ShaderBuildConfig {
-    pub shader_output_root: String,
-    pub binding_output_root: String,
-    pub log_root: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -104,6 +99,29 @@ pub struct ResolvedShaderBinding {
     pub output_path: PathBuf,
 }
 
+static DEFAULT_SHADER_MANIFEST: OnceLock<ShaderManifest> = OnceLock::new();
+
+/// 默认 workspace 中已编译 shader 的路径查询入口。
+///
+/// 首次查询时加载并缓存默认 manifest；配置或逻辑路径错误会直接 panic，与运行时资源路径的
+/// fail-fast 语义一致。
+pub struct ShaderArtifactPath;
+
+impl ShaderArtifactPath {
+    pub fn resolve(package_id: &str, entry_relative_path: &str) -> String {
+        DEFAULT_SHADER_MANIFEST
+            .get_or_init(|| {
+                ShaderManifest::load_default()
+                    .unwrap_or_else(|error| panic!("shader-packages.toml 加载失败: {error:#}"))
+            })
+            .shader_output_path(package_id, entry_relative_path)
+            .unwrap_or_else(|error| panic!("shader 输出路径解析失败: {error:#}"))
+            .to_str()
+            .expect("shader 输出路径不是有效 UTF-8")
+            .to_string()
+    }
+}
+
 impl ShaderManifest {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let requested_path = path.as_ref();
@@ -123,16 +141,17 @@ impl ShaderManifest {
         Ok(manifest)
     }
 
+    /// 从 `truvis-path` 定位的 workspace 默认 manifest 加载 shader 逻辑配置。
+    pub fn load_default() -> Result<Self> {
+        Self::load(TruvisPath::shader_manifest_path())
+    }
+
     pub fn manifest_path(&self) -> &Path {
         &self.manifest_path
     }
 
     pub fn root_dir(&self) -> &Path {
         &self.root_dir
-    }
-
-    pub fn build(&self) -> &ShaderBuildConfig {
-        &self.build
     }
 
     pub fn compiler(&self) -> &ShaderCompilerConfig {
@@ -169,18 +188,6 @@ impl ShaderManifest {
         self.root_dir.join(relative_path)
     }
 
-    pub fn shader_output_root(&self) -> PathBuf {
-        self.resolve_path(&self.build.shader_output_root)
-    }
-
-    pub fn binding_output_root(&self) -> PathBuf {
-        self.resolve_path(&self.build.binding_output_root)
-    }
-
-    pub fn log_root(&self) -> PathBuf {
-        self.resolve_path(&self.build.log_root)
-    }
-
     pub fn slangc_executable(&self) -> PathBuf {
         self.resolve_executable(&self.compiler.slangc)
     }
@@ -196,7 +203,7 @@ impl ShaderManifest {
     pub fn shader_output_path(&self, package_id: &str, entry_relative_path: &str) -> Result<PathBuf> {
         Self::validate_relative_path("shader entry relative path", entry_relative_path)?;
         let package = self.package(package_id)?;
-        let path = self.shader_output_root().join(&package.output_prefix).join(entry_relative_path);
+        let path = TruvisPath::shader_build_dir().join(&package.output_prefix).join(entry_relative_path);
         let mut output = OsString::from(path.as_os_str());
         output.push(".spv");
         Ok(PathBuf::from(output))
@@ -205,8 +212,7 @@ impl ShaderManifest {
     pub fn binding_output_path(&self, target: &str, binding_id: &str) -> Result<PathBuf> {
         Self::validate_relative_path("shader binding target", target)?;
         let binding = self.binding(binding_id)?;
-        Ok(self
-            .binding_output_root()
+        Ok(TruvisPath::rust_binding_build_dir()
             .join(target)
             .join("shader")
             .join(&binding.output_crate)
@@ -250,9 +256,6 @@ impl ShaderManifest {
     }
 
     fn validate(&self) -> Result<()> {
-        Self::validate_relative_path("build.shader_output_root", &self.build.shader_output_root)?;
-        Self::validate_relative_path("build.binding_output_root", &self.build.binding_output_root)?;
-        Self::validate_relative_path("build.log_root", &self.build.log_root)?;
         Self::validate_compiler("compiler.slangc", &self.compiler.slangc)?;
         Self::validate_compiler("compiler.glslc", &self.compiler.glslc)?;
         Self::validate_compiler("compiler.dxc", &self.compiler.dxc)?;

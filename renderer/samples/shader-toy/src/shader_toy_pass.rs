@@ -16,8 +16,8 @@ use truvis_gfx::{
         shader::GfxShaderStageInfo,
     },
 };
-use truvis_path::TruvisPath;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
+use truvis_shader_manifest::ShaderArtifactPath;
 
 #[derive(Debug, Clone, Copy, Enum)]
 enum ShaderStage {
@@ -30,12 +30,12 @@ static SHADER_STAGES: LazyLock<EnumMap<ShaderStage, GfxShaderStageInfo>> = LazyL
         ShaderStage::Vertex => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::VERTEX,
             entry_point: c"main",
-            path: TruvisPath::shader_build_path_str("sample-shader-toy", "main.vert"),
+            path: ShaderArtifactPath::resolve("sample-shader-toy", "main.vert"),
         },
         ShaderStage::Fragment => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::FRAGMENT,
             entry_point: c"main",
-            path: TruvisPath::shader_build_path_str("sample-shader-toy", "main.frag"),
+            path: ShaderArtifactPath::resolve("sample-shader-toy", "main.frag"),
         },
     }
 });

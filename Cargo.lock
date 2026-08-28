@@ -4262,6 +4262,7 @@ dependencies = [
  "truvis-render-loop",
  "truvis-render-runtime",
  "truvis-renderer-shader-binding",
+ "truvis-shader-manifest",
 ]
 
 [[package]]
@@ -4290,11 +4291,11 @@ dependencies = [
  "truvis-descriptor-layout-macro",
  "truvis-descriptor-layout-trait",
  "truvis-gfx",
- "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-runtime",
  "truvis-renderer-shader-binding",
+ "truvis-shader-manifest",
  "truvis-streamline-binding",
  "vk-mem",
 ]
@@ -4856,11 +4857,11 @@ dependencies = [
  "renderer-imgui",
  "renderer-kit",
  "truvis-gfx",
- "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-loop",
  "truvis-render-runtime",
+ "truvis-shader-manifest",
 ]
 
 [[package]]
@@ -6004,11 +6005,11 @@ dependencies = [
  "renderer-imgui",
  "renderer-kit",
  "truvis-gfx",
- "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-loop",
  "truvis-render-runtime",
+ "truvis-shader-manifest",
 ]
 
 [[package]]
@@ -6151,7 +6152,6 @@ dependencies = [
  "anyhow",
  "serde",
  "toml 0.8.2",
- "truvis-shader-manifest",
 ]
 
 [[package]]
@@ -6217,6 +6217,7 @@ dependencies = [
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-shader-binding",
+ "truvis-shader-manifest",
  "truvis-streamline-binding",
  "truvis-utils",
  "truvis-world",
@@ -6263,7 +6264,6 @@ dependencies = [
 name = "truvis-renderer-shader-binding"
 version = "0.1.0"
 dependencies = [
- "truvis-path",
  "truvis-shader-binding",
  "truvis-shader-binding-codegen",
  "truvis-shader-manifest",
@@ -6275,7 +6275,6 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "glam",
- "truvis-path",
  "truvis-shader-binding-codegen",
  "truvis-shader-manifest",
 ]
@@ -6297,6 +6296,7 @@ dependencies = [
  "serde",
  "serde_json",
  "truvis-logs",
+ "truvis-path",
  "truvis-shader-manifest",
  "walkdir",
 ]
@@ -6308,6 +6308,7 @@ dependencies = [
  "anyhow",
  "serde",
  "toml 0.8.2",
+ "truvis-path",
 ]
 
 [[package]]

@@ -23,9 +23,10 @@ use hlsl::HlslCompiler;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use slang::SlangCompiler;
-use truvis_shader_manifest::{ShaderBuildConfig, ShaderCompilerConfig, ShaderManifest, ShaderPackage};
+use truvis_path::TruvisPath;
+use truvis_shader_manifest::{ShaderCompilerConfig, ShaderManifest, ShaderPackage};
 
-const MANIFEST_VERSION: u32 = 5;
+const MANIFEST_VERSION: u32 = 6;
 const COMPILER_ARGS_VERSION: &str = "shader-compiler-args-v4-depfile";
 
 /// shader 编译流程的路径上下文。
@@ -39,7 +40,7 @@ struct ShaderBuildLayout {
 
 impl ShaderBuildLayout {
     fn new(manifest: &ShaderManifest) -> Self {
-        let output_dir = manifest.shader_output_root();
+        let output_dir = TruvisPath::shader_build_dir();
         Self {
             dependency_dir: output_dir.join(".deps"),
             state_manifest_path: output_dir.join(".state").join("shader-build.json"),
@@ -61,6 +62,19 @@ impl ShaderBuildLayout {
         path.strip_prefix(&self.manifest_root).unwrap_or(path).to_string_lossy().replace('\\', "/")
     }
 
+    fn relative_output_path(&self, path: &Path) -> Result<String, String> {
+        path.strip_prefix(&self.output_dir)
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map_err(|_| format!("shader 构建产物不在配置的输出根内: {}", path.display()))
+    }
+
+    fn resolve_output_path(&self, relative_path: &str) -> PathBuf {
+        #[cfg(windows)]
+        let relative_path = relative_path.replace('/', "\\");
+
+        self.output_dir.join(relative_path)
+    }
+
     /// 旧 manifest 只能删除本工具输出目录内的文件。
     fn managed_output_from_manifest(&self, relative_path: &str) -> Result<PathBuf, String> {
         let relative = Path::new(relative_path);
@@ -77,7 +91,7 @@ impl ShaderBuildLayout {
         {
             return Err(format!("拒绝旧 shader manifest 中的非 canonical 输出路径: {relative_path}"));
         }
-        let path = self.resolve_manifest_path(relative_path);
+        let path = self.resolve_output_path(relative_path);
         if !path.starts_with(&self.output_dir) {
             return Err(format!("拒绝删除 shader 输出目录外的 manifest 路径: {}", path.display()));
         }
@@ -238,9 +252,8 @@ impl ShaderBuildRunner {
         let package_states = self.collect_package_states()?;
         let directly_changed = self.directly_changed_packages(previous_manifest, &package_states);
         let changed_packages = self.packages.expand_changed_dependents(&directly_changed);
-        let global_config_changed = previous_manifest.is_none_or(|previous| {
-            previous.build != *self.manifest.build() || previous.compiler != *self.manifest.compiler()
-        });
+        let global_config_changed =
+            previous_manifest.is_none_or(|previous| previous.compiler != *self.manifest.compiler());
 
         let tasks = self.collect_tasks();
         self.remove_stale_outputs(&previous_state.managed_outputs, &tasks)?;
@@ -255,7 +268,7 @@ impl ShaderBuildRunner {
         for task in tasks {
             let task_manifest = ShaderTaskManifest::from_task(&self.layout, &task)?;
             let previous_task = previous_tasks.get(&task_manifest.task_id);
-            let output_path = self.layout.resolve_manifest_path(&task_manifest.output_path);
+            let output_path = self.layout.resolve_output_path(&task_manifest.output_path);
             let needs_compile = self.force
                 || global_config_changed
                 || changed_packages.contains(&task.package_id)
@@ -273,7 +286,6 @@ impl ShaderBuildRunner {
 
         ShaderBuildManifest {
             version: MANIFEST_VERSION,
-            build: self.manifest.build().clone(),
             compiler: self.manifest.compiler().clone(),
             packages: package_states,
             tasks: next_task_manifests,
@@ -490,8 +502,8 @@ impl ShaderBuildRunner {
     ) -> Result<(), String> {
         let current_outputs = current_tasks
             .iter()
-            .map(|task| self.layout.relative_slash_path(&task.output_path))
-            .collect::<BTreeSet<_>>();
+            .map(|task| self.layout.relative_output_path(&task.output_path))
+            .collect::<Result<BTreeSet<_>, _>>()?;
 
         for old_output in previous_outputs {
             if current_outputs.contains(old_output) {
@@ -563,7 +575,6 @@ impl ShaderBuildRunner {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ShaderBuildManifest {
     version: u32,
-    build: ShaderBuildConfig,
     compiler: ShaderCompilerConfig,
     packages: Vec<ShaderPackageState>,
     tasks: Vec<ShaderTaskManifest>,
@@ -599,7 +610,8 @@ impl ShaderBuildManifest {
     }
 }
 
-/// 版本变化时仍保留旧 manifest 声明过的输出集合，确保目录重排不会遗留幽灵 SPIR-V。
+/// 当前版本 state 中的输出路径以 `shader_build` 为根；旧版本使用 manifest 根，首次运行只触发全量重编，
+/// 不能按新语义复用其增量状态或输出集合。
 struct LoadedShaderBuildManifest {
     current: Option<ShaderBuildManifest>,
     managed_outputs: Vec<String>,
@@ -618,15 +630,19 @@ impl LoadedShaderBuildManifest {
             .map_err(|err| format!("无法读取 shader manifest {}: {err}", path.display()))?;
         let value: serde_json::Value = serde_json::from_str(&content)
             .map_err(|err| format!("无法解析 shader manifest {}: {err}", path.display()))?;
-        let managed_outputs = value
-            .get("tasks")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|task| task.get("output_path").and_then(serde_json::Value::as_str))
-            .map(str::to_string)
-            .collect::<Vec<_>>();
         let version = value.get("version").and_then(serde_json::Value::as_u64);
+        let managed_outputs = if version == Some(u64::from(MANIFEST_VERSION)) {
+            value
+                .get("tasks")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|task| task.get("output_path").and_then(serde_json::Value::as_str))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let current = if version == Some(u64::from(MANIFEST_VERSION)) {
             Some(
                 serde_json::from_value(value)
@@ -672,8 +688,8 @@ impl ShaderTaskManifest {
             package_id: task.package_id.clone(),
             entry_relative_path,
             shader_path: layout.relative_slash_path(&task.shader_path),
-            output_path: layout.relative_slash_path(&task.output_path),
-            dependency_path: layout.relative_slash_path(&task.depfile_path),
+            output_path: layout.relative_output_path(&task.output_path)?,
+            dependency_path: layout.relative_output_path(&task.depfile_path)?,
             shader_input: FileStamp::from_path(layout, &task.shader_path)?,
             shader_stage: format!("{:?}", task.shader_stage),
             compiler_type: format!("{:?}", task.compiler_type),

@@ -12,6 +12,7 @@ truvis-render-foundation = { workspace = true }
 truvis-render-graph = { workspace = true }
 truvis-render-runtime = { workspace = true }
 truvis-path = { workspace = true }
+truvis-shader-manifest = { workspace = true }
 truvis-renderer-shader-binding = { workspace = true }
 truvis-descriptor-layout-macro = { workspace = true }
 truvis-descriptor-layout-trait = { workspace = true }

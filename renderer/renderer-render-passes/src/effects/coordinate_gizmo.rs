@@ -5,10 +5,10 @@ use ash::vk;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_gfx::pipelines::graphics_pipeline::{GfxGraphicsPipeline, GfxGraphicsPipelineCreateInfo, GfxPipelineLayout};
-use truvis_path::TruvisPath;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
+use truvis_shader_manifest::ShaderArtifactPath;
 
 /// 主视图右下角的相机朝向坐标轴 gizmo pass。
 ///
@@ -40,11 +40,8 @@ impl CoordinateGizmoPass {
         global_descriptor_sets: &GlobalDescriptorSets,
     ) -> Self {
         let mut ci = GfxGraphicsPipelineCreateInfo::default();
-        ci.vertex_shader_stage(&TruvisPath::shader_build_path_str("renderer", "ui/coordinate_gizmo.slang"), c"vsmain");
-        ci.fragment_shader_stage(
-            &TruvisPath::shader_build_path_str("renderer", "ui/coordinate_gizmo.slang"),
-            c"psmain",
-        );
+        ci.vertex_shader_stage(&ShaderArtifactPath::resolve("renderer", "ui/coordinate_gizmo.slang"), c"vsmain");
+        ci.fragment_shader_stage(&ShaderArtifactPath::resolve("renderer", "ui/coordinate_gizmo.slang"), c"psmain");
         ci.vertex_binding(vec![]);
         ci.vertex_attribute(vec![]);
         ci.attach_info(vec![present_format], None, None);

@@ -15,8 +15,8 @@ use truvis_gfx::pipelines::shader::{GfxShaderGroupInfo, GfxShaderModuleCache, Gf
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::sbt_buffer::GfxSBTBuffer;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
-use truvis_path::TruvisPath;
 use truvis_shader_binding::gpu;
+use truvis_shader_manifest::ShaderArtifactPath;
 
 use crate::state::frame_timing::FrameTiming;
 
@@ -70,22 +70,22 @@ static RAYCAST_SHADER_STAGES: LazyLock<EnumMap<RayCastShaderStages, GfxShaderSta
         RayCastShaderStages::RayGen => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::RAYGEN_KHR,
             entry_point: c"main_ray_gen",
-            path: TruvisPath::shader_build_path_str("engine", "raycast/raygen.slang"),
+            path: ShaderArtifactPath::resolve("engine", "raycast/raygen.slang"),
         },
         RayCastShaderStages::Miss => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::MISS_KHR,
             entry_point: c"main_miss",
-            path: TruvisPath::shader_build_path_str("engine", "raycast/miss.slang"),
+            path: ShaderArtifactPath::resolve("engine", "raycast/miss.slang"),
         },
         RayCastShaderStages::ClosestHit => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::CLOSEST_HIT_KHR,
             entry_point: c"main_closest_hit",
-            path: TruvisPath::shader_build_path_str("engine", "raycast/closest_hit.slang"),
+            path: ShaderArtifactPath::resolve("engine", "raycast/closest_hit.slang"),
         },
         RayCastShaderStages::AnyHit => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::ANY_HIT_KHR,
             entry_point: c"main_any_hit",
-            path: TruvisPath::shader_build_path_str("engine", "raycast/any_hit.slang"),
+            path: ShaderArtifactPath::resolve("engine", "raycast/any_hit.slang"),
         },
     }
 });
