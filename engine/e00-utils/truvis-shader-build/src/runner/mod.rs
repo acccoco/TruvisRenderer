@@ -12,46 +12,25 @@ mod slang;
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::ErrorKind,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
 
-use common::{EnvPath, ShaderCompileTask, ShaderCompiler, ShaderCompilerType};
-use dependency::{ShaderDependencyValidator, ShaderSourceLayer, ShaderSourcePackage, ShaderSourceRoot};
+use common::{ShaderCompileTask, ShaderCompiler, ShaderCompilerExecutables, ShaderCompilerType};
+use dependency::{ShaderDependencyRoot, ShaderDependencyValidator, ShaderSourcePackage, ShaderSourceRoot, SourceLayer};
 use glsl::GlslCompiler;
 use hlsl::HlslCompiler;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use slang::SlangCompiler;
-use truvis_logs::{LogFilePath, TruvisLogger};
-use truvis_path::TruvisPath;
+use truvis_shader_manifest::{ShaderBuildConfig, ShaderCompilerConfig, ShaderManifest, ShaderPackage};
 
-const MANIFEST_VERSION: u32 = 4;
+const MANIFEST_VERSION: u32 = 5;
 const COMPILER_ARGS_VERSION: &str = "shader-compiler-args-v4-depfile";
-
-/// 命令行只暴露最小控制面。
-struct CliOptions {
-    force: bool,
-}
-
-impl CliOptions {
-    fn parse() -> Result<Self, String> {
-        let mut force = false;
-        for arg in std::env::args().skip(1) {
-            match arg.as_str() {
-                "--force" | "-f" => force = true,
-                "--help" | "-h" => return Err("Usage: shader-build [--force]".to_string()),
-                _ => return Err(format!("Unsupported shader-build arg '{arg}'")),
-            }
-        }
-
-        Ok(Self { force })
-    }
-}
 
 /// shader 编译流程的路径上下文。
 struct ShaderBuildLayout {
-    workspace_dir: PathBuf,
+    manifest_root: PathBuf,
     output_dir: PathBuf,
     dependency_dir: PathBuf,
     state_manifest_path: PathBuf,
@@ -59,29 +38,46 @@ struct ShaderBuildLayout {
 }
 
 impl ShaderBuildLayout {
-    fn new() -> Self {
-        let workspace_dir = TruvisPath::workspace_path();
-        let output_dir = EnvPath::shader_build_path().to_path_buf();
+    fn new(manifest: &ShaderManifest) -> Self {
+        let output_dir = manifest.shader_output_root();
         Self {
             dependency_dir: output_dir.join(".deps"),
             state_manifest_path: output_dir.join(".state").join("shader-build.json"),
-            package_manifest_path: workspace_dir.join("shader-packages.toml"),
-            workspace_dir,
+            package_manifest_path: manifest.manifest_path().to_path_buf(),
+            manifest_root: manifest.root_dir().to_path_buf(),
             output_dir,
         }
     }
 
-    fn resolve_workspace_path(&self, relative_path: &str) -> PathBuf {
-        self.workspace_dir.join(relative_path.replace('/', "\\"))
+    fn resolve_manifest_path(&self, relative_path: &str) -> PathBuf {
+        // 与迁移前保持一致，避免 Windows 路径分隔符进入 shader 调试信息并改变产物哈希。
+        #[cfg(windows)]
+        let relative_path = relative_path.replace('/', "\\");
+
+        self.manifest_root.join(relative_path)
     }
 
     fn relative_slash_path(&self, path: &Path) -> String {
-        path.strip_prefix(&self.workspace_dir).unwrap_or(path).to_string_lossy().replace('\\', "/")
+        path.strip_prefix(&self.manifest_root).unwrap_or(path).to_string_lossy().replace('\\', "/")
     }
 
     /// 旧 manifest 只能删除本工具输出目录内的文件。
     fn managed_output_from_manifest(&self, relative_path: &str) -> Result<PathBuf, String> {
-        let path = self.resolve_workspace_path(relative_path);
+        let relative = Path::new(relative_path);
+        if relative_path.is_empty()
+            || relative.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::CurDir
+                        | std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            })
+        {
+            return Err(format!("拒绝旧 shader manifest 中的非 canonical 输出路径: {relative_path}"));
+        }
+        let path = self.resolve_manifest_path(relative_path);
         if !path.starts_with(&self.output_dir) {
             return Err(format!("拒绝删除 shader 输出目录外的 manifest 路径: {}", path.display()));
         }
@@ -89,148 +85,32 @@ impl ShaderBuildLayout {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
-struct ShaderPackageFile {
-    package: Vec<ShaderPackageConfig>,
-}
-
-/// 一个 shader source/binary owner 的声明。
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-struct ShaderPackageConfig {
-    id: String,
-    entry_root: String,
-    #[serde(default)]
-    include_roots: Vec<String>,
-    #[serde(default)]
-    shared_input_roots: Vec<String>,
-    #[serde(default)]
-    depends_on: Vec<String>,
-    output_prefix: String,
-}
-
 /// 已校验的 package 集合。
 struct ShaderPackageSet {
-    packages: Vec<ShaderPackageConfig>,
+    packages: Vec<ShaderPackage>,
 }
 
 impl ShaderPackageSet {
-    fn load(layout: &ShaderBuildLayout) -> Result<Self, String> {
-        let content = std::fs::read_to_string(&layout.package_manifest_path).map_err(|err| {
-            format!("无法读取 shader package manifest {}: {err}", layout.package_manifest_path.display())
-        })?;
-        let mut file: ShaderPackageFile = toml::from_str(&content).map_err(|err| {
-            format!("无法解析 shader package manifest {}: {err}", layout.package_manifest_path.display())
-        })?;
-        file.package.sort_by(|left, right| left.id.cmp(&right.id));
-
-        let package_set = Self { packages: file.package };
-        package_set.validate(layout)?;
-        Ok(package_set)
-    }
-
-    fn validate(&self, layout: &ShaderBuildLayout) -> Result<(), String> {
-        if self.packages.is_empty() {
-            return Err("shader-packages.toml 至少需要一个 [[package]]".to_string());
-        }
-
-        let mut ids = BTreeSet::new();
-        let mut output_prefixes = BTreeSet::new();
-        for package in &self.packages {
-            if package.id.is_empty()
-                || !package.id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-            {
-                return Err(format!("非法 shader package id: '{}'", package.id));
-            }
-            if !ids.insert(package.id.clone()) {
-                return Err(format!("重复 shader package id: '{}'", package.id));
-            }
-
-            Self::validate_relative_path("entry_root", &package.entry_root)?;
-            Self::validate_relative_path("output_prefix", &package.output_prefix)?;
-            for path in &package.include_roots {
-                Self::validate_relative_path("include_roots", path)?;
-            }
-            for path in &package.shared_input_roots {
-                Self::validate_relative_path("shared_input_roots", path)?;
-            }
-
-            if !output_prefixes.insert(package.output_prefix.clone()) {
-                return Err(format!("重复 shader output_prefix: '{}'", package.output_prefix));
-            }
-
-            Self::require_directory(layout, &package.entry_root, &package.id)?;
-            for path in package.include_roots.iter().chain(&package.shared_input_roots) {
-                Self::require_directory(layout, path, &package.id)?;
-            }
-        }
-
-        let dependency_map = self
-            .packages
-            .iter()
-            .map(|package| (package.id.clone(), package.depends_on.clone()))
-            .collect::<BTreeMap<_, _>>();
-        for package in &self.packages {
-            for dependency in &package.depends_on {
-                if dependency == &package.id {
-                    return Err(format!("shader package '{}' 不能依赖自身", package.id));
-                }
-                if !dependency_map.contains_key(dependency) {
-                    return Err(format!("shader package '{}' 依赖不存在的 package '{}'", package.id, dependency));
-                }
-            }
-        }
-
-        let mut visiting = BTreeSet::new();
-        let mut visited = BTreeSet::new();
-        for package in &self.packages {
-            Self::visit_dependencies(&package.id, &dependency_map, &mut visiting, &mut visited)?;
-        }
-
-        Ok(())
-    }
-
-    fn validate_relative_path(field: &str, value: &str) -> Result<(), String> {
-        if value.is_empty() {
-            return Err(format!("{field} 不能为空"));
-        }
-
-        let path = Path::new(value);
-        if path
-            .components()
-            .any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
-        {
-            return Err(format!("{field} 必须是 workspace 内的词法相对路径: '{value}'"));
-        }
-        Ok(())
+    fn new(mut packages: Vec<ShaderPackage>) -> Self {
+        packages.sort_by(|left, right| left.id.cmp(&right.id));
+        Self { packages }
     }
 
     fn require_directory(layout: &ShaderBuildLayout, relative_path: &str, package_id: &str) -> Result<(), String> {
-        let path = layout.resolve_workspace_path(relative_path);
+        let path = layout.resolve_manifest_path(relative_path);
         if !path.is_dir() {
             return Err(format!("shader package '{}' 的目录不存在: {}", package_id, path.display()));
         }
         Ok(())
     }
 
-    fn visit_dependencies(
-        package_id: &str,
-        dependency_map: &BTreeMap<String, Vec<String>>,
-        visiting: &mut BTreeSet<String>,
-        visited: &mut BTreeSet<String>,
-    ) -> Result<(), String> {
-        if visited.contains(package_id) {
-            return Ok(());
+    fn require_directories(&self, layout: &ShaderBuildLayout) -> Result<(), String> {
+        for package in &self.packages {
+            Self::require_directory(layout, &package.entry_root, &package.id)?;
+            for path in package.include_roots.iter().chain(package.shared_inputs.iter().map(|input| &input.path)) {
+                Self::require_directory(layout, path, &package.id)?;
+            }
         }
-        if !visiting.insert(package_id.to_string()) {
-            return Err(format!("shader package 依赖存在环，回到 '{package_id}'"));
-        }
-
-        for dependency in dependency_map.get(package_id).into_iter().flatten() {
-            Self::visit_dependencies(dependency, dependency_map, visiting, visited)?;
-        }
-
-        visiting.remove(package_id);
-        visited.insert(package_id.to_string());
         Ok(())
     }
 
@@ -254,7 +134,11 @@ impl ShaderPackageSet {
     }
 
     /// 当前 package 与其传递依赖只暴露 shared inputs，不暴露任何其它 entry。
-    fn allowed_dependency_roots(&self, package: &ShaderPackageConfig, layout: &ShaderBuildLayout) -> Vec<PathBuf> {
+    fn allowed_dependency_roots(
+        &self,
+        package: &ShaderPackage,
+        layout: &ShaderBuildLayout,
+    ) -> Vec<ShaderDependencyRoot> {
         let mut package_ids = BTreeSet::from([package.id.clone()]);
         self.collect_dependency_ids(&package.id, &mut package_ids);
 
@@ -265,14 +149,21 @@ impl ShaderPackageSet {
                     .iter()
                     .find(|candidate| &candidate.id == package_id)
                     .expect("validated shader package disappeared")
-                    .shared_input_roots
+                    .shared_inputs
                     .iter()
             })
-            .map(|path| layout.resolve_workspace_path(path))
+            .map(|input| ShaderDependencyRoot {
+                path: layout.resolve_manifest_path(&input.path),
+                layer: input.layer.into(),
+            })
             .collect::<Vec<_>>();
-        roots.sort();
-        roots.dedup();
+        roots.sort_by(|left, right| left.path.cmp(&right.path));
+        roots.dedup_by(|left, right| left.path == right.path);
         roots
+    }
+
+    fn allowed_dependency_paths(&self, package: &ShaderPackage, layout: &ShaderBuildLayout) -> Vec<PathBuf> {
+        self.allowed_dependency_roots(package, layout).into_iter().map(|root| root.path).collect()
     }
 
     fn collect_dependency_ids(&self, package_id: &str, collected: &mut BTreeSet<String>) {
@@ -290,27 +181,45 @@ impl ShaderPackageSet {
 }
 
 /// package-aware shader 构建协调者。
-struct ShaderBuildRunner {
+pub struct ShaderBuildRunner {
+    manifest: ShaderManifest,
     layout: ShaderBuildLayout,
     packages: ShaderPackageSet,
+    compiler_executables: ShaderCompilerExecutables,
     dependency_validator: ShaderDependencyValidator,
     force: bool,
 }
 
 impl ShaderBuildRunner {
-    fn new(force: bool) -> Result<Self, String> {
-        let layout = ShaderBuildLayout::new();
-        let packages = ShaderPackageSet::load(&layout)?;
-        let dependency_validator = ShaderDependencyValidator::new(&layout.workspace_dir)?;
+    pub fn new(manifest: ShaderManifest, force: bool) -> Result<Self, String> {
+        let layout = ShaderBuildLayout::new(&manifest);
+        let packages = ShaderPackageSet::new(manifest.packages().to_vec());
+        packages.require_directories(&layout)?;
+        let compiler_executables = ShaderCompilerExecutables::from_manifest(&manifest);
+        Self::require_configured_compiler(&manifest.compiler().slangc, &manifest.slangc_executable())?;
+        Self::require_configured_compiler(&manifest.compiler().glslc, &manifest.glslc_executable())?;
+        Self::require_configured_compiler(&manifest.compiler().dxc, &manifest.dxc_executable())?;
+        let dependency_validator = ShaderDependencyValidator::new(&layout.manifest_root)?;
         Ok(Self {
+            manifest,
             layout,
             packages,
+            compiler_executables,
             dependency_validator,
             force,
         })
     }
 
-    fn run(&self) -> Result<(), String> {
+    fn require_configured_compiler(configured: &str, resolved: &Path) -> Result<(), String> {
+        let configured_path = Path::new(configured);
+        let resolves_to_file = configured_path.is_absolute() || configured.contains('/') || configured.contains('\\');
+        if resolves_to_file && !resolved.is_file() {
+            return Err(format!("配置的 shader 编译器不存在: {}", resolved.display()));
+        }
+        Ok(())
+    }
+
+    pub fn run(&self) -> Result<(), String> {
         log::info!("Shader package manifest: {:?}", self.layout.package_manifest_path);
         log::info!("Shader output path: {:?}", self.layout.output_dir);
         for package in &self.packages.packages {
@@ -329,6 +238,9 @@ impl ShaderBuildRunner {
         let package_states = self.collect_package_states()?;
         let directly_changed = self.directly_changed_packages(previous_manifest, &package_states);
         let changed_packages = self.packages.expand_changed_dependents(&directly_changed);
+        let global_config_changed = previous_manifest.is_none_or(|previous| {
+            previous.build != *self.manifest.build() || previous.compiler != *self.manifest.compiler()
+        });
 
         let tasks = self.collect_tasks();
         self.remove_stale_outputs(&previous_state.managed_outputs, &tasks)?;
@@ -343,8 +255,9 @@ impl ShaderBuildRunner {
         for task in tasks {
             let task_manifest = ShaderTaskManifest::from_task(&self.layout, &task)?;
             let previous_task = previous_tasks.get(&task_manifest.task_id);
-            let output_path = self.layout.resolve_workspace_path(&task_manifest.output_path);
+            let output_path = self.layout.resolve_manifest_path(&task_manifest.output_path);
             let needs_compile = self.force
+                || global_config_changed
                 || changed_packages.contains(&task.package_id)
                 || previous_task.is_none_or(|old_task| old_task != &task_manifest)
                 || !output_path.is_file()
@@ -360,6 +273,8 @@ impl ShaderBuildRunner {
 
         ShaderBuildManifest {
             version: MANIFEST_VERSION,
+            build: self.manifest.build().clone(),
+            compiler: self.manifest.compiler().clone(),
             packages: package_states,
             tasks: next_task_manifests,
         }
@@ -376,10 +291,10 @@ impl ShaderBuildRunner {
     fn collect_tasks(&self) -> Vec<ShaderCompileTask> {
         let mut tasks = Vec::new();
         for package in &self.packages.packages {
-            let entry_root = self.layout.resolve_workspace_path(&package.entry_root);
+            let entry_root = self.layout.resolve_manifest_path(&package.entry_root);
             let include_roots =
-                package.include_roots.iter().map(|path| self.layout.resolve_workspace_path(path)).collect::<Vec<_>>();
-            let allowed_dependency_roots = self.packages.allowed_dependency_roots(package, &self.layout);
+                package.include_roots.iter().map(|path| self.layout.resolve_manifest_path(path)).collect::<Vec<_>>();
+            let allowed_dependency_roots = self.packages.allowed_dependency_paths(package, &self.layout);
             let output_prefix = Path::new(&package.output_prefix);
 
             tasks.extend(
@@ -396,6 +311,7 @@ impl ShaderBuildRunner {
                             output_prefix,
                             &include_roots,
                             &allowed_dependency_roots,
+                            &self.compiler_executables,
                             &entry,
                         )
                     }),
@@ -415,42 +331,30 @@ impl ShaderBuildRunner {
             .iter()
             .map(|package| {
                 let mut source_roots = package
-                    .shared_input_roots
+                    .shared_inputs
                     .iter()
-                    .map(|path| {
-                        let layer = if path.contains("/abi/") {
-                            ShaderSourceLayer::Abi
-                        } else if path.contains("/lib/") {
-                            ShaderSourceLayer::Lib
-                        } else {
-                            return Err(format!(
-                                "shader package '{}' 的 shared_input_root 必须属于 abi 或 lib: '{}'",
-                                package.id, path
-                            ));
-                        };
-                        Ok(ShaderSourceRoot {
-                            path: self.layout.resolve_workspace_path(path),
-                            layer,
-                        })
+                    .map(|input| ShaderSourceRoot {
+                        path: self.layout.resolve_manifest_path(&input.path),
+                        layer: input.layer.into(),
                     })
-                    .collect::<Result<Vec<_>, String>>()?;
+                    .collect::<Vec<_>>();
                 source_roots.push(ShaderSourceRoot {
-                    path: self.layout.resolve_workspace_path(&package.entry_root),
-                    layer: ShaderSourceLayer::Entry,
+                    path: self.layout.resolve_manifest_path(&package.entry_root),
+                    layer: SourceLayer::Entry,
                 });
 
-                Ok(ShaderSourcePackage {
+                ShaderSourcePackage {
                     package_id: package.id.clone(),
                     include_roots: package
                         .include_roots
                         .iter()
-                        .map(|path| self.layout.resolve_workspace_path(path))
+                        .map(|path| self.layout.resolve_manifest_path(path))
                         .collect(),
                     source_roots,
                     allowed_dependency_roots: self.packages.allowed_dependency_roots(package, &self.layout),
-                })
+                }
             })
-            .collect::<Result<Vec<_>, String>>()?;
+            .collect::<Vec<_>>();
 
         self.dependency_validator.validate_sources(&packages)
     }
@@ -468,18 +372,18 @@ impl ShaderBuildRunner {
     }
 
     /// package 的本地 ABI/lib/include 变化只直接失效该 package；依赖传播在下一步统一完成。
-    fn collect_shared_inputs(&self, package: &ShaderPackageConfig) -> Result<Vec<FileStamp>, String> {
-        let entry_root = self.layout.resolve_workspace_path(&package.entry_root);
+    fn collect_shared_inputs(&self, package: &ShaderPackage) -> Result<Vec<FileStamp>, String> {
+        let entry_root = self.layout.resolve_manifest_path(&package.entry_root);
         let include_roots =
-            package.include_roots.iter().map(|path| self.layout.resolve_workspace_path(path)).collect::<Vec<_>>();
-        let allowed_dependency_roots = self.packages.allowed_dependency_roots(package, &self.layout);
+            package.include_roots.iter().map(|path| self.layout.resolve_manifest_path(path)).collect::<Vec<_>>();
+        let allowed_dependency_roots = self.packages.allowed_dependency_paths(package, &self.layout);
         let output_prefix = Path::new(&package.output_prefix);
         let mut inputs = BTreeMap::new();
 
         for root in package
-            .shared_input_roots
+            .shared_inputs
             .iter()
-            .map(|path| self.layout.resolve_workspace_path(path))
+            .map(|input| self.layout.resolve_manifest_path(&input.path))
             .chain(std::iter::once(entry_root.clone()))
         {
             for entry in walkdir::WalkDir::new(&root).into_iter().filter_map(Result::ok) {
@@ -496,6 +400,7 @@ impl ShaderBuildRunner {
                         output_prefix,
                         &include_roots,
                         &allowed_dependency_roots,
+                        &self.compiler_executables,
                         &entry,
                     )
                     .is_some()
@@ -658,6 +563,8 @@ impl ShaderBuildRunner {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ShaderBuildManifest {
     version: u32,
+    build: ShaderBuildConfig,
+    compiler: ShaderCompilerConfig,
     packages: Vec<ShaderPackageState>,
     tasks: Vec<ShaderTaskManifest>,
 }
@@ -738,7 +645,7 @@ impl LoadedShaderBuildManifest {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ShaderPackageState {
-    config: ShaderPackageConfig,
+    config: ShaderPackage,
     shared_inputs: Vec<FileStamp>,
 }
 
@@ -753,6 +660,7 @@ struct ShaderTaskManifest {
     shader_input: FileStamp,
     shader_stage: String,
     compiler_type: String,
+    compiler_executable: String,
     compiler_args_version: String,
 }
 
@@ -769,6 +677,7 @@ impl ShaderTaskManifest {
             shader_input: FileStamp::from_path(layout, &task.shader_path)?,
             shader_stage: format!("{:?}", task.shader_stage),
             compiler_type: format!("{:?}", task.compiler_type),
+            compiler_executable: layout.relative_slash_path(&task.compiler_executable),
             compiler_args_version: COMPILER_ARGS_VERSION.to_string(),
         })
     }
@@ -797,11 +706,4 @@ impl FileStamp {
         let millis = modified.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
         Ok(millis.min(u128::from(u64::MAX)) as u64)
     }
-}
-
-pub fn run_from_env() -> Result<(), String> {
-    TruvisLogger::init_with_file(LogFilePath::current_exe(TruvisPath::temp_dir()));
-
-    let options = CliOptions::parse()?;
-    ShaderBuildRunner::new(options.force)?.run()
 }

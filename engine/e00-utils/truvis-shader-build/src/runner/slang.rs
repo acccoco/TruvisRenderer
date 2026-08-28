@@ -2,7 +2,7 @@
 //!
 //! 使用 slangc 将 Slang 着色器编译为 SPIR-V
 
-use super::common::{EnvPath, ShaderCompileTask, ShaderCompiler, ShaderCompilerType};
+use super::common::{ShaderCompileTask, ShaderCompiler, ShaderCompilerType};
 
 /// Slang 编译器
 ///
@@ -22,7 +22,7 @@ impl ShaderCompiler for SlangCompiler {
     }
 
     fn compile(&self, task: &ShaderCompileTask) -> Result<(), String> {
-        let mut command = std::process::Command::new(EnvPath::slangc_path());
+        let mut command = std::process::Command::new(&task.compiler_executable);
         for include_root in &task.include_roots {
             command.arg("-I").arg(include_root);
         }

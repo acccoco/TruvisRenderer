@@ -22,7 +22,7 @@ impl ShaderCompiler for GlslCompiler {
     }
 
     fn compile(&self, task: &ShaderCompileTask) -> Result<(), String> {
-        let mut command = std::process::Command::new("glslc");
+        let mut command = std::process::Command::new(&task.compiler_executable);
         for include_root in &task.include_roots {
             command.arg(format!("-I{}", include_root.display()));
         }

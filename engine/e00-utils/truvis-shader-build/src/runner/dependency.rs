@@ -5,20 +5,36 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use truvis_shader_manifest::ShaderSourceLayer;
+
 use super::common::ShaderCompileTask;
 
-/// Shader 源文件所在的职责层级。
+/// 一个需要执行源码预检的 owner 根目录。
+pub struct ShaderSourceRoot {
+    pub path: PathBuf,
+    pub layer: SourceLayer,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ShaderSourceLayer {
+pub enum SourceLayer {
     Abi,
     Lib,
     Entry,
 }
 
-/// 一个需要执行源码预检的 owner 根目录。
-pub struct ShaderSourceRoot {
+impl From<ShaderSourceLayer> for SourceLayer {
+    fn from(value: ShaderSourceLayer) -> Self {
+        match value {
+            ShaderSourceLayer::Abi => Self::Abi,
+            ShaderSourceLayer::Lib => Self::Lib,
+        }
+    }
+}
+
+/// package 通过自身或依赖 package 可见的共享源码根。
+pub struct ShaderDependencyRoot {
     pub path: PathBuf,
-    pub layer: ShaderSourceLayer,
+    pub layer: SourceLayer,
 }
 
 /// 单个 package 的源码可见范围。
@@ -26,7 +42,7 @@ pub struct ShaderSourcePackage {
     pub package_id: String,
     pub include_roots: Vec<PathBuf>,
     pub source_roots: Vec<ShaderSourceRoot>,
-    pub allowed_dependency_roots: Vec<PathBuf>,
+    pub allowed_dependency_roots: Vec<ShaderDependencyRoot>,
 }
 
 /// 统一执行源码静态检查和编译器 depfile 检查。
@@ -45,20 +61,21 @@ impl ShaderDependencyValidator {
     pub fn validate_sources(&self, packages: &[ShaderSourcePackage]) -> Result<(), String> {
         let mut errors = Vec::new();
         for package in packages {
-            let include_roots = match self.canonicalize_roots(&package.include_roots, &package.package_id) {
+            let include_roots = match self.canonicalize_paths(&package.include_roots, &package.package_id) {
                 Ok(roots) => roots,
                 Err(err) => {
                     errors.push(err);
                     continue;
                 }
             };
-            let allowed_roots = match self.canonicalize_roots(&package.allowed_dependency_roots, &package.package_id) {
-                Ok(roots) => roots,
-                Err(err) => {
-                    errors.push(err);
-                    continue;
-                }
-            };
+            let allowed_roots =
+                match self.canonicalize_dependency_roots(&package.allowed_dependency_roots, &package.package_id) {
+                    Ok(roots) => roots,
+                    Err(err) => {
+                        errors.push(err);
+                        continue;
+                    }
+                };
 
             for source_root in &package.source_roots {
                 for entry in walkdir::WalkDir::new(&source_root.path).into_iter().filter_map(Result::ok) {
@@ -100,7 +117,7 @@ impl ShaderDependencyValidator {
             )
         })?;
         let entry_path = Self::canonicalize(&task.shader_path, "shader entry")?;
-        let allowed_roots = self.canonicalize_roots(&task.allowed_dependency_roots, &task.package_id)?;
+        let allowed_roots = self.canonicalize_paths(&task.allowed_dependency_roots, &task.package_id)?;
 
         let mut rejected = Vec::new();
         let mut contains_entry = false;
@@ -147,9 +164,9 @@ impl ShaderDependencyValidator {
         &self,
         package_id: &str,
         source_path: &Path,
-        source_layer: ShaderSourceLayer,
+        source_layer: SourceLayer,
         include_roots: &[PathBuf],
-        allowed_roots: &[PathBuf],
+        allowed_roots: &[ShaderDependencyRoot],
     ) -> Result<(), String> {
         let content = std::fs::read_to_string(source_path)
             .map_err(|err| format!("无法读取 shader 源码 {}: {err}", source_path.display()))?;
@@ -160,15 +177,8 @@ impl ShaderDependencyValidator {
                 continue;
             };
             let location = format!("{}:{}", source_path.display(), line_index + 1);
-            let target_layer = match Self::validate_include_path(&include_path) {
-                Ok(layer) => layer,
-                Err(err) => {
-                    errors.push(format!("{location}: {err}"));
-                    continue;
-                }
-            };
-            if source_layer == ShaderSourceLayer::Abi && target_layer != ShaderSourceLayer::Abi {
-                errors.push(format!("{location}: ABI 只能依赖 ABI，不能引用 '{include_path}'"));
+            if let Err(err) = Self::validate_include_path(&include_path) {
+                errors.push(format!("{location}: {err}"));
                 continue;
             }
 
@@ -201,19 +211,23 @@ impl ShaderDependencyValidator {
                 errors.push(format!("{location}: include 位于 workspace 外: {}", resolved.display()));
                 continue;
             }
-            if !allowed_roots.iter().any(|root| resolved.starts_with(root)) {
+            let Some(target_root) = allowed_roots.iter().find(|root| resolved.starts_with(&root.path)) else {
                 errors.push(format!(
                     "{location}: package '{}' 未声明 include 依赖: {}",
                     package_id,
                     resolved.display()
                 ));
+                continue;
+            };
+            if source_layer == SourceLayer::Abi && target_root.layer != SourceLayer::Abi {
+                errors.push(format!("{location}: ABI 只能依赖 ABI，不能引用 '{include_path}'"));
             }
         }
 
         if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
     }
 
-    fn validate_include_path(include_path: &str) -> Result<ShaderSourceLayer, String> {
+    fn validate_include_path(include_path: &str) -> Result<(), String> {
         if include_path.contains('\\') {
             return Err(format!("include 必须使用 '/' 分隔: '{include_path}'"));
         }
@@ -229,21 +243,10 @@ impl ShaderDependencyValidator {
             return Err(format!("include 必须是 canonical 相对路径: '{include_path}'"));
         }
 
-        if include_path.starts_with("abi/engine/") || include_path.starts_with("abi/renderer/") {
-            Ok(ShaderSourceLayer::Abi)
-        } else if include_path.starts_with("lib/engine/")
-            || include_path.starts_with("lib/renderer/")
-            || include_path.starts_with("lib/sample-shader-toy/")
-        {
-            Ok(ShaderSourceLayer::Lib)
-        } else {
-            Err(format!(
-                "include 必须带 layer/owner 前缀（abi/engine、abi/renderer、lib/engine、lib/renderer 或 lib/sample-shader-toy）: '{include_path}'"
-            ))
-        }
+        Ok(())
     }
 
-    fn canonicalize_roots(&self, roots: &[PathBuf], package_id: &str) -> Result<Vec<PathBuf>, String> {
+    fn canonicalize_paths(&self, roots: &[PathBuf], package_id: &str) -> Result<Vec<PathBuf>, String> {
         roots
             .iter()
             .map(|root| {
@@ -256,6 +259,30 @@ impl ShaderDependencyValidator {
                     ));
                 }
                 Ok(canonical)
+            })
+            .collect()
+    }
+
+    fn canonicalize_dependency_roots(
+        &self,
+        roots: &[ShaderDependencyRoot],
+        package_id: &str,
+    ) -> Result<Vec<ShaderDependencyRoot>, String> {
+        roots
+            .iter()
+            .map(|root| {
+                let canonical = Self::canonicalize(&root.path, "shader dependency root")?;
+                if !canonical.starts_with(&self.workspace_root) {
+                    return Err(format!(
+                        "shader package '{}' 的依赖根位于 workspace 外: {}",
+                        package_id,
+                        canonical.display()
+                    ));
+                }
+                Ok(ShaderDependencyRoot {
+                    path: canonical,
+                    layer: root.layer,
+                })
             })
             .collect()
     }

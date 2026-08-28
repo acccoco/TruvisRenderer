@@ -6,13 +6,12 @@ description = "build shader"
 
 
 [dependencies]
-truvis-path = { workspace = true }
 truvis-logs = { workspace = true }
+truvis-shader-manifest = { workspace = true }
 
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-toml = { workspace = true }
 
 rayon = { workspace = true }
 walkdir = { workspace = true }

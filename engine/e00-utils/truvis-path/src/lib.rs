@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde::Deserialize;
+use truvis_shader_manifest::ShaderManifest;
 
 mod path_utils;
 pub use path_utils::PathUtils;
@@ -27,22 +28,11 @@ struct MapConfig {
     dirs: Dirs,
 }
 
-#[derive(Debug, Deserialize)]
-struct ShaderPackageFile {
-    package: Vec<ShaderPackagePath>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ShaderPackagePath {
-    id: String,
-    output_prefix: String,
-}
-
 // 编译期嵌入 workspace 根目录（由 build.rs 注入）
 const WORKSPACE_ROOT: &str = env!("TRUVIS_WORKSPACE_ROOT");
 
 static CONFIG: OnceLock<MapConfig> = OnceLock::new();
-static SHADER_PACKAGES: OnceLock<ShaderPackageFile> = OnceLock::new();
+static SHADER_MANIFEST: OnceLock<ShaderManifest> = OnceLock::new();
 
 fn config() -> &'static MapConfig {
     CONFIG.get_or_init(|| {
@@ -53,12 +43,10 @@ fn config() -> &'static MapConfig {
     })
 }
 
-fn shader_packages() -> &'static ShaderPackageFile {
-    SHADER_PACKAGES.get_or_init(|| {
-        let manifest_path = Path::new(WORKSPACE_ROOT).join("shader-packages.toml");
-        let content = fs::read_to_string(&manifest_path)
-            .unwrap_or_else(|e| panic!("无法读取 shader-packages.toml（{manifest_path:?}）: {e}"));
-        toml::from_str(&content).unwrap_or_else(|e| panic!("shader-packages.toml 解析失败: {e}"))
+fn shader_manifest() -> &'static ShaderManifest {
+    SHADER_MANIFEST.get_or_init(|| {
+        ShaderManifest::load(TruvisPath::shader_manifest_path())
+            .unwrap_or_else(|error| panic!("shader-packages.toml 加载失败: {error:#}"))
     })
 }
 
@@ -192,7 +180,12 @@ impl TruvisPath {
 
     /// 编译后的 shader 产物目录（`build/shader/`）。
     pub fn shader_build_dir() -> PathBuf {
-        Self::target().join("shader")
+        shader_manifest().shader_output_root()
+    }
+
+    /// shader package manifest 路径。
+    pub fn shader_manifest_path() -> PathBuf {
+        Self::workspace().join("shader-packages.toml")
     }
 
     /// Rust 自动绑定生成目录（`build/bindings/`）。
@@ -206,17 +199,12 @@ impl TruvisPath {
 
     /// 按 package id 解析编译后的 SPIR-V 路径。
     pub fn shader_build_spv(package_id: &str, filename: &str) -> String {
-        let output_prefix = shader_packages()
-            .package
-            .iter()
-            .find(|package| package.id == package_id)
-            .unwrap_or_else(|| panic!("未知 shader package id: {package_id}"))
-            .output_prefix
-            .as_str();
-        let path = Self::shader_build_dir().join(output_prefix).join(filename);
-        let mut s = path.to_str().unwrap().to_string();
-        s.push_str(".spv");
-        s
+        shader_manifest()
+            .shader_output_path(package_id, filename)
+            .unwrap_or_else(|error| panic!("shader 输出路径解析失败: {error:#}"))
+            .to_str()
+            .unwrap()
+            .to_string()
     }
 
     /// 编译后的 SPIR-V 路径（字符串形式）。

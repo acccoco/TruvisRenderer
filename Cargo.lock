@@ -6151,6 +6151,7 @@ dependencies = [
  "anyhow",
  "serde",
  "toml 0.8.2",
+ "truvis-shader-manifest",
 ]
 
 [[package]]
@@ -6293,10 +6294,18 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "toml 0.8.2",
  "truvis-logs",
- "truvis-path",
+ "truvis-shader-manifest",
  "walkdir",
+]
+
+[[package]]
+name = "truvis-shader-manifest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "toml 0.8.2",
 ]
 
 [[package]]

@@ -4,6 +4,7 @@ members = [
     # e00-utils
     "engine/e00-utils/truvis-fetch-res",
     "engine/e00-utils/truvis-path",
+    "engine/e00-utils/truvis-shader-manifest",
     "engine/e00-utils/truvis-shader-binding-codegen",
     "engine/e00-utils/truvis-shader-build",
     # e00-foundation
@@ -66,6 +67,7 @@ panic = 'abort'    # panic 时直接终止，进一步减小体积
 # e00-utils
 truvis-fetch-res = { path = "engine/e00-utils/truvis-fetch-res" }
 truvis-path = { path = "engine/e00-utils/truvis-path" }
+truvis-shader-manifest = { path = "engine/e00-utils/truvis-shader-manifest" }
 truvis-shader-binding-codegen = { path = "engine/e00-utils/truvis-shader-binding-codegen" }
 truvis-shader-build = { path = "engine/e00-utils/truvis-shader-build" }
 # e00-foundation

@@ -1,10 +1,21 @@
-# 会被 truvis-path 解析
+[build]
+shader_output_root = "build/shader"
+binding_output_root = "build/bindings"
+log_root = ".temp"
+
+[compiler]
+slangc = "tools/slang/bin/slangc.exe"
+glslc = "glslc"
+dxc = "dxc"
 
 [[package]]
 id = "engine"
 entry_root = "engine/shader/entry"
 include_roots = ["engine/shader"]
-shared_input_roots = ["engine/shader/abi/engine", "engine/shader/lib/engine"]
+shared_inputs = [
+    { path = "engine/shader/abi/engine", layer = "abi" },
+    { path = "engine/shader/lib/engine", layer = "lib" },
+]
 depends_on = []
 output_prefix = "engine"
 
@@ -12,7 +23,10 @@ output_prefix = "engine"
 id = "renderer"
 entry_root = "renderer/shader/entry/renderer"
 include_roots = ["engine/shader", "renderer/shader"]
-shared_input_roots = ["renderer/shader/abi/renderer", "renderer/shader/lib/renderer"]
+shared_inputs = [
+    { path = "renderer/shader/abi/renderer", layer = "abi" },
+    { path = "renderer/shader/lib/renderer", layer = "lib" },
+]
 depends_on = ["engine"]
 output_prefix = "renderer"
 
@@ -20,7 +34,7 @@ output_prefix = "renderer"
 id = "sample-hello-triangle"
 entry_root = "renderer/shader/entry/sample-hello-triangle"
 include_roots = ["engine/shader"]
-shared_input_roots = []
+shared_inputs = []
 depends_on = ["engine"]
 output_prefix = "samples/hello-triangle"
 
@@ -28,6 +42,22 @@ output_prefix = "samples/hello-triangle"
 id = "sample-shader-toy"
 entry_root = "renderer/shader/entry/sample-shader-toy"
 include_roots = ["renderer/shader"]
-shared_input_roots = ["renderer/shader/lib/sample-shader-toy"]
+shared_inputs = [
+    { path = "renderer/shader/lib/sample-shader-toy", layer = "lib" },
+]
 depends_on = []
 output_prefix = "samples/shader-toy"
+
+[[binding]]
+id = "engine"
+package = "engine"
+header = "engine/shader/truvis-shader-binding/ffi/rust_ffi.hpp"
+extra_include_roots = []
+output_crate = "truvis-shader-binding"
+
+[[binding]]
+id = "renderer"
+package = "renderer"
+header = "renderer/shader/truvis-renderer-shader-binding/ffi/rust_ffi.hpp"
+extra_include_roots = ["engine/shader/truvis-shader-binding/ffi"]
+output_crate = "truvis-renderer-shader-binding"

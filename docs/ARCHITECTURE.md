@@ -59,8 +59,8 @@ app ──> renderer ──> engine
 - CPU scene 只由 `World`/`SceneStore` 权威持有；GPU scene 是 prepare 后的派生状态。
 - Vulkan 对象只在 RenderThread 创建、使用和销毁。窗口 owner 持有 `RenderThread` handle，关闭时先回收
   Renderer/Runtime/Vulkan，再销毁 child HWND 和 Tauri parent。
-- Shader owner 方向固定为 `renderer -> engine`；Engine 校验器只识别 `abi/engine|renderer` 与
-  `lib/engine|renderer|sample-*` 的明确前缀。
+- 当前 `shader-packages.toml` 声明的 owner 方向为 `renderer -> engine`；通用校验器从 package 依赖闭包、
+  `shared_inputs.layer` 和 include root 推导可见边界，不内置 Engine/Renderer/sample 名称。
 
 ## 文档职责
 

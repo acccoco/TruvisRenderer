@@ -45,6 +45,8 @@ workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
   运行时路径编码和词法路径归一化等 helper；不负责下载或加载资源内容。
 - `truvis-fetch-res/`：`fetch_res` 工具 crate，读取 `resources.toml` 并下载模型资产、外部工具、SDK 或参考源码资源；不参与渲染线程的
   asset loading。
+- `truvis-shader-manifest/`：统一解析和校验 `shader-packages.toml` 的 package、compiler、输出与 binding 配置；
+  不依赖 Engine/Renderer 运行时结构，也不检查构建环境是否完整。
 - `truvis-shader-build/`：`shader-build` 工具 crate，负责把 manifest 声明的 shader 源码编译到
   `build/shader/`；推荐通过 `just shader` 调用。
 - `truvis-shader-binding-codegen/`：Engine/Renderer binding crate 共用的 bindgen 参数、类型重命名、稳定输出路径与

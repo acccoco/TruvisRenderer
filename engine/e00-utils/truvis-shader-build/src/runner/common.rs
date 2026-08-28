@@ -1,11 +1,8 @@
 //! 着色器编译的共享类型和工具
 
-use std::{
-    path::{Path, PathBuf},
-    sync::OnceLock,
-};
+use std::path::{Path, PathBuf};
 
-use truvis_path::TruvisPath;
+use truvis_shader_manifest::ShaderManifest;
 
 /// Shader 的执行阶段
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,20 +41,28 @@ pub enum ShaderCompilerType {
     Slang,
 }
 
-/// Shader 构建工具使用的 workspace 路径。
-pub struct EnvPath;
+/// 三类 shader 编译器的已解析 executable。
+pub struct ShaderCompilerExecutables {
+    glslc: PathBuf,
+    dxc: PathBuf,
+    slangc: PathBuf,
+}
 
-impl EnvPath {
-    /// 编译 shader 的输出路径。
-    pub fn shader_build_path() -> &'static Path {
-        static PATH: OnceLock<PathBuf> = OnceLock::new();
-        PATH.get_or_init(TruvisPath::shader_build_dir)
+impl ShaderCompilerExecutables {
+    pub fn from_manifest(manifest: &ShaderManifest) -> Self {
+        Self {
+            glslc: manifest.glslc_executable(),
+            dxc: manifest.dxc_executable(),
+            slangc: manifest.slangc_executable(),
+        }
     }
 
-    /// Slang 编译器路径。
-    pub fn slangc_path() -> &'static Path {
-        static PATH: OnceLock<PathBuf> = OnceLock::new();
-        PATH.get_or_init(|| TruvisPath::tools_path().join("slang").join("bin").join("slangc.exe"))
+    fn executable(&self, compiler_type: ShaderCompilerType) -> PathBuf {
+        match compiler_type {
+            ShaderCompilerType::Glsl => self.glslc.clone(),
+            ShaderCompilerType::Hlsl => self.dxc.clone(),
+            ShaderCompilerType::Slang => self.slangc.clone(),
+        }
     }
 }
 
@@ -104,6 +109,7 @@ pub struct ShaderCompileTask {
     pub allowed_dependency_roots: Vec<PathBuf>,
     pub shader_stage: ShaderStage,
     pub compiler_type: ShaderCompilerType,
+    pub compiler_executable: PathBuf,
 }
 
 impl ShaderCompileTask {
@@ -116,6 +122,7 @@ impl ShaderCompileTask {
         output_prefix: &Path,
         include_roots: &[PathBuf],
         allowed_dependency_roots: &[PathBuf],
+        compiler_executables: &ShaderCompilerExecutables,
         entry: &walkdir::DirEntry,
     ) -> Option<Self> {
         let shader_path = entry.path();
@@ -132,6 +139,7 @@ impl ShaderCompileTask {
         depfile_ext.push(".d");
         depfile_path.set_extension(depfile_ext);
 
+        let compiler_type = Self::select_compiler(shader_name);
         Some(Self {
             package_id: package_id.to_string(),
             entry_relative_path: relative_path.to_path_buf(),
@@ -141,7 +149,8 @@ impl ShaderCompileTask {
             include_roots: include_roots.to_vec(),
             allowed_dependency_roots: allowed_dependency_roots.to_vec(),
             shader_stage: Self::parse_shader_stage(shader_name)?,
-            compiler_type: Self::select_compiler(shader_name),
+            compiler_type,
+            compiler_executable: compiler_executables.executable(compiler_type),
         })
     }
 

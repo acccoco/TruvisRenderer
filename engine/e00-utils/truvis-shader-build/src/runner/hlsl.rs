@@ -57,7 +57,7 @@ impl ShaderCompiler for HlslCompiler {
 
         let target = Self::get_shader_model_target(task.shader_stage);
 
-        let mut command = std::process::Command::new("dxc");
+        let mut command = std::process::Command::new(&task.compiler_executable);
         for include_root in &task.include_roots {
             command.arg("-I").arg(include_root);
         }

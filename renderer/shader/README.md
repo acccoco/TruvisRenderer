@@ -48,7 +48,8 @@ manifest 不提供 workspace 根目录 `.` include root。搜索根与 `.vscode/
 禁止 `../`、绝对路径、反斜杠和依赖搜索顺序的裸 domain 路径。
 
 依赖层级固定为 `abi/<owner> <- lib/<owner> <- entry`；ABI 不能依赖 lib/entry，lib 不能依赖 entry。
-Owner 方向固定为 `engine <- renderer`。构建器先静态检查源码，再用 Slang/GLSLC/DXC depfile 验证实际传递依赖；
+当前 manifest 声明的 Owner 方向为 `engine <- renderer`，通用构建器只认 package 依赖闭包和带层级的
+`shared_inputs`，不内置 Engine、Renderer 或 sample 名称。构建器先静态检查源码，再用 Slang/GLSLC/DXC depfile 验证实际传递依赖；
 ShaderToy 即使物理上位于 `renderer/shader`，也不能访问 Renderer 或 Engine shared inputs。
 
 ## Binding 唯一所有权

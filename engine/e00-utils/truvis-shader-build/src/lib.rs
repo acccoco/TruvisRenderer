@@ -1,3 +1,3 @@
 mod runner;
 
-pub use runner::run_from_env;
+pub use runner::ShaderBuildRunner;

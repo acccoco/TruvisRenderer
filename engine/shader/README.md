@@ -14,6 +14,7 @@ Rust binding 公共生成工具位于 `engine/e00-utils/`。所有 Renderer 侧 
 - `truvis-shader-binding/`：`engine::*` 与 canonical Slang 基础类型的 Rust binding owner。
 - `../e00-utils/truvis-shader-binding-codegen/`：Engine/Renderer binding 共用的严格 allowlist、类型重命名、namespace
   注入、生成路径、内容 hash 与 write-if-changed 实现。
+- `../e00-utils/truvis-shader-manifest/`：编译工具、binding codegen 与运行时路径查询共用的 manifest 模型。
 - `../e00-utils/truvis-shader-build/`：读取 `shader-packages.toml` 的多 package shader 编译工具。
 
 Renderer 侧的 ABI、Slang-only 算法、entry 与统一 Rust binding 结构见 `renderer/shader/README.md`。
@@ -43,8 +44,9 @@ Engine binding、shader 源码和 package 配置禁止依赖任何 Renderer crat
 | `sample-shader-toy` | 无 | `build/shader/samples/shader-toy/` |
 
 四个 package 的 include roots 只使用 `.vscode/settings.json` 声明的 `engine/shader`、`renderer/shader` 或其严格
-子集，不使用 workspace 根目录 `.`。源码 include 必须写成 `abi/engine/...`、`lib/engine/...`、
-`abi/renderer/...`、`lib/renderer/...` 或 `lib/sample-shader-toy/...`，不得依赖搜索顺序。
+子集，不使用 workspace 根目录 `.`。当前 manifest 因此要求源码 include 写成 `abi/engine/...`、
+`lib/engine/...`、`abi/renderer/...`、`lib/renderer/...` 或 `lib/sample-shader-toy/...`。构建器本身不识别
+固定 owner 名称，而是从 `shared_inputs` 相对 include root 的 `layer/owner` 前缀推导合法路径。
 
 执行：
 
@@ -57,8 +59,9 @@ just shader-force
 `TruvisPath::shader_build_path_str(package_id, entry_relative_path)` 解析同一份 manifest，调用点不手写
 输出前缀。
 
-`build/shader/.state/shader-build.json` 记录 package 配置、共享输入和任务，`build/shader/.deps/` 保存编译器
-depfile。构建前检查 canonical include 与层级方向，编译后再验证真实传递依赖。单个 entry 变化只重编该
+`build/shader/.state/shader-build.json` 使用版本 5 记录 package、compiler、输出、共享输入和任务，
+`build/shader/.deps/` 保存编译器 depfile。构建前检查 canonical include、唯一解析和层级方向，编译后再验证
+真实传递依赖。单个 entry 变化只重编该
 任务；Renderer shared input 只失效 Renderer；Engine shared input 会传播到声明依赖 Engine 的 Renderer 和 Hello Triangle；
 ShaderToy shared input 只失效自身。
 
