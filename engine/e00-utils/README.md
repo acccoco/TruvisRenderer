@@ -9,7 +9,8 @@
 - `truvis-shader-manifest/`：解析并校验 shader package、编译器、输出与 binding 配置；不检查目录和
   编译器是否存在。
 - `truvis-shader-build/`：由 manifest 驱动的 SPIR-V 全量/增量编译与依赖校验。
-- `truvis-shader-binding-codegen/`：Engine/Renderer ABI owner 共用的 bindgen 生成机制。
+- `truvis-shader-binding-codegen/`：消费 manifest 已解析的 header、include roots 与输出路径，统一执行
+  bindgen、类型重命名、content hash 和 write-if-changed。
 
 shader 源码与 ABI owner 仍分别位于 `engine/shader/`、`renderer/shader/`；工具层不定义 namespace、
 allowlist 或跨 crate re-export policy。

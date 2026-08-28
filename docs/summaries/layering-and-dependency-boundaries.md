@@ -117,6 +117,9 @@ DTO，不理解 Tauri 传输。
   `renderer::*`。
 - Renderer package id 和输出前缀都为 `renderer`；Rust owner 为 `truvis-renderer-shader-binding`。
 - Owner 方向为 `renderer -> engine`。Engine shader、binding 和 package 配置不得反向引用 Renderer。
+- `truvis-shader-manifest`、`truvis-shader-build` 与 `truvis-shader-binding-codegen` 位于 `engine/e00-utils/`；
+  shader 源码和两个 Rust ABI owner 仍留在各自 shader 根。binding 的结构路径由 manifest 管理，allowlist 与
+  Rust re-export policy 由 owner `build.rs` 管理。
 - include 必须使用 `abi/engine`、`lib/engine`、`abi/renderer`、`lib/renderer` 或 sample-specific 前缀，
   这些前缀由当前 manifest 的 include root 与 `shared_inputs` 推导，并由源码预检与 compiler depfile 双重校验；
   e00-utils 中的通用工具不内置 owner 名称。

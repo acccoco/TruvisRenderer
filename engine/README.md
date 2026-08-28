@@ -49,8 +49,8 @@ workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
   不依赖 Engine/Renderer 运行时结构，也不检查构建环境是否完整。
 - `truvis-shader-build/`：`shader-build` 工具 crate，负责把 manifest 声明的 shader 源码编译到
   `build/shader/`；推荐通过 `just shader` 调用。
-- `truvis-shader-binding-codegen/`：Engine/Renderer binding crate 共用的 bindgen 参数、类型重命名、稳定输出路径与
-  write-if-changed 支持。
+- `truvis-shader-binding-codegen/`：消费 manifest 已解析的 binding 路径，提供共用 bindgen 参数、类型重命名、
+  content hash 与 write-if-changed；allowlist 和跨 crate re-export 仍由 ABI owner 决定。
 
 ### `e10-gfx/`
 

@@ -61,6 +61,8 @@ app ──> renderer ──> engine
   Renderer/Runtime/Vulkan，再销毁 child HWND 和 Tauri parent。
 - 当前 `shader-packages.toml` 声明的 owner 方向为 `renderer -> engine`；通用校验器从 package 依赖闭包、
   `shared_inputs.layer` 和 include root 推导可见边界，不内置 Engine/Renderer/sample 名称。
+- Shader manifest、编译器和 binding codegen 位于 `engine/e00-utils/`；源码与 ABI owner 留在
+  `engine/shader/`、`renderer/shader/`。manifest 决定结构路径，owner `build.rs` 决定 allowlist/re-export policy。
 
 ## 文档职责
 

@@ -4,12 +4,12 @@
 //! 固定输出路径和 write-if-changed 语义，避免不同 owner 生成出不一致的 Rust 投影。
 
 use std::{
-    env, fs,
+    fs,
     path::{Path, PathBuf},
 };
 
 use bindgen::callbacks::ItemInfo;
-use truvis_path::TruvisPath;
+use truvis_shader_manifest::ResolvedShaderBinding;
 
 /// 注入 bindgen 生成 namespace 的一行 Rust 代码。
 pub struct ModuleRawLine<'a> {
@@ -19,13 +19,10 @@ pub struct ModuleRawLine<'a> {
 
 /// 单个 shader binding owner 的生成契约。
 pub struct BindingSpec<'a> {
-    pub header: &'a Path,
-    pub include_dirs: &'a [PathBuf],
-    pub output_crate: &'a str,
+    pub binding: ResolvedShaderBinding,
     pub allowlist_types: &'a [&'a str],
     pub allowlist_vars: &'a [&'a str],
     pub module_raw_lines: &'a [ModuleRawLine<'a>],
-    pub rerun_if_changed: &'a [PathBuf],
 }
 
 /// 生成文件及其内容 hash，供 binding crate 的 `build.rs` 暴露给 `include!`。
@@ -53,7 +50,7 @@ impl<'a> BindingGenerator<'a> {
         self.emit_rerun_inputs();
 
         let mut builder = bindgen::Builder::default()
-            .header(self.spec.header.to_string_lossy())
+            .header(self.spec.binding.header.to_string_lossy())
             .clang_args(["-x", "c++", "-std=c++17"])
             .derive_default(false)
             .raw_line("#[allow(clippy::all)]")
@@ -63,7 +60,7 @@ impl<'a> BindingGenerator<'a> {
             .parse_callbacks(Box::new(SlangTypeRenamer))
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
-        for include_dir in self.spec.include_dirs {
+        for include_dir in &self.spec.binding.include_roots {
             builder = builder.clang_arg(format!("-I{}", include_dir.display()));
         }
         for pattern in self.spec.allowlist_types {
@@ -80,7 +77,7 @@ impl<'a> BindingGenerator<'a> {
         let mut generated = Vec::new();
         bindings.write(Box::new(&mut generated)).expect("Couldn't render shader bindings");
 
-        let source_path = self.output_path();
+        let source_path = self.spec.binding.output_path.clone();
         let content_hash = Self::content_hash(&generated);
         let hash_path = source_path.with_extension("hash");
 
@@ -96,18 +93,10 @@ impl<'a> BindingGenerator<'a> {
         }
     }
 
-    fn output_path(&self) -> PathBuf {
-        let target = env::var("TARGET").expect("TARGET must be set by Cargo build scripts");
-        TruvisPath::rust_binding_build_dir()
-            .join(target)
-            .join("shader")
-            .join(self.spec.output_crate)
-            .join("_shader_bindings.rs")
-    }
-
     fn emit_rerun_inputs(&self) {
-        println!("cargo:rerun-if-changed={}", self.spec.header.display());
-        for path in self.spec.rerun_if_changed {
+        println!("cargo:rerun-if-changed={}", self.spec.binding.manifest_path.display());
+        println!("cargo:rerun-if-changed={}", self.spec.binding.header.display());
+        for path in &self.spec.binding.abi_input_roots {
             println!("cargo:rerun-if-changed={}", path.display());
         }
     }

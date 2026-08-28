@@ -12,8 +12,8 @@ Rust binding 公共生成工具位于 `engine/e00-utils/`。所有 Renderer 侧 
   Renderer descriptor 或 `renderer/shader`。
 - `entry/`：Engine runtime 自有 shader entry，目前只包含同步 raycast。
 - `truvis-shader-binding/`：`engine::*` 与 canonical Slang 基础类型的 Rust binding owner。
-- `../e00-utils/truvis-shader-binding-codegen/`：Engine/Renderer binding 共用的严格 allowlist、类型重命名、namespace
-  注入、生成路径、内容 hash 与 write-if-changed 实现。
+- `../e00-utils/truvis-shader-binding-codegen/`：Engine/Renderer binding 共用的 bindgen 执行、类型重命名、namespace
+  注入、内容 hash 与 write-if-changed 实现；header、include roots 和输出路径来自 manifest。
 - `../e00-utils/truvis-shader-manifest/`：编译工具、binding codegen 与运行时路径查询共用的 manifest 模型。
 - `../e00-utils/truvis-shader-build/`：读取 `shader-packages.toml` 的多 package shader 编译工具。
 
@@ -66,7 +66,8 @@ just shader-force
 ShaderToy shared input 只失效自身。
 
 binding 源码生成到 `build/bindings/{TARGET}/shader/<binding-crate>/`，源码树不保存
-`_shader_bindings.rs`。
+`_shader_bindings.rs`。两个 owner 的 `build.rs` 按 binding id 读取 `[[binding]]`，只补充各自 allowlist 与
+跨 crate Rust re-export policy。
 
 ## ABI 布局约束
 

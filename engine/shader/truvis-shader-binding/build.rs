@@ -1,15 +1,14 @@
-use std::path::PathBuf;
-
 use truvis_path::TruvisPath;
 use truvis_shader_binding_codegen::{BindingGenerator, BindingSpec};
+use truvis_shader_manifest::ShaderManifest;
 
 fn main() {
-    let shader_root = TruvisPath::shader_root_path();
-    let header = PathBuf::from("./ffi/rust_ffi.hpp");
+    let manifest =
+        ShaderManifest::load(TruvisPath::shader_manifest_path()).expect("Unable to load shader package manifest");
+    let target = std::env::var("TARGET").expect("TARGET must be set by Cargo build scripts");
+    let binding = manifest.resolved_binding("engine", &target).expect("Unable to resolve engine shader binding");
     let generated = BindingGenerator::new(BindingSpec {
-        header: &header,
-        include_dirs: std::slice::from_ref(&shader_root),
-        output_crate: "truvis-shader-binding",
+        binding,
         allowlist_types: &[
             "uint",
             "float2",
@@ -26,7 +25,6 @@ fn main() {
         ],
         allowlist_vars: &["engine::.*"],
         module_raw_lines: &[],
-        rerun_if_changed: &[shader_root.join("abi").join("engine")],
     })
     .generate();
 

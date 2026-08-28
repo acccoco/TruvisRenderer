@@ -6266,6 +6266,7 @@ dependencies = [
  "truvis-path",
  "truvis-shader-binding",
  "truvis-shader-binding-codegen",
+ "truvis-shader-manifest",
 ]
 
 [[package]]
@@ -6276,6 +6277,7 @@ dependencies = [
  "glam",
  "truvis-path",
  "truvis-shader-binding-codegen",
+ "truvis-shader-manifest",
 ]
 
 [[package]]
@@ -6283,7 +6285,7 @@ name = "truvis-shader-binding-codegen"
 version = "0.1.0"
 dependencies = [
  "bindgen",
- "truvis-path",
+ "truvis-shader-manifest",
 ]
 
 [[package]]

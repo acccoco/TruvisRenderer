@@ -5,6 +5,6 @@ edition = "2024"
 description = "Truvis shader Rust binding generation support"
 
 [dependencies]
-truvis-path = { workspace = true }
+truvis-shader-manifest = { workspace = true }
 
 bindgen = { workspace = true }

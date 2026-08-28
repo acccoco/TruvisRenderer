@@ -19,7 +19,6 @@ struct Dirs {
     tools: String,
     target: String,
     temp: String,
-    shader: String,
     cxx: String,
 }
 
@@ -167,17 +166,6 @@ impl TruvisPath {
 
 // engine 目录下的子目录
 impl TruvisPath {
-    /// shader 根目录（`engine/shader/`）
-    pub fn shader_root() -> PathBuf {
-        Self::workspace().join(&config().dirs.shader)
-    }
-
-    /// shader 根目录（兼容旧名称）
-    #[inline]
-    pub fn shader_root_path() -> PathBuf {
-        Self::shader_root()
-    }
-
     /// 编译后的 shader 产物目录（`build/shader/`）。
     pub fn shader_build_dir() -> PathBuf {
         shader_manifest().shader_output_root()

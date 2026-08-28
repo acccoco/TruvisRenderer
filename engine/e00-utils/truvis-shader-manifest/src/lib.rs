@@ -93,6 +93,17 @@ pub struct ShaderBinding {
     pub output_crate: String,
 }
 
+/// binding codegen 可直接消费的路径配置。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedShaderBinding {
+    pub id: String,
+    pub header: PathBuf,
+    pub include_roots: Vec<PathBuf>,
+    pub abi_input_roots: Vec<PathBuf>,
+    pub manifest_path: PathBuf,
+    pub output_path: PathBuf,
+}
+
 impl ShaderManifest {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let requested_path = path.as_ref();
@@ -200,6 +211,35 @@ impl ShaderManifest {
             .join("shader")
             .join(&binding.output_crate)
             .join("_shader_bindings.rs"))
+    }
+
+    pub fn resolved_binding(&self, binding_id: &str, target: &str) -> Result<ResolvedShaderBinding> {
+        let binding = self.binding(binding_id)?;
+        let package = self.package(&binding.package)?;
+        let include_roots = package
+            .include_roots
+            .iter()
+            .chain(&binding.extra_include_roots)
+            .map(|path| self.resolve_path(path))
+            .collect();
+        let mut abi_input_roots = self
+            .package_dependency_closure(&binding.package)?
+            .into_iter()
+            .flat_map(|package| &package.shared_inputs)
+            .filter(|input| input.layer == ShaderSourceLayer::Abi)
+            .map(|input| self.resolve_path(&input.path))
+            .collect::<Vec<_>>();
+        abi_input_roots.sort();
+        abi_input_roots.dedup();
+
+        Ok(ResolvedShaderBinding {
+            id: binding.id.clone(),
+            header: self.resolve_path(&binding.header),
+            include_roots,
+            abi_input_roots,
+            manifest_path: self.manifest_path.clone(),
+            output_path: self.binding_output_path(target, binding_id)?,
+        })
     }
 
     pub fn package_dependency_closure(&self, package_id: &str) -> Result<Vec<&ShaderPackage>> {
