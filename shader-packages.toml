@@ -1,5 +1,5 @@
 [compiler]
-slangc = "tools/slang/bin/slangc.exe"
+slangc = "external/slang/bin/slangc.exe"
 glslc = "glslc"
 dxc = "dxc"
 

@@ -62,7 +62,7 @@ app ──> renderer ──> engine
 - 当前 `shader-packages.toml` 声明的 owner 方向为 `renderer -> engine`；通用校验器从 package 依赖闭包、
   `shared_inputs.layer` 和 include root 推导可见边界，不内置 Engine/Renderer/sample 名称。
 - Shader manifest、编译器和 binding codegen 位于 `engine/e00-utils/`；源码与 ABI owner 留在
-  `engine/shader/`、`renderer/shader/`。`map.toml`/`truvis-path` 决定产物物理根，manifest 决定 package、
+  `engine/shader/`、`renderer/shader/`。`paths.toml`/`truvis-path` 决定产物物理根，manifest 决定 package、
   binding 与输出前缀等逻辑路径，owner `build.rs` 决定 allowlist/re-export policy。
 
 ## 文档职责

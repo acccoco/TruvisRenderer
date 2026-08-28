@@ -41,7 +41,7 @@ workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
 
 引擎工具层，面向 workspace 路径和资源准备，不等同于运行时 asset 系统。
 
-- `truvis-path/`：基于根目录 `map.toml` 的统一物理路径入口，提供 workspace、assets、resources、shader/binding
+- `truvis-path/`：基于根目录 `paths.toml` 的统一物理路径入口，提供 workspace、assets、resources、shader/binding
   build、CXX、运行时路径编码和词法路径归一化等 helper；不理解 shader package schema，也不负责下载或加载资源内容。
 - `truvis-fetch-res/`：`fetch_res` 工具 crate，读取 `resources.toml` 并下载模型资产、外部工具、SDK 或参考源码资源；不参与渲染线程的
   asset loading。

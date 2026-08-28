@@ -37,28 +37,28 @@ rename_to = "sponza-1"
 name = "slang"
 url = "https://github.com/shader-slang/slang/releases/download/v2026.11/slang-2026.11-windows-x86_64.zip"
 resource_type = "zip"
-target_dir = "tools"
+target_dir = "external"
 rename_to = "slang"
 
 [[resources]]
 name = "tracy"
 url = "https://github.com/wolfpld/tracy/releases/download/v0.13.1/windows-0.13.1.zip"
 resource_type = "zip"
-target_dir = "tools"
+target_dir = "external"
 rename_to = "tracy"
 
 [[resources]]
 name = "streamline"
 url = "https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.11.1/streamline-sdk-v2.11.1.zip"
 resource_type = "zip"
-target_dir = "tools"
+target_dir = "external"
 rename_to = "streamline-sdk"
 
 [[resources]]
 name = "nvidia-rtx-gi-repo"
 url = "https://github.com/NVIDIA-RTX/RTXGI.git"
 resource_type = "git"
-target_dir = "tools"
+target_dir = "external"
 rename_to = "rtx-gi"
 git_ref = "v2.7.0"
 recursive_submodules = true
@@ -67,7 +67,7 @@ recursive_submodules = true
 name = "nvidia-rtx-di-repo"
 url = "https://github.com/NVIDIA-RTX/RTXDI.git"
 resource_type = "git"
-target_dir = "tools"
+target_dir = "external"
 rename_to = "rtx-di"
 git_ref = "v3.0.0"
 recursive_submodules = true
@@ -76,7 +76,7 @@ recursive_submodules = true
 name = "openpbr-repo"
 url = "https://github.com/AcademySoftwareFoundation/OpenPBR.git"
 resource_type = "git"
-target_dir = "tools"
+target_dir = "external"
 rename_to = "openpbr"
 git_ref = "v1.1.1"
 recursive_submodules = true

@@ -1,7 +1,7 @@
 set shell := ["nu", "-c"]
 
-validation_layer_settings := justfile_directory() + "\\tools\\vulkan\\khronos_validation_settings.txt"
-tracy_profiler := justfile_directory() + "\\tools\\tracy\\tracy-profiler.exe"
+validation_layer_settings := justfile_directory() + "\\config\\vulkan\\khronos_validation_settings.txt"
+tracy_profiler := justfile_directory() + "\\external\\tracy\\tracy-profiler.exe"
 
 # 显示可用命令
 [group('1 常用工作流')]

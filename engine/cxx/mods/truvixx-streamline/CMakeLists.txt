@@ -1,7 +1,7 @@
 # truvixx-streamline: Streamline / DLSS C API wrapper
 
 set(TRUVIS_WORKSPACE_ROOT "${CMAKE_SOURCE_DIR}/../..")
-set(STREAMLINE_SDK_ROOT "${TRUVIS_WORKSPACE_ROOT}/tools/streamline-sdk")
+set(STREAMLINE_SDK_ROOT "${TRUVIS_WORKSPACE_ROOT}/external/streamline-sdk")
 set(STREAMLINE_INCLUDE_DIR "${STREAMLINE_SDK_ROOT}/include")
 
 # 这里只依赖 Streamline 头文件，不链接 sl.interposer.lib。

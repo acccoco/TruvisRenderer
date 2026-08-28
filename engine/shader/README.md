@@ -57,7 +57,7 @@ just shader-force
 
 `just shader` 先运行 package-aware 编译器，再构建 Engine 与 Renderer 两个 binding crate。运行时通过
 `ShaderArtifactPath::resolve(package_id, entry_relative_path)` 解析同一份 manifest，调用点不手写输出前缀。
-`map.toml` 的 `dirs.shader_build`、`dirs.binding_build` 和 `dirs.temp` 是产物物理根的唯一配置源；
+`paths.toml` 的 `dirs.shader_build`、`dirs.binding_build` 和 `dirs.temp` 是产物物理根的唯一配置源；
 `shader-packages.toml` 只声明 package/compiler/binding 及 package id 到输出前缀的逻辑映射。
 
 `build/shader/.state/shader-build.json` 使用版本 6 记录 package、compiler、输出、共享输入和任务，

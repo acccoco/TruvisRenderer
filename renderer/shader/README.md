@@ -73,5 +73,5 @@ shader 路径保留兼容层。
 - Hello Triangle entry 变化只重编自身 1 个 entry。
 
 运行时仍使用 entry 相对路径，并通过 `ShaderArtifactPath::resolve` 以 `renderer`、
-`sample-hello-triangle`、`sample-shader-toy` package id 解析产物。物理根来自 `map.toml` 的
+`sample-hello-triangle`、`sample-shader-toy` package id 解析产物。物理根来自 `paths.toml` 的
 `dirs.shader_build`，package id 到输出前缀的映射来自 `shader-packages.toml`。

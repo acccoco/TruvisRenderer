@@ -248,7 +248,7 @@ analytic light v1 不创建可命中的发光几何，因此 analytic NEE 固定
 ## SHARC world-space radiance cache（Update / Resolve / Query）
 
 SHARC（Spatially Hashed Radiance Cache）按路线图第八、九阶段接入。算法移植自 NVIDIA RTXGI SHARC v1.6
-（`tools/rtx-gi/Libraries/Sharc`），落在 `renderer/shader/lib/renderer/realtime_rt/sharc_hash_grid.slangi`、
+（`external/rtx-gi/Libraries/Sharc`），落在 `renderer/shader/lib/renderer/realtime_rt/sharc_hash_grid.slangi`、
 `sharc_common.slangi` 与接入层 `sharc_integration.slangi`。模式由 `RealtimeRenderSettings.sharc_mode` 控制：
 `Off` 完全旁路；`Update` 只维护缓存、不查询（画面与 Off 一致）；`On` 在维护基础上让后续 bounce 查询缓存。
 

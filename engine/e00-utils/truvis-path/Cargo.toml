@@ -2,7 +2,7 @@
 name = "truvis-path"
 version = "0.1.0"
 edition = "2024"
-description = "基于 map.toml 的 Truvis 工作区路径管理"
+description = "基于 paths.toml 的 Truvis 工作区路径管理"
 
 [dependencies]
 serde = { workspace = true }

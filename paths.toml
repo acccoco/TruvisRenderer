@@ -1,11 +1,12 @@
-# Truvis 路径映射配置
+# Truvis workspace 路径映射配置
 # 所有路径均为相对于 workspace 根目录的相对路径
 
 [dirs]
 engine    = "engine"
 assets    = "assets"
 resources = "assets/resources"
-tools     = "tools"
+config    = "config"
+external  = "external"
 target    = "build"
 temp      = ".temp"
 shader_build  = "build/shader"

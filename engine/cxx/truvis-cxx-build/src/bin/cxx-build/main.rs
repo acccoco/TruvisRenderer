@@ -502,7 +502,7 @@ impl StreamlineRuntimePackager {
         // CMake 输出、Streamline runtime 和 Streamline JSON 是三类不同来源：
         // - CMake 输出来自当前 profile 的 native build；
         // - Streamline runtime 来自 SDK 的 debug/development 或 release/production 目录；
-        // - JSON config 来自项目维护的 tools/streamline 模板。
+        // - JSON config 来自项目维护的 config/streamline 模板。
         // 三者都必须部署到 executable 同级目录，但它们的输入来源和失效条件不能混在一起。
         let runtime_sources = self.streamline_runtime_sources(build_type)?;
         for source_path in runtime_sources {
@@ -543,7 +543,7 @@ impl StreamlineRuntimePackager {
     fn streamline_runtime_sources(&self, build_type: BuildType) -> Result<Vec<PathBuf>, String> {
         // Streamline runtime 是运行时依赖，不是 CMake target 产物。这里单独解析 SDK
         // 目录并做缺失检查，避免把第三方 DLL 的存在性错误伪装成 CMake 构建错误。
-        let streamline_sdk_root = TruvisPath::tools_path().join("streamline-sdk");
+        let streamline_sdk_root = TruvisPath::external().join("streamline-sdk");
         if !streamline_sdk_root.exists() {
             return Err(format!(
                 "Streamline SDK 不存在: {}。请先运行 `just fetch-res`。",
@@ -582,10 +582,10 @@ impl StreamlineRuntimePackager {
     }
 
     fn streamline_json_configs(&self) -> Result<Vec<PathBuf>, String> {
-        let configs_dir = TruvisPath::tools_path().join("streamline");
+        let configs_dir = TruvisPath::config().join("streamline");
         if !configs_dir.exists() {
             return Err(format!(
-                "Streamline 配置目录不存在: {}。请提交 tools/streamline 下的 sl.*.json 模板。",
+                "Streamline 配置目录不存在: {}。请提交 config/streamline 下的 sl.*.json 模板。",
                 configs_dir.display()
             ));
         }
@@ -770,7 +770,7 @@ impl<'a> CxxInputCollector<'a> {
 
         for root in [
             self.cxx_project_dir.join("mods"),
-            TruvisPath::tools_path().join("streamline-sdk").join("include"),
+            TruvisPath::external().join("streamline-sdk").join("include"),
         ] {
             self.collect_tree_inputs(&mut inputs, &root)?;
         }

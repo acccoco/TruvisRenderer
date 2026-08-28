@@ -1,7 +1,7 @@
 //! Shader 构建配置的唯一解析入口。
 //!
 //! package 源码、header 和带分隔符的 compiler 路径以 manifest 所在目录为根；shader、binding
-//! 产物根由 `truvis-path` 从 workspace `map.toml` 提供。该 crate 只验证 shader schema、词法路径和
+//! 产物根由 `truvis-path` 从 workspace `paths.toml` 提供。该 crate 只验证 shader schema、词法路径和
 //! package 图，不要求源码、编译器或输出目录已经存在，因此运行时路径查询也可以复用同一模型。
 
 use std::{

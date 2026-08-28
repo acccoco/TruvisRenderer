@@ -3,7 +3,7 @@
   // 保持下划线字段，避免 development runtime 误读一个不存在的测试服务路径。
   "_testServer": "D:/path/to/nvgs-server-spoof",
 
-  // 是否允许 OTA 更新。当前项目固定使用 tools/streamline-sdk 中的 SDK 版本，
+  // 是否允许 OTA 更新。当前项目固定使用 external/streamline-sdk 中的 SDK 版本，
   // 关闭 OTA 可以避免运行时下载的插件影响复现。
   "enableOTA": false,
 

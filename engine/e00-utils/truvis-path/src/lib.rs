@@ -9,13 +9,14 @@ use serde::Deserialize;
 mod path_utils;
 pub use path_utils::PathUtils;
 
-/// map.toml 中 [dirs] 表的映射
+/// paths.toml 中 [dirs] 表的映射
 #[derive(Debug, Deserialize)]
 struct Dirs {
     engine: String,
     assets: String,
     resources: String,
-    tools: String,
+    config: String,
+    external: String,
     target: String,
     temp: String,
     shader_build: String,
@@ -24,28 +25,28 @@ struct Dirs {
 }
 
 #[derive(Debug, Deserialize)]
-struct MapConfig {
+struct PathsConfig {
     dirs: Dirs,
 }
 
 // 编译期嵌入 workspace 根目录（由 build.rs 注入）
 const WORKSPACE_ROOT: &str = env!("TRUVIS_WORKSPACE_ROOT");
 
-static CONFIG: OnceLock<MapConfig> = OnceLock::new();
+static PATHS_CONFIG: OnceLock<PathsConfig> = OnceLock::new();
 
-fn config() -> &'static MapConfig {
-    CONFIG.get_or_init(|| {
-        let map_path = Path::new(WORKSPACE_ROOT).join("map.toml");
+fn paths_config() -> &'static PathsConfig {
+    PATHS_CONFIG.get_or_init(|| {
+        let paths_path = Path::new(WORKSPACE_ROOT).join("paths.toml");
         let content =
-            fs::read_to_string(&map_path).unwrap_or_else(|e| panic!("无法读取 map.toml（{map_path:?}）: {e}"));
-        toml::from_str(&content).unwrap_or_else(|e| panic!("map.toml 解析失败: {e}"))
+            fs::read_to_string(&paths_path).unwrap_or_else(|e| panic!("无法读取 paths.toml（{paths_path:?}）: {e}"));
+        toml::from_str(&content).unwrap_or_else(|e| panic!("paths.toml 解析失败: {e}"))
     })
 }
 
 /// 统一资源路径管理
 ///
-/// 所有路径基于 workspace 根目录，子目录映射来自根目录 `map.toml`。
-/// 路径在首次访问时从 `map.toml` 读取并永久缓存，后续调用零 I/O 开销。
+/// 所有路径基于 workspace 根目录，子目录映射来自根目录 `paths.toml`。
+/// 路径在首次访问时从 `paths.toml` 读取并永久缓存，后续调用零 I/O 开销。
 ///
 /// # 使用示例
 /// ```ignore
@@ -69,10 +70,10 @@ impl TruvisPath {
 
     /// Cargo 输出目录。
     ///
-    /// 函数名保留 `target` 是为了兼容旧调用点；实际目录来自 `map.toml`，
+    /// 函数名保留 `target` 是为了兼容旧调用点；实际目录来自 `paths.toml`，
     /// 当前配置为 workspace 下的 `build/`。
     pub fn target() -> PathBuf {
-        Self::workspace().join(&config().dirs.target)
+        Self::workspace().join(&paths_config().dirs.target)
     }
 
     /// Cargo 输出目录（兼容旧名称）。
@@ -83,7 +84,7 @@ impl TruvisPath {
 
     /// `.temp/` 目录
     pub fn temp_dir() -> PathBuf {
-        Self::workspace().join(&config().dirs.temp)
+        Self::workspace().join(&paths_config().dirs.temp)
     }
 }
 
@@ -91,7 +92,7 @@ impl TruvisPath {
 impl TruvisPath {
     /// `engine/` 目录
     pub fn engine() -> PathBuf {
-        Self::workspace().join(&config().dirs.engine)
+        Self::workspace().join(&paths_config().dirs.engine)
     }
 
     /// `engine/` 目录（兼容旧名称）
@@ -102,7 +103,7 @@ impl TruvisPath {
 
     /// `assets/<filename>` 路径
     pub fn assets(filename: &str) -> PathBuf {
-        Self::workspace().join(&config().dirs.assets).join(filename)
+        Self::workspace().join(&paths_config().dirs.assets).join(filename)
     }
 
     /// `assets/<filename>` 路径（兼容旧名称）
@@ -124,7 +125,7 @@ impl TruvisPath {
 
     /// `assets/resources/<filename>` 路径
     pub fn resources(filename: &str) -> PathBuf {
-        Self::workspace().join(&config().dirs.resources).join(filename)
+        Self::workspace().join(&paths_config().dirs.resources).join(filename)
     }
 
     /// `assets/resources/<filename>` 路径（兼容旧名称）
@@ -144,15 +145,14 @@ impl TruvisPath {
         Self::resources_str(filename)
     }
 
-    /// `tools/` 目录
-    pub fn tools() -> PathBuf {
-        Self::workspace().join(&config().dirs.tools)
+    /// 项目维护的外部工具与 runtime 配置目录（`config/`）。
+    pub fn config() -> PathBuf {
+        Self::workspace().join(&paths_config().dirs.config)
     }
 
-    /// `tools/` 目录（兼容旧名称）
-    #[inline]
-    pub fn tools_path() -> PathBuf {
-        Self::tools()
+    /// 下载或检出的第三方工具、SDK 与参考源码目录（`external/`）。
+    pub fn external() -> PathBuf {
+        Self::workspace().join(&paths_config().dirs.external)
     }
 }
 
@@ -160,7 +160,7 @@ impl TruvisPath {
 impl TruvisPath {
     /// 编译后的 shader 产物目录（`build/shader/`）。
     pub fn shader_build_dir() -> PathBuf {
-        Self::workspace().join(&config().dirs.shader_build)
+        Self::workspace().join(&paths_config().dirs.shader_build)
     }
 
     /// shader package manifest 路径。
@@ -174,12 +174,12 @@ impl TruvisPath {
     /// 一样属于 workspace 级构建产物；具体 crate 需要继续按 target 和模块名拆分子目录，
     /// 避免不同 FFI / shader binding 互相覆盖。
     pub fn rust_binding_build_dir() -> PathBuf {
-        Self::workspace().join(&config().dirs.binding_build)
+        Self::workspace().join(&paths_config().dirs.binding_build)
     }
 
     /// cxx 根目录（`engine/cxx/`）
     pub fn cxx_root() -> PathBuf {
-        Self::workspace().join(&config().dirs.cxx)
+        Self::workspace().join(&paths_config().dirs.cxx)
     }
 
     /// cxx 根目录（兼容旧名称）
