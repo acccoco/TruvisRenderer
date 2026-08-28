@@ -19,7 +19,7 @@ use truvis_render_loop::input_event::{ElementState, InputEvent, MouseButton};
 use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 
-use app_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
+use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 
 use crate::backend::gui_mesh::GuiMesh;
 use crate::backend::gui_pass::GuiPass;

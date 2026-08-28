@@ -1,4 +1,4 @@
-pub use app_render_passes::post_process::sdr::SdrToneMappingSettings;
+pub use renderer_render_passes::post_process::sdr::SdrToneMappingSettings;
 
 /// realtime / offline path tracing 共享的 app 层调试参数。
 ///

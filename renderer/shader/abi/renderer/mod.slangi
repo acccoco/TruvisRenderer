@@ -1,0 +1,5 @@
+#pragma once
+
+/// App owner 的 shader-visible ABI 聚合入口。
+#include "abi/renderer/render_passes/mod.slangi"
+#include "abi/renderer/kit/mod.slangi"

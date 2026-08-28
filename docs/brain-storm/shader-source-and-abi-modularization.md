@@ -67,7 +67,7 @@ engine/shader/
 ├─ truvis-shader-binding-codegen/    # 多 binding crate 复用的 bindgen helper
 └─ truvis-shader-build/              # 多 package SPIR-V 构建工具
 
-app/shader/
+renderer/shader/
 ├─ abi/
 │  └─ app/                           # 全部 App CPU/GPU ABI
 │     ├─ mod.slangi
@@ -89,11 +89,11 @@ app/shader/
 | --- | --- |
 | frame、scene、geometry、material、light、bindless、全局 binding | `engine/shader/abi/engine` |
 | raycast ABI 与 entry | Engine render runtime / `engine/shader` |
-| realtime/offline RT、raster、post、resolve、sdr、selection、image clear | `app/shader/abi/app/render_passes` + `entry/app` |
-| ImGui ABI 与 entry | `app/shader/abi/app/kit` + `entry/app/ui` |
-| hello-triangle、shader-toy entry | `app/shader/entry/<sample>` |
+| realtime/offline RT、raster、post、resolve、sdr、selection、image clear | `renderer/shader/abi/app/render_passes` + `entry/app` |
+| ImGui ABI 与 entry | `renderer/shader/abi/app/kit` + `entry/app/ui` |
+| hello-triangle、shader-toy entry | `renderer/shader/entry/<sample>` |
 | PBR、sampling、scene access 等不依赖 App resource 的通用算法 | `engine/shader/lib/engine` |
-| realtime/offline RT、ReSTIR、SHARC、GBuffer、pass env map 等依赖 App ABI/resource 的算法 | `app/shader/lib/app` |
+| realtime/offline RT、ReSTIR、SHARC、GBuffer、pass env map 等依赖 App ABI/resource 的算法 | `renderer/shader/lib/app` |
 
 ## 依赖与组合规则
 
@@ -110,7 +110,7 @@ Engine lib ──import/include──> 其它 Engine lib
 - `abi/` 必须保持 Slang 与 C++/Clang 都能解析的公共语法子集，使用 `#include + #pragma once`。
 - `lib/` 是纯 Slang，可逐步使用 `module`、`import`、`public/internal` 和可选 `.slang-module`。
 - `entry/` 只声明 entry point 和组合调用，不作为其它源码的 include/import 目标。
-- include 从 `.vscode/settings.json` 声明的 `engine/shader`、`app/shader` 搜索根开始，必须使用
+- include 从 `.vscode/settings.json` 声明的 `engine/shader`、`renderer/shader` 搜索根开始，必须使用
   `abi/engine`、`lib/engine`、`abi/app`、`lib/app` 或 `lib/sample-shader-toy` 前缀并唯一解析。
 - 层级方向为 `abi/<owner> <- lib/<owner> <- entry`，owner 方向为 `engine <- app`；同 owner lib 可以互相
   复用，但 ABI 不得依赖 lib，任何 lib 都不得依赖 entry。
@@ -301,7 +301,7 @@ sample-shader-toy      -> build/shader/samples/shader-toy/...
 
 ### 阶段 4：多 package 编译与 entry 移动（已完成）
 
-- 引入 package manifest 和 namespaced output，将全部 App 源码集中到 `app/shader`。
+- 引入 package manifest 和 namespaced output，将全部 App 源码集中到 `renderer/shader`。
 - 收敛为 Engine、App、Hello Triangle、ShaderToy 四个 package。
 - 同步更新所有 pipeline shader artifact path。
 - 验证 Engine runtime、主体 App 和 samples 都加载各自 SPIR-V。
@@ -331,7 +331,7 @@ sample-shader-toy      -> build/shader/samples/shader-toy/...
 
 阶段 1-4 已在生产 workspace 落地。实施中进一步确认：realtime/offline RT payload、pass env map 等源码
 直接引用 App pass resource / ABI，因此按实际 owner 放入
-`app/shader/lib/app/`；Engine `lib/engine/` 只保留不依赖 App 的通用算法。
+`renderer/shader/lib/app/`；Engine `lib/engine/` 只保留不依赖 App 的通用算法。
 
 验证结果：
 

@@ -1,35 +1,35 @@
 # Engine Shader
 
 `engine/shader/` 只保存 Engine 自有 shader 源码，并提供 workspace 级 SPIR-V 编译与 Rust binding
-生成基础设施。所有 App 侧 shader 集中在 `app/shader/`；package 清单的唯一来源是根目录
+生成基础设施。所有 Renderer 侧 shader 集中在 `renderer/shader/`；package 清单的唯一来源是根目录
 `shader-packages.toml`。
 
 ## 源码职责
 
 - `abi/engine/`：Engine 的 Rust / Slang 共享 ABI。`binding`、`bindless`、`frame`、`geometry`、`light`、
   `material`、`scene` 是公共契约，`raycast` 是 Engine runtime 自有 pass ABI。
-- `lib/engine/`：只在 Slang 领域复用的 Engine 通用算法，不生成 Rust binding；不得依赖 App ABI、
-  App descriptor 或 `app/shader`。
+- `lib/engine/`：只在 Slang 领域复用的 Engine 通用算法，不生成 Rust binding；不得依赖 Renderer ABI、
+  Renderer descriptor 或 `renderer/shader`。
 - `entry/`：Engine runtime 自有 shader entry，目前只包含同步 raycast。
 - `truvis-shader-binding/`：`engine::*` 与 canonical Slang 基础类型的 Rust binding owner。
-- `truvis-shader-binding-codegen/`：Engine/App binding 共用的严格 allowlist、类型重命名、namespace
+- `truvis-shader-binding-codegen/`：Engine/Renderer binding 共用的严格 allowlist、类型重命名、namespace
   注入、生成路径、内容 hash 与 write-if-changed 实现。
 - `truvis-shader-build/`：读取 `shader-packages.toml` 的多 package shader 编译工具。
 
-App 侧的 ABI、Slang-only 算法、entry 与统一 Rust binding 结构见 `app/shader/README.md`。
+Renderer 侧的 ABI、Slang-only 算法、entry 与统一 Rust binding 结构见 `renderer/shader/README.md`。
 
 ## Namespace 与 binding owner
 
 - Engine ABI：`engine::*`，Rust owner 为 `truvis-shader-binding`。
-- App ABI：`app::render_passes::*` 与 `app::kit::*`，Rust owner 为
-  `truvis-app-shader-binding`。
+- Renderer ABI：`renderer::render_passes::*` 与 `renderer::kit::*`，Rust owner 为
+  `truvis-renderer-shader-binding`。
 
 公共 generator 在内部固定 `allowlist_recursively(false)`，并拒绝没有 type/var allowlist 的 spec。
-Engine binding 显式 allowlist canonical 基础类型与 `engine::*`；App binding 只 allowlist
-`app::*`，并通过 `ModuleRawLine` 显式复用 Engine canonical Rust 类型。缺少跨 owner re-export
+Engine binding 显式 allowlist canonical 基础类型与 `engine::*`；Renderer binding 只 allowlist
+`renderer::*`，并通过 `ModuleRawLine` 显式复用 Engine canonical Rust 类型。缺少跨 owner re-export
 时应由 Rust 编译直接失败，不维护容易过期的禁止定义黑名单。
 
-Engine binding、shader 源码和 package 配置禁止依赖任何 App crate 或 `app/shader`。
+Engine binding、shader 源码和 package 配置禁止依赖任何 Renderer crate 或 `renderer/shader`。
 
 ## Package、include 与产物
 
@@ -38,13 +38,13 @@ Engine binding、shader 源码和 package 配置禁止依赖任何 App crate 或
 | package | 依赖 | 产物前缀 |
 | --- | --- | --- |
 | `engine` | 无 | `build/shader/engine/` |
-| `app` | `engine` | `build/shader/app/` |
+| `renderer` | `engine` | `build/shader/renderer/` |
 | `sample-hello-triangle` | `engine` | `build/shader/samples/hello-triangle/` |
 | `sample-shader-toy` | 无 | `build/shader/samples/shader-toy/` |
 
-四个 package 的 include roots 只使用 `.vscode/settings.json` 声明的 `engine/shader`、`app/shader` 或其严格
+四个 package 的 include roots 只使用 `.vscode/settings.json` 声明的 `engine/shader`、`renderer/shader` 或其严格
 子集，不使用 workspace 根目录 `.`。源码 include 必须写成 `abi/engine/...`、`lib/engine/...`、
-`abi/app/...`、`lib/app/...` 或 `lib/sample-shader-toy/...`，不得依赖搜索顺序。
+`abi/renderer/...`、`lib/renderer/...` 或 `lib/sample-shader-toy/...`，不得依赖搜索顺序。
 
 执行：
 
@@ -53,13 +53,13 @@ just shader
 just shader-force
 ```
 
-`just shader` 先运行 package-aware 编译器，再构建 Engine 与 App 两个 binding crate。运行时通过
+`just shader` 先运行 package-aware 编译器，再构建 Engine 与 Renderer 两个 binding crate。运行时通过
 `TruvisPath::shader_build_path_str(package_id, entry_relative_path)` 解析同一份 manifest，调用点不手写
 输出前缀。
 
 `build/shader/.state/shader-build.json` 记录 package 配置、共享输入和任务，`build/shader/.deps/` 保存编译器
 depfile。构建前检查 canonical include 与层级方向，编译后再验证真实传递依赖。单个 entry 变化只重编该
-任务；App shared input 只失效 App；Engine shared input 会传播到声明依赖 Engine 的 App 和 Hello Triangle；
+任务；Renderer shared input 只失效 Renderer；Engine shared input 会传播到声明依赖 Engine 的 Renderer 和 Hello Triangle；
 ShaderToy shared input 只失效自身。
 
 binding 源码生成到 `build/bindings/{TARGET}/shader/<binding-crate>/`，源码树不保存

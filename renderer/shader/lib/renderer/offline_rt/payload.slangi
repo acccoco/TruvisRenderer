@@ -1,0 +1,129 @@
+/// @file payload.slangi
+/// @brief offline RT shader 间传递的最小载荷契约。
+///
+/// closest-hit / miss 只负责把一次追踪事件整理成 `RtSurfaceHit`；raygen 负责基于事件推进
+/// path state。这个边界避免 hit shader 夹带 BRDF / throughput / radiance 逻辑。
+
+#pragma once
+#ifndef TRUVIS_RT_PAYLOAD_SLANGI
+#define TRUVIS_RT_PAYLOAD_SLANGI
+#include "abi/renderer/render_passes/offline_rt/mod.slangi"
+
+// 离线 shader 复用 realtime RT 的 path tracing helper。那些 helper 内部仍以
+// `renderer::render_passes::realtime_rt::...` 访问 TLAS、sky 常量和单帧输出；在离线 translation unit 中将该 namespace
+// token 重定向到 `offline_rt`，避免为同一套积分逻辑复制一份 helper。这个 remap 只允许发生在
+// offline 入口的编译单元内：descriptor set、push constant 和单帧输出 ABI 仍归属 offline_rt。
+#define realtime_rt offline_rt
+
+/// Push Constants 声明（所有 RT 着色器共享）。
+///
+/// raygen、hit 和 miss 使用同一个 push constant block，确保 channel 参数在一次 trace 的所有 shader
+/// invocation 中一致。
+[[vk::push_constant]]
+renderer::render_passes::offline_rt::PushConstants push_const;
+
+/// 路径追踪最大深度。递归深度仍由 raygen 手动推进，Vulkan pipeline recursion depth 只覆盖 shader 调用栈。
+const static uint max_depth = 16;
+
+/// closest-hit 返回给 raygen 的采样事件类型。
+enum MaterialType : uint
+{
+    ROUGH_SURFACE = 0,       ///< 非 delta 普通表面
+    DELTA_SPECULAR = 1,      ///< smooth surface 的 delta 镜面反射事件
+    DELTA_TRANSMISSION = 2,  ///< smooth transmission 的 delta 反射/折射事件
+    ROUGH_TRANSMISSION = 3,  ///< rough transmission，v1 先按非 delta surface fallback 积分
+    EMISSIVE = 4,            ///< 自发光表面
+    NO_HIT = 5,              ///< 未命中任何几何体
+};
+
+/// 一次 TraceRay 返回给 raygen 的表面/环境事件。
+///
+/// 几何字段由 closest-hit 写入；miss shader 只写环境采样需要的最小虚拟事件。raygen 可基于
+/// `material_type` 判断该事件是否来自真实表面，不能反向要求 hit/miss 承担 path 积分状态。
+struct RtSurfaceHit
+{
+    /// 世界空间命中位置
+    float3 position;
+    /// 命中点的 object/local 空间位置，用于用 current/previous model 计算 motion vector。
+    float3 object_position;
+    /// TLAS custom index 对应的稳定 instance slot。
+    uint instance_id;
+    /// Instance 内的 submesh / geometry index，和 `GeometryIndex()` 语义一致。
+    uint geometry_id;
+    /// 当前命中的 submesh-local primitive index，供 emissive light record 直接寻址。
+    uint primitive_id;
+    /// world-space forward/shading 法线。
+    /// 该法线已经按当前 ray `faceforward` 翻面，是 BRDF 采样和 RR NormalRoughness 输入使用的法线。
+    float3 forward_normal;
+    /// 未经过 `faceforward` 的 world-space 几何法线，用于检查模型法线方向和判断正反面。
+    float3 origin_normal;
+    /// object/local space 插值顶点法线，用于诊断 mesh 原始数据和 world transform 的差异。
+    float3 object_normal;
+    /// 纹理坐标
+    float2 uv;
+    /// 光线 t 值（线性深度）
+    float hit_t;
+
+    /// 基础颜色（漫反射颜色）
+    float3 base_color;
+    /// 金属度
+    float metallic;
+    /// 粗糙度
+    float roughness;
+    /// Transmission 材质的不透明度；1 表示不透射，0 表示完全透射。非透射材质固定为 1。
+    float opacity;
+    /// 折射率
+    float ior;
+
+    /// 自发光颜色。miss shader 使用该字段承载 sky radiance。
+    float3 emissive;
+
+    /// 材质类型
+    MaterialType material_type;
+
+    /// 是否为 delta 路径（镜面反射或透明折射）。
+    bool is_delta_path()
+    {
+        return material_type == MaterialType::DELTA_SPECULAR ||
+            material_type == MaterialType::DELTA_TRANSMISSION;
+    }
+
+    /// 是否是真实几何表面事件。
+    bool is_surface()
+    {
+        return material_type != MaterialType::NO_HIT;
+    }
+};
+
+/// 主光线追踪载荷。
+///
+/// `random_seed` 由 raygen 持有并随 payload 传入 hit/miss，当前 hit/miss 不消费随机数；保留在 payload
+/// 中是为了让材质采样模块在 raygen 内以同一个状态推进，避免多份随机状态分叉。
+struct RtTracePayload
+{
+    /// 是否命中几何体
+    bool hit;
+    /// 命中表面或 miss 环境事件。
+    RtSurfaceHit surface;
+    /// 随机数种子
+    uint random_seed;
+
+    static RtTracePayload make(uint random_seed)
+    {
+        RtTracePayload payload = {};
+        payload.hit = false;
+        payload.random_seed = random_seed;
+        payload.surface.material_type = MaterialType::NO_HIT;
+        return payload;
+    }
+};
+
+/// 阴影/遮挡查询载荷：miss 表示没有遮挡物。
+///
+/// 当前主 NEE 使用 RayQuery inline path，不走这个 payload；它保留给需要独立 shadow miss group
+/// 的实验或后续 pipeline。
+struct ShadowMissPayload
+{
+    bool miss;
+};
+#endif // TRUVIS_RT_PAYLOAD_SLANGI

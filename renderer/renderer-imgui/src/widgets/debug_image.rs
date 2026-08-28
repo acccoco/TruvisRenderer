@@ -1,4 +1,4 @@
-use app_kit::debug_image::{DebugImageOption, DebugImageSelection};
+use renderer_kit::debug_image::{DebugImageOption, DebugImageSelection};
 
 /// 纯 CPU debug image 选择状态的 ImGui 视图，不保存 GPU image/view。
 pub struct DebugImageSelectorView;

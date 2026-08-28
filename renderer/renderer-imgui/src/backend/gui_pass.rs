@@ -7,7 +7,6 @@ use enum_map::{Enum, EnumMap, enum_map};
 use imgui::TextureId;
 use itertools::Itertools;
 
-use truvis_app_shader_binding::gpu;
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::descriptors::descriptor::GfxDescriptorSetLayout;
@@ -26,6 +25,7 @@ use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_foundation::resource_access::GfxResourceAccess;
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
+use truvis_renderer_shader_binding::gpu;
 
 use super::gui_mesh::GuiMesh;
 use super::gui_vertex_layout::ImGuiVertexLayoutAoS;
@@ -41,12 +41,12 @@ static SHADER_STAGES: LazyLock<EnumMap<ShaderStage, GfxShaderStageInfo>> = LazyL
         ShaderStage::Vertex => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::VERTEX,
             entry_point: c"vsmain",
-            path: TruvisPath::shader_build_path_str("app", "ui/imgui.slang"),
+            path: TruvisPath::shader_build_path_str("renderer", "ui/imgui.slang"),
         },
         ShaderStage::Fragment => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::FRAGMENT,
             entry_point: c"psmain",
-            path: TruvisPath::shader_build_path_str("app", "ui/imgui.slang"),
+            path: TruvisPath::shader_build_path_str("renderer", "ui/imgui.slang"),
         },
     }
 });
@@ -77,7 +77,7 @@ impl GuiPass {
             "ui-pass-local-descriptor-layout",
         );
         let mut descriptor_set_layouts = render_descriptor_sets.global_set_layouts();
-        assert_eq!(gpu::app::kit::ui_imgui::SET_NUM, descriptor_set_layouts.len() as u32);
+        assert_eq!(gpu::renderer::kit::ui_imgui::SET_NUM, descriptor_set_layouts.len() as u32);
         descriptor_set_layouts.push(descriptor_set_layout.handle());
         let pipeline_layout = Rc::new(GfxPipelineLayout::new(
             ctx,
@@ -85,7 +85,7 @@ impl GuiPass {
             &[vk::PushConstantRange {
                 stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 offset: 0,
-                size: size_of::<gpu::app::kit::ui_imgui::PushConstant>() as u32,
+                size: size_of::<gpu::renderer::kit::ui_imgui::PushConstant>() as u32,
             }],
             "uipass",
         ));
@@ -170,7 +170,7 @@ impl GuiPass {
         cmd.cmd_bind_pipeline(vk::PipelineBindPoint::GRAPHICS, self.pipeline.handle());
         cmd.cmd_set_viewport(0, std::slice::from_ref(&viewport));
 
-        let push_constant = gpu::app::kit::ui_imgui::PushConstant {
+        let push_constant = gpu::renderer::kit::ui_imgui::PushConstant {
             ortho: glam::Mat4::orthographic_rh(
                 0.0,
                 draw_data.display_size[0],
@@ -263,7 +263,7 @@ impl GuiPass {
                             cmd.push_descriptor_set(
                                 vk::PipelineBindPoint::GRAPHICS,
                                 self.pipeline_layout.handle(),
-                                gpu::app::kit::ui_imgui::SET_NUM,
+                                gpu::renderer::kit::ui_imgui::SET_NUM,
                                 &descriptor_writes,
                             );
                             last_texture_id = Some(texture_id);

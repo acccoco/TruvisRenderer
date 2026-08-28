@@ -6,11 +6,11 @@ description = "Truvis product renderer and frontend communication ports"
 
 [dependencies]
 truvis-render-loop = { workspace = true }
-app-kit = { workspace = true }
-app-imgui = { workspace = true }
-app-render-passes = { workspace = true }
-app-rendering = { workspace = true }
-app-render-ui = { workspace = true }
+renderer-kit = { workspace = true }
+renderer-imgui = { workspace = true }
+renderer-render-passes = { workspace = true }
+renderer-rendering = { workspace = true }
+renderer-render-ui = { workspace = true }
 truvis-editor-bridge = { workspace = true }
 truvis-gfx = { workspace = true }
 truvis-render-runtime = { workspace = true }

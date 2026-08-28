@@ -1,6 +1,6 @@
-# app-kit
+# renderer-kit
 
-`app-kit` 是 App 域的基础能力层，只保存生命周期契约、相机/输入和与具体界面、渲染实现无关的纯 CPU 状态。
+`renderer-kit` 是 Renderer 域的基础能力层，只保存生命周期契约、相机/输入和与具体界面、渲染实现无关的纯 CPU 状态。
 
 ## 主要职责
 
@@ -11,10 +11,10 @@
 
 ## 所有权与依赖
 
-- 不依赖 `imgui`、`app-render-passes`、`truvis-app-shader-binding` 或任何具体渲染 subsystem。
+- 不依赖 `imgui`、`renderer-render-passes`、`truvis-renderer-shader-binding` 或任何具体渲染 subsystem。
 - 不拥有具体 Renderer state、GUI backend、render controls、GPU pass、realtime/offline targets，也不提供可执行入口。
 - `DebugImageSelection::selected_id()` 在可见性关闭时返回 `None`；`normalize_options()` 在模式切换或窗口隐藏时仍可由 Renderer 显式调用。
-- `app-imgui` 持有 ImGui context、字体、backend 与选择器视图；`app-rendering` 持有具体 rendering subsystem 及其长期 GPU 资源。
+- `renderer-imgui` 持有 ImGui context、字体、backend 与选择器视图；`renderer-rendering` 持有具体 rendering subsystem 及其长期 GPU 资源。
 - 纯 UI overlay、camera 和 input 不需要实现 `SubsystemLifecycle`；生命周期 trait 不引入 registry、visitor、动态分发或自动调度。
 - 相机状态属于 Renderer；runtime 只消费 `RenderView`，不依赖相机控制策略。中键 pivot、Shift+中键拖拽与滚轮锚点状态留在 `CameraController`，同步 raycast 仍由具体 Renderer 在 `after_prepare` 阶段执行。
 

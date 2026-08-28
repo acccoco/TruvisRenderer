@@ -4,14 +4,14 @@
 
 - 本规则适用于所有 owner 的 `shader/abi/<owner>/`、push constants、`ConstantBuffer`、`StructuredBuffer`、`RWStructuredBuffer`、device address `PTR(...)`、vertex/input record 以及 descriptor set / binding 契约。
 - 只在 shader 内部使用、不会被 Rust / C++ 写入或读取、不会进入 Vulkan pipeline layout 或 buffer layout 的局部算法结构，可按 shader 局部实现处理；一旦跨越 CPU / GPU 边界，必须按共享 ABI 处理。
-- 共享 ABI 必须放在实际 owner 目录：Engine 使用 `engine/shader/abi/engine/<domain>/mod.slangi`，App 使用 `app/shader/abi/app/<domain>/mod.slangi`，并分别通过 `abi/engine/mod.slangi`、`abi/app/mod.slangi` 暴露给对应 binding crate。Engine ABI 使用 `engine::*`，App ABI 使用 `app::<owner>::*`；禁止在多个 owner 重复定义同一类型。
+- 共享 ABI 必须放在实际 owner 目录：Engine 使用 `engine/shader/abi/engine/<domain>/mod.slangi`，Renderer 使用 `renderer/shader/abi/renderer/<domain>/mod.slangi`，并分别通过 `abi/engine/mod.slangi`、`abi/renderer/mod.slangi` 暴露给对应 binding crate。Engine ABI 使用 `engine::*`，Renderer ABI 使用 `renderer::<owner>::*`；禁止在多个 owner 重复定义同一类型。
 
 ## 2) 搜索路径与依赖方向
 
-- `.vscode/settings.json` 的 `slang.additionalSearchPaths` 固定为 `engine/shader` 与 `app/shader`，是编辑器看到的完整源码根；`shader-packages.toml` 是构建期唯一事实来源，必须显式镜像相同根目录或其严格子集，构建器不读取编辑器配置。
-- include 必须从搜索根开始并带 layer/owner 前缀，只允许 `abi/engine/...`、`lib/engine/...`、`abi/app/...`、`lib/app/...`、`lib/sample-shader-toy/...`。禁止 `../`、绝对路径、workspace-root 路径、反斜杠以及依赖 include root 顺序解析的裸 domain 路径；同一 include 必须唯一解析。
+- `.vscode/settings.json` 的 `slang.additionalSearchPaths` 固定为 `engine/shader` 与 `renderer/shader`，是编辑器看到的完整源码根；`shader-packages.toml` 是构建期唯一事实来源，必须显式镜像相同根目录或其严格子集，构建器不读取编辑器配置。
+- include 必须从搜索根开始并带 layer/owner 前缀，只允许 `abi/engine/...`、`lib/engine/...`、`abi/renderer/...`、`lib/renderer/...`、`lib/sample-shader-toy/...`。禁止 `../`、绝对路径、workspace-root 路径、反斜杠以及依赖 include root 顺序解析的裸 domain 路径；同一 include 必须唯一解析。
 - Shader 源码层级固定为 `abi/<owner> <- lib/<owner> <- entry`：ABI 只能依赖同 owner 或下层 owner 的 ABI；lib 可以依赖 ABI、同 owner lib 和下层 owner lib，但不能依赖 entry；entry 可以组合可见 ABI/lib，但不得被其它源码 include/import。
-- Owner 方向固定为 `engine <- app`。App shader 可以依赖 Engine；Engine shader 不得依赖 App。Hello Triangle 只依赖 Engine；ShaderToy 的 package `depends_on = []`，不得依赖 Engine 或 App。
+- Owner 方向固定为 `engine <- renderer`。Renderer shader 可以依赖 Engine；Engine shader 不得依赖 Renderer。Hello Triangle 只依赖 Engine；ShaderToy 的 package `depends_on = []`，不得依赖 Engine 或 Renderer。
 - `truvis-shader-build` 必须同时执行源码预检和编译器 depfile 校验；package 只能访问自身 entry、自身 shared inputs 与 `depends_on` 传递闭包的 shared inputs，缺失声明或越界依赖必须 fail-closed。
 
 ## 3) 布局判定
@@ -32,8 +32,8 @@
 
 ## 5) Rust / C++ 镜像
 
-- Rust 侧优先使用 ABI owner 的生成 crate：Engine 使用 `truvis_shader_binding::gpu::engine::*`，全部 App ABI 使用 `truvis_app_shader_binding::gpu::app::*`。已有生成绑定能表达的 push constant、scene root、material、light 或 pass-local ABI，不允许另写一份看似相同的 Rust struct。
-- C++ / bindgen 路径应继续从各 binding crate 的 `ffi/rust_ffi.hpp` 和 owner Slang ABI 获得同一份结构定义，避免 Slang、C++ header 和 Rust 类型各自维护字段列表。所有 binding spec 必须声明非空 type/var allowlist；generator 固定 `allowlist_recursively(false)`。App binding 必须依赖 Engine binding，并通过实际引用 namespace 显式复用 canonical Engine/base 类型，缺失映射时让 Rust 构建失败；不维护重复定义黑名单。
+- Rust 侧优先使用 ABI owner 的生成 crate：Engine 使用 `truvis_shader_binding::gpu::engine::*`，全部 Renderer ABI 使用 `truvis_renderer_shader_binding::gpu::renderer::*`。已有生成绑定能表达的 push constant、scene root、material、light 或 pass-local ABI，不允许另写一份看似相同的 Rust struct。
+- C++ / bindgen 路径应继续从各 binding crate 的 `ffi/rust_ffi.hpp` 和 owner Slang ABI 获得同一份结构定义，避免 Slang、C++ header 和 Rust 类型各自维护字段列表。所有 binding spec 必须声明非空 type/var allowlist；generator 固定 `allowlist_recursively(false)`。Renderer binding 必须依赖 Engine binding，并通过实际引用 namespace 显式复用 canonical Engine/base 类型，缺失映射时让 Rust 构建失败；不维护重复定义黑名单。
 - 如果确实无法走现有生成绑定，必须在新增代码旁说明手写 ABI 的原因、字段 offset / size / align 的验证方式，以及它与 Slang / Vulkan 布局保持一致的依据。
 - 任何 Rust `repr(C)`、C++ struct、staging buffer 写入、readback 解析或 FFI 类型，只能作为共享 ABI 的宿主侧投影；它们不能反向定义 shader ABI。
 

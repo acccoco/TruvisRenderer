@@ -5,10 +5,10 @@
 //! `DebugImageSelection`。这里不接触 RenderGraph、GPU resource 生命周期或 GUI draw
 //! data 上传；调用方在 `ImGuiSubsystem::build_frame` 的闭包内调用 `TruvisOverlayUi::build`。
 
-use app_imgui::{DebugImageSelectorView, DebugInfoOverlay, FrameStatsOverlayData};
-use app_kit::debug_image::{DebugImageOption, DebugImageSelection};
-use app_render_ui::RenderControlsOverlay;
-use app_rendering::{OfflineRenderSettings, PathTracingCommonSettings, RealtimeRenderSettings, RenderMode};
+use renderer_imgui::{DebugImageSelectorView, DebugInfoOverlay, FrameStatsOverlayData};
+use renderer_kit::debug_image::{DebugImageOption, DebugImageSelection};
+use renderer_render_ui::RenderControlsOverlay;
+use renderer_rendering::{OfflineRenderSettings, PathTracingCommonSettings, RealtimeRenderSettings, RenderMode};
 use truvis_render_runtime::ray_cast::RayCastResult;
 use truvis_render_runtime::state::dlss_options::DlssOptions;
 use truvis_world::World;
@@ -224,7 +224,7 @@ impl TruvisOverlayUi {
                 if self.section_visible(OverlayTag::Rendering) {
                     Self::draw_stack_section_header(ui, OverlayTag::Rendering);
                     // 默认 separate-style 布局把渲染选项与点选结果放进同一个 Renderer 级主面板；
-                    // 控件本身复用 app-render-ui section，避免把渲染子系统 owner 状态迁入布局层。
+                    // 控件本身复用 renderer-render-ui section，避免把渲染子系统 owner 状态迁入布局层。
                     Self::draw_controls_contents(
                         ui,
                         &mut render_controls,

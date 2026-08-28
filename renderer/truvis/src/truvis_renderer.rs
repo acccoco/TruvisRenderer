@@ -15,13 +15,13 @@ use truvis_world::{
     procedural_mesh::ProceduralMeshKind,
 };
 
-use app_imgui::{FrameStatsOverlayData, ImGuiSubsystem};
-use app_kit::camera::Camera;
-use app_kit::camera_controller::CameraController;
-use app_kit::debug_image::DebugImageSelection;
-use app_kit::input_state::InputManager;
-use app_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
-use app_rendering::{OfflineRenderSubsystem, PathTracingCommonSettings, RealtimeRenderSubsystem, RenderMode};
+use renderer_imgui::{FrameStatsOverlayData, ImGuiSubsystem};
+use renderer_kit::camera::Camera;
+use renderer_kit::camera_controller::CameraController;
+use renderer_kit::debug_image::DebugImageSelection;
+use renderer_kit::input_state::InputManager;
+use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
+use renderer_rendering::{OfflineRenderSubsystem, PathTracingCommonSettings, RealtimeRenderSubsystem, RenderMode};
 
 use crate::TruvisRendererPorts;
 use crate::coordinate_gizmo::CoordinateGizmoSubsystem;

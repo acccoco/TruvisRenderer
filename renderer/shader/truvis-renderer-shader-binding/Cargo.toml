@@ -1,0 +1,12 @@
+[package]
+name = "truvis-renderer-shader-binding"
+version = "0.1.0"
+edition = "2024"
+description = "Renderer-owned shader ABI Rust binding"
+
+[dependencies]
+truvis-shader-binding = { workspace = true }
+
+[build-dependencies]
+truvis-path = { workspace = true }
+truvis-shader-binding-codegen = { workspace = true }

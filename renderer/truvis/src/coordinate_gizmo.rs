@@ -1,7 +1,7 @@
 use ash::vk;
 
-use app_kit::subsystem::SubsystemLifecycle;
-use app_render_passes::effects::coordinate_gizmo::{CoordinateGizmoPass, CoordinateGizmoRgPass};
+use renderer_kit::subsystem::SubsystemLifecycle;
+use renderer_render_passes::effects::coordinate_gizmo::{CoordinateGizmoPass, CoordinateGizmoRgPass};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle};
 use truvis_render_runtime::render_runtime::{
     RenderRuntimeInitCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx,

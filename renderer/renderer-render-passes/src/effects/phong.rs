@@ -2,7 +2,6 @@ use std::{mem::offset_of, rc::Rc};
 
 use ash::vk;
 
-use truvis_app_shader_binding::gpu;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::gfx::GfxDeviceCtx;
 use truvis_gfx::resources::layout::GfxVertexLayout;
@@ -20,6 +19,7 @@ use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
+use truvis_renderer_shader_binding::gpu;
 
 pub struct PhongPass {
     pipeline: GfxGraphicsPipeline,
@@ -47,8 +47,8 @@ impl PhongPass {
         render_descriptor_sets: &GlobalDescriptorSets,
     ) -> Self {
         let mut ci = GfxGraphicsPipelineCreateInfo::default();
-        ci.vertex_shader_stage(&TruvisPath::shader_build_path_str("app", "raster/phong3d.vs.slang"), c"main");
-        ci.fragment_shader_stage(&TruvisPath::shader_build_path_str("app", "raster/phong.ps.slang"), c"main");
+        ci.vertex_shader_stage(&TruvisPath::shader_build_path_str("renderer", "raster/phong3d.vs.slang"), c"main");
+        ci.fragment_shader_stage(&TruvisPath::shader_build_path_str("renderer", "raster/phong.ps.slang"), c"main");
 
         ci.vertex_binding(VertexLayoutSoA3D::vertex_input_bindings());
         ci.vertex_attribute(VertexLayoutSoA3D::vertex_input_attributes());
@@ -69,7 +69,7 @@ impl PhongPass {
             &[vk::PushConstantRange::default()
                 .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
-                .size(size_of::<gpu::app::render_passes::raster::PushConstants>() as u32)],
+                .size(size_of::<gpu::renderer::render_passes::raster::PushConstants>() as u32)],
             "phong-pass",
         ));
 
@@ -87,7 +87,7 @@ impl PhongPass {
         cmd: &GfxCommandBuffer,
         record_ctx: &RenderPassRecordCtx<'_>,
         viewport: &vk::Rect2D,
-        push_constant: &gpu::app::render_passes::raster::PushConstants,
+        push_constant: &gpu::renderer::render_passes::raster::PushConstants,
         frame_label: FrameLabel,
     ) {
         cmd.cmd_bind_pipeline(vk::PipelineBindPoint::GRAPHICS, self.pipeline.handle());
@@ -146,7 +146,7 @@ impl PhongPass {
             cmd,
             record_ctx,
             &target.extent.into(),
-            &gpu::app::render_passes::raster::PushConstants {
+            &gpu::renderer::render_passes::raster::PushConstants {
                 frame_data: record_ctx.per_frame_gpu_data.device_address(frame_label),
                 scene: render_scene.scene_buffer_device_address(frame_label),
 
@@ -163,7 +163,7 @@ impl PhongPass {
             cmd.cmd_push_constants(
                 self.pipeline.layout(),
                 vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                offset_of!(gpu::app::render_passes::raster::PushConstants, instance_idx) as u32,
+                offset_of!(gpu::renderer::render_passes::raster::PushConstants, instance_idx) as u32,
                 bytemuck::bytes_of(&data),
             );
         });

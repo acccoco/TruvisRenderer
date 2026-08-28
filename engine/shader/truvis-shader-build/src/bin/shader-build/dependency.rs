@@ -229,16 +229,16 @@ impl ShaderDependencyValidator {
             return Err(format!("include 必须是 canonical 相对路径: '{include_path}'"));
         }
 
-        if include_path.starts_with("abi/engine/") || include_path.starts_with("abi/app/") {
+        if include_path.starts_with("abi/engine/") || include_path.starts_with("abi/renderer/") {
             Ok(ShaderSourceLayer::Abi)
         } else if include_path.starts_with("lib/engine/")
-            || include_path.starts_with("lib/app/")
+            || include_path.starts_with("lib/renderer/")
             || include_path.starts_with("lib/sample-shader-toy/")
         {
             Ok(ShaderSourceLayer::Lib)
         } else {
             Err(format!(
-                "include 必须带 layer/owner 前缀（abi/engine、abi/app、lib/engine、lib/app 或 lib/sample-shader-toy）: '{include_path}'"
+                "include 必须带 layer/owner 前缀（abi/engine、abi/renderer、lib/engine、lib/renderer 或 lib/sample-shader-toy）: '{include_path}'"
             ))
         }
     }

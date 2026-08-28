@@ -85,13 +85,13 @@ Cornell 增加 rendering + render-ui，主体 Truvis 额外直接使用 pass cra
 ## Shader 源码与 ABI 依赖边界
 
 Shader package 按依赖、include roots、增量失效范围和发布边界组织；全部 App 源码集中在
-`app/shader`，不再跟随 Rust crate 目录拆散：
+`renderer/shader`，不再跟随 Rust crate 目录拆散：
 
 ```mermaid
 flowchart LR
     EngineSource["engine/shader<br/>abi/engine + lib/engine + runtime entry"]
     EngineBinding["truvis-shader-binding<br/>engine canonical Rust ABI"]
-    AppSource["app/shader<br/>abi/app + lib/app + pass/GUI entry"]
+    AppSource["renderer/shader<br/>abi/app + lib/app + pass/GUI entry"]
     AppBinding["truvis-app-shader-binding<br/>app::*"]
     HelloSource["sample-hello-triangle<br/>Engine-only include roots"]
     ToySource["sample-shader-toy<br/>独立 lib + entry，无 Engine 依赖"]
@@ -110,7 +110,7 @@ flowchart LR
   generator 固定 `allowlist_recursively(false)`，缺少映射时让构建 fail-closed，不维护定义黑名单。
 - 根目录 `shader-packages.toml` 是源码 package、include root、依赖传播和输出前缀的唯一清单；运行时
   `TruvisPath` 也按 package id 解析 namespaced SPIR-V 路径。
-- `.vscode/settings.json` 只声明编辑器搜索根 `engine/shader` 与 `app/shader`；构建配置显式镜像相同根或其
+- `.vscode/settings.json` 只声明编辑器搜索根 `engine/shader` 与 `renderer/shader`；构建配置显式镜像相同根或其
   严格子集，不读取编辑器配置。include 必须使用 `abi/engine`、`lib/engine`、`abi/app`、`lib/app` 或
   `lib/sample-shader-toy` 前缀并唯一解析。
 - 源码方向为 `abi/<owner> <- lib/<owner> <- entry`，owner 方向为 `engine <- app`。构建器同时通过源码

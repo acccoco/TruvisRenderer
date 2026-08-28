@@ -9,7 +9,7 @@ realtime/offline 渲染子系统。它依赖 engine 与公共 Renderer capabilit
   和 realtime/offline 渲染子系统，并显式决定 update 与 RenderGraph pass 顺序。
 - `EditorController`：把 Editor 协议 DTO 适配到权威 `World` 查询与 edit API。
 - `DesktopCommandController`：消费 Tauri 本地特权命令，只把 Rust `PathBuf` 交给 `World`，不扩展通用 Editor DTO。
-- `TruvisOverlayUi`：组合 `app-imgui` 的诊断控件与 `app-render-ui` 的设置 section，决定主体 Renderer 的窗口布局和绘制顺序。
+- `TruvisOverlayUi`：组合 `renderer-imgui` 的诊断控件与 `renderer-render-ui` 的设置 section，决定主体 Renderer 的窗口布局和绘制顺序。
 - `SelectionOutlineSubsystem` / `CoordinateGizmoSubsystem`：持有主体 Renderer 专用效果的资源与 pass 编排状态。
 
 ## 状态所有权
@@ -24,8 +24,8 @@ realtime/offline 渲染子系统。它依赖 engine 与公共 Renderer capabilit
 ## 运行与编排
 
 `TruvisRenderer::render` 根据当前 `RenderMode` 选择 realtime 或 offline 渲染子系统，并显式组织主图 resolve、
-selection outline、coordinate gizmo 与 ImGui 的顺序。具体 pass 位于 `app-render-passes`，渲染 owner 位于
-`app-rendering`，ImGui 与设置控件分别位于 `app-imgui` 和 `app-render-ui`；`app-kit` 只提供基础契约和 CPU 状态。
+selection outline、coordinate gizmo 与 ImGui 的顺序。具体 pass 位于 `renderer-render-passes`，渲染 owner 位于
+`renderer-rendering`，ImGui 与设置控件分别位于 `renderer-imgui` 和 `renderer-render-ui`；`renderer-kit` 只提供基础契约和 CPU 状态。
 
 ## 边界约束
 

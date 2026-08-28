@@ -1,5 +1,5 @@
 [package]
-name = "app-kit"
+name = "renderer-kit"
 version = "0.1.0"
 edition = "2024"
 description = "App lifecycle contracts, camera/input and renderer-independent CPU state"

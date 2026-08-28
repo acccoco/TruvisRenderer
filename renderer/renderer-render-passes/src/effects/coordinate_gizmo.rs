@@ -40,8 +40,11 @@ impl CoordinateGizmoPass {
         global_descriptor_sets: &GlobalDescriptorSets,
     ) -> Self {
         let mut ci = GfxGraphicsPipelineCreateInfo::default();
-        ci.vertex_shader_stage(&TruvisPath::shader_build_path_str("app", "ui/coordinate_gizmo.slang"), c"vsmain");
-        ci.fragment_shader_stage(&TruvisPath::shader_build_path_str("app", "ui/coordinate_gizmo.slang"), c"psmain");
+        ci.vertex_shader_stage(&TruvisPath::shader_build_path_str("renderer", "ui/coordinate_gizmo.slang"), c"vsmain");
+        ci.fragment_shader_stage(
+            &TruvisPath::shader_build_path_str("renderer", "ui/coordinate_gizmo.slang"),
+            c"psmain",
+        );
         ci.vertex_binding(vec![]);
         ci.vertex_attribute(vec![]);
         ci.attach_info(vec![present_format], None, None);

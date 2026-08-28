@@ -5,7 +5,6 @@ use std::sync::LazyLock;
 
 use std::rc::Rc;
 
-use truvis_app_shader_binding::gpu;
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::descriptors::descriptor::{GfxDescriptorSet, GfxDescriptorSetLayout};
@@ -24,6 +23,7 @@ use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
+use truvis_renderer_shader_binding::gpu;
 
 use super::pipeline::GfxRtPipeline;
 
@@ -49,27 +49,27 @@ static SHADER_STAGES: LazyLock<EnumMap<ShaderStages, GfxShaderStageInfo>> = Lazy
         ShaderStages::RayGen => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::RAYGEN_KHR,
             entry_point: c"main_ray_gen",
-            path: TruvisPath::shader_build_path_str("app", "realtime_rt/raygen.slang"),
+            path: TruvisPath::shader_build_path_str("renderer", "realtime_rt/raygen.slang"),
         },
         ShaderStages::SkyMiss => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::MISS_KHR,
             entry_point: c"sky_miss",
-            path: TruvisPath::shader_build_path_str("app", "realtime_rt/miss_sky.slang"),
+            path: TruvisPath::shader_build_path_str("renderer", "realtime_rt/miss_sky.slang"),
         },
         ShaderStages::ShadowMiss => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::MISS_KHR,
             entry_point: c"shadow_miss",
-            path: TruvisPath::shader_build_path_str("app", "realtime_rt/miss_shadow.slang"),
+            path: TruvisPath::shader_build_path_str("renderer", "realtime_rt/miss_shadow.slang"),
         },
         ShaderStages::ClosestHit => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::CLOSEST_HIT_KHR,
             entry_point: c"main_closest_hit",
-            path: TruvisPath::shader_build_path_str("app", "realtime_rt/closest_hit.slang"),
+            path: TruvisPath::shader_build_path_str("renderer", "realtime_rt/closest_hit.slang"),
         },
         ShaderStages::TransAny => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::ANY_HIT_KHR,
             entry_point: c"trans_any",
-            path: TruvisPath::shader_build_path_str("app", "realtime_rt/any_hit.slang"),
+            path: TruvisPath::shader_build_path_str("renderer", "realtime_rt/any_hit.slang"),
         },
     }
 });
@@ -137,7 +137,7 @@ pub struct RestirSurfaceKeyRgImages {
 
 /// ReSTIR DI reservoir pass image handles。
 ///
-/// app-kit 负责资源生命周期；render-pass crate 只关心当前 descriptor 绑定需要的
+/// renderer-kit 负责资源生命周期；render-pass crate 只关心当前 descriptor 绑定需要的
 /// Vulkan image/view handle，避免把 app 层 target owner 类型反向暴露到 pass 实现里。
 #[derive(Clone, Copy)]
 pub struct RestirReservoirPassImages {
@@ -512,7 +512,7 @@ impl RealtimeRtPass {
                     | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
             )
             .offset(0)
-            .size(size_of::<gpu::app::render_passes::realtime_rt::PushConstants>() as u32);
+            .size(size_of::<gpu::renderer::render_passes::realtime_rt::PushConstants>() as u32);
 
         let rt_descriptor_set_layout = GfxDescriptorSetLayout::<RealtimeRtDescriptorBinding>::new(
             device_ctx,
@@ -662,7 +662,7 @@ impl RealtimeRtPass {
         const RESTIR_DI_PHASE_SPATIAL: u32 = 2;
         const RESTIR_DI_PHASE_FINAL: u32 = 3;
 
-        // SHARC sub-pass 常量，必须与 `app/shader/abi/realtime_rt/mod.slangi`
+        // SHARC sub-pass 常量，必须与 `renderer/shader/abi/realtime_rt/mod.slangi`
         // 的 SHARC_PHASE_* 保持一致。
         const SHARC_MODE_OFF: u32 = 0;
         const SHARC_PHASE_NONE: u32 = 0;
@@ -701,7 +701,7 @@ impl RealtimeRtPass {
         let rr_specular_motion_vectors_view = image_view(pass_data.rr_specular_motion_vectors_view);
 
         // ReSTIR DI 资源通过 pass-local push descriptor 绑定，顺序必须与
-        // `app/shader/abi/realtime_rt/mod.slangi` 完全一致。这里显式展开 A/B/C/D，避免把
+        // `renderer/shader/abi/realtime_rt/mod.slangi` 完全一致。这里显式展开 A/B/C/D，避免把
         // reservoir pack 的 uint/float 图像顺序藏进动态数组导致 ABI 难以审查。
         let restir_initial_a_view = image_view(pass_data.restir_initial.a_view);
         let restir_initial_b_view = image_view(pass_data.restir_initial.b_view);
@@ -775,7 +775,7 @@ impl RealtimeRtPass {
         cmd.push_descriptor_set(
             vk::PipelineBindPoint::RAY_TRACING_KHR,
             self.pipeline.pipeline_layout,
-            gpu::app::render_passes::realtime_rt::SET_NUM,
+            gpu::renderer::render_passes::realtime_rt::SET_NUM,
             &[
                 RealtimeRtDescriptorBinding::tlas().write_tals(vk::DescriptorSet::null(), 0, vec![tlas]),
                 RealtimeRtDescriptorBinding::rt_single_frame_output().write_image(
@@ -949,13 +949,13 @@ impl RealtimeRtPass {
         cmd.bind_descriptor_sets(
             vk::PipelineBindPoint::RAY_TRACING_KHR,
             self.pipeline.pipeline_layout,
-            gpu::app::render_passes::realtime_rt::SHARC_SET_NUM,
+            gpu::renderer::render_passes::realtime_rt::SHARC_SET_NUM,
             &[self.sharc_descriptor_set.handle()],
             None,
         );
         // FIXME 这个变量废除了，现在只有 spp 1
         let spp = 1;
-        let mut push_constant = gpu::app::render_passes::realtime_rt::PushConstants {
+        let mut push_constant = gpu::renderer::render_passes::realtime_rt::PushConstants {
             spp_idx: 0,
             channel: pass_data.debug_channel,
             sky_sampling_mode: pass_data.sky_sampling_mode,
@@ -984,7 +984,8 @@ impl RealtimeRtPass {
             | vk::ShaderStageFlags::ANY_HIT_KHR
             | vk::ShaderStageFlags::CLOSEST_HIT_KHR;
 
-        let push_and_trace = |push_constant: &gpu::app::render_passes::realtime_rt::PushConstants, extent: [u32; 3]| {
+        let push_and_trace = |push_constant: &gpu::renderer::render_passes::realtime_rt::PushConstants,
+                              extent: [u32; 3]| {
             cmd.cmd_push_constants(
                 self.pipeline.pipeline_layout,
                 shader_stages,

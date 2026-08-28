@@ -1,4 +1,0 @@
-#pragma once
-
-/// `app-kit` 拥有的 shader-visible ABI 聚合入口。
-#include "abi/app/kit/ui_imgui/mod.slangi"

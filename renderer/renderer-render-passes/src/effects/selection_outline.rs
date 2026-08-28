@@ -3,7 +3,6 @@ use std::rc::Rc;
 
 use ash::vk;
 
-use truvis_app_shader_binding::gpu;
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -17,6 +16,7 @@ use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgP
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
 use truvis_render_runtime::selection::{WorldSubmeshRasterView, WorldSubmeshSelection};
+use truvis_renderer_shader_binding::gpu;
 
 /// selection outline 的共享 pass 实现。
 ///
@@ -99,8 +99,14 @@ impl SelectionOutlinePass {
         global_descriptor_sets: &GlobalDescriptorSets,
     ) -> GfxGraphicsPipeline {
         let mut ci = GfxGraphicsPipelineCreateInfo::default();
-        ci.vertex_shader_stage(&TruvisPath::shader_build_path_str("app", "selection_outline/mask.vs.slang"), c"main");
-        ci.fragment_shader_stage(&TruvisPath::shader_build_path_str("app", "selection_outline/mask.ps.slang"), c"main");
+        ci.vertex_shader_stage(
+            &TruvisPath::shader_build_path_str("renderer", "selection_outline/mask.vs.slang"),
+            c"main",
+        );
+        ci.fragment_shader_stage(
+            &TruvisPath::shader_build_path_str("renderer", "selection_outline/mask.ps.slang"),
+            c"main",
+        );
         ci.vertex_binding(vec![vk::VertexInputBindingDescription {
             binding: 0,
             stride: size_of::<glam::Vec3>() as u32,
@@ -130,7 +136,7 @@ impl SelectionOutlinePass {
             &[vk::PushConstantRange::default()
                 .stage_flags(vk::ShaderStageFlags::VERTEX)
                 .offset(0)
-                .size(size_of::<gpu::app::render_passes::selection_outline::MaskPushConstant>() as u32)],
+                .size(size_of::<gpu::renderer::render_passes::selection_outline::MaskPushConstant>() as u32)],
             "selection-outline-mask",
         ));
 
@@ -145,11 +151,11 @@ impl SelectionOutlinePass {
     ) -> GfxGraphicsPipeline {
         let mut ci = GfxGraphicsPipelineCreateInfo::default();
         ci.vertex_shader_stage(
-            &TruvisPath::shader_build_path_str("app", "selection_outline/composite.slang"),
+            &TruvisPath::shader_build_path_str("renderer", "selection_outline/composite.slang"),
             c"vsmain",
         );
         ci.fragment_shader_stage(
-            &TruvisPath::shader_build_path_str("app", "selection_outline/composite.slang"),
+            &TruvisPath::shader_build_path_str("renderer", "selection_outline/composite.slang"),
             c"psmain",
         );
         ci.vertex_binding(vec![]);
@@ -173,7 +179,7 @@ impl SelectionOutlinePass {
         );
 
         let mut descriptor_set_layouts = global_descriptor_sets.global_set_layouts();
-        assert_eq!(gpu::app::render_passes::selection_outline::SET_NUM, descriptor_set_layouts.len() as u32);
+        assert_eq!(gpu::renderer::render_passes::selection_outline::SET_NUM, descriptor_set_layouts.len() as u32);
         descriptor_set_layouts.push(descriptor_set_layout.handle());
         let pipeline_layout = Rc::new(GfxPipelineLayout::new(
             ctx,
@@ -181,7 +187,7 @@ impl SelectionOutlinePass {
             &[vk::PushConstantRange::default()
                 .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
-                .size(size_of::<gpu::app::render_passes::selection_outline::CompositePushConstant>() as u32)],
+                .size(size_of::<gpu::renderer::render_passes::selection_outline::CompositePushConstant>() as u32)],
             "selection-outline-composite",
         ));
 
@@ -215,7 +221,7 @@ impl SelectionOutlinePass {
         cmd.cmd_bind_pipeline(vk::PipelineBindPoint::GRAPHICS, self.mask_pipeline.handle());
         Self::set_fullscreen_viewport(cmd, target.extent);
 
-        let push_constants = gpu::app::render_passes::selection_outline::MaskPushConstant {
+        let push_constants = gpu::renderer::render_passes::selection_outline::MaskPushConstant {
             instance_idx: 0,
             submesh_idx: 0,
             _padding_0: 0,
@@ -240,7 +246,7 @@ impl SelectionOutlinePass {
             cmd.cmd_push_constants(
                 self.mask_pipeline.layout(),
                 vk::ShaderStageFlags::VERTEX,
-                offset_of!(gpu::app::render_passes::selection_outline::MaskPushConstant, instance_idx) as u32,
+                offset_of!(gpu::renderer::render_passes::selection_outline::MaskPushConstant, instance_idx) as u32,
                 BytesConvert::bytes_of(&data),
             );
         });
@@ -269,7 +275,7 @@ impl SelectionOutlinePass {
                     .image_view(mask_view),
             ],
         )];
-        let push_constants = gpu::app::render_passes::selection_outline::CompositePushConstant {
+        let push_constants = gpu::renderer::render_passes::selection_outline::CompositePushConstant {
             target_size: glam::vec2(target.extent.width as f32, target.extent.height as f32).into(),
             _padding_0: glam::Vec2::ZERO.into(),
             color: glam::Vec4::from_array(Self::OUTLINE_COLOR).into(),
@@ -294,7 +300,7 @@ impl SelectionOutlinePass {
         cmd.push_descriptor_set(
             vk::PipelineBindPoint::GRAPHICS,
             self.composite_pipeline.layout(),
-            gpu::app::render_passes::selection_outline::SET_NUM,
+            gpu::renderer::render_passes::selection_outline::SET_NUM,
             &descriptor_writes,
         );
         Self::set_fullscreen_viewport(cmd, target.extent);

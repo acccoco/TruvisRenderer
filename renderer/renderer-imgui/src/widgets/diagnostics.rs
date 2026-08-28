@@ -1,6 +1,6 @@
 use ash::vk;
 
-use app_kit::camera::Camera;
+use renderer_kit::camera::Camera;
 
 pub struct FrameStatsOverlayData<'a> {
     pub camera: &'a Camera,

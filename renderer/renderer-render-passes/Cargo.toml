@@ -1,5 +1,5 @@
 [package]
-name = "app-render-passes"
+name = "renderer-render-passes"
 version = "0.1.0"
 edition = "2024"
 description = "App-layer shared render pass implementations (RT, post-process, etc.)"
@@ -9,7 +9,7 @@ truvis-gfx = { workspace = true }
 truvis-render-foundation = { workspace = true }
 truvis-render-graph = { workspace = true }
 truvis-render-runtime = { workspace = true }
-truvis-app-shader-binding = { workspace = true }
+truvis-renderer-shader-binding = { workspace = true }
 truvis-path = { workspace = true }
 truvis-descriptor-layout-macro = { workspace = true }
 truvis-descriptor-layout-trait = { workspace = true }

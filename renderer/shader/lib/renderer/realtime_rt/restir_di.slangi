@@ -1,0 +1,978 @@
+/// @file restir_di.slangi
+/// @brief primary surface ReSTIR DI reservoir 生成、复用和最终 shade。
+
+#pragma once
+
+#include "lib/engine/core/random.slangi"
+#include "lib/renderer/realtime_rt/raygen_direct_lighting.slangi"
+#include "lib/renderer/realtime_rt/raygen_view.slangi"
+
+static const uint RT_DEBUG_RESTIR_INITIAL_WEIGHT = 13;
+static const uint RT_DEBUG_RESTIR_TEMPORAL_VALID = 14;
+static const uint RT_DEBUG_RESTIR_FINAL_CONTRIBUTION = 15;
+static const uint RESTIR_INITIAL_CANDIDATE_COUNT = 8;
+static const float RESTIR_TEMPORAL_HISTORY_M_CAP = 64.0f;
+static const int RESTIR_TEMPORAL_SEARCH_RADIUS_PX = 4;
+static const uint RESTIR_SPATIAL_SAMPLE_COUNT = 8;
+static const uint RESTIR_SPATIAL_DISOCCLUSION_BOOST_SAMPLE_COUNT = 16;
+static const float RESTIR_SPATIAL_TARGET_HISTORY_LENGTH = 8.0f;
+
+struct RtPrimarySurfaceKey
+{
+    // primary surface key 是 ReSTIR DI 自己的高精度 surface signature。
+    // 它不是 RR/SR GBuffer 的别名；temporal rejection 和 final shade 都依赖这里的材质签名。
+    float3 position;
+    float linear_depth;
+    float3 normal;
+    float roughness;
+    float3 base_color;
+    float metallic;
+    bool valid;
+
+    static RtPrimarySurfaceKey empty()
+    {
+        RtPrimarySurfaceKey key;
+        key.position = float3(0.0f);
+        key.linear_depth = 0.0f;
+        key.normal = float3(0.0f, 1.0f, 0.0f);
+        key.roughness = 0.0f;
+        key.base_color = float3(0.0f);
+        key.metallic = 0.0f;
+        key.valid = false;
+        return key;
+    }
+};
+
+struct RtReservoir
+{
+    // reservoir 只保存 light-side sample identity。方向、距离、PDF、radiance 和 shadow ray
+    // 都必须在当前 surface 上重建，避免把旧 shading point 的几何关系跨帧/跨邻域复用。
+    RtLightSampleKey sample_key;
+    // 按 RTXDI 契约，写入 storage image 的 weight_sum 是 finalized reservoir inverse PDF。
+    // 只有局部 streaming 过程中，它才临时表示尚未归一化的 RIS weight sum。
+    float weight_sum;
+    // target 是当前 reservoir 选中样本在“当前 phase 输出 surface”上的 target PDF。
+    float target;
+    // M 是有效历史 / 候选池规模。initial 输出按 RTXDI 设为 1；temporal/spatial 输出会随复用累加，
+    // 下一帧 temporal 读取时再裁剪，避免相关历史无界增长。
+    float m;
+    // source_age 表示 sample identity 从几帧前继承而来，只用于限制 stale history；
+    // 它不是曝光、能量或采样 PDF 的一部分。
+    float source_age;
+    bool valid;
+    uint sky_version;
+    uint emissive_version;
+    uint analytic_version;
+
+    static RtReservoir empty()
+    {
+        RtReservoir reservoir;
+        reservoir.sample_key = RtLightSampleKey::empty();
+        reservoir.weight_sum = 0.0f;
+        reservoir.target = 0.0f;
+        reservoir.m = 0.0f;
+        reservoir.source_age = 0.0f;
+        reservoir.valid = false;
+        reservoir.sky_version = engine::binding::gpu_scene.sky_distribution_version;
+        reservoir.emissive_version = engine::binding::gpu_scene.emissive_light_version;
+        reservoir.analytic_version = engine::binding::gpu_scene.analytic_light_version;
+        return reservoir;
+    }
+};
+
+struct RtRestirDI
+{
+    static bool enabled()
+    {
+        return push_const.restir_di_mode != renderer::render_passes::realtime_rt::RESTIR_DI_MODE_OFF;
+    }
+
+    static bool temporal_enabled()
+    {
+        return push_const.restir_di_mode == renderer::render_passes::realtime_rt::RESTIR_DI_MODE_TEMPORAL ||
+            push_const.restir_di_mode == renderer::render_passes::realtime_rt::RESTIR_DI_MODE_TEMPORAL_SPATIAL;
+    }
+
+    static bool spatial_enabled()
+    {
+        return push_const.restir_di_mode == renderer::render_passes::realtime_rt::RESTIR_DI_MODE_TEMPORAL_SPATIAL;
+    }
+
+    static bool is_restir_debug_channel()
+    {
+        return push_const.channel == RT_DEBUG_RESTIR_INITIAL_WEIGHT ||
+            push_const.channel == RT_DEBUG_RESTIR_TEMPORAL_VALID ||
+            push_const.channel == RT_DEBUG_RESTIR_FINAL_CONTRIBUTION;
+    }
+
+    static bool should_skip_primary_nee(uint depth, const RtSurfaceHit surface)
+    {
+        return enabled() && depth == 0 && is_primary_restir_surface(surface);
+    }
+
+    static bool is_primary_restir_surface(const RtSurfaceHit surface)
+    {
+        return surface.is_surface() &&
+            !surface.is_delta_path() &&
+            surface.material_type != MaterialType::EMISSIVE;
+    }
+
+    static void store_primary_surface_key(uint2 thread_id, const RtSurfaceHit surface)
+    {
+        // surface key 是 temporal/spatial reuse 的 eligibility 证明，而不仅是几何描述。
+        // 只有 primary 直接光会被 ReSTIR 替换的表面才能写有效 key；delta / emissive / miss
+        // 像素必须写空 key，避免旧 reservoir 被 final phase 加到不属于 ReSTIR DI 的路径上。
+        store_surface_key(
+            thread_id,
+            is_primary_restir_surface(surface) ? surface_key_from_hit(surface) : RtPrimarySurfaceKey::empty()
+        );
+    }
+
+    static uint4 pack_candidate_a(const RtReservoir reservoir)
+    {
+        // A: identity metadata。A.w 是 reservoir valid；sample_key valid 另存在 D.w，
+        // 这样可以区分“reservoir 统计有效”与“候选身份可重建”两个契约。
+        return uint4(
+            reservoir.sample_key.kind,
+            reservoir.sample_key.light_index,
+            reservoir.sample_key.class_mask,
+            reservoir.valid ? 1u : 0u
+        );
+    }
+
+    static float4 pack_candidate_b(const RtReservoir reservoir)
+    {
+        // B: light-side sample 参数。具体含义由 sample_key.kind 决定，不能解释为世界空间方向。
+        return reservoir.sample_key.sample;
+    }
+
+    static float4 pack_candidate_c(const RtReservoir reservoir)
+    {
+        // C: reservoir 统计量。storage 中的 weight_sum 是 finalized inverse PDF；
+        // target 与 M 必须和它一起传递，供后续 RTXDI-style combine / bias correction 使用。
+        return float4(reservoir.weight_sum, reservoir.target, reservoir.m, reservoir.source_age);
+    }
+
+    static uint4 pack_candidate_d(const RtReservoir reservoir)
+    {
+        // D: scene 版本签名。只要 sky/emissive/analytic light 任一语义变化，旧 reservoir
+        // 就不能参与复用；这比只靠 CPU reset 更细，能覆盖 scene 内容变化。
+        return uint4(
+            reservoir.sky_version,
+            reservoir.emissive_version,
+            reservoir.analytic_version,
+            reservoir.sample_key.valid ? 1u : 0u
+        );
+    }
+
+    static RtReservoir unpack_reservoir(uint4 a, float4 b, float4 c, uint4 d)
+    {
+        // unpack 不尝试修复非法状态。任何缺少 sample key、target、weight_sum 或 M 的结果
+        // 都视为 empty reservoir，后续 phase 直接丢弃，避免 NaN/负权重进入复用。
+        RtReservoir reservoir = RtReservoir::empty();
+        reservoir.sample_key.kind = a.x;
+        reservoir.sample_key.light_index = a.y;
+        reservoir.sample_key.class_mask = a.z;
+        reservoir.sample_key.valid = d.w != 0u && reservoir.sample_key.kind != 0u;
+        reservoir.sample_key.sample = b;
+        reservoir.weight_sum = c.x;
+        reservoir.target = c.y;
+        reservoir.m = c.z;
+        reservoir.source_age = c.w;
+        reservoir.valid = a.w != 0u && reservoir.sample_key.valid && reservoir.weight_sum > 0.0f &&
+            reservoir.target > 0.0f && reservoir.m > 0.0f;
+        reservoir.sky_version = d.x;
+        reservoir.emissive_version = d.y;
+        reservoir.analytic_version = d.z;
+        return reservoir;
+    }
+
+    static void store_initial(uint2 thread_id, const RtReservoir reservoir)
+    {
+        renderer::render_passes::realtime_rt::restir_initial_a.Store(thread_id, pack_candidate_a(reservoir));
+        renderer::render_passes::realtime_rt::restir_initial_b.Store(thread_id, pack_candidate_b(reservoir));
+        renderer::render_passes::realtime_rt::restir_initial_c.Store(thread_id, pack_candidate_c(reservoir));
+        renderer::render_passes::realtime_rt::restir_initial_d.Store(thread_id, pack_candidate_d(reservoir));
+    }
+
+    static RtReservoir load_initial(uint2 thread_id)
+    {
+        return unpack_reservoir(
+            renderer::render_passes::realtime_rt::restir_initial_a.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_initial_b.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_initial_c.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_initial_d.Load(thread_id)
+        );
+    }
+
+    static void store_temporal(uint2 thread_id, const RtReservoir reservoir)
+    {
+        renderer::render_passes::realtime_rt::restir_temporal_a.Store(thread_id, pack_candidate_a(reservoir));
+        renderer::render_passes::realtime_rt::restir_temporal_b.Store(thread_id, pack_candidate_b(reservoir));
+        renderer::render_passes::realtime_rt::restir_temporal_c.Store(thread_id, pack_candidate_c(reservoir));
+        renderer::render_passes::realtime_rt::restir_temporal_d.Store(thread_id, pack_candidate_d(reservoir));
+    }
+
+    static RtReservoir load_temporal(uint2 thread_id)
+    {
+        return unpack_reservoir(
+            renderer::render_passes::realtime_rt::restir_temporal_a.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_temporal_b.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_temporal_c.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_temporal_d.Load(thread_id)
+        );
+    }
+
+    static void store_final(uint2 thread_id, const RtReservoir reservoir)
+    {
+        renderer::render_passes::realtime_rt::restir_final_a.Store(thread_id, pack_candidate_a(reservoir));
+        renderer::render_passes::realtime_rt::restir_final_b.Store(thread_id, pack_candidate_b(reservoir));
+        renderer::render_passes::realtime_rt::restir_final_c.Store(thread_id, pack_candidate_c(reservoir));
+        renderer::render_passes::realtime_rt::restir_final_d.Store(thread_id, pack_candidate_d(reservoir));
+    }
+
+    static RtReservoir load_final(uint2 thread_id)
+    {
+        return unpack_reservoir(
+            renderer::render_passes::realtime_rt::restir_final_a.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_final_b.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_final_c.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_final_d.Load(thread_id)
+        );
+    }
+
+    static RtReservoir load_history(uint2 thread_id)
+    {
+        // history descriptor 由 Rust 侧绑定上一帧 temporal reservoir。
+        // 这里的名字保持 shader 入口通用，但语义上绝不是上一帧 spatial/final reservoir。
+        return unpack_reservoir(
+            renderer::render_passes::realtime_rt::restir_history_a.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_history_b.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_history_c.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_history_d.Load(thread_id)
+        );
+    }
+
+    static void store_surface_key(uint2 thread_id, const RtPrimarySurfaceKey key)
+    {
+        // invalid key 必须把三张 surface image 全部清零。temporal/final 通过 normal 长度和 depth
+        // 判断有效性，不能留下上一帧或上一 phase 的材质签名。
+        if (!key.valid)
+        {
+            renderer::render_passes::realtime_rt::restir_surface_a.Store(thread_id, float4(0.0f));
+            renderer::render_passes::realtime_rt::restir_surface_b.Store(thread_id, float4(0.0f));
+            renderer::render_passes::realtime_rt::restir_surface_c.Store(thread_id, float4(0.0f));
+            return;
+        }
+        renderer::render_passes::realtime_rt::restir_surface_a.Store(thread_id, float4(key.position, key.linear_depth));
+        renderer::render_passes::realtime_rt::restir_surface_b.Store(thread_id, float4(key.normal, key.roughness));
+        renderer::render_passes::realtime_rt::restir_surface_c.Store(thread_id, float4(key.base_color, key.metallic));
+    }
+
+    static RtPrimarySurfaceKey load_surface_key(uint2 thread_id)
+    {
+        // current surface key 由 path phase 写入，temporal/spatial/final 都以它作为当前 surface
+        // 的唯一 ReSTIR 输入，避免从压缩 GBuffer 中恢复 visibility 起点。
+        const float4 a = renderer::render_passes::realtime_rt::restir_surface_a.Load(thread_id);
+        const float4 b = renderer::render_passes::realtime_rt::restir_surface_b.Load(thread_id);
+        const float4 c = renderer::render_passes::realtime_rt::restir_surface_c.Load(thread_id);
+        RtPrimarySurfaceKey key;
+        key.position = a.xyz;
+        key.linear_depth = a.w;
+        key.normal = normalize(b.xyz);
+        key.roughness = b.w;
+        key.base_color = c.xyz;
+        key.metallic = c.w;
+        key.valid = dot(b.xyz, b.xyz) > 1e-5f && key.linear_depth > 0.0f;
+        return key;
+    }
+
+    static RtPrimarySurfaceKey load_history_surface_key(uint2 thread_id)
+    {
+        // history surface key 与 history reservoir 使用相同 reprojected pixel 坐标。
+        // 只有 surface signature 兼容时，上一帧 temporal reservoir 才能进入当前像素。
+        const float4 a = renderer::render_passes::realtime_rt::restir_history_surface_a.Load(thread_id);
+        const float4 b = renderer::render_passes::realtime_rt::restir_history_surface_b.Load(thread_id);
+        const float4 c = renderer::render_passes::realtime_rt::restir_history_surface_c.Load(thread_id);
+        RtPrimarySurfaceKey key;
+        key.position = a.xyz;
+        key.linear_depth = a.w;
+        key.normal = normalize(b.xyz);
+        key.roughness = b.w;
+        key.base_color = c.xyz;
+        key.metallic = c.w;
+        key.valid = dot(b.xyz, b.xyz) > 1e-5f && key.linear_depth > 0.0f;
+        return key;
+    }
+
+    static RtPrimarySurfaceKey surface_key_from_hit(const RtSurfaceHit surface)
+    {
+        RtPrimarySurfaceKey key;
+        key.position = surface.position;
+        key.linear_depth = surface.hit_t;
+        key.normal = surface.forward_normal;
+        key.roughness = surface.roughness;
+        key.base_color = surface.base_color;
+        key.metallic = surface.metallic;
+        key.valid = surface.is_surface();
+        return key;
+    }
+
+    static RtSurfaceHit surface_from_key(const RtPrimarySurfaceKey primary_key)
+    {
+        RtSurfaceHit surface = {};
+        // ReSTIR final shade 会重新发 visibility ray，起点/法线必须使用本 pass 自己的 RGBA32F
+        // primary surface key。GBufferA/B/C 是 RR/SR 输入，位置、法线和材质可能被压缩，不适合作为
+        // ReSTIR 时空复用后的真实重连表面或 target 函数签名。
+        surface.position = primary_key.position;
+        surface.object_position = float3(0.0f);
+        surface.instance_id = 0;
+        surface.geometry_id = 0;
+        surface.primitive_id = 0;
+        surface.forward_normal = primary_key.valid ? normalize(primary_key.normal) : float3(0.0f, 1.0f, 0.0f);
+        surface.origin_normal = surface.forward_normal;
+        surface.object_normal = surface.forward_normal;
+        surface.uv = float2(0.0f);
+        surface.hit_t = primary_key.linear_depth;
+        surface.base_color = primary_key.base_color;
+        surface.metallic = primary_key.metallic;
+        surface.roughness = primary_key.roughness;
+        surface.opacity = 1.0f;
+        surface.ior = 1.0f;
+        surface.emissive = float3(0.0f);
+        surface.material_type = primary_key.valid ? MaterialType::ROUGH_SURFACE : MaterialType::NO_HIT;
+        return surface;
+    }
+
+    static RtSurfaceHit surface_from_restir_inputs(uint2 thread_id)
+    {
+        return surface_from_key(load_surface_key(thread_id));
+    }
+
+    static bool surface_compatible(const RtPrimarySurfaceKey current_key, const RtPrimarySurfaceKey history_key)
+    {
+        if (!current_key.valid || !history_key.valid)
+        {
+            return false;
+        }
+        if (dot(current_key.normal, history_key.normal) < 0.9f)
+        {
+            return false;
+        }
+        if (abs(current_key.roughness - history_key.roughness) > 0.15f)
+        {
+            return false;
+        }
+        if (abs(current_key.metallic - history_key.metallic) > 0.1f)
+        {
+            return false;
+        }
+        // material signature 是 reservoir target 函数的一部分。不同 albedo/metallic 的表面即使共面，
+        // 也不能共享旧 surface 的 weight_sum/target 比值，否则高饱和彩色光会在材质边界留下离群点。
+        const float3 base_color_delta = abs(current_key.base_color - history_key.base_color);
+        if (max(base_color_delta.x, max(base_color_delta.y, base_color_delta.z)) > 0.18f)
+        {
+            return false;
+        }
+        const float depth_tolerance = max(0.03f, current_key.linear_depth * 0.03f);
+        if (abs(current_key.linear_depth - history_key.linear_depth) > depth_tolerance)
+        {
+            return false;
+        }
+        const float position_tolerance = max(0.04f, current_key.linear_depth * 0.01f);
+        return length(current_key.position - history_key.position) <= position_tolerance;
+    }
+
+    static bool reservoir_history_versions_match(const RtReservoir reservoir)
+    {
+        return reservoir.sky_version == engine::binding::gpu_scene.sky_distribution_version &&
+            reservoir.emissive_version == engine::binding::gpu_scene.emissive_light_version &&
+            reservoir.analytic_version == engine::binding::gpu_scene.analytic_light_version;
+    }
+
+    static bool reservoir_reusable(const RtReservoir reservoir)
+    {
+        return reservoir.valid && reservoir.sample_key.valid && reservoir_history_versions_match(reservoir) && reservoir.source_age <= 8.0f;
+    }
+
+    static float visible_candidate_target(const RtLightCandidate candidate, const RtSurfaceHit surface, const float3 view_dir)
+    {
+        // 本实现固定使用 RTXDI RayTraced bias correction 风格：target PDF 评估包含一次保守 visibility。
+        // 项目当前没有 previous TLAS，因此 temporal source surface 的校正 ray 仍走当前 TLAS；
+        // 这比 1/M normalization 更接近 RTXDI，但动态几何上仍是一个有意的工程折中。
+        if (!candidate.valid || !RtDirectLighting::is_candidate_visible(renderer::render_passes::realtime_rt::rt_tlas, candidate))
+        {
+            return 0.0f;
+        }
+        return RtDirectLighting::candidate_target(candidate, surface, view_dir);
+    }
+
+    static float target_at_surface(
+        const RtLightSampleKey sample_key,
+        const RtSurfaceHit surface,
+        out RtLightCandidate out_candidate
+    )
+    {
+        out_candidate = RtDirectLighting::reconstruct_candidate_from_key(sample_key, surface);
+        if (!out_candidate.valid)
+        {
+            return 0.0f;
+        }
+        const float3 view_dir = normalize(engine::binding::per_frame_data.camera_pos - surface.position);
+        return visible_candidate_target(out_candidate, surface, view_dir);
+    }
+
+    static bool stream_sample(
+        inout RtReservoir reservoir,
+        const RtLightSampleKey sample_key,
+        const float target_pdf,
+        const float inv_source_pdf,
+        const float sample_m,
+        const float source_age,
+        inout uint random_seed
+    )
+    {
+        if (sample_m <= 0.0f)
+        {
+            return false;
+        }
+
+        // M 描述候选池规模；零 target proposal 也会通过调用方的 finalize denominator 表达，
+        // 这里仅在 source PDF 与 target 都有效时才让样本参与 weighted reservoir competition。
+        reservoir.m += sample_m;
+        if (!sample_key.valid || target_pdf <= 0.0f || inv_source_pdf <= 0.0f)
+        {
+            return false;
+        }
+
+        const float ris_weight = target_pdf * inv_source_pdf;
+        if (ris_weight <= 0.0f)
+        {
+            return false;
+        }
+
+        const float new_weight_sum = reservoir.weight_sum + ris_weight;
+        const bool selected = !reservoir.valid || Random::rnd(random_seed) * new_weight_sum < ris_weight;
+        if (selected)
+        {
+            reservoir.sample_key = sample_key;
+            reservoir.target = target_pdf;
+            reservoir.source_age = source_age;
+            reservoir.valid = true;
+            reservoir.sky_version = engine::binding::gpu_scene.sky_distribution_version;
+            reservoir.emissive_version = engine::binding::gpu_scene.emissive_light_version;
+            reservoir.analytic_version = engine::binding::gpu_scene.analytic_light_version;
+        }
+        reservoir.weight_sum = new_weight_sum;
+        return selected;
+    }
+
+    static bool combine_reservoirs(
+        inout RtReservoir reservoir,
+        const RtReservoir source,
+        const float target_at_current,
+        inout uint random_seed
+    )
+    {
+        if (source.m <= 0.0f)
+        {
+            return false;
+        }
+
+        // RTXDI_CombineDIReservoirs 等价于把已 finalized 的 source inverse PDF 还原成本轮
+        // streaming 的 sampleNormalization：target_at_current * source.weight_sum * source.M。
+        reservoir.m += source.m;
+        if (!reservoir_reusable(source) || target_at_current <= 0.0f || source.weight_sum <= 0.0f)
+        {
+            return false;
+        }
+
+        const float ris_weight = target_at_current * source.weight_sum * source.m;
+        if (ris_weight <= 0.0f)
+        {
+            return false;
+        }
+
+        const float new_weight_sum = reservoir.weight_sum + ris_weight;
+        const bool selected = !reservoir.valid || Random::rnd(random_seed) * new_weight_sum < ris_weight;
+        if (selected)
+        {
+            reservoir.sample_key = source.sample_key;
+            reservoir.target = target_at_current;
+            reservoir.source_age = source.source_age;
+            reservoir.valid = true;
+            reservoir.sky_version = engine::binding::gpu_scene.sky_distribution_version;
+            reservoir.emissive_version = engine::binding::gpu_scene.emissive_light_version;
+            reservoir.analytic_version = engine::binding::gpu_scene.analytic_light_version;
+        }
+        reservoir.weight_sum = new_weight_sum;
+        return selected;
+    }
+
+    static void finalize_resampling(
+        inout RtReservoir reservoir,
+        const float normalization_numerator,
+        const float normalization_denominator
+    )
+    {
+        if (!reservoir.valid || reservoir.target <= 0.0f || normalization_numerator <= 0.0f ||
+            normalization_denominator <= 0.0f)
+        {
+            reservoir = RtReservoir::empty();
+            return;
+        }
+
+        // RTXDI_FinalizeResampling: rawWeightSum * numerator / (selectedTargetPdf * denominator)。
+        // 归一化后 weight_sum 可直接作为 final shade 的 inverse PDF，也可被下一轮 combine 使用。
+        reservoir.weight_sum = reservoir.weight_sum * normalization_numerator /
+            max(reservoir.target * normalization_denominator, 1e-7f);
+        if (reservoir.weight_sum <= 0.0f)
+        {
+            reservoir = RtReservoir::empty();
+        }
+    }
+
+    static void bias_correction_normalization(
+        inout RtReservoir reservoir,
+        const float selected_source_target,
+        const float target_sum_over_sources
+    )
+    {
+        // 该 helper 明确表达 RTXDI Basic/RayTraced bias correction 的 pi / piSum 归一化边界。
+        // target_sum_over_sources 已由调用方按参与复用的 source surface 与各自 M 累加。
+        finalize_resampling(reservoir, selected_source_target, target_sum_over_sources);
+    }
+
+    static RtReservoir make_initial_reservoir(inout RtTracePayload payload, const RtSurfaceHit surface, const float3 view_dir)
+    {
+        RtReservoir reservoir = RtReservoir::empty();
+        if (!is_primary_restir_surface(surface))
+        {
+            return reservoir;
+        }
+
+        // Initial reservoir 使用 RTXDI 的 streaming RIS 语义：proposal 以 target/pdf 进入 raw
+        // weight sum，phase 结束时 finalize 成 inverse PDF，再把 M 设为 1 供 temporal combine。
+        uint resampling_seed = payload.random_seed ^ 0x9E3779B9u;
+        for (uint i = 0; i < RESTIR_INITIAL_CANDIDATE_COUNT; ++i)
+        {
+            const RtLightCandidate candidate = RtDirectLighting::sample_unified_candidate(payload, surface);
+            const float target = visible_candidate_target(candidate, surface, view_dir);
+            if (!candidate.valid || !candidate.sample_key.valid || target <= 0.0f || candidate.solid_angle_pdf <= 0.0f)
+            {
+                continue;
+            }
+
+            stream_sample(
+                reservoir,
+                candidate.sample_key,
+                target,
+                1.0f / max(candidate.solid_angle_pdf, 1e-7f),
+                1.0f,
+                0.0f,
+                resampling_seed
+            );
+        }
+        if (reservoir.valid)
+        {
+            // Initial denominator 使用固定 proposal 总数；finalized 后 M 按 RTXDI initial 输出契约设为 1。
+            finalize_resampling(reservoir, 1.0f, (float)RESTIR_INITIAL_CANDIDATE_COUNT);
+            if (reservoir.valid)
+            {
+                reservoir.m = 1.0f;
+            }
+        }
+        return reservoir;
+    }
+
+    static uint make_resampling_seed(uint2 thread_id, uint salt)
+    {
+        return Random::tea(
+            thread_id.y * DispatchRaysDimensions().x + thread_id.x,
+            (uint)engine::binding::per_frame_data.frame_id * 1664525u + salt
+        );
+    }
+
+    static RtReservoir capped_history_reservoir(const RtReservoir reservoir)
+    {
+        RtReservoir capped = reservoir;
+        // weight_sum 已是 finalized inverse PDF；裁剪 history 时只裁剪 M，不再缩放 inverse PDF。
+        capped.m = min(max(reservoir.m, 1.0f), RESTIR_TEMPORAL_HISTORY_M_CAP);
+        return capped;
+    }
+
+    static int2 reproject_history_pixel(uint2 thread_id, const int2 offset)
+    {
+        // motion vector 使用项目统一的 pixel-space “当前像素 -> 上一帧像素”约定。
+        // RTXDI temporal 会在回投影中心附近做小范围搜索；几何/材质兼容性由 surface key 再严格拒绝。
+        const float2 motion_vector = renderer::render_passes::realtime_rt::dlss_motion_vectors.Load(thread_id);
+        return int2(floor(float2(thread_id) + motion_vector + float2(0.5f))) + offset;
+    }
+
+    static bool pixel_in_bounds(int2 pixel)
+    {
+        return pixel.x >= 0 && pixel.y >= 0 && pixel.x < int(DispatchRaysDimensions().x) && pixel.y < int(DispatchRaysDimensions().y);
+    }
+
+    static bool find_temporal_history_coord(
+        uint2 thread_id,
+        const RtPrimarySurfaceKey current_key,
+        inout uint random_seed,
+        out uint2 out_coord,
+        out RtPrimarySurfaceKey out_key
+    )
+    {
+        out_coord = uint2(0, 0);
+        out_key = RtPrimarySurfaceKey::empty();
+        for (uint i = 0; i < 9; ++i)
+        {
+            int2 offset = int2(0, 0);
+            if (i > 0)
+            {
+                offset = int2(
+                    int(floor(Random::rnd(random_seed) * float(RESTIR_TEMPORAL_SEARCH_RADIUS_PX * 2 + 1))) -
+                        RESTIR_TEMPORAL_SEARCH_RADIUS_PX,
+                    int(floor(Random::rnd(random_seed) * float(RESTIR_TEMPORAL_SEARCH_RADIUS_PX * 2 + 1))) -
+                        RESTIR_TEMPORAL_SEARCH_RADIUS_PX
+                );
+            }
+
+            const int2 history_pixel = reproject_history_pixel(thread_id, offset);
+            if (!pixel_in_bounds(history_pixel))
+            {
+                continue;
+            }
+
+            const uint2 history_coord = uint2(history_pixel);
+            const RtPrimarySurfaceKey history_key = load_history_surface_key(history_coord);
+            if (!surface_compatible(current_key, history_key))
+            {
+                continue;
+            }
+
+            out_coord = history_coord;
+            out_key = history_key;
+            return true;
+        }
+        return false;
+    }
+
+    static int2 spatial_neighbor_offset(uint sample_index)
+    {
+        const int2 offsets[32] = {
+            int2(1, 0),
+            int2(-1, 0),
+            int2(0, 1),
+            int2(0, -1),
+            int2(1, 1),
+            int2(-1, 1),
+            int2(1, -1),
+            int2(-1, -1),
+            int2(2, 0),
+            int2(-2, 0),
+            int2(0, 2),
+            int2(0, -2),
+            int2(2, 1),
+            int2(-2, 1),
+            int2(2, -1),
+            int2(-2, -1),
+            int2(1, 2),
+            int2(-1, 2),
+            int2(1, -2),
+            int2(-1, -2),
+            int2(3, 1),
+            int2(-3, 1),
+            int2(3, -1),
+            int2(-3, -1),
+            int2(1, 3),
+            int2(-1, 3),
+            int2(1, -3),
+            int2(-1, -3),
+            int2(3, 3),
+            int2(-3, 3),
+            int2(3, -3),
+            int2(-3, -3)
+        };
+        return offsets[sample_index & 31u];
+    }
+
+    static RtReservoir temporal_resample(uint2 thread_id)
+    {
+        const RtSurfaceHit current_surface = surface_from_restir_inputs(thread_id);
+        const RtPrimarySurfaceKey current_key = load_surface_key(thread_id);
+        RtReservoir result = RtReservoir::empty();
+        if (!current_surface.is_surface() || !current_key.valid)
+        {
+            return result;
+        }
+
+        uint random_seed = make_resampling_seed(thread_id, 19u);
+        const RtReservoir initial = load_initial(thread_id);
+        float initial_m = 0.0f;
+        if (reservoir_reusable(initial))
+        {
+            initial_m = max(initial.m, 1.0f);
+            combine_reservoirs(result, initial, initial.target, random_seed);
+        }
+
+        bool selected_history = false;
+        float history_m = 0.0f;
+        RtPrimarySurfaceKey history_key = RtPrimarySurfaceKey::empty();
+        if (push_const.restir_history_valid != 0 && current_key.valid)
+        {
+            uint2 history_coord;
+            if (find_temporal_history_coord(thread_id, current_key, random_seed, history_coord, history_key))
+            {
+                RtReservoir history = capped_history_reservoir(load_history(history_coord));
+                if (reservoir_reusable(history))
+                {
+                    RtLightCandidate history_candidate;
+                    const float history_target_at_current = target_at_surface(history.sample_key, current_surface, history_candidate);
+                    history.source_age = history.source_age + 1.0f;
+                    history_m = history.m;
+                    selected_history = combine_reservoirs(result, history, history_target_at_current, random_seed);
+                }
+            }
+        }
+
+        if (result.valid)
+        {
+            float numerator = result.target;
+            float denominator = result.target * initial_m;
+            if (history_m > 0.0f)
+            {
+                const RtSurfaceHit history_surface = surface_from_key(history_key);
+                RtLightCandidate selected_at_history;
+                const float history_selected_target = target_at_surface(result.sample_key, history_surface, selected_at_history);
+                if (selected_history)
+                {
+                    numerator = history_selected_target;
+                }
+                denominator += history_selected_target * history_m;
+            }
+            bias_correction_normalization(result, numerator, denominator);
+        }
+        return result;
+    }
+
+    static RtReservoir spatial_resample(uint2 thread_id)
+    {
+        const RtSurfaceHit current_surface = surface_from_restir_inputs(thread_id);
+        const RtPrimarySurfaceKey current_key = load_surface_key(thread_id);
+        RtReservoir result = RtReservoir::empty();
+        if (!current_surface.is_surface() || !current_key.valid)
+        {
+            return result;
+        }
+
+        uint random_seed = make_resampling_seed(thread_id, 37u);
+        const RtReservoir center = load_temporal(thread_id);
+        float center_m = 0.0f;
+        if (reservoir_reusable(center))
+        {
+            center_m = max(center.m, 1.0f);
+            combine_reservoirs(result, center, center.target, random_seed);
+        }
+
+        const uint spatial_sample_count = center_m < RESTIR_SPATIAL_TARGET_HISTORY_LENGTH
+            ? RESTIR_SPATIAL_DISOCCLUSION_BOOST_SAMPLE_COUNT
+            : RESTIR_SPATIAL_SAMPLE_COUNT;
+        const uint start_index = min((uint)(Random::rnd(random_seed) * 32.0f), 31u);
+        int selected_neighbor = -1;
+
+        for (uint i = 0; i < spatial_sample_count; ++i)
+        {
+            const int2 sample_pixel = int2(thread_id) + spatial_neighbor_offset(start_index + i);
+            if (!pixel_in_bounds(sample_pixel))
+            {
+                continue;
+            }
+            const uint2 sample_coord = uint2(sample_pixel);
+            const RtPrimarySurfaceKey sample_key = load_surface_key(sample_coord);
+            const RtReservoir sample_reservoir = load_temporal(sample_coord);
+            if (!surface_compatible(current_key, sample_key) || !reservoir_reusable(sample_reservoir))
+            {
+                continue;
+            }
+
+            // spatial reuse 只读取当前帧邻域 temporal reservoir，并按当前像素 surface 重算 target。
+            // 它只用于当前帧 final reservoir，不能作为下一帧 temporal history。
+            RtLightCandidate sample_candidate;
+            const float sample_target = target_at_surface(sample_reservoir.sample_key, current_surface, sample_candidate);
+            if (combine_reservoirs(result, sample_reservoir, sample_target, random_seed))
+            {
+                selected_neighbor = int(i);
+            }
+        }
+
+        if (result.valid)
+        {
+            float numerator = result.target;
+            float denominator = result.target * center_m;
+            for (uint i = 0; i < spatial_sample_count; ++i)
+            {
+                const int2 sample_pixel = int2(thread_id) + spatial_neighbor_offset(start_index + i);
+                if (!pixel_in_bounds(sample_pixel))
+                {
+                    continue;
+                }
+                const uint2 sample_coord = uint2(sample_pixel);
+                const RtPrimarySurfaceKey sample_key = load_surface_key(sample_coord);
+                const RtReservoir sample_reservoir = load_temporal(sample_coord);
+                if (!surface_compatible(current_key, sample_key) || !reservoir_reusable(sample_reservoir))
+                {
+                    continue;
+                }
+
+                const RtSurfaceHit sample_surface = surface_from_key(sample_key);
+                RtLightCandidate selected_at_sample;
+                const float sample_selected_target = target_at_surface(result.sample_key, sample_surface, selected_at_sample);
+                if (selected_neighbor == int(i))
+                {
+                    numerator = sample_selected_target;
+                }
+                denominator += sample_selected_target * max(sample_reservoir.m, 1.0f);
+            }
+            bias_correction_normalization(result, numerator, denominator);
+        }
+
+        return result;
+    }
+
+    static RtReservoir selected_final_reservoir(uint2 thread_id)
+    {
+        // final shade 根据 mode 选择当前帧最终估计器：InitialOnly 读 initial，Temporal 读 temporal，
+        // TemporalSpatial 才读 final。这个选择不改变 Rust 侧 history 绑定仍然只用 temporal。
+        if (push_const.restir_di_mode == renderer::render_passes::realtime_rt::RESTIR_DI_MODE_INITIAL_ONLY)
+        {
+            return load_initial(thread_id);
+        }
+        if (push_const.restir_di_mode == renderer::render_passes::realtime_rt::RESTIR_DI_MODE_TEMPORAL)
+        {
+            return load_temporal(thread_id);
+        }
+        return load_final(thread_id);
+    }
+
+    static float reservoir_shade_weight(const RtReservoir reservoir)
+    {
+        return reservoir.weight_sum;
+    }
+
+    static RtDirectLightingSample shade_final_reservoir(uint2 thread_id, const RtReservoir reservoir)
+    {
+        if (!reservoir_reusable(reservoir))
+        {
+            return RtDirectLightingSample::empty();
+        }
+
+        RtSurfaceHit surface = surface_from_restir_inputs(thread_id);
+        const RtPrimarySurfaceKey current_key = load_surface_key(thread_id);
+        if (!surface.is_surface() || !current_key.valid)
+        {
+            return RtDirectLightingSample::empty();
+        }
+        const RtLightCandidate candidate = RtDirectLighting::reconstruct_candidate_from_key(reservoir.sample_key, surface);
+        // final shade 仍重新 trace visibility。temporal/spatial phase 已经排除过不可见候选，
+        // 但最终输出必须以当前 TLAS 与当前 surface 为准，不能复用历史 visibility。
+        if (!RtDirectLighting::is_candidate_visible(renderer::render_passes::realtime_rt::rt_tlas, candidate))
+        {
+            return RtDirectLightingSample::empty();
+        }
+
+        const float3 view_dir = normalize(engine::binding::per_frame_data.camera_pos - surface.position);
+        const float current_target = RtDirectLighting::candidate_target(candidate, surface, view_dir);
+        if (current_target <= 0.0f)
+        {
+            return RtDirectLightingSample::empty();
+        }
+        return RtDirectLighting::shade_reservoir_candidate(
+            candidate,
+            surface,
+            view_dir,
+            reservoir_shade_weight(reservoir)
+        );
+    }
+
+    static void run_temporal_phase(uint2 thread_id)
+    {
+        if (!temporal_enabled())
+        {
+            // 这是 helper 级防御分支：当前 Rust pass 在 InitialOnly 下不会执行 temporal phase，
+            // 因此不能依赖这里刷新 temporal target。真正的 InitialOnly debug 语义在 final phase
+            // 里显式处理，避免为了调试额外发起一次 TraceRays。
+            store_temporal(thread_id, load_initial(thread_id));
+            return;
+        }
+        store_temporal(thread_id, temporal_resample(thread_id));
+    }
+
+    static void run_spatial_phase(uint2 thread_id)
+    {
+        if (!spatial_enabled())
+        {
+            // Temporal 模式没有邻域复用；final target 保存 temporal 的当前帧副本，仅供 final/debug 读取。
+            store_final(thread_id, load_temporal(thread_id));
+            return;
+        }
+        store_final(thread_id, spatial_resample(thread_id));
+    }
+
+    static void run_final_phase(uint2 thread_id)
+    {
+        const RtReservoir initial = load_initial(thread_id);
+        // InitialOnly 不执行 temporal phase；temporal target 可能仍保存旧 frame label 的内容。
+        // ReSTIR temporal debug 必须只在 temporal reuse 实际参与当前 mode 时读取 temporal target。
+        const RtReservoir temporal = temporal_enabled() ? load_temporal(thread_id) : RtReservoir::empty();
+        const RtReservoir reservoir = selected_final_reservoir(thread_id);
+        const RtDirectLightingSample final_sample = shade_final_reservoir(thread_id, reservoir);
+
+        if (push_const.channel == RT_DEBUG_RESTIR_INITIAL_WEIGHT)
+        {
+            const float value = initial.valid ? saturate(log2(1.0f + initial.weight_sum) / 8.0f) : 0.0f;
+            renderer::render_passes::realtime_rt::rt_single_frame_output.Store(thread_id, float4(float3(value), 1.0f));
+            return;
+        }
+        if (push_const.channel == RT_DEBUG_RESTIR_TEMPORAL_VALID)
+        {
+            const float valid_value = temporal.valid ? 1.0f : 0.0f;
+            const float age_value = temporal.valid ? saturate(temporal.source_age / 8.0f) : 0.0f;
+            renderer::render_passes::realtime_rt::rt_single_frame_output.Store(thread_id, float4(valid_value, 1.0f - age_value, age_value, 1.0f));
+            return;
+        }
+        if (push_const.channel == RT_DEBUG_RESTIR_FINAL_CONTRIBUTION)
+        {
+            renderer::render_passes::realtime_rt::rt_single_frame_output.Store(thread_id, float4(final_sample.contribution, 1.0f));
+            return;
+        }
+        if (push_const.channel != 0)
+        {
+            // 非 ReSTIR debug channel 的 surface/path debug 已在 path phase 写出。
+            // final phase 不覆盖这些图像，避免把 ReSTIR direct contribution 混入旧 debug 语义。
+            return;
+        }
+
+        // 普通 Final 通道在 path phase 已经包含间接光、emission、sky 和 secondary NEE；
+        // primary direct lighting 被 ReSTIR 接管后只在这里追加一次。
+        const float3 base_radiance = renderer::render_passes::realtime_rt::rt_single_frame_output.Load(thread_id).xyz;
+        renderer::render_passes::realtime_rt::rt_single_frame_output.Store(thread_id, float4(base_radiance + final_sample.contribution, 1.0f));
+    }
+
+    static void run_non_path_phase(uint2 thread_id)
+    {
+        // 非 path phase 不执行 camera ray/path loop，只处理 ReSTIR 的 image-space reuse 和 final shade。
+        // phase 顺序由 Rust pass 用 image barrier 串联，shader 只根据 push constant 分派工作。
+        if (push_const.restir_di_phase == renderer::render_passes::realtime_rt::RESTIR_DI_PHASE_TEMPORAL)
+        {
+            run_temporal_phase(thread_id);
+        }
+        else if (push_const.restir_di_phase == renderer::render_passes::realtime_rt::RESTIR_DI_PHASE_SPATIAL)
+        {
+            run_spatial_phase(thread_id);
+        }
+        else if (push_const.restir_di_phase == renderer::render_passes::realtime_rt::RESTIR_DI_PHASE_FINAL)
+        {
+            run_final_phase(thread_id);
+        }
+    }
+};

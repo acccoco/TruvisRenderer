@@ -183,92 +183,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
-name = "app-imgui"
-version = "0.1.0"
-dependencies = [
- "app-kit",
- "ash",
- "enum-map",
- "glam",
- "imgui",
- "itertools 0.10.5",
- "log",
- "truvis-app-shader-binding",
- "truvis-descriptor-layout-macro",
- "truvis-descriptor-layout-trait",
- "truvis-gfx",
- "truvis-path",
- "truvis-render-foundation",
- "truvis-render-graph",
- "truvis-render-loop",
- "truvis-render-runtime",
-]
-
-[[package]]
-name = "app-kit"
-version = "0.1.0"
-dependencies = [
- "glam",
- "log",
- "truvis-gfx",
- "truvis-render-foundation",
- "truvis-render-loop",
- "truvis-render-runtime",
-]
-
-[[package]]
-name = "app-render-passes"
-version = "0.1.0"
-dependencies = [
- "ash",
- "bytemuck",
- "enum-map",
- "glam",
- "itertools 0.10.5",
- "log",
- "slotmap",
- "truvis-app-shader-binding",
- "truvis-descriptor-layout-macro",
- "truvis-descriptor-layout-trait",
- "truvis-gfx",
- "truvis-path",
- "truvis-render-foundation",
- "truvis-render-graph",
- "truvis-render-runtime",
- "truvis-streamline-binding",
- "vk-mem",
-]
-
-[[package]]
-name = "app-render-ui"
-version = "0.1.0"
-dependencies = [
- "app-imgui",
- "app-kit",
- "app-rendering",
- "imgui",
- "truvis-render-runtime",
-]
-
-[[package]]
-name = "app-rendering"
-version = "0.1.0"
-dependencies = [
- "app-kit",
- "app-render-passes",
- "ash",
- "glam",
- "itertools 0.10.5",
- "log",
- "slotmap",
- "truvis-gfx",
- "truvis-render-foundation",
- "truvis-render-graph",
- "truvis-render-runtime",
- "vk-mem",
-]
-
-[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -990,25 +904,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "cornell"
+name = "cornell-app"
 version = "0.1.0"
 dependencies = [
- "app-imgui",
- "app-kit",
- "app-render-ui",
- "app-rendering",
+ "cornell-renderer",
+ "truvis-logs",
+ "truvis-path",
+ "truvis-render-loop",
+ "truvis-winit-host",
+]
+
+[[package]]
+name = "cornell-renderer"
+version = "0.1.0"
+dependencies = [
  "ash",
  "glam",
  "log",
- "truvis-asset",
- "truvis-logs",
+ "renderer-imgui",
+ "renderer-kit",
+ "renderer-render-ui",
+ "renderer-rendering",
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-loop",
  "truvis-render-runtime",
  "truvis-shader-binding",
- "truvis-winit-host",
  "truvis-world",
 ]
 
@@ -2130,27 +2052,6 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
-
-[[package]]
-name = "hello-triangle"
-version = "0.1.0"
-dependencies = [
- "app-imgui",
- "app-kit",
- "ash",
- "enum-map",
- "glam",
- "itertools 0.10.5",
- "log",
- "truvis-gfx",
- "truvis-logs",
- "truvis-path",
- "truvis-render-foundation",
- "truvis-render-graph",
- "truvis-render-loop",
- "truvis-render-runtime",
- "truvis-winit-host",
-]
 
 [[package]]
 name = "hermit-abi"
@@ -4342,6 +4243,92 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "renderer-imgui"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "enum-map",
+ "glam",
+ "imgui",
+ "itertools 0.10.5",
+ "log",
+ "renderer-kit",
+ "truvis-descriptor-layout-macro",
+ "truvis-descriptor-layout-trait",
+ "truvis-gfx",
+ "truvis-path",
+ "truvis-render-foundation",
+ "truvis-render-graph",
+ "truvis-render-loop",
+ "truvis-render-runtime",
+ "truvis-renderer-shader-binding",
+]
+
+[[package]]
+name = "renderer-kit"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "log",
+ "truvis-gfx",
+ "truvis-render-foundation",
+ "truvis-render-loop",
+ "truvis-render-runtime",
+]
+
+[[package]]
+name = "renderer-render-passes"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "bytemuck",
+ "enum-map",
+ "glam",
+ "itertools 0.10.5",
+ "log",
+ "slotmap",
+ "truvis-descriptor-layout-macro",
+ "truvis-descriptor-layout-trait",
+ "truvis-gfx",
+ "truvis-path",
+ "truvis-render-foundation",
+ "truvis-render-graph",
+ "truvis-render-runtime",
+ "truvis-renderer-shader-binding",
+ "truvis-streamline-binding",
+ "vk-mem",
+]
+
+[[package]]
+name = "renderer-render-ui"
+version = "0.1.0"
+dependencies = [
+ "imgui",
+ "renderer-imgui",
+ "renderer-kit",
+ "renderer-rendering",
+ "truvis-render-runtime",
+]
+
+[[package]]
+name = "renderer-rendering"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "glam",
+ "itertools 0.10.5",
+ "log",
+ "renderer-kit",
+ "renderer-render-passes",
+ "slotmap",
+ "truvis-gfx",
+ "truvis-render-foundation",
+ "truvis-render-graph",
+ "truvis-render-runtime",
+ "vk-mem",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.11.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4846,25 +4833,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "shader-toy"
+name = "shader-toy-app"
 version = "0.1.0"
 dependencies = [
- "app-imgui",
- "app-kit",
+ "shader-toy-renderer",
+ "truvis-logs",
+ "truvis-path",
+ "truvis-render-loop",
+ "truvis-winit-host",
+]
+
+[[package]]
+name = "shader-toy-renderer"
+version = "0.1.0"
+dependencies = [
  "ash",
  "bytemuck",
  "enum-map",
  "glam",
  "itertools 0.10.5",
  "log",
+ "renderer-imgui",
+ "renderer-kit",
  "truvis-gfx",
- "truvis-logs",
  "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-loop",
  "truvis-render-runtime",
- "truvis-winit-host",
 ]
 
 [[package]]
@@ -5986,6 +5982,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "triangle-app"
+version = "0.1.0"
+dependencies = [
+ "triangle-renderer",
+ "truvis-logs",
+ "truvis-path",
+ "truvis-render-loop",
+ "truvis-winit-host",
+]
+
+[[package]]
+name = "triangle-renderer"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "enum-map",
+ "glam",
+ "itertools 0.10.5",
+ "log",
+ "renderer-imgui",
+ "renderer-kit",
+ "truvis-gfx",
+ "truvis-path",
+ "truvis-render-foundation",
+ "truvis-render-graph",
+ "truvis-render-loop",
+ "truvis-render-runtime",
+]
+
+[[package]]
 name = "truvis"
 version = "0.1.0"
 dependencies = [
@@ -6003,15 +6029,6 @@ dependencies = [
  "truvis-render-loop",
  "truvis-renderer",
  "truvis-winit-host",
-]
-
-[[package]]
-name = "truvis-app-shader-binding"
-version = "0.1.0"
-dependencies = [
- "truvis-path",
- "truvis-shader-binding",
- "truvis-shader-binding-codegen",
 ]
 
 [[package]]
@@ -6217,15 +6234,15 @@ dependencies = [
 name = "truvis-renderer"
 version = "0.1.0"
 dependencies = [
- "app-imgui",
- "app-kit",
- "app-render-passes",
- "app-render-ui",
- "app-rendering",
  "ash",
  "glam",
  "imgui",
  "log",
+ "renderer-imgui",
+ "renderer-kit",
+ "renderer-render-passes",
+ "renderer-render-ui",
+ "renderer-rendering",
  "slotmap",
  "tokio",
  "truvis-asset",
@@ -6239,6 +6256,15 @@ dependencies = [
  "truvis-shader-binding",
  "truvis-world",
  "vk-mem",
+]
+
+[[package]]
+name = "truvis-renderer-shader-binding"
+version = "0.1.0"
+dependencies = [
+ "truvis-path",
+ "truvis-shader-binding",
+ "truvis-shader-binding-codegen",
 ]
 
 [[package]]

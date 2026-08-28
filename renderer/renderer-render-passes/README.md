@@ -1,19 +1,19 @@
-# app-render-passes
+# renderer-render-passes
 
-`app-render-passes` 存放 Truvis 主体 app 与 samples 共享的具体 render pass 实现，
+`renderer-render-passes` 存放 TruvisRenderer 与 sample Renderer 共享的具体 render pass 实现，
 例如 real-time / offline ray tracing、accumulation、SDR、image clear、resolve、
 coordinate gizmo、selection outline 和 Phong shading。
 
 ## Shader 所有权
 
-- shader 源码统一位于 `app/shader/`；`abi/app/render_passes/` 保存
-  `app::render_passes::*` CPU/GPU 契约，`lib/app/` 保存依赖 pass ABI/resource 的算法，
-  `entry/app/` 保存最终入口。
-- `app/shader/truvis-app-shader-binding` 统一生成全部 App ABI，只 allowlist `app::*`，并依赖
+- shader 源码统一位于 `renderer/shader/`；`abi/renderer/render_passes/` 保存
+  `renderer::render_passes::*` CPU/GPU 契约，`lib/renderer/` 保存依赖 pass ABI/resource 的算法，
+  `entry/renderer/` 保存最终入口。
+- `renderer/shader/truvis-renderer-shader-binding` 统一生成全部 App ABI，只 allowlist `renderer::*`，并依赖
   Engine canonical `truvis-shader-binding`。
 - 本 crate 使用 `app` package，产物位于 `build/shader/app/`；Engine ABI/lib 通过
   `depends_on = ["engine"]` 单向引用。
-- 完整目录、include roots 与增量边界见 `app/shader/README.md`。
+- 完整目录、include roots 与增量边界见 `renderer/shader/README.md`。
 
 ## 主要职责
 
@@ -40,8 +40,8 @@ coordinate gizmo、selection outline 和 Phong shading。
 - 本 crate 不负责 Renderer 级 pass 顺序、GUI overlay 顺序或 demo pipeline 编排。
 - 本 crate 不持有 `RenderRuntime`，也不依赖 frame runtime 或 Renderer hooks。
 - runtime-owned 同步 raycast pipeline 不在本 crate 中；它是 `truvis-render-runtime` 的私有实现细节。
-- `GBuffer` 不在本 crate 中；它属于 `app-rendering` 的 realtime subsystem 资源 owner。
-- GUI Vulkan backend 与 GUI RenderGraph adapter 是 `app-imgui::ImGuiSubsystem` 的私有实现细节，不在本 crate 中。
+- `GBuffer` 不在本 crate 中；它属于 `renderer-rendering` 的 realtime subsystem 资源 owner。
+- GUI Vulkan backend 与 GUI RenderGraph adapter 是 `renderer-imgui::ImGuiSubsystem` 的私有实现细节，不在本 crate 中。
 - shader 源码可以引用 Engine ABI/lib；Engine shader、binding 与构建配置禁止引用本模块的 shader root 或 binding crate。
 - pass-local descriptor 只描述本次 draw/dispatch 使用哪个 image view，不拥有 image/view，也不替代 RenderGraph 的
   layout transition、访问同步或 pipeline owner 的 GPU-safe 释放责任。
@@ -49,6 +49,6 @@ coordinate gizmo、selection outline 和 Phong shading。
 ## 设计意图
 
 本 crate 只表达“如何录制 Truvis app 复用的具体 GPU 效果”。具体 Renderer 在 `Renderer::render`
-中创建 `RenderGraphBuilder`，再按业务顺序组合 `app-rendering` 中的渲染子系统、
-post-process pass 和 `app-imgui` 提供的 GUI pass。这样新增 demo 或渲染能力时优先复用 pass 实现，而不把
+中创建 `RenderGraphBuilder`，再按业务顺序组合 `renderer-rendering` 中的渲染子系统、
+post-process pass 和 `renderer-imgui` 提供的 GUI pass。这样新增 demo 或渲染能力时优先复用 pass 实现，而不把
 Renderer 级编排逻辑下沉到 engine core。

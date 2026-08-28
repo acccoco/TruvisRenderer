@@ -1,4 +1,4 @@
-use cornell::cornell_renderer::CornellRenderer;
+use cornell_renderer::CornellRenderer;
 use truvis_logs::LogFilePath;
 use truvis_path::TruvisPath;
 use truvis_render_loop::init_env_with_log_file;

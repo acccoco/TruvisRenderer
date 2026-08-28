@@ -5,7 +5,6 @@ use ash::vk;
 use enum_map::{Enum, EnumMap, enum_map};
 use itertools::Itertools;
 
-use truvis_app_shader_binding::gpu;
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -20,6 +19,7 @@ use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
 use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
+use truvis_renderer_shader_binding::gpu;
 
 #[derive(Debug, Clone, Copy, Enum)]
 enum ShaderStage {
@@ -32,12 +32,12 @@ static SHADER_STAGES: LazyLock<EnumMap<ShaderStage, GfxShaderStageInfo>> = LazyL
         ShaderStage::Vertex => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::VERTEX,
             entry_point: c"vsmain",
-            path: TruvisPath::shader_build_path_str("app", "post/resolve.slang"),
+            path: TruvisPath::shader_build_path_str("renderer", "post/resolve.slang"),
         },
         ShaderStage::Fragment => GfxShaderStageInfo {
             stage: vk::ShaderStageFlags::FRAGMENT,
             entry_point: c"psmain",
-            path: TruvisPath::shader_build_path_str("app", "post/resolve.slang"),
+            path: TruvisPath::shader_build_path_str("renderer", "post/resolve.slang"),
         },
     }
 });
@@ -115,7 +115,7 @@ impl ResolvePass {
         let push_constant_range = vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
-            .size(size_of::<gpu::app::render_passes::resolve::PushConstant>() as u32);
+            .size(size_of::<gpu::renderer::render_passes::resolve::PushConstant>() as u32);
 
         let descriptor_set_layout = GfxDescriptorSetLayout::<ResolveDescriptorBinding>::new(
             ctx,
@@ -123,7 +123,7 @@ impl ResolvePass {
             "resolve-pass-local-descriptor-layout",
         );
         let mut descriptor_set_layouts = global_descriptor_sets.global_set_layouts();
-        assert_eq!(gpu::app::render_passes::resolve::SET_NUM, descriptor_set_layouts.len() as u32);
+        assert_eq!(gpu::renderer::render_passes::resolve::SET_NUM, descriptor_set_layouts.len() as u32);
         descriptor_set_layouts.push(descriptor_set_layout.handle());
         let pipeline_layout =
             Rc::new(GfxPipelineLayout::new(ctx, &descriptor_set_layouts, &[push_constant_range], "resolve-pass"));
@@ -236,11 +236,11 @@ impl ResolvePass {
         cmd.push_descriptor_set(
             vk::PipelineBindPoint::GRAPHICS,
             self.pipeline_layout.handle(),
-            gpu::app::render_passes::resolve::SET_NUM,
+            gpu::renderer::render_passes::resolve::SET_NUM,
             &descriptor_writes,
         );
 
-        let push_constant = gpu::app::render_passes::resolve::PushConstant {
+        let push_constant = gpu::renderer::render_passes::resolve::PushConstant {
             offset: params.offset.into(),
             size: params.size.into(),
             target_size: glam::vec2(target_extent.width as f32, target_extent.height as f32).into(),

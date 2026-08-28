@@ -1,11 +1,11 @@
 use ash::vk;
 use slotmap::Key;
 
-use app_kit::subsystem::SubsystemLifecycle;
-use app_render_passes::effects::selection_outline::{
+use renderer_kit::subsystem::SubsystemLifecycle;
+use renderer_render_passes::effects::selection_outline::{
     SelectionOutlineCompositeRgPass, SelectionOutlineMaskRgPass, SelectionOutlinePass,
 };
-use app_rendering::ImageTarget;
+use renderer_rendering::ImageTarget;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageViewDesc;

@@ -1,12 +1,12 @@
 [package]
-name = "app-rendering"
+name = "renderer-rendering"
 version = "0.1.0"
 edition = "2024"
 description = "Realtime/offline render subsystems and their persistent GPU resources"
 
 [dependencies]
-app-kit = { workspace = true }
-app-render-passes = { workspace = true }
+renderer-kit = { workspace = true }
+renderer-render-passes = { workspace = true }
 truvis-gfx = { workspace = true }
 truvis-render-foundation = { workspace = true }
 truvis-render-graph = { workspace = true }

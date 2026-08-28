@@ -1,4 +1,4 @@
-use hello_triangle::triangle_renderer::TriangleRenderer;
+use triangle_renderer::TriangleRenderer;
 use truvis_logs::LogFilePath;
 use truvis_path::TruvisPath;
 use truvis_render_loop::init_env_with_log_file;

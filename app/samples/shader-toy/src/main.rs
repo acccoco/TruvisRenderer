@@ -1,4 +1,4 @@
-use shader_toy::shader_toy_renderer::ShaderToyRenderer;
+use shader_toy_renderer::ShaderToyRenderer;
 use truvis_logs::LogFilePath;
 use truvis_path::TruvisPath;
 use truvis_render_loop::init_env_with_log_file;

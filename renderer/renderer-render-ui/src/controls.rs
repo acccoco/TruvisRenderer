@@ -1,6 +1,6 @@
-use app_rendering::offline::OfflineRenderSettings;
-use app_rendering::realtime::{RealtimeRenderSettings, RtRestirDiMode, RtSharcMode};
-use app_rendering::shared::{
+use renderer_rendering::offline::OfflineRenderSettings;
+use renderer_rendering::realtime::{RealtimeRenderSettings, RtRestirDiMode, RtSharcMode};
+use renderer_rendering::shared::{
     PathTracingCommonSettings, PathTracingDebugChannel, RenderMode, SdrToneMappingSettings, SkySamplingMode,
 };
 use truvis_render_runtime::state::dlss_options::DlssOptions;

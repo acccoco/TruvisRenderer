@@ -4,13 +4,13 @@ use std::cell::Cell;
 
 use slotmap::Key;
 
-use app_kit::debug_image::DebugImageOption;
-use app_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
-use app_render_passes::post_process::accum::{AccumPass, AccumRgPass};
-use app_render_passes::post_process::image_clear::{ImageClearPass, ImageClearRgPass};
-use app_render_passes::post_process::resolve::{ResolveDebugImage, ResolvePass, ResolveRgPass};
-use app_render_passes::post_process::sdr::{SdrPass, SdrRgPass};
-use app_render_passes::ray_tracing::offline::{OfflineRtPass, OfflineRtRgPass};
+use renderer_kit::debug_image::DebugImageOption;
+use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
+use renderer_render_passes::post_process::accum::{AccumPass, AccumRgPass};
+use renderer_render_passes::post_process::image_clear::{ImageClearPass, ImageClearRgPass};
+use renderer_render_passes::post_process::resolve::{ResolveDebugImage, ResolvePass, ResolveRgPass};
+use renderer_render_passes::post_process::sdr::{SdrPass, SdrRgPass};
+use renderer_render_passes::ray_tracing::offline::{OfflineRtPass, OfflineRtRgPass};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;

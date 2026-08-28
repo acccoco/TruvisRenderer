@@ -4,13 +4,13 @@ use std::{cell::Cell, env};
 
 use slotmap::Key;
 
-use app_kit::debug_image::DebugImageOption;
-use app_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
-use app_render_passes::post_process::dlss_rr::{DlssRrPass, DlssRrRgPass};
-use app_render_passes::post_process::dlss_sr::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
-use app_render_passes::post_process::resolve::{ResolveDebugImage, ResolvePass, ResolveRgPass};
-use app_render_passes::post_process::sdr::{SdrPass, SdrRgPass};
-use app_render_passes::ray_tracing::realtime::{
+use renderer_kit::debug_image::DebugImageOption;
+use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
+use renderer_render_passes::post_process::dlss_rr::{DlssRrPass, DlssRrRgPass};
+use renderer_render_passes::post_process::dlss_sr::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
+use renderer_render_passes::post_process::resolve::{ResolveDebugImage, ResolvePass, ResolveRgPass};
+use renderer_render_passes::post_process::sdr::{SdrPass, SdrRgPass};
+use renderer_render_passes::ray_tracing::realtime::{
     RealtimeRtPass, RealtimeRtRgPass, RestirReservoirRgImages, RestirSurfaceKeyRgImages,
 };
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -115,7 +115,7 @@ impl RtSharcMode {
         }
     }
 
-    /// 必须与 `app/shader/abi/realtime_rt/mod.slangi` 的 SHARC_MODE_* 保持一致。
+    /// 必须与 `renderer/shader/abi/realtime_rt/mod.slangi` 的 SHARC_MODE_* 保持一致。
     pub fn shader_mode(self) -> u32 {
         match self {
             Self::Off => 0,

@@ -9,16 +9,16 @@ depends_on = []
 output_prefix = "engine"
 
 [[package]]
-id = "app"
-entry_root = "app/shader/entry/app"
-include_roots = ["engine/shader", "app/shader"]
-shared_input_roots = ["app/shader/abi/app", "app/shader/lib/app"]
+id = "renderer"
+entry_root = "renderer/shader/entry/renderer"
+include_roots = ["engine/shader", "renderer/shader"]
+shared_input_roots = ["renderer/shader/abi/renderer", "renderer/shader/lib/renderer"]
 depends_on = ["engine"]
-output_prefix = "app"
+output_prefix = "renderer"
 
 [[package]]
 id = "sample-hello-triangle"
-entry_root = "app/shader/entry/sample-hello-triangle"
+entry_root = "renderer/shader/entry/sample-hello-triangle"
 include_roots = ["engine/shader"]
 shared_input_roots = []
 depends_on = ["engine"]
@@ -26,8 +26,8 @@ output_prefix = "samples/hello-triangle"
 
 [[package]]
 id = "sample-shader-toy"
-entry_root = "app/shader/entry/sample-shader-toy"
-include_roots = ["app/shader"]
-shared_input_roots = ["app/shader/lib/sample-shader-toy"]
+entry_root = "renderer/shader/entry/sample-shader-toy"
+include_roots = ["renderer/shader"]
+shared_input_roots = ["renderer/shader/lib/sample-shader-toy"]
 depends_on = []
 output_prefix = "samples/shader-toy"
