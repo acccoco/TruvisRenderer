@@ -6,7 +6,7 @@
 //! - [Vulkan HLSL Guide](https://docs.vulkan.org/guide/latest/hlsl.html)
 //! - [Nsight Shader Configuration](https://docs.nvidia.com/nsight-graphics/UserGuide/index.html#configuring-your-application-shaders)
 
-use crate::common::{ShaderCompileTask, ShaderCompiler, ShaderCompilerType, ShaderStage};
+use super::common::{ShaderCompileTask, ShaderCompiler, ShaderCompilerType, ShaderStage};
 
 /// HLSL 编译器
 ///

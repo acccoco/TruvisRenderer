@@ -2,7 +2,7 @@
 //!
 //! 使用 slangc 将 Slang 着色器编译为 SPIR-V
 
-use crate::common::{EnvPath, ShaderCompileTask, ShaderCompiler, ShaderCompilerType};
+use super::common::{EnvPath, ShaderCompileTask, ShaderCompiler, ShaderCompilerType};
 
 /// Slang 编译器
 ///

@@ -2,7 +2,7 @@
 //!
 //! 使用 glslc (来自 Vulkan SDK) 将 GLSL 着色器编译为 SPIR-V
 
-use crate::common::{ShaderCompileTask, ShaderCompiler, ShaderCompilerType};
+use super::common::{ShaderCompileTask, ShaderCompiler, ShaderCompilerType};
 
 /// GLSL 编译器
 ///

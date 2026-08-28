@@ -799,7 +799,7 @@ impl FileStamp {
     }
 }
 
-fn main() -> Result<(), String> {
+pub fn run_from_env() -> Result<(), String> {
     TruvisLogger::init_with_file(LogFilePath::current_exe(TruvisPath::temp_dir()));
 
     let options = CliOptions::parse()?;

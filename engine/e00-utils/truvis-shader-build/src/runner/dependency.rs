@@ -5,7 +5,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use crate::common::ShaderCompileTask;
+use super::common::ShaderCompileTask;
 
 /// Shader 源文件所在的职责层级。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
