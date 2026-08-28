@@ -45,6 +45,10 @@ workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
   运行时路径编码和词法路径归一化等 helper；不负责下载或加载资源内容。
 - `truvis-fetch-res/`：`fetch_res` 工具 crate，读取 `resources.toml` 并下载模型资产、外部工具、SDK 或参考源码资源；不参与渲染线程的
   asset loading。
+- `truvis-shader-build/`：`shader-build` 工具 crate，负责把 manifest 声明的 shader 源码编译到
+  `build/shader/`；推荐通过 `just shader` 调用。
+- `truvis-shader-binding-codegen/`：Engine/Renderer binding crate 共用的 bindgen 参数、类型重命名、稳定输出路径与
+  write-if-changed 支持。
 
 ### `e10-gfx/`
 
@@ -96,7 +100,6 @@ CPU 侧语义层，负责 asset 身份、加载状态、scene runtime 身份与 
 Shader 源码、SPIR-V 编译和 Rust 绑定生成目录。
 
 - `entry/`、`api/`、`lib/`：Slang shader 入口、共享 ABI/API 头文件和 shader 侧复用库。共享结构变更会影响 Rust 绑定。
-- `truvis-shader-build/`：`shader-build` 工具 crate，负责把 shader 源码编译到 `build/shader/`；推荐通过 `just shader` 调用。
 - `truvis-shader-binding/`：通过 bindgen 生成 Rust 侧 GPU 数据结构绑定，并导出 `truvis_shader_binding::gpu`；不负责 shader
   编译或 pass 录制。
 
