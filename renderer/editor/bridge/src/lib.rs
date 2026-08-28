@@ -3,16 +3,16 @@
 //! 本 crate 只拥有 editor DTO、transport envelope 和有界 channel endpoint。它不依赖
 //! `truvis-world`、render runtime 或任何 GPU 类型，也不缓存 selection、scene 或 material 状态。
 
-mod app_endpoint;
-mod desktop_endpoint;
 mod envelope;
+mod frontend_endpoint;
 pub mod protocol;
+mod renderer_endpoint;
 
 use tokio::sync::mpsc;
 
-pub use app_endpoint::AppEndpoint;
-pub use desktop_endpoint::DesktopEndpoint;
 pub use envelope::EditorRequestEnvelope;
+pub use frontend_endpoint::FrontendEndpoint;
+pub use renderer_endpoint::RendererEndpoint;
 
 /// EditorBridge 两条有界队列的容量配置。
 ///
@@ -33,16 +33,16 @@ impl Default for EditorBridgeConfig {
     }
 }
 
-/// 创建方向受限的 Desktop / App endpoint。
+/// 创建方向受限的 Frontend / Renderer endpoint。
 ///
 /// 两条队列全部有界；Render 侧只使用 `try_recv` / `try_send`，每个 request 通过独立
 /// oneshot 返回 response。双方不会共享 `Mutex` 或场景对象。
-pub fn create_editor_bridge(config: EditorBridgeConfig) -> (DesktopEndpoint, AppEndpoint) {
+pub fn create_editor_bridge(config: EditorBridgeConfig) -> (FrontendEndpoint, RendererEndpoint) {
     let (request_sender, request_receiver) = mpsc::channel(config.request_capacity);
     let (notification_sender, notification_receiver) = mpsc::channel(config.notification_capacity);
 
     (
-        DesktopEndpoint::new(request_sender, notification_receiver),
-        AppEndpoint::new(request_receiver, notification_sender),
+        FrontendEndpoint::new(request_sender, notification_receiver),
+        RendererEndpoint::new(request_receiver, notification_sender),
     )
 }

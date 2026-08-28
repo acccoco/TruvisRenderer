@@ -1,12 +1,12 @@
 use std::fs;
-use std::path::PathBuf;
 
 use ts_rs::{Config, TS};
 
 use truvis_editor_bridge::protocol::{EditorNotification, EditorRequest, EditorResponse};
+use truvis_path::TruvisPath;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../web/src/protocol/generated");
+    let output_dir = TruvisPath::workspace_path().join("app/editor/web/src/protocol/generated");
     if output_dir.is_dir() {
         fs::remove_dir_all(&output_dir)?;
     }

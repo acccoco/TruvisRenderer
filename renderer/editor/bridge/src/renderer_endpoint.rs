@@ -8,12 +8,12 @@ use crate::protocol::EditorNotification;
 ///
 /// Renderer 每帧通过 `try_receive_request` 按预算消费请求，并通过 request 自带的 oneshot
 /// 非阻塞返回结果。任何方法都不会等待 Desktop 或持有跨线程锁。
-pub struct AppEndpoint {
+pub struct RendererEndpoint {
     request_receiver: Receiver<EditorRequestEnvelope>,
     notification_sender: Sender<EditorNotification>,
 }
 
-impl AppEndpoint {
+impl RendererEndpoint {
     pub(crate) fn new(
         request_receiver: Receiver<EditorRequestEnvelope>,
         notification_sender: Sender<EditorNotification>,

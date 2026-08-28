@@ -5990,35 +5990,19 @@ name = "truvis"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "app-imgui",
- "app-kit",
- "app-render-passes",
- "app-render-ui",
- "app-rendering",
- "ash",
- "glam",
- "imgui",
  "log",
  "raw-window-handle",
  "serde",
- "slotmap",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tokio",
- "truvis-asset",
  "truvis-editor-bridge",
- "truvis-gfx",
  "truvis-logs",
  "truvis-path",
- "truvis-render-foundation",
- "truvis-render-graph",
  "truvis-render-loop",
- "truvis-render-runtime",
- "truvis-shader-binding",
+ "truvis-renderer",
  "truvis-winit-host",
- "truvis-world",
- "vk-mem",
 ]
 
 [[package]]
@@ -6093,6 +6077,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "tokio",
+ "truvis-path",
  "ts-rs",
 ]
 
@@ -6226,6 +6211,34 @@ version = "0.1.0"
 dependencies = [
  "log",
  "truvis-render-loop",
+]
+
+[[package]]
+name = "truvis-renderer"
+version = "0.1.0"
+dependencies = [
+ "app-imgui",
+ "app-kit",
+ "app-render-passes",
+ "app-render-ui",
+ "app-rendering",
+ "ash",
+ "glam",
+ "imgui",
+ "log",
+ "slotmap",
+ "tokio",
+ "truvis-asset",
+ "truvis-editor-bridge",
+ "truvis-gfx",
+ "truvis-path",
+ "truvis-render-foundation",
+ "truvis-render-graph",
+ "truvis-render-loop",
+ "truvis-render-runtime",
+ "truvis-shader-binding",
+ "truvis-world",
+ "vk-mem",
 ]
 
 [[package]]

@@ -21,7 +21,7 @@ const DESKTOP_COMMAND_CAPACITY: usize = 1;
 /// 该确认不表示 CPU decode、GPU upload 或 importance distribution 已完成；这些阶段仍由
 /// 现有异步 asset/render 流程推进。
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct DesktopSkyAccepted;
+pub struct DesktopSkyAccepted;
 
 /// Tauri 主线程可以提交的 App-local 特权命令。
 ///
@@ -42,7 +42,7 @@ enum DesktopCommand {
 /// sender 可以被 async command 临时 clone；它不保存 scene 状态，也不能直接访问
 /// `World`。RenderThread receiver 关闭后，所有后续提交必须立即失败。
 #[derive(Clone)]
-pub(crate) struct DesktopCommandSender {
+pub struct DesktopCommandSender {
     /// 指向 RenderThread 单消费者队列的有界 sender。
     sender: mpsc::Sender<DesktopCommand>,
 }
@@ -52,7 +52,7 @@ impl DesktopCommandSender {
     ///
     /// 使用 `try_send` 是线程边界不变量：Tauri command 不能等待 RenderThread inbox
     /// 腾出空间，否则 shutdown 或渲染卡顿会把桌面事件循环拖入背压链。
-    pub(crate) fn try_request_sky_texture(
+    pub fn try_request_sky_texture(
         &self,
         path: PathBuf,
     ) -> Result<oneshot::Receiver<Result<DesktopSkyAccepted, String>>, String> {

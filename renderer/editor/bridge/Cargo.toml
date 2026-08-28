@@ -5,6 +5,7 @@ edition = "2024"
 description = "Editor protocol DTOs and bounded cross-thread endpoints for Truvis"
 
 [dependencies]
+truvis-path = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
 ts-rs = { workspace = true }

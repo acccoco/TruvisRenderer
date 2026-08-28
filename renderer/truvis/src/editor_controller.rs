@@ -8,7 +8,7 @@ use truvis_editor_bridge::protocol::{
     MAX_SCENE_PAGE_SIZE, MaterialClassDto, MaterialDto, MaterialId, MaterialPatch, MeshId, MeshSummaryDto,
     SceneObjectSummary, SceneObjectsPage, SceneVersion, SelectionDto, TextureId,
 };
-use truvis_editor_bridge::{AppEndpoint, EditorRequestEnvelope};
+use truvis_editor_bridge::{EditorRequestEnvelope, RendererEndpoint};
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_world::World;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
@@ -37,12 +37,12 @@ impl Default for EditorControllerConfig {
 /// Controller 只在 RenderThread 的 Renderer update 阶段借用 `World`，把协议 DTO 转换成现有
 /// World 查询或 mutation。它不保存 selection、scene/material cache，也不拥有 Desktop IPC 生命周期。
 pub(crate) struct EditorController {
-    endpoint: AppEndpoint,
+    endpoint: RendererEndpoint,
     config: EditorControllerConfig,
 }
 
 impl EditorController {
-    pub(crate) fn new(endpoint: AppEndpoint, config: EditorControllerConfig) -> Self {
+    pub(crate) fn new(endpoint: RendererEndpoint, config: EditorControllerConfig) -> Self {
         Self { endpoint, config }
     }
 

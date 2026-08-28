@@ -1,0 +1,30 @@
+[package]
+name = "truvis-renderer"
+version = "0.1.0"
+edition = "2024"
+description = "Truvis product renderer and frontend communication ports"
+
+[dependencies]
+truvis-render-loop = { workspace = true }
+app-kit = { workspace = true }
+app-imgui = { workspace = true }
+app-render-passes = { workspace = true }
+app-rendering = { workspace = true }
+app-render-ui = { workspace = true }
+truvis-editor-bridge = { workspace = true }
+truvis-gfx = { workspace = true }
+truvis-render-runtime = { workspace = true }
+truvis-render-foundation = { workspace = true }
+truvis-render-graph = { workspace = true }
+truvis-asset = { workspace = true }
+truvis-world = { workspace = true }
+truvis-path = { workspace = true }
+truvis-shader-binding = { workspace = true }
+
+ash = { workspace = true }
+glam = { workspace = true }
+imgui = { workspace = true }
+log = { workspace = true }
+slotmap = { workspace = true }
+tokio = { workspace = true }
+vk-mem = { workspace = true }

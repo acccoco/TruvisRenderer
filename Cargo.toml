@@ -31,14 +31,16 @@ members = [
     "engine/cxx/truvis-assimp-binding",
     "engine/cxx/truvis-streamline-binding",
     "engine/cxx/truvis-cxx-build",
+    # renderer
+    "renderer/truvis",
+    "renderer/editor/bridge",
+    "renderer/renderer-kit",
+    "renderer/renderer-imgui",
+    "renderer/renderer-render-passes",
+    "renderer/renderer-rendering",
+    "renderer/renderer-render-ui",
     # app
-    "app/app-kit",
-    "app/app-imgui",
-    "app/app-render-passes",
-    "app/app-rendering",
-    "app/app-render-ui",
     "app/shader/truvis-app-shader-binding",
-    "app/editor/bridge",
     "app/truvis",
     "app/samples/hello-triangle",
     "app/samples/shader-toy",
@@ -81,13 +83,14 @@ truvis-render-loop = { path = "engine/e50-render-loop/truvis-render-loop" }
 truvis-render-thread = { path = "engine/e60-platform/truvis-render-thread" }
 truvis-winit-host = { path = "engine/e60-platform/truvis-winit-host" }
 # app
-app-kit = { path = "app/app-kit" }
-app-imgui = { path = "app/app-imgui" }
-app-render-passes = { path = "app/app-render-passes" }
-app-rendering = { path = "app/app-rendering" }
-app-render-ui = { path = "app/app-render-ui" }
+app-kit = { path = "renderer/renderer-kit" }
+app-imgui = { path = "renderer/renderer-imgui" }
+app-render-passes = { path = "renderer/renderer-render-passes" }
+app-rendering = { path = "renderer/renderer-rendering" }
+app-render-ui = { path = "renderer/renderer-render-ui" }
 truvis-app-shader-binding = { path = "app/shader/truvis-app-shader-binding" }
-truvis-editor-bridge = { path = "app/editor/bridge" }
+truvis-renderer = { path = "renderer/truvis" }
+truvis-editor-bridge = { path = "renderer/editor/bridge" }
 # shader
 truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
 truvis-shader-binding-codegen = { path = "engine/shader/truvis-shader-binding-codegen" }

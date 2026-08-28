@@ -15,16 +15,15 @@ use tauri::{Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 use tokio::sync::oneshot;
 
+use truvis_editor_bridge::EditorBridgeConfig;
 use truvis_editor_bridge::protocol::{EditorRequest, EditorResponse};
-use truvis_editor_bridge::{EditorBridgeConfig, create_editor_bridge};
 use truvis_logs::LogFilePath;
 use truvis_path::TruvisPath;
 use truvis_render_loop::init_env_with_log_file;
+use truvis_renderer::{DesktopCommandSender, TruvisRenderer, create_truvis_ports};
 use truvis_winit_host::{EmbeddedViewportRect, EmbeddedWinitHost};
 
-use crate::desktop_command::{DesktopCommandController, DesktopCommandSender};
 use crate::editor_ipc::EditorIpc;
-use crate::truvis_renderer::TruvisRenderer;
 
 /// Tauri command 使用的 DOM viewport 物理像素矩形。
 ///
@@ -270,8 +269,8 @@ impl TruvisDesktop {
     pub fn run() -> Result<()> {
         init_env_with_log_file(LogFilePath::current_exe(TruvisPath::temp_dir()));
 
-        let (desktop_endpoint, app_endpoint) = create_editor_bridge(EditorBridgeConfig::default());
-        let (desktop_command_sender, desktop_command_controller) = DesktopCommandController::create();
+        let (frontend_ports, renderer_ports) = create_truvis_ports(EditorBridgeConfig::default());
+        let desktop_command_sender = frontend_ports.desktop_commands;
 
         let app = tauri::Builder::default()
             .plugin(tauri_plugin_dialog::init())
@@ -284,11 +283,10 @@ impl TruvisDesktop {
                     .window_handle()
                     .map_err(|error| std::io::Error::other(format!("failed to get Tauri parent HWND: {error}")))?
                     .as_raw();
-                let render_host = EmbeddedWinitHost::spawn(parent_window, move || {
-                    Box::new(TruvisRenderer::new(app_endpoint, desktop_command_controller))
-                })
-                .map_err(std::io::Error::other)?;
-                let editor_ipc = EditorIpc::start(app.handle().clone(), desktop_endpoint);
+                let render_host =
+                    EmbeddedWinitHost::spawn(parent_window, move || Box::new(TruvisRenderer::new(renderer_ports)))
+                        .map_err(std::io::Error::other)?;
+                let editor_ipc = EditorIpc::start(app.handle().clone(), frontend_ports.editor);
 
                 app.manage(TruvisDesktopState::new(render_host, editor_ipc, desktop_command_sender));
                 window.show()?;

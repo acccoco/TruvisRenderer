@@ -1,4 +1,3 @@
-use truvis_editor_bridge::AppEndpoint;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
@@ -24,6 +23,7 @@ use app_kit::input_state::InputManager;
 use app_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 use app_rendering::{OfflineRenderSubsystem, PathTracingCommonSettings, RealtimeRenderSubsystem, RenderMode};
 
+use crate::TruvisRendererPorts;
 use crate::coordinate_gizmo::CoordinateGizmoSubsystem;
 use crate::desktop_command::DesktopCommandController;
 use crate::editor_controller::{EditorController, EditorControllerConfig};
@@ -58,12 +58,12 @@ pub struct TruvisRenderer {
 }
 
 impl TruvisRenderer {
-    /// 使用桌面壳预先创建的 [`AppEndpoint`] 构造渲染侧业务状态。
+    /// 使用 frontend 壳预先创建的 [`TruvisRendererPorts`] 构造渲染侧业务状态。
     ///
     /// Editor IPC 生命周期属于 Tauri desktop；本 Renderer 只拥有 Editor 协议和桌面特权
     /// command 到权威 `World` 的非阻塞 controller，避免 RenderThread 同时承担窗口壳和
     /// 网络 owner 职责。
-    pub(crate) fn new(app_endpoint: AppEndpoint, desktop_command_controller: DesktopCommandController) -> Self {
+    pub fn new(ports: TruvisRendererPorts) -> Self {
         Self {
             imgui: Default::default(),
             debug_image_selection: Default::default(),
@@ -78,8 +78,8 @@ impl TruvisRenderer {
             overlay_ui: Default::default(),
             click_ray_cast_probe: Default::default(),
             selected_submesh: None,
-            desktop_command_controller,
-            editor_controller: EditorController::new(app_endpoint, EditorControllerConfig::default()),
+            desktop_command_controller: ports.desktop_commands,
+            editor_controller: EditorController::new(ports.editor, EditorControllerConfig::default()),
         }
     }
 }

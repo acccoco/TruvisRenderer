@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
 use truvis_editor_bridge::protocol::{EditorError, EditorErrorCode, EditorRequest, EditorResponse};
-use truvis_editor_bridge::{DesktopEndpoint, EditorRequestEnvelope};
+use truvis_editor_bridge::{EditorRequestEnvelope, FrontendEndpoint};
 
 const EDITOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 const EDITOR_NOTIFICATION_EVENT: &str = "editor-notification";
@@ -26,7 +26,7 @@ pub(crate) struct EditorIpc {
 }
 
 impl EditorIpc {
-    pub(crate) fn start(app_handle: AppHandle, endpoint: DesktopEndpoint) -> Self {
+    pub(crate) fn start(app_handle: AppHandle, endpoint: FrontendEndpoint) -> Self {
         let (request_sender, mut notification_receiver) = endpoint.into_parts();
         let notification_task = tauri::async_runtime::spawn(async move {
             while let Some(notification) = notification_receiver.recv().await {

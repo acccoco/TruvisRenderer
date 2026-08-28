@@ -3,16 +3,17 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use crate::EditorRequestEnvelope;
 use crate::protocol::EditorNotification;
 
-/// Tauri desktop 独占的跨线程 endpoint。
+/// Frontend adapter 独占的跨线程 endpoint。
 ///
-/// request sender 供 Tauri command clone 后非阻塞提交请求；notification receiver 由
-/// desktop 侧单个 async dispatcher 独占。该类型不保存 scene、selection 或 material 状态。
-pub struct DesktopEndpoint {
+/// request sender 供 frontend command clone 后非阻塞提交请求；notification receiver 由
+/// frontend 侧单个 async dispatcher 独占。该类型不保存 scene、selection 或 material 状态，
+/// 也不依赖 Tauri、WebView 或其他具体传输实现。
+pub struct FrontendEndpoint {
     request_sender: Sender<EditorRequestEnvelope>,
     notification_receiver: Receiver<EditorNotification>,
 }
 
-impl DesktopEndpoint {
+impl FrontendEndpoint {
     pub(crate) fn new(
         request_sender: Sender<EditorRequestEnvelope>,
         notification_receiver: Receiver<EditorNotification>,
