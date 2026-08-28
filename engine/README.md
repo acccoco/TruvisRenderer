@@ -1,6 +1,6 @@
 # Engine
 
-`engine/` 是渲染引擎核心实现、Shader 工具链与 C++ FFI 边界目录。这里的 Rust crate 覆盖基础工具、Vulkan
+`engine/` 是渲染引擎核心实现与 Shader 工具链目录。这里的 Rust crate 覆盖基础工具、Vulkan
 RHI、CPU scene/assets、RenderGraph、RenderRuntime、RenderLoop 框架和平台入口；具体 Renderer、GUI 集成和业务 pass 位于
 workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
 
@@ -10,7 +10,7 @@ workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
 同层 crate 默认不互相依赖，除非架构文档明确记录。
 
 一级 Rust 职责目录使用 `eNN-` 前缀标识 Engine 归属和主要架构阶段；`e40-render/`、`e60-platform/` 等目录可以包含
-多个实际 crate 层级。`shader/` 与 `cxx/` 保持稳定的横切工具链根目录。
+多个实际 crate 层级。`shader/` 是 Engine-owned 的横切源码与 ABI 根目录。
 
 - L0 基础层：`e00-foundation/`、`e00-utils/` 和 descriptor-layout crate，提供日志、路径、通用工具和 shader binding layout 元信息。
 - L1 RHI 层：`e10-gfx/truvis-gfx` 封装 Vulkan root owner、typed Ctx、资源、队列、同步、swapchain 与管线基础能力。
@@ -24,8 +24,8 @@ workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
 - L8 Renderer 层：具体 Renderer、Subsystem、pass、shader 和 typed ports 位于 `../renderer/`。
 - L9 应用壳层：Tauri Editor 与 standalone sample 启动入口位于 `../app/`。
 
-`shader/` 和 `cxx/` 是工具链与外部边界目录：其中 binding crate 会被运行时 crate 使用，build crate 主要由 `just`
-命令驱动生成产物。
+`shader/` 是 Engine shader 源码与外部 ABI 边界；通用 shader 构建与 binding codegen crate 位于
+`e00-utils/`。完整 native project、C++ modules 与 Rust FFI binding 统一位于 workspace 根 [`../cxx/`](../cxx/README.md)。
 
 ## 目录与 crate
 
@@ -42,7 +42,7 @@ workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
 引擎工具层，面向 workspace 路径和资源准备，不等同于运行时 asset 系统。
 
 - `truvis-path/`：基于根目录 `paths.toml` 的统一物理路径入口，提供 workspace、assets、resources、shader/binding
-  build、CXX、运行时路径编码和词法路径归一化等 helper；不理解 shader package schema，也不负责下载或加载资源内容。
+  build、运行时路径编码和词法路径归一化等 helper；不理解 shader package schema，也不负责下载或加载资源内容。
 - `truvis-fetch-res/`：`fetch_res` 工具 crate，读取 `resources.toml` 并下载模型资产、外部工具、SDK 或参考源码资源；不参与渲染线程的
   asset loading。
 - `truvis-shader-manifest/`：依赖 `truvis-path` 提供的产物根，统一解析和校验 `shader-packages.toml` 的
@@ -51,7 +51,6 @@ workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
   `build/shader/`；推荐通过 `just shader` 调用。
 - `truvis-shader-binding-codegen/`：消费 manifest 已解析的 binding 路径，提供共用 bindgen 参数、类型重命名、
   content hash 与 write-if-changed；allowlist 和跨 crate re-export 仍由 ABI owner 决定。
-
 ### `e10-gfx/`
 
 Vulkan RHI 与 descriptor-layout 辅助层，提供底层 GPU 能力，不包含 scene、Renderer/App 或具体 pass 编排。
@@ -105,19 +104,6 @@ Shader 源码、SPIR-V 编译和 Rust 绑定生成目录。
 - `truvis-shader-binding/`：通过 bindgen 生成 Rust 侧 GPU 数据结构绑定，并导出 `truvis_shader_binding::gpu`；不负责 shader
   编译或 pass 录制。
 
-### `cxx/`
-
-C++ 子系统、CMake/vcpkg 构建和 Rust FFI binding 目录。
-
-- `mods/`：C++ 模块源码，当前包含 Assimp、Streamline、GFX 和公共 utils 等 native 模块；导出到 Rust 的能力通过对应模块的 C API
-  暴露。
-- `truvis-cxx-build/`：CXX 构建驱动 crate，选择 CMake preset、构建 native 产物、复制 `.lib`/`.dll`/`.pdb` 并同步
-  `compile_commands.json`；推荐通过 `just cxx` 调用。
-- `truvis-assimp-binding/`：Assimp C API 的 Rust FFI 声明 crate；只负责绑定和链接声明，不负责 asset 调度、CPU 数据状态机或
-  GPU 上传。
-- `truvis-streamline-binding/`：Streamline / DLSS Rust 绑定与最小 RAII runtime，负责 `slInit`/`slShutdown` 生命周期和日志桥；当前不负责
-  RenderGraph pass、resource tagging 或 DLSS evaluate。
-
 Renderer 层位于 workspace 顶层 `../renderer/`：它保存具体 Renderer、capability crates、Subsystem、
 GPU pass、shader 和传输无关的 typed ports，只能单向依赖 Engine。应用壳位于 `../app/`，只保留
 Tauri Editor 和 standalone sample 启动入口。Engine 不得依赖这两个顶层业务目录。
@@ -129,7 +115,7 @@ Tauri Editor 和 standalone sample 启动入口。Engine 不得依赖这两个�
 3. 本文件：按目录和 crate 定位要阅读的模块。
 4. 各 crate 内 README：深入具体职责、生命周期和边界；重点可先看 `e10-gfx/truvis-gfx/README.md`、`e30-world/truvis-asset/README.md`、
    `e30-world/truvis-world/README.md`、`e40-render/*/README.md`、`e50-render-loop/*/README.md`、`e60-platform/*/README.md`。
-5. `shader/README.md`、`cxx/README.md`：了解 shader/CXX 工具链与外部边界。
+5. `shader/README.md` 与 `../cxx/README.md`：了解 shader 工具链和独立 CXX/native integration 子系统。
 
 ## 构建与工具入口
 

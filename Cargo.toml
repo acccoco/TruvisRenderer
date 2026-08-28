@@ -7,6 +7,8 @@ members = [
     "engine/e00-utils/truvis-shader-manifest",
     "engine/e00-utils/truvis-shader-binding-codegen",
     "engine/e00-utils/truvis-shader-build",
+    "cxx/rust/tools/truvis-cxx-binding-codegen",
+    "cxx/rust/tools/truvis-cxx-build",
     # e00-foundation
     "engine/e00-foundation/truvis-utils",
     "engine/e00-foundation/truvis-logs",
@@ -29,9 +31,8 @@ members = [
     # shader 绑定相关
     "engine/shader/truvis-shader-binding",
     # cxx 绑定相关
-    "engine/cxx/truvis-assimp-binding",
-    "engine/cxx/truvis-streamline-binding",
-    "engine/cxx/truvis-cxx-build",
+    "cxx/rust/bindings/truvis-assimp-binding",
+    "cxx/rust/bindings/truvis-streamline-binding",
     # renderer
     "renderer/truvis",
     "renderer/editor/bridge",
@@ -70,6 +71,8 @@ truvis-path = { path = "engine/e00-utils/truvis-path" }
 truvis-shader-manifest = { path = "engine/e00-utils/truvis-shader-manifest" }
 truvis-shader-binding-codegen = { path = "engine/e00-utils/truvis-shader-binding-codegen" }
 truvis-shader-build = { path = "engine/e00-utils/truvis-shader-build" }
+truvis-cxx-binding-codegen = { path = "cxx/rust/tools/truvis-cxx-binding-codegen" }
+truvis-cxx-build = { path = "cxx/rust/tools/truvis-cxx-build" }
 # e00-foundation
 truvis-logs = { path = "engine/e00-foundation/truvis-logs" }
 truvis-utils = { path = "engine/e00-foundation/truvis-utils" }
@@ -104,9 +107,8 @@ cornell-renderer = { path = "renderer/samples/cornell" }
 # shader
 truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
 # cxx
-truvis-assimp-binding = { path = "engine/cxx/truvis-assimp-binding" }
-truvis-streamline-binding = { path = "engine/cxx/truvis-streamline-binding" }
-truvis-cxx-build = { path = "engine/cxx/truvis-cxx-build" }
+truvis-assimp-binding = { path = "cxx/rust/bindings/truvis-assimp-binding" }
+truvis-streamline-binding = { path = "cxx/rust/bindings/truvis-streamline-binding" }
 
 
 

@@ -21,7 +21,6 @@ struct Dirs {
     temp: String,
     shader_build: String,
     binding_build: String,
-    cxx: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -175,16 +174,5 @@ impl TruvisPath {
     /// 避免不同 FFI / shader binding 互相覆盖。
     pub fn rust_binding_build_dir() -> PathBuf {
         Self::workspace().join(&paths_config().dirs.binding_build)
-    }
-
-    /// cxx 根目录（`engine/cxx/`）
-    pub fn cxx_root() -> PathBuf {
-        Self::workspace().join(&paths_config().dirs.cxx)
-    }
-
-    /// cxx 根目录（兼容旧名称）
-    #[inline]
-    pub fn cxx_root_path() -> PathBuf {
-        Self::cxx_root()
     }
 }

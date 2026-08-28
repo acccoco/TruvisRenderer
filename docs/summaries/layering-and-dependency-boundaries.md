@@ -126,6 +126,26 @@ DTO，不理解 Tauri 传输。
   这些前缀由当前 manifest 的 include root 与 `shared_inputs` 推导，并由源码预检与 compiler depfile 双重校验；
   e00-utils 中的通用工具不内置 owner 名称。
 
+## CXX 与 Rust FFI
+
+`cxx/` 是 workspace 唯一的 native integration 子系统，同时包含完整 CMake project、C++ modules、
+构建工具和 Rust binding。它不镜像 Engine/Renderer/App 物理分层。
+
+```text
+C++ module --public C ABI DLL--> Rust binding crate --> Engine/Renderer consumer
+```
+
+- `cxx/CMakeLists.txt`、`CMakePresets.json` 与 `vcpkg.json` 定义完整 native project；`cxx/modules/`
+  中的 target 使用标准 CMake `target_link_libraries` 直接依赖。
+- 对 Rust 暴露的 C API target 必须是 SHARED library；内部实现可以是 STATIC/OBJECT library。
+- public export header 生成到 `build/cxx/generated/include/`，源码树不保存构建产物。
+- `cxx/rust/tools/truvis-cxx-build` 每次调用 CMake configure/build，由 CMake generator 决定实际重新编译与链接；
+  Rust 只消费 CMake runtime plan、部署 native/runtime 产物并记录托管输出。
+- `cxx/rust/tools/truvis-cxx-binding-codegen` 提供公共 bindgen 机制。具体 binding crate 的 Cargo metadata、
+  allowlist、C ABI re-export 与 native target 仍由 binding owner 定义。
+- 依赖只能是 Rust binding -> public C ABI -> native module。CMake 不调用 Cargo，CXX module 不依赖 Rust crate
+  或 Rust symbol；异常、STL container 与 allocator ownership 不跨 DLL ABI。
+
 ## 物理目录
 
 ```text
@@ -140,4 +160,5 @@ app/
   truvis/                  Tauri Editor 应用壳
   editor/web/              React/Tauri transport
   samples/                 standalone 薄 binary
+cxx/                       独立 CMake project、C++ modules、Rust tools/bindings
 ```

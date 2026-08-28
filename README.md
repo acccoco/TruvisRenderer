@@ -54,6 +54,10 @@ just build-all
 
 `build-all` 已包含 Web editor、shader 和 Debug / Release CXX 构建，无需预先重复执行这些步骤。
 
+根目录的 [`cxx/`](./cxx/README.md) 是完整且独立的 native CMake project，包含 `CMakeLists.txt`、
+`CMakePresets.json`、`vcpkg.json`、全部 C++ modules、构建工具和 Rust binding。日常仍推荐通过 `just cxx`
+完成 CMake build、binding 生成和 runtime 部署。
+
 ### 其他运行入口
 
 ```nushell
@@ -124,4 +128,5 @@ RenderGraph pass 顺序，`RenderRuntime` 负责 GPU 资源、场景同步、帧
 - [应用壳模块说明](./app/README.md)
 - [主体 Truvis Renderer](./renderer/truvis/README.md)
 - [Shader 模块说明](./engine/shader/README.md)
+- [CXX 工具链与 native project](./cxx/README.md)
 - [活跃设计方向](./docs/brain-storm/README.md)

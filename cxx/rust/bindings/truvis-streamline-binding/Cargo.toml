@@ -1,0 +1,16 @@
+[package]
+name = "truvis-streamline-binding"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.truvis_cxx_binding]
+native_target = "truvixx-streamline-capi"
+
+[dependencies]
+log = { workspace = true }
+truvis-path = { workspace = true }
+truvis-utils = { workspace = true }
+
+[build-dependencies]
+truvis-cxx-binding-codegen = { workspace = true }
+truvis-path = { workspace = true }

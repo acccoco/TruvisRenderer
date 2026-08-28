@@ -11,6 +11,5 @@
 - `truvis-shader-build/`：由 manifest 驱动的 SPIR-V 全量/增量编译与依赖校验。
 - `truvis-shader-binding-codegen/`：消费 manifest 已解析的 header、include roots 与输出路径，统一执行
   bindgen、类型重命名、content hash 和 write-if-changed。
-
 shader 源码与 ABI owner 仍分别位于 `engine/shader/`、`renderer/shader/`；工具层不定义 namespace、
-allowlist 或跨 crate re-export policy。
+allowlist 或跨 crate re-export policy。CXX project、工具和 binding 统一位于 workspace 根 `cxx/`。

@@ -1,0 +1,9 @@
+[package]
+name = "truvis-cxx-binding-codegen"
+version = "0.1.0"
+edition = "2024"
+description = "Shared bindgen support for Truvis public CXX DLL modules"
+
+[dependencies]
+bindgen = { workspace = true }
+truvis-path = { workspace = true }

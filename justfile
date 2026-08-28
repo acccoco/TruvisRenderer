@@ -48,19 +48,34 @@ shader-force:
 [group('2 资源生成与构建')]
 cxx-debug:
     cargo run --bin cxx-build -- --profile debug
-    cargo build -p truvis-assimp-binding -p truvis-streamline-binding
+    just _cxx-bindings
 
 # 增量编译 Debug + Release CXX 项目并更新 Rust 绑定
 [group('2 资源生成与构建')]
 cxx:
     cargo run --bin cxx-build -- --profile all
-    cargo build -p truvis-assimp-binding -p truvis-streamline-binding
+    just _cxx-bindings
 
 # 强制重新编译 Debug + Release CXX 项目并更新 Rust 绑定
 [group('2 资源生成与构建')]
 cxx-force:
     cargo run --bin cxx-build -- --profile all --force
-    cargo build -p truvis-assimp-binding -p truvis-streamline-binding
+    just _cxx-bindings
+
+# 从 Cargo package metadata 发现所有单向消费 public CXX DLL 的 binding crate。
+_cxx-bindings:
+    #!nu
+    let metadata = (cargo metadata --no-deps --format-version 1 | from json)
+    let packages = (
+        $metadata.packages
+        | where {|package| ($package | get -o metadata.truvis_cxx_binding) != null }
+        | get name
+    )
+    if ($packages | is-empty) {
+        error make { msg: 'No package declares package.metadata.truvis_cxx_binding' }
+    }
+    let package_args = ($packages | each {|package| ['-p', $package] } | flatten)
+    cargo build ...$package_args
 
 # 运行 Triangle 示例
 [group('3 运行示例')]
@@ -87,11 +102,11 @@ truvis-direct *run_opts: editor-web (_run-cargo-bin "truvis-app" run_opts)
 tracy:
     start '{{ tracy_profiler }}'
 
-# 配置 CXX CMake preset：tool=vs2026/vs2022/clang，profile=debug/release
+# 配置 cxx/ CMake preset：tool=vs2026/vs2022/clang，profile=debug/release
 [group('5 CXX CMake 手工入口')]
 cxx-preset tool="vs2026" profile="debug": (_cxx-cmake "preset" tool profile)
 
-# 构建 CXX CMake preset：tool=vs2026/vs2022/clang，profile=debug/release
+# 构建 cxx/ CMake preset：tool=vs2026/vs2022/clang，profile=debug/release
 [group('5 CXX CMake 手工入口')]
 cxx-build tool="vs2026" profile="debug": (_cxx-cmake "build" tool profile)
 
@@ -124,12 +139,12 @@ _run-cargo-bin bin *run_opts:
 
     cargo run --bin {{ bin }}
 
-[working-directory("engine/cxx")]
 _cxx-cmake action tool profile:
     #!nu
     # CXX 手工入口的参数化规则集中在这里，避免 preset/build 两条路径维护两份 tool/profile 映射。
     # action 只由上层 recipe 传入，用户侧暴露的是 cxx-preset / cxx-build 两个更明确的入口。
     let action = '{{ action }}' | str downcase
+    cd '{{ justfile_directory() }}\cxx'
 
     # tool/profile 对用户大小写宽容，但后续映射统一使用小写，减少分支组合。
     let tool = '{{ tool }}' | str downcase

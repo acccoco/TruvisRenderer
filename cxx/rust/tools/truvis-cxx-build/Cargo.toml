@@ -1,0 +1,14 @@
+[package]
+name = "truvis-cxx-build"
+version = "0.1.0"
+edition = "2024"
+description = "Build and deploy the Truvis native CXX project"
+
+
+[dependencies]
+truvis-path = { workspace = true }
+truvis-logs = { workspace = true }
+
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

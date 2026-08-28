@@ -15,7 +15,7 @@ app ──> renderer ──> engine
 ## 三层职责
 
 - `engine/`：通用 Runtime、`RenderLoop`、`RenderThread`、RenderGraph、World、Vulkan RHI、窗口宿主及
-  shader/CXX 基础设施。Engine 不知道任何具体 Renderer 或 Tauri。
+  shader 基础设施。Engine 不知道任何具体 Renderer 或 Tauri。
 - `renderer/`：具体 Renderer、Subsystem、Pass、Shader、产品 overlay 和传输无关的 typed ports。
   `TruvisRenderer`、Triangle、ShaderToy 和 Cornell Renderer 都属于此层。
 - `app/`：Tauri Editor 与 standalone sample 的启动壳。Tauri `invoke/emit/AppHandle`、dialog、WebView、
@@ -35,10 +35,12 @@ app ──> renderer ──> engine
 | Runtime/Renderer/Subsystem 配置 | [`render-configuration-system.md`](summaries/render-configuration-system.md) |
 | Realtime RT、ReSTIR 与 SHARC | [`realtime-rt-raytracing-flow.md`](summaries/realtime-rt-raytracing-flow.md) |
 | Tauri Web Editor、typed ports、背压与一致性 | [`editor-subsystem.md`](summaries/editor-subsystem.md) |
+| Native CXX project、DLL 与 Rust FFI | [`cxx/README.md`](../cxx/README.md) |
 
 ## 模块入口
 
 - [`engine/README.md`](../engine/README.md)：Engine 目录与 crate 导航。
+- [`cxx/README.md`](../cxx/README.md)：独立 native project、CXX module、构建工具与 Rust binding 契约。
 - [`renderer/README.md`](../renderer/README.md)：Renderer 层职责和组成。
 - [`renderer/truvis/README.md`](../renderer/truvis/README.md)：`TruvisRenderer`、controller、ports 和 pass 编排。
 - [`renderer/shader/README.md`](../renderer/shader/README.md)：Renderer shader package、ABI 和 binding owner。
@@ -64,6 +66,12 @@ app ──> renderer ──> engine
 - Shader manifest、编译器和 binding codegen 位于 `engine/e00-utils/`；源码与 ABI owner 留在
   `engine/shader/`、`renderer/shader/`。`paths.toml`/`truvis-path` 决定产物物理根，manifest 决定 package、
   binding 与输出前缀等逻辑路径，owner `build.rs` 决定 allowlist/re-export policy。
+- workspace 根 `cxx/` 是唯一 native integration 子系统，其中的 `CMakeLists.txt`、`CMakePresets.json` 和
+  `vcpkg.json` 定义完整 CMake project；`modules/` 使用标准 CMake target 直接依赖，不镜像 Rust 顶层分层。
+- 对 Rust 暴露 C ABI 的 CXX target 必须为 DLL；内部实现可以使用 STATIC/OBJECT library。C++ 重新编译判断只由
+  CMake generator、compiler dependency information 与 linker 负责，Rust 构建工具不扫描 native 输入。
+- Rust binding 只能单向消费 public C ABI。CMake/native module 不知道 Cargo crate，也不得链接或回调 Rust symbol；
+  binding crate 通过 Cargo metadata 自动发现，公共 codegen 只统一生成机制，allowlist 与生命周期契约仍由 binding owner 决定。
 
 ## 文档职责
 
