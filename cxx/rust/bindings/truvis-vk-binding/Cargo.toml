@@ -1,0 +1,15 @@
+[package]
+name = "truvis-vk-binding"
+version = "0.1.0"
+edition = "2024"
+description = "沿 ash loader 链路调用 Vulkan C API 的 native binding"
+
+[package.metadata.truvis_cxx_binding]
+native_target = "truvixx-vk-capi"
+
+[dependencies]
+ash = { workspace = true }
+
+[build-dependencies]
+truvis-cxx-binding-codegen = { workspace = true }
+truvis-path = { workspace = true }

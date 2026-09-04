@@ -33,6 +33,7 @@ members = [
     # cxx 绑定相关
     "cxx/rust/bindings/truvis-assimp-binding",
     "cxx/rust/bindings/truvis-streamline-binding",
+    "cxx/rust/bindings/truvis-vk-binding",
     # renderer
     "renderer/truvis",
     "renderer/editor/bridge",
@@ -109,6 +110,7 @@ truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
 # cxx
 truvis-assimp-binding = { path = "cxx/rust/bindings/truvis-assimp-binding" }
 truvis-streamline-binding = { path = "cxx/rust/bindings/truvis-streamline-binding" }
+truvis-vk-binding = { path = "cxx/rust/bindings/truvis-vk-binding" }
 
 
 

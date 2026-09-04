@@ -22,6 +22,16 @@ Vulkan RHI 抽象层，封装设备、队列、资源、同步与图形/计算/�
   allocator、关闭 Streamline，再销毁 device、instance、surface 相关 root 资源。
 - 上层 owner 负责安排销毁顺序，`Gfx` 不隐藏清理仍被外部持有的资源。
 
+## Native Vulkan 命令
+
+- `GfxDevice.push_descriptor` 持有 `truvis_vk_binding::Device`；它只保存与当前设备配对的 POD 函数表。
+- `vkCmdPushDescriptorSetKHR` 由 native C API 通过 ash Instance 提供的 `vkGetDeviceProcAddr` 加载并同步调用；
+  DLL 来源继续由 `VulkanEntrySource` 决定。必要命令缺失时，构造阶段回收尚未交付的 Device 并报告失败。
+- `GfxCommandBuffer::push_descriptor_set` 在 `GfxWriteDescriptorSet::with_writes` 闭包内传递 ash 数组，
+  包括加速结构的 `pNext`；native 不保存 CPU 指针，GPU 对象的有效期继续由原资源 owner 保证。
+- wrapper 不负责 Vulkan release；最后一次命令调用必须早于 Device / Instance / Entry 的销毁。
+  详细 ABI 契约见 [`truvis-vk-binding`](../../../cxx/rust/bindings/truvis-vk-binding/README.md)。
+
 ## Ctx 规则
 
 - `Gfx::new(...)` 返回由调用方持有的 root owner；生产代码不通过全局 singleton 访问 `Gfx`。

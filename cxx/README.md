@@ -15,7 +15,7 @@ Rust binding。它不镜像 `engine/`、`renderer/`、`app/` 的 Rust 分层，�
 
 - `truvixx-utils`：内部 STATIC helper。
 - `truvixx-assimp`：内部 Assimp 实现；`truvixx-assimp-capi` 是 Rust 使用的 SHARED C API。
-- `truvixx-gfx`：内部 STATIC Vulkan C++ 实验实现，当前没有 Rust binding。
+- `truvixx-vk-capi`：使用 Vulkan C headers 的设备命令桥接，函数入口由 ash 注入，不链接 Vulkan loader。
 - `truvixx-streamline-capi`：Streamline/DLSS SHARED C API，运行时 sidecar 与 JSON 由本 module 声明。
 
 ## 构建与增量
@@ -52,10 +52,15 @@ cmake --build --preset vs2026-build-debug
 - binding crate 的 `build.rs` 单向读取 module header，经公共 codegen 生成到
   `build/bindings/{TARGET}/cxx/{crate}/`，再链接部署到 Cargo profile 目录的 import library。
 - CMake/native project 不知道 Cargo crate，也不得链接或回调 Rust symbol。
+- Vulkan 命令 binding 通过 owner 指定的 namespace import 复用 ash 类型；公共 codegen 不维护 Vulkan 类型映射。
 - Streamline 的 RenderGraph pass 顺序和 Vulkan resource 生命周期仍由 Rust Renderer/Runtime owner 管理。
 
 Streamline Rust 生命周期细节见
 [`truvis-streamline-binding/README.md`](rust/bindings/truvis-streamline-binding/README.md)。
+
+Vulkan 命令桥接和宿主 ABI 契约见
+[`truvixx-vk/README.md`](modules/truvixx-vk/README.md) 与
+[`truvis-vk-binding/README.md`](rust/bindings/truvis-vk-binding/README.md)。
 
 ## 生成目录
 

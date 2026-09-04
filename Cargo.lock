@@ -6138,6 +6138,7 @@ dependencies = [
  "tracy-client",
  "truvis-descriptor-layout-trait",
  "truvis-streamline-binding",
+ "truvis-vk-binding",
  "vk-mem",
 ]
 
@@ -6331,6 +6332,15 @@ dependencies = [
 [[package]]
 name = "truvis-utils"
 version = "0.1.0"
+
+[[package]]
+name = "truvis-vk-binding"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "truvis-cxx-binding-codegen",
+ "truvis-path",
+]
 
 [[package]]
 name = "truvis-winit-host"

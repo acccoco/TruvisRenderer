@@ -108,6 +108,8 @@ flowchart LR
 - 叶子 Vulkan/VMA/WSI wrapper 通过 `destroy(self, ctx, reason)` 或 `destroy_mut(&mut self, ctx, reason)` 释放，释放所需依赖由
   owner 在调用点传入 typed `Gfx` Ctx。
 - `Drop` 不调用 Vulkan/VMA/WSI release API，只通过 debug assertion 暴露遗漏的显式销毁。
+- `GfxDevice` 的 native Vulkan 命令表只借用当前 Device 和 ash loader 链路；C ABI 在 RenderThread 同步透传
+  descriptor 数组及 `pNext`，不保留 CPU 指针或创建额外工作线程。命令表本身不参与 Vulkan release。
 - Runtime owner、manager、子系统字段和长期资源 wrapper 不保存 typed `Gfx` Ctx、`&Gfx`、`&GfxDevice` 或
   `&VMemAllocator` 引用。
 - manager 更新 descriptor 时只接收自身所需的窄 target；`GlobalDescriptorSets` 保持为全局 pipeline 绑定聚合，不作为下层

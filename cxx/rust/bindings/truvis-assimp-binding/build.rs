@@ -11,6 +11,8 @@ fn main() {
         allowlist_types: &["Truvixx.*", "ResType"],
         allowlist_functions: &["truvixx_.*"],
         allowlist_vars: &["ResType_.*"],
+        module_raw_lines: &[],
+        layout_tests: true,
     })
     .generate();
 

@@ -145,6 +145,9 @@ C++ module --public C ABI DLL--> Rust binding crate --> Engine/Renderer consumer
   allowlist、C ABI re-export 与 native target 仍由 binding owner 定义。
 - 依赖只能是 Rust binding -> public C ABI -> native module。CMake 不调用 Cargo，CXX module 不依赖 Rust crate
   或 Rust symbol；异常、STL container 与 allocator ownership 不跨 DLL ABI。
+- Vulkan 命令路径为 `truvis-gfx -> truvis-vk-binding -> truvixx-vk-capi`。binding 依赖 ash 并直接复用其宿主类型，
+  native 仅依赖 Vulkan C headers，通过 ash 注入的原生 `vkGetDeviceProcAddr` 建立设备函数表。
+  `GfxDevice` 持有函数表；Vulkan root、RenderThread 录制、descriptor 组装和 GPU 资源生命周期仍由原 Rust owner 管理。
 
 ## 物理目录
 

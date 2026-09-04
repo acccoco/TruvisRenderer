@@ -10,6 +10,12 @@ use std::{
 
 use truvis_path::TruvisPath;
 
+/// 在生成的 namespace 中显式复用由 binding owner 选择的 Rust 类型。
+pub struct ModuleRawLine<'a> {
+    pub module: &'a str,
+    pub line: &'a str,
+}
+
 /// 单个 public CXX module 的 Rust binding 生成契约。
 pub struct CxxBindingSpec<'a> {
     pub output_crate: &'a str,
@@ -18,6 +24,8 @@ pub struct CxxBindingSpec<'a> {
     pub allowlist_types: &'a [&'a str],
     pub allowlist_functions: &'a [&'a str],
     pub allowlist_vars: &'a [&'a str],
+    pub module_raw_lines: &'a [ModuleRawLine<'a>],
+    pub layout_tests: bool,
 }
 
 /// 生成文件及其内容 hash，供 binding crate 的 `include!` 使用。
@@ -53,6 +61,7 @@ impl<'a> CxxBindingGenerator<'a> {
             .header(self.spec.header.to_string_lossy())
             .clang_args(["-x", "c++", "-std=c++20"])
             .derive_default(true)
+            .layout_tests(self.spec.layout_tests)
             .raw_line("#[allow(clippy::all)]")
             .raw_line("#[allow(warnings)]")
             .enable_cxx_namespaces()
@@ -70,6 +79,9 @@ impl<'a> CxxBindingGenerator<'a> {
         }
         for pattern in self.spec.allowlist_vars {
             builder = builder.allowlist_var(pattern);
+        }
+        for raw_line in self.spec.module_raw_lines {
+            builder = builder.module_raw_line(raw_line.module, raw_line.line);
         }
 
         let bindings = builder.generate().expect("Unable to generate CXX bindings");

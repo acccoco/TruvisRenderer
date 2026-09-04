@@ -33,8 +33,9 @@ pub struct GfxDevice {
     pub(crate) debug_utils: ash::ext::debug_utils::Device,
     /// 交换链扩展 API
     pub(crate) swapchain: ash::khr::swapchain::Device,
-    /// 推送描述符扩展 API
-    pub(crate) push_descriptor: ash::khr::push_descriptor::Device,
+    /// 通过 C ABI 转发的推送描述符 API，函数表借用本设备及其 ash loader 链路。
+    /// 所有命令仍由 RenderThread 同步录制，设备销毁后不得再调用此表。
+    pub(crate) push_descriptor: truvis_vk_binding::Device,
 
     #[cfg(debug_assertions)]
     destroyed: Cell<bool>,
@@ -80,7 +81,11 @@ impl GfxDevice {
         let vk_rt_pipeline_pf = ash::khr::ray_tracing_pipeline::Device::new(instance, &device);
         let vk_debug_utils_device = ash::ext::debug_utils::Device::new(instance, &device);
         let vk_swapchain = ash::khr::swapchain::Device::new(instance, &device);
-        let vk_push_descriptor = ash::khr::push_descriptor::Device::new(instance, &device);
+        let vk_push_descriptor = truvis_vk_binding::Device::new(instance, &device).unwrap_or_else(|err| {
+            // 此时设备尚未交给 GfxDevice，也没有创建子资源；初始化失败必须回收原生句柄。
+            unsafe { device.destroy_device(None) };
+            panic!("Failed to initialize native Vulkan dispatch: {err}");
+        });
 
         Self {
             device: device.clone(),
