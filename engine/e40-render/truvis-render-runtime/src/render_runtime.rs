@@ -24,6 +24,7 @@ use crate::present::swapchain_presenter::SwapchainPresenter;
 use crate::ray_cast::RayCastService;
 use crate::render_runtime_ctx::RenderPassRecordCtx;
 use crate::render_world::render_world::RenderWorld;
+use crate::render_world::render_resource_system::RenderResourceSystem;
 use crate::resources::cmd_allocator::CmdAllocator;
 use crate::resources::gfx_resource_manager::GfxResourceManager;
 use crate::runtime_defaults::DefaultRenderRuntimeSettings;
@@ -75,6 +76,7 @@ pub struct RenderRuntime {
     dlss_sr_state: DlssSrState,
     view_accum: ViewAccumState,
     render_world: RenderWorld,
+    render_resources: RenderResourceSystem,
     ray_cast_service: RayCastService,
 
     cmd_allocator: CmdAllocator,
@@ -91,8 +93,8 @@ pub struct RenderRuntime {
 impl RenderRuntime {
     /// 创建不依赖窗口系统的 runtime root state。
     ///
-    /// 这里会初始化 `Gfx`、CPU `World`、GPU resource/binding/timing owner、私有 `RenderWorld`
-    /// 和全局描述符；texture/mesh/material/instance/sky/emissive managers 在 `RenderWorld` 内部创建。
+    /// 这里会初始化 `Gfx`、CPU `World`、runtime 级 GPU resource/binding/timing owner、私有
+    /// `RenderResourceSystem` 和 `RenderWorld`；共享 texture/mesh/material/sky manager 不属于场景镜像。
     /// 这里不会创建 surface/swapchain。窗口相关资源必须等
     /// `init_after_window` 收到平台层 raw handle 后再创建。
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
@@ -156,9 +158,9 @@ impl RenderRuntime {
                 .expect("failed to register default sky texture")
         };
         world.update_sky_texture(Some(default_sky_texture)).expect("failed to assign default sky texture");
-        let render_world = {
-            let _span = tracy_client::span!("RenderRuntime::new/render_world");
-            RenderWorld::new(
+        let render_resources = {
+            let _span = tracy_client::span!("RenderRuntime::new/render_resources");
+            RenderResourceSystem::new(
                 gfx.resource_ctx(),
                 gfx.device_ctx(),
                 gfx.immediate_ctx(),
@@ -167,6 +169,10 @@ impl RenderRuntime {
                 &mut shader_binding_system,
                 frame_timing.frame_id(),
             )
+        };
+        let render_world = {
+            let _span = tracy_client::span!("RenderRuntime::new/render_world");
+            RenderWorld::new(gfx.resource_ctx(), frame_timing.frame_id())
         };
 
         let ray_cast_service = {
@@ -208,6 +214,7 @@ impl RenderRuntime {
                 world,
                 ray_cast_service,
                 render_world,
+                render_resources,
                 gfx_resource_manager,
                 shader_binding_system,
                 frame_timing,
@@ -342,10 +349,11 @@ impl RenderRuntime {
 
         self.ray_cast_service.destroy_mut(self.gfx.resource_ctx(), self.gfx.device_ctx());
         // CPU scene/asset 与 render-side bridge 按依赖方向释放：先停止 scene runtime，
-        // 再释放 RenderWorld 内部的 texture/material/mesh/instance/TLAS 等 GPU 翻译缓存。
+        // 再释放 RenderWorld 场景缓存与 runtime 级共享 GPU 资源。
         self.world.destroy_scene_mut();
         self.world.destroy();
-        self.render_world.destroy(
+        self.render_world.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
+        self.render_resources.destroy(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             &mut self.shader_binding_system,
@@ -369,7 +377,7 @@ impl RenderRuntime {
     /// 自包含的帧开始流程：时间快照更新、FIF 等待、资源清理和 manager frame id 推进。
     ///
     /// 这里是 runtime 每帧唯一的资源回收入口。先等待当前 FIF 槽位不再被 GPU 使用，
-    /// 再重置命令池和延迟释放队列；`World::sync_for_render` 在 update 之后的 prepare 边界执行。
+    /// 再重置命令池和延迟释放队列；`World::poll_asset_loads` 在 update 之后的 prepare 边界执行。
     pub fn begin_frame(&mut self) {
         let _span = tracy_client::span!("RenderRuntime::begin_frame");
         self.frame_timing.begin_frame();
@@ -397,9 +405,10 @@ impl RenderRuntime {
         }
 
         let current_frame_id = self.frame_timing.frame_id();
-        // bindless 与 RenderWorld 内部 managers 都使用同一个 frame id 推进延迟回收窗口，
+        // bindless 与 RenderResourceSystem 都使用同一个 frame id 推进延迟回收窗口，
         // 保持 shader-visible slot 与 handle 的复用节奏一致。
         self.shader_binding_system.begin_frame(current_frame_id);
+        self.render_resources.begin_frame(current_frame_id);
         self.render_world.begin_frame(current_frame_id);
     }
 
@@ -752,18 +761,14 @@ impl RenderRuntime {
         let cmd = self.render_world_update_cmds[*frame_label].clone();
 
         // World 同步必须发生在 Renderer update 之后、RenderWorld buffer 上传之前。
-        // 这里会 drain AssetHub 完成事件并产出 typed asset payload；RenderWorld 随后注册
-        // texture SRV / mesh BLAS / material slot，再由 bindless prepare 写入本帧 descriptor。
-        let world_sync = self.world.sync_for_render();
-        let scene_changes = world_sync.scene_changes;
+        // loader completion 先收敛到 CPU registry；RenderResourceSystem 随后从最终资源表
+        // 对账并提交尚未安装的 texture/mesh，再由 bindless prepare 写入本帧 descriptor。
+        self.world.poll_asset_loads();
         let scene_view = self.world.scene_view();
-        let asset_sync_result = self.render_world.prepare_asset_sync(
-            world_sync.asset_uploads,
-            &scene_changes,
+        let resource_sync_result = self.render_resources.sync(
             scene_view,
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
-            self.gfx.immediate_ctx(),
             self.gfx.queue_ctx(),
             &mut self.gfx_resource_manager,
             &mut self.shader_binding_system,
@@ -787,6 +792,7 @@ impl RenderRuntime {
         // 后续 scene root buffer 会写入这些 shader-visible handle。
         self.shader_binding_system.prepare_render_data(self.gfx.device_ctx(), &self.gfx_resource_manager);
         let render_world_result = self.render_world.prepare_render_data(
+            &mut self.render_resources,
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.immediate_ctx(),
@@ -795,7 +801,7 @@ impl RenderRuntime {
             self.frame_timing.frame_id(),
             self.frame_timing.frame_label(),
             scene_view,
-            asset_sync_result.dirty_dispatch_plan,
+            resource_sync_result,
         );
         if render_world_result.sky_changed {
             // sky 从 fallback 切换到真实贴图时，历史累积帧已经不再对应当前环境光。
@@ -842,6 +848,8 @@ impl RenderRuntime {
         );
         cmd.end();
         self.gfx.queue_ctx().gfx_queue().submit(vec![GfxSubmitInfo::new(std::slice::from_ref(&cmd))], None);
+        self.render_resources.commit_submitted_frame(frame_label);
+        self.render_world.commit_submitted_frame(frame_label);
     }
 }
 

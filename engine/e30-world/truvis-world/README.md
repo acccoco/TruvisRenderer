@@ -4,26 +4,25 @@
 
 ## 主要职责
 
-- `World` 持有 `SceneStore`，负责 CPU 侧场景语义数据。
+- `World` 持有 `SceneStore` 与 `ResourceSystem`；前者负责场景关系，后者负责 CPU 资源与 loader。
 - `SceneStore` 持有单调递增的 `u64 scene_version`；只有成功且非 no-op 的场景语义修改才推进版本，
   `SceneReadView::scene_version()` 为 editor 等只读 consumer 提供当前版本。
-- `World` 持有 `AssetHub`，负责 asset 数据入口。
-- `World` 持有 `SceneAssetIngestor`，负责把 Renderer-facing scene import 请求映射到内部 asset
-  loader 状态。
+- `ResourceSystem` 持有 `AssetHub`，负责 asset 数据入口；内部 `SceneAssetIngestor` 负责把 Renderer-facing
+  scene import 请求映射到 loader 状态和 CPU resource handle。
 - `World` 提供 Renderer-facing facade：Renderer 通过它请求 model import、注册 texture/procedural mesh/material、
   注册 runtime instance、更新 sky state 和 analytic light，不直接组合 `AssetHub` 与 `SceneStore` 的内部调用顺序。
 - `World::request_sky_texture_from_path` 组合 canonicalize、普通 scene texture 注册和
   `SceneSkyState.texture` 更新，立即返回 `TextureHandle`，不等待 CPU decode、GPU upload 或天空分布构建；
   旧 texture 不自动删除，避免破坏仍由 material 持有的引用。
-- `World` 的 scene edit API 使用 `WorldEditError` 显式报告 stale handle、缺失依赖、仍被引用和
-  filesystem canonicalize 失败；失败 edit 不写 change log，也不污染依赖索引。
+- `World` 的 scene/resource edit API 使用 `WorldEditError` 显式报告 stale handle、缺失依赖、仍被引用和
+  filesystem canonicalize 失败；失败 edit 不推进 revision，也不污染依赖索引。
 - file texture 通过 `World::register_texture` 进入 scene 前会先执行 filesystem canonicalize；model 主路径和
   model 内 texture 路径也在 `SceneAssetIngestor` 中 canonicalize，失败时 model import 进入 failed 状态。
-- `World` 提供 render runtime-facing 窄接口：runtime 通过 `sync_for_render()` 消费已经翻译为
-  CPU resource handle 的 `WorldRenderSync` typed payload 和 `SceneChanges`，通过只读 `scene_view()` 快照同步
-  instance/light，不直接访问 `SceneStore` owner 或 `World` 内部字段。
+- `World` 提供 render runtime-facing 窄接口：runtime 通过 `poll_asset_loads()` 把 loader 完成结果收敛到
+  CPU registry，再通过只读 `scene_view()` 快照按最终状态同步
+  resource/instance/light，不直接访问 `SceneStore` 或 `ResourceSystem` owner。
 - 上层 update / prepare 阶段通过 `World` 访问 CPU 数据，再由 `RenderRuntime::prepare` 同步到 GPU 可见资源。
-- `SceneStore` 中的 handle 是 CPU runtime 身份；`AssetHub` 中的 handle 只作为 loader 内部身份，不表示 GPU slot 或 bindless index，也不扩散到 Renderer / render-side manager。
+- `ResourceStore` 中的 handle 是 CPU resource 身份；`AssetHub` 中的 handle 只作为 loader 内部身份，不表示 GPU slot 或 bindless index，也不扩散到 Renderer / render-side manager。
 
 ## 边界约束
 
@@ -34,15 +33,14 @@
   `SceneAssetIngestor` 用于事件翻译，不把 loader 身份扩散到 Renderer、`SceneStore` 或 render-side manager。
 - `SceneStore`、`Instance`、raycast hit 和 `RenderWorld` manager 的长期引用使用 `TextureHandle` /
   `MeshHandle` / `MaterialHandle`，不使用 `Asset*Handle` 作为兼容层。
-- `SceneStore` 内部维护 texture -> material、material -> instance 和 mesh -> instance 反向依赖索引；
+- `ResourceStore` 维护 texture -> material，`SceneStore` 维护 material -> instance 和 mesh -> instance 反向依赖索引；
   删除 texture/material/mesh 前先检查依赖，存在依赖时拒绝删除并返回 edit error。
-- `SceneStore` 保存 mesh 的 submesh metadata，并在注册 instance 或更新 instance material 列表时强制
+- `ResourceStore` 保存 mesh 的 submesh metadata，并在注册 instance 或更新 instance material 列表时强制
   `materials.len() == mesh.submesh_count()`；第 `i` 个 material 始终对应第 `i` 个 submesh / geometry。
-- `SceneStore` 持有 `SceneSkyState`，记录 sky enabled、intensity、引用的 `TextureHandle` 和 revision；
+- `SceneStore` 持有 `SceneSkyState`，记录 sky enabled、引用的 `TextureHandle` 和 revision；
   删除 texture 时也会检查 sky 是否仍引用该 texture。
-- `SceneStore` 与 `AssetHub` 字段对外保持私有；只有 `World` 方法可以组合二者。
-- `SceneStore` owner 不作为跨 crate 构造参数暴露；`World::new()` 负责创建内部 `SceneStore`、
-  `AssetHub` 和 `SceneAssetIngestor`。
+- `SceneStore` 与 `ResourceSystem` 字段对外保持私有；只有 `World` 方法可以组合二者。
+- 两个 CPU owner 不作为跨 crate 构造参数暴露；`World::new()` 负责创建内部 `SceneStore` 和 `ResourceSystem`。
 - GPU frame state、bindless、global descriptor 和 manager-owned image/view 属于 render-side runtime owner；具体窗口尺寸 render target 由 Renderer 层 pipeline/子系统持有。
 
 ## 设计意图

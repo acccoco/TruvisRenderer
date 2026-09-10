@@ -2,7 +2,7 @@ use std::collections::{HashSet, VecDeque};
 use std::mem::size_of_val;
 use std::ptr;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use ash::vk;
 use slotmap::SecondaryMap;
 
@@ -21,8 +21,9 @@ use truvis_gfx::resources::special_buffers::acceleration_buffer::GfxAcceleration
 use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
-use truvis_world::PendingMeshUpload;
 use truvis_world::guid_new_type::MeshHandle;
+use truvis_world::SceneReadView;
+use truvis_render_foundation::frame_label::FrameLabel;
 
 use crate::render_world::geometry::{RtGeometry, RtTriangleMeta};
 use crate::render_world::render_data::MeshRenderData;
@@ -97,11 +98,9 @@ impl MeshUploadQueue {
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
         handle: MeshHandle,
-        data: MeshData,
+        data: &MeshData,
     ) -> Result<()> {
         let _span = tracy_client::span!("MeshUploadQueue::submit_mesh_upload");
-        Self::validate_mesh_data(&data)?;
-
         let name = data.name.clone();
         let mut geometries = Vec::with_capacity(data.submeshes.len());
         let mut triangle_metadata = Vec::with_capacity(data.submeshes.len());
@@ -335,47 +334,6 @@ impl MeshUploadQueue {
         self.destroyed = true;
     }
 
-    /// 在分配 GPU 资源前验证 CPU mesh 数据满足当前渲染运行时的固定假设。
-    ///
-    /// mesh 必须至少包含一个 submesh；每个 submesh 按三角形索引构建一条 BLAS geometry，
-    /// 并要求 SoA 顶点属性一一对应。这里提前失败，避免创建部分 GPU 资源后再在 Vulkan
-    /// build 阶段暴露难定位的问题。
-    fn validate_mesh_data(data: &MeshData) -> Result<()> {
-        if data.submeshes.is_empty() {
-            bail!("mesh '{}' has no submeshes", data.name);
-        }
-        for (submesh_index, submesh) in data.submeshes.iter().enumerate() {
-            Self::validate_submesh_data(&data.name, submesh_index, submesh)?;
-        }
-        Ok(())
-    }
-
-    fn validate_submesh_data(mesh_name: &str, submesh_index: usize, data: &SubmeshData) -> Result<()> {
-        let debug_name = if data.name.is_empty() { mesh_name } else { &data.name };
-        let vertex_count = data.positions.len();
-        if vertex_count == 0 {
-            bail!("mesh '{}' submesh {} '{}' has no vertices", mesh_name, submesh_index, debug_name);
-        }
-        if data.normals.len() != vertex_count || data.tangents.len() != vertex_count || data.uvs.len() != vertex_count {
-            bail!(
-                "mesh '{}' submesh {} '{}' has mismatched vertex attribute counts",
-                mesh_name,
-                submesh_index,
-                debug_name
-            );
-        }
-        if data.indices.is_empty() {
-            bail!("mesh '{}' submesh {} '{}' has no indices", mesh_name, submesh_index, debug_name);
-        }
-        if !data.indices.len().is_multiple_of(3) {
-            bail!("mesh '{}' submesh {} '{}' index count is not a multiple of 3", mesh_name, submesh_index, debug_name);
-        }
-        if data.indices.iter().any(|&index| index as usize >= vertex_count) {
-            bail!("mesh '{}' submesh {} '{}' has out-of-range index", mesh_name, submesh_index, debug_name);
-        }
-        Ok(())
-    }
-
     fn create_vertex_stage_buffer(
         resource_ctx: GfxResourceCtx<'_>,
         vertex_count: usize,
@@ -469,6 +427,12 @@ struct UploadedMesh {
     blas_device_address: vk::DeviceAddress,
 }
 
+struct RetiredMesh {
+    handle: MeshHandle,
+    mesh: UploadedMesh,
+    retired_frame_id: u64,
+}
+
 impl UploadedMesh {
     fn destroy(self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>, reason: DestroyReason) {
         for geometry in self.geometries {
@@ -481,111 +445,138 @@ impl UploadedMesh {
 /// 渲染侧 mesh 资产上传与 BLAS 缓存。
 ///
 /// 它把 `MeshHandle` 解析为光栅化和 ray tracing 共用的 GPU 几何数据。
-/// `ready_revision` 在 mesh 首次 ready 或替换时递增，供 `RenderWorld` 判断 TLAS 是否需要重建。
 pub struct RenderMeshManager {
     meshes: SecondaryMap<MeshHandle, UploadedMesh>,
-    retired_meshes: HashSet<MeshHandle>,
+    pending_meshes: HashSet<MeshHandle>,
+    retired_resources: Vec<RetiredMesh>,
     upload_queue: MeshUploadQueue,
-    ready_revision: u64,
+    current_frame_id: u64,
 }
 
-/// mesh 上传阶段对 dirty routing 暴露的结构化结果。
-#[derive(Default)]
-pub(crate) struct RenderMeshUpdateResult {
-    /// 本帧完成上传/BLAS build 并进入 resolver 可见状态的 scene mesh。
-    pub(crate) ready_changed_meshes: Vec<MeshHandle>,
-}
-
+/// mesh 上传阶段对资源对账暴露的结构化结果。
 impl RenderMeshManager {
+    pub(crate) fn begin_frame(&mut self, current_frame_id: u64) {
+        self.current_frame_id = current_frame_id;
+    }
+
     /// 创建 mesh 管理器。
     ///
     /// 内部 command pool 绑定 graphics queue family，因为 BLAS build 不能假设 transfer queue 支持。
-    pub fn new(device_ctx: GfxDeviceCtx<'_>, queue_ctx: GfxQueueCtx<'_>) -> Self {
+    pub fn new(device_ctx: GfxDeviceCtx<'_>, queue_ctx: GfxQueueCtx<'_>, current_frame_id: u64) -> Self {
         Self {
             meshes: SecondaryMap::new(),
-            retired_meshes: HashSet::new(),
+            pending_meshes: HashSet::new(),
+            retired_resources: Vec::new(),
             upload_queue: MeshUploadQueue::new(device_ctx, queue_ctx),
-            ready_revision: 0,
+            current_frame_id,
         }
     }
 
-    /// 消费 mesh upload payload，并推进 GPU 上传/BLAS build 完成检测。
+    /// 对账 CPU mesh registry，并推进 GPU 上传/BLAS build 完成检测。
     ///
     /// 该方法只查询 graphics queue timeline semaphore，不等待 GPU；完成前 mesh 不会进入 resolver
     /// 可见的 `meshes` map，因此 instance bridge 会继续把依赖它的实例保持为 pending。
-    pub fn update(
+    pub fn sync_scene(
         &mut self,
-        pending_uploads: Vec<PendingMeshUpload>,
+        scene: SceneReadView<'_>,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-    ) -> RenderMeshUpdateResult {
-        let _span = tracy_client::span!("RenderMeshManager::update");
-        let mut result = RenderMeshUpdateResult::default();
+    ) {
+        let _span = tracy_client::span!("RenderMeshManager::sync_scene");
+        self.reclaim_retired_resources(resource_ctx, device_ctx);
 
-        for upload in pending_uploads {
-            if self.retired_meshes.contains(&upload.handle) {
+        for handle in scene.mesh_handles() {
+            if !self.needs_upload(handle) {
                 continue;
             }
-            if let Err(err) =
-                self.upload_queue.submit_mesh_upload(resource_ctx, device_ctx, queue_ctx, upload.handle, upload.data)
+            let Some(data) = scene.mesh_data(handle) else {
+                continue;
+            };
+            match self
+                .upload_queue
+                .submit_mesh_upload(resource_ctx, device_ctx, queue_ctx, handle, data)
             {
-                log::error!("Failed to submit mesh upload {:?}: {}", upload.handle, err);
+                Ok(()) => {
+                    self.pending_meshes.insert(handle);
+                }
+                Err(err) => {
+                    log::error!("Failed to submit mesh upload {:?}: {}", handle, err);
+                }
             }
         }
 
         for finished in self.upload_queue.update(resource_ctx, device_ctx) {
-            if self.retired_meshes.remove(&finished.handle) {
+            self.pending_meshes.remove(&finished.handle);
+            if !scene.contains_mesh(finished.handle) {
                 for geometry in finished.geometries {
                     geometry.destroy(resource_ctx, DestroyReason::DeferredCleanup);
                 }
                 finished.blas.destroy(resource_ctx, device_ctx, DestroyReason::DeferredCleanup);
-                self.ready_revision = self.ready_revision.saturating_add(1);
                 continue;
             }
-            let handle = finished.handle;
-            self.replace_uploaded_mesh(resource_ctx, device_ctx, finished);
-            self.ready_revision = self.ready_revision.saturating_add(1);
-            result.ready_changed_meshes.push(handle);
+            if self.meshes.contains_key(finished.handle) {
+                log::error!("RenderMeshManager: reject duplicate upload for immutable mesh {:?}", finished.handle);
+                for geometry in finished.geometries {
+                    geometry.destroy(resource_ctx, DestroyReason::DeferredCleanup);
+                }
+                finished.blas.destroy(resource_ctx, device_ctx, DestroyReason::DeferredCleanup);
+                continue;
+            }
+            self.install_uploaded_mesh(device_ctx, finished);
         }
-
-        result
     }
 
     /// 移除 scene mesh 对应的 GPU-ready cache。
     ///
-    /// 已提交的上传/BLAS build 只能等待 timeline 自然完成；retired set 保证完成回调不会把已删除
-    /// mesh 重新发布给 instance/TLAS resolver。
+    /// 已提交的上传/BLAS build 只能等待 timeline 自然完成；completion 会再次检查 CPU registry
+    /// 中的 generational handle，不会把已删除 mesh 重新发布。
     pub fn remove_meshes(
         &mut self,
         handles: &[MeshHandle],
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
     ) {
         for &handle in handles {
-            self.retired_meshes.insert(handle);
             let Some(mesh) = self.meshes.remove(handle) else {
                 continue;
             };
-            mesh.destroy(resource_ctx, device_ctx, DestroyReason::ImmediateRelease);
-            self.ready_revision = self.ready_revision.saturating_add(1);
+            self.retired_resources.push(RetiredMesh {
+                handle,
+                mesh,
+                retired_frame_id: self.current_frame_id,
+            });
         }
     }
 
-    fn replace_uploaded_mesh(
+    pub(crate) fn needs_upload(&self, handle: MeshHandle) -> bool {
+        !self.meshes.contains_key(handle) && !self.pending_meshes.contains(&handle)
+    }
+
+    /// 按 CPU registry 的完整 membership 清理已经删除的 render-side mesh。
+    ///
+    /// 首期 mesh 内容不可变；这里仅处理资源生命周期，不支持同 handle 的内容替换。
+    pub fn remove_stale_meshes(
         &mut self,
-        resource_ctx: GfxResourceCtx<'_>,
+        scene: SceneReadView<'_>,
+    ) -> bool {
+        let live_handles = scene.mesh_handles().collect::<HashSet<_>>();
+        let stale_handles = self
+            .meshes
+            .keys()
+            .filter(|handle| !live_handles.contains(handle))
+            .collect::<Vec<_>>();
+        if stale_handles.is_empty() {
+            return false;
+        }
+
+        self.remove_meshes(&stale_handles);
+        true
+    }
+
+    fn install_uploaded_mesh(
+        &mut self,
         device_ctx: GfxDeviceCtx<'_>,
         finished: FinishedMeshUpload,
     ) {
-        // 替换同一 scene mesh handle 时必须先让旧资源离开 resolver map；后续 instance bridge
-        // 会通过 ready revision 触发 scene/TLAS 更新，而不会继续拿到旧 BLAS。
-        if let Some(old_mesh) = self.meshes.remove(finished.handle) {
-            // 同一 handle 的 mesh 重新上传时，旧 geometry/BLAS 不能继续被 resolver 返回。
-            // 当前实现依赖帧开始的 FIF 等待保证立即释放不会撞上在飞命令。
-            old_mesh.destroy(resource_ctx, device_ctx, DestroyReason::ImmediateRelease);
-        }
-
         let blas_device_address = finished.blas.device_address(device_ctx);
         // 缓存 BLAS device address，后续构建 TLAS 时无需重新查询 Vulkan handle。
         log::trace!(
@@ -605,6 +596,21 @@ impl RenderMeshManager {
         );
     }
 
+    fn reclaim_retired_resources(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
+        let current_frame_id = self.current_frame_id;
+        let fif_count = FrameLabel::COUNT as u64;
+        let mut retained = Vec::new();
+        for retired in self.retired_resources.drain(..) {
+            if current_frame_id.saturating_sub(retired.retired_frame_id) >= fif_count {
+                log::debug!("RenderMeshManager: reclaimed mesh {:?} after FIF window", retired.handle);
+                retired.mesh.destroy(resource_ctx, device_ctx, DestroyReason::DeferredCleanup);
+            } else {
+                retained.push(retired);
+            }
+        }
+        self.retired_resources = retained;
+    }
+
     /// 关闭上传队列并释放所有 mesh GPU 资源。
     ///
     /// pending 队列会先等待对应 timeline value，确保 staging/scratch/geometry/BLAS 不再被 graphics queue 引用。
@@ -613,6 +619,9 @@ impl RenderMeshManager {
 
         for (_, mesh) in self.meshes.drain() {
             mesh.destroy(resource_ctx, device_ctx, DestroyReason::Shutdown);
+        }
+        for retired in self.retired_resources.drain(..) {
+            retired.mesh.destroy(resource_ctx, device_ctx, DestroyReason::Shutdown);
         }
     }
 }

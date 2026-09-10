@@ -127,7 +127,7 @@ impl RenderAssetUploadQueue {
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
         handle: TextureHandle,
-        data: TextureBytes,
+        data: &TextureBytes,
     ) -> anyhow::Result<()> {
         let _span = tracy_client::span!("RenderAssetUploadQueue::submit_texture");
         let extent = data.extent();

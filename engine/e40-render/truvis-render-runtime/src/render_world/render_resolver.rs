@@ -1,4 +1,5 @@
 use truvis_world::guid_new_type::{MaterialHandle, MeshHandle};
+use truvis_world::components::material::MaterialData;
 
 use crate::render_world::render_data::MeshRenderData;
 
@@ -18,6 +19,9 @@ pub(crate) trait MaterialSlotResolver {
     fn is_material_ready(&self, handle: MaterialHandle) -> bool {
         self.resolve_material_slot(handle).is_some()
     }
+
+    /// 当前资源对账发布的渲染侧材质副本；场景派生不回读 CPU ResourceSystem。
+    fn material_data(&self, handle: MaterialHandle) -> Option<&MaterialData>;
 }
 
 /// scene mesh handle 到 GPU-ready mesh 数据的解析接口。

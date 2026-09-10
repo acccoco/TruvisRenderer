@@ -7,10 +7,11 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_shader_binding::gpu;
-use truvis_world::{SceneMaterialEmissiveView, SceneReadView};
+use truvis_world::components::material::MaterialData;
 
 use crate::render_world::geometry::RtTriangleMeta;
 use crate::render_world::render_data::{InstanceRenderData, MeshRenderData, RenderData};
+use crate::render_world::render_resolver::MaterialSlotResolver;
 
 const INVALID_EMISSIVE_TRIANGLE_BASE: u32 = u32::MAX;
 
@@ -101,12 +102,12 @@ impl EmissiveLightFrameBuffers {
         required_triangles: usize,
         required_aliases: usize,
         required_base_map: usize,
-    ) {
+    ) -> bool {
         if required_triangles <= self.triangle_capacity
             && required_aliases <= self.alias_capacity
             && required_base_map <= self.base_map_capacity
         {
-            return;
+            return false;
         }
 
         let frame_label = self.frame_label;
@@ -116,6 +117,7 @@ impl EmissiveLightFrameBuffers {
 
         self.destroy_mut(resource_ctx, DestroyReason::ImmediateRelease);
         *self = Self::with_capacity(resource_ctx, frame_label, triangle_capacity, alias_capacity, base_map_capacity);
+        true
     }
 
     fn upload(
@@ -216,6 +218,8 @@ pub(crate) struct RenderEmissiveLightTable {
     base_map: Vec<u32>,
     dirty: bool,
     version: u32,
+    uploaded_versions: [u32; FrameLabel::COUNT],
+    pending_versions: [Option<u32>; FrameLabel::COUNT],
 }
 
 impl RenderEmissiveLightTable {
@@ -227,6 +231,8 @@ impl RenderEmissiveLightTable {
             base_map: Vec::new(),
             dirty: true,
             version: 1,
+            uploaded_versions: [0; FrameLabel::COUNT],
+            pending_versions: [None; FrameLabel::COUNT],
         }
     }
 
@@ -241,17 +247,22 @@ impl RenderEmissiveLightTable {
         barrier_mask: GfxBarrierMask,
         frame_label: FrameLabel,
         render_data: &RenderData<'_>,
-        scene: SceneReadView<'_>,
+        material_resolver: &dyn MaterialSlotResolver,
     ) -> EmissiveLightBinding {
         if self.dirty {
-            self.rebuild(render_data, scene);
+            self.rebuild(render_data, material_resolver);
             self.dirty = false;
             self.version = self.version.saturating_add(1).max(1);
         }
 
         let frame = &mut self.frames[*frame_label];
-        frame.ensure_capacity(resource_ctx, self.triangle_lights.len(), self.alias_table.len(), self.base_map.len());
-        frame.upload(resource_ctx, cmd, barrier_mask, &self.triangle_lights, &self.alias_table, &self.base_map);
+        if frame.ensure_capacity(resource_ctx, self.triangle_lights.len(), self.alias_table.len(), self.base_map.len()) {
+            self.uploaded_versions[*frame_label] = 0;
+        }
+        if self.uploaded_versions[*frame_label] != self.version {
+            frame.upload(resource_ctx, cmd, barrier_mask, &self.triangle_lights, &self.alias_table, &self.base_map);
+            self.pending_versions[*frame_label] = Some(self.version);
+        }
 
         let alias_count = u32::try_from(self.alias_table.len()).expect("emissive alias table exceeds u32 range");
         // record_count 与 alias_count 语义不同：alias table 可能只包含正 power 的可采样记录，
@@ -267,16 +278,23 @@ impl RenderEmissiveLightTable {
         }
     }
 
-    fn rebuild(&mut self, render_data: &RenderData<'_>, scene: SceneReadView<'_>) {
+    pub(crate) fn commit_submitted_frame(&mut self, frame_label: FrameLabel) {
+        let index = *frame_label;
+        if let Some(version) = self.pending_versions[index].take() {
+            self.uploaded_versions[index] = version;
+        }
+    }
+
+    fn rebuild(&mut self, render_data: &RenderData<'_>, material_resolver: &dyn MaterialSlotResolver) {
         self.triangle_lights.clear();
         self.alias_table.clear();
         self.base_map.clear();
 
-        // dirty router 决定何时重建，本函数只按当前 active instance/submesh 快照重算表。
+        // RenderWorld 对账结果决定何时重建，本函数只按当前 active instance/submesh 快照重算表。
         // 这样 emissive table 不需要自己保存 mesh/material/instance revision 组合状态。
         let mut weighted_records = Vec::new();
         for instance in &render_data.all_instances {
-            self.append_instance(render_data, scene, instance, &mut weighted_records);
+            self.append_instance(render_data, material_resolver, instance, &mut weighted_records);
         }
 
         let total_weight = weighted_records.iter().map(|(_, weight)| *weight).sum::<f64>();
@@ -295,7 +313,7 @@ impl RenderEmissiveLightTable {
     fn append_instance(
         &mut self,
         render_data: &RenderData<'_>,
-        scene: SceneReadView<'_>,
+        material_resolver: &dyn MaterialSlotResolver,
         instance: &InstanceRenderData,
         weighted_records: &mut Vec<(usize, f64)>,
     ) {
@@ -308,7 +326,7 @@ impl RenderEmissiveLightTable {
         for (submesh_idx, (&material_slot, &material_handle)) in
             instance.material_slots.iter().zip(instance.material_handles.iter()).enumerate()
         {
-            let Some(material) = scene.material_emissive_view(material_handle) else {
+            let Some(material) = material_resolver.material_data(material_handle) else {
                 self.base_map.push(INVALID_EMISSIVE_TRIANGLE_BASE);
                 continue;
             };
@@ -341,14 +359,14 @@ impl RenderEmissiveLightTable {
         instance: &InstanceRenderData,
         submesh_idx: usize,
         material_slot: u32,
-        material: SceneMaterialEmissiveView<'_>,
+        material: &MaterialData,
         _mesh: &MeshRenderData<'_>,
         triangles: &[RtTriangleMeta],
         weighted_records: &mut Vec<(usize, f64)>,
     ) {
         let estimated_base_color =
-            if material.diffuse_texture().is_some() { glam::Vec3::ONE } else { material.base_color().truncate() };
-        let estimated_radiance = material.emissive_radiance() * estimated_base_color;
+            if material.diffuse_texture.is_some() { glam::Vec3::ONE } else { material.base_color.truncate() };
+        let estimated_radiance = material.class.emissive_radiance() * estimated_base_color;
         let luminance = Self::luminance(estimated_radiance).max(0.0);
 
         for triangle in triangles {
@@ -382,8 +400,8 @@ impl RenderEmissiveLightTable {
         }
     }
 
-    fn is_emissive_material(material: SceneMaterialEmissiveView<'_>) -> bool {
-        material.is_emissive() && material.emissive_radiance().max_element() > 0.0
+    fn is_emissive_material(material: &MaterialData) -> bool {
+        material.class.is_emissive() && material.class.emissive_radiance().max_element() > 0.0
     }
 
     fn luminance(color: glam::Vec3) -> f32 {

@@ -18,6 +18,8 @@ pub struct RenderSceneAccumSignature {
     pub analytic_light_version: u32,
     /// sky 分布版本覆盖 HDRI importance table 与 fallback/真实贴图切换；它影响 sky radiance 与 PDF。
     pub sky_distribution_version: u32,
+    /// active instance 使用的 material/transform 投影变化版本。
+    pub appearance_revision: u64,
 }
 
 /// Render pass 访问 GPU scene 的最小只读契约。

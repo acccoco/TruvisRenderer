@@ -4,35 +4,31 @@ use std::path::{Path, PathBuf};
 use slotmap::{SecondaryMap, SlotMap};
 use truvis_asset::asset_hub::{AssetHub, AssetLoadEvent};
 use truvis_asset::handle::{
-    LoadStatus, MeshData, ModelLoadDesc, ModelLoadHandle, RawMaterialData, RawSceneData, TextureLoadDesc,
+    LoadStatus, ModelLoadDesc, ModelLoadHandle, RawSceneData, TextureLoadDesc,
     TextureLoadHandle,
 };
 
 use crate::components::instance::Instance;
 use crate::components::material::MaterialData;
-use crate::edit_error::SceneEditError;
-use crate::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle, ModelImportHandle, TextureHandle};
+use crate::guid_new_type::{ModelImportHandle, TextureHandle};
+use crate::resource_system::ResourceStore;
 use crate::scene_store::SceneStore;
-use crate::{FailedTextureLoad, PendingMeshUpload, PendingTextureUpload, SceneAssetSyncOutput};
 
 /// `World` 内部的 scene asset ingest 协调器。
 ///
 /// 它是 loader handle 和 CPU world resource handle 的唯一翻译边界。`AssetHub` 只交付一次性 CPU
-/// payload；本对象负责把 model / texture ingest 到 `SceneStore`，并产出 render-side
-/// manager 消费的短期 upload event。
+/// payload；本对象只把 model / texture ingest 到 `ResourceStore` 与 `SceneStore`。
 #[derive(Default)]
 pub struct SceneAssetIngestor {
     model_imports: SlotMap<ModelImportHandle, SceneModelImportRecord>,
     model_loads: SecondaryMap<ModelLoadHandle, ModelImportHandle>,
     texture_loads: SecondaryMap<TextureLoadHandle, TextureHandle>,
     texture_paths: HashMap<PathBuf, TextureHandle>,
-    pending_asset_sync: SceneAssetSyncOutput,
 }
 
 struct SceneModelImportRecord {
     status: LoadStatus,
     error: Option<String>,
-    spawned_instances: Option<Vec<InstanceHandle>>,
 }
 
 impl SceneAssetIngestor {
@@ -41,12 +37,19 @@ impl SceneAssetIngestor {
         Self::default()
     }
 
+    pub(crate) fn texture_for_path(&self, path: &Path) -> Option<TextureHandle> {
+        self.texture_paths.get(path).copied()
+    }
+
+    pub(crate) fn forget_texture(&mut self, handle: TextureHandle) {
+        self.texture_paths.retain(|_, current| *current != handle);
+    }
+
     /// 提交一次 model import 请求。
     pub fn request_model_import(&mut self, assets: &mut AssetHub, path: PathBuf) -> ModelImportHandle {
         let scene_import = self.model_imports.insert(SceneModelImportRecord {
             status: LoadStatus::Loading,
             error: None,
-            spawned_instances: None,
         });
         let path = match std::fs::canonicalize(&path) {
             Ok(path) => path,
@@ -65,39 +68,20 @@ impl SceneAssetIngestor {
     pub fn register_texture_canonical(
         &mut self,
         assets: &mut AssetHub,
-        scene: &mut SceneStore,
+        resources: &mut ResourceStore,
         path: PathBuf,
     ) -> TextureHandle {
         if let Some(&scene_texture) = self.texture_paths.get(&path) {
-            if scene.contains_texture(scene_texture) {
+            if resources.contains_texture(scene_texture) {
                 return scene_texture;
             }
         }
 
         let texture_load = assets.request_texture(TextureLoadDesc { path: path.clone() });
-        let scene_texture = scene.register_texture();
+        let scene_texture = resources.register_texture();
         self.texture_loads.insert(texture_load, scene_texture);
         self.texture_paths.insert(path, scene_texture);
         scene_texture
-    }
-
-    /// 注册 CPU mesh payload，并返回 CPU world mesh handle。
-    pub fn register_mesh(&mut self, scene: &mut SceneStore, data: MeshData) -> Result<MeshHandle, SceneEditError> {
-        let scene_mesh = scene.register_mesh(&data)?;
-        self.pending_asset_sync.pending_mesh_uploads.push(PendingMeshUpload {
-            handle: scene_mesh,
-            data,
-        });
-        Ok(scene_mesh)
-    }
-
-    /// 注册 CPU material 参数，并返回 CPU world material handle。
-    pub fn register_material(
-        &mut self,
-        scene: &mut SceneStore,
-        data: MaterialData,
-    ) -> Result<MaterialHandle, SceneEditError> {
-        scene.register_material(data)
     }
 
     /// 查询 model import 的当前 CPU 加载状态。
@@ -114,50 +98,44 @@ impl SceneAssetIngestor {
         record.error.as_deref()
     }
 
-    /// 消费 `AssetHub` 完成事件，并转换为 render-side 只看得见 CPU resource handle 的事件。
+    /// 消费 `AssetHub` 完成事件，只更新 CPU registry 和场景最终状态。
     pub fn ingest_asset_events(
         &mut self,
         assets: &mut AssetHub,
+        resources: &mut ResourceStore,
         scene: &mut SceneStore,
         events: Vec<AssetLoadEvent>,
-    ) -> SceneAssetSyncOutput {
-        let mut asset_sync = self.drain_pending_asset_sync(scene);
+    ) {
         for event in events {
-            self.ingest_asset_event(assets, scene, event, &mut asset_sync);
+            self.ingest_asset_event(assets, resources, scene, event);
         }
-        asset_sync
     }
 
     fn ingest_asset_event(
         &mut self,
         assets: &mut AssetHub,
+        resources: &mut ResourceStore,
         scene: &mut SceneStore,
         event: AssetLoadEvent,
-        asset_sync: &mut SceneAssetSyncOutput,
     ) {
         match event {
             AssetLoadEvent::TextureLoaded { handle, desc: _, data } => {
                 let scene_texture = self.take_scene_texture_for_load(handle);
-                if !scene.contains_texture(scene_texture) {
+                if !resources.contains_texture(scene_texture) {
                     return;
                 }
-                asset_sync.pending_texture_uploads.push(PendingTextureUpload {
-                    handle: scene_texture,
-                    data,
-                });
+                resources.mark_texture_loaded(scene_texture, data);
             }
             AssetLoadEvent::TextureFailed { handle, desc: _, error } => {
                 let scene_texture = self.take_scene_texture_for_load(handle);
-                if !scene.contains_texture(scene_texture) {
+                if !resources.contains_texture(scene_texture) {
                     return;
                 }
-                asset_sync.failed_textures.push(FailedTextureLoad {
-                    handle: scene_texture,
-                    error,
-                });
+                log::error!("Texture load failed {:?}: {}", scene_texture, error);
+                resources.mark_texture_failed(scene_texture);
             }
             AssetLoadEvent::ModelLoaded { handle, desc: _, data } => {
-                self.ingest_model_loaded(assets, scene, handle, data, asset_sync);
+                self.ingest_model_loaded(assets, resources, scene, handle, data);
             }
             AssetLoadEvent::ModelFailed { handle, desc: _, error } => {
                 self.mark_model_failed(handle, error);
@@ -168,10 +146,10 @@ impl SceneAssetIngestor {
     fn ingest_model_loaded(
         &mut self,
         assets: &mut AssetHub,
+        resources: &mut ResourceStore,
         scene: &mut SceneStore,
         model_load: ModelLoadHandle,
         raw: RawSceneData,
-        asset_sync: &mut SceneAssetSyncOutput,
     ) {
         let scene_import = self.take_scene_import_for_load(model_load);
         if let Err(error) = Self::validate_model_payload(&raw) {
@@ -180,24 +158,15 @@ impl SceneAssetIngestor {
         }
 
         let source_path = raw.source_path.clone();
-        if let Err(error) = Self::validate_model_texture_paths(&source_path, &raw.materials) {
-            self.fail_scene_import(scene_import, error);
-            return;
-        }
-
         let mut scene_meshes = Vec::with_capacity(raw.meshes.len());
         for mesh_data in raw.meshes {
-            let scene_mesh = match scene.register_mesh(&mesh_data) {
+            let scene_mesh = match resources.register_mesh(mesh_data) {
                 Ok(handle) => handle,
                 Err(err) => {
                     self.fail_scene_import(scene_import, err.to_string());
                     return;
                 }
             };
-            asset_sync.pending_mesh_uploads.push(PendingMeshUpload {
-                handle: scene_mesh,
-                data: mesh_data,
-            });
             scene_meshes.push(scene_mesh);
         }
 
@@ -211,7 +180,7 @@ impl SceneAssetIngestor {
                 coverage: material.coverage,
                 diffuse_texture: match self.register_model_texture_ref(
                     assets,
-                    scene,
+                    resources,
                     &source_path,
                     material.diffuse_texture_path,
                     "diffuse",
@@ -224,7 +193,7 @@ impl SceneAssetIngestor {
                 },
                 normal_texture: match self.register_model_texture_ref(
                     assets,
-                    scene,
+                    resources,
                     &source_path,
                     material.normal_texture_path,
                     "normal",
@@ -237,7 +206,7 @@ impl SceneAssetIngestor {
                 },
                 name: material.name,
             };
-            let scene_material = match scene.register_material(scene_data.clone()) {
+            let scene_material = match resources.register_material(scene_data) {
                 Ok(handle) => handle,
                 Err(err) => {
                     self.fail_scene_import(scene_import, err.to_string());
@@ -247,7 +216,7 @@ impl SceneAssetIngestor {
             scene_materials.push(scene_material);
         }
 
-        let mut spawned_instances = Vec::with_capacity(raw.instances.len());
+        let instance_count = raw.instances.len();
         for instance in raw.instances {
             let mesh = scene_meshes[instance.mesh_index as usize];
             let materials = instance
@@ -255,19 +224,15 @@ impl SceneAssetIngestor {
                 .into_iter()
                 .map(|material_index| scene_materials[material_index as usize])
                 .collect();
-            let scene_instance = match scene.register_instance(Instance {
+            if let Err(err) = scene.register_instance(resources, Instance {
                 name: instance.name,
                 mesh,
                 materials,
                 transform: instance.transform,
             }) {
-                Ok(handle) => handle,
-                Err(err) => {
-                    self.fail_scene_import(scene_import, err.to_string());
-                    return;
-                }
-            };
-            spawned_instances.push(scene_instance);
+                self.fail_scene_import(scene_import, err.to_string());
+                return;
+            }
         }
 
         let record = self
@@ -277,11 +242,10 @@ impl SceneAssetIngestor {
         log::info!(
             "SceneAssetIngestor: model {:?} spawned {} runtime instances",
             scene_import,
-            spawned_instances.len()
+            instance_count
         );
         record.status = LoadStatus::Ready;
         record.error = None;
-        record.spawned_instances = Some(spawned_instances);
     }
 
     fn validate_model_payload(raw: &RawSceneData) -> Result<(), String> {
@@ -316,24 +280,6 @@ impl SceneAssetIngestor {
                     expected_materials,
                     instance.material_indices.len()
                 ));
-            }
-        }
-        Ok(())
-    }
-
-    fn validate_model_texture_paths(source_path: &Path, materials: &[RawMaterialData]) -> Result<(), String> {
-        for material in materials {
-            for (label, path) in [
-                ("diffuse", material.diffuse_texture_path.as_ref()),
-                ("normal", material.normal_texture_path.as_ref()),
-            ] {
-                let Some(path) = path else {
-                    continue;
-                };
-                let resolved_path = Self::resolve_scene_texture_path(source_path, path.clone());
-                std::fs::canonicalize(&resolved_path).map_err(|err| {
-                    format!("failed to canonicalize {label} texture path '{}': {err}", resolved_path.display())
-                })?;
             }
         }
         Ok(())
@@ -377,7 +323,7 @@ impl SceneAssetIngestor {
     fn register_model_texture_ref(
         &mut self,
         assets: &mut AssetHub,
-        scene: &mut SceneStore,
+        resources: &mut ResourceStore,
         source_path: &Path,
         texture_path: Option<PathBuf>,
         label: &'static str,
@@ -389,14 +335,7 @@ impl SceneAssetIngestor {
         let canonical_path = std::fs::canonicalize(&resolved_path).map_err(|err| {
             format!("failed to canonicalize {label} texture path '{}': {err}", resolved_path.display())
         })?;
-        Ok(Some(self.register_texture_canonical(assets, scene, canonical_path)))
+        Ok(Some(self.register_texture_canonical(assets, resources, canonical_path)))
     }
 
-    fn drain_pending_asset_sync(&mut self, scene: &SceneStore) -> SceneAssetSyncOutput {
-        let mut sync = std::mem::take(&mut self.pending_asset_sync);
-        sync.pending_texture_uploads.retain(|upload| scene.contains_texture(upload.handle));
-        sync.failed_textures.retain(|failed| scene.contains_texture(failed.handle));
-        sync.pending_mesh_uploads.retain(|upload| scene.contains_mesh(upload.handle));
-        sync
-    }
 }

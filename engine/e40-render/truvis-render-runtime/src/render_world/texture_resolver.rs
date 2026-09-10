@@ -35,6 +35,12 @@ pub trait TextureResolver {
     /// texture 是否已经拥有真实 GPU image/view/bindless binding。
     fn is_texture_ready(&self, handle: TextureHandle) -> bool;
 
+    /// 指定 texture 的 shader binding 发生变化时递增。
+    ///
+    /// revision 按 handle 保存，material manager 只重建实际依赖该 texture 的 snapshot；
+    /// CPU scene 没有新的 material edit 时也能发现异步 ready。
+    fn texture_revision(&self, handle: TextureHandle) -> u64;
+
     /// 获取可渲染的 texture binding；未就绪时由实现返回 fallback。
     fn resolve_texture(&self, handle: TextureHandle) -> TextureBinding;
 }

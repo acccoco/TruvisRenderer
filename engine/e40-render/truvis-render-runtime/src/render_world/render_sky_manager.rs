@@ -106,7 +106,7 @@ struct SkyDistributionBinding {
     version: u32,
 }
 
-/// sky 阶段对 dirty routing 暴露的结构化结果。
+/// sky 阶段对资源/场景对账暴露的结构化结果。
 pub(crate) struct RenderSkyUpdateResult {
     pub(crate) binding: EnvironmentSkyBinding,
     /// sky 绑定或 active distribution 是否变化；变化后当前 view temporal history 不再匹配。
@@ -121,7 +121,6 @@ pub(crate) struct RenderSkyUpdateResult {
 pub(crate) struct RenderSkyManager {
     sky_texture: Option<TextureHandle>,
     sky_enabled: bool,
-    sky_intensity: f32,
     sky_revision: u64,
     fallback: FallbackSkyTexture,
     fallback_distribution: FallbackSkyDistribution,
@@ -161,7 +160,6 @@ impl RenderSkyManager {
         Self {
             sky_texture: None,
             sky_enabled: true,
-            sky_intensity: 1.0,
             sky_revision: 0,
             fallback,
             fallback_distribution,
@@ -202,7 +200,6 @@ impl RenderSkyManager {
             self.sky_texture = state.texture;
         }
         self.sky_enabled = state.enabled;
-        self.sky_intensity = state.intensity;
         self.sky_revision = state.revision;
         self.state_changed_pending |= state_changed;
         state_changed
@@ -219,6 +216,10 @@ impl RenderSkyManager {
             return;
         }
 
+        if self.latest_request.is_some_and(|(_, current)| current == handle) {
+            return;
+        }
+
         // 同一 handle 的 reload 也可能代表不同像素；在新请求开始时撤下旧表，保持
         // image/distribution generation 一致。
         self.retire_active_distribution(gfx_resource_manager);
@@ -230,20 +231,6 @@ impl RenderSkyManager {
             texture: handle,
             texture_bytes: data.clone(),
         });
-    }
-
-    pub(crate) fn observe_texture_failed(
-        &mut self,
-        handle: TextureHandle,
-        error: &str,
-        gfx_resource_manager: &mut GfxResourceManager,
-    ) {
-        if Some(handle) == self.sky_texture {
-            self.latest_request = None;
-            self.retire_active_distribution(gfx_resource_manager);
-            self.state_changed_pending = true;
-            log::warn!("RenderSkyManager: scene sky texture failed; keep fallback sky distribution: {error}");
-        }
     }
 
     /// 收集 CPU worker 结果，并把仍为最新 generation 的 Alias entries 提交到共享 transfer queue。
@@ -265,8 +252,8 @@ impl RenderSkyManager {
                         );
                         continue;
                     }
-                    if let Err(error) = upload_queue.submit_sky_distribution(resource_ctx, device_ctx, queue_ctx, build)
-                    {
+                    if let Err(error) = upload_queue.submit_sky_distribution(resource_ctx, device_ctx, queue_ctx, build) {
+                        self.latest_request = None;
                         log::error!("RenderSkyManager: failed to submit sky distribution upload: {error}");
                     }
                 }

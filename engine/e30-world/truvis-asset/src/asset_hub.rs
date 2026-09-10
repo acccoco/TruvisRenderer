@@ -55,7 +55,7 @@ pub enum AssetLoadEvent {
 /// 一次性 CPU asset loader service。
 ///
 /// `AssetHub` 只负责创建 loader task、收集后台结果并生成事件。长期 scene identity、
-/// texture 去重、model ingest transaction 和 render upload payload 都由 `World` 内部的
+/// texture 去重、model ingest 协调和 GPU 资源上传都由 `World` / render runtime 内部的
 /// `SceneAssetIngestor` / `SceneStore` 负责。
 pub struct AssetHub {
     textures: SlotMap<TextureLoadHandle, TextureLoadRecord>,

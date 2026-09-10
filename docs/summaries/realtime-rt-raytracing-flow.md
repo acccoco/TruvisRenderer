@@ -184,7 +184,7 @@ light = emissive_triangle_lights[base + primitive_id]
 ## Analytic Light 采样
 
 analytic point / spot / area light 的 CPU 语义记录由 `SceneStore` 保存。`RenderAnalyticLightManager` 在 analytic
-dirty dispatch 到达后读取 `SceneReadView`，分别上传 point / spot / area structured buffer，并在 scene root 中写入
+对账发现 analytic light revision 变化后读取 `SceneReadView`，分别上传 point / spot / area structured buffer，并在 scene root 中写入
 device address、count 与 `analytic_light_version`。Point / Spot 在 RT 中不是 delta light，而是半径固定为 `0.5`
 的 analytic sphere surface emitter；Area 是 `center + half_u + half_v` 描述的矩形单面 emitter。
 

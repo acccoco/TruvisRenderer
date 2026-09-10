@@ -1,10 +1,10 @@
 # Brain Storm 文档索引
 
-本目录只记录尚未进入主线实现、但仍有明确工程价值的设计方向和方案评估。当前实现事实以
+本目录记录尚未进入主线实现、或已落地但仍保留后续演进边界的设计方向和方案评估。当前实现事实以
 [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md)、[`docs/summaries/`](../summaries/) 和模块 README 为准。
 
-这里的文档不是事实摘要，也不是历史归档。一个方向完成后，应把仍需保留的事实提炼到 `docs/summaries/`
-或模块 README，再从本目录移除；历史讨论通过 Git 历史追溯。
+这里的文档不是唯一事实摘要，也不是历史归档。一个方向完成后，应把实现事实提炼到 `docs/summaries/`
+或模块 README；若设计契约仍需作为后续演进入口，可以保留本目录文档，历史讨论通过 Git 历史追溯。
 
 ## 活跃方向
 
@@ -17,7 +17,9 @@
 - [`shader-module-evolution.md`](shader-module-evolution.md)：
   Slang module / `.slang-module` 的收益测量、失效契约与可选引入边界。
 - [`asset-upload-and-scene-evolution.md`](asset-upload-and-scene-evolution.md)：
-  asset upload、热重载、跨场景卸载和 scene invalidation 的后续能力。
+  asset upload、失败恢复、资源卸载和 scene invalidation 的后续能力。
+- [`render-scene-mirror-and-resource-system.md`](render-scene-mirror-and-resource-system.md)：
+  已落地首期的 RenderWorld 持久镜像与版本对账设计，包含 ResourceSystem / RenderResourceSystem 分层、GPU 副本和历史失效契约。
 - [`realtime-lighting-evolution.md`](realtime-lighting-evolution.md)：
   realtime RT light-class 策略、ReSTIR 稳定性、SHARC 历史控制和间接光复用评估。
 - [`dlss-quality-and-cleanup.md`](dlss-quality-and-cleanup.md)：

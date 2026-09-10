@@ -14,9 +14,9 @@ pub enum SceneHandleKind {
     Light,
 }
 
-/// `SceneStore` 内部 edit API 的事务失败原因。
+/// `SceneStore` / `ResourceSystem` edit API 的校验失败原因。
 ///
-/// 所有返回该错误的 edit 都必须保持事务语义：不推进 revision、不写入 `SceneChanges`，
+/// 所有返回该错误的 edit 都必须保持原子语义：不推进 revision，
 /// 也不修改 texture/material/mesh/instance 反向依赖索引。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SceneEditError {
@@ -56,7 +56,7 @@ impl std::error::Error for SceneEditError {}
 /// `World` facade 对外暴露的 edit 错误。
 ///
 /// `World` 负责补充文件系统 canonicalize、asset ingest 请求等 facade 层失败；真正的
-/// scene store 事务失败仍由 `SceneEditError` 保持清晰边界。
+/// scene/resource edit 失败仍由 `SceneEditError` 保持清晰边界。
 #[derive(Debug)]
 pub enum WorldEditError {
     Scene(SceneEditError),

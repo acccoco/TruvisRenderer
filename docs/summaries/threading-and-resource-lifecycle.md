@@ -131,7 +131,7 @@ flowchart LR
   `SceneStore` 保存 mesh 的 submesh metadata 和 instance material 对齐约束；`RenderMeshManager` 持有每个 submesh 的 vertex/index buffer、
   `RtGeometry`、mesh 级 BLAS 和 GPU ready 状态；`RenderMaterialManager` 管理 material
   GPU buffer、稳定 slot 以及 `MaterialHandle -> stable slot` 映射；Renderer 通过
-  `World::request_model_import` 拿到 `ModelImportHandle`，ready model CPU payload 在 `World::sync_for_render`
+  `World::request_model_import` 拿到 `ModelImportHandle`，ready model CPU payload 在 `World::poll_asset_loads`
   内部由 `SceneAssetIngestor` 自动变为 runtime instances；facade 内部通过 `SceneAssetIngestor` 把 prefab 引用解析为 CPU resource handle；`RenderInstanceManager`
   持有 runtime instance 到稳定 GPU instance slot 的映射。CPU scene 删除 texture/mesh/material 后，对应 render manager
   负责移除 ready cache 或延迟回收 slot；已经提交但尚未完成的 texture/mesh upload 在 timeline 到达后只销毁资源，不重新发布 stale handle。

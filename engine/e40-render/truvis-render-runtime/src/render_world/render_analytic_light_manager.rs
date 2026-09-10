@@ -105,16 +105,21 @@ pub(crate) struct RenderAnalyticLightUpdateResult {
 
 /// runtime 私有的 analytic light GPU buffer owner。
 ///
-/// CPU scene 保存 point / spot / area light 语义；本 manager 只在 dirty dispatch 到达后
-/// 读取只读快照并上传对应 FIF buffer。dirty 会标记全部 FIF，保证每个 frame label
+/// CPU scene 保存 point / spot / area light 语义；本 manager 对账只读快照并上传对应 FIF
+/// buffer。变化会标记全部 FIF，保证每个 frame label
 /// 在重新被使用前都能写入最新 light snapshot。
 pub(crate) struct RenderAnalyticLightManager {
     frames: [AnalyticLightFrameBuffers; FrameLabel::COUNT],
     fif_dirty: [bool; FrameLabel::COUNT],
+    pending_commits: [bool; FrameLabel::COUNT],
     point_light_count: u32,
     spot_light_count: u32,
     area_light_count: u32,
     version: u32,
+    /// 完整对账后保存的场景灯光副本；每个 FIF 上传只读取这些副本。
+    point_lights: Vec<gpu::engine::light::PointLight>,
+    spot_lights: Vec<gpu::engine::light::SpotLight>,
+    area_lights: Vec<gpu::engine::light::AreaLight>,
 }
 
 impl RenderAnalyticLightManager {
@@ -122,15 +127,66 @@ impl RenderAnalyticLightManager {
         Self {
             frames: FrameLabel::ALL.map(|frame_label| AnalyticLightFrameBuffers::new(resource_ctx, frame_label)),
             fif_dirty: [false; FrameLabel::COUNT],
+            pending_commits: [false; FrameLabel::COUNT],
             point_light_count: 0,
             spot_light_count: 0,
             area_light_count: 0,
             version: 0,
+            point_lights: Vec::new(),
+            spot_lights: Vec::new(),
+            area_lights: Vec::new(),
         }
     }
 
     pub(crate) fn mark_dirty(&mut self) {
         self.fif_dirty = [true; FrameLabel::COUNT];
+    }
+
+    /// 对账 CPU light revision；无需依赖 scene dirty event 才能发现新增或删除光源。
+    pub(crate) fn sync_scene(&mut self, scene: SceneReadView<'_>) {
+        if self.version != scene.light_revision() {
+            self.point_lights = scene
+                .point_light_map()
+                .values()
+                .map(|light| gpu::engine::light::PointLight {
+                    pos: light.pos,
+                    color: light.color,
+                    _color_padding: Default::default(),
+                    _pos_padding: Default::default(),
+                })
+                .collect();
+            self.spot_lights = scene
+                .spot_light_map()
+                .values()
+                .map(|light| gpu::engine::light::SpotLight {
+                    pos: light.pos,
+                    inner_angle: light.inner_angle,
+                    color: light.color,
+                    outer_angle: light.outer_angle,
+                    dir: light.dir,
+                    _dir_padding: Default::default(),
+                })
+                .collect();
+            self.area_lights = scene
+                .area_light_map()
+                .values()
+                .map(|light| gpu::engine::light::AreaLight {
+                    center: light.center,
+                    half_u: light.half_u,
+                    half_v: light.half_v,
+                    radiance: light.radiance,
+                    _center_padding: Default::default(),
+                    _half_u_padding: Default::default(),
+                    _half_v_padding: Default::default(),
+                    _radiance_padding: Default::default(),
+                })
+                .collect();
+            self.point_light_count = u32::try_from(self.point_lights.len()).expect("analytic point light count exceeds u32 range");
+            self.spot_light_count = u32::try_from(self.spot_lights.len()).expect("analytic spot light count exceeds u32 range");
+            self.area_light_count = u32::try_from(self.area_lights.len()).expect("analytic area light count exceeds u32 range");
+            self.version = scene.light_revision();
+            self.mark_dirty();
+        }
     }
 
     pub(crate) fn update_and_upload(
@@ -139,13 +195,12 @@ impl RenderAnalyticLightManager {
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
         frame_label: FrameLabel,
-        scene: SceneReadView<'_>,
     ) -> RenderAnalyticLightUpdateResult {
         let frame_index = *frame_label;
         let changed = self.fif_dirty[frame_index];
         if changed {
-            self.upload_current_frame(resource_ctx, cmd, barrier_mask, frame_index, scene);
-            self.fif_dirty[frame_index] = false;
+            self.upload_current_frame(resource_ctx, cmd, barrier_mask, frame_index);
+            self.pending_commits[frame_index] = true;
         }
 
         RenderAnalyticLightUpdateResult {
@@ -156,6 +211,14 @@ impl RenderAnalyticLightManager {
                 self.version,
             ),
             changed,
+        }
+    }
+
+    pub(crate) fn commit_submitted_frame(&mut self, frame_label: FrameLabel) {
+        let index = *frame_label;
+        if self.pending_commits[index] {
+            self.fif_dirty[index] = false;
+            self.pending_commits[index] = false;
         }
     }
 
@@ -171,12 +234,11 @@ impl RenderAnalyticLightManager {
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
         frame_index: usize,
-        scene: SceneReadView<'_>,
     ) {
         let frame = &mut self.frames[frame_index];
-        let point_light_count = scene.point_light_map().len();
-        let spot_light_count = scene.spot_light_map().len();
-        let area_light_count = scene.area_light_map().len();
+        let point_light_count = self.point_lights.len();
+        let spot_light_count = self.spot_lights.len();
+        let area_light_count = self.area_lights.len();
 
         if point_light_count > MAX_ANALYTIC_LIGHT_COUNT
             || spot_light_count > MAX_ANALYTIC_LIGHT_COUNT
@@ -190,37 +252,16 @@ impl RenderAnalyticLightManager {
             let spot_light_buffer_slices = frame.spot_light_stage_buffer.mapped_slice();
             let area_light_buffer_slices = frame.area_light_stage_buffer.mapped_slice();
 
-            for (light_idx, (_, point_light)) in scene.point_light_map().iter().enumerate() {
-                point_light_buffer_slices[light_idx] = gpu::engine::light::PointLight {
-                    pos: point_light.pos,
-                    color: point_light.color,
-                    _color_padding: Default::default(),
-                    _pos_padding: Default::default(),
-                };
+            for (light_idx, point_light) in self.point_lights.iter().enumerate() {
+                point_light_buffer_slices[light_idx] = *point_light;
             }
 
-            for (light_idx, (_, spot_light)) in scene.spot_light_map().iter().enumerate() {
-                spot_light_buffer_slices[light_idx] = gpu::engine::light::SpotLight {
-                    pos: spot_light.pos,
-                    inner_angle: spot_light.inner_angle,
-                    color: spot_light.color,
-                    outer_angle: spot_light.outer_angle,
-                    dir: spot_light.dir,
-                    _dir_padding: Default::default(),
-                };
+            for (light_idx, spot_light) in self.spot_lights.iter().enumerate() {
+                spot_light_buffer_slices[light_idx] = *spot_light;
             }
 
-            for (light_idx, (_, area_light)) in scene.area_light_map().iter().enumerate() {
-                area_light_buffer_slices[light_idx] = gpu::engine::light::AreaLight {
-                    center: area_light.center,
-                    half_u: area_light.half_u,
-                    half_v: area_light.half_v,
-                    radiance: area_light.radiance,
-                    _center_padding: Default::default(),
-                    _half_u_padding: Default::default(),
-                    _half_v_padding: Default::default(),
-                    _radiance_padding: Default::default(),
-                };
+            for (light_idx, area_light) in self.area_lights.iter().enumerate() {
+                area_light_buffer_slices[light_idx] = *area_light;
             }
         }
 
@@ -246,11 +287,9 @@ impl RenderAnalyticLightManager {
             barrier_mask,
         );
 
-        self.point_light_count =
-            u32::try_from(point_light_count).expect("analytic point light count exceeds u32 range");
-        self.spot_light_count = u32::try_from(spot_light_count).expect("analytic spot light count exceeds u32 range");
-        self.area_light_count = u32::try_from(area_light_count).expect("analytic area light count exceeds u32 range");
-        self.version = scene.light_revision();
+        debug_assert_eq!(point_light_count, self.point_light_count as usize);
+        debug_assert_eq!(spot_light_count, self.spot_light_count as usize);
+        debug_assert_eq!(area_light_count, self.area_light_count as usize);
     }
 
     fn flush_copy_and_barrier(
