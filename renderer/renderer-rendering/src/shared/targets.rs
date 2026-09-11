@@ -1,7 +1,7 @@
 //! Realtime/offline 子系统共享的 image target 构建和资源释放契约。
 //!
 //! 这些资源描述具体渲染子系统需要的中间图像，而不是 engine 的帧调度基础设施。
-//! owner 只保存 `GfxResourceManager` handle；创建、resize 和 shutdown 时由
+//! owner 只保存 `GfxResourceRegistry` handle；创建、resize 和 shutdown 时由
 //! `RealtimeRenderSubsystem` 通过生命周期 ctx 显式传入 manager 与 typed Gfx ctx。
 //!
 //! 设计边界：
@@ -19,11 +19,11 @@ use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
+use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
 
 /// RenderGraph 导入图像所需的 handle、格式和尺寸快照。
 ///
-/// 这里的 handle 不是资源所有权本身，而是 `GfxResourceManager` 中已注册对象的稳定索引。
+/// 这里的 handle 不是资源所有权本身，而是 `GfxResourceRegistry` 中已注册对象的稳定索引。
 /// 调用方只能在 owner 存活期间把它导入 RenderGraph；真实释放仍由 owner 在
 /// resize / shutdown 阶段通过 manager 显式完成。
 #[derive(Clone, Copy)]
@@ -55,7 +55,7 @@ impl PerFrameImageSet {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         desc: TargetImageDesc<'_>,
         frame_id: u64,
     ) -> Self {
@@ -74,11 +74,11 @@ impl PerFrameImageSet {
 
         transition_images_to_general(immediate_ctx, &images, &format!("transfer-{}-layout", desc.name_prefix));
 
-        // view 生命周期由 `GfxResourceManager` 跟随 image 释放。owner 只保存 view handle；
+        // view 生命周期由 `GfxResourceRegistry` 跟随 image 释放。owner 只保存 view handle；
         // pass-local descriptor 在 command recording 时按值写入，不形成额外的长期资源 owner。
-        let image_handles = images.map(|image| gfx_resource_manager.register_image(image));
+        let image_handles = images.map(|image| gfx_resource_registry.register_image(image));
         let image_view_handles = FrameLabel::ALL.map(|frame_label| {
-            gfx_resource_manager.get_or_create_image_view(
+            gfx_resource_registry.get_or_create_image_view(
                 device_ctx,
                 image_handles[*frame_label],
                 GfxImageViewDesc::new_2d(desc.format, vk::ImageAspectFlags::COLOR),
@@ -107,13 +107,13 @@ impl PerFrameImageSet {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
         // view 会由 manager 在释放 image 时按 image-view-before-image 顺序处理。调用方仍必须遵守
         // resize/shutdown 的 GPU safe point；pass-local descriptor 不改变底层 image 的在飞生命周期。
         for image in std::mem::take(&mut self.images) {
-            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, image, reason);
+            gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image, reason);
         }
         self.views = Default::default();
     }
@@ -141,7 +141,7 @@ impl SingleImageTarget {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         desc: TargetImageDesc<'_>,
         frame_id: u64,
     ) -> Self {
@@ -158,8 +158,8 @@ impl SingleImageTarget {
             &format!("transfer-{}-layout", desc.name_prefix),
         );
 
-        let image_handle = gfx_resource_manager.register_image(image);
-        let view_handle = gfx_resource_manager.get_or_create_image_view(
+        let image_handle = gfx_resource_registry.register_image(image);
+        let view_handle = gfx_resource_registry.get_or_create_image_view(
             device_ctx,
             image_handle,
             GfxImageViewDesc::new_2d(desc.format, vk::ImageAspectFlags::COLOR),
@@ -187,10 +187,10 @@ impl SingleImageTarget {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, self.image, reason);
+        gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, self.image, reason);
         self.image = GfxImageHandle::default();
         self.view = GfxImageViewHandle::default();
     }

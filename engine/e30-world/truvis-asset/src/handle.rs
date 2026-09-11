@@ -149,7 +149,7 @@ impl TextureBytes {
 ///
 /// 数据已经从导入库的临时内存复制到 Rust owned buffer。asset 层在这里停止，
 /// 后续的 vertex/index buffer 创建、BLAS geometry 构建和 GPU ready 状态由
-/// `RenderMeshManager` 维护。一个 submesh 是 scene / GPU scene / ray tracing 中
+/// `GpuMeshStore` 维护。一个 submesh 是 scene / GPU scene / ray tracing 中
 /// 最小的完整几何单元，对应 BLAS 内的一条 geometry。
 ///
 /// 调用方应保持顶点属性数组长度一致，`indices` 使用 `u32` 索引。asset 层不在

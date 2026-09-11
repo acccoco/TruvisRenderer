@@ -10,7 +10,7 @@ use truvis_editor_bridge::protocol::{
 };
 use truvis_editor_bridge::{EditorRequestEnvelope, RendererEndpoint};
 use truvis_render_runtime::selection::WorldSubmeshSelection;
-use truvis_world::World;
+use truvis_world::GameWorld;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
 use truvis_world::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle, TextureHandle};
 
@@ -34,8 +34,8 @@ impl Default for EditorControllerConfig {
 
 /// `TruvisRenderer` 内的 Editor 协议适配器。
 ///
-/// Controller 只在 RenderThread 的 Renderer update 阶段借用 `World`，把协议 DTO 转换成现有
-/// World 查询或 mutation。它不保存 selection、scene/material cache，也不拥有 Desktop IPC 生命周期。
+/// Controller 只在 RenderThread 的 Renderer update 阶段借用 `GameWorld`，把协议 DTO 转换成现有
+/// GameWorld 查询或 mutation。它不保存 selection、scene/material cache，也不拥有 Desktop IPC 生命周期。
 pub(crate) struct EditorController {
     endpoint: RendererEndpoint,
     config: EditorControllerConfig,
@@ -47,7 +47,7 @@ impl EditorController {
     }
 
     /// 按单帧预算处理 Query / Command。
-    pub(crate) fn process_requests(&mut self, world: &mut World, selection: Option<WorldSubmeshSelection>) {
+    pub(crate) fn process_requests(&mut self, world: &mut GameWorld, selection: Option<WorldSubmeshSelection>) {
         let started_at = Instant::now();
         for _ in 0..self.config.max_requests_per_frame {
             if started_at.elapsed() >= self.config.max_time_per_frame {
@@ -64,7 +64,7 @@ impl EditorController {
 
     fn process_request(
         &self,
-        world: &mut World,
+        world: &mut GameWorld,
         selection: Option<WorldSubmeshSelection>,
         envelope: EditorRequestEnvelope,
     ) {
@@ -75,14 +75,14 @@ impl EditorController {
         };
 
         // WebView 可能已刷新、timeout 或进入 shutdown；reply receiver 消失不能回滚已经
-        // 完成的 World mutation，因此 send 失败只表示结果无人接收。
+        // 完成的 GameWorld mutation，因此 send 失败只表示结果无人接收。
         let _ = reply.send(response);
         if let Some(notification) = notification {
             let _ = self.endpoint.try_send_notification(notification);
         }
     }
 
-    fn handle_query(world: &World, selection: Option<WorldSubmeshSelection>, query: EditorQuery) -> EditorResponse {
+    fn handle_query(world: &GameWorld, selection: Option<WorldSubmeshSelection>, query: EditorQuery) -> EditorResponse {
         match query {
             EditorQuery::GetSceneVersion => {
                 EditorResponse::SceneVersion(SceneVersion::from_u64(world.scene_view().scene_version()))
@@ -104,7 +104,7 @@ impl EditorController {
         }
     }
 
-    fn handle_command(world: &mut World, command: EditorCommand) -> (EditorResponse, Option<EditorNotification>) {
+    fn handle_command(world: &mut GameWorld, command: EditorCommand) -> (EditorResponse, Option<EditorNotification>) {
         match command {
             EditorCommand::UpdateMaterial { material_id, patch } => {
                 let handle = match Self::decode_material_id(&material_id) {
@@ -147,7 +147,7 @@ impl EditorController {
 
 impl EditorController {
     fn scene_objects_page(
-        world: &World,
+        world: &GameWorld,
         offset: u32,
         limit: u16,
         expected_scene_version: Option<SceneVersion>,
@@ -191,7 +191,7 @@ impl EditorController {
     ///
     /// Instance 对 mesh/material 的引用完整性由 `SceneStore` 在注册、更新和删除边界维护；
     /// 因此 live instance 出现缺失依赖表示内部不变量已经破坏，而不是普通 stale query。
-    fn instance_details(world: &World, instance_id: InstanceId) -> EditorResponse {
+    fn instance_details(world: &GameWorld, instance_id: InstanceId) -> EditorResponse {
         let handle = match Self::decode_instance_id(&instance_id) {
             Ok(handle) => handle,
             Err(error) => return EditorResponse::Error(error),
@@ -231,14 +231,14 @@ impl EditorController {
         })
     }
 
-    fn selection_dto(world: &World, selection: Option<WorldSubmeshSelection>) -> Option<SelectionDto> {
+    fn selection_dto(world: &GameWorld, selection: Option<WorldSubmeshSelection>) -> Option<SelectionDto> {
         let selection = selection?;
         let instance = world.scene_view().get_instance(selection.instance)?;
         let material = *instance.materials.get(selection.submesh_index as usize)?;
         Some(Self::selection_dto_from_handles(selection.instance, selection.submesh_index, material))
     }
 
-    fn material_dto(world: &World, handle: MaterialHandle) -> Option<MaterialDto> {
+    fn material_dto(world: &GameWorld, handle: MaterialHandle) -> Option<MaterialDto> {
         let data = world.material_data(handle)?;
         Some(MaterialDto {
             id: Self::encode_material_id(handle),

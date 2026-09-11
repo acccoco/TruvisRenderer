@@ -16,12 +16,12 @@ use truvis_world::guid_new_type::TextureHandle;
 use crate::bindings::bindless_manager::BindlessSrvHandle;
 use crate::bindings::shader_binding_system::ShaderBindingSystem;
 use crate::render_world::environment_binding::EnvironmentSkyBinding;
-use crate::render_world::render_asset_upload_queue::{CompletedSkyDistributionUpload, RenderAssetUploadQueue};
+use crate::render_world::gpu_asset_upload_queue::{CompletedSkyDistributionUpload, GpuAssetUploadQueue};
 use crate::render_world::sky_distribution_builder::{
     SkyDistributionBuildRequest, SkyDistributionBuildResult, SkyDistributionBuilder,
 };
 use crate::render_world::texture_resolver::TextureResolver;
-use crate::resources::gfx_resource_manager::GfxResourceManager;
+use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 
 #[derive(Clone, Copy, Default)]
 struct FallbackSkyTexture {
@@ -88,10 +88,10 @@ impl SkyDistributionResource {
     }
 }
 
-/// 已交给 `GfxResourceManager` 按 FIF 延迟释放的 distribution。
+/// 已交给 `GfxResourceRegistry` 按 FIF 延迟释放的 distribution。
 ///
 /// 本地记录只用于在 `RenderWorld::begin_frame` 后收敛 manager 状态；真实资源 owner
-/// 是 `GfxResourceManager::pending_destroy_buffers`。
+/// 是 `GfxResourceRegistry::pending_destroy_buffers`。
 struct RetiredSkyDistribution {
     buffer_handle: GfxBufferHandle,
     retired_frame_id: u64,
@@ -115,10 +115,10 @@ pub(crate) struct RenderSkyUpdateResult {
 
 /// scene sky 的 runtime 私有桥接层。
 ///
-/// `SceneStore` 只保存 `TextureHandle` 与天空语义；真实 image 由 `RenderTextureManager`
+/// `SceneStore` 只保存 `TextureHandle` 与天空语义；真实 image 由 `GpuTextureStore`
 /// 持有。该 manager 拥有 distribution worker、请求 generation、active/retired Alias
 /// buffer，并保证新 texture 绝不引用旧 texture 的 distribution。
-pub(crate) struct RenderSkyManager {
+pub(crate) struct GpuSkyStore {
     sky_texture: Option<TextureHandle>,
     sky_enabled: bool,
     sky_revision: u64,
@@ -137,22 +137,22 @@ pub(crate) struct RenderSkyManager {
     worker_stopped: bool,
 }
 
-impl RenderSkyManager {
+impl GpuSkyStore {
     /// 创建立即可用的纯色 fallback sky 与 uniform sphere distribution。
     pub(crate) fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
         current_frame_id: u64,
     ) -> Self {
-        let _span = tracy_client::span!("RenderSkyManager::new");
+        let _span = tracy_client::span!("GpuSkyStore::new");
         let fallback = Self::create_fallback_sky(
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             shader_binding_system,
         );
         let fallback_distribution = FallbackSkyDistribution::new(resource_ctx, immediate_ctx);
@@ -189,13 +189,13 @@ impl RenderSkyManager {
     pub(crate) fn apply_scene_sky_state(
         &mut self,
         state: &SceneSkyState,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
     ) -> bool {
         let state_changed = self.sky_revision != state.revision;
         if self.sky_texture != state.texture {
             // texture identity 一改变就先撤下旧 distribution。新 image ready 而新 Alias
             // 尚未完成时只能配 uniform PDF，不能短暂复用旧表。
-            self.retire_active_distribution(gfx_resource_manager);
+            self.retire_active_distribution(gfx_resource_registry);
             self.latest_request = None;
             self.sky_texture = state.texture;
         }
@@ -210,7 +210,7 @@ impl RenderSkyManager {
         &mut self,
         handle: TextureHandle,
         data: &TextureBytes,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
     ) {
         if Some(handle) != self.sky_texture {
             return;
@@ -222,9 +222,9 @@ impl RenderSkyManager {
 
         // 同一 handle 的 reload 也可能代表不同像素；在新请求开始时撤下旧表，保持
         // image/distribution generation 一致。
-        self.retire_active_distribution(gfx_resource_manager);
+        self.retire_active_distribution(gfx_resource_registry);
         let request_id = self.next_request_id;
-        self.next_request_id = self.next_request_id.checked_add(1).expect("RenderSkyManager request id exhausted");
+        self.next_request_id = self.next_request_id.checked_add(1).expect("GpuSkyStore request id exhausted");
         self.latest_request = Some((request_id, handle));
         self.distribution_builder.request(SkyDistributionBuildRequest {
             request_id,
@@ -239,14 +239,14 @@ impl RenderSkyManager {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-        upload_queue: &mut RenderAssetUploadQueue,
+        upload_queue: &mut GpuAssetUploadQueue,
     ) {
         for result in self.distribution_builder.poll() {
             match result {
                 SkyDistributionBuildResult::Ready(build) => {
                     if !self.is_latest_request(build.request_id, build.texture) {
                         log::debug!(
-                            "RenderSkyManager: discard stale CPU distribution request={} texture={:?}",
+                            "GpuSkyStore: discard stale CPU distribution request={} texture={:?}",
                             build.request_id,
                             build.texture
                         );
@@ -254,7 +254,7 @@ impl RenderSkyManager {
                     }
                     if let Err(error) = upload_queue.submit_sky_distribution(resource_ctx, device_ctx, queue_ctx, build) {
                         self.latest_request = None;
-                        log::error!("RenderSkyManager: failed to submit sky distribution upload: {error}");
+                        log::error!("GpuSkyStore: failed to submit sky distribution upload: {error}");
                     }
                 }
                 SkyDistributionBuildResult::UniformFallback {
@@ -267,7 +267,7 @@ impl RenderSkyManager {
                     if self.is_latest_request(request_id, texture) {
                         self.state_changed_pending = true;
                         log::warn!(
-                            "RenderSkyManager: sky {:?} {}x{} has zero/invalid energy; use uniform sphere PDF (CPU build {:.2} ms)",
+                            "GpuSkyStore: sky {:?} {}x{} has zero/invalid energy; use uniform sphere PDF (CPU build {:.2} ms)",
                             texture,
                             source_width,
                             source_height,
@@ -284,12 +284,12 @@ impl RenderSkyManager {
         &mut self,
         completed_uploads: Vec<CompletedSkyDistributionUpload>,
         resource_ctx: GfxResourceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
     ) {
         for completed in completed_uploads {
             if !self.is_latest_request(completed.request_id, completed.texture) {
                 log::debug!(
-                    "RenderSkyManager: destroy stale GPU distribution request={} texture={:?}",
+                    "GpuSkyStore: destroy stale GPU distribution request={} texture={:?}",
                     completed.request_id,
                     completed.texture
                 );
@@ -297,9 +297,9 @@ impl RenderSkyManager {
                 continue;
             }
 
-            self.retire_active_distribution(gfx_resource_manager);
+            self.retire_active_distribution(gfx_resource_registry);
             let device_address = completed.buffer.device_address();
-            let buffer_handle = gfx_resource_manager.register_buffer(completed.buffer);
+            let buffer_handle = gfx_resource_registry.register_buffer(completed.buffer);
             let version = self.next_distribution_version;
             self.next_distribution_version = self.next_distribution_version.saturating_add(1).max(2);
             self.sky_distribution = Some(SkyDistributionResource {
@@ -314,7 +314,7 @@ impl RenderSkyManager {
             let entry_count = completed.width as u64 * completed.height as u64;
             let gpu_bytes = entry_count * std::mem::size_of::<gpu::engine::scene::SkyDistributionEntry>() as u64;
             log::info!(
-                "RenderSkyManager: published sky distribution request={} source={}x{} distribution={}x{} entries={} GPU={} bytes CPU={:.2} ms upload={:.2} ms version={}",
+                "GpuSkyStore: published sky distribution request={} source={}x{} distribution={}x{} entries={} GPU={} bytes CPU={:.2} ms upload={:.2} ms version={}",
                 completed.request_id,
                 completed.source_width,
                 completed.source_height,
@@ -342,9 +342,9 @@ impl RenderSkyManager {
 
         if sky_source_changed {
             if real_ready {
-                log::info!("RenderSkyManager: scene sky is GPU ready; switch from fallback sky");
+                log::info!("GpuSkyStore: scene sky is GPU ready; switch from fallback sky");
             } else {
-                log::warn!("RenderSkyManager: scene sky is not GPU ready; switch to fallback sky");
+                log::warn!("GpuSkyStore: scene sky is not GPU ready; switch to fallback sky");
             }
         }
 
@@ -357,7 +357,7 @@ impl RenderSkyManager {
 
         let binding = if real_ready {
             let texture = texture_resolver.resolve_texture(
-                self.sky_texture.expect("RenderSkyManager: real_ready requires a scene texture handle"),
+                self.sky_texture.expect("GpuSkyStore: real_ready requires a scene texture handle"),
             );
             EnvironmentSkyBinding {
                 srv_handle: texture.srv_handle,
@@ -396,13 +396,13 @@ impl RenderSkyManager {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         shader_binding_system: &mut ShaderBindingSystem,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
     ) {
         if !self.fallback.view_handle.is_null() {
             shader_binding_system.unregister_srv(self.fallback.view_handle);
         }
         if !self.fallback.image_handle.is_null() {
-            gfx_resource_manager.release_image_immediate(
+            gfx_resource_registry.release_image_immediate(
                 resource_ctx,
                 device_ctx,
                 self.fallback.image_handle,
@@ -412,14 +412,14 @@ impl RenderSkyManager {
         self.fallback = FallbackSkyTexture::default();
 
         if let Some(distribution) = self.sky_distribution.take() {
-            gfx_resource_manager.release_buffer_immediate(
+            gfx_resource_registry.release_buffer_immediate(
                 resource_ctx,
                 distribution.buffer_handle,
                 DestroyReason::Shutdown,
             );
         }
         for retired in self.retired_distributions.drain(..) {
-            gfx_resource_manager.release_buffer_immediate(resource_ctx, retired.buffer_handle, DestroyReason::Shutdown);
+            gfx_resource_registry.release_buffer_immediate(resource_ctx, retired.buffer_handle, DestroyReason::Shutdown);
         }
         self.fallback_distribution.destroy_mut(resource_ctx);
     }
@@ -428,11 +428,11 @@ impl RenderSkyManager {
         self.latest_request == Some((request_id, texture)) && self.sky_texture == Some(texture)
     }
 
-    fn retire_active_distribution(&mut self, gfx_resource_manager: &mut GfxResourceManager) {
+    fn retire_active_distribution(&mut self, gfx_resource_registry: &mut GfxResourceRegistry) {
         let Some(distribution) = self.sky_distribution.take() else {
             return;
         };
-        gfx_resource_manager.release_buffer_deferred(distribution.buffer_handle, self.current_frame_id);
+        gfx_resource_registry.release_buffer_deferred(distribution.buffer_handle, self.current_frame_id);
         self.retired_distributions.push(RetiredSkyDistribution {
             buffer_handle: distribution.buffer_handle,
             retired_frame_id: self.current_frame_id,
@@ -464,7 +464,7 @@ impl RenderSkyManager {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
     ) -> FallbackSkyTexture {
         // sky fallback 需要视觉中性，避免材质缺失用的洋红色污染环境光。
@@ -473,8 +473,8 @@ impl RenderSkyManager {
         let image = GfxImage::from_rgba8(resource_ctx, immediate_ctx, 1, 1, &pixels, "FallbackSky");
         let image_format = image.format();
 
-        let image_handle = gfx_resource_manager.register_image(image);
-        let view_handle = gfx_resource_manager.get_or_create_image_view(
+        let image_handle = gfx_resource_registry.register_image(image);
+        let view_handle = gfx_resource_registry.get_or_create_image_view(
             device_ctx,
             image_handle,
             GfxImageViewDesc::new_2d(image_format, vk::ImageAspectFlags::COLOR),
@@ -491,7 +491,7 @@ impl RenderSkyManager {
     }
 }
 
-impl Drop for RenderSkyManager {
+impl Drop for GpuSkyStore {
     fn drop(&mut self) {
         debug_assert!(self.worker_stopped);
         debug_assert!(self.fallback.image_handle.is_null());

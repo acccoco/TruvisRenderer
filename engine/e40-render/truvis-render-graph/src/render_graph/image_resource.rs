@@ -8,7 +8,7 @@ use crate::render_graph::semaphore_info::RgSemaphoreInfo;
 /// 图像资源的来源
 #[derive(Clone, Debug)]
 pub enum RgImageSource {
-    /// 从外部导入的图像（已存在于 GfxResourceManager）
+    /// 从外部导入的图像（已存在于 GfxResourceRegistry）
     Imported {
         image_handle: GfxImageHandle,
         view_handle: Option<GfxImageViewHandle>,

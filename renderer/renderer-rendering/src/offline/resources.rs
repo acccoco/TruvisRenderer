@@ -6,7 +6,7 @@ use slotmap::Key;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
-use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
+use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
 use truvis_render_runtime::state::frame_state::FrameRenderState;
 
 use crate::shared::targets::{ImageTarget, PerFrameImageSet, SingleImageTarget, TargetImageDesc};
@@ -26,7 +26,7 @@ impl OfflineTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) -> Self {
@@ -41,7 +41,7 @@ impl OfflineTargets {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             TargetImageDesc {
                 name_prefix: "offline-single-frame",
                 format: frame_state.hdr_color_format,
@@ -54,7 +54,7 @@ impl OfflineTargets {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             TargetImageDesc {
                 name_prefix: "offline-accum",
                 format: frame_state.hdr_color_format,
@@ -67,7 +67,7 @@ impl OfflineTargets {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             TargetImageDesc {
                 name_prefix: "offline-render-target",
                 format: frame_state.hdr_color_format,
@@ -89,24 +89,24 @@ impl OfflineTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) {
-        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
+        self.destroy(resource_ctx, device_ctx, gfx_resource_registry, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_registry, frame_state, frame_id);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        self.single_frame_image.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.accum_image.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.render_target.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.single_frame_image.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.accum_image.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.render_target.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
     }
 
     #[inline]

@@ -8,7 +8,7 @@ use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
-use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
+use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
 use truvis_render_runtime::state::frame_state::FrameRenderState;
 
 use crate::shared::targets::{ImageTarget, PerFrameImageSet, TargetImageDesc, create_image};
@@ -26,7 +26,7 @@ impl RtWorkingTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) -> Self {
@@ -38,7 +38,7 @@ impl RtWorkingTargets {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             TargetImageDesc {
                 name_prefix: "single-frame-rt",
                 format: frame_state.hdr_color_format,
@@ -56,24 +56,24 @@ impl RtWorkingTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) {
         // resize 走 destroy + new，而不是在原 handle 上复用；RenderGraph 下一帧只看到新尺寸 target，
         // 各 pass 在录制时直接把新 view 写入自己的 local descriptor。
-        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
+        self.destroy(resource_ctx, device_ctx, gfx_resource_registry, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_registry, frame_state, frame_id);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        self.single_frame_rt.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.single_frame_rt.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
     }
 
     #[inline]
@@ -149,7 +149,7 @@ impl RestirDiTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) -> Self {
@@ -159,7 +159,7 @@ impl RestirDiTargets {
                 resource_ctx,
                 device_ctx,
                 immediate_ctx,
-                gfx_resource_manager,
+                gfx_resource_registry,
                 TargetImageDesc {
                     name_prefix,
                     format,
@@ -197,36 +197,36 @@ impl RestirDiTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) {
-        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
+        self.destroy(resource_ctx, device_ctx, gfx_resource_registry, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_registry, frame_state, frame_id);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        self.initial_a.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.initial_b.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.initial_c.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.initial_d.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.temporal_a.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.temporal_b.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.temporal_c.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.temporal_d.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.final_a.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.final_b.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.final_c.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.final_d.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.surface_a.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.surface_b.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.surface_c.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.initial_a.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.initial_b.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.initial_c.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.initial_d.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.temporal_a.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.temporal_b.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.temporal_c.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.temporal_d.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.final_a.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.final_b.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.final_c.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.final_d.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.surface_a.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.surface_b.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.surface_c.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
     }
 
     #[inline]
@@ -417,7 +417,7 @@ impl DlssSrInputTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) -> Self {
@@ -428,7 +428,7 @@ impl DlssSrInputTargets {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             TargetImageDesc {
                 name_prefix: "dlss-depth",
                 format: Self::DEPTH_FORMAT,
@@ -441,7 +441,7 @@ impl DlssSrInputTargets {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             TargetImageDesc {
                 name_prefix: "dlss-motion-vectors",
                 format: Self::MOTION_VECTOR_FORMAT,
@@ -459,23 +459,23 @@ impl DlssSrInputTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) {
-        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
+        self.destroy(resource_ctx, device_ctx, gfx_resource_registry, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_registry, frame_state, frame_id);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        self.depth.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.motion_vectors.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.depth.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.motion_vectors.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
     }
 
     #[inline]
@@ -514,7 +514,7 @@ impl DlssSrExposureTarget {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_id: u64,
     ) -> Self {
         let name = format!("dlss-sr-exposure-{}", frame_id);
@@ -534,8 +534,8 @@ impl DlssSrExposureTarget {
             .one_time_exec(|cmd| image.transfer_data(resource_ctx, cmd, &exposure_bytes), "dlss-sr-exposure-upload");
         stage_buffer.destroy(resource_ctx, DestroyReason::ScopeDrop);
 
-        let image_handle = gfx_resource_manager.register_image(image);
-        let view_handle = gfx_resource_manager.get_or_create_image_view(
+        let image_handle = gfx_resource_registry.register_image(image);
+        let view_handle = gfx_resource_registry.get_or_create_image_view(
             device_ctx,
             image_handle,
             GfxImageViewDesc::new_2d(Self::FORMAT, vk::ImageAspectFlags::COLOR),
@@ -556,10 +556,10 @@ impl DlssSrExposureTarget {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, self.exposure.image, reason);
+        gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, self.exposure.image, reason);
         self.exposure = ImageTarget::default();
     }
 
@@ -595,7 +595,7 @@ impl DlssRrInputTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) -> Self {
@@ -604,7 +604,7 @@ impl DlssRrInputTargets {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             TargetImageDesc {
                 name_prefix: "dlss-rr-diffuse-albedo",
                 format: Self::ALBEDO_FORMAT,
@@ -617,7 +617,7 @@ impl DlssRrInputTargets {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             TargetImageDesc {
                 name_prefix: "dlss-rr-specular-albedo",
                 format: Self::ALBEDO_FORMAT,
@@ -630,7 +630,7 @@ impl DlssRrInputTargets {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             TargetImageDesc {
                 name_prefix: "dlss-rr-specular-motion-vectors",
                 format: Self::SPECULAR_MOTION_VECTOR_FORMAT,
@@ -652,24 +652,24 @@ impl DlssRrInputTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) {
-        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
+        self.destroy(resource_ctx, device_ctx, gfx_resource_registry, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_registry, frame_state, frame_id);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        self.diffuse_albedo.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.specular_albedo.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        self.specular_motion_vectors.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.diffuse_albedo.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.specular_albedo.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.specular_motion_vectors.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
     }
 
     #[inline]
@@ -710,7 +710,7 @@ impl DlssOutputTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) -> Self {
@@ -720,7 +720,7 @@ impl DlssOutputTargets {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             TargetImageDesc {
                 name_prefix: "dlss-output",
                 format: frame_state.hdr_color_format,
@@ -741,22 +741,22 @@ impl DlssOutputTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) {
-        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
+        self.destroy(resource_ctx, device_ctx, gfx_resource_registry, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_registry, frame_state, frame_id);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        self.color.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        self.color.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
     }
 
     #[inline]
@@ -786,7 +786,7 @@ impl MainViewTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) -> Self {
@@ -794,7 +794,7 @@ impl MainViewTargets {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             TargetImageDesc {
                 name_prefix: "main-view-color",
                 format: frame_state.hdr_color_format,
@@ -806,7 +806,7 @@ impl MainViewTargets {
             },
             frame_id,
         );
-        let depth = create_depth_target(resource_ctx, device_ctx, gfx_resource_manager, frame_state, frame_id);
+        let depth = create_depth_target(resource_ctx, device_ctx, gfx_resource_registry, frame_state, frame_id);
 
         Self { color, depth }
     }
@@ -816,23 +816,23 @@ impl MainViewTargets {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) {
-        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, frame_state, frame_id);
+        self.destroy(resource_ctx, device_ctx, gfx_resource_registry, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_registry, frame_state, frame_id);
     }
 
     pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        self.color.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
-        gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, self.depth.image, reason);
+        self.color.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, self.depth.image, reason);
         self.depth = ImageTarget::default();
     }
 
@@ -852,7 +852,7 @@ impl Drop for MainViewTargets {
 fn create_depth_target(
     resource_ctx: GfxResourceCtx<'_>,
     device_ctx: GfxDeviceCtx<'_>,
-    gfx_resource_manager: &mut GfxResourceManager,
+    gfx_resource_registry: &mut GfxResourceRegistry,
     frame_state: &FrameRenderState,
     frame_id: u64,
 ) -> ImageTarget {
@@ -863,8 +863,8 @@ fn create_depth_target(
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
         format!("main-view-depth-{}", frame_id),
     );
-    let image_handle = gfx_resource_manager.register_image(image);
-    let view_handle = gfx_resource_manager.get_or_create_image_view(
+    let image_handle = gfx_resource_registry.register_image(image);
+    let view_handle = gfx_resource_registry.get_or_create_image_view(
         device_ctx,
         image_handle,
         GfxImageViewDesc::new_2d(frame_state.depth_format, vk::ImageAspectFlags::DEPTH),

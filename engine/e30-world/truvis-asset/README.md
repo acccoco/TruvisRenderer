@@ -2,13 +2,13 @@
 
 资产加载模块，提供 texture / model 的一次性 CPU loader task 和完成事件。
 
-本模块位于 World 层和 RenderRuntime 之间，只负责到 upload-ready CPU data：
+本模块位于 GameWorld 层和 RenderRuntime 之间，只负责到 upload-ready CPU data：
 不创建 GPU image / image view，不创建 vertex/index buffer、BLAS，也不注册
 bindless descriptor 或 material slot。GPU 上传和 shader 可见绑定由
-`truvis-render-runtime` 的 `RenderTextureManager`、`RenderMeshManager`、
-`RenderMaterialManager` 负责；model import 由 `World` 内部的
+`truvis-render-runtime` 的 `GpuTextureStore`、`GpuMeshStore`、
+`GpuMaterialStore` 负责；model import 由 `GameWorld` 内部的
 `SceneAssetIngestor` 在 asset sync 阶段实例化成 runtime instance。Renderer 层不直接持有
-`ModelLoadHandle`，而是通过 `World` 的 `ModelImportHandle` facade 查询 model import。
+`ModelLoadHandle`，而是通过 `GameWorld` 的 `ModelImportHandle` facade 查询 model import。
 
 ## 主要组件
 
@@ -38,7 +38,7 @@ bindless descriptor 或 material slot。GPU 上传和 shader 可见绑定由
 - Assimp 导入任务只在后台复制 owned CPU 数据，完成后释放 C++ scene handle，不把 C++ handle/raw pointer 传出任务
 - glTF 导入任务只在后台复制 owned CPU 数据；`.gltf` / `.glb` 由 asset loader 按扩展名分派，其它格式继续走 Assimp 路径
 - Assimp / glTF 导入失败会通过 `ModelFailed` 事件回传给 `SceneAssetIngestor`
-- model material 引用的相对纹理路径按 model 文件所在目录解析，绝对路径保持不变；asset 层不做 scene texture identity 去重或 canonicalize，后续是否规范化由 `World` / `SceneAssetIngestor` 的 scene 规则决定。glTF v1 只把外部 image URI 注册为 texture path，GLB/data URI 嵌入贴图暂不改变 texture path 身份模型。
+- model material 引用的相对纹理路径按 model 文件所在目录解析，绝对路径保持不变；asset 层不做 scene texture identity 去重或 canonicalize，后续是否规范化由 `GameWorld` / `SceneAssetIngestor` 的 scene 规则决定。glTF v1 只把外部 image URI 注册为 texture path，GLB/data URI 嵌入贴图暂不改变 texture path 身份模型。
 - 保持 asset 层不依赖 GPU 资源缓存或 bindless 绑定策略
 
 ## HDR / EXR 边界

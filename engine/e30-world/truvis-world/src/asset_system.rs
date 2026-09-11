@@ -11,12 +11,12 @@ use crate::guid_new_type::{MaterialHandle, MeshHandle, ModelImportHandle, Textur
 use crate::scene_asset_ingestor::SceneAssetIngestor;
 use crate::scene_store::SceneStore;
 
-/// CPU ResourceSystem 的资源表。
+/// CPU AssetSystem 的资源表。
 ///
 /// 这里保存资源身份、不可变 CPU payload、材质参数和 material -> texture 依赖。
 /// 渲染侧扫描最终状态并借用不可变内容提交上传，可以随时从同一个来源重建 GPU 镜像。
 #[derive(Default)]
-pub(crate) struct ResourceStore {
+pub(crate) struct AssetStore {
     /// texture 的 CPU 状态和已解码 payload；像素通过 `TextureBytes` 内部的 `Arc` 共享，
     /// 不会因为交给上传队列而复制大块内存。
     all_textures: SlotMap<TextureHandle, SceneTextureRecord>,
@@ -84,7 +84,7 @@ struct SceneMaterialRecord {
     revision: u64,
 }
 
-impl ResourceStore {
+impl AssetStore {
     pub(crate) fn contains_texture(&self, handle: TextureHandle) -> bool {
         self.all_textures.contains_key(handle)
     }
@@ -188,7 +188,7 @@ impl ResourceStore {
 
         self.remove_material_texture_dependencies(handle, &old_data);
         self.add_material_texture_dependencies(handle, &data);
-        let record = self.all_materials.get_mut(handle).expect("ResourceStore: material disappeared after validation");
+        let record = self.all_materials.get_mut(handle).expect("AssetStore: material disappeared after validation");
         record.data = data;
         record.revision = record.revision.saturating_add(1).max(1);
         Ok(true)
@@ -295,27 +295,27 @@ impl ResourceStore {
     }
 }
 
-impl Drop for ResourceStore {
+impl Drop for AssetStore {
     fn drop(&mut self) {
-        log::info!("ResourceStore dropped.");
+        log::info!("AssetStore dropped.");
     }
 }
 
 /// CPU 资源的唯一 owner。
 ///
-/// `ResourceSystem` 把资源身份、内容 metadata、loader 和 ingest 状态放在同一边界；
-/// 它不创建 Vulkan 对象，也不保存 World 的 instance 关系。Render-side 通过 `SceneReadView`
+/// `AssetSystem` 把资源身份、内容 metadata、loader 和 ingest 状态放在同一边界；
+/// 它不创建 Vulkan 对象，也不保存 GameWorld 的 instance 关系。Render-side 通过 `SceneReadView`
 /// 读取它发布的最终资源状态。
-pub struct ResourceSystem {
-    pub(crate) store: ResourceStore,
+pub struct AssetSystem {
+    pub(crate) store: AssetStore,
     pub(crate) assets: AssetHub,
     pub(crate) scene_assets: SceneAssetIngestor,
 }
 
-impl ResourceSystem {
+impl AssetSystem {
     pub fn new() -> Self {
         Self {
-            store: ResourceStore::default(),
+            store: AssetStore::default(),
             assets: AssetHub::new(),
             scene_assets: SceneAssetIngestor::new(),
         }
@@ -388,7 +388,7 @@ impl ResourceSystem {
     }
 }
 
-impl Default for ResourceSystem {
+impl Default for AssetSystem {
     fn default() -> Self {
         Self::new()
     }
@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn texture_reverse_reference_controls_orphan_removal() {
-        let mut resources = ResourceStore::default();
+        let mut resources = AssetStore::default();
         let texture = resources.register_texture();
         let material = resources
             .register_material(MaterialData {

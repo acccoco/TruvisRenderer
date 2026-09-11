@@ -8,7 +8,7 @@
 flowchart LR
     App["app<br/>Tauri Editor 与薄 sample 启动壳"]
     Renderer["renderer<br/>具体 Renderer、Subsystem、Pass、Shader、typed ports"]
-    Engine["engine<br/>Runtime、RenderLoop、RenderThread、World、Gfx、platform"]
+    Engine["engine<br/>Runtime、RenderLoop、RenderThread、GameWorld、Gfx、platform"]
     Platform["engine/e60-platform<br/>winit 与 RenderThread 宿主"]
 
     App --> Renderer --> Engine
@@ -19,7 +19,7 @@ flowchart LR
 
 - `renderer -> app` 禁止；Renderer 不引用 Tauri、WebView、`AppHandle`、invoke/event 或 dialog。
 - `engine -> renderer` 禁止；Engine 不知道 `TruvisRenderer` 或任何 sample Renderer。
-- App 可直接使用 `engine/e60-platform` 启动窗口和 RenderThread，但不直接编排 Runtime、World、
+- App 可直接使用 `engine/e60-platform` 启动窗口和 RenderThread，但不直接编排 Runtime、GameWorld、
   RenderGraph、pass 或 GPU resource。
 - 真实依赖约束以 Cargo graph 为准；目录只是职责导航。
 
@@ -39,7 +39,7 @@ truvis-winit-host
 - `truvis-render-loop` 定义 `Renderer` phase 契约并拥有唯一 `RenderLoop::run`。
 - `truvis-render-thread` 拥有 backend-independent OS RenderThread、Renderer factory、完成状态与 panic 传播。
 - `truvis-winit-host` 只处理 standalone/embedded 窗口、事件循环和输入适配。
-- `truvis-render-runtime` 拥有 `World`、Gfx、GPU manager、frame data、present 和同步资源。
+- `truvis-render-runtime` 拥有 `GameWorld`、Gfx、GPU manager、frame data、present 和同步资源。
 - Engine 运行时、线程模型和公共 API 不因顶层拆分而改变。
 
 ## Renderer 层
@@ -91,7 +91,7 @@ App 不引用 `truvis-world`、`truvis-gfx`、`truvis-render-runtime`、`truvis-
 ## Editor 通信边界
 
 `renderer/editor/bridge` 中的 `truvis-editor-bridge` 仅定义 DTO、oneshot reply 和有界 channel endpoint，
-不依赖 Tauri、World、Runtime 或 GPU 类型。
+不依赖 Tauri、GameWorld、Runtime 或 GPU 类型。
 
 ```text
 Tauri/WebView
@@ -100,14 +100,14 @@ Tauri/WebView
             <bounded in-process channels>
        -> TruvisRendererPorts
             -> EditorController / DesktopCommandController
-                 -> World
+                 -> GameWorld
 ```
 
 `create_truvis_ports` 在 App/Tauri main thread 调用。App 保留 `TruvisFrontendPorts`，将
 `TruvisRendererPorts` 移入 RenderThread factory 并交给 `TruvisRenderer::new`。因此 Renderer 只理解 typed ports 和
 DTO，不理解 Tauri 传输。
 
-`EditorController` 只解释 DTO 并访问 `World`；`DesktopCommandController` 只处理本地特权命令。两者都不实现
+`EditorController` 只解释 DTO 并访问 `GameWorld`；`DesktopCommandController` 只处理本地特权命令。两者都不实现
 `SubsystemLifecycle`。
 
 ## Shader 与 ABI

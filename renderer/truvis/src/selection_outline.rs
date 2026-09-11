@@ -17,7 +17,7 @@ use truvis_render_runtime::bindings::global_descriptor_sets::GlobalDescriptorSet
 use truvis_render_runtime::render_runtime::{
     RenderRuntimeInitCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx,
 };
-use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
+use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 
 /// `TruvisRenderer` 拥有的 selection outline 资源 owner。
@@ -103,7 +103,7 @@ impl SubsystemLifecycle for SelectionOutlineSubsystem {
         let resources = SelectionOutlineResources::new(
             ctx.resource_ctx,
             ctx.device_ctx,
-            ctx.gfx_resource_manager,
+            ctx.gfx_resource_registry,
             ctx.shader_binding_system.global_descriptor_sets(),
             image_info.image_extent,
             image_info.image_format,
@@ -118,7 +118,7 @@ impl SubsystemLifecycle for SelectionOutlineSubsystem {
             resources.rebuild_masks(
                 ctx.resource_ctx,
                 ctx.device_ctx,
-                ctx.gfx_resource_manager,
+                ctx.gfx_resource_registry,
                 ctx.shader_binding_system.global_descriptor_sets(),
                 image_info.image_extent,
                 image_info.image_format,
@@ -128,7 +128,7 @@ impl SubsystemLifecycle for SelectionOutlineSubsystem {
             self.resources = Some(SelectionOutlineResources::new(
                 ctx.resource_ctx,
                 ctx.device_ctx,
-                ctx.gfx_resource_manager,
+                ctx.gfx_resource_registry,
                 ctx.shader_binding_system.global_descriptor_sets(),
                 image_info.image_extent,
                 image_info.image_format,
@@ -139,7 +139,7 @@ impl SubsystemLifecycle for SelectionOutlineSubsystem {
 
     fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
         if let Some(resources) = self.resources.take() {
-            resources.destroy(ctx.resource_ctx, ctx.device_ctx, ctx.gfx_resource_manager, DestroyReason::Shutdown);
+            resources.destroy(ctx.resource_ctx, ctx.device_ctx, ctx.gfx_resource_registry, DestroyReason::Shutdown);
         }
     }
 }
@@ -148,14 +148,14 @@ impl SelectionOutlineResources {
     fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         global_descriptor_sets: &GlobalDescriptorSets,
         extent: vk::Extent2D,
         present_format: vk::Format,
         frame_id: u64,
     ) -> Self {
         let pass = SelectionOutlinePass::new(device_ctx, present_format, global_descriptor_sets);
-        let masks = SelectionOutlineMasks::new(resource_ctx, device_ctx, gfx_resource_manager, extent, frame_id);
+        let masks = SelectionOutlineMasks::new(resource_ctx, device_ctx, gfx_resource_registry, extent, frame_id);
         Self {
             pass,
             present_format,
@@ -167,7 +167,7 @@ impl SelectionOutlineResources {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         global_descriptor_sets: &GlobalDescriptorSets,
         extent: vk::Extent2D,
         present_format: vk::Format,
@@ -181,15 +181,15 @@ impl SelectionOutlineResources {
             self.present_format = present_format;
         }
 
-        self.masks.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        self.masks = SelectionOutlineMasks::new(resource_ctx, device_ctx, gfx_resource_manager, extent, frame_id);
+        self.masks.destroy(resource_ctx, device_ctx, gfx_resource_registry, DestroyReason::Resize);
+        self.masks = SelectionOutlineMasks::new(resource_ctx, device_ctx, gfx_resource_registry, extent, frame_id);
     }
 
     fn destroy(
         self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
         let Self {
@@ -197,7 +197,7 @@ impl SelectionOutlineResources {
             present_format: _,
             mut masks,
         } = self;
-        masks.destroy(resource_ctx, device_ctx, gfx_resource_manager, reason);
+        masks.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
         pass.destroy(device_ctx);
     }
 }
@@ -206,7 +206,7 @@ impl SelectionOutlineMasks {
     fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         extent: vk::Extent2D,
         frame_id: u64,
     ) -> Self {
@@ -216,10 +216,10 @@ impl SelectionOutlineMasks {
                 extent,
                 format!("selection-outline-mask-{}-{}", frame_label, frame_id),
             );
-            gfx_resource_manager.register_image(image)
+            gfx_resource_registry.register_image(image)
         });
         let views = FrameLabel::ALL.map(|frame_label| {
-            gfx_resource_manager.get_or_create_image_view(
+            gfx_resource_registry.get_or_create_image_view(
                 device_ctx,
                 images[*frame_label],
                 GfxImageViewDesc::new_2d(SelectionOutlinePass::MASK_FORMAT, vk::ImageAspectFlags::COLOR),
@@ -243,11 +243,11 @@ impl SelectionOutlineMasks {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
         for image in std::mem::take(&mut self.images) {
-            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, image, reason);
+            gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image, reason);
         }
         self.views = Default::default();
     }

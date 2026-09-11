@@ -2,7 +2,7 @@
 //!
 //! 本模块拥有顶层 Tauri window、Editor IPC 与 embedded winit host 的组装和关闭
 //! 顺序。它不处理材质领域命令，也不访问 Vulkan；editor DTO 与本地桌面特权命令
-//! 都只能在 RenderThread 上各自的 controller 中进入权威 `World`。
+//! 都只能在 RenderThread 上各自的 controller 中进入权威 `GameWorld`。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

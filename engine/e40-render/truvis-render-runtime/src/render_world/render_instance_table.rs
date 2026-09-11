@@ -26,7 +26,7 @@ enum InstanceState {
 struct InstanceBinding {
     slot: GpuInstanceSlot,
     state: InstanceState,
-    /// 最终对账后保存的渲染相关 instance 副本；打包阶段不回读 CPU World。
+    /// 最终对账后保存的渲染相关 instance 副本；打包阶段不回读 CPU GameWorld。
     source: Instance,
     source_revision_seen: u64,
     requires_any_hit: bool,
@@ -57,9 +57,9 @@ pub(crate) struct RayCastInstanceRecord {
 ///
 /// 它为 `InstanceHandle` 分配生命周期内稳定的 GPU instance slot，并在 mesh/material
 /// 都 GPU ready 前保持 pending，避免 draw/TLAS 访问未就绪资源。
-/// manager 是 CPU scene read view 与 runtime 私有 `RenderData` 之间的翻译层：`World`
+/// manager 是 CPU scene read view 与 runtime 私有 `RenderData` 之间的翻译层：`GameWorld`
 /// 保存语义实例，RenderWorld 只接收按稳定 slot 排序、依赖已就绪的渲染快照。
-pub struct RenderInstanceManager {
+pub struct RenderInstanceTable {
     bindings: SecondaryMap<InstanceHandle, InstanceBinding>,
     free_slots: Vec<GpuInstanceSlot>,
     retired_slots: Vec<RetiredSlot>,
@@ -79,7 +79,7 @@ pub(crate) struct RenderInstanceUpdateResult {
     pub(crate) temporal_data_changed: bool,
 }
 
-impl RenderInstanceManager {
+impl RenderInstanceTable {
     /// 创建 instance manager，并预分配稳定 GPU instance slot 池。
     ///
     /// slot 数量当前与 `RenderWorld` instance buffer 容量保持一致；耗尽表示 CPU scene 中可渲染实例
@@ -208,7 +208,7 @@ impl RenderInstanceManager {
             let mesh_geometry_count = all_meshes[mesh_index].geometries.len();
             if mesh_geometry_count != instance.materials.len() {
                 log::error!(
-                    "RenderInstanceManager: skip instance {:?}; material count {} does not match mesh {:?} geometry count {}",
+                    "RenderInstanceTable: skip instance {:?}; material count {} does not match mesh {:?} geometry count {}",
                     handle,
                     instance.materials.len(),
                     instance.mesh,
@@ -271,7 +271,7 @@ impl RenderInstanceManager {
             if !self.bindings.contains_key(handle) {
                 let revision = scene
                     .instance_revision(handle)
-                    .expect("RenderInstanceManager: instance revision missing during scene scan");
+                    .expect("RenderInstanceTable: instance revision missing during scene scan");
                 self.register_instance(handle, instance, revision);
             }
         }
@@ -295,7 +295,7 @@ impl RenderInstanceManager {
 
             let source_revision = scene
                 .instance_revision(handle)
-                .expect("RenderInstanceManager: instance revision missing during binding sync");
+                .expect("RenderInstanceTable: instance revision missing during binding sync");
             let source_changed = binding.source_revision_seen != source_revision;
             let transform_changed = binding.source.transform != instance.transform;
             let material_binding_changed = binding.source.materials != instance.materials;
@@ -306,7 +306,7 @@ impl RenderInstanceManager {
 
             if transform_changed && binding.state == InstanceState::Active {
                 log::debug!(
-                    "RenderInstanceManager: transform dirty handle={:?} stable_slot={}",
+                    "RenderInstanceTable: transform dirty handle={:?} stable_slot={}",
                     handle,
                     binding.slot.as_u32()
                 );
@@ -341,7 +341,7 @@ impl RenderInstanceManager {
                     binding.history_initialized = false;
                     result.active_set_changed = true;
                     log::trace!(
-                        "RenderInstanceManager: activate handle={:?} stable_slot={}",
+                        "RenderInstanceTable: activate handle={:?} stable_slot={}",
                         handle,
                         binding.slot.as_u32()
                     );
@@ -353,7 +353,7 @@ impl RenderInstanceManager {
                     binding.history_initialized = false;
                     result.active_set_changed = true;
                     log::trace!(
-                        "RenderInstanceManager: deactivate handle={:?} stable_slot={}",
+                        "RenderInstanceTable: deactivate handle={:?} stable_slot={}",
                         handle,
                         binding.slot.as_u32()
                     );
@@ -367,7 +367,7 @@ impl RenderInstanceManager {
 
     fn register_instance(&mut self, handle: InstanceHandle, instance: &Instance, source_revision: u64) {
         // 新实例先拿到稳定 slot，但初始状态保持 pending；ready gate 由 resolver 决定。
-        let slot = self.free_slots.pop().expect("RenderInstanceManager: GPU instance slots exhausted");
+        let slot = self.free_slots.pop().expect("RenderInstanceTable: GPU instance slots exhausted");
         self.bindings.insert(
             handle,
             InstanceBinding {
@@ -380,7 +380,7 @@ impl RenderInstanceManager {
                 history_initialized: false,
             },
         );
-        log::trace!("RenderInstanceManager: register handle={:?} stable_slot={}", handle, slot.as_u32());
+        log::trace!("RenderInstanceTable: register handle={:?} stable_slot={}", handle, slot.as_u32());
     }
 
     fn retire_instance_binding(&mut self, handle: InstanceHandle) -> bool {
@@ -391,7 +391,7 @@ impl RenderInstanceManager {
                 retired_frame_id: self.current_frame_id,
             });
             log::debug!(
-                "RenderInstanceManager: retire handle={:?} stable_slot={}; reclaim delayed by FIF",
+                "RenderInstanceTable: retire handle={:?} stable_slot={}; reclaim delayed by FIF",
                 handle,
                 binding.slot.as_u32()
             );
@@ -409,7 +409,7 @@ impl RenderInstanceManager {
             if current_frame_id.saturating_sub(retired.retired_frame_id) >= fif_count {
                 // 延迟到 FIF 窗口之后再复用 slot，保证旧 command buffer 中的 instance index
                 // 不会突然指向新实例。
-                log::debug!("RenderInstanceManager: reclaimed stable_slot={}", retired.slot.as_u32());
+                log::debug!("RenderInstanceTable: reclaimed stable_slot={}", retired.slot.as_u32());
                 self.free_slots.push(retired.slot);
             } else {
                 retained.push(retired);

@@ -4,15 +4,15 @@ use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
-use truvis_world::World;
+use truvis_world::GameWorld;
 
 use crate::bindings::per_frame_gpu_data::PerFrameGpuData;
 use crate::bindings::shader_binding_system::{ShaderBindingSystem, ShaderBindingView};
 use crate::present::swapchain_presenter::PresentView;
 use crate::ray_cast::{RayCastRay, RayCastResult, RayCastService};
-use crate::render_world::render_instance_manager::RenderInstanceManager;
+use crate::render_world::render_instance_table::RenderInstanceTable;
 use crate::resources::cmd_allocator::CmdAllocator;
-use crate::resources::gfx_resource_manager::GfxResourceManager;
+use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 use crate::selection::WorldSubmeshRasterView;
 use crate::state::dlss_options::DlssOptions;
 use crate::state::dlss_sr::DlssSrState;
@@ -32,17 +32,17 @@ pub struct RenderPassRecordCtx<'a> {
     pub view_accum: &'a ViewAccumState,
     pub dlss_sr_state: &'a DlssSrState,
     pub shader_bindings: ShaderBindingView<'a>,
-    pub gfx_resource_manager: &'a GfxResourceManager,
+    pub gfx_resource_registry: &'a GfxResourceRegistry,
     pub per_frame_gpu_data: &'a PerFrameGpuData,
 }
 
 /// Update 阶段上下文，借用 CPU 端更新需要的 RenderRuntime 字段。
 ///
 /// 在 app 执行 update 工作期间保持存活；drop 前 RenderRuntime 会保持借用锁定。
-/// 这个阶段允许修改 `World` 与 runtime DLSS 选项，但还没有把 CPU 语义数据翻译到 GPU scene。
+/// 这个阶段允许修改 `GameWorld` 与 runtime DLSS 选项，但还没有把 CPU 语义数据翻译到 GPU scene。
 pub struct RenderRuntimeUpdateCtx<'a> {
     /// CPU 语义世界；update 阶段允许 Renderer/子系统修改 scene、asset 请求和运行时实例。
-    pub world: &'a mut World,
+    pub world: &'a mut GameWorld,
     /// 可变 DLSS 选项；修改后由 runtime 在 prepare/render 前统一同步派生状态。
     pub dlss_options: &'a mut DlssOptions,
     /// 当前帧渲染目标状态快照，已在 acquire 前与 swapchain 同步。
@@ -72,7 +72,7 @@ pub struct RenderRuntimeRenderCtx<'a> {
     pub record_ctx: RenderPassRecordCtx<'a>,
     /// runtime 私有 `RenderWorld` 的只读视图；pass 不能访问 concrete scene owner。
     pub render_scene: &'a dyn RenderSceneView,
-    /// World 语义 selection 到当前 raster draw 的只读解析/绘制接口；不暴露 GPU slot owner。
+    /// GameWorld 语义 selection 到当前 raster draw 的只读解析/绘制接口；不暴露 GPU slot owner。
     pub world_submesh_raster: &'a dyn WorldSubmeshRasterView,
     /// 当前窗口 present 边界，只暴露 swapchain 信息和 RenderGraph 导入 helper。
     pub present: PresentView<'a>,
@@ -91,7 +91,7 @@ pub struct RenderRuntimeRayCastCtx<'a> {
     pub(crate) frame_timing: &'a FrameTiming,
     pub(crate) shader_bindings: ShaderBindingView<'a>,
     pub(crate) render_scene: &'a dyn RenderSceneView,
-    pub(crate) render_instance_manager: &'a RenderInstanceManager,
+    pub(crate) render_instance_table: &'a RenderInstanceTable,
     pub(crate) ray_cast_service: &'a mut RayCastService,
 }
 
@@ -108,7 +108,7 @@ impl RenderRuntimeRayCastCtx<'_> {
             self.frame_timing,
             self.shader_bindings,
             self.render_scene,
-            self.render_instance_manager,
+            self.render_instance_table,
             rays,
         )
     }
@@ -117,7 +117,7 @@ impl RenderRuntimeRayCastCtx<'_> {
 /// Init 阶段上下文，用于 window/surface 创建后的一次性设置。
 ///
 /// 不包含 camera；camera 属于具体 app。
-/// 这里暴露 `World`、GPU 资源/binding owner 和 `CmdAllocator` 的可变借用，供 Renderer/子系统创建长期 GPU 资源；
+/// 这里暴露 `GameWorld`、GPU 资源/binding owner 和 `CmdAllocator` 的可变借用，供 Renderer/子系统创建长期 GPU 资源；
 /// 初始化完成后这些能力会重新收敛回 runtime 的阶段化生命周期。
 pub struct RenderRuntimeInitCtx<'a> {
     /// 初始化长期 GPU 资源所需的 device 上下文。
@@ -133,9 +133,9 @@ pub struct RenderRuntimeInitCtx<'a> {
     /// surface/swapchain 相关操作所需上下文。
     pub surface_ctx: GfxSurfaceCtx<'a>,
     /// CPU 语义世界，供 Renderer/子系统注册初始 scene、asset 和实例。
-    pub world: &'a mut World,
+    pub world: &'a mut GameWorld,
     /// manager-owned buffer/image/view 资源生命周期 owner。
-    pub gfx_resource_manager: &'a mut GfxResourceManager,
+    pub gfx_resource_registry: &'a mut GfxResourceRegistry,
     /// shader-visible descriptor、bindless 和 sampler owner。
     pub shader_binding_system: &'a mut ShaderBindingSystem,
     /// 当前帧序号、FIF label 和时间快照。
@@ -163,7 +163,7 @@ pub struct RenderRuntimeResizeCtx<'a> {
     /// resize 路径访问 surface/swapchain 所需上下文。
     pub surface_ctx: GfxSurfaceCtx<'a>,
     /// manager-owned buffer/image/view 资源生命周期 owner。
-    pub gfx_resource_manager: &'a mut GfxResourceManager,
+    pub gfx_resource_registry: &'a mut GfxResourceRegistry,
     /// shader-visible descriptor、bindless 和 sampler owner。
     pub shader_binding_system: &'a mut ShaderBindingSystem,
     /// 当前帧序号、FIF label 和时间快照。
@@ -190,7 +190,7 @@ pub struct RenderRuntimeShutdownCtx<'a> {
     /// surface 相关上层资源释放时使用。
     pub surface_ctx: GfxSurfaceCtx<'a>,
     /// 仍然存活的 manager-owned buffer/image/view 资源生命周期 owner。
-    pub gfx_resource_manager: &'a mut GfxResourceManager,
+    pub gfx_resource_registry: &'a mut GfxResourceRegistry,
     /// 仍然存活的 shader-visible descriptor、bindless 和 sampler owner。
     pub shader_binding_system: &'a mut ShaderBindingSystem,
     /// 当前帧序号、FIF label 和时间快照。

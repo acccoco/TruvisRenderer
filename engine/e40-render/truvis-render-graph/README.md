@@ -26,7 +26,7 @@
 ## 边界约束
 
 - 仅关注 imported image 的状态跟踪、同步和命令录制辅助，不依赖 scene/asset 等领域模块
-- 不依赖 `truvis-render-runtime`，也不持有 `GfxResourceManager`、descriptor 或 bindless owner
+- 不依赖 `truvis-render-runtime`，也不持有 `GfxResourceRegistry`、descriptor 或 bindless owner
 - Renderer 和具体渲染子系统显式决定 pass 添加顺序，RenderGraph 不重排 pass
 - transient image/buffer、buffer barrier 录制、多队列调度和资源 aliasing 暂不属于当前能力
 - 业务 pass 逻辑在上层模块组织（如 `truvis-app`）

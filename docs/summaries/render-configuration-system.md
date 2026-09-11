@@ -99,13 +99,13 @@ quality mode；RR 是否替代 SR evaluate 由 `DlssOptions` 决定。
 | `analytic_nee_enabled: bool` | 是否额外启用 point / spot / area analytic light NEE，关闭时不影响 HDRI / emissive NEE |
 | `tone_mapping: SdrToneMappingSettings` | SDR 输出路径使用的手动曝光和 ACES fitted tone mapping 参数 |
 
-`SkySamplingMode` 是 path tracing 共享的 pass-local 调试/实验开关。默认 `Importance` 使用 `RenderSkyManager`
+`SkySamplingMode` 是 path tracing 共享的 pass-local 调试/实验开关。默认 `Importance` 使用 `GpuSkyStore`
 生成的 HDRI alias table；`Uniform` 强制 shader 走旧的 uniform sphere 采样，用于在相同场景下比较 HDRI NEE
 噪声与能量稳定性。该选项不改变 render extent、DLSS feature resource 或 runtime-owned temporal state。
 
 `sky_brightness` 是 Renderer 层 path tracing 运行时调参，默认值 `8.0` 保持旧 shader 硬编码亮度。它只在 shader
 采样 sky 贴图后统一缩放可见 sky miss 与 HDRI 直接光候选 radiance；因为这是所有方向共享的均匀倍率，不改变
-`RenderSkyManager` importance distribution 的相对权重，也不需要重建 alias table 或改写环境光 PDF。
+`GpuSkyStore` importance distribution 的相对权重，也不需要重建 alias table 或改写环境光 PDF。
 
 `emissive_nee_enabled` 是 path tracing pass-local 调试开关，默认开启。关闭时统一 NEE 不会把 emissive
 class 纳入候选来源，但直接命中 emissive surface 的 hit emission 仍按当前 path tracing 语义累加；该选项不改变

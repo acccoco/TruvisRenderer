@@ -60,7 +60,7 @@ impl ImageClearPass {
 
     pub fn exec(&self, cmd: &GfxCommandBuffer, data: ImageClearPassData, record_ctx: &RenderPassRecordCtx<'_>) {
         let dst_view = record_ctx
-            .gfx_resource_manager
+            .gfx_resource_registry
             .get_image_view(data.dst_image)
             .expect("ImageClearPass: dst image view not found")
             .handle();

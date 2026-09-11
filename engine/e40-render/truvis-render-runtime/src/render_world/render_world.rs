@@ -13,39 +13,39 @@ use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
 
 use crate::render_world::environment_binding::EnvironmentBinding;
-use crate::render_world::render_analytic_light_manager::{AnalyticLightBinding, RenderAnalyticLightManager};
+use crate::render_world::analytic_light_table::{AnalyticLightBinding, AnalyticLightTable};
 use crate::render_world::render_data::RenderData;
 use crate::render_world::render_emissive_light_table::EmissiveLightBinding;
 use crate::render_world::render_emissive_light_table::RenderEmissiveLightTable;
-use crate::render_world::render_instance_manager::RenderInstanceManager;
-use crate::render_world::render_tlas_manager::RenderTlasManager;
-use crate::render_world::render_resource_system::{RenderResourceSyncResult, RenderResourceSystem};
+use crate::render_world::render_instance_table::RenderInstanceTable;
+use crate::render_world::scene_tlas::SceneTlas;
+use crate::render_world::render_asset_system::{RenderResourceSyncResult, RenderAssetSystem};
 use crate::selection::{WorldSubmeshRasterView, WorldSubmeshSelection};
 
-use super::buffers::RenderWorldBuffers;
+use super::buffers::SceneBuffers;
 use super::raster_draw_cache::{
     RasterDrawItem, draw_raster_cache, draw_raster_cache_selected, update_raster_draw_cache,
 };
 
 /// runtime 私有的 GPU scene 翻译层。
 ///
-/// 它把 `RenderInstanceManager` 产出的 `RenderData` 转换成 shader 可读的 GPU buffer 和
-/// 光栅化 draw cache，并协调 `RenderTlasManager` 更新 TLAS；render pass 只能通过
+/// 它把 `RenderInstanceTable` 产出的 `RenderData` 转换成 shader 可读的 GPU buffer 和
+/// 光栅化 draw cache，并协调 `SceneTlas` 更新 TLAS；render pass 只能通过
 /// `RenderSceneView` 读取 prepare 后的快照。
 /// `RenderWorld` 不拥有 CPU scene 或共享 GPU resource；它拥有场景侧 managers 和当前 FIF 可用的
 /// GPU scene 表示。
 pub struct RenderWorld {
     /// RenderWorld 只拥有 scene 组合、历史与派生表；共享 GPU 资源由 runtime 级
-    /// `RenderResourceSystem` 持有并通过窄调用参数提供。
-    pub(super) render_instance_manager: RenderInstanceManager,
-    pub(super) render_analytic_light_manager: RenderAnalyticLightManager,
+    /// `RenderAssetSystem` 持有并通过窄调用参数提供。
+    pub(super) render_instance_table: RenderInstanceTable,
+    pub(super) analytic_light_table: AnalyticLightTable,
     pub(super) render_emissive_light_table: RenderEmissiveLightTable,
     /// 每个 FIF frame label 独占一套 scene buffer，避免覆盖 GPU 仍在读取的数据。
-    pub(super) render_world_buffers: [RenderWorldBuffers; FrameLabel::COUNT],
+    pub(super) scene_buffers: [SceneBuffers; FrameLabel::COUNT],
     /// TLAS 由独立 manager 持有，避免 acceleration structure 生命周期散在 scene buffer 里。
-    pub(super) render_tlas_manager: RenderTlasManager,
+    pub(super) scene_tlas: SceneTlas,
     /// prepare 阶段从 `RenderData` 展开的光栅化 draw cache，render pass 只通过 view 契约录制 draw。
-    pub(super) raster_draws: [Vec<RasterDrawItem>; FrameLabel::COUNT],
+    pub(super) raster_draw_cache: [Vec<RasterDrawItem>; FrameLabel::COUNT],
     /// 只在 active scene 的渲染投影发生变化时推进，用于失效离线/累积历史。
     appearance_revision: u64,
     /// 场景 instance/indirect 数据版本；材质只变时不触发大块 scene buffer 重传。
@@ -70,28 +70,28 @@ impl RenderWorld {
         current_frame_id: u64,
     ) -> Self {
         let _span = tracy_client::span!("RenderWorld::new");
-        let render_instance_manager = RenderInstanceManager::new(current_frame_id);
+        let render_instance_table = RenderInstanceTable::new(current_frame_id);
         let render_emissive_light_table = {
             let _span = tracy_client::span!("RenderWorld::new/render_emissive_light_table");
             RenderEmissiveLightTable::new(resource_ctx)
         };
-        let render_analytic_light_manager = {
-            let _span = tracy_client::span!("RenderWorld::new/render_analytic_light_manager");
-            RenderAnalyticLightManager::new(resource_ctx)
+        let analytic_light_table = {
+            let _span = tracy_client::span!("RenderWorld::new/analytic_light_table");
+            AnalyticLightTable::new(resource_ctx)
         };
 
-        let render_world_buffers = {
+        let scene_buffers = {
             let _span = tracy_client::span!("RenderWorld::new/per_frame_buffers");
-            FrameLabel::ALL.map(|frame_label| RenderWorldBuffers::new(resource_ctx, frame_label))
+            FrameLabel::ALL.map(|frame_label| SceneBuffers::new(resource_ctx, frame_label))
         };
 
         Self {
-            render_instance_manager,
-            render_analytic_light_manager,
+            render_instance_table,
+            analytic_light_table,
             render_emissive_light_table,
-            render_world_buffers,
-            render_tlas_manager: RenderTlasManager::new(),
-            raster_draws: FrameLabel::ALL.map(|_| Vec::new()),
+            scene_buffers,
+            scene_tlas: SceneTlas::new(),
+            raster_draw_cache: FrameLabel::ALL.map(|_| Vec::new()),
             appearance_revision: 0,
             scene_revision: 0,
             uploaded_scene_revisions: [0; FrameLabel::COUNT],
@@ -104,10 +104,10 @@ impl RenderWorld {
     /// 调用点位于 `RenderRuntime::destroy`，此时 device 已 idle，因此 manager 资源、每个 FIF 的
     /// TLAS 和 buffer 都可以按 shutdown reason 释放。
     pub fn destroy(mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
-        self.render_analytic_light_manager.destroy_mut(resource_ctx);
+        self.analytic_light_table.destroy_mut(resource_ctx);
         self.render_emissive_light_table.destroy_mut(resource_ctx);
-        self.render_tlas_manager.destroy_mut(resource_ctx, device_ctx);
-        for buffers in &mut self.render_world_buffers {
+        self.scene_tlas.destroy_mut(resource_ctx, device_ctx);
+        for buffers in &mut self.scene_buffers {
             buffers.destroy_mut(resource_ctx, device_ctx);
         }
     }
@@ -116,16 +116,16 @@ impl RenderWorld {
 // Runtime 内部阶段入口：`RenderRuntime` 只负责提供阶段上下文，具体 render-side scene 状态在这里推进。
 impl RenderWorld {
     pub(crate) fn begin_frame(&mut self, current_frame_id: u64) {
-        self.render_instance_manager.begin_frame(current_frame_id);
+        self.render_instance_table.begin_frame(current_frame_id);
     }
 
     pub(crate) fn request_motion_history_reset(&mut self) {
-        self.render_instance_manager.request_motion_history_reset();
+        self.render_instance_table.request_motion_history_reset();
     }
 
     /// 同步 raycast 需要用 instance slot 反查 CPU record；只暴露只读引用，不暴露 instance manager 修改入口。
-    pub(crate) fn render_instance_manager(&self) -> &RenderInstanceManager {
-        &self.render_instance_manager
+    pub(crate) fn render_instance_table(&self) -> &RenderInstanceTable {
+        &self.render_instance_table
     }
 
     /// 准备 render pass 可见的 GPU scene。
@@ -134,7 +134,7 @@ impl RenderWorld {
     /// emissive table、TLAS/scene root。它不修改 CPU scene，只读取 `SceneReadView` 快照。
     pub(crate) fn prepare_render_data(
         &mut self,
-        render_resources: &mut RenderResourceSystem,
+        render_resources: &mut RenderAssetSystem,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
@@ -145,12 +145,12 @@ impl RenderWorld {
         scene: SceneReadView<'_>,
         resource_sync_result: RenderResourceSyncResult,
     ) -> RenderWorldPrepareResult {
-        let sky_update = render_resources.sky_manager.update_sky_binding(&render_resources.texture_manager);
+        let sky_update = render_resources.update_sky_binding();
         let environment_binding = EnvironmentBinding {
             sky: sky_update.binding,
         };
 
-        render_resources.material_manager.upload(
+        render_resources.upload_materials(
             resource_ctx,
             cmd,
             transfer_barrier_mask,
@@ -158,13 +158,13 @@ impl RenderWorld {
         );
 
         // instance 阶段完整对账 CPU scene。只有 mesh 与 material 都解析成功的实例会进入 active 列表。
-        let (scene_render_data, instance_result) = self.render_instance_manager.prepare_render_data(
+        let (scene_render_data, instance_result) = self.render_instance_table.prepare_render_data(
             scene,
-            &render_resources.material_manager,
-            &render_resources.mesh_manager,
+            render_resources.material_resolver(),
+            render_resources.mesh_resolver(),
         );
-        self.render_analytic_light_manager.sync_scene(scene);
-        let analytic_light_update = self.render_analytic_light_manager.update_and_upload(
+        self.analytic_light_table.sync_scene(scene);
+        let analytic_light_update = self.analytic_light_table.update_and_upload(
             resource_ctx,
             cmd,
             transfer_barrier_mask,
@@ -208,7 +208,7 @@ impl RenderWorld {
             || instance_result.transform_changed
             || instance_result.requires_any_hit_changed
         {
-            self.render_tlas_manager.mark_dirty();
+            self.scene_tlas.mark_dirty();
         }
 
         let material_buffer_device_address = render_resources.material_buffer_device_address(frame_label);
@@ -218,14 +218,14 @@ impl RenderWorld {
             transfer_barrier_mask,
             frame_label,
             &scene_render_data,
-            &render_resources.material_manager,
+            render_resources.material_resolver(),
         );
         Self::upload_render_data(
-            &mut self.render_world_buffers,
+            &mut self.scene_buffers,
             &mut self.uploaded_scene_revisions,
             &mut self.pending_scene_revisions,
-            &mut self.render_tlas_manager,
-            &mut self.raster_draws,
+            &mut self.scene_tlas,
+            &mut self.raster_draw_cache,
             resource_ctx,
             device_ctx,
             immediate_ctx,
@@ -248,8 +248,8 @@ impl RenderWorld {
     }
 
     pub(crate) fn commit_submitted_frame(&mut self, frame_label: FrameLabel) {
-        self.render_instance_manager.commit_submitted_frame();
-        self.render_analytic_light_manager.commit_submitted_frame(frame_label);
+        self.render_instance_table.commit_submitted_frame();
+        self.analytic_light_table.commit_submitted_frame(frame_label);
         self.render_emissive_light_table.commit_submitted_frame(frame_label);
         let index = *frame_label;
         if let Some(revision) = self.pending_scene_revisions[index].take() {
@@ -265,7 +265,7 @@ impl RenderWorld {
     /// 没有 active instance 时返回 None，render pass 应据此跳过 ray tracing 路径或使用空场景策略。
     #[inline]
     pub fn tlas(&self, frame_label: FrameLabel) -> Option<&GfxAcceleration> {
-        self.render_tlas_manager.tlas(frame_label)
+        self.scene_tlas.tlas(frame_label)
     }
 
     /// 返回当前 frame label 的 scene root buffer。
@@ -273,7 +273,7 @@ impl RenderWorld {
     /// buffer 内保存 shader 查找整套 scene 数据所需的 device address、bindless handle 和计数。
     #[inline]
     pub fn scene_buffer(&self, frame_label: FrameLabel) -> &GfxStructuredBuffer<gpu::engine::scene::GpuScene> {
-        &self.render_world_buffers[*frame_label].scene_buffer
+        &self.scene_buffers[*frame_label].scene_buffer
     }
 }
 
@@ -290,7 +290,7 @@ impl RenderSceneView for RenderWorld {
     }
 
     fn accum_signature(&self, frame_label: FrameLabel) -> RenderSceneAccumSignature {
-        self.render_world_buffers[*frame_label].accum_signature
+        self.scene_buffers[*frame_label].accum_signature
     }
 
     /// 遍历 prepare 阶段展开好的 raster draw cache 并录制 draw。
@@ -299,11 +299,11 @@ impl RenderSceneView for RenderWorld {
     /// 或其它 per-draw 状态，同时不暴露 `RenderWorld` 的内部缓存结构。
     fn draw_raster(&self, frame_label: FrameLabel, cmd: &GfxCommandBuffer, before_draw: &mut dyn FnMut(u32, u32)) {
         let _span = tracy_client::span!("RenderWorld::draw_raster");
-        draw_raster_cache(&self.raster_draws[*frame_label], cmd, before_draw);
+        draw_raster_cache(&self.raster_draw_cache[*frame_label], cmd, before_draw);
     }
 }
 
-// 选择轮廓使用的窄接口：Renderer 提供 CPU World 语义，runtime 负责解析当前 GPU draw。
+// 选择轮廓使用的窄接口：Renderer 提供 CPU GameWorld 语义，runtime 负责解析当前 GPU draw。
 impl WorldSubmeshRasterView for RenderWorld {
     fn draw_selected_submesh_raster(
         &self,
@@ -314,12 +314,12 @@ impl WorldSubmeshRasterView for RenderWorld {
     ) -> bool {
         let _span = tracy_client::span!("RenderWorld::draw_selected_submesh_raster");
         let Some((instance_slot, submesh_idx)) =
-            self.render_instance_manager.resolve_active_raster_submesh(selection.instance, selection.submesh_index)
+            self.render_instance_table.resolve_active_raster_submesh(selection.instance, selection.submesh_index)
         else {
             return false;
         };
 
-        draw_raster_cache_selected(&self.raster_draws[*frame_label], cmd, instance_slot, submesh_idx, before_draw)
+        draw_raster_cache_selected(&self.raster_draw_cache[*frame_label], cmd, instance_slot, submesh_idx, before_draw)
     }
 }
 
@@ -333,11 +333,11 @@ impl RenderWorld {
     /// 上传顺序刻意保持为 draw cache、mesh/instance/light buffer、TLAS、scene root buffer：
     /// scene root buffer 最后写入，确保它记录的 device address 与本帧实际 buffer/TLAS 对齐。
     fn upload_render_data(
-        render_world_buffers: &mut [RenderWorldBuffers; FrameLabel::COUNT],
+        scene_buffers: &mut [SceneBuffers; FrameLabel::COUNT],
         uploaded_scene_revisions: &mut [u64; FrameLabel::COUNT],
         pending_scene_revisions: &mut [Option<u64>; FrameLabel::COUNT],
-        render_tlas_manager: &mut RenderTlasManager,
-        raster_draws: &mut [Vec<RasterDrawItem>; FrameLabel::COUNT],
+        scene_tlas: &mut SceneTlas,
+        raster_draw_cache: &mut [Vec<RasterDrawItem>; FrameLabel::COUNT],
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
@@ -355,17 +355,17 @@ impl RenderWorld {
     ) {
         let _span = tracy_client::span!("RenderWorld::prepare_render_data");
 
-        update_raster_draw_cache(&mut raster_draws[*frame_label], render_data);
+        update_raster_draw_cache(&mut raster_draw_cache[*frame_label], render_data);
         let scene_needs_upload = uploaded_scene_revisions[*frame_label] != scene_revision;
         if scene_needs_upload {
-            Self::upload_mesh_buffer(render_world_buffers, resource_ctx, cmd, barrier_mask, render_data, frame_label);
-            Self::upload_instance_buffer(render_world_buffers, resource_ctx, cmd, barrier_mask, render_data, frame_label);
+            Self::upload_mesh_buffer(scene_buffers, resource_ctx, cmd, barrier_mask, render_data, frame_label);
+            Self::upload_instance_buffer(scene_buffers, resource_ctx, cmd, barrier_mask, render_data, frame_label);
             pending_scene_revisions[*frame_label] = Some(scene_revision);
         }
 
         // TLAS instance 描述使用稳定 instance slot 与 transform，因此必须在 instance buffer
         // 写入逻辑之后构建，保证 GPU scene buffer、TLAS custom index 和 raster draw cache 对齐。
-        render_tlas_manager.build_or_update(
+        scene_tlas.build_or_update(
             resource_ctx,
             device_ctx,
             immediate_ctx,
@@ -373,10 +373,10 @@ impl RenderWorld {
             frame_id,
             frame_label,
         );
-        let current_tlas_revision = render_tlas_manager.tlas_revision(frame_label);
+        let current_tlas_revision = scene_tlas.tlas_revision(frame_label);
 
         Self::upload_scene_buffer(
-            render_world_buffers,
+            scene_buffers,
             cmd,
             frame_label,
             barrier_mask,
@@ -393,7 +393,7 @@ impl RenderWorld {
     ///
     /// 这个 buffer 只保存 device address、bindless handle 和计数，是 shader 访问整套场景数据的入口。
     fn upload_scene_buffer(
-        render_world_buffers: &mut [RenderWorldBuffers; FrameLabel::COUNT],
+        scene_buffers: &mut [SceneBuffers; FrameLabel::COUNT],
         cmd: &GfxCommandBuffer,
         frame_label: FrameLabel,
         barrier_mask: GfxBarrierMask,
@@ -405,7 +405,7 @@ impl RenderWorld {
         appearance_revision: u64,
     ) {
         let frame_index = *frame_label;
-        let crt_gpu_buffers = &render_world_buffers[frame_index];
+        let crt_gpu_buffers = &scene_buffers[frame_index];
         // scene root buffer 只存放“入口地址”和资源句柄，不复制大块 scene 数据。
         // 它最后写入，确保地址/count 与本帧刚上传的 buffer 和 TLAS revision 匹配。
         let gpu_scene_data = gpu::engine::scene::GpuScene {
@@ -457,14 +457,14 @@ impl RenderWorld {
             sky_distribution_version: environment_binding.sky.distribution_version,
             appearance_revision,
         };
-        render_world_buffers[frame_index].accum_signature = accum_signature;
+        scene_buffers[frame_index].accum_signature = accum_signature;
     }
 
     /// 将 mesh 数据以 geometry 表的形式上传到 GPU。
     ///
     /// geometry 表只保存 device address；实际 vertex/index buffer 生命周期由 mesh manager 持有。
     fn upload_mesh_buffer(
-        render_world_buffers: &mut [RenderWorldBuffers; FrameLabel::COUNT],
+        scene_buffers: &mut [SceneBuffers; FrameLabel::COUNT],
         resource_ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
@@ -472,7 +472,7 @@ impl RenderWorld {
         frame_label: FrameLabel,
     ) {
         let _span = tracy_client::span!("upload_mesh_buffer2");
-        let crt_gpu_buffers = &mut render_world_buffers[*frame_label];
+        let crt_gpu_buffers = &mut scene_buffers[*frame_label];
         let crt_geometry_stage_buffer = &mut crt_gpu_buffers.geometry_stage_buffer;
         let geometry_buffer_slices = crt_geometry_stage_buffer.mapped_slice();
 
@@ -509,7 +509,7 @@ impl RenderWorld {
     /// `instance_slot` 是全局稳定 slot；geometry/material indirect buffer 则是本帧紧凑列表，
     /// 用于把一个 instance 映射到它的 submesh geometry 与 material slot。
     fn upload_instance_buffer(
-        render_world_buffers: &mut [RenderWorldBuffers; FrameLabel::COUNT],
+        scene_buffers: &mut [SceneBuffers; FrameLabel::COUNT],
         resource_ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
@@ -517,7 +517,7 @@ impl RenderWorld {
         frame_label: FrameLabel,
     ) {
         let _span = tracy_client::span!("upload_instance_buffer2");
-        let crt_gpu_buffers = &mut render_world_buffers[*frame_label];
+        let crt_gpu_buffers = &mut scene_buffers[*frame_label];
 
         let crt_instance_stage_buffer = &mut crt_gpu_buffers.instance_stage_buffer;
         let crt_geometry_indirect_stage_buffer = &mut crt_gpu_buffers.geometry_indirect_stage_buffer;
@@ -572,7 +572,7 @@ impl RenderWorld {
             crt_geometry_indirect_idx += submesh_cnt;
 
             // 将稳定 material slot 写入间接索引 buffer。
-            // material slot 来自 RenderMaterialManager，可被 shader 直接索引材质 buffer。
+            // material slot 来自 GpuMaterialStore，可被 shader 直接索引材质 buffer。
             for material_slot in instance.material_slots.iter() {
                 material_indirect_buffer_slices[crt_material_indirect_idx] = *material_slot;
                 crt_material_indirect_idx += 1;

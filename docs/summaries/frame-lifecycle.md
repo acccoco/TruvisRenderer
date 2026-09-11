@@ -5,7 +5,7 @@
 
 本文把一帧理解成三层协作：
 
-- `RenderRuntime` 提供底层阶段化能力，拥有 `World`、GPU resource/binding/timing owners、runtime-owned render state、
+- `RenderRuntime` 提供底层阶段化能力，拥有 `GameWorld`、GPU resource/binding/timing owners、runtime-owned render state、
   `RenderWorld`、present、cmd 和同步资源。
 - `RenderLoop` 固定一帧顺序，把 runtime phase 交给对应 Renderer 阶段。
 - 具体 Renderer 持有 camera、input、GUI、overlay 和具体渲染子系统，并决定这些能力如何组合。
@@ -21,13 +21,13 @@ After Render  = present + end_frame
 ```
 
 真实代码不会把所有阶段合并成这三个函数，因为阶段化 Ctx 需要限制不同时间点能访问的资源。
-例如 update 可以修改 `World`，render 只能读取 prepare 后的 GPU scene 快照。
+例如 update 可以修改 `GameWorld`，render 只能读取 prepare 后的 GPU scene 快照。
 
 ### 三层职责图
 
 ```mermaid
 flowchart TB
-    Runtime["RenderRuntime<br/>资源与 GPU 快照 owner<br/>World / Resource+Binding+Timing / RenderWorld / Present / Sync"]
+    Runtime["RenderRuntime<br/>资源与 GPU 快照 owner<br/>GameWorld / Resource+Binding+Timing / RenderWorld / Present / Sync"]
     RenderLoop["RenderLoop<br/>一帧顺序编排者<br/>把 runtime phase 裁剪成 hook ctx"]
     Renderer["Concrete Renderer<br/>业务状态 owner<br/>camera / input / ImGui / overlay / rendering subsystems"]
     Subsystem["Concrete Subsystem<br/>Renderer 静态持有的能力对象<br/>可选 SubsystemLifecycle + 具体能力"]
@@ -186,7 +186,7 @@ flowchart TB
 | `begin_frame`                  | 每帧开始                         | 采样 `FrameTiming`、等待 FIF timeline、重置 frame command pool、清理延迟释放并下发当前 frame id | 不直接暴露 ctx                        |
 | `update_phase`                 | input 后、Renderer update 前         | 同步 present extent 到 `FrameRenderState`，acquire 当前 present target，提供 CPU 更新能力                   | `RenderRuntimeUpdateCtx`         |
 | `sync_dlss_options_frame_state` | Renderer update 后        | 当 `DlssOptions` 改变 DLSS SR mode 或 render extent 时同步 `FrameRenderState`，并触发上层 resize          | `Option<RenderRuntimeResizeCtx>` |
-| `prepare(render_view)`         | update / resize 后、render 前   | 读取 Renderer 的 `RenderView` 快照，把 `World`、asset、material、instance 同步成 GPU scene 与 descriptor 数据     | 不直接暴露 ctx                        |
+| `prepare(render_view)`         | update / resize 后、render 前   | 读取 Renderer 的 `RenderView` 快照，把 `GameWorld`、asset、material、instance 同步成 GPU scene 与 descriptor 数据     | 不直接暴露 ctx                        |
 | `ray_cast_phase`               | prepare 后、render graph 前     | 允许 Renderer 对刚准备好的 GPU scene 做同步 raycast                                                          | `RenderRuntimeRayCastCtx`        |
 | `render_phase`                 | Renderer render 前                 | 提供只读 render ctx，供 RenderGraph/pass 读取 GPU scene、present view 与 timeline                      | `RenderRuntimeRenderCtx`         |
 | `present`                      | render graph 提交后             | 把当前 swapchain image 交给 present queue                                                         | 不直接暴露 ctx                        |
@@ -230,11 +230,11 @@ Renderer 是业务编排层。它既不拥有 runtime，也不把具体子系统
 - `RenderLoop` 是唯一固定帧执行器，内部同时驱动完整循环与帧生命周期，再通过 `dyn Renderer` 调用具体业务 hook。
 - `Renderer` 是业务组合 owner；它静态持有具体子系统，并在 render 阶段决定 RenderGraph pass 顺序。
 - 子系统只实现自己的具体能力；生命周期、输入消费与渲染顺序均由拥有它的 Renderer 显式控制。
-- `World` 只应在 init / update / resize / shutdown 等允许可变借用的阶段修改；render 阶段不再修改 CPU scene。
+- `GameWorld` 只应在 init / update / resize / shutdown 等允许可变借用的阶段修改；render 阶段不再修改 CPU scene。
 - `EditorController` 只在 Renderer `update` 中以非阻塞、预算受限方式处理 Query / Command；selection 在 `after_prepare`
   拾取完成后通过 best-effort notification 发布，不把 Tauri WebView 或 desktop owner 引入 render / GPU 同步边界。
 - `prepare` 是 update 与 render 之间的语义翻译边界；它生成本帧 GPU scene、通过 runtime 私有
-  `RenderTlasManager` 更新 TLAS、刷新 per-frame data 和 descriptor 状态。
+  `SceneTlas` 更新 TLAS、刷新 per-frame data 和 descriptor 状态。
 - `after_prepare` 是显式例外窗口；它可以同步查询刚准备好的 GPU scene，但普通渲染工作仍应进入 `render` hook 和 RenderGraph。
 - Renderer / 子系统持有的 GPU 资源必须在 resize 或 shutdown ctx 中显式重建 / 释放，不能依赖 runtime destroy 后的 `Drop` 再访问
   Vulkan/VMA/WSI。

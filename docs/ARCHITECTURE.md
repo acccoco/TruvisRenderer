@@ -14,7 +14,7 @@ app ──> renderer ──> engine
 
 ## 三层职责
 
-- `engine/`：通用 Runtime、`RenderLoop`、`RenderThread`、RenderGraph、World、Vulkan RHI、窗口宿主及
+- `engine/`：通用 Runtime、`RenderLoop`、`RenderThread`、RenderGraph、GameWorld、Vulkan RHI、窗口宿主及
   shader 基础设施。Engine 不知道任何具体 Renderer 或 Tauri。
 - `renderer/`：具体 Renderer、Subsystem、Pass、Shader、产品 overlay 和传输无关的 typed ports。
   `TruvisRenderer`、Triangle、ShaderToy 和 Cornell Renderer 都属于此层。
@@ -52,13 +52,13 @@ app ──> renderer ──> engine
 
 ## 全局约束
 
-- `RenderRuntime` 拥有 `Gfx`、`World`、GPU resource/binding/timing owner、`RenderWorld`、present、command
+- `RenderRuntime` 拥有 `Gfx`、`GameWorld`、GPU resource/binding/timing owner、`RenderWorld`、present、command
   和同步资源；Renderer 与 Subsystem 只通过当前 phase 的窄 Ctx 使用能力。
 - 具体 Renderer 拥有 camera/input、overlay、selection 和渲染子系统，并显式决定 RenderGraph pass 顺序。
   `SubsystemLifecycle` 只约束 init/resize/shutdown，controller 不实现该 trait。
 - `truvis-renderer` 仅接收 `TruvisRendererPorts`。App 在 Tauri main thread 创建 ports，保留
   `TruvisFrontendPorts`，将 Renderer 侧 ports 移入 RenderThread factory。
-- CPU scene 只由 `World`/`SceneStore` 权威持有；GPU scene 是 prepare 后的派生状态。
+- CPU scene 只由 `GameWorld`/`SceneStore` 权威持有；GPU scene 是 prepare 后的派生状态。
 - Vulkan 对象只在 RenderThread 创建、使用和销毁。窗口 owner 持有 `RenderThread` handle，关闭时先回收
   Renderer/Runtime/Vulkan，再销毁 child HWND 和 Tauri parent。
 - 当前 `shader-packages.toml` 声明的 owner 方向为 `renderer -> engine`；通用校验器从 package 依赖闭包、

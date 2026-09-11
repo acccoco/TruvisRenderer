@@ -10,7 +10,7 @@ pub enum PathTracingDebugChannel {
     /// 该法线经过 `faceforward` 翻面，会随入射 ray 保持同侧；这是旧 `normal` 通道的兼容语义。
     ForwardNormal,
     /// 显示未经过 `faceforward` 翻面的 world-space 几何法线。
-    WorldNormal,
+    GameWorldNormal,
     /// 显示 mesh object/local space 中的插值顶点法线。
     ObjectNormal,
     /// 显示材质 base color / albedo。
@@ -53,7 +53,7 @@ impl PathTracingDebugChannel {
     pub const ALL: [Self; 21] = [
         Self::Final,
         Self::ForwardNormal,
-        Self::WorldNormal,
+        Self::GameWorldNormal,
         Self::ObjectNormal,
         Self::BaseColor,
         Self::NeeHdri,
@@ -78,7 +78,7 @@ impl PathTracingDebugChannel {
         match self {
             Self::Final => "final",
             Self::ForwardNormal => "forward normal",
-            Self::WorldNormal => "world normal",
+            Self::GameWorldNormal => "world normal",
             Self::ObjectNormal => "object normal",
             Self::BaseColor => "base color",
             Self::NeeHdri => "from NEE HDRI",
@@ -104,7 +104,7 @@ impl PathTracingDebugChannel {
         match self {
             Self::Final => 0,
             Self::ForwardNormal => 1,
-            Self::WorldNormal => 10,
+            Self::GameWorldNormal => 10,
             Self::ObjectNormal => 11,
             Self::BaseColor => 2,
             Self::NeeHdri => 4,

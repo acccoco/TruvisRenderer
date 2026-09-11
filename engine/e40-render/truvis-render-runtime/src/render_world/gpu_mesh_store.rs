@@ -46,7 +46,7 @@ struct SubmittedMeshUpload {
 
 /// 已通过 timeline 检测确认完成的 mesh GPU 资源。
 ///
-/// `RenderMeshManager` 接管该结构后，mesh 才会进入 `meshes` map，供 instance bridge
+/// `GpuMeshStore` 接管该结构后，mesh 才会进入 `meshes` map，供 instance bridge
 /// 解析为 render-side 几何数据。
 struct FinishedMeshUpload {
     handle: MeshHandle,
@@ -237,7 +237,7 @@ impl MeshUploadQueue {
         queue_ctx.gfx_queue().submit(vec![submit_info], None);
 
         log::trace!(
-            "RenderMeshManager: submitted mesh {:?} '{}' submeshes={} timeline={}",
+            "GpuMeshStore: submitted mesh {:?} '{}' submeshes={} timeline={}",
             handle,
             name,
             geometries.len(),
@@ -276,7 +276,7 @@ impl MeshUploadQueue {
             }
 
             // staging 和 scratch 只服务本次上传/build，timeline 到达后即可释放；
-            // geometry 与 BLAS 则转交给 RenderMeshManager，成为 render pass 可解析的数据。
+            // geometry 与 BLAS 则转交给 GpuMeshStore，成为 render pass 可解析的数据。
             let upload = self.pending_uploads.pop_front().unwrap();
             command_pool.free_command_buffers(device_ctx, vec![upload.command_buffer]);
             for staging_buffer in upload.staging_buffers {
@@ -295,7 +295,7 @@ impl MeshUploadQueue {
         finished_uploads
     }
 
-    /// 关闭上传队列并释放仍未交给 `RenderMeshManager` 的 pending 资源。
+    /// 关闭上传队列并释放仍未交给 `GpuMeshStore` 的 pending 资源。
     ///
     /// shutdown 路径允许等待 timeline，因为此时帧循环已经停止；等待完成后才能销毁
     /// command buffer、staging、scratch、geometry 和 BLAS。
@@ -445,7 +445,7 @@ impl UploadedMesh {
 /// 渲染侧 mesh 资产上传与 BLAS 缓存。
 ///
 /// 它把 `MeshHandle` 解析为光栅化和 ray tracing 共用的 GPU 几何数据。
-pub struct RenderMeshManager {
+pub struct GpuMeshStore {
     meshes: SecondaryMap<MeshHandle, UploadedMesh>,
     pending_meshes: HashSet<MeshHandle>,
     retired_resources: Vec<RetiredMesh>,
@@ -454,7 +454,7 @@ pub struct RenderMeshManager {
 }
 
 /// mesh 上传阶段对资源对账暴露的结构化结果。
-impl RenderMeshManager {
+impl GpuMeshStore {
     pub(crate) fn begin_frame(&mut self, current_frame_id: u64) {
         self.current_frame_id = current_frame_id;
     }
@@ -483,7 +483,7 @@ impl RenderMeshManager {
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
     ) {
-        let _span = tracy_client::span!("RenderMeshManager::sync_scene");
+        let _span = tracy_client::span!("GpuMeshStore::sync_scene");
         self.reclaim_retired_resources(resource_ctx, device_ctx);
 
         for handle in scene.mesh_handles() {
@@ -516,7 +516,7 @@ impl RenderMeshManager {
                 continue;
             }
             if self.meshes.contains_key(finished.handle) {
-                log::error!("RenderMeshManager: reject duplicate upload for immutable mesh {:?}", finished.handle);
+                log::error!("GpuMeshStore: reject duplicate upload for immutable mesh {:?}", finished.handle);
                 for geometry in finished.geometries {
                     geometry.destroy(resource_ctx, DestroyReason::DeferredCleanup);
                 }
@@ -580,7 +580,7 @@ impl RenderMeshManager {
         let blas_device_address = finished.blas.device_address(device_ctx);
         // 缓存 BLAS device address，后续构建 TLAS 时无需重新查询 Vulkan handle。
         log::trace!(
-            "RenderMeshManager: mesh {:?} '{}' is GPU ready, blas_address={:#x}",
+            "GpuMeshStore: mesh {:?} '{}' is GPU ready, blas_address={:#x}",
             finished.handle,
             finished.name,
             blas_device_address
@@ -602,7 +602,7 @@ impl RenderMeshManager {
         let mut retained = Vec::new();
         for retired in self.retired_resources.drain(..) {
             if current_frame_id.saturating_sub(retired.retired_frame_id) >= fif_count {
-                log::debug!("RenderMeshManager: reclaimed mesh {:?} after FIF window", retired.handle);
+                log::debug!("GpuMeshStore: reclaimed mesh {:?} after FIF window", retired.handle);
                 retired.mesh.destroy(resource_ctx, device_ctx, DestroyReason::DeferredCleanup);
             } else {
                 retained.push(retired);
@@ -626,7 +626,7 @@ impl RenderMeshManager {
     }
 }
 
-impl MeshRenderResolver for RenderMeshManager {
+impl MeshRenderResolver for GpuMeshStore {
     fn resolve_mesh(&self, handle: MeshHandle) -> Option<MeshRenderData<'_>> {
         let mesh = self.meshes.get(handle)?;
         Some(MeshRenderData {

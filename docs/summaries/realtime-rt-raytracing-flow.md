@@ -127,7 +127,7 @@ version。resize、DLSS reset、mode 变化、sky/emissive/analytic light 变化
 
 HDRI 和 sky 的采样与 PDF 查询统一走 `EnvMap::sample` / `EnvMap::pdf`。
 
-- 默认 `SkySamplingMode::Importance`：使用 `RenderSkyManager` 异步构建并上传的 Alias table。
+- 默认 `SkySamplingMode::Importance`：使用 `GpuSkyStore` 异步构建并上传的 Alias table。
 - `SkySamplingMode::Uniform`：强制回退 uniform sphere，用于 A/B 对比。
 - fallback sky：真实 sky GPU image 未 ready 前使用 1x1 均匀 distribution 和纯色 fallback 贴图。
 - 过渡态：真实 HDRI image 已 ready、Alias table 尚未 ready 时，继续显示真实 HDRI，但 PDF 使用 uniform sphere。
@@ -151,7 +151,7 @@ HDRI class 内部采样与 PDF 查询必须读取同一个 `EnvMap::pdf`；统�
 
 ## 自发光三角形采样
 
-自发光三角形由 `RenderEmissiveLightTable` 在 `RenderInstanceManager::prepare_render_data` 输出 active render data
+自发光三角形由 `RenderEmissiveLightTable` 在 `RenderInstanceTable::prepare_render_data` 输出 active render data
 之后、scene root buffer 上传之前构建并上传：
 
 - `emissive_triangle_lights`：world-space triangle record array。
@@ -183,7 +183,7 @@ light = emissive_triangle_lights[base + primitive_id]
 
 ## Analytic Light 采样
 
-analytic point / spot / area light 的 CPU 语义记录由 `SceneStore` 保存。`RenderAnalyticLightManager` 在 analytic
+analytic point / spot / area light 的 CPU 语义记录由 `SceneStore` 保存。`AnalyticLightTable` 在 analytic
 对账发现 analytic light revision 变化后读取 `SceneReadView`，分别上传 point / spot / area structured buffer，并在 scene root 中写入
 device address、count 与 `analytic_light_version`。Point / Spot 在 RT 中不是 delta light，而是半径固定为 `0.5`
 的 analytic sphere surface emitter；Area 是 `center + half_u + half_v` 描述的矩形单面 emitter。

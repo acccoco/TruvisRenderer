@@ -6,7 +6,7 @@
 
 `RenderRuntime::prepare` 是 CPU scene 到 GPU scene 的固定同步边界；完整身份转换、upload 和 ready/fallback 规则见
 [`scene-data-lifecycle.md`](scene-data-lifecycle.md)。prepare 完成后，Renderer 在 render hook 中读取
-`RenderSceneView` 和 runtime render state，构造本帧 RenderGraph；render pass 不再访问 `World`、`SceneStore`
+`RenderSceneView` 和 runtime render state，构造本帧 RenderGraph；render pass 不再访问 `GameWorld`、`SceneStore`
 或 render-side manager owner。
 
 RenderGraph 是按 Renderer 指定顺序执行的命令录制与同步辅助，不是自动调度器：
@@ -15,7 +15,7 @@ RenderGraph 是按 Renderer 指定顺序执行的命令录制与同步辅助，�
 - Renderer 决定完整业务顺序；具体渲染子系统只贡献自己的 pass 或 sub-flow。
 - 当前 graph 只跟踪 imported image 的访问与状态，不创建或拥有 image。
 - graph compile 通过线性扫描生成 image barrier、layout transition、epilogue barrier 和 semaphore submit 信息。
-- execution 通过 `GfxResourceAccess` 解析 image/image-view handle，不依赖 concrete `GfxResourceManager`。
+- execution 通过 `GfxResourceAccess` 解析 image/image-view handle，不依赖 concrete `GfxResourceRegistry`。
 
 ## 资源职责
 

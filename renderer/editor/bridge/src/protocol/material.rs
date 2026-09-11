@@ -24,7 +24,7 @@ pub enum CoverageModeDto {
 
 /// Web 可读取的完整材质 DTO。
 ///
-/// texture 字段仍是 World texture handle 的 opaque ID；当前第一阶段 Web 只展示绑定，
+/// texture 字段仍是 GameWorld texture handle 的 opaque ID；当前第一阶段 Web 只展示绑定，
 /// 不直接上传纹理或访问 GPU bindless handle。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct MaterialDto {
@@ -41,7 +41,7 @@ pub struct MaterialDto {
 
 /// `UpdateMaterial` 的绝对赋值 patch。
 ///
-/// 缺失字段保持当前 World 值；存在字段必须通过 Renderer 侧数值与领域校验。Web 在用户松开
+/// 缺失字段保持当前 GameWorld 值；存在字段必须通过 Renderer 侧数值与领域校验。Web 在用户松开
 /// 鼠标时发送一次 patch，不在拖动期间持续发送 preview command。
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
 pub struct MaterialPatch {

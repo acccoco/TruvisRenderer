@@ -98,7 +98,7 @@ impl Renderer for TriangleRenderer {
 
         let cmd = &self.cmds[*frame_label];
         cmd.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "triangle-graph");
-        compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
+        compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
         cmd.end();
 
         let submit_info = compiled_graph.build_submit_info(std::slice::from_ref(cmd));

@@ -8,7 +8,7 @@ use truvis_render_runtime::render_runtime::{RenderRuntimeRayCastCtx, RenderRunti
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_shader_binding::gpu;
 use truvis_world::{
-    World,
+    GameWorld,
     components::instance::Instance,
     components::material::{CoverageMode, MaterialClass, MaterialData},
     guid_new_type::MeshHandle,
@@ -50,7 +50,7 @@ pub struct TruvisRenderer {
 
     /// RenderThread 独占的 Tauri 桌面特权命令消费者。
     ///
-    /// 它只在 update 阶段短暂借用 `World`，确保文件选择结果不会让 Tauri 主线程、
+    /// 它只在 update 阶段短暂借用 `GameWorld`，确保文件选择结果不会让 Tauri 主线程、
     /// WebView 或 Tauri IPC owner 越过 CPU scene 权威边界。
     desktop_command_controller: DesktopCommandController,
 
@@ -61,7 +61,7 @@ impl TruvisRenderer {
     /// 使用 frontend 壳预先创建的 [`TruvisRendererPorts`] 构造渲染侧业务状态。
     ///
     /// Editor IPC 生命周期属于 Tauri desktop；本 Renderer 只拥有 Editor 协议和桌面特权
-    /// command 到权威 `World` 的非阻塞 controller，避免 RenderThread 同时承担窗口壳和
+    /// command 到权威 `GameWorld` 的非阻塞 controller，避免 RenderThread 同时承担窗口壳和
     /// 网络 owner 职责。
     pub fn new(ports: TruvisRendererPorts) -> Self {
         Self {
@@ -219,7 +219,7 @@ impl TruvisRenderer {
         self.overlay_ui.options_mut()
     }
 
-    fn request_model(world: &mut World, camera: &mut Camera) {
+    fn request_model(world: &mut GameWorld, camera: &mut Camera) {
         camera.position = glam::vec3(270.0, 194.0, -64.0);
         camera.euler_yaw_deg = 90.0;
         camera.euler_pitch_deg = 0.0;
@@ -287,7 +287,7 @@ impl TruvisRenderer {
         world.request_model_import(TruvisPath::assets_path("fbx/sponza/sponza.fbx"));
     }
 
-    fn spawn_material_test_cubes(world: &mut World) {
+    fn spawn_material_test_cubes(world: &mut GameWorld) {
         const MATERIAL_SOURCE: &str = "procedural://material-test-cubes";
         const CUBE_SCALE: f32 = 100.0;
 
@@ -376,7 +376,7 @@ impl TruvisRenderer {
         Self::spawn_emissive_cube_matrix(world, cube_mesh, EMISSIVE_CUBE_MATRIX_CONFIG);
     }
 
-    fn spawn_emissive_cube_matrix(world: &mut World, cube_mesh: MeshHandle, config: EmissiveCubeMatrixConfig) {
+    fn spawn_emissive_cube_matrix(world: &mut GameWorld, cube_mesh: MeshHandle, config: EmissiveCubeMatrixConfig) {
         let palette_specs = [
             EmissiveCubePaletteSpec {
                 name: "warm-amber",
@@ -471,7 +471,7 @@ impl TruvisRenderer {
         }
     }
 
-    fn clear_stale_selection(&mut self, world: &World) -> bool {
+    fn clear_stale_selection(&mut self, world: &GameWorld) -> bool {
         let Some(selection) = self.selected_submesh else {
             return false;
         };
@@ -664,7 +664,7 @@ impl Renderer for TruvisRenderer {
 
                 let cmd = self.realtime.compute_cmd(frame_label);
                 cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-compute-graph");
-                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
+                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
                 cmd.end();
                 compiled_graph.build_submit_info(std::slice::from_ref(cmd))
             }
@@ -681,7 +681,7 @@ impl Renderer for TruvisRenderer {
 
                 let cmd = self.offline.compute_cmd(frame_label);
                 cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "offline-compute-graph");
-                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
+                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
                 cmd.end();
                 compiled_graph.build_submit_info(std::slice::from_ref(cmd))
             }
@@ -733,7 +733,7 @@ impl Renderer for TruvisRenderer {
 
                 let cmd = self.realtime.present_cmd(frame_label);
                 cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-present-graph");
-                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
+                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
                 cmd.end();
                 compiled_graph.build_submit_info(std::slice::from_ref(cmd))
             }
@@ -780,7 +780,7 @@ impl Renderer for TruvisRenderer {
 
                 let cmd = self.offline.present_cmd(frame_label);
                 cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "offline-present-graph");
-                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
+                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
                 cmd.end();
                 compiled_graph.build_submit_info(std::slice::from_ref(cmd))
             }

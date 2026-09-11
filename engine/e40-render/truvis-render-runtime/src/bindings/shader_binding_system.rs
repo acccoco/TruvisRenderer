@@ -5,14 +5,14 @@ use truvis_gfx::gfx::GfxDeviceCtx;
 use crate::bindings::bindless_manager::{BindlessManager, BindlessSrvHandle};
 use crate::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use crate::bindings::sampler_manager::RenderSamplerManager;
-use crate::resources::gfx_resource_manager::GfxResourceManager;
+use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::GfxImageViewHandle;
 
 /// shader-visible binding 系统的长期 owner。
 ///
 /// 它只负责全局 descriptor set、bindless slot 和静态 sampler 的生命周期与更新。
-/// 资源对象本身仍由 `GfxResourceManager` 持有；这里在刷新 bindless descriptor 时
+/// 资源对象本身仍由 `GfxResourceRegistry` 持有；这里在刷新 bindless descriptor 时
 /// 只临时借用资源 manager 查询 image view。
 pub struct ShaderBindingSystem {
     global_descriptor_sets: GlobalDescriptorSets,
@@ -50,9 +50,9 @@ impl ShaderBindingSystem {
     }
 
     #[inline]
-    pub fn prepare_render_data(&mut self, ctx: GfxDeviceCtx<'_>, gfx_resource_manager: &GfxResourceManager) {
+    pub fn prepare_render_data(&mut self, ctx: GfxDeviceCtx<'_>, gfx_resource_registry: &GfxResourceRegistry) {
         let bindless_target = self.global_descriptor_sets.bindless_target();
-        self.bindless_manager.prepare_render_data(ctx, gfx_resource_manager, bindless_target);
+        self.bindless_manager.prepare_render_data(ctx, gfx_resource_registry, bindless_target);
     }
 
     #[inline]

@@ -1,6 +1,6 @@
 //! 一次性 CPU asset loader 与完成事件系统。
 //!
-//! 本 crate 位于 World 层和 RenderRuntime 之间：[`AssetHub`](asset_hub::AssetHub)
+//! 本 crate 位于 GameWorld 层和 RenderRuntime 之间：[`AssetHub`](asset_hub::AssetHub)
 //! 只负责提交 texture/model CPU load task，并把完成结果作为一次性事件交给
 //! `truvis-world` 的 `SceneAssetIngestor`。长期 scene identity、texture 去重、
 //! model ingest 协调和 render upload 都不属于 asset 层。

@@ -20,7 +20,7 @@ pub(crate) trait MaterialSlotResolver {
         self.resolve_material_slot(handle).is_some()
     }
 
-    /// 当前资源对账发布的渲染侧材质副本；场景派生不回读 CPU ResourceSystem。
+    /// 当前资源对账发布的渲染侧材质副本；场景派生不回读 CPU AssetSystem。
     fn material_data(&self, handle: MaterialHandle) -> Option<&MaterialData>;
 }
 

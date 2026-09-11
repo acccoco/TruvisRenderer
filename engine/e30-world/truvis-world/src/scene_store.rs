@@ -9,13 +9,13 @@ use crate::components::instance::Instance;
 use crate::components::material::MaterialData;
 use crate::edit_error::{SceneEditError, SceneHandleKind};
 use crate::guid_new_type::{InstanceHandle, LightHandle, MaterialHandle, MeshHandle, TextureHandle};
-use crate::resource_system::ResourceStore;
+use crate::asset_system::AssetStore;
 
 /// CPU scene 中的 sky / environment 权威状态。
 ///
 /// 这里仅保存 Renderer 可编辑的语义状态：是否启用、引用的 scene texture 以及语义版本。
 /// GPU SRV、fallback texture、importance distribution 和 retired buffer 都属于 render-side
-/// `RenderSkyManager`，不会进入 `SceneStore`。
+/// `GpuSkyStore`，不会进入 `SceneStore`。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneSkyState {
     pub enabled: bool,
@@ -35,17 +35,17 @@ impl Default for SceneSkyState {
 
 /// CPU scene 的只读视图。
 ///
-/// 该 view 是 `World` 暴露给 render-side prepare 的窄接口：调用方只能读取当前
+/// 该 view 是 `GameWorld` 暴露给 render-side prepare 的窄接口：调用方只能读取当前
 /// scene 快照，不能构造或修改 `SceneStore` owner。它不保存跨帧状态，也不拥有任何
 /// loader / GPU resource。
 #[derive(Clone, Copy)]
 pub struct SceneReadView<'a> {
     scene: &'a SceneStore,
-    resources: &'a ResourceStore,
+    resources: &'a AssetStore,
 }
 
 impl<'a> SceneReadView<'a> {
-    pub(crate) fn new(scene: &'a SceneStore, resources: &'a ResourceStore) -> Self {
+    pub(crate) fn new(scene: &'a SceneStore, resources: &'a AssetStore) -> Self {
         Self { scene, resources }
     }
 
@@ -180,7 +180,7 @@ impl<'a> SceneReadView<'a> {
     /// 查询直接引用指定 material 的 instance。
     ///
     /// 结果只表达 CPU scene 语义依赖；instance 是否已经 GPU-ready 仍由 render-side
-    /// `RenderInstanceManager` 和 resolver 在 prepare 阶段判断。
+    /// `RenderInstanceTable` 和 resolver 在 prepare 阶段判断。
     pub fn instances_using_material(&self, material: MaterialHandle) -> impl Iterator<Item = InstanceHandle> + 'a {
         self.scene.material_to_instances.get(&material).into_iter().flat_map(|instances| instances.iter().copied())
     }
@@ -200,7 +200,7 @@ impl<'a> SceneReadView<'a> {
 /// CPU 侧 runtime scene 的所有者。
 ///
 /// `SceneStore` 只保存 live instance / light / sky 以及场景关系索引。mesh、material、texture
-/// 的身份与内容由同一个 `World` 中的 `ResourceSystem` 持有；这里仅通过 handle 建立组合关系。
+/// 的身份与内容由同一个 `GameWorld` 中的 `AssetSystem` 持有；这里仅通过 handle 建立组合关系。
 /// 它不创建 GPU 资源，也不解析资源在 shader 中的可见绑定。
 #[derive(Default)]
 pub(crate) struct SceneStore {
@@ -262,13 +262,13 @@ impl SceneStore {
     }
 
     fn bump_sky_revision(&mut self) {
-        // sky revision 只表达 CPU 环境光语义变化；GPU distribution 版本仍由 RenderSkyManager
+        // sky revision 只表达 CPU 环境光语义变化；GPU distribution 版本仍由 GpuSkyStore
         // 独立维护，并在 scene root 中单独写入。
         self.sky_state.revision = self.sky_state.revision.saturating_add(1).max(1);
     }
 
     /// 更新 CPU sky 引用的 scene texture。
-    pub fn update_sky_texture(&mut self, texture: Option<TextureHandle>, resources: &ResourceStore) -> Result<(), SceneEditError> {
+    pub fn update_sky_texture(&mut self, texture: Option<TextureHandle>, resources: &AssetStore) -> Result<(), SceneEditError> {
         if let Some(texture) = texture {
             if !resources.contains_texture(texture) {
                 return Err(SceneEditError::MissingDependency { kind: SceneHandleKind::Texture });
@@ -298,7 +298,7 @@ impl SceneStore {
     ///
     /// 注册只改变 CPU 语义状态；mesh/material asset 是否已经 GPU-ready 由 render-side
     /// bridge 在同步时检查。
-    pub fn register_instance(&mut self, resources: &ResourceStore, instance: Instance) -> Result<InstanceHandle, SceneEditError> {
+    pub fn register_instance(&mut self, resources: &AssetStore, instance: Instance) -> Result<InstanceHandle, SceneEditError> {
         self.validate_instance_dependencies(resources, &instance)?;
         let handle = self.all_instances.insert(instance);
         self.instance_revisions.insert(handle, 1);
@@ -311,7 +311,7 @@ impl SceneStore {
     /// 从 CPU scene 移除 live instance。
     ///
     /// 返回的 instance 数据只代表 CPU 记录。已建立的 GPU-side 映射会在后续 prepare/sync
-    /// 阶段被 `RenderInstanceManager` 识别为 stale 并回收。
+    /// 阶段被 `RenderInstanceTable` 识别为 stale 并回收。
     pub fn remove_instance(&mut self, handle: InstanceHandle) -> Result<(), SceneEditError> {
         let Some(instance) = self.all_instances.remove(handle) else {
             return Err(SceneEditError::StaleHandle {
@@ -354,7 +354,7 @@ impl SceneStore {
     /// mesh 反向依赖保持创建时的关系不变。
     pub fn update_instance_materials(
         &mut self,
-        resources: &ResourceStore,
+        resources: &AssetStore,
         handle: InstanceHandle,
         materials: Vec<MaterialHandle>,
     ) -> Result<(), SceneEditError> {
@@ -417,7 +417,7 @@ impl SceneStore {
 
 // 场景关系索引与 edit 校验
 impl SceneStore {
-    fn validate_material_handles(&self, resources: &ResourceStore, materials: &[MaterialHandle]) -> Result<(), SceneEditError> {
+    fn validate_material_handles(&self, resources: &AssetStore, materials: &[MaterialHandle]) -> Result<(), SceneEditError> {
         for &material in materials {
             if !resources.contains_material(material) {
                 return Err(SceneEditError::MissingDependency {
@@ -428,7 +428,7 @@ impl SceneStore {
         Ok(())
     }
 
-    fn validate_instance_dependencies(&self, resources: &ResourceStore, instance: &Instance) -> Result<(), SceneEditError> {
+    fn validate_instance_dependencies(&self, resources: &AssetStore, instance: &Instance) -> Result<(), SceneEditError> {
         if !resources.contains_mesh(instance.mesh) {
             return Err(SceneEditError::MissingDependency {
                 kind: SceneHandleKind::Mesh,
@@ -440,7 +440,7 @@ impl SceneStore {
 
     fn validate_instance_material_count(
         &self,
-        resources: &ResourceStore,
+        resources: &AssetStore,
         mesh: MeshHandle,
         material_count: usize,
     ) -> Result<(), SceneEditError> {
@@ -539,7 +539,7 @@ mod tests {
 
     #[test]
     fn rejects_mesh_without_submeshes() {
-        let mut resources = ResourceStore::default();
+        let mut resources = AssetStore::default();
         let err = resources.register_mesh(test_mesh(0)).unwrap_err();
         assert!(matches!(err, SceneEditError::InvalidMeshData { .. }));
     }
@@ -547,7 +547,7 @@ mod tests {
     #[test]
     fn validates_instance_material_count_against_mesh_submeshes() {
         let mut scene = SceneStore::new();
-        let mut resources = ResourceStore::default();
+        let mut resources = AssetStore::default();
         let mesh = resources.register_mesh(test_mesh(2)).unwrap();
         let material_a = resources.register_material(test_material("a")).unwrap();
         let material_b = resources.register_material(test_material("b")).unwrap();
@@ -578,7 +578,7 @@ mod tests {
     #[test]
     fn tracks_reverse_references_until_instance_is_removed() {
         let mut scene = SceneStore::new();
-        let mut resources = ResourceStore::default();
+        let mut resources = AssetStore::default();
         let mesh = resources.register_mesh(test_mesh(1)).unwrap();
         let material = resources.register_material(test_material("material")).unwrap();
 

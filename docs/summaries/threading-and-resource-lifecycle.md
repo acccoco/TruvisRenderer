@@ -88,8 +88,8 @@ flowchart LR
 - Tauri `select_hdri` 使用非阻塞原生 dialog；`TruvisDesktopState` 只持有 sender 和 dialog-open 原子状态，不持有 scene
   投影，也不在持有 desktop resources mutex 时打开 dialog 或等待 reply。
 - HDRI 的本地 `PathBuf` 只通过容量为 `1` 的私有 `DesktopCommandSender` 进入 RenderThread，不进入通用 Editor DTO。
-  `DesktopCommandController` 每帧最多处理一条，并且只在 `TruvisRenderer::update` 中短暂借用 `World`。
-- desktop oneshot reply 只确认 `World::request_sky_texture_from_path` 已接受 CPU scene mutation，不等待 asset decode、
+  `DesktopCommandController` 每帧最多处理一条，并且只在 `TruvisRenderer::update` 中短暂借用 `GameWorld`。
+- desktop oneshot reply 只确认 `GameWorld::request_sky_texture_from_path` 已接受 CPU scene mutation，不等待 asset decode、
   texture upload 或 sky distribution；Tauri main thread、WebView 和 Editor IPC owner 仍不访问 Vulkan。
 - GPU 同步优先通过 RenderGraph、binary semaphore 和 frame timeline 表达。
 - `RenderLoop` 的默认 120 FPS 软件限帧仍在 RenderThread 内执行：剩余时间大于 1 ms 时使用
@@ -121,34 +121,34 @@ flowchart LR
 - Frame：command buffer、per-frame buffer、FrameLabel / timeline state。
 - Swapchain：swapchain image/view、present semaphore。
 - Renderer / Subsystem targets：RT working target、main view target、GBuffer、selection outline mask 等窗口尺寸资源由具体
-  Renderer/子系统持有，并在 init / resize / shutdown 阶段通过 ctx 中的 `GfxResourceManager` 与
+  Renderer/子系统持有，并在 init / resize / shutdown 阶段通过 ctx 中的 `GfxResourceRegistry` 与
   `ShaderBindingSystem` 显式创建、注册或释放。
 - Asset：`AssetHub` 只持有 texture / model loader task handle、后台任务状态和完成事件队列，并负责 Assimp / glTF model 到 owned
   CPU payload 的导入；HDR/EXR texture payload 以共享 RGBA16F 保存，普通图片以共享 RGBA8 保存。
   `SceneAssetIngestor` 把 loader 结果翻译为 CPU resource handle 事件；`RenderWorld` 内部的
-  `RenderAssetUploadQueue` 统一持有 texture image 与 sky distribution 的 transfer command pool/timeline，
-  `RenderTextureManager` 持有完成后的 texture GPU image/view/bindless 绑定；
-  `SceneStore` 保存 mesh 的 submesh metadata 和 instance material 对齐约束；`RenderMeshManager` 持有每个 submesh 的 vertex/index buffer、
-  `RtGeometry`、mesh 级 BLAS 和 GPU ready 状态；`RenderMaterialManager` 管理 material
+  `GpuAssetUploadQueue` 统一持有 texture image 与 sky distribution 的 transfer command pool/timeline，
+  `GpuTextureStore` 持有完成后的 texture GPU image/view/bindless 绑定；
+  `SceneStore` 保存 mesh 的 submesh metadata 和 instance material 对齐约束；`GpuMeshStore` 持有每个 submesh 的 vertex/index buffer、
+  `RtGeometry`、mesh 级 BLAS 和 GPU ready 状态；`GpuMaterialStore` 管理 material
   GPU buffer、稳定 slot 以及 `MaterialHandle -> stable slot` 映射；Renderer 通过
-  `World::request_model_import` 拿到 `ModelImportHandle`，ready model CPU payload 在 `World::poll_asset_loads`
-  内部由 `SceneAssetIngestor` 自动变为 runtime instances；facade 内部通过 `SceneAssetIngestor` 把 prefab 引用解析为 CPU resource handle；`RenderInstanceManager`
+  `GameWorld::request_model_import` 拿到 `ModelImportHandle`，ready model CPU payload 在 `GameWorld::poll_asset_loads`
+  内部由 `SceneAssetIngestor` 自动变为 runtime instances；facade 内部通过 `SceneAssetIngestor` 把 prefab 引用解析为 CPU resource handle；`RenderInstanceTable`
   持有 runtime instance 到稳定 GPU instance slot 的映射。CPU scene 删除 texture/mesh/material 后，对应 render manager
   负责移除 ready cache 或延迟回收 slot；已经提交但尚未完成的 texture/mesh upload 在 timeline 到达后只销毁资源，不重新发布 stale handle。
 - Scene GPU：runtime 私有 `RenderWorld` 持有 render-side texture / mesh / material / instance / sky / emissive managers、
-  instance / geometry / light / indirect buffer 和当前 FIF 的 raster draw cache，并通过内部 `RenderTlasManager`
-  持有 per-FIF TLAS；`RenderSceneView` 只向 render pass 暴露只读 scene 快照。默认 sky 由 `World` 注册为
-  `TextureHandle` 并写入 `SceneStore::SceneSkyState`，通过 `RenderTextureManager` 异步上传，并由
-  `RenderSkyManager` 根据 scene sky state 提供 fallback、真实 sky binding 和 distribution，并拥有
+  instance / geometry / light / indirect buffer 和当前 FIF 的 raster draw cache，并通过内部 `SceneTlas`
+  持有 per-FIF TLAS；`RenderSceneView` 只向 render pass 暴露只读 scene 快照。默认 sky 由 `GameWorld` 注册为
+  `TextureHandle` 并写入 `SceneStore::SceneSkyState`，通过 `GpuTextureStore` 异步上传，并由
+  `GpuSkyStore` 根据 scene sky state 提供 fallback、真实 sky binding 和 distribution，并拥有
   distribution worker、request generation 与 active/retired 状态。旧 distribution 交给
-  `GfxResourceManager` 按退休 frame id 跨过 FIF 后销毁，stale 未发布 buffer 在 transfer timeline 完成后立即销毁。
+  `GfxResourceRegistry` 按退休 frame id 跨过 FIF 后销毁，stale 未发布 buffer 在 transfer timeline 完成后立即销毁。
 - ImGui：font texture、per-frame GUI mesh buffer、当前只包含 font view 的 texture map 都由 `renderer-imgui::ImGuiSubsystem`
   持有；debug image handle 不进入 ImGui 生命周期，由 `renderer-rendering` 的 realtime/offline subsystem 持有并在当前 present graph 内短暂导入。
 - RenderGraph：按帧导入的 image 状态引用与同步计划；图内 transient image/buffer 是未来能力，不作为当前资源生命周期类别。
 
 ## 创建路径
 
-- `RenderRuntime::new` 初始化 `Gfx`，创建 `World`、`GfxResourceManager`、`ShaderBindingSystem`、`FrameTiming`、
+- `RenderRuntime::new` 初始化 `Gfx`，创建 `GameWorld`、`GfxResourceRegistry`、`ShaderBindingSystem`、`FrameTiming`、
   `PerFrameGpuData` 与 runtime-owned render state。
 - `RenderRuntime::init_after_window` 创建 surface、swapchain 和 `SwapchainPresenter`。
 - `RenderLoop` 创建 `RenderRuntime` 并把 `RenderRuntimeInitCtx` 包装为 `RendererInitCtx` 交给 Renderer hooks。
@@ -166,8 +166,8 @@ flowchart LR
 ## 销毁路径
 
 `RenderWorld` 的资产 shutdown 顺序固定为：先停止并 join `SkyDistributionBuilder`，再等待共享
-`RenderAssetUploadQueue` timeline 并释放 pending staging/image/buffer，最后销毁
-`RenderSkyManager` 已发布的 active/retired/fallback 资源与 `RenderTextureManager` ready images。
+`GpuAssetUploadQueue` timeline 并释放 pending staging/image/buffer，最后销毁
+`GpuSkyStore` 已发布的 active/retired/fallback 资源与 `GpuTextureStore` ready images。
 这保证 CPU producer、transfer queue 和 shader-visible owner 不会交叉销毁。
 
 桌面窗口的外层销毁顺序固定为：`TruvisDesktopState::shutting_down` 先阻止新 dialog 和 Editor invoke → RenderThread 上的
@@ -179,8 +179,8 @@ Tauri/Tao drop WebView 与 top-level HWND。
 - `RenderLoop` 内部 shutdown：RenderLoop 等待 GPU idle 后，用 `RendererShutdownCtx` 调用具体 `Renderer`；
   Renderer 在该 hook 内按自己的资源依赖顺序完成所有子系统 shutdown。
 - Renderer / 子系统 shutdown 必须在 `RenderRuntime::destroy()` 释放 runtime 子资源之前释放自己持有的 GPU 资源；需要 manager
-  或 shader-visible binding 访问时通过 shutdown context 使用 `GfxResourceManager` 与 `ShaderBindingSystem`。
-- manager-owned image/view 只能通过 `GfxResourceManager` 释放，manager 负责 image-view-before-image、延迟销毁队列与
+  或 shader-visible binding 访问时通过 shutdown context 使用 `GfxResourceRegistry` 与 `ShaderBindingSystem`。
+- manager-owned image/view 只能通过 `GfxResourceRegistry` 释放，manager 负责 image-view-before-image、延迟销毁队列与
   `DestroyReason` 诊断。
 - runtime destroy：`gfx.wait_idel()` -> release present/assets/GPU scene/cmd/runtime resources -> `gfx.destroy()`。
 - `gfx.destroy()` 会先释放内部 device child，再在 Vulkan device/instance/root 销毁前关闭 Streamline runtime。

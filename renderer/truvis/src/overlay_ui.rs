@@ -11,7 +11,7 @@ use renderer_render_ui::RenderControlsOverlay;
 use renderer_rendering::{OfflineRenderSettings, PathTracingCommonSettings, RealtimeRenderSettings, RenderMode};
 use truvis_render_runtime::ray_cast::RayCastResult;
 use truvis_render_runtime::state::dlss_options::DlssOptions;
-use truvis_world::World;
+use truvis_world::GameWorld;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
 
 use crate::truvis_renderer::ClickRayCastProbe;
@@ -483,7 +483,7 @@ pub(crate) struct RenderControlsData<'a> {
 
 pub(crate) struct RaycastOverlayData<'a> {
     pub(crate) probe: &'a ClickRayCastProbe,
-    pub(crate) world: &'a World,
+    pub(crate) world: &'a GameWorld,
 }
 
 pub(crate) struct DebugImageSelectionData<'a> {

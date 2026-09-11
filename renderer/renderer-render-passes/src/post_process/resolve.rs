@@ -220,7 +220,7 @@ impl ResolvePass {
         params: &ResolvePassData,
     ) {
         let src_view = record_ctx
-            .gfx_resource_manager
+            .gfx_resource_registry
             .get_image_view(params.render_target)
             .expect("ResolvePass: source image view not found")
             .handle();

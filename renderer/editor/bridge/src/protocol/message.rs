@@ -6,7 +6,7 @@ use crate::protocol::{
     SceneVersion, SelectionDto,
 };
 
-/// 不修改 World 的 Editor 查询。
+/// 不修改 GameWorld 的 Editor 查询。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(tag = "type", rename_all = "snake_case")]
@@ -26,7 +26,7 @@ pub enum EditorQuery {
     },
 }
 
-/// 修改 CPU World 权威状态的 Editor 命令。
+/// 修改 CPU GameWorld 权威状态的 Editor 命令。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(tag = "type", rename_all = "snake_case")]

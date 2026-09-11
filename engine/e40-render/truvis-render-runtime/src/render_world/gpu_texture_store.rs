@@ -14,17 +14,17 @@ use truvis_world::SceneReadView;
 
 use crate::bindings::bindless_manager::BindlessSrvHandle;
 use crate::bindings::shader_binding_system::ShaderBindingSystem;
-use crate::render_world::render_asset_upload_queue::{CompletedTextureUpload, RenderAssetUploadQueue};
+use crate::render_world::gpu_asset_upload_queue::{CompletedTextureUpload, GpuAssetUploadQueue};
 use crate::render_world::texture_resolver::{TextureBinding, TextureResolver};
-use crate::resources::gfx_resource_manager::GfxResourceManager;
+use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 
 /// shader 可见的纹理绑定缓存。
 ///
-/// `image_handle`/`view_handle` 归 `GfxResourceManager` 管理，`srv_handle` 是 bindless 表中的稳定引用。
+/// `image_handle`/`view_handle` 归 `GfxResourceRegistry` 管理，`srv_handle` 是 bindless 表中的稳定引用。
 /// 材质解析只需要后两者，不直接接触上传队列或 loader owner。
 #[derive(Clone, Copy)]
 pub struct UploadedAssetTexture {
-    /// 注册到 `GfxResourceManager` 的 image owner handle。
+    /// 注册到 `GfxResourceRegistry` 的 image owner handle。
     pub image_handle: GfxImageHandle,
     /// shader SRV 使用的 image view handle。
     pub view_handle: GfxImageViewHandle,
@@ -38,14 +38,14 @@ pub struct UploadedAssetTexture {
 ///
 /// 它是 `TextureHandle -> shader texture binding` 的唯一转换点。加载失败或尚未完成上传时，
 /// `TextureResolver` 会返回 fallback 纹理，使材质 GPU 数据始终可被 shader 安全读取。
-pub struct RenderTextureManager {
+pub struct GpuTextureStore {
     textures: SecondaryMap<TextureHandle, UploadedAssetTexture>,
     pending_textures: HashSet<TextureHandle>,
     fallback: UploadedAssetTexture,
     current_frame_id: u64,
 }
 
-impl RenderTextureManager {
+impl GpuTextureStore {
     pub(crate) fn begin_frame(&mut self, current_frame_id: u64) {
         self.current_frame_id = current_frame_id;
     }
@@ -58,18 +58,18 @@ impl RenderTextureManager {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
     ) -> Self {
-        let _span = tracy_client::span!("RenderTextureManager::new");
+        let _span = tracy_client::span!("GpuTextureStore::new");
 
         let fallback = {
-            let _span = tracy_client::span!("RenderTextureManager::new/fallback_texture");
+            let _span = tracy_client::span!("GpuTextureStore::new/fallback_texture");
             Self::create_fallback_texture(
                 resource_ctx,
                 device_ctx,
                 immediate_ctx,
-                gfx_resource_manager,
+                gfx_resource_registry,
                 shader_binding_system,
             )
         };
@@ -86,7 +86,7 @@ impl RenderTextureManager {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
     ) -> UploadedAssetTexture {
         // fallback 使用醒目的 1x1 洋红色纹理，目的是让缺失/未就绪纹理在画面中容易定位；
@@ -95,8 +95,8 @@ impl RenderTextureManager {
         let image = GfxImage::from_rgba8(resource_ctx, immediate_ctx, 1, 1, &pixels, "FallbackTexture");
         let image_format = image.format();
 
-        let image_handle = gfx_resource_manager.register_image(image);
-        let view_handle = gfx_resource_manager.get_or_create_image_view(
+        let image_handle = gfx_resource_registry.register_image(image);
+        let view_handle = gfx_resource_registry.get_or_create_image_view(
             device_ctx,
             image_handle,
             GfxImageViewDesc::new_2d(image_format, vk::ImageAspectFlags::COLOR),
@@ -123,9 +123,9 @@ impl RenderTextureManager {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-        upload_queue: &mut RenderAssetUploadQueue,
+        upload_queue: &mut GpuAssetUploadQueue,
     ) {
-        let _span = tracy_client::span!("RenderTextureManager::submit_uploads");
+        let _span = tracy_client::span!("GpuTextureStore::submit_uploads");
         for handle in scene.texture_handles() {
             if !self.needs_upload(handle) {
                 continue;
@@ -151,10 +151,10 @@ impl RenderTextureManager {
         scene: SceneReadView<'_>,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
     ) {
-        let _span = tracy_client::span!("RenderTextureManager::publish_completed_uploads");
+        let _span = tracy_client::span!("GpuTextureStore::publish_completed_uploads");
         for completed in completed_uploads {
             let handle = completed.handle;
             let image = completed.image;
@@ -164,13 +164,13 @@ impl RenderTextureManager {
                 continue;
             }
             if self.textures.contains_key(handle) {
-                log::error!("RenderTextureManager: reject duplicate upload for immutable texture {:?}", handle);
+                log::error!("GpuTextureStore: reject duplicate upload for immutable texture {:?}", handle);
                 image.destroy(resource_ctx, DestroyReason::DeferredCleanup);
                 continue;
             }
             self.install_uploaded_texture(
                 device_ctx,
-                gfx_resource_manager,
+                gfx_resource_registry,
                 shader_binding_system,
                 handle,
                 image,
@@ -185,7 +185,7 @@ impl RenderTextureManager {
     pub fn remove_textures(
         &mut self,
         handles: &[TextureHandle],
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
     ) {
         for &handle in handles {
@@ -194,7 +194,7 @@ impl RenderTextureManager {
                 continue;
             };
             shader_binding_system.unregister_srv(texture.view_handle);
-            gfx_resource_manager.release_image_deferred(texture.image_handle, self.current_frame_id);
+            gfx_resource_registry.release_image_deferred(texture.image_handle, self.current_frame_id);
         }
     }
 
@@ -205,7 +205,7 @@ impl RenderTextureManager {
     pub fn remove_stale_textures(
         &mut self,
         scene: SceneReadView<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
     ) -> bool {
         let live_handles = scene.texture_handles().collect::<HashSet<_>>();
@@ -220,7 +220,7 @@ impl RenderTextureManager {
 
         self.remove_textures(
             &stale_handles,
-            gfx_resource_manager,
+            gfx_resource_registry,
             shader_binding_system,
         );
         true
@@ -229,7 +229,7 @@ impl RenderTextureManager {
     fn install_uploaded_texture(
         &mut self,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
         handle: TextureHandle,
         image: GfxImage,
@@ -237,8 +237,8 @@ impl RenderTextureManager {
         let image_format = image.format();
         // 只有上传完成的 image 才进入全局资源管理器和 bindless 表。
         // 从这一步开始，材质桥接层解析同一个 TextureHandle 时会拿到真实 SRV。
-        let image_handle = gfx_resource_manager.register_image(image);
-        let view_handle = gfx_resource_manager.get_or_create_image_view(
+        let image_handle = gfx_resource_registry.register_image(image);
+        let view_handle = gfx_resource_registry.get_or_create_image_view(
             device_ctx,
             image_handle,
             GfxImageViewDesc::new_2d(image_format, vk::ImageAspectFlags::COLOR),
@@ -268,12 +268,12 @@ impl RenderTextureManager {
         mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
     ) {
         for (_, texture) in self.textures.drain() {
             shader_binding_system.unregister_srv(texture.view_handle);
-            gfx_resource_manager.release_image_immediate(
+            gfx_resource_registry.release_image_immediate(
                 resource_ctx,
                 device_ctx,
                 texture.image_handle,
@@ -282,7 +282,7 @@ impl RenderTextureManager {
         }
 
         shader_binding_system.unregister_srv(self.fallback.view_handle);
-        gfx_resource_manager.release_image_immediate(
+        gfx_resource_registry.release_image_immediate(
             resource_ctx,
             device_ctx,
             self.fallback.image_handle,
@@ -291,7 +291,7 @@ impl RenderTextureManager {
     }
 }
 
-impl TextureResolver for RenderTextureManager {
+impl TextureResolver for GpuTextureStore {
     fn is_texture_ready(&self, handle: TextureHandle) -> bool {
         self.textures.contains_key(handle)
     }

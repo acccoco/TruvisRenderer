@@ -66,7 +66,7 @@ impl AccumPass {
 
     pub fn exec(&self, cmd: &GfxCommandBuffer, data: AccumPassData, record_ctx: &RenderPassRecordCtx<'_>) {
         let image_view = |handle| {
-            record_ctx.gfx_resource_manager.get_image_view(handle).expect("AccumPass: image view not found").handle()
+            record_ctx.gfx_resource_registry.get_image_view(handle).expect("AccumPass: image view not found").handle()
         };
         let image_info =
             |view| vec![vk::DescriptorImageInfo::default().image_layout(vk::ImageLayout::GENERAL).image_view(view)];

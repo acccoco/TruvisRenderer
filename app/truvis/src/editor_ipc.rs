@@ -1,7 +1,7 @@
 //! Tauri WebView 到 RenderThread 的 Editor IPC owner。
 //!
 //! 本模块只负责 Tauri invoke、通知转发和请求超时；领域请求仍由 RenderThread 上的
-//! `EditorController` 解释，CPU `World` 与 Vulkan 对象不会进入 desktop state。
+//! `EditorController` 解释，CPU `GameWorld` 与 Vulkan 对象不会进入 desktop state。
 
 use std::sync::Mutex;
 use std::time::Duration;

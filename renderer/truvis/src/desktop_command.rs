@@ -2,13 +2,13 @@
 //!
 //! 本模块只传递不能进入通用 Editor DTO 的本地桌面能力。sender 属于 Tauri
 //! `TruvisDesktopState`，receiver 由 RenderThread 上的 `DesktopCommandController`
-//! 独占；路径不会序列化到 Web，也不会让 Tauri IPC owner 接触 `World`。
+//! 独占；路径不会序列化到 Web，也不会让 Tauri IPC owner 接触 `GameWorld`。
 
 use std::path::PathBuf;
 
 use tokio::sync::{mpsc, oneshot};
 
-use truvis_world::{World, WorldEditError};
+use truvis_world::{GameWorld, WorldEditError};
 
 /// 私有桌面命令队列容量。
 ///
@@ -40,7 +40,7 @@ enum DesktopCommand {
 /// Tauri `TruvisDesktopState` 持有的命令提交端。
 ///
 /// sender 可以被 async command 临时 clone；它不保存 scene 状态，也不能直接访问
-/// `World`。RenderThread receiver 关闭后，所有后续提交必须立即失败。
+/// `GameWorld`。RenderThread receiver 关闭后，所有后续提交必须立即失败。
 #[derive(Clone)]
 pub struct DesktopCommandSender {
     /// 指向 RenderThread 单消费者队列的有界 sender。
@@ -77,7 +77,7 @@ pub(crate) struct DesktopCommandUpdate {
 
 /// RenderThread 独占的桌面命令消费者。
 ///
-/// 每帧最多处理一条命令，并且只有这里可以把本地 `PathBuf` 交给权威 `World`。
+/// 每帧最多处理一条命令，并且只有这里可以把本地 `PathBuf` 交给权威 `GameWorld`。
 /// shutdown 时先关闭 receiver；队列中尚未处理的 command 随后被丢弃，其 oneshot
 /// sender 被释放，使等待中的 Tauri command 得到明确的 channel-closed 结果。
 pub(crate) struct DesktopCommandController {
@@ -93,7 +93,7 @@ impl DesktopCommandController {
     }
 
     /// 在 RenderThread update 阶段非阻塞处理至多一条命令。
-    pub(crate) fn process_next(&mut self, world: &mut World) -> DesktopCommandUpdate {
+    pub(crate) fn process_next(&mut self, world: &mut GameWorld) -> DesktopCommandUpdate {
         let command = match self.receiver.try_recv() {
             Ok(command) => command,
             Err(mpsc::error::TryRecvError::Empty | mpsc::error::TryRecvError::Disconnected) => {
@@ -126,7 +126,7 @@ impl DesktopCommandController {
         while self.receiver.try_recv().is_ok() {}
     }
 
-    /// 把 World 错误转换为可展示但不泄露本机完整路径的桌面错误。
+    /// 把 GameWorld 错误转换为可展示但不泄露本机完整路径的桌面错误。
     fn world_edit_error_message(error: WorldEditError) -> String {
         match error {
             WorldEditError::FilesystemCanonicalizeFailed { error, .. } => {

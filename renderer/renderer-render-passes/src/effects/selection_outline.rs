@@ -256,7 +256,7 @@ impl SelectionOutlinePass {
     ) {
         let frame_label = record_ctx.frame_timing.frame_label();
         let mask_view = record_ctx
-            .gfx_resource_manager
+            .gfx_resource_registry
             .get_image_view(target.mask_view_handle)
             .expect("SelectionOutlinePass: mask image view not found")
             .handle();

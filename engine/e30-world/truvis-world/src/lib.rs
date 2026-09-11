@@ -1,7 +1,7 @@
 //! CPU 侧 world 聚合层。
 //!
-//! `World` 是 update 阶段和 render runtime prepare 阶段之间的 CPU 数据入口，聚合
-//! runtime scene 状态与 `ResourceSystem` 的一次性 loader service。它不拥有 Vulkan、swapchain、
+//! `GameWorld` 是 update 阶段和 render runtime prepare 阶段之间的 CPU 数据入口，聚合
+//! runtime scene 状态与 `AssetSystem` 的一次性 loader service。它不拥有 Vulkan、swapchain、
 //! GPU buffer/image、frame state 或 shader binding 资源；这些对象由 render-side runtime 管理。
 
 use std::path::PathBuf;
@@ -13,7 +13,7 @@ pub mod components;
 mod edit_error;
 pub mod guid_new_type;
 pub mod procedural_mesh;
-mod resource_system;
+mod asset_system;
 mod scene_asset_ingestor;
 mod scene_store;
 
@@ -21,7 +21,7 @@ use crate::components::instance::Instance;
 use crate::components::material::MaterialData;
 pub use crate::edit_error::{SceneEditError, SceneHandleKind, WorldEditError};
 use crate::guid_new_type::{InstanceHandle, LightHandle, MaterialHandle, MeshHandle, ModelImportHandle, TextureHandle};
-pub use crate::resource_system::ResourceSystem;
+pub use crate::asset_system::AssetSystem;
 use crate::scene_store::SceneStore;
 pub use crate::scene_store::{SceneReadView, SceneSkyState};
 
@@ -30,37 +30,37 @@ pub use crate::scene_store::{SceneReadView, SceneSkyState};
 /// 与 GPU-facing 状态物理分离，建立 CPU/GPU 数据的所有权边界。Renderer 及其具体
 /// 子系统在 update 阶段通过这里修改 CPU state；`RenderRuntime::prepare` 再读取这些数据，
 /// 同步到 render-side manager、bridge、`RenderWorld` 和 shader-visible bindings。
-pub struct World {
+pub struct GameWorld {
     /// runtime scene 语义数据，包括 live instance 和 light。
     ///
     /// 这里的 handle 是 CPU runtime 身份，不是 GPU slot；渲染运行时负责把它们同步到
     /// GPU-visible scene 数据。
     scene: SceneStore,
     /// CPU 资源唯一 owner；不创建 GPU 对象，也不保存 instance 组合关系。
-    resources: ResourceSystem,
+    resources: AssetSystem,
 }
 
 // 创建与销毁
-impl World {
+impl GameWorld {
     /// 创建 CPU world，并在内部初始化 scene store、resource system 和 ingest pipeline。
     pub fn new() -> Self {
         Self {
             scene: SceneStore::new(),
-            resources: ResourceSystem::new(),
+            resources: AssetSystem::new(),
         }
     }
 
     /// 在 render runtime 销毁阶段先清空 CPU scene。
     ///
     /// 该方法服务现有销毁顺序：scene runtime 语义先停止，render-side scene 缓存随后释放，
-    /// 最后再消费并销毁整个 `World`。
+    /// 最后再消费并销毁整个 `GameWorld`。
     pub fn destroy_scene_mut(&mut self) {
         self.scene.destroy_mut();
     }
 
-    /// 消耗 `World`，释放其 CPU asset owner。
+    /// 消耗 `GameWorld`，释放其 CPU asset owner。
     ///
-    /// GPU 资源不属于 `World`，因此这里不会访问任何 Vulkan/VMA 对象；调用方必须在自己的
+    /// GPU 资源不属于 `GameWorld`，因此这里不会访问任何 Vulkan/VMA 对象；调用方必须在自己的
     /// render-side owner 中按依赖顺序显式释放 GPU 资源。
     pub fn destroy(self) {
         self.resources.destroy();
@@ -68,11 +68,11 @@ impl World {
 }
 
 // Render runtime-facing 同步接口
-impl World {
+impl GameWorld {
     /// 将后台 loader 完成结果收敛到 CPU 资源表与场景。
     ///
     /// 这是 render runtime 在 update 之后、prepare 之初收敛 loader completion 的唯一入口。
-    /// `World` 只负责把后台 loader 结果收敛回调用线程并翻译成 CPU resource handle；texture /
+    /// `GameWorld` 只负责把后台 loader 结果收敛回调用线程并翻译成 CPU resource handle；texture /
     /// mesh / material 的 GPU 上传仍由 render-side manager 负责。
     pub fn poll_asset_loads(&mut self) {
         self.resources.poll_asset_loads(&mut self.scene);
@@ -80,7 +80,7 @@ impl World {
 
     /// 返回 CPU scene 的只读视图。
     ///
-    /// 当前 render-side `RenderInstanceManager` 仍需要读取 `SceneStore` 的 live instance / light
+    /// 当前 render-side `RenderInstanceTable` 仍需要读取 `SceneStore` 的 live instance / light
     /// 快照。该 accessor 不暴露 `SceneStore` owner，避免 render runtime 或 Renderer 绕过 facade 修改 CPU scene 语义。
     pub fn scene_view(&self) -> SceneReadView<'_> {
         SceneReadView::new(&self.scene, &self.resources.store)
@@ -88,7 +88,7 @@ impl World {
 }
 
 // Renderer 侧 facade
-impl World {
+impl GameWorld {
     /// 请求导入 model / prefab。
     ///
     /// 返回值是 CPU world import handle；调用方不需要知道 `AssetHub` 的内部 load handle。

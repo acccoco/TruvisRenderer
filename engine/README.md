@@ -17,7 +17,7 @@ workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
 - L2 渲染契约：`e40-render/truvis-render-foundation` 提供 `FrameLabel`、资源句柄、`RenderView` /
   `RenderSceneView` 和 `GfxResourceAccess`。
 - L3 语义与编排辅助：`e30-world/` 保存 CPU asset/scene 语义，`e40-render/truvis-render-graph` 负责按 Renderer 指定顺序推导 pass 同步。
-- L4 Runtime 集成层：`e40-render/truvis-render-runtime` 持有 `Gfx`、`World`、GPU resource/binding/timing owners、runtime render state、`RenderWorld`、present、`RenderPassRecordCtx` 和 asset-to-GPU bridge。
+- L4 Runtime 集成层：`e40-render/truvis-render-runtime` 持有 `Gfx`、`GameWorld`、GPU resource/binding/timing owners、runtime render state、`RenderWorld`、present、`RenderPassRecordCtx` 和 asset-to-GPU bridge。
 - L5 RenderLoop 框架层：`e50-render-loop/truvis-render-loop` 定义具体 `Renderer` 阶段契约、统一 `RenderLoop` 和最小线程控制契约。
 - L6 渲染线程宿主：`e60-platform/truvis-render-thread` 管理不依赖窗口 backend 的 OS RenderThread 生命周期。
 - L7 窗口平台层：`e60-platform/truvis-winit-host` 管理 winit standalone / embedded 窗口与输入适配。
@@ -64,11 +64,11 @@ Vulkan RHI 与 descriptor-layout 辅助层，提供底层 GPU 能力，不包含
 
 ### `e30-world/`
 
-CPU 侧语义层，负责 asset 身份、加载状态、scene runtime 身份与 `World` 聚合，不创建 GPU 资源。
+CPU 侧语义层，负责 asset 身份、加载状态、scene runtime 身份与 `GameWorld` 聚合，不创建 GPU 资源。
 
 - `truvis-asset/`：纹理、mesh、material、model 等内容资产的 CPU 身份、去重、加载状态和完成事件；不创建 GPU
   image/buffer、BLAS、bindless index 或 material slot。
-- `truvis-world/`：`World`、`SceneStore` 和 `AssetHub` 聚合入口；不持有 `Gfx`、GPU resource/binding owner、swapchain 或 frame state。
+- `truvis-world/`：`GameWorld`、`SceneStore` 和 `AssetHub` 聚合入口；不持有 `Gfx`、GPU resource/binding owner、swapchain 或 frame state。
 
 ### `e40-render/`
 
@@ -78,7 +78,7 @@ CPU 侧语义层，负责 asset 身份、加载状态、scene runtime 身份与 
   `RenderView`、`RenderSceneView` 和 `GfxResourceAccess`；不包含 GPU owner、CPU scene、窗口平台或 runtime render state 语义。
 - `truvis-render-graph/`：按 Renderer 添加 pass 的线性顺序推导 image barrier、layout transition 和 semaphore submit
   信息；不做自动调度、资源 aliasing 或业务 pass 逻辑。
-- `truvis-render-runtime/`：渲染运行时集成层，拥有 `Gfx`、`World`、`GfxResourceManager`、`ShaderBindingSystem`、`CmdAllocator`、`PerFrameGpuData`、runtime render state、runtime 私有 `RenderWorld`、present、同步资源、`RenderPassRecordCtx` 和 CPU-to-GPU bridge；不负责窗口事件循环、GUI 适配或具体 Renderer pass 顺序。
+- `truvis-render-runtime/`：渲染运行时集成层，拥有 `Gfx`、`GameWorld`、`GfxResourceRegistry`、`ShaderBindingSystem`、`CmdAllocator`、`PerFrameGpuData`、runtime render state、runtime 私有 `RenderWorld`、present、同步资源、`RenderPassRecordCtx` 和 CPU-to-GPU bridge；不负责窗口事件循环、GUI 适配或具体 Renderer pass 顺序。
 
 ### `e50-render-loop/`
 

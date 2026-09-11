@@ -7,7 +7,7 @@ use truvis_gfx::{gfx::GfxDeviceCtx, utilities::descriptor_cursor::GfxDescriptorC
 use truvis_shader_binding::gpu;
 
 use crate::bindings::descriptor_bindings::{BindlessDescriptorBinding, BindlessDescriptorTarget};
-use crate::resources::gfx_resource_manager::GfxResourceManager;
+use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::GfxImageViewHandle;
 
@@ -110,7 +110,7 @@ impl BindlessManager {
     pub fn prepare_render_data(
         &mut self,
         ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &GfxResourceManager,
+        gfx_resource_registry: &GfxResourceRegistry,
         bindless_target: BindlessDescriptorTarget,
     ) {
         let _span = tracy_client::span!("BindlessManager::prepare_render_data");
@@ -126,7 +126,7 @@ impl BindlessManager {
             match self.srvs_slots[slot] {
                 Some(view_handle) => {
                     // 新注册的 slot：写入 descriptor，立即从 dirty 移除
-                    let image_view = gfx_resource_manager.get_image_view(view_handle).unwrap();
+                    let image_view = gfx_resource_registry.get_image_view(view_handle).unwrap();
                     let image_info = vk::DescriptorImageInfo::default()
                         .image_view(image_view.handle())
                         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);

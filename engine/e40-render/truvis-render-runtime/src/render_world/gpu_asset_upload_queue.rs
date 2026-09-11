@@ -19,8 +19,8 @@ use crate::render_world::sky_distribution_builder::SkyDistributionBuild;
 
 /// 已完成的 scene texture image 上传。
 ///
-/// timeline 完成后 image 所有权从共享 queue 移交给 `RenderTextureManager`；在此之前
-/// image 不允许注册到 `GfxResourceManager` 或 bindless。
+/// timeline 完成后 image 所有权从共享 queue 移交给 `GpuTextureStore`；在此之前
+/// image 不允许注册到 `GfxResourceRegistry` 或 bindless。
 pub(crate) struct CompletedTextureUpload {
     pub(crate) handle: TextureHandle,
     pub(crate) image: GfxImage,
@@ -28,7 +28,7 @@ pub(crate) struct CompletedTextureUpload {
 
 /// timeline 已确认完成的 sky distribution buffer。
 ///
-/// `RenderSkyManager` 必须再次校验 request id 与 texture handle，匹配后才可把 device
+/// `GpuSkyStore` 必须再次校验 request id 与 texture handle，匹配后才可把 device
 /// address 发布到 scene root；stale completion 则在这里之后立即安全销毁。
 pub(crate) struct CompletedSkyDistributionUpload {
     pub(crate) request_id: u64,
@@ -92,7 +92,7 @@ impl PendingAssetUpload {
 /// 该 owner 统一持有 transfer command pool、timeline semaphore 和 FIFO pending
 /// records。CPU loader/worker 只生产 owned payload；所有 Vulkan 对象仍只在渲染线程
 /// 创建、提交、发布和销毁。
-pub(crate) struct RenderAssetUploadQueue {
+pub(crate) struct GpuAssetUploadQueue {
     command_pool: Option<GfxCommandPool>,
     timeline_semaphore: Option<GfxSemaphore>,
     next_timeline_value: u64,
@@ -100,7 +100,7 @@ pub(crate) struct RenderAssetUploadQueue {
     destroyed: bool,
 }
 
-impl RenderAssetUploadQueue {
+impl GpuAssetUploadQueue {
     /// 创建服务 render-side 资产 copy 的 transfer command pool 与 timeline。
     pub(crate) fn new(device_ctx: GfxDeviceCtx<'_>, queue_ctx: GfxQueueCtx<'_>) -> Self {
         let command_pool = GfxCommandPool::new(
@@ -129,7 +129,7 @@ impl RenderAssetUploadQueue {
         handle: TextureHandle,
         data: &TextureBytes,
     ) -> anyhow::Result<()> {
-        let _span = tracy_client::span!("RenderAssetUploadQueue::submit_texture");
+        let _span = tracy_client::span!("GpuAssetUploadQueue::submit_texture");
         let extent = data.extent();
         let image_info = GfxImageCreateInfo::new_image_2d_info(
             vk::Extent2D {
@@ -149,8 +149,8 @@ impl RenderAssetUploadQueue {
             "AssetTexture",
         );
 
-        let command_pool = self.command_pool.as_ref().expect("RenderAssetUploadQueue used after shutdown");
-        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("RenderAssetUploadQueue used after shutdown");
+        let command_pool = self.command_pool.as_ref().expect("GpuAssetUploadQueue used after shutdown");
+        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("GpuAssetUploadQueue used after shutdown");
         let command_buffer = GfxCommandBuffer::new(device_ctx, command_pool, "AssetTextureUploadCmd");
 
         command_buffer.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "AssetTextureUpload");
@@ -187,7 +187,7 @@ impl RenderAssetUploadQueue {
         queue_ctx: GfxQueueCtx<'_>,
         build: SkyDistributionBuild,
     ) -> anyhow::Result<()> {
-        let _span = tracy_client::span!("RenderAssetUploadQueue::submit_sky_distribution");
+        let _span = tracy_client::span!("GpuAssetUploadQueue::submit_sky_distribution");
         let byte_size = std::mem::size_of_val(build.entries.as_slice()) as vk::DeviceSize;
         anyhow::ensure!(byte_size > 0, "sky distribution upload must contain at least one entry");
 
@@ -204,8 +204,8 @@ impl RenderAssetUploadQueue {
         let staging_buffer = GfxBuffer::new_stage_buffer(resource_ctx, byte_size, "SkyDistributionStage");
         staging_buffer.transfer_data_by_mmap(resource_ctx, &build.entries);
 
-        let command_pool = self.command_pool.as_ref().expect("RenderAssetUploadQueue used after shutdown");
-        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("RenderAssetUploadQueue used after shutdown");
+        let command_pool = self.command_pool.as_ref().expect("GpuAssetUploadQueue used after shutdown");
+        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("GpuAssetUploadQueue used after shutdown");
         let command_buffer = GfxCommandBuffer::new(device_ctx, command_pool, "SkyDistributionUploadCmd");
         command_buffer.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "SkyDistributionUpload");
         command_buffer.cmd_copy_buffer(
@@ -256,10 +256,10 @@ impl RenderAssetUploadQueue {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
     ) -> RenderAssetUploadCompletions {
-        let _span = tracy_client::span!("RenderAssetUploadQueue::poll");
+        let _span = tracy_client::span!("GpuAssetUploadQueue::poll");
         let device = device_ctx.device();
-        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("RenderAssetUploadQueue used after shutdown");
-        let command_pool = self.command_pool.as_ref().expect("RenderAssetUploadQueue used after shutdown");
+        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("GpuAssetUploadQueue used after shutdown");
+        let command_pool = self.command_pool.as_ref().expect("GpuAssetUploadQueue used after shutdown");
         let current_value = unsafe { device.get_semaphore_counter_value(timeline_semaphore.handle()).unwrap_or(0) };
 
         let mut completed = RenderAssetUploadCompletions::default();
@@ -322,7 +322,7 @@ impl RenderAssetUploadQueue {
             self.destroyed = true;
             return;
         };
-        let mut command_pool = self.command_pool.take().expect("RenderAssetUploadQueue command pool missing");
+        let mut command_pool = self.command_pool.take().expect("GpuAssetUploadQueue command pool missing");
 
         if let Some(last_upload) = self.pending_uploads.back() {
             const WAIT_SEMAPHORE_TIMEOUT_NS: u64 = 30 * 1000 * 1000 * 1000;
@@ -360,8 +360,8 @@ impl RenderAssetUploadQueue {
     }
 }
 
-impl Drop for RenderAssetUploadQueue {
+impl Drop for GpuAssetUploadQueue {
     fn drop(&mut self) {
-        debug_assert!(self.destroyed, "RenderAssetUploadQueue dropped without explicit shutdown");
+        debug_assert!(self.destroyed, "GpuAssetUploadQueue dropped without explicit shutdown");
     }
 }

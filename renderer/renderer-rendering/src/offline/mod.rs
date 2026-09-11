@@ -223,7 +223,7 @@ impl OfflineRenderResources {
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.immediate_ctx,
-            &mut *ctx.gfx_resource_manager,
+            &mut *ctx.gfx_resource_registry,
             &target_frame_state,
             ctx.frame_timing.frame_id(),
         );
@@ -253,7 +253,7 @@ impl OfflineRenderResources {
         self.accum_pass.destroy(ctx.device_ctx);
         self.sdr_pass.destroy(ctx.device_ctx);
         self.resolve_pass.destroy(ctx.device_ctx);
-        self.targets.destroy(ctx.resource_ctx, ctx.device_ctx, &mut *ctx.gfx_resource_manager, DestroyReason::Shutdown);
+        self.targets.destroy(ctx.resource_ctx, ctx.device_ctx, &mut *ctx.gfx_resource_registry, DestroyReason::Shutdown);
     }
 }
 
@@ -270,7 +270,7 @@ impl SubsystemLifecycle for OfflineRenderSubsystem {
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
-                &mut *ctx.gfx_resource_manager,
+                &mut *ctx.gfx_resource_registry,
                 &target_frame_state,
                 ctx.frame_timing.frame_id(),
             );

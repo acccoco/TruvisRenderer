@@ -15,7 +15,7 @@ use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_shader_binding::gpu;
 use truvis_world::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle};
 
-use crate::render_world::render_instance_manager::RenderInstanceManager;
+use crate::render_world::render_instance_table::RenderInstanceTable;
 use crate::state::frame_timing::FrameTiming;
 
 mod pass;
@@ -106,7 +106,7 @@ impl RayCastService {
         frame_timing: &FrameTiming,
         shader_bindings: ShaderBindingView<'_>,
         render_scene: &dyn RenderSceneView,
-        render_instance_manager: &RenderInstanceManager,
+        render_instance_table: &RenderInstanceTable,
         rays: &[RayCastRay],
     ) -> Result<Vec<RayCastResult>> {
         let _span = tracy_client::span!("RayCastService::cast_sync");
@@ -180,7 +180,7 @@ impl RayCastService {
         command_pool.free_command_buffers(device_ctx, vec![cmd]);
 
         readback_buffer.invalidate(resource_ctx, 0, raw_hit_bytes);
-        self.convert_raw_hits(render_instance_manager, &readback_buffer.mapped_slice_ref()[..rays.len()])
+        self.convert_raw_hits(render_instance_table, &readback_buffer.mapped_slice_ref()[..rays.len()])
     }
 
     pub(crate) fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
@@ -277,7 +277,7 @@ impl RayCastService {
 
     fn convert_raw_hits(
         &self,
-        render_instance_manager: &RenderInstanceManager,
+        render_instance_table: &RenderInstanceTable,
         raw_hits: &[gpu::engine::raycast::RawHit],
     ) -> Result<Vec<RayCastResult>> {
         raw_hits
@@ -287,7 +287,7 @@ impl RayCastService {
                     return Ok(RayCastResult::Miss);
                 }
 
-                let record = render_instance_manager
+                let record = render_instance_table
                     .ray_cast_record(raw.instance_slot)
                     .ok_or_else(|| anyhow::anyhow!("raycast hit unknown instance slot {}", raw.instance_slot))?;
                 let material = record.materials.get(raw.submesh_index as usize).copied().ok_or_else(|| {

@@ -19,7 +19,7 @@
 - [`asset-upload-and-scene-evolution.md`](asset-upload-and-scene-evolution.md)：
   asset upload、失败恢复、资源卸载和 scene invalidation 的后续能力。
 - [`render-scene-mirror-and-resource-system.md`](render-scene-mirror-and-resource-system.md)：
-  已落地首期的 RenderWorld 持久镜像与版本对账设计，包含 ResourceSystem / RenderResourceSystem 分层、GPU 副本和历史失效契约。
+  已落地首期的 RenderWorld 持久镜像与版本对账设计，包含 AssetSystem / RenderAssetSystem 分层、GPU 副本和历史失效契约。
 - [`realtime-lighting-evolution.md`](realtime-lighting-evolution.md)：
   realtime RT light-class 策略、ReSTIR 稳定性、SHARC 历史控制和间接光复用评估。
 - [`dlss-quality-and-cleanup.md`](dlss-quality-and-cleanup.md)：

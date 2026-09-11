@@ -1,6 +1,6 @@
 # Editor 子系统边界与一致性
 
-> 状态：当前实现事实总结。本文记录 Tauri WebView、Editor IPC、主体 Renderer 与 CPU `World`
+> 状态：当前实现事实总结。本文记录 Tauri WebView、Editor IPC、主体 Renderer 与 CPU `GameWorld`
 > 之间的状态所有权、协议、线程、背压和生命周期边界。
 
 ## 系统定位
@@ -11,7 +11,7 @@ Truvis Editor 由 Tauri/Tao 顶层窗口、React WebView、Windows child HWND �
 
 核心设计是让 UI 和 GPU scene 都不能成为第二份 CPU scene 权威状态：
 
-- `World` / `SceneStore` 是 scene、material、sky 与 light 的唯一 CPU 权威 owner。
+- `GameWorld` / `SceneStore` 是 scene、material、sky 与 light 的唯一 CPU 权威 owner。
 - 当前 selection 属于 `TruvisRenderer`，使用 CPU `InstanceHandle + submesh_index` 语义。
 - GPU scene 是 `RenderRuntime::prepare` 根据 CPU scene 生成的派生状态。
 - WebView 只保存可丢弃的展示投影；刷新后通过查询重新构建。
@@ -50,7 +50,7 @@ DOM viewport rect
 - `truvis_app::editor_ipc` 只负责 invoke、通知转发、背压和 timeout，不解释领域请求。
 - `app/truvis/capabilities/main-editor.json` 只授予 `main` WebView 注册和移除 Tauri event listener 的权限；
   页面不能通过 Tauri event API 向 native 侧发送业务消息。
-- `truvis_renderer::editor_controller` 是协议 DTO 到 `World` handle、查询和 edit API 的唯一适配点。
+- `truvis_renderer::editor_controller` 是协议 DTO 到 `GameWorld` handle、查询和 edit API 的唯一适配点。
 - `truvis_renderer::desktop_command` 只处理 Tauri 本地特权命令。本机 `PathBuf` 不进入通用 Editor DTO。
 - `create_truvis_ports` 在 Tauri main thread 创建端口。App 保留 `TruvisFrontendPorts`，
   RenderThread factory 只移入 `TruvisRendererPorts`。
@@ -81,14 +81,14 @@ WebView 初始化后主动查询 scene version、selection、对象分页和所�
 `scene_version`；分页请求可以携带期望版本，版本冲突时页面丢弃不完整结果并从第一页重新查询。
 
 材质编辑由 WebView invoke `UpdateMaterial` command。`EditorController` 在 Renderer update 阶段把 opaque ID
-还原为强类型 handle，再调用 `World` edit API。校验失败不修改 `World`，成功后响应携带新的 scene version
+还原为强类型 handle，再调用 `GameWorld` edit API。校验失败不修改 `GameWorld`，成功后响应携带新的 scene version
 和权威材质投影。
 
 selection 在原生 viewport 中通过 runtime-owned 同步 raycast 得到。Renderer 保存 CPU 选择语义，并在变化后发送
 best-effort notification；WebView 同时保留主动查询和一秒 version 轮询，因此 notification 丢失不会永久破坏投影。
 
 HDRI 文件选择不是通用 Editor DTO。Tauri 打开本地文件对话框，通过进程内私有有界队列把 `PathBuf`
-交给 RenderThread；WebView 只得到文件名和 accepted/cancelled/error。accepted 只表示 `World` 已接受
+交给 RenderThread；WebView 只得到文件名和 accepted/cancelled/error。accepted 只表示 `GameWorld` 已接受
 CPU scene 请求，不表示 decode、GPU upload 或 Alias distribution 已完成。
 
 ## 并发与背压
@@ -101,7 +101,7 @@ RenderThread 只使用非阻塞 endpoint 操作，并按每帧最多 `32` 条、
 允许丢弃。任何一侧都不能为了等待另一侧而阻塞 RenderThread、Tauri main thread 或持有 desktop resource lock。
 
 通知 receiver 由 Tauri async runtime 中的单个 dispatcher task 消费，并定向发送给 `main` WebView；该 task
-不是新的 OS 线程 owner，也不访问 `World` 或 Vulkan。
+不是新的 OS 线程 owner，也不访问 `GameWorld` 或 Vulkan。
 
 ## 生命周期与当前限制
 
@@ -109,7 +109,7 @@ RenderThread 只使用非阻塞 endpoint 操作，并按每帧最多 `32` 条、
 
 - Tauri main thread：顶层窗口、WebView、文件对话框和 desktop state。
 - RenderWindowThread：winit event loop 与 Windows child HWND。
-- RenderThread：`RenderLoop`、`TruvisRenderer`、`World` 与所有 Vulkan 对象。
+- RenderThread：`RenderLoop`、`TruvisRenderer`、`GameWorld` 与所有 Vulkan 对象。
 
 关闭时先拒绝新的 Editor/desktop 请求，再完成 Renderer、具体子系统、RenderRuntime 和 Vulkan 资源释放；
 RenderThread 退出后销毁 child HWND，随后停止 notification dispatcher，最后销毁 Tauri parent window。

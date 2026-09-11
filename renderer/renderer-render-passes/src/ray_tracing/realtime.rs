@@ -678,11 +678,11 @@ impl RealtimeRtPass {
         };
 
         let image = |handle: GfxImageHandle| {
-            record_ctx.gfx_resource_manager.get_image(handle).expect("RealtimeRtPass: image handle not found").handle()
+            record_ctx.gfx_resource_registry.get_image(handle).expect("RealtimeRtPass: image handle not found").handle()
         };
         let image_view = |handle: GfxImageViewHandle| {
             record_ctx
-                .gfx_resource_manager
+                .gfx_resource_registry
                 .get_image_view(handle)
                 .expect("RealtimeRtPass: image view handle not found")
                 .handle()

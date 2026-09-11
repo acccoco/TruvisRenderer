@@ -3,6 +3,6 @@ import type { MaterialId } from "./MaterialId";
 import type { MaterialPatch } from "./MaterialPatch";
 
 /**
- * 修改 CPU World 权威状态的 Editor 命令。
+ * 修改 CPU GameWorld 权威状态的 Editor 命令。
  */
 export type EditorCommand = { "type": "update_material", material_id: MaterialId, patch: MaterialPatch, };

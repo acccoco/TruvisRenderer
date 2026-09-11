@@ -139,7 +139,7 @@ impl GuiPass {
         &self,
         frame_label: FrameLabel,
         global_descriptor_sets: &GlobalDescriptorSets,
-        gfx_resource_manager: &dyn GfxResourceAccess,
+        gfx_resource_registry: &dyn GfxResourceAccess,
         canvas_color_view: vk::ImageView,
         canvas_extent: vk::Extent2D,
         cmd: &GfxCommandBuffer,
@@ -246,7 +246,7 @@ impl GuiPass {
                                 continue;
                             };
                             let Some(texture_image_view) =
-                                gfx_resource_manager.get_image_view(*texture_image_view_handle)
+                                gfx_resource_registry.get_image_view(*texture_image_view_handle)
                             else {
                                 log::warn!("GuiPass: missing image view for texture id {:?}", texture_id);
                                 continue;

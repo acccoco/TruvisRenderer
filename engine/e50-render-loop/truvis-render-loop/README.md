@@ -27,11 +27,11 @@
 
 - `RendererInitCtx` 包装 `RenderRuntimeInitCtx` 并附带窗口 size / scale factor；Renderer 直接用 `&mut ctx.runtime`
   初始化自己持有的长期资源。
-- `RenderRuntimeUpdateCtx` 面向 CPU 更新，提供 `World`、帧设置和 `DlssOptions`，不承担 command recording。
+- `RenderRuntimeUpdateCtx` 面向 CPU 更新，提供 `GameWorld`、帧设置和 `DlssOptions`，不承担 command recording。
 - `RenderRuntimeRayCastCtx` 只在 Renderer `after_prepare` hook 中出现。
 - `RenderRuntimeRenderCtx` 面向渲染录制；具体 Renderer 可在 `renderer-kit` 内进一步裁剪为 `SubsystemRenderCtx`，该类型不属于 render-loop 层。
 - `RendererResizeCtx` 和 `RendererShutdownCtx` 分别包装对应 runtime ctx；Renderer 直接用它们重建或释放自有子系统资源。
-  manager-owned image/view 必须通过 `GfxResourceManager` 释放，shader-visible view 必须通过 `ShaderBindingSystem` 注销。
+  manager-owned image/view 必须通过 `GfxResourceRegistry` 释放，shader-visible view 必须通过 `ShaderBindingSystem` 注销。
 
 ## 边界约束
 

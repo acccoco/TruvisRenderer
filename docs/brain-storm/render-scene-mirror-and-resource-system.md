@@ -1,4 +1,4 @@
-# RenderWorld 镜像与 ResourceSystem：状态对账和 GPU 同步设计
+# RenderWorld 镜像与 AssetSystem：状态对账和 GPU 同步设计
 
 > 状态：2026-09-10 设计与首期实现已对齐。本文同时记录设计契约和实现边界；表格中的类型名以当前源码为准，伪代码不定义 Rust 或 shader ABI。真实运行结果以文末验证记录为准。
 
@@ -7,18 +7,18 @@
 将 Truvis 从“逐级传递变化原因”改为“复制渲染所需状态，由接收方比较最终结果”。保留 CPU 权威与 GPU 派生状态的边界，同时改变 RenderWorld 的数据组织和跨边界同步方式：
 
 ```text
-ResourceSystem ──资源版本与内容──> RenderResourceSystem ──> GPU resource
-World          ──场景状态对账──> RenderWorld          ──> GPU scene / TLAS
+AssetSystem ──资源版本与内容──> RenderAssetSystem ──> GPU resource
+GameWorld          ──场景状态对账──> RenderWorld          ──> GPU scene / TLAS
                                      ↑
-                   RenderResourceSystem 的已发布资源视图
+                   RenderAssetSystem 的已发布资源视图
 ```
 
 具体目标如下：
 
-1. **降低变化维护成本。** World / ResourceSystem 的有效编辑只维护对象最终状态与 revision；不要求调用方同时维护 transform、material、TLAS、emissive 等传递规则。移除生产主路径对 `SceneChangeLog → DirtyEvent → DirtyRule → DirtyDispatchPlan` 的依赖。
-2. **建立完整的渲染侧场景镜像。** RenderWorld 持久保存渲染所需的 instance、light、sky、资源引用与派生绑定。完成同步后，后端打包、TLAS、raycast 和 render pass 不再回读 World 或 CPU ResourceSystem。
-3. **分开共享资源和场景组合。** ResourceSystem 管理 CPU 资源身份与内容；RenderResourceSystem 管理当前 device 的共享 GPU 资源；每个 World 对应自己的 RenderWorld，多个场景可以引用同一资源。
-4. **接受必要的数据副本。** 允许复制 instance 状态、小型材质参数和 prepared 数据，以减少借用耦合和事件传播。共享资源按资源身份保存渲染副本，不按 instance 或 World 深拷贝 mesh / texture 大块内容。
+1. **降低变化维护成本。** GameWorld / AssetSystem 的有效编辑只维护对象最终状态与 revision；不要求调用方同时维护 transform、material、TLAS、emissive 等传递规则。移除生产主路径对 `SceneChangeLog → DirtyEvent → DirtyRule → DirtyDispatchPlan` 的依赖。
+2. **建立完整的渲染侧场景镜像。** RenderWorld 持久保存渲染所需的 instance、light、sky、资源引用与派生绑定。完成同步后，后端打包、TLAS、raycast 和 render pass 不再回读 GameWorld 或 CPU AssetSystem。
+3. **分开共享资源和场景组合。** AssetSystem 管理 CPU 资源身份与内容；RenderAssetSystem 管理当前 device 的共享 GPU 资源；每个 GameWorld 对应自己的 RenderWorld，多个场景可以引用同一资源。
+4. **接受必要的数据副本。** 允许复制 instance 状态、小型材质参数和 prepared 数据，以减少借用耦合和事件传播。共享资源按资源身份保存渲染副本，不按 instance 或 GameWorld 深拷贝 mesh / texture 大块内容。
 5. **分别判断 GPU 更新与历史失效。** 材质外观变化无需借助 TLAS 重建清空累积；GPU 各 FIF 副本独立追平；运动历史按实际渲染帧推进。
 6. **先建立简单且可验证的基线。** 第一阶段使用顺序 `update → prepare → render` 和全表版本扫描；后续按测量结果优化扫描与上传，不把完整 ECS、独立渲染镜像线程或通用事件系统作为前提。
 
@@ -26,9 +26,9 @@ World          ──场景状态对账──> RenderWorld          ──> GPU 
 
 ### 简化原则
 
-- 只保留一份 CPU ResourceSystem、一份 World 和一份持久 RenderWorld 镜像；允许必要的只读 snapshot，不复制完整 mesh / texture 大块内容。
+- 只保留一份 CPU AssetSystem、一份 GameWorld 和一份持久 RenderWorld 镜像；允许必要的只读 snapshot，不复制完整 mesh / texture 大块内容。
 - 不新增通用 `SceneDelta`、`ResourceDelta`、`GpuResourceDelta` 或必须可靠消费的 dirty 事件图；正确性来自最终状态、完整 membership 扫描和资源完成队列。
-- 不为首期引入事务回滚、多 World 协调、独立 RenderWorld 线程、完整 ECS 或 per-property revision。
+- 不为首期引入事务回滚、多 GameWorld 协调、独立 RenderWorld 线程、完整 ECS 或 per-property revision。
 - mesh 与 texture 创建后不可变；不同内容通过新 handle 创建，避免同 handle 替换、旧内容并存和复杂的版本切换。
 - material 只保留一个 CPU 权威状态和一个渲染侧 prepared snapshot；instance 只保存引用，不复制完整 material 内容。
 - 先用全表扫描和整条 record 上传保证正确性，只有测量证明需要时才增加 changed-handle、chunk 或 sparse upload 加速。
@@ -48,16 +48,16 @@ World          ──场景状态对账──> RenderWorld          ──> GPU 
 | 删除 | 只允许删除没有 live 引用的 material、mesh、texture；删除后 GPU 资源延迟回收 |
 | FIF | CPU scene / material 变化和异步资源 ready 都必须追平当前及后续 FIF 副本 |
 
-“首期”默认一个 `RenderRuntime` 和一个 `World`。RenderResourceSystem 的共享边界保留未来扩展空间，但本设计不为多 World 引用协调增加额外协议。
+“首期”默认一个 `RenderRuntime` 和一个 `GameWorld`。RenderAssetSystem 的共享边界保留未来扩展空间，但本设计不为多 GameWorld 引用协调增加额外协议。
 
 首期只需要窄的同步 API，概念上可收敛为以下几组操作，不再为每种变化建立独立 command / event 类型：
 
 | Owner | 最小操作 | 说明 |
 | --- | --- | --- |
-| ResourceSystem | `create_mesh`、`import_texture`、`create_material`、`update_material` | mesh / texture 创建后不可变；material 更新写回完整内容并推进 source revision |
-| World | `create_instance`、`update_instance_transform`、`update_instance_materials` | instance 只保存引用和场景状态，修改后推进 instance source revision |
-| World / SceneStore | `instances_using_material`、`instances_using_mesh` | 直接从反向索引回答引用查询和删除前检查 |
-| ResourceSystem | `materials_using_texture`、`remove_orphan_*` | texture 依赖由 material / sky 反向索引检查；删除只接受无 live 引用资源 |
+| AssetSystem | `create_mesh`、`import_texture`、`create_material`、`update_material` | mesh / texture 创建后不可变；material 更新写回完整内容并推进 source revision |
+| GameWorld | `create_instance`、`update_instance_transform`、`update_instance_materials` | instance 只保存引用和场景状态，修改后推进 instance source revision |
+| GameWorld / SceneStore | `instances_using_material`、`instances_using_mesh` | 直接从反向索引回答引用查询和删除前检查 |
+| AssetSystem | `materials_using_texture`、`remove_orphan_*` | texture 依赖由 material / sky 反向索引检查；删除只接受无 live 引用资源 |
 
 这些名称是职责示意，实际实现可以复用现有注册、更新和删除入口；重点是 API 写最终状态，prepare 再按 revision 对账。
 
@@ -67,9 +67,9 @@ World          ──场景状态对账──> RenderWorld          ──> GPU 
 
 | 方面 | 当前实现 | 设计约束 |
 | --- | --- | --- |
-| CPU owner | `World` 持有 `SceneStore` 与 `ResourceSystem`；资源内容、loader 和场景关系分边界保存 | ResourceSystem 保存资源，World 保存场景关系；导入器协调二者 |
-| GPU owner | `RenderRuntime` 持有 `RenderResourceSystem`；`RenderWorld` 只持有场景 managers、buffer、TLAS 与历史 | 共享资源与场景组合分开，资源 manager 不属于某个 instance |
-| 同步 | `World::poll_asset_loads` 只把 loader completion 写回 CPU registry；render prepare 由资源表全量对账 | 接收方读取最终状态，按对象版本、membership 和资源发布状态对账 |
+| CPU owner | `GameWorld` 持有 `SceneStore` 与 `AssetSystem`；资源内容、loader 和场景关系分边界保存 | AssetSystem 保存资源，GameWorld 保存场景关系；导入器协调二者 |
+| GPU owner | `RenderRuntime` 持有 `RenderAssetSystem`；`RenderWorld` 只持有场景 managers、buffer、TLAS 与历史 | 共享资源与场景组合分开，资源 manager 不属于某个 instance |
+| 同步 | `GameWorld::poll_asset_loads` 只把 loader completion 写回 CPU registry；render prepare 由资源表全量对账 | 接收方读取最终状态，按对象版本、membership 和资源发布状态对账 |
 | RenderWorld 数据 | instance manager 持久保存 handle、slot、transform/material 快照和历史；prepare 生成当前 `RenderData` | 渲染镜像自包含，RenderData 只作为本次打包视图 |
 | 上传与失效 | 材质已有按 slot / FIF 的 dirty；instance / geometry / indirect 仍有全量重建、整容量 copy | 保留每个 GPU 副本的追平义务，逐步按实际内容与有效范围更新 |
 
@@ -79,8 +79,8 @@ World          ──场景状态对账──> RenderWorld          ──> GPU 
 
 - [`scene-data-lifecycle.md`](../summaries/scene-data-lifecycle.md)：当前 scene / asset 身份和同步主线。
 - [`frame-lifecycle.md`](../summaries/frame-lifecycle.md)、[`threading-and-resource-lifecycle.md`](../summaries/threading-and-resource-lifecycle.md)：帧边界、线程与 GPU 生命周期。
-- [`resource_system.rs`](../../engine/e30-world/truvis-world/src/resource_system.rs)、[`scene_store.rs`](../../engine/e30-world/truvis-world/src/scene_store.rs)：CPU 资源与场景 owner。
-- [`render_resource_system.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_resource_system.rs)、[`render_instance_manager.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_instance_manager.rs)、[`render_world.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_world.rs)：GPU 资源 owner、场景镜像与打包。
+- [`asset_system.rs`](../../engine/e30-world/truvis-world/src/asset_system.rs)、[`scene_store.rs`](../../engine/e30-world/truvis-world/src/scene_store.rs)：CPU 资源与场景 owner。
+- [`render_asset_system.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_asset_system.rs)、[`render_instance_table.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_instance_table.rs)、[`render_world.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_world.rs)：GPU 资源 owner、场景镜像与打包。
 
 ## 待推进内容
 
@@ -101,7 +101,7 @@ World          ──场景状态对账──> RenderWorld          ──> GPU 
 | RenderV2 | GameWorld 投影到可查询的 RenderWorld；后端消费渲染域数据，共享材质使用资源身份 / MaterialID | 当前 typed source message、ECSStagingWorld 和调度器有其并行约束，不代表消息链天然更简单 |
 | Bevy | MainWorld 经 Extract 进入 RenderWorld；资源有 extracted / prepared 表示 | change detection、asset event 和 ECS extraction 仍有同步机制，不等同于取消变化跟踪 |
 | UE | GameThread component 与 RenderThread scene proxy 分开，proxy 保存渲染所需状态 | render command queue 服务其线程模型，本设计暂不引入同样的跨线程命令协议 |
-| Unity | BRG 将共享 mesh/material 与 instance buffer、绘制批次分开 | 传统 GameObject、Entities Graphics 与 BRG 的边界不同，不统一描述成两个完整 ECS World |
+| Unity | BRG 将共享 mesh/material 与 instance buffer、绘制批次分开 | 传统 GameObject、Entities Graphics 与 BRG 的边界不同，不统一描述成两个完整 ECS GameWorld |
 
 RenderV2 的本地对照入口为 `d5enginev2/engine/modules/render/renderer/README.md` 和同模块的 `render_v2/render_entity_components.hpp`。外部参考仅用于上述高层边界：Bevy 的 [ExtractSchedule](https://docs.rs/bevy/latest/bevy/render/struct.ExtractSchedule.html) 与 [RenderAsset](https://docs.rs/bevy/latest/bevy/render/render_asset/trait.RenderAsset.html)、UE 的 [Threaded Rendering](https://dev.epicgames.com/documentation/unreal-engine/threaded-rendering-in-unreal-engine?lang=en-US)、Unity 的 [BatchRendererGroup](https://docs.unity3d.com/cn/6000.0/ScriptReference/Rendering.BatchRendererGroup.html) 与 [创建批次](https://docs.unity3d.com/cn/6000.0/Manual/batch-renderer-group-creating-batches.html)。
 
@@ -109,54 +109,54 @@ RenderV2 的本地对照入口为 `d5enginev2/engine/modules/render/renderer/REA
 
 ```text
 RenderRuntime
-├── ResourceSystem
+├── AssetSystem
 │   ├── resource identity / CPU content / source revision
 │   ├── material -> texture dependencies
 │   └── AssetHub / load coordinator
-├── World
+├── GameWorld
 │   ├── instance / transform / mesh-material references
 │   ├── light / sky state
 │   └── instance membership / source revision
 ├── SceneAssetImporter / CPU edit coordination
-├── RenderResourceSystem
+├── RenderAssetSystem
 │   ├── prepared material snapshots / stable material slots
 │   ├── texture image / view / bindless residency
 │   ├── mesh vertex-index buffers / BLAS / geometry metadata
 │   ├── upload-build completion / published resource view
 │   └── GPU resource retirement
-├── RenderWorld（每个 World 一份）
+├── RenderWorld（每个 GameWorld 一份）
 │   ├── render instance / light / sky mirrors
 │   ├── used mesh-material bindings / stable instance slots
 │   ├── current-previous transform history
 │   ├── raster data / raycast records / indirect layout
 │   ├── emissive table / TLAS
 │   └── GPU scene replicas / scene history versions
-├── GfxResourceManager
+├── GfxResourceRegistry
 └── frame timing / FIF / RenderGraph / command submission
 ```
 
 这是逻辑 owner 划分，不要求同时创建同名 crate 或抽象每个列表项。
 
-- **ResourceSystem** 是 material、mesh、texture 的唯一 CPU 内容权威，管理身份、依赖和加载状态。mesh 与 texture 在创建后内容不可变；material 参数可以修改并推进 source revision。它不知道 RenderWorld 的 TLAS 或 Vulkan 对象。
-- **World** 是场景关系权威，只保存资源引用和 instance / light / sky 状态。共享材质修改影响所有引用者；只改一个 instance 的材质时，选择另一个 material handle 或显式复制资源，再修改引用。
-- **SceneAssetImporter / 编辑协调器** 通过 ResourceSystem 与 World 的接口完成注册和引用验证。导入器是协调者，不持有第二份长期资源库，也不创建 Vulkan 对象。
-- **RenderResourceSystem** 按 resource handle 和 device 管理首次安装、准备、发布及回收。BLAS 与 mesh buffer 同属不可变 mesh GPU resource；材质 GPU slot 不属于某个 instance 或 World。
+- **AssetSystem** 是 material、mesh、texture 的唯一 CPU 内容权威，管理身份、依赖和加载状态。mesh 与 texture 在创建后内容不可变；material 参数可以修改并推进 source revision。它不知道 RenderWorld 的 TLAS 或 Vulkan 对象。
+- **GameWorld** 是场景关系权威，只保存资源引用和 instance / light / sky 状态。共享材质修改影响所有引用者；只改一个 instance 的材质时，选择另一个 material handle 或显式复制资源，再修改引用。
+- **SceneAssetImporter / 编辑协调器** 通过 AssetSystem 与 GameWorld 的接口完成注册和引用验证。导入器是协调者，不持有第二份长期资源库，也不创建 Vulkan 对象。
+- **RenderAssetSystem** 按 resource handle 和 device 管理首次安装、准备、发布及回收。BLAS 与 mesh buffer 同属不可变 mesh GPU resource；材质 GPU slot 不属于某个 instance 或 GameWorld。
 - **RenderWorld** 是可重新生成的渲染镜像 owner，保存场景组合和历史；TLAS 属于它。资源完成处理不直接修改它的对象表。
-- **GfxResourceManager** 保持底层 buffer / image 分配与释放契约。高层 owner 决定何时退役，底层执行安全释放；二者不是两份独立的 Vulkan 所有权。
+- **GfxResourceRegistry** 保持底层 buffer / image 分配与释放契约。高层 owner 决定何时退役，底层执行安全释放；二者不是两份独立的 Vulkan 所有权。
 
 固定访问方向为：
 
 ```text
-SceneAssetImporter / CPU edit coordination -> ResourceSystem + World
-RenderResourceSystem::sync                -> ResourceSystem::ResourceView
-RenderWorld::sync                         -> World::SceneView
-RenderWorld::resolve                      -> RenderResourceSystem::PreparedResourceView
+SceneAssetImporter / CPU edit coordination -> AssetSystem + GameWorld
+RenderAssetSystem::sync                -> AssetSystem::ResourceView
+RenderWorld::sync                         -> GameWorld::SceneView
+RenderWorld::resolve                      -> RenderAssetSystem::PreparedResourceView
 backend packing / TLAS / render passes    -> render-side mirrors and bindings
 ```
 
-同步读取结束后，不在 RenderWorld 中保留指向 World / CPU ResourceSystem 的借用。PreparedResourceView 提供材质语义、mesh 几何元数据及 GPU 绑定；emissive、TLAS 和上传代码不能为补字段绕回 CPU owner。
+同步读取结束后，不在 RenderWorld 中保留指向 GameWorld / CPU AssetSystem 的借用。PreparedResourceView 提供材质语义、mesh 几何元数据及 GPU 绑定；emissive、TLAS 和上传代码不能为补字段绕回 CPU owner。
 
-第一阶段仍在现有 RenderThread 上顺序执行 update / prepare / render，不改变 `app -> renderer -> engine` 依赖，也不引入全局单例或 `Arc<RwLock<ResourceSystem>>`。未来真正并行化时，需要单独设计不可变发布快照及背压；拥有镜像本身不代表已经具备线程安全协议。
+第一阶段仍在现有 RenderThread 上顺序执行 update / prepare / render，不改变 `app -> renderer -> engine` 依赖，也不引入全局单例或 `Arc<RwLock<AssetSystem>>`。未来真正并行化时，需要单独设计不可变发布快照及背压；拥有镜像本身不代表已经具备线程安全协议。
 
 ### 3. 复制范围与 RenderWorld 数据组织
 
@@ -164,15 +164,15 @@ backend packing / TLAS / render passes    -> render-side mirrors and bindings
 
 | 数据 | CPU 权威 | 渲染侧副本 | 共享方式 |
 | --- | --- | --- | --- |
-| instance transform、mesh/material 引用、可见性语义 | World | RenderWorld 持久实例记录 | 每个场景一份；不包含每个 view 的剔除结果 |
-| material 参数与纹理引用 | ResourceSystem | RenderResourceSystem 按材质保存小型 source snapshot、prepared 参数与绑定 | 同 device 多个 RenderWorld 共享；不按 instance 复制完整参数 |
+| instance transform、mesh/material 引用、可见性语义 | GameWorld | RenderWorld 持久实例记录 | 每个场景一份；不包含每个 view 的剔除结果 |
+| material 参数与纹理引用 | AssetSystem | RenderAssetSystem 按材质保存小型 source snapshot、prepared 参数与绑定 | 同 device 多个 RenderWorld 共享；不按 instance 复制完整参数 |
 | material 对场景的派生信息 | 无独立权威，由上述数据产生 | RenderWorld 按使用的 material 保存 slot、coverage、emissive 与已观察版本 | instance 持有引用或索引 |
-| mesh / texture 大块 CPU 内容 | ResourceSystem | 上传期间可持有不可变 payload lease | 第一阶段保留一份 CPU 内容；允许不可变共享，禁止每个 RenderWorld 深拷贝 |
-| mesh buffer、BLAS、image、descriptor | 不属于 CPU World | RenderResourceSystem | 按资源和 device 共享，引用带代际 / 生命周期保证 |
-| light、sky 选择与强度 | World | RenderWorld 镜像与场景绑定 | HDRI image 及可共享的资源派生数据由资源层管理 |
+| mesh / texture 大块 CPU 内容 | AssetSystem | 上传期间可持有不可变 payload lease | 第一阶段保留一份 CPU 内容；允许不可变共享，禁止每个 RenderWorld 深拷贝 |
+| mesh buffer、BLAS、image、descriptor | 不属于 CPU GameWorld | RenderAssetSystem | 按资源和 device 共享，引用带代际 / 生命周期保证 |
+| light、sky 选择与强度 | GameWorld | RenderWorld 镜像与场景绑定 | HDRI image 及可共享的资源派生数据由资源层管理 |
 | GPU instance/material/indirect 数据 | 从渲染镜像派生 | 各 GPU FIF 副本 | 由 buffer owner 独立追平 |
 
-CPU 大资源的提前卸载是后续策略；若释放 CPU bytes，ResourceSystem 必须仍掌握身份、内容版本和重载来源。这个策略不把权威内容转交给 RenderWorld。
+CPU 大资源的提前卸载是后续策略；若释放 CPU bytes，AssetSystem 必须仍掌握身份、内容版本和重载来源。这个策略不把权威内容转交给 RenderWorld。
 
 RenderWorld 内部采用带 generational handle 的持久表与可复用数组，不要求先引入 ECS。概念形状如下，字段是职责示意，不定义 Rust / Slang ABI：
 
@@ -185,7 +185,7 @@ RenderInstanceRecord
     stable_instance_slot + pending/active state + requires_any_hit
     prepared_transform + previous_transform + last_submitted_transform
 
-PreparedMaterial（RenderResourceSystem 中每种材质一份）
+PreparedMaterial（RenderAssetSystem 中每种材质一份）
     source_revision_seen + copied render-relevant material parameters
     texture_dependency_stamps[] + resolved bindings
     stable_material_slot + packed GPU material
@@ -202,10 +202,10 @@ PreparedMaterial（RenderResourceSystem 中每种材质一份）
 
 | 标识或版本 | Owner | 推进条件 / 用途 |
 | --- | --- | --- |
-| handle generation | CPU registry / World | 区分删除后复用索引的新对象；不能由 GPU slot 替代 |
+| handle generation | CPU registry / GameWorld | 区分删除后复用索引的新对象；不能由 GPU slot 替代 |
 | source revision | CPU material / instance / light / sky 记录 | 有效编辑提交后推进；mesh / texture 内容创建后不再修改；失败编辑与相等赋值不推进 |
 | membership / table epoch | CPU 容器，可选优化 | 增删或表内容变化时用于跳过已确认无变化的扫描，不是正确性的唯一依据 |
-| published resource / binding revision | RenderResourceSystem | 首次发布 texture / mesh ready、BLAS ready 或 material prepared binding 时推进；不把 CPU ready 当 GPU ready |
+| published resource / binding revision | RenderAssetSystem | 首次发布 texture / mesh ready、BLAS ready 或 material prepared binding 时推进；不把 CPU ready 当 GPU ready |
 | prepared revision | 对应渲染数据 owner | 最终待上传内容或其资源绑定发生变化时推进，包括没有 CPU 编辑的依赖 ready |
 | uploaded revision[FIF] | 各 GPU buffer owner | 对应副本已安排并提交了该版本的有序更新；GPU 完成另由 timeline 判断 |
 | scene history versions | RenderWorld / 历史消费者 | 实际外观、几何或采样语义变化时推进，不跟随 FIF 补写重复推进 |
@@ -214,7 +214,7 @@ PreparedMaterial（RenderResourceSystem 中每种材质一份）
 
 CPU 修改在验证成功后一次性写入完整状态并推进 revision。若支持可变访问 guard，也必须在 guard 提交时完成同样的契约；不能暴露绕过版本维护的任意可变引用。
 
-初版对 ResourceSystem 的注册表和 World 的完整 scene membership 做扫描。复杂度约为 `O(R + N + B)`：R 为资源记录数，N 为 instance 数，B 为实际检查的引用总数；不能把多材质依赖检查都算成常数成本。资源源数据和派生打包只在版本或依赖变化时复制 / 重算。
+初版对 AssetSystem 的注册表和 GameWorld 的完整 scene membership 做扫描。复杂度约为 `O(R + N + B)`：R 为资源记录数，N 为 instance 数，B 为实际检查的引用总数；不能把多材质依赖检查都算成常数成本。资源源数据和派生打包只在版本或依赖变化时复制 / 重算。
 
 现有 1024 instance 上限仅是当前实现背景，不构成性能证明或目标上限。后续可以用 chunk version、dirty bitset 或 changed-handle 集合跳过扫描；这些只能是候选对象加速索引，清空后做全量对账仍应得到相同结果，不能重新引入必须可靠消费的语义 changelog。
 
@@ -225,7 +225,7 @@ CPU 修改在验证成功后一次性写入完整状态并推进 revision。若�
 **资源对账：**
 
 1. 比较 CPU registry membership 与 render-resource records，处理删除和已失效的首次上传请求。
-2. 扫描 CPU ResourceStore 中的不可变 mesh/texture 内容，为尚未安装的资源提交上传；比较 material source revision 和 texture binding revision，准备新的 material snapshot。mesh / texture 没有内容更新路径。
+2. 扫描 CPU AssetStore 中的不可变 mesh/texture 内容，为尚未安装的资源提交上传；比较 material source revision 和 texture binding revision，准备新的 material snapshot。mesh / texture 没有内容更新路径。
 3. 即使 CPU revision 未变，也继续推进 upload / BLAS / sky distribution 等异步工作并检查完成。
 4. 按纹理、mesh 等依赖更新 prepared material 与资源元数据，发布一次一致的 PreparedResourceView。
 
@@ -233,7 +233,7 @@ CPU 修改在验证成功后一次性写入完整状态并推进 revision。若�
 
 ```text
 begin sync_epoch
-for each instance in complete World membership:
+for each instance in complete GameWorld membership:
     find or create mirror by generational handle
     mark mirror seen in sync_epoch
     if source revision differs:
@@ -255,7 +255,7 @@ finalize derived tables and pending GPU revisions
 
 对账输出可保留一个局部 `RenderWorldChangeSummary`，例如 instance 更新区间、topology/TLAS/emissive 的变化和 appearance invalidation。它只承接这次计算的结果，不再转换成另一组事件供规则解释。GPU 待更新义务必须保存到 buffer owner 的版本状态中，不能随临时 summary 销毁。
 
-资源层保留 `material -> texture` 依赖查询，World 保留 mesh/material 到实例的关系以提供查询和删除检查。初版不要求通过这些索引推送 transitive dirty；RenderWorld 读取 PreparedResourceView 即可发现资源 ready 或 material prepared 版本变化。除 loader / upload completion 外，不再新增 `SceneDelta / ResourceDelta / GpuResourceDelta` 三套变化对象。
+资源层保留 `material -> texture` 依赖查询，GameWorld 保留 mesh/material 到实例的关系以提供查询和删除检查。初版不要求通过这些索引推送 transitive dirty；RenderWorld 读取 PreparedResourceView 即可发现资源 ready 或 material prepared 版本变化。除 loader / upload completion 外，不再新增 `SceneDelta / ResourceDelta / GpuResourceDelta` 三套变化对象。
 
 ### 6. 资源身份、就绪与删除
 
@@ -275,11 +275,11 @@ Material 参数可先使用 fallback texture；mesh 的 raster buffer ready 与 
 - **迟到完成：** 首次上传请求携带 resource handle generation。已删除 handle 的完成结果只能进入回收，不能重新发布 shader-visible binding。
 - **完成队列：** loader / upload / build completion 是任务事实，保留队列；它们由所属 owner 消费，更新状态表。RenderWorld 不需要再次订阅这些队列。
 
-显式删除 CPU resource 前必须验证引用。material 被 instance 引用时不能删除，mesh 被 instance 引用时不能删除，texture 被 material 或 sky 引用时不能删除。删除被拒绝时，不修改内容、引用和版本。首期只有一个 World，引用检查直接由 World / SceneStore 的反向索引完成；不为多 World 增加协调器。
+显式删除 CPU resource 前必须验证引用。material 被 instance 引用时不能删除，mesh 被 instance 引用时不能删除，texture 被 material 或 sky 引用时不能删除。删除被拒绝时，不修改内容、引用和版本。首期只有一个 GameWorld，引用检查直接由 GameWorld / SceneStore 的反向索引完成；不为多 GameWorld 增加协调器。
 
 CPU 删除与 GPU 释放分开：实例镜像在对账时退役，旧 slot、BLAS、image 和 descriptor 要等待引用它们的在飞提交安全结束后才能回收或复用。CPU handle generation、GPU slot generation 和 GPU completion 是不同约束；某一帧的 FIF wait 不能被当作所有异步任务都已结束。
 
-停止运行时，先停止接收 CPU 编辑和新资源请求，再退出场景使用、处理未完成任务和 GPU 提交，释放 RenderWorld 场景资源、RenderResourceSystem 共享资源，最后释放底层分配器和 device。逻辑树调整不能绕过现有显式 shutdown 契约。
+停止运行时，先停止接收 CPU 编辑和新资源请求，再退出场景使用、处理未完成任务和 GPU 提交，释放 RenderWorld 场景资源、RenderAssetSystem 共享资源，最后释放底层分配器和 device。逻辑树调整不能绕过现有显式 shutdown 契约。
 
 ### 7. Prepare、GPU 副本与运动历史
 
@@ -287,10 +287,10 @@ CPU 删除与 GPU 释放分开：实例镜像在对账时退役，旧 slot、BLA
 begin_frame
     wait current FIF reuse boundary / reclaim safe retired objects
 update
-    commit ResourceSystem + World edits
+    commit AssetSystem + GameWorld edits
 prepare
     collect loader results / finish CPU scene import ingest
-    RenderResourceSystem sync + poll + publish prepared resources
+    RenderAssetSystem sync + poll + publish prepared resources
     freeze resource view for this prepare epoch
     RenderWorld sync source mirrors + resolve bindings
     derive topology / temporal payload / TLAS / light changes
@@ -316,7 +316,7 @@ GPU buffer owner 使用 `target prepared revision` 和每个 FIF 的 `uploaded r
 - 本帧 `current = 最新镜像 transform`，`previous = last_submitted_transform`。
 - 首次激活和 history reset 时令 previous 等于 current，避免虚假运动。
 - 成功提交参与该历史的场景后，再推进 last_submitted_transform；跳过渲染、取消 prepare 或失败提交不推进。
-- 移动后静止的下一渲染帧仍需写入 previous=current，即使 World 没有新编辑。
+- 移动后静止的下一渲染帧仍需写入 previous=current，即使 GameWorld 没有新编辑。
 - 一个 RenderWorld 可以被多个 view 读取；view 的剔除结果不写回场景镜像，场景历史只由本 RenderWorld 的实际提交推进。
 
 因此 temporal payload 变化可以推进 instance upload revision，但不能因此无条件推进 TLAS 或外观语义版本。FIF 中仍存旧 previous 的副本，也必须在下次使用前追平。
@@ -348,14 +348,14 @@ CPU source revision、GPU prepared/upload revision、TLAS 输入版本、emissiv
 
 ### 9. 首期操作与成本
 
-首期只有一个 `RenderRuntime` / `World`。RenderResourceSystem 在该 runtime 内共享资源 GPU 状态，RenderWorld 保存这一场景的 instance slot、TLAS、raycast 与历史；不为跨 World 的引用计数、同步广播或独立 device 增加抽象。多个 view 仍可读取同一个 RenderWorld，但 view 的剔除结果不写回场景镜像。
+首期只有一个 `RenderRuntime` / `GameWorld`。RenderAssetSystem 在该 runtime 内共享资源 GPU 状态，RenderWorld 保存这一场景的 instance slot、TLAS、raycast 与历史；不为跨 GameWorld 的引用计数、同步广播或独立 device 增加抽象。多个 view 仍可读取同一个 RenderWorld，但 view 的剔除结果不写回场景镜像。
 
 | 操作 | 对账行为 |
 | --- | --- |
-| FBX / glTF 导入 | loader 输出 CPU 数据；导入器注册资源并创建 World instance；prepare 观察新 membership，资源未 ready 时保存 Pending 镜像。导入失败不做 rollback，留下的无引用资源可删除 |
+| FBX / glTF 导入 | loader 输出 CPU 数据；导入器注册资源并创建 GameWorld instance；prepare 观察新 membership，资源未 ready 时保存 Pending 镜像。导入失败不做 rollback，留下的无引用资源可删除 |
 | 同一次同步中移动并换材质 | source revision 推进，镜像读取最终 transform 与完整 material 列表；两项分别比较，不用强度枚举互相覆盖 |
 | CPU 修改 A -> B -> C | 接收方直接复制 C，不回放 B；若最后回到已观察的 A，投影相等则无需无意义重建 |
-| World 无编辑但 texture / BLAS ready | 资源 view 的发布状态变化；材质或实例对账发现新 ready generation，更新外观或激活状态 |
+| GameWorld 无编辑但 texture / BLAS ready | 资源 view 的发布状态变化；材质或实例对账发现新 ready generation，更新外观或激活状态 |
 | 实例在同步前创建又删除 | 不出现在完整 membership 中，不分配渲染镜像或 GPU slot |
 | instance 删除或场景清空 | mirror sweep 退役场景记录；无引用的 CPU resource 可删除，GPU resource 仍按 completion 延迟回收 |
 
@@ -368,8 +368,8 @@ CPU source revision、GPU prepared/upload revision、TLAS 输入版本、emissiv
 目标架构先固定，文件移动、owner 拆分和行为替换分别形成可验证步骤：
 
 1. **建立 source revision 与持久镜像。** 已完成：有效编辑推进最终状态和 revision，RenderWorld 做完整 membership 对账，RenderData 从镜像生成。
-2. **收窄 CPU 资源与场景。** 已完成：`ResourceSystem` 承接不可变 mesh/texture、可变 material 与依赖，`SceneStore` 只保存 instance/light/sky 关系。
-3. **建立 RenderResourceSystem 发布边界。** 已完成：texture/mesh/material/sky manager 和 upload queue 由 runtime 级 `RenderResourceSystem` 持有，支持首次上传、ready/fallback、material 更新和安全回收。
+2. **收窄 CPU 资源与场景。** 已完成：`AssetSystem` 承接不可变 mesh/texture、可变 material 与依赖，`SceneStore` 只保存 instance/light/sky 关系。
+3. **建立 RenderAssetSystem 发布边界。** 已完成：texture/mesh/material/sky manager 和 upload queue 由 runtime 级 `RenderAssetSystem` 持有，支持首次上传、ready/fallback、material 更新和安全回收。
 4. **切换 revision pull 主路径。** 已完成：生产路径不再依赖 DirtyEvent / DirtyRule / DirtyDispatchPlan；全表扫描是正确性基线。
 5. **独立历史与 GPU 副本更新。** 首期已完成 FIF dirty 补写、mesh/texture late completion 防护、静态 scene buffer revision 和 FIF 延迟回收；appearance history 使用独立版本，不借 TLAS 变化传递普通材质失效。
 6. **按 profile 优化。** 未纳入首期；TLAS refit、异步 TLAS build、staging thread、mesh/texture 内容热替换与跨线程快照继续保持非目标。
@@ -381,18 +381,18 @@ CPU source revision、GPU prepared/upload revision、TLAS 输入版本、emissiv
 - 唯一 CPU 权威、单向投影和 Vulkan 的 RenderThread 生命周期保持不变；被改变的是资源归属、render-side 数据组织与同步算法。
 - 首期 scene 导入不要求事务回滚。导入失败只需让 import 状态失败并保留已注册资源；这些资源若没有 live 引用，应可以通过孤儿删除接口清理。
 - mesh 与 texture 内容在创建 / 导入后不可修改；不支持同 handle 顶点、索引、像素内容更新或热替换。不同内容使用新 handle。
-- “允许副本”不允许多个可独立编辑的材质真相；RenderWorld / RenderResourceSystem 的 CPU snapshot 均可从权威状态重建。
+- “允许副本”不允许多个可独立编辑的材质真相；RenderWorld / RenderAssetSystem 的 CPU snapshot 均可从权威状态重建。
 - 不承诺移除 completion queue、GPU retirement、FIF tracking 或历史版本。这些处理不同生命周期，不能被一个全局 scene_dirty 取代。
 - 不为取消 changelog 引入另一套必须可靠消费的资源 / 场景事件协议。源版本、完整 membership 和资源发布状态必须足以恢复镜像；loader / upload completion 队列仍然保留。
-- 第一阶段不实现完整 asset database、网络复制、事件回放、撤销系统、通用 ECS scheduler、独立 RenderWorld 工作线程、多 World 协调或多 device 渲染。
+- 第一阶段不实现完整 asset database、网络复制、事件回放、撤销系统、通用 ECS scheduler、独立 RenderWorld 工作线程、多 GameWorld 协调或多 device 渲染。
 - 本文中的记录布局不是 GPU ABI；共享 shader 结构仍从既有 ABI owner 生成，真正更改布局时按项目 ABI 规则验证。
 
 ## 完成标准
 
 ### 架构与维护
 
-- ResourceSystem、World、RenderResourceSystem、RenderWorld 的 owner 和只读接口已建立；不可变 mesh / texture、可变 material 与场景 instance / TLAS 分离。
-- RenderWorld 持有自包含的 render scene 镜像；后端打包、TLAS、灯光表和 render pass 不回读 World / CPU ResourceSystem。
+- AssetSystem、GameWorld、RenderAssetSystem、RenderWorld 的 owner 和只读接口已建立；不可变 mesh / texture、可变 material 与场景 instance / TLAS 分离。
+- RenderWorld 持有自包含的 render scene 镜像；后端打包、TLAS、灯光表和 render pass 不回读 GameWorld / CPU AssetSystem。
 - 有效 CPU 编辑只维护最终状态与 source revision；普通新增字段无需扩展跨层事件规则。
 - 生产正确性不依赖旧 changelog/router，也不依赖 optional changed-handle 队列的可靠消费；全量对账可重建一致的镜像。
 - 明确记录 CPU 镜像内存、扫描与上传成本；性能声明有数据支持，功能正确不等于性能已验证。

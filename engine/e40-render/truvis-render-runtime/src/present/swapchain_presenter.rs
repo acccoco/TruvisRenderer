@@ -2,7 +2,7 @@ use ash::vk;
 use itertools::Itertools;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::resources::gfx_resource_manager::GfxResourceManager;
+use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::resources::image::GfxImage;
@@ -115,12 +115,12 @@ impl SwapchainPresenter {
     /// 创建 surface、swapchain、swapchain image/view wrapper 和 present 同步对象。
     ///
     /// 该函数只能在平台层提供 raw window/display handle 后调用。创建出的 swapchain images
-    /// 会注册到 `GfxResourceManager`，但 Vulkan image 本体仍由 WSI 拥有。
+    /// 会注册到 `GfxResourceRegistry`，但 Vulkan image 本体仍由 WSI 拥有。
     pub fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         surface_ctx: GfxSurfaceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         raw_display_handle: RawDisplayHandle,
         raw_window_handle: RawWindowHandle,
         window_physical_extent: vk::Extent2D,
@@ -137,7 +137,7 @@ impl SwapchainPresenter {
             None,
         );
         let (swapchain_image_handles, swapchain_image_view_handles) =
-            Self::create_swapchain_images_and_views(resource_ctx, device_ctx, &swapchain, gfx_resource_manager);
+            Self::create_swapchain_images_and_views(resource_ctx, device_ctx, &swapchain, gfx_resource_registry);
 
         let swapchain_image_infos = swapchain.image_infos();
 
@@ -171,7 +171,7 @@ impl SwapchainPresenter {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         swapchain: &GfxSwapchain,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
     ) -> (Vec<GfxImageHandle>, Vec<GfxImageViewHandle>) {
         let mut image_handles = Vec::new();
         let mut image_view_handles = Vec::new();
@@ -187,9 +187,9 @@ impl SwapchainPresenter {
                 swapchain_image_info.image_format,
                 format!("swapchain-image-{}", image_idx),
             );
-            let image_handle = gfx_resource_manager.register_image(image);
+            let image_handle = gfx_resource_registry.register_image(image);
 
-            let image_view_handle = gfx_resource_manager.get_or_create_image_view(
+            let image_view_handle = gfx_resource_registry.get_or_create_image_view(
                 device_ctx,
                 image_handle,
                 GfxImageViewDesc::new_2d(swapchain_image_info.image_format, vk::ImageAspectFlags::COLOR),
@@ -323,14 +323,14 @@ impl SwapchainPresenter {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         surface_ctx: GfxSurfaceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
     ) {
         device_ctx.device().wait_idle();
 
         // 重建前先释放旧 image wrapper/view，再把旧 swapchain 交给 Vulkan 创建新 swapchain。
         // 这里 wait idle 是 resize 路径的保守同步点，防止窗口尺寸资源仍被在飞命令使用。
         for image_handle in std::mem::take(&mut self.swapchain_images) {
-            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, image_handle, DestroyReason::Resize);
+            gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image_handle, DestroyReason::Resize);
         }
         let old_swapchain = self.swapchain.take();
         self.swapchain = Some(GfxSwapchain::new(
@@ -345,7 +345,7 @@ impl SwapchainPresenter {
             resource_ctx,
             device_ctx,
             self.swapchain.as_ref().unwrap(),
-            gfx_resource_manager,
+            gfx_resource_registry,
         );
 
         self.current_image_acquired = false;
@@ -421,7 +421,7 @@ impl SwapchainPresenter {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         surface_ctx: GfxSurfaceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
     ) {
         // swapchain image wrapper 必须在 swapchain 销毁前释放；surface 最后销毁。
         for semaphore in self.present_complete_semaphores {
@@ -431,7 +431,7 @@ impl SwapchainPresenter {
             semaphore.destroy(device_ctx);
         }
         for image_handle in self.swapchain_images {
-            gfx_resource_manager.release_image_immediate(
+            gfx_resource_registry.release_image_immediate(
                 resource_ctx,
                 device_ctx,
                 image_handle,

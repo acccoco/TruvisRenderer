@@ -19,7 +19,7 @@ use truvis_render_foundation::resource_access::GfxResourceAccess;
 /// 负责管理所有的 GPU 资源，包括 Buffer、Image 和 ImageView。
 /// 使用 SlotMap 存储资源，对外提供轻量级的 Handle。
 /// 支持资源的延迟销毁（Frames in Flight）。
-pub struct GfxResourceManager {
+pub struct GfxResourceRegistry {
     /// 存储所有的 Buffer 资源
     buffer_pool: SlotMap<GfxBufferHandle, GfxBuffer>,
     /// 存储所有的 Image 资源
@@ -39,16 +39,16 @@ pub struct GfxResourceManager {
 
     destroyed: bool,
 }
-impl Default for GfxResourceManager {
+impl Default for GfxResourceRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
 // 创建与初始化
-impl GfxResourceManager {
+impl GfxResourceRegistry {
     /// 创建一个新的资源管理器
     pub fn new() -> Self {
-        let _span = tracy_client::span!("GfxResourceManager::new");
+        let _span = tracy_client::span!("GfxResourceRegistry::new");
 
         Self {
             buffer_pool: SlotMap::with_key(),
@@ -65,7 +65,7 @@ impl GfxResourceManager {
     }
 }
 // 销毁
-impl GfxResourceManager {
+impl GfxResourceRegistry {
     pub fn destroy(mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
         self.destroy_all(resource_ctx, device_ctx, DestroyReason::Shutdown);
     }
@@ -81,7 +81,7 @@ impl GfxResourceManager {
         // 销毁 所有的 image views
         for (view_handle, image_view) in self.image_view_pool.drain() {
             log::debug!(
-                "GfxResourceManager releasing image view manager={:?} name={} raw={:#x} reason={}",
+                "GfxResourceRegistry releasing image view manager={:?} name={} raw={:#x} reason={}",
                 view_handle,
                 image_view.debug_name(),
                 image_view.handle().as_raw(),
@@ -95,7 +95,7 @@ impl GfxResourceManager {
         // 销毁所有 images
         for (image_handle, image) in self.image_pool.drain() {
             log::debug!(
-                "GfxResourceManager releasing image manager={:?} name={} raw={:#x} reason={}",
+                "GfxResourceRegistry releasing image manager={:?} name={} raw={:#x} reason={}",
                 image_handle,
                 image.debug_name(),
                 image.handle().as_raw(),
@@ -107,7 +107,7 @@ impl GfxResourceManager {
         // 销毁所有 buffers
         for (buffer_handle, buffer) in self.buffer_pool.drain() {
             log::debug!(
-                "GfxResourceManager releasing buffer manager={:?} name={} raw={:#x} reason={}",
+                "GfxResourceRegistry releasing buffer manager={:?} name={} raw={:#x} reason={}",
                 buffer_handle,
                 buffer.debug_name(),
                 buffer.vk_buffer().as_raw(),
@@ -126,7 +126,7 @@ impl GfxResourceManager {
         }
     }
 }
-impl Drop for GfxResourceManager {
+impl Drop for GfxResourceRegistry {
     fn drop(&mut self) {
         #[cfg(debug_assertions)]
         {
@@ -135,7 +135,7 @@ impl Drop for GfxResourceManager {
     }
 }
 // 子系统 API
-impl GfxResourceManager {
+impl GfxResourceRegistry {
     /// 清理已过期的资源
     ///
     /// 检查待销毁队列，销毁那些已经不再被 GPU 使用的资源（即提交销毁时的帧索引 <= completed_frame_index）。
@@ -157,7 +157,7 @@ impl GfxResourceManager {
         for (buffer_handle, reason) in buffers_to_destroy {
             if let Some(buffer) = self.buffer_pool.remove(buffer_handle) {
                 log::debug!(
-                    "GfxResourceManager releasing delayed buffer manager={:?} name={} raw={:#x} reason={}",
+                    "GfxResourceRegistry releasing delayed buffer manager={:?} name={} raw={:#x} reason={}",
                     buffer_handle,
                     buffer.debug_name(),
                     buffer.vk_buffer().as_raw(),
@@ -183,7 +183,7 @@ impl GfxResourceManager {
     }
 }
 // Buffer 资源 API
-impl GfxResourceManager {
+impl GfxResourceRegistry {
     pub fn register_buffer(&mut self, buffer: GfxBuffer) -> GfxBufferHandle {
         self.buffer_pool.insert(buffer)
     }
@@ -234,7 +234,7 @@ impl GfxResourceManager {
         self.pending_destroy_buffers.retain(|(pending_handle, _, _)| *pending_handle != handle);
         if let Some(buffer) = self.buffer_pool.remove(handle) {
             log::trace!(
-                "GfxResourceManager releasing immediate buffer manager={:?} name={} raw={:#x} reason={}",
+                "GfxResourceRegistry releasing immediate buffer manager={:?} name={} raw={:#x} reason={}",
                 handle,
                 buffer.debug_name(),
                 buffer.vk_buffer().as_raw(),
@@ -245,7 +245,7 @@ impl GfxResourceManager {
     }
 }
 // 图像 API
-impl GfxResourceManager {
+impl GfxResourceRegistry {
     pub fn register_image(&mut self, image: GfxImage) -> GfxImageHandle {
         self.image_pool.insert(image)
     }
@@ -308,7 +308,7 @@ impl GfxResourceManager {
                 // 销毁 image view
                 if let Some(image_view) = self.image_view_pool.remove(image_view_handle) {
                     log::trace!(
-                        "GfxResourceManager releasing image view manager={:?} parent={:?} name={} raw={:#x} reason={}",
+                        "GfxResourceRegistry releasing image view manager={:?} parent={:?} name={} raw={:#x} reason={}",
                         image_view_handle,
                         handle,
                         image_view.debug_name(),
@@ -326,7 +326,7 @@ impl GfxResourceManager {
         // 销毁 image 本身
         if let Some(image) = self.image_pool.remove(handle) {
             log::trace!(
-                "GfxResourceManager releasing image manager={:?} name={} raw={:#x} reason={}",
+                "GfxResourceRegistry releasing image manager={:?} name={} raw={:#x} reason={}",
                 handle,
                 image.debug_name(),
                 image.handle().as_raw(),
@@ -337,7 +337,7 @@ impl GfxResourceManager {
     }
 }
 // ImageView 资源 API
-impl GfxResourceManager {
+impl GfxResourceRegistry {
     /// 创建一个 ImageView
     pub fn get_or_create_image_view(
         &mut self,
@@ -373,7 +373,7 @@ impl GfxResourceManager {
     }
 }
 
-impl GfxResourceAccess for GfxResourceManager {
+impl GfxResourceAccess for GfxResourceRegistry {
     fn get_image(&self, handle: GfxImageHandle) -> Option<&GfxImage> {
         self.get_image(handle)
     }

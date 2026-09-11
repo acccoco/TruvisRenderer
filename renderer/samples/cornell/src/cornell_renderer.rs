@@ -5,7 +5,7 @@ use truvis_render_loop::input_event::InputEvent;
 use truvis_render_loop::renderer::{Renderer, RendererInitCtx, RendererResizeCtx, RendererShutdownCtx};
 use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 use truvis_shader_binding::gpu;
-use truvis_world::World;
+use truvis_world::GameWorld;
 
 use renderer_imgui::{DebugImageSelectorView, DebugInfoOverlay, ImGuiSubsystem};
 use renderer_kit::camera::Camera;
@@ -29,7 +29,7 @@ pub struct CornellRenderer {
 }
 
 impl CornellRenderer {
-    fn request_model(world: &mut World, camera: &mut Camera) {
+    fn request_model(world: &mut GameWorld, camera: &mut Camera) {
         camera.position = glam::vec3(-400.0, 1000.0, 1000.0);
         camera.euler_yaw_deg = 330.0;
         camera.euler_pitch_deg = -27.0;
@@ -145,7 +145,7 @@ impl Renderer for CornellRenderer {
 
             let cmd = self.realtime.compute_cmd(frame_label);
             cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-compute-graph");
-            compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
+            compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
             cmd.end();
             compiled_graph.build_submit_info(std::slice::from_ref(cmd))
         };
@@ -180,7 +180,7 @@ impl Renderer for CornellRenderer {
 
             let cmd = self.realtime.present_cmd(frame_label);
             cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-present-graph");
-            compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_manager);
+            compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
             cmd.end();
             compiled_graph.build_submit_info(std::slice::from_ref(cmd))
         };

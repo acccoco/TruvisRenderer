@@ -13,7 +13,7 @@ use crate::render_world::render_data::{InstanceRenderData, RenderData};
 /// 每个 frame-in-flight 拥有独立 TLAS 与 revision，避免当前帧重建时覆盖 GPU
 /// 仍可能读取的上一轮 acceleration structure。它只消费 `RenderData` 中已经
 /// active 的 instance，不重新判断 instance 是否可见。
-pub(crate) struct RenderTlasManager {
+pub(crate) struct SceneTlas {
     frames: [RenderTlasFrame; FrameLabel::COUNT],
     scene_revision: u64,
 }
@@ -23,7 +23,7 @@ struct RenderTlasFrame {
     tlas_revision: u64,
 }
 
-impl RenderTlasManager {
+impl SceneTlas {
     pub(crate) fn new() -> Self {
         Self {
             frames: FrameLabel::ALL.map(|_| RenderTlasFrame {
@@ -72,7 +72,7 @@ impl RenderTlasManager {
         frame_id: u64,
         frame_label: FrameLabel,
     ) {
-        let _span = tracy_client::span!("RenderTlasManager::build_or_update");
+        let _span = tracy_client::span!("SceneTlas::build_or_update");
         let frame_index = *frame_label;
         let frame = &mut self.frames[frame_index];
         let tlas_revision = self.scene_revision;

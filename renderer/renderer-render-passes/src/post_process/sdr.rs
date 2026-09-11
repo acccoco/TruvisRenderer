@@ -86,7 +86,7 @@ impl SdrPass {
 
     pub fn exec(&self, cmd: &GfxCommandBuffer, data: SdrPassData, record_ctx: &RenderPassRecordCtx<'_>) {
         let image_view = |handle| {
-            record_ctx.gfx_resource_manager.get_image_view(handle).expect("SdrPass: image view not found").handle()
+            record_ctx.gfx_resource_registry.get_image_view(handle).expect("SdrPass: image view not found").handle()
         };
         let image_info =
             |view| vec![vk::DescriptorImageInfo::default().image_layout(vk::ImageLayout::GENERAL).image_view(view)];

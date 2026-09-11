@@ -77,7 +77,7 @@ impl<'a> RenderGraphBuilder<'a> {
     ///
     /// # 参数
     /// - `name`: 资源调试名称
-    /// - `image_handle`: 物理图像句柄（来自 GfxResourceManager）
+    /// - `image_handle`: 物理图像句柄（来自 GfxResourceRegistry）
     /// - `view_handle`: 可选的图像视图句柄
     /// - `format`: 图像格式（用于推断 barrier aspect）
     /// - `initial_state`: 图像的初始状态

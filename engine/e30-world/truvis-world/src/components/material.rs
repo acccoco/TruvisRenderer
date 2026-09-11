@@ -4,7 +4,7 @@ pub use truvis_asset::handle::{CoverageMode, MaterialClass};
 
 /// CPU scene 中的材质语义参数。
 ///
-/// `MaterialData` 是 `World` facade 和 `SceneStore` 对外使用的材质数据形状。
+/// `MaterialData` 是 `GameWorld` facade 和 `SceneStore` 对外使用的材质数据形状。
 /// texture 引用使用 `TextureHandle`，因此 Renderer、instance、raycast 和 render-side
 /// manager 不需要知道 `AssetHub` 内部 loader handle。GPU material slot、bindless
 /// texture binding 和 per-FIF material buffer 仍由 `RenderWorld` 内部 manager 维护。

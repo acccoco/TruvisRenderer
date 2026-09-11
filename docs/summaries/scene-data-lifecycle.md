@@ -1,4 +1,4 @@
-# CPU ResourceSystem / World 到 GPU RenderWorld 同步
+# CPU AssetSystem / GameWorld 到 GPU RenderWorld 同步
 
 > 状态：当前实现事实总结（2026-09-10）。主设计见 [`render-scene-mirror-and-resource-system.md`](../brain-storm/render-scene-mirror-and-resource-system.md)。
 
@@ -10,37 +10,37 @@ Truvis 现在把 CPU 资源、CPU 场景关系和 device 资源分成三个边�
 AssetHub / loader
       │ completion 写回 CPU registry
       ▼
-World
-├── ResourceSystem   mesh / material / texture 身份、内容与依赖
+GameWorld
+├── AssetSystem   mesh / material / texture 身份、内容与依赖
 └── SceneStore       instance / light / sky 关系与反向索引
       │ SceneReadView
       ▼
 RenderRuntime
-├── RenderResourceSystem   texture / mesh / material / sky 的 GPU 资源与上传
+├── RenderAssetSystem   texture / mesh / material / sky 的 GPU 资源与上传
 └── RenderWorld            instance 镜像、GPU scene buffer、emissive、TLAS、历史
       │ RenderSceneView
       ▼
 render pass / shader / raycast
 ```
 
-`World` 是 update 阶段唯一的 CPU facade。它不保存 Vulkan 对象；`ResourceSystem` 也不创建 GPU
-对象。`RenderResourceSystem` 是 runtime 级共享 GPU 资源 owner，`RenderWorld` 只组合一个场景的
+`GameWorld` 是 update 阶段唯一的 CPU facade。它不保存 Vulkan 对象；`AssetSystem` 也不创建 GPU
+对象。`RenderAssetSystem` 是 runtime 级共享 GPU 资源 owner，`RenderWorld` 只组合一个场景的
 instance、light、sky 镜像和派生 GPU scene。prepare 完成后，render pass 不回读 CPU owner。
 
 ## CPU owner
 
-`ResourceSystem` 位于 `engine/e30-world/truvis-world/src/resource_system.rs`，包含
-`ResourceStore`、`AssetHub` 和 `SceneAssetIngestor`：
+`AssetSystem` 位于 `engine/e30-world/truvis-world/src/asset_system.rs`，包含
+`AssetStore`、`AssetHub` 和 `SceneAssetIngestor`：
 
-- mesh 注册时由 CPU `ResourceStore` 保留不可变顶点/index payload；渲染侧只在需要上传时借用它。
+- mesh 注册时由 CPU `AssetStore` 保留不可变顶点/index payload；渲染侧只在需要上传时借用它。
 - texture 注册后获得 `TextureHandle`，file decode 由 `AssetHub` 异步完成；按路径复用同一个 live handle。
 - material 保存完整 `MaterialData` 和 source revision，更新内容时维护 `material -> texture` 依赖。
 - mesh/texture 创建后不可变；不同内容使用新 handle。material 可以更新，但相等赋值不推进 revision。
 - 删除 material、mesh、texture 前分别检查 live instance、material 和 sky 引用；失败不修改表和版本。
 
 `SceneStore` 只保存 instance、analytic light、sky 和 `material -> instance`、`mesh -> instance` 反向索引。
-创建或修改 instance 时，通过 `ResourceStore` 校验 mesh/material handle 和 material 数量；不支持修改
-instance 的 mesh 内容或 mesh 引用。`SceneReadView` 同时只读借用 SceneStore 与 ResourceStore，向
+创建或修改 instance 时，通过 `AssetStore` 校验 mesh/material handle 和 material 数量；不支持修改
+instance 的 mesh 内容或 mesh 引用。`SceneReadView` 同时只读借用 SceneStore 与 AssetStore，向
 render-side 暴露最终状态、资源 membership、material revision 和引用查询。
 
 `SceneAssetIngestor` 负责把 loader handle 翻译成 CPU handle。model 完成后先校验 raw scene，随后
@@ -48,25 +48,25 @@ render-side 暴露最终状态、资源 membership、material revision 和引用
 
 ## GPU owner
 
-`RenderResourceSystem` 位于 `engine/e40-render/truvis-render-runtime/src/render_world/render_resource_system.rs`，
+`RenderAssetSystem` 位于 `engine/e40-render/truvis-render-runtime/src/render_world/render_asset_system.rs`，
 由 `RenderRuntime` 持有，包含：
 
-- `RenderTextureManager`：按 texture handle 安装 image/view/SRV，维护 fallback、published binding revision 和迟到完成回收。
-- `RenderMeshManager`：按 mesh handle 创建 vertex/index buffer、RtGeometry 和 BLAS；mesh 内容不可替换，删除后跨 FIF 延迟释放。
-- `RenderMaterialManager`：扫描 CPU material membership，维护 stable slot、render-side source snapshot、texture binding revision 和每 FIF dirty upload。
-- `RenderSkyManager` 与 `RenderAssetUploadQueue`：处理 sky fallback/distribution 以及 texture/sky 的异步完成。
+- `GpuTextureStore`：按 texture handle 安装 image/view/SRV，维护 fallback、published binding revision 和迟到完成回收。
+- `GpuMeshStore`：按 mesh handle 创建 vertex/index buffer、RtGeometry 和 BLAS；mesh 内容不可替换，删除后跨 FIF 延迟释放。
+- `GpuMaterialStore`：扫描 CPU material membership，维护 stable slot、render-side source snapshot、texture binding revision 和每 FIF dirty upload。
+- `GpuSkyStore` 与 `GpuAssetUploadQueue`：处理 sky fallback/distribution 以及 texture/sky 的异步完成。
 
 这些 manager 不保存 instance 的组合关系；material slot、image 和 BLAS 可被同一个 runtime 的场景引用。`RenderWorld`
-中的 `RenderInstanceManager` 只保存 CPU instance handle 到 stable instance slot 的镜像、transform/material
-快照、pending/active 状态和 motion history；`RenderTlasManager`、emissive table、scene/indirect buffer
+中的 `RenderInstanceTable` 只保存 CPU instance handle 到 stable instance slot 的镜像、transform/material
+快照、pending/active 状态和 motion history；`SceneTlas`、emissive table、scene/indirect buffer
 和 raster draw cache 都属于场景侧。
 
 ## 一帧同步顺序
 
 `RenderRuntime::prepare` 的固定顺序是：
 
-1. `World::poll_asset_loads()` 调用 `AssetHub::update()`，让 `ResourceSystem` 消费 loader 完成事件并写回 CPU resource/scene 最终状态。
-2. `RenderResourceSystem::sync()` 对账 CPU membership，移除已删除资源，借用保留的 texture/mesh 内容提交上传，poll/publish GPU completion，再扫描 material source/binding revision。
+1. `GameWorld::poll_asset_loads()` 调用 `AssetHub::update()`，让 `AssetSystem` 消费 loader 完成事件并写回 CPU resource/scene 最终状态。
+2. `RenderAssetSystem::sync()` 对账 CPU membership，移除已删除资源，借用保留的 texture/mesh 内容提交上传，poll/publish GPU completion，再扫描 material source/binding revision。
 3. `ShaderBindingSystem::prepare_render_data()` 刷新全局 bindless 表。
 4. `RenderWorld::prepare_render_data()` 扫描完整 instance membership，比较 transform、material 列表和 material revision，解析 mesh/material ready gate，生成 `RenderData`。
 5. analytic light、emissive table、geometry/instance/indirect buffer、TLAS 和 scene root buffer 依据本次对账结果更新；最后写 per-frame 数据。
@@ -93,13 +93,13 @@ per-FIF uploaded revision、TLAS/emissive/appearance 版本不能合并成一个
 
 ## 删除、迟到完成与 FIF
 
-CPU 删除先检查反向索引，再从 ResourceSystem 或 SceneStore 移除。render-side 下一次完整扫描发现
+CPU 删除先检查反向索引，再从 AssetSystem 或 SceneStore 移除。render-side 下一次完整扫描发现
 membership 缺失后退役 slot/cache；已提交但尚未完成的 texture upload 或 BLAS completion 只销毁结果，
 不能重新 publish stale handle。mesh buffer、image、material slot 和 instance slot 按各自 owner 的约束
 延迟回收，不能把 CPU 删除直接等同于 GPU 已安全释放。
 
 `RenderRuntime::begin_frame` 先等待当前 FIF timeline、清理底层延迟释放，再向
-`RenderResourceSystem` 和 `RenderWorld` 传递 frame id。每个 material buffer、scene buffer 和 instance
+`RenderAssetSystem` 和 `RenderWorld` 传递 frame id。每个 material buffer、scene buffer 和 instance
 buffer 有自己的 FIF 副本；本帧只写当前 label，落后的 A/B/C 副本会在再次使用前补写最新目标。CPU
 loader 完成、GPU copy 入队、timeline completion、shader-visible publish 和 render 结果是不同阶段，日志
 中的任一成功都不能替代后续阶段证据。
@@ -114,13 +114,13 @@ loader 完成、GPU copy 入队、timeline completion、shader-visible publish �
 - mesh/texture 不支持内容修改或同 handle 热替换。
 - CPU scene/resource 变化、异步 texture/mesh ready 和 GPU 资源退役在 FIF 下保持有效。
 
-不在首期范围：导入事务回滚、多 World 资源协调、跨线程 RenderWorld、完整 ECS extraction、mesh/texture
+不在首期范围：导入事务回滚、多 GameWorld 资源协调、跨线程 RenderWorld、完整 ECS extraction、mesh/texture
 热替换和按属性的复杂事件图。
 
 ## 代码入口
 
-- CPU：[`resource_system.rs`](../../engine/e30-world/truvis-world/src/resource_system.rs)、[`scene_store.rs`](../../engine/e30-world/truvis-world/src/scene_store.rs)、[`scene_asset_ingestor.rs`](../../engine/e30-world/truvis-world/src/scene_asset_ingestor.rs)
-- GPU：[`render_resource_system.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_resource_system.rs)、[`render_world.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_world.rs)
+- CPU：[`asset_system.rs`](../../engine/e30-world/truvis-world/src/asset_system.rs)、[`scene_store.rs`](../../engine/e30-world/truvis-world/src/scene_store.rs)、[`scene_asset_ingestor.rs`](../../engine/e30-world/truvis-world/src/scene_asset_ingestor.rs)
+- GPU：[`render_asset_system.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_asset_system.rs)、[`render_world.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_world.rs)
 - Cornell 验证：[`cornell_renderer.rs`](../../renderer/samples/cornell/src/cornell_renderer.rs)
 
 `cargo test -p truvis-world`（4 项）、`cargo check -p truvis-render-runtime -p cornell-renderer -p cornell-app` 和

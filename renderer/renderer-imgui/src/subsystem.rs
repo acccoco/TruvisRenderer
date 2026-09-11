@@ -215,8 +215,8 @@ impl ImGuiSubsystem {
             atlas_texture.data,
             "imgui-fonts",
         );
-        let fonts_image_handle = ctx.gfx_resource_manager.register_image(fonts_image);
-        let fonts_image_view_handle = ctx.gfx_resource_manager.get_or_create_image_view(
+        let fonts_image_handle = ctx.gfx_resource_registry.register_image(fonts_image);
+        let fonts_image_view_handle = ctx.gfx_resource_registry.get_or_create_image_view(
             ctx.device_ctx,
             fonts_image_handle,
             GfxImageViewDesc::new_2d(vk::Format::R8G8B8A8_UNORM, vk::ImageAspectFlags::COLOR),
@@ -249,7 +249,7 @@ impl SubsystemLifecycle for ImGuiSubsystem {
 
         self.fonts_image_view_handle.take();
         if let Some(image_handle) = self.fonts_image_handle.take() {
-            ctx.gfx_resource_manager.release_image_immediate(
+            ctx.gfx_resource_registry.release_image_immediate(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 image_handle,

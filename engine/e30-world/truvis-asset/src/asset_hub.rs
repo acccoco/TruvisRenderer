@@ -55,7 +55,7 @@ pub enum AssetLoadEvent {
 /// 一次性 CPU asset loader service。
 ///
 /// `AssetHub` 只负责创建 loader task、收集后台结果并生成事件。长期 scene identity、
-/// texture 去重、model ingest 协调和 GPU 资源上传都由 `World` / render runtime 内部的
+/// texture 去重、model ingest 协调和 GPU 资源上传都由 `GameWorld` / render runtime 内部的
 /// `SceneAssetIngestor` / `SceneStore` 负责。
 pub struct AssetHub {
     textures: SlotMap<TextureLoadHandle, TextureLoadRecord>,
@@ -126,7 +126,7 @@ impl AssetHub {
 
     /// 收集后台加载任务完成事件。
     ///
-    /// 该函数是后台 loader 和 `World` 之间的同步点。返回后的事件队列已经被消费，
+    /// 该函数是后台 loader 和 `GameWorld` 之间的同步点。返回后的事件队列已经被消费，
     /// `AssetHub` 不会再次重放同一事件。
     pub fn update(&mut self) -> Vec<AssetLoadEvent> {
         let _span = tracy_client::span!("AssetHub::update");

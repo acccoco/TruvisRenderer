@@ -15,7 +15,7 @@
 
 - Tauri API、`AppHandle`、invoke/event、dialog 和两秒 request timeout 只存在于 `app/truvis`。
 - standalone sample 只初始化日志、图标和窗口参数，并把 Renderer factory 交给 `StandaloneWinitHost`。
-- App 不直接访问 `World`、Vulkan、RenderGraph、具体 pass 或 Renderer subsystem。
+- App 不直接访问 `GameWorld`、Vulkan、RenderGraph、具体 pass 或 Renderer subsystem。
 - 主体 Tauri parent window 必须晚于 Renderer/Runtime/Vulkan、child HWND 与 notification task 销毁。
 
 具体渲染能力见 [`renderer/README.md`](../renderer/README.md)。

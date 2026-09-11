@@ -11,13 +11,13 @@ use truvis_asset::handle::{
 use crate::components::instance::Instance;
 use crate::components::material::MaterialData;
 use crate::guid_new_type::{ModelImportHandle, TextureHandle};
-use crate::resource_system::ResourceStore;
+use crate::asset_system::AssetStore;
 use crate::scene_store::SceneStore;
 
-/// `World` 内部的 scene asset ingest 协调器。
+/// `GameWorld` 内部的 scene asset ingest 协调器。
 ///
 /// 它是 loader handle 和 CPU world resource handle 的唯一翻译边界。`AssetHub` 只交付一次性 CPU
-/// payload；本对象只把 model / texture ingest 到 `ResourceStore` 与 `SceneStore`。
+/// payload；本对象只把 model / texture ingest 到 `AssetStore` 与 `SceneStore`。
 #[derive(Default)]
 pub struct SceneAssetIngestor {
     model_imports: SlotMap<ModelImportHandle, SceneModelImportRecord>,
@@ -68,7 +68,7 @@ impl SceneAssetIngestor {
     pub fn register_texture_canonical(
         &mut self,
         assets: &mut AssetHub,
-        resources: &mut ResourceStore,
+        resources: &mut AssetStore,
         path: PathBuf,
     ) -> TextureHandle {
         if let Some(&scene_texture) = self.texture_paths.get(&path) {
@@ -102,7 +102,7 @@ impl SceneAssetIngestor {
     pub fn ingest_asset_events(
         &mut self,
         assets: &mut AssetHub,
-        resources: &mut ResourceStore,
+        resources: &mut AssetStore,
         scene: &mut SceneStore,
         events: Vec<AssetLoadEvent>,
     ) {
@@ -114,7 +114,7 @@ impl SceneAssetIngestor {
     fn ingest_asset_event(
         &mut self,
         assets: &mut AssetHub,
-        resources: &mut ResourceStore,
+        resources: &mut AssetStore,
         scene: &mut SceneStore,
         event: AssetLoadEvent,
     ) {
@@ -146,7 +146,7 @@ impl SceneAssetIngestor {
     fn ingest_model_loaded(
         &mut self,
         assets: &mut AssetHub,
-        resources: &mut ResourceStore,
+        resources: &mut AssetStore,
         scene: &mut SceneStore,
         model_load: ModelLoadHandle,
         raw: RawSceneData,
@@ -323,7 +323,7 @@ impl SceneAssetIngestor {
     fn register_model_texture_ref(
         &mut self,
         assets: &mut AssetHub,
-        resources: &mut ResourceStore,
+        resources: &mut AssetStore,
         source_path: &Path,
         texture_path: Option<PathBuf>,
         label: &'static str,

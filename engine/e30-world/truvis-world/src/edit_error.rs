@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 /// scene edit 中涉及的 handle 类别。
 ///
-/// 该类型只用于错误报告，避免 `SceneStore` 把具体 SlotMap 存储细节暴露到 `World`
+/// 该类型只用于错误报告，避免 `SceneStore` 把具体 SlotMap 存储细节暴露到 `GameWorld`
 /// facade 之外。删除、更新或依赖校验失败时，调用方可以据此判断是哪一类 scene 语义对象失效。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneHandleKind {
@@ -14,7 +14,7 @@ pub enum SceneHandleKind {
     Light,
 }
 
-/// `SceneStore` / `ResourceSystem` edit API 的校验失败原因。
+/// `SceneStore` / `AssetSystem` edit API 的校验失败原因。
 ///
 /// 所有返回该错误的 edit 都必须保持原子语义：不推进 revision，
 /// 也不修改 texture/material/mesh/instance 反向依赖索引。
@@ -53,9 +53,9 @@ impl fmt::Display for SceneEditError {
 
 impl std::error::Error for SceneEditError {}
 
-/// `World` facade 对外暴露的 edit 错误。
+/// `GameWorld` facade 对外暴露的 edit 错误。
 ///
-/// `World` 负责补充文件系统 canonicalize、asset ingest 请求等 facade 层失败；真正的
+/// `GameWorld` 负责补充文件系统 canonicalize、asset ingest 请求等 facade 层失败；真正的
 /// scene/resource edit 失败仍由 `SceneEditError` 保持清晰边界。
 #[derive(Debug)]
 pub enum WorldEditError {

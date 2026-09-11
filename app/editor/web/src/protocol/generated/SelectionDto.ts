@@ -5,7 +5,7 @@ import type { MaterialId } from "./MaterialId";
 /**
  * Web 可理解的当前 submesh selection。
  *
- * instance/material ID 都直接来源于当前 World SlotMap key；submesh index 是 instance-local
+ * instance/material ID 都直接来源于当前 GameWorld SlotMap key；submesh index 是 instance-local
  * 顺序，不表示 GPU geometry slot。
  */
 export type SelectionDto = { instance_id: InstanceId, submesh_index: number, material_id: MaterialId, };

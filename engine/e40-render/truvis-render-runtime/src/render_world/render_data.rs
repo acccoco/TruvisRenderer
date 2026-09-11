@@ -50,14 +50,14 @@ pub(crate) struct InstanceRenderData {
     pub(crate) transform: glam::Mat4,
     /// 上一帧用于 DLSS motion vector 回溯的模型矩阵。
     ///
-    /// 新激活实例或 history reset 帧会由 `RenderInstanceManager` 写为当前 transform，
+    /// 新激活实例或 history reset 帧会由 `RenderInstanceTable` 写为当前 transform，
     /// 避免旧 slot 历史污染当前帧 temporal 输入。
     pub(crate) previous_transform: glam::Mat4,
 }
 
 /// 用于渲染的 mesh GPU 数据引用。
 ///
-/// `RtGeometry` 与 BLAS 生命周期由 `RenderMeshManager` 持有，这里只借用已完成上传的
+/// `RtGeometry` 与 BLAS 生命周期由 `GpuMeshStore` 持有，这里只借用已完成上传的
 /// render-side 数据，保证 `RenderData` 构建期间不会复制 GPU 资源 owner。
 pub(crate) struct MeshRenderData<'a> {
     /// 该 mesh 包含的所有 submesh 几何体。
@@ -70,7 +70,7 @@ pub(crate) struct MeshRenderData<'a> {
 
 /// 由 render-side scene bridge 构建的场景数据快照。
 ///
-/// 这是 `RenderInstanceManager` 交给 `RenderWorld` 的 prepare 输入。它只包含依赖已 ready 的实例，
+/// 这是 `RenderInstanceTable` 交给 `RenderWorld` 的 prepare 输入。它只包含依赖已 ready 的实例，
 /// 并用稳定 slot 与紧凑索引连接 instance、mesh、geometry、material，避免 GPU 上传阶段
 /// 再回到 CPU resource handle 做解析。
 ///

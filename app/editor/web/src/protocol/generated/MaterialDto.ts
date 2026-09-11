@@ -7,7 +7,7 @@ import type { TextureId } from "./TextureId";
 /**
  * Web 可读取的完整材质 DTO。
  *
- * texture 字段仍是 World texture handle 的 opaque ID；当前第一阶段 Web 只展示绑定，
+ * texture 字段仍是 GameWorld texture handle 的 opaque ID；当前第一阶段 Web 只展示绑定，
  * 不直接上传纹理或访问 GPU bindless handle。
  */
 export type MaterialDto = { id: MaterialId, name: string, base_color: [number, number, number, number], metallic: number, roughness: number, class: MaterialClassDto, coverage: CoverageModeDto, diffuse_texture: TextureId | null, normal_texture: TextureId | null, };

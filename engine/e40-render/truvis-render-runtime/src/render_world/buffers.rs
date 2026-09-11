@@ -9,7 +9,7 @@ use truvis_shader_binding::gpu;
 ///
 /// 每个 frame label 拥有独立的 scene/instance/geometry/material-indirect buffer，
 /// 避免 CPU 准备下一帧数据时覆盖 GPU 仍在读取的上一帧 buffer。
-pub(super) struct RenderWorldBuffers {
+pub(super) struct SceneBuffers {
     /// scene root UBO，保存 shader 访问其它 scene buffer 的 device address 与 bindless handle。
     pub(super) scene_buffer: GfxStructuredBuffer<gpu::engine::scene::GpuScene>,
     /// geometry table device buffer，元素只保存 vertex/index buffer device address。
@@ -29,16 +29,16 @@ pub(super) struct RenderWorldBuffers {
     pub(super) accum_signature: RenderSceneAccumSignature,
 }
 
-impl RenderWorldBuffers {
+impl SceneBuffers {
     /// 创建一个 FIF frame label 独占的 scene buffer 集。
     ///
-    /// 固定容量与 `RenderInstanceManager` 等上游桥接层的 slot 上限保持一致；容量不足时上传阶段
+    /// 固定容量与 `RenderInstanceTable` 等上游桥接层的 slot 上限保持一致；容量不足时上传阶段
     /// 会显式 panic，便于暴露当前后端还没有动态扩容的限制。
     pub(super) fn new(ctx: GfxResourceCtx<'_>, frame_label: FrameLabel) -> Self {
         let max_geometry_cnt = 1024 * 8;
         let max_instance_cnt = 1024;
 
-        RenderWorldBuffers {
+        SceneBuffers {
             scene_buffer: GfxStructuredBuffer::new_ubo(ctx, 1, format!("scene buffer-{}", frame_label)),
             geometry_buffer: GfxStructuredBuffer::new_ssbo(
                 ctx,

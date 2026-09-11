@@ -1,7 +1,7 @@
 //! Frontend 与 RenderThread renderer 的方向受限装配端口。
 //!
 //! 本模块只负责一次性创建并拆分通信 owner，不解释 Editor DTO，也不接触 Tauri API、
-//! `World` 或 GPU 资源。frontend 端留在桌面主线程，renderer 端整体移入 Renderer factory。
+//! `GameWorld` 或 GPU 资源。frontend 端留在桌面主线程，renderer 端整体移入 Renderer factory。
 
 use truvis_editor_bridge::{EditorBridgeConfig, FrontendEndpoint, RendererEndpoint, create_editor_bridge};
 

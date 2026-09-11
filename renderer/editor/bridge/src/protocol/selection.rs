@@ -5,7 +5,7 @@ use crate::protocol::{InstanceId, MaterialId};
 
 /// Web 可理解的当前 submesh selection。
 ///
-/// instance/material ID 都直接来源于当前 World SlotMap key；submesh index 是 instance-local
+/// instance/material ID 都直接来源于当前 GameWorld SlotMap key；submesh index 是 instance-local
 /// 顺序，不表示 GPU geometry slot。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct SelectionDto {

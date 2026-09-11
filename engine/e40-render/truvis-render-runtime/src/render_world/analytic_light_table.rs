@@ -108,7 +108,7 @@ pub(crate) struct RenderAnalyticLightUpdateResult {
 /// CPU scene 保存 point / spot / area light 语义；本 manager 对账只读快照并上传对应 FIF
 /// buffer。变化会标记全部 FIF，保证每个 frame label
 /// 在重新被使用前都能写入最新 light snapshot。
-pub(crate) struct RenderAnalyticLightManager {
+pub(crate) struct AnalyticLightTable {
     frames: [AnalyticLightFrameBuffers; FrameLabel::COUNT],
     fif_dirty: [bool; FrameLabel::COUNT],
     pending_commits: [bool; FrameLabel::COUNT],
@@ -122,7 +122,7 @@ pub(crate) struct RenderAnalyticLightManager {
     area_lights: Vec<gpu::engine::light::AreaLight>,
 }
 
-impl RenderAnalyticLightManager {
+impl AnalyticLightTable {
     pub(crate) fn new(resource_ctx: GfxResourceCtx<'_>) -> Self {
         Self {
             frames: FrameLabel::ALL.map(|frame_label| AnalyticLightFrameBuffers::new(resource_ctx, frame_label)),

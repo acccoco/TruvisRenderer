@@ -97,7 +97,7 @@ flowchart LR
     Samples["Standalone Samples"] --> Renderer
     Renderer --> Loop["RenderLoop"]
     Loop --> Runtime["RenderRuntime"]
-    Runtime --> Graph["RenderGraph + World"]
+    Runtime --> Graph["RenderGraph + GameWorld"]
     Graph --> Gfx["Vulkan Gfx + Shader / CXX Bindings"]
 ```
 
@@ -109,7 +109,7 @@ RenderGraph pass 顺序，`RenderRuntime` 负责 GPU 资源、场景同步、帧
 
 项目使用右手坐标系，Y 轴向上，默认相机朝向 `-Z`。光栅化阶段使用负 viewport height，保持 Vulkan clip space 到左上角为原点的 framebuffer 坐标映射一致。
 
-![World、View、NDC 与 Framebuffer 坐标映射](./docs/imgs/coords.png)
+![GameWorld、View、NDC 与 Framebuffer 坐标映射](./docs/imgs/coords.png)
 
 ## 当前支持范围
 

@@ -209,7 +209,7 @@ impl EmissiveLightFrameBuffers {
 /// runtime 私有的自发光三角形 light table owner。
 ///
 /// 它只读取 prepare 阶段已经解析好的 `RenderData` 和 `SceneReadView` 的材质 emissive view，
-/// 不访问 `World` 或 pass 资源。GPU buffer 按 FIF 拆分，避免 CPU 更新当前帧表时覆盖
+/// 不访问 `GameWorld` 或 pass 资源。GPU buffer 按 FIF 拆分，避免 CPU 更新当前帧表时覆盖
 /// 上一帧仍可能被 raygen 读取的 table。
 pub(crate) struct RenderEmissiveLightTable {
     frames: [EmissiveLightFrameBuffers; FrameLabel::COUNT],

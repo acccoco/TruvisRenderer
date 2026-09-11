@@ -23,7 +23,7 @@ use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_render_runtime::resources::gfx_resource_manager::GfxResourceManager;
+use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
 
 /// Realtime 渲染子系统使用的 GBuffer 资源集合。
 ///
@@ -49,7 +49,7 @@ impl GBuffer {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         extent: vk::Extent2D,
         frame_id: u64,
     ) -> Self {
@@ -57,7 +57,7 @@ impl GBuffer {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             Self::A_FORMAT,
             extent,
             frame_id,
@@ -67,7 +67,7 @@ impl GBuffer {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             Self::B_FORMAT,
             extent,
             frame_id,
@@ -77,7 +77,7 @@ impl GBuffer {
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            gfx_resource_manager,
+            gfx_resource_registry,
             Self::C_FORMAT,
             extent,
             frame_id,
@@ -101,12 +101,12 @@ impl GBuffer {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         extent: vk::Extent2D,
         frame_id: u64,
     ) {
-        self.destroy(resource_ctx, device_ctx, gfx_resource_manager, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_manager, extent, frame_id);
+        self.destroy(resource_ctx, device_ctx, gfx_resource_registry, DestroyReason::Resize);
+        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_registry, extent, frame_id);
     }
 
     /// 释放所有 GBuffer GPU 资源。
@@ -114,17 +114,17 @@ impl GBuffer {
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
         for image in std::mem::take(&mut self.a_images) {
-            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, image, reason);
+            gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image, reason);
         }
         for image in std::mem::take(&mut self.b_images) {
-            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, image, reason);
+            gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image, reason);
         }
         for image in std::mem::take(&mut self.c_images) {
-            gfx_resource_manager.release_image_immediate(resource_ctx, device_ctx, image, reason);
+            gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image, reason);
         }
 
         self.a_views = Default::default();
@@ -170,7 +170,7 @@ impl GBuffer {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_manager: &mut GfxResourceManager,
+        gfx_resource_registry: &mut GfxResourceRegistry,
         format: vk::Format,
         extent: vk::Extent2D,
         frame_id: u64,
@@ -213,9 +213,9 @@ impl GBuffer {
             &format!("transfer-{}-layout", name_prefix),
         );
 
-        let image_handles = images.map(|image| gfx_resource_manager.register_image(image));
+        let image_handles = images.map(|image| gfx_resource_registry.register_image(image));
         let image_view_handles = FrameLabel::ALL.map(|frame_label| {
-            gfx_resource_manager.get_or_create_image_view(
+            gfx_resource_registry.get_or_create_image_view(
                 device_ctx,
                 image_handles[*frame_label],
                 GfxImageViewDesc::new_2d(format, vk::ImageAspectFlags::COLOR),
