@@ -5,7 +5,7 @@ use half::f16;
 use image::{DynamicImage, GenericImageView};
 
 use crate::asset_loader::{LoadResult, TextureLoadRequest};
-use crate::handle::{TextureBytes, TexturePixels};
+use crate::handle::{TextureBytes, TextureLoadDesc, TexturePixels};
 
 /// 实际的纹理加载任务，运行在 Rayon 线程池中。
 ///
@@ -13,9 +13,12 @@ use crate::handle::{TextureBytes, TexturePixels};
 /// 这里不创建 Vulkan image，返回的 `TextureBytes` 只用于后续 render-side 上传。
 pub(crate) fn load_texture_task(req: TextureLoadRequest) -> LoadResult {
     let _span = tracy_client::span!("load_texture_task");
-    log::info!("Loading texture: {:?}", req.desc.path);
+    log::info!("Loading texture: {}", req.desc.source_label());
 
-    let img_result = image::open(&req.desc.path);
+    let img_result = match &req.desc {
+        TextureLoadDesc::File { path } => image::open(path),
+        TextureLoadDesc::Embedded { bytes, .. } => image::load_from_memory(bytes),
+    };
 
     match img_result {
         Ok(img) => {
@@ -65,15 +68,53 @@ pub(crate) fn load_texture_task(req: TextureLoadRequest) -> LoadResult {
                     data,
                 },
                 Err(error) => {
-                    log::error!("Decoded texture {:?} has invalid payload: {}", req.desc.path, error);
+                    log::error!("Decoded texture {} has invalid payload: {}", req.desc.source_label(), error);
                     LoadResult::TextureFailure(req.handle, error)
                 }
             }
         }
         Err(error) => {
-            log::error!("Failed to load texture {:?}: {}", req.desc.path, error);
+            log::error!("Failed to load texture {}: {}", req.desc.source_label(), error);
             LoadResult::TextureFailure(req.handle, error.to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use image::{ColorType, ImageEncoder};
+    use slotmap::Key;
+
+    use super::*;
+    use crate::asset_loader::TextureLoadRequest;
+    use crate::handle::{EmbeddedTextureId, TextureLoadDesc, TextureLoadHandle};
+
+    #[test]
+    fn embedded_rgba_payload_decodes_to_upload_ready_bytes() {
+        let mut encoded = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut encoded)
+            .write_image(&[255, 0, 0, 255], 1, 1, ColorType::Rgba8.into())
+            .expect("encode test png");
+
+        let result = load_texture_task(TextureLoadRequest {
+            handle: TextureLoadHandle::null(),
+            desc: TextureLoadDesc::Embedded {
+                identity: EmbeddedTextureId { image_index: 0 },
+                bytes: Arc::from(encoded),
+                mime_type: Some("image/png".to_string()),
+            },
+        });
+
+        let LoadResult::TextureSuccess { data, .. } = result else {
+            panic!("embedded texture should decode successfully");
+        };
+        assert_eq!(data.extent().width, 1);
+        assert_eq!(data.extent().height, 1);
+        assert_eq!(data.format(), vk::Format::R8G8B8A8_UNORM);
+        assert_eq!(data.texel_count(), 1);
+        assert_eq!(data.as_bytes().len(), 4);
     }
 }
 

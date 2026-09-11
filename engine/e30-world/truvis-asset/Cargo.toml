@@ -16,6 +16,7 @@ crossbeam-channel = { workspace = true }
 crossbeam-utils = { workspace = true }
 rayon = { workspace = true }
 image = { workspace = true }
+base64 = { workspace = true }
 half = { workspace = true }
 bytemuck = { workspace = true }
 tracy-client = { workspace = true }

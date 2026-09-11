@@ -18,6 +18,8 @@
   Slang module / `.slang-module` 的收益测量、失效契约与可选引入边界。
 - [`asset-upload-and-scene-evolution.md`](asset-upload-and-scene-evolution.md)：
   asset upload、失败恢复、资源卸载和 scene invalidation 的后续能力。
+- [`scene-import-and-async-texture.md`](scene-import-and-async-texture.md)：
+  FBX/glTF/GLB scene 结构导入、外部与内嵌 texture 统一建模，以及 texture 异步解码的最小实施计划。
 - [`render-scene-mirror-and-resource-system.md`](render-scene-mirror-and-resource-system.md)：
   已落地首期的 RenderWorld 持久镜像与版本对账设计，包含 AssetSystem / RenderAssetSystem 分层、GPU 副本和历史失效契约。
 - [`realtime-lighting-evolution.md`](realtime-lighting-evolution.md)：

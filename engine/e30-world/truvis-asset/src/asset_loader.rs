@@ -87,8 +87,10 @@ impl AssetLoader {
     pub(crate) fn request_load_texture(&self, req: TextureLoadRequest) {
         let result_sender = self.result_sender.clone();
         let wg_task = self.wait_group.as_ref().expect("AssetLoader used after drop").clone();
+        let handle = req.handle;
         self.pool.spawn(move || {
-            let result = load_texture_task(req);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| load_texture_task(req)))
+                .unwrap_or_else(|_| LoadResult::TextureFailure(handle, "texture load task panicked".to_string()));
             let _ = result_sender.send(result);
             drop(wg_task);
         });

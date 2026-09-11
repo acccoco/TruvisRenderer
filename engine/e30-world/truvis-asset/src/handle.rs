@@ -27,8 +27,41 @@ new_key_type! {
 /// 这是一次性 loader 请求的参数，不是长期 identity key。同一路径是否复用为同一个
 /// `TextureHandle` 由 `SceneAssetIngestor` / `SceneStore` 决定。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TextureLoadDesc {
-    pub path: std::path::PathBuf,
+pub enum TextureLoadDesc {
+    File { path: PathBuf },
+    Embedded {
+        identity: EmbeddedTextureId,
+        bytes: Arc<[u8]>,
+        mime_type: Option<String>,
+    },
+}
+
+impl TextureLoadDesc {
+    /// 返回不包含像素 payload 的诊断文本，避免把 embedded bytes 写入日志。
+    pub fn source_label(&self) -> String {
+        match self {
+            Self::File { path } => format!("file:{}", path.display()),
+            Self::Embedded {
+                identity,
+                mime_type,
+                bytes,
+            } => format!(
+                "embedded:image={},mime={},bytes={}",
+                identity.image_index,
+                mime_type.as_deref().unwrap_or("unknown"),
+                bytes.len()
+            ),
+        }
+    }
+}
+
+/// embedded image 在一个 scene document 内的稳定身份。
+///
+/// 跨 scene 的去重由 `SceneAssetIngestor` 额外组合 canonical scene path；这里不对
+/// encoded bytes 做内容哈希，也不承担全局 asset database 的职责。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EmbeddedTextureId {
+    pub image_index: u32,
 }
 
 /// 一次 model / prefab CPU import task 的输入描述。
@@ -293,9 +326,9 @@ impl CoverageMode {
 
 /// 后台 Assimp task 产出的 owned material CPU 数据。
 ///
-/// texture 仍以导入器返回的路径表达，避免后台 task 直接修改 `SceneStore`。
+/// texture 仍以导入器返回的 source 表达，避免后台 task 直接修改 `SceneStore`。
 /// `SceneAssetIngestor` 在 asset sync 阶段解析相对路径、分配 `TextureHandle`
-/// 并提交必要的 texture load task。
+/// 并提交必要的 file 或 memory texture load task。
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawMaterialData {
     pub base_color: glam::Vec4,
@@ -303,9 +336,19 @@ pub struct RawMaterialData {
     pub roughness: f32,
     pub class: MaterialClass,
     pub coverage: CoverageMode,
-    pub diffuse_texture_path: Option<PathBuf>,
-    pub normal_texture_path: Option<PathBuf>,
+    pub diffuse_texture: Option<RawTextureSource>,
+    pub normal_texture: Option<RawTextureSource>,
     pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RawTextureSource {
+    ExternalPath(PathBuf),
+    Embedded {
+        identity: EmbeddedTextureId,
+        bytes: Arc<[u8]>,
+        mime_type: Option<String>,
+    },
 }
 
 /// 后台 Assimp task 产出的 owned instance CPU 数据。

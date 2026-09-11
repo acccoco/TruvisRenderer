@@ -6,12 +6,15 @@
 //! 路径解析、scene handle 分配和 render upload event 生成统一收敛在 `SceneAssetIngestor`。
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use base64::Engine;
 use gltf::buffer;
 
 use crate::asset_loader::{LoadResult, ModelLoadRequest};
 use crate::handle::{
-    CoverageMode, MaterialClass, MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData, SubmeshData,
+    CoverageMode, EmbeddedTextureId, MaterialClass, MeshData, RawMaterialData, RawSceneData,
+    RawSceneInstanceData, RawTextureSource, SubmeshData,
 };
 
 /// 实际的 glTF scene 导入任务。
@@ -40,33 +43,40 @@ pub(crate) fn load_gltf_scene_task(req: ModelLoadRequest) -> LoadResult {
 
 /// glTF scene 的只读复制器。
 ///
-/// Reader 拥有一次 `gltf::import` 返回的 document/buffer/image 数据，只在本后台任务内
-/// 借用它们读取 primitive、material 和 node tree。所有输出都立即复制到 Rust owned
-/// Vec/String/PathBuf，确保任务结束后不会留下 glTF crate 内部借用或 decoded image bytes。
+/// Reader 拥有 document、buffer 和 embedded image encoded bytes，只在本后台任务内
+/// 借用 glTF 对象读取 primitive、material 和 node tree。所有输出都立即复制到 Rust owned
+/// Vec/String/PathBuf/Arc，确保任务结束后不会留下 glTF crate 内部借用。
 struct GltfSceneReader {
     document: gltf::Document,
     buffers: Vec<buffer::Data>,
     source_path: PathBuf,
     model_name: String,
+    embedded_images: Vec<Option<(Arc<[u8]>, Option<String>)>>,
 }
 
 impl GltfSceneReader {
     /// 加载一个 glTF / GLB 文件并复制成 `RawSceneData`。
     ///
-    /// `gltf::import` 可以读取外部 buffer 和 GLB 内嵌 buffer；本 v1 仅把外部 image URI
-    /// 转成 texture path，GLB/data URI 贴图暂不注册 texture handle，避免改变当前
-    /// scene texture path identity 策略。
+    /// 只导入 buffer，不在 model task 中解码 image。外部 URI 保留为路径，GLB bufferView
+    /// 和 data URI 复制 encoded bytes，后续由独立 texture task 异步解码。
     fn load_path(path: &Path) -> Result<RawSceneData, String> {
         if !path.exists() {
             return Err(format!("glTF scene file does not exist: {:?}", path));
         }
 
-        let (document, buffers, _images) = gltf::import(path).map_err(|err| err.to_string())?;
+        let gltf = gltf::Gltf::open(path).map_err(|err| err.to_string())?;
+        let document = gltf.document;
+        let buffers = gltf::import_buffers(&document, path.parent(), gltf.blob).map_err(|err| err.to_string())?;
+        let embedded_images = document
+            .images()
+            .map(|image| Self::embedded_image_bytes(image, &buffers))
+            .collect::<Result<Vec<_>, _>>()?;
         let reader = Self {
             document,
             buffers,
             source_path: path.to_path_buf(),
             model_name: Self::model_name(path),
+            embedded_images,
         };
 
         reader.copy_scene()
@@ -133,7 +143,8 @@ impl GltfSceneReader {
     /// 将 glTF material 复制到 AssetHub 的 raw material 边界格式。
     ///
     /// v1 只读取当前 `MaterialData` 能表达的 PBR metallic-roughness 参数和两类贴图。
-    /// 外部 URI 保留为 importer 原始表达，稍后由 `SceneAssetIngestor` 根据 scene 路径统一解析。
+    /// 外部 URI 保留为 importer 原始表达，稍后由 `SceneAssetIngestor` 根据 scene 路径统一解析；
+    /// embedded source 只携带 owned encoded bytes。
     fn copy_material(&self, material: gltf::Material<'_>) -> RawMaterialData {
         let pbr = material.pbr_metallic_roughness();
         let base_color = pbr.base_color_factor();
@@ -151,12 +162,12 @@ impl GltfSceneReader {
             roughness: pbr.roughness_factor(),
             class: Self::material_class(&name, emissive_radiance, transmission_factor, ior),
             coverage: Self::coverage_mode(&name, material.alpha_mode(), material.alpha_cutoff()),
-            diffuse_texture_path: pbr
+            diffuse_texture: pbr
                 .base_color_texture()
-                .and_then(|texture| Self::external_texture_path(texture.texture().source())),
-            normal_texture_path: material
+                .and_then(|texture| self.texture_source(texture.texture().source())),
+            normal_texture: material
                 .normal_texture()
-                .and_then(|texture| Self::external_texture_path(texture.texture().source())),
+                .and_then(|texture| self.texture_source(texture.texture().source())),
             name,
         }
     }
@@ -267,17 +278,101 @@ impl GltfSceneReader {
             roughness: 0.5,
             class: MaterialClass::Surface,
             coverage: CoverageMode::Opaque,
-            diffuse_texture_path: None,
-            normal_texture_path: None,
+            diffuse_texture: None,
+            normal_texture: None,
             name: "material-default".to_string(),
         }
     }
 
-    fn external_texture_path(image: gltf::image::Image<'_>) -> Option<PathBuf> {
+    fn texture_source(&self, image: gltf::image::Image<'_>) -> Option<RawTextureSource> {
         match image.source() {
-            gltf::image::Source::Uri { uri, .. } if !uri.starts_with("data:") => Some(PathBuf::from(uri)),
-            gltf::image::Source::Uri { .. } | gltf::image::Source::View { .. } => None,
+            gltf::image::Source::Uri { uri, .. } if !uri.starts_with("data:") => {
+                Some(RawTextureSource::ExternalPath(PathBuf::from(uri)))
+            }
+            gltf::image::Source::Uri { mime_type, .. } => self
+                .embedded_images
+                .get(image.index())
+                .cloned()
+                .flatten()
+                .map(|(bytes, embedded_mime_type)| RawTextureSource::Embedded {
+                    identity: EmbeddedTextureId {
+                        image_index: image.index() as u32,
+                    },
+                    bytes,
+                    mime_type: mime_type.map(str::to_owned).or(embedded_mime_type),
+                }),
+            gltf::image::Source::View { mime_type, .. } => self
+                .embedded_images
+                .get(image.index())
+                .cloned()
+                .flatten()
+                .map(|(bytes, embedded_mime_type)| RawTextureSource::Embedded {
+                    identity: EmbeddedTextureId {
+                        image_index: image.index() as u32,
+                    },
+                    bytes,
+                    mime_type: Some(mime_type.to_owned()).or(embedded_mime_type),
+                }),
         }
+    }
+
+    fn embedded_image_bytes(
+        image: gltf::image::Image<'_>,
+        buffers: &[buffer::Data],
+    ) -> Result<Option<(Arc<[u8]>, Option<String>)>, String> {
+        match image.source() {
+            gltf::image::Source::View { view, mime_type } => {
+                let data = buffers
+                    .get(view.buffer().index())
+                    .ok_or_else(|| format!("embedded image references missing buffer {}", view.buffer().index()))?;
+                let start = view.offset();
+                let end = start.saturating_add(view.length());
+                let bytes = data.0.get(start..end).ok_or_else(|| "embedded image bufferView is out of range".to_string())?;
+                Ok(Some((Arc::from(bytes.to_vec()), Some(mime_type.to_owned()))))
+            }
+            gltf::image::Source::Uri { uri, mime_type } if uri.starts_with("data:") => {
+                let (metadata, encoded) = uri.split_once(',').ok_or_else(|| "invalid embedded data URI".to_string())?;
+                let bytes = if metadata.split(';').any(|part| part.eq_ignore_ascii_case("base64")) {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(encoded)
+                        .map_err(|err| format!("invalid embedded image data URI: {err}"))?
+                } else {
+                    Self::percent_decode_data_uri(encoded)?
+                };
+                let uri_mime_type = metadata
+                    .strip_prefix("data:")
+                    .and_then(|metadata| metadata.split(';').next())
+                    .filter(|mime_type| !mime_type.is_empty())
+                    .map(str::to_owned);
+                Ok(Some((Arc::from(bytes), mime_type.map(str::to_owned).or(uri_mime_type))))
+            }
+            gltf::image::Source::Uri { .. } => Ok(None),
+        }
+    }
+
+    fn percent_decode_data_uri(value: &str) -> Result<Vec<u8>, String> {
+        let bytes = value.as_bytes();
+        let mut decoded = Vec::with_capacity(bytes.len());
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] != b'%' {
+                decoded.push(bytes[index]);
+                index += 1;
+                continue;
+            }
+            if index + 2 >= bytes.len() {
+                return Err("invalid percent escape in embedded image data URI".to_string());
+            }
+            let high = bytes[index + 1] as char;
+            let low = bytes[index + 2] as char;
+            let value = high
+                .to_digit(16)
+                .and_then(|high| low.to_digit(16).map(|low| (high << 4) | low))
+                .ok_or_else(|| "invalid percent escape in embedded image data URI".to_string())?;
+            decoded.push(value as u8);
+            index += 3;
+        }
+        Ok(decoded)
     }
 
     fn material_class(name: &str, emissive: glam::Vec3, transmission_factor: f32, ior: f32) -> MaterialClass {
@@ -396,4 +491,14 @@ impl GltfSceneReader {
 struct GltfPrimitiveRef {
     mesh_index: u32,
     material_index: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GltfSceneReader;
+
+    #[test]
+    fn percent_decodes_non_base64_data_uri_payload() {
+        assert_eq!(GltfSceneReader::percent_decode_data_uri("PNG%00%FF"), Ok(vec![b'P', b'N', b'G', 0, 255]));
+    }
 }

@@ -33,7 +33,7 @@ instance、light、sky 镜像和派生 GPU scene。prepare 完成后，render pa
 `AssetStore`、`AssetHub` 和 `SceneAssetIngestor`：
 
 - mesh 注册时由 CPU `AssetStore` 保留不可变顶点/index payload；渲染侧只在需要上传时借用它。
-- texture 注册后获得 `TextureHandle`，file decode 由 `AssetHub` 异步完成；按路径复用同一个 live handle。
+- texture 注册后获得 `TextureHandle`，file 或 embedded bytes decode 由 `AssetHub` 异步完成；外部路径按 canonical path、embedded image 按 scene path + image identity 复用同一个 live handle。
 - material 保存完整 `MaterialData` 和 source revision，更新内容时维护 `material -> texture` 依赖。
 - mesh/texture 创建后不可变；不同内容使用新 handle。material 可以更新，但相等赋值不推进 revision。
 - 删除 material、mesh、texture 前分别检查 live instance、material 和 sky 引用；失败不修改表和版本。
@@ -44,7 +44,10 @@ instance 的 mesh 内容或 mesh 引用。`SceneReadView` 同时只读借用 Sce
 render-side 暴露最终状态、资源 membership、material revision 和引用查询。
 
 `SceneAssetIngestor` 负责把 loader handle 翻译成 CPU handle。model 完成后先校验 raw scene，随后
-注册资源和 instance；首期不做导入事务回滚，半途失败留下的无引用资源可以通过普通删除接口清理。
+注册资源和 instance；结构导入完成即表示 model import `Ready`，material 可以引用仍处于
+`Loading` 的 texture。外部路径和 embedded bytes 都通过同一个 texture completion event 写回
+`AssetStore`。首期不做导入事务回滚，半途失败留下的无引用资源可以通过普通删除接口清理；单张
+texture 失败保留 scene structure 并由 render-side 使用 fallback。
 
 ## GPU owner
 

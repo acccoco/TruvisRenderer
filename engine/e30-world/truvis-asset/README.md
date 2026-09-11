@@ -14,12 +14,12 @@ bindless descriptor 或 material slot。GPU 上传和 shader 可见绑定由
 
 - `AssetHub`：对外统一入口，负责 loader handle 分配和完成事件汇聚
 - `AssetLoadEvent`：CPU 数据完成事件，交给 `SceneAssetIngestor` 翻译成 CPU resource handle 和 render upload event
-- `TextureLoadDesc` / `ModelLoadDesc`：一次性 loader task 输入描述，不承担长期去重 identity
+- `TextureLoadDesc` / `ModelLoadDesc`：一次性 loader task 输入描述，不承担长期去重 identity；texture request 支持外部文件和带 MIME 的 embedded bytes，`AssetHub::request_texture_bytes` 是内存请求入口
 - `TexturePixels` / `TextureBytes`：从图片文件解码出的共享 owned CPU payload；普通图片为
   `Arc<[u8]>` RGBA8，HDR/EXR 为 `Arc<[u16]>` RGBA16F bit pattern，只通过事件交给 render-side owner
 - `SubmeshData`：从导入器复制出来的 owned CPU 几何数据，是 scene / GPU scene / RT 中的最小几何单元
 - `MeshData`：由一个或多个 `SubmeshData` 组成的 owned CPU mesh payload，只通过事件交给 mesh manager；mesh 对应一个 BLAS，submesh 对应 BLAS 内一条 geometry
-- `RawSceneData`：model 导入后的 owned CPU scene payload，通过 `ModelLoaded` 事件交给 `SceneAssetIngestor`
+- `RawSceneData`：model 导入后的 owned CPU scene payload，通过 `ModelLoaded` 事件交给 `SceneAssetIngestor`；material texture 以 `RawTextureSource` 表达外部路径或带 MIME 的 embedded bytes
 
 ## 内部结构
 
@@ -38,7 +38,7 @@ bindless descriptor 或 material slot。GPU 上传和 shader 可见绑定由
 - Assimp 导入任务只在后台复制 owned CPU 数据，完成后释放 C++ scene handle，不把 C++ handle/raw pointer 传出任务
 - glTF 导入任务只在后台复制 owned CPU 数据；`.gltf` / `.glb` 由 asset loader 按扩展名分派，其它格式继续走 Assimp 路径
 - Assimp / glTF 导入失败会通过 `ModelFailed` 事件回传给 `SceneAssetIngestor`
-- model material 引用的相对纹理路径按 model 文件所在目录解析，绝对路径保持不变；asset 层不做 scene texture identity 去重或 canonicalize，后续是否规范化由 `GameWorld` / `SceneAssetIngestor` 的 scene 规则决定。glTF v1 只把外部 image URI 注册为 texture path，GLB/data URI 嵌入贴图暂不改变 texture path 身份模型。
+- model material 引用的相对纹理路径按 model 文件所在目录解析，绝对路径保持不变；asset 层不做 scene texture identity 去重或 canonicalize，后续由 `GameWorld` / `SceneAssetIngestor` 的 scene 规则决定。glTF/GLB 的 data URI 和 bufferView image 会复制为 owned embedded bytes，随后走异步 texture decode。
 - 保持 asset 层不依赖 GPU 资源缓存或 bindless 绑定策略
 
 ## HDR / EXR 边界

@@ -143,6 +143,7 @@ tauri-plugin-dialog = "2.7.2"
 # 资源加载与序列化 (Asset Loading & Serialization)
 ###########################################################
 image = "0.25.6"
+base64 = "0.22.1"
 half = "2.7.1"
 gltf = { version = "1.0.0", features = ["KHR_materials_ior", "KHR_materials_transmission"] }
 tobj = "4.0.3"

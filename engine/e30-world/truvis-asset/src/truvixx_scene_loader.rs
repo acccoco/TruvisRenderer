@@ -12,7 +12,8 @@ use truvis_assimp_binding::truvixx;
 
 use crate::asset_loader::{LoadResult, ModelLoadRequest};
 use crate::handle::{
-    CoverageMode, MaterialClass, MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData, SubmeshData,
+    CoverageMode, MaterialClass, MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData, RawTextureSource,
+    SubmeshData,
 };
 
 /// 实际的 scene 导入任务。
@@ -280,8 +281,8 @@ impl TruvixxSceneReader<'_> {
             roughness: mat.roughness,
             class: Self::material_class(mat.opacity, Self::truvixx_float4_to_vec4(mat.emissive).truncate()),
             coverage: CoverageMode::Opaque,
-            diffuse_texture_path: (!diffuse_map.is_empty()).then(|| PathBuf::from(diffuse_map)),
-            normal_texture_path: (!normal_map.is_empty()).then(|| PathBuf::from(normal_map)),
+            diffuse_texture: (!diffuse_map.is_empty()).then(|| RawTextureSource::ExternalPath(PathBuf::from(diffuse_map))),
+            normal_texture: (!normal_map.is_empty()).then(|| RawTextureSource::ExternalPath(PathBuf::from(normal_map))),
             name: if name.is_empty() { format!("material-{}", material_index) } else { name },
         })
     }

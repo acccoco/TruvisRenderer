@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use slotmap::{SecondaryMap, SlotMap};
 use truvis_asset::asset_hub::{AssetHub, AssetLoadEvent};
 use truvis_asset::handle::{
-    LoadStatus, ModelLoadDesc, ModelLoadHandle, RawSceneData, TextureLoadDesc,
+    EmbeddedTextureId, LoadStatus, ModelLoadDesc, ModelLoadHandle, RawSceneData, RawTextureSource, TextureLoadDesc,
     TextureLoadHandle,
 };
 
@@ -24,6 +24,7 @@ pub struct SceneAssetIngestor {
     model_loads: SecondaryMap<ModelLoadHandle, ModelImportHandle>,
     texture_loads: SecondaryMap<TextureLoadHandle, TextureHandle>,
     texture_paths: HashMap<PathBuf, TextureHandle>,
+    embedded_textures: HashMap<(PathBuf, EmbeddedTextureId), TextureHandle>,
 }
 
 struct SceneModelImportRecord {
@@ -43,6 +44,7 @@ impl SceneAssetIngestor {
 
     pub(crate) fn forget_texture(&mut self, handle: TextureHandle) {
         self.texture_paths.retain(|_, current| *current != handle);
+        self.embedded_textures.retain(|_, current| *current != handle);
     }
 
     /// 提交一次 model import 请求。
@@ -77,7 +79,7 @@ impl SceneAssetIngestor {
             }
         }
 
-        let texture_load = assets.request_texture(TextureLoadDesc { path: path.clone() });
+        let texture_load = assets.request_texture(TextureLoadDesc::File { path: path.clone() });
         let scene_texture = resources.register_texture();
         self.texture_loads.insert(texture_load, scene_texture);
         self.texture_paths.insert(path, scene_texture);
@@ -119,19 +121,20 @@ impl SceneAssetIngestor {
         event: AssetLoadEvent,
     ) {
         match event {
-            AssetLoadEvent::TextureLoaded { handle, desc: _, data } => {
+            AssetLoadEvent::TextureLoaded { handle, desc, data } => {
                 let scene_texture = self.take_scene_texture_for_load(handle);
                 if !resources.contains_texture(scene_texture) {
                     return;
                 }
+                log::debug!("Texture ready {:?}: {}", scene_texture, desc.source_label());
                 resources.mark_texture_loaded(scene_texture, data);
             }
-            AssetLoadEvent::TextureFailed { handle, desc: _, error } => {
+            AssetLoadEvent::TextureFailed { handle, desc, error } => {
                 let scene_texture = self.take_scene_texture_for_load(handle);
                 if !resources.contains_texture(scene_texture) {
                     return;
                 }
-                log::error!("Texture load failed {:?}: {}", scene_texture, error);
+                log::error!("Texture load failed {:?} ({}): {}", scene_texture, desc.source_label(), error);
                 resources.mark_texture_failed(scene_texture);
             }
             AssetLoadEvent::ModelLoaded { handle, desc: _, data } => {
@@ -182,7 +185,7 @@ impl SceneAssetIngestor {
                     assets,
                     resources,
                     &source_path,
-                    material.diffuse_texture_path,
+                    material.diffuse_texture,
                     "diffuse",
                 ) {
                     Ok(texture) => texture,
@@ -195,7 +198,7 @@ impl SceneAssetIngestor {
                     assets,
                     resources,
                     &source_path,
-                    material.normal_texture_path,
+                    material.normal_texture,
                     "normal",
                 ) {
                     Ok(texture) => texture,
@@ -325,17 +328,38 @@ impl SceneAssetIngestor {
         assets: &mut AssetHub,
         resources: &mut AssetStore,
         source_path: &Path,
-        texture_path: Option<PathBuf>,
+        texture_source: Option<RawTextureSource>,
         label: &'static str,
     ) -> Result<Option<TextureHandle>, String> {
-        let Some(texture_path) = texture_path else {
+        let Some(texture_source) = texture_source else {
             return Ok(None);
         };
-        let resolved_path = Self::resolve_scene_texture_path(source_path, texture_path);
-        let canonical_path = std::fs::canonicalize(&resolved_path).map_err(|err| {
-            format!("failed to canonicalize {label} texture path '{}': {err}", resolved_path.display())
-        })?;
-        Ok(Some(self.register_texture_canonical(assets, resources, canonical_path)))
+        match texture_source {
+            RawTextureSource::ExternalPath(texture_path) => {
+                let resolved_path = Self::resolve_scene_texture_path(source_path, texture_path);
+                let canonical_path = std::fs::canonicalize(&resolved_path).map_err(|err| {
+                    format!("failed to canonicalize {label} texture path '{}': {err}", resolved_path.display())
+                })?;
+                Ok(Some(self.register_texture_canonical(assets, resources, canonical_path)))
+            }
+            RawTextureSource::Embedded {
+                identity,
+                bytes,
+                mime_type,
+            } => {
+                let key = (source_path.to_path_buf(), identity);
+                if let Some(&handle) = self.embedded_textures.get(&key) {
+                    if resources.contains_texture(handle) {
+                        return Ok(Some(handle));
+                    }
+                }
+                let handle = resources.register_texture();
+                let load = assets.request_texture_bytes(identity, bytes, mime_type);
+                self.texture_loads.insert(load, handle);
+                self.embedded_textures.insert(key, handle);
+                Ok(Some(handle))
+            }
+        }
     }
 
 }

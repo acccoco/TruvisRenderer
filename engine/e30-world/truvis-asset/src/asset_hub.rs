@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use slotmap::SlotMap;
 
@@ -104,10 +105,32 @@ impl AssetHub {
         let _span = tracy_client::span!("AssetHub::request_texture");
         let handle = self.textures.insert(TextureLoadRecord { desc: desc.clone() });
 
-        log::info!("Request load texture: {:?}", desc.path);
+        log::info!("Request load texture: {}", desc.source_label());
         self.loader.request_load_texture(TextureLoadRequest { desc, handle });
 
         handle
+    }
+
+    /// 请求从文件读取并解码纹理的 task。
+    pub fn request_texture_path(&mut self, path: impl Into<std::path::PathBuf>) -> TextureLoadHandle {
+        self.request_texture(TextureLoadDesc::File { path: path.into() })
+    }
+
+    /// 请求从已拥有的 encoded bytes 解码纹理的 task。
+    ///
+    /// `AssetHub` 只持有 task 期间的 `Arc`；解码完成后 payload 通过事件交给 CPU
+    /// `AssetStore`，不会在 hub 内形成长期像素 registry。
+    pub fn request_texture_bytes(
+        &mut self,
+        identity: crate::handle::EmbeddedTextureId,
+        bytes: Arc<[u8]>,
+        mime_type: Option<String>,
+    ) -> TextureLoadHandle {
+        self.request_texture(TextureLoadDesc::Embedded {
+            identity,
+            bytes,
+            mime_type,
+        })
     }
 
     /// 请求后台导入 model / prefab。
