@@ -10,7 +10,8 @@ realtime RT 的 path 积分状态集中在 raygen 侧推进。closest-hit 和 mi
 
 主要入口：
 
-- `engine/shader/entry/realtime_rt/raygen.slang`：每像素初始化、path loop、`TraceRay` 顺序和最终输出。
+- `renderer/shader/entry/renderer/realtime_rt/raygen.slang`：每像素初始化、path loop、`TraceRay` 顺序和最终输出。
+- `renderer/shader/lib/renderer/realtime_rt/surface_hit.slangi`：realtime/offline 共用的命中事件求值与分类。
 - `renderer/shader/lib/renderer/realtime_rt/raygen_direct_lighting.slangi`：统一 Light Candidate System、visibility 和 shade。
 - `renderer/shader/lib/renderer/realtime_rt/restir_di.slangi`：primary ReSTIR DI reservoir 打包、temporal/spatial reuse 和 final shade。
 - `renderer/shader/lib/renderer/realtime_rt/raygen_material.slangi`：BRDF / delta 材质采样和 BRDF PDF。
@@ -44,7 +45,7 @@ surface-only debug channel 会在每次 `TraceRay` 返回后先尝试早退。no
 1. **Miss sky**：miss shader 采样 sky 贴图，把 sky radiance 写入 `surface.emissive`。raygen 调用
    `add_sky_miss` 累加贡献并终止路径。
 2. **Primary output**：如果这是第一次 hit/miss，写出 GBuffer / DLSS 输入。
-3. **Hit emissive surface**：调用 `add_emissive` 累加 hit emission 并终止路径。
+3. **Hit emission**：普通材质先调用 `add_emissive` 累加独立 emission，再继续反射；只有显式 `MaterialClass::Emissive` 终止路径。
 4. **普通 surface 的直接光**：Off 模式下所有非 delta surface 继续走统一 NEE；ReSTIR DI 开启时，只有 primary visible surface 生成 initial reservoir 并跳过普通 primary NEE，secondary bounce 仍走统一 NEE。
 5. **BRDF / 材质采样**：采样下一跳方向和 throughput，记录本次 `brdf_pdf` 供后续 sky/emissive hit MIS 使用。
 6. **Russian roulette**：连续 delta 链路保留完整路径；离开 delta 链路后，depth 小于 3 时保留完整路径，
@@ -56,8 +57,9 @@ flowchart TD
     Ray["当前 ray"] --> Trace["TraceRay"]
     Trace --> Miss{"miss sky?"}
     Miss -- yes --> Sky["add_sky_miss<br/>累加 sky 并结束"]
-    Miss -- no --> Emissive{"hit emissive?"}
-    Emissive -- yes --> HitLight["add_emissive<br/>累加 hit emission 并结束"]
+    Miss -- no --> Emission["累加本地 emission"]
+    Emission --> Emissive{"仅发光材质?"}
+    Emissive -- yes --> HitLight["终止路径"]
     Emissive -- no --> UnifiedNee["统一 NEE<br/>选择 light class + candidate"]
     UnifiedNee --> Brdf["BRDF / delta 材质采样"]
     Brdf --> RR{"Russian roulette<br/>non-delta and depth >= 3"}
@@ -66,6 +68,30 @@ flowchart TD
 ```
 
 ## NEE 通用候选契约
+
+### 材质纹理求值
+
+`MaterialAccess` 统一执行槽级 UV 选择、仿射变换、sampler 和 fallback；`GeometryEval` 只做几何寻址。
+base-color RGBA、MR 的 B/G、normal RGB、emissive RGB 分别与对应 factor 组合。
+Realtime/Offline/Phong 共用 base-color 入口，线性采样 RGB 与材质 baseColor factor 始终相乘一次，
+alpha factor 与纹理 Alpha 相乘。颜色槽使用 sRGB view 在采样时解码，Normal/MR 使用线性 view。
+alpha any-hit、shadow/specular-motion RayQuery 和同步 raycast 都使用同一 base-color 映射；
+emissive NEE 通过 light 的 instance/geometry/primitive 索引重读所选 UV，不缓存 UV0。
+发光值与 base color 解耦。Alias proposal 仍按常量发光因子和面积估计，纹理采样在 GPU 评估候选时完成。
+
+法线贴图在世界空间 TBN 中求值，保留 authored tangent.w 和 instance 镜像的 handedness。
+没有 tangent 或编辑到另一 UV 集时，使用变换后 UV 的三角形差分重建；raster 使用屏幕导数调用同一重建方法。
+此路径采用参考 glTF renderer 的导数 fallback 策略，不生成 MikkTSpace 顶点切线。
+退化 UV/零 scale 且没有可用 authored tangent 时使用插值顶点法线；法线强度只缩放解码后的 XY。
+几何/origin normal 不被贴图覆盖；BRDF 和 GBuffer/denoiser 使用同一 shading normal。
+
+路径 throughput 只传播 BSDF 等实际积分权重，不包含材质 AO 状态；SHARC 同样不叠加 AO 衰减。
+SHARC 缓存只存反射 radiance，query 前已累加本地 emission，避免重复。
+RT、alpha/raycast、emissive NEE 与 raster 材质统一经 MaterialAccess 显式采样 LOD 0。
+图片只含 base level，材质 sampler 只包含 S/T wrap 与 Nearest/Linear Filter；不计算 footprint/LOD。
+Raster 的法线切线重建仍使用屏幕导数，与 mip 采样无关。单级采样不消除远距离或斜视角混叠。
+
+### Light candidate
 
 HDRI NEE、emissive triangle NEE 和 analytic light NEE 已收敛到统一 Light Candidate System。raygen 每个普通
 surface 只请求一个直接光候选；`RtDirectLighting` 先在启用的 light class 中均匀选择来源，再调用各 class

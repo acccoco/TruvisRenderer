@@ -357,8 +357,7 @@ impl GpuSkyStore {
 
         let binding = if real_ready {
             let texture = texture_resolver.resolve_texture(
-                self.sky_texture.expect("GpuSkyStore: real_ready requires a scene texture handle"),
-            );
+                self.sky_texture.expect("GpuSkyStore: real_ready requires a scene texture handle"));
             EnvironmentSkyBinding {
                 srv_handle: texture.srv_handle,
                 sampler: gpu::engine::bindless::ESamplerType_LinearRepeatClamp,

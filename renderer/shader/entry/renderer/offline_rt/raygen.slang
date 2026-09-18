@@ -78,12 +78,17 @@ void main_ray_gen()
             break;
         }
 
+        if (any(surface.emissive > 0.0))
+        {
+            const float3 emission = path.add_emissive(depth, surface, ray.Direction);
+            debug_state.record_emissive(emission);
+        }
+
         if (surface.material_type == MaterialType::EMISSIVE)
         {
-            const float3 emissive_contribution = path.add_emissive(depth, surface, ray.Direction);
-            debug_state.record_emissive(emissive_contribution);
             break;
         }
+
 
         const RtDirectLightingSample direct_lighting = RtDirectLighting::sample_unified(
             payload,

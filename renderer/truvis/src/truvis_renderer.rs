@@ -353,8 +353,9 @@ impl TruvisRenderer {
                     roughness: spec.roughness,
                     class: spec.class,
                     coverage: spec.coverage,
-                    diffuse_texture: None,
-                    normal_texture: None,
+                    textures: Default::default(),
+                    normal_scale: 1.0,
+                    emissive_factor: glam::Vec3::ZERO,
                     name: format!("material-test-cube-{}-{}", MATERIAL_SOURCE, spec.name),
                 })
                 .expect("failed to register material test cube material");
@@ -414,8 +415,9 @@ impl TruvisRenderer {
                         roughness: 1.0,
                         class: MaterialClass::emissive(spec.radiance),
                         coverage: CoverageMode::Opaque,
-                        diffuse_texture: None,
-                        normal_texture: None,
+                        textures: Default::default(),
+                        normal_scale: 1.0,
+                        emissive_factor: glam::Vec3::ZERO,
                         name: format!("emissive-cube-matrix-{}", spec.name),
                     })
                     .expect("failed to register emissive cube material")

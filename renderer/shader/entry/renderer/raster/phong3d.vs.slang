@@ -1,10 +1,7 @@
-#include "abi/renderer/render_passes/raster/mod.slangi"
+#include "lib/renderer/raster/material_vertex.slangi"
 #include "lib/renderer/raster/phong.slangi"
 
-/// Phong raster vertex shader 的 3D asset layout 变体。
-///
-/// 该入口保留 tangent/bitangent 的 location 空洞，匹配部分模型导入后的顶点布局；当前 shader
-/// 只消费 position/normal/uv，不改变 pipeline vertex binding。
+/// position/normal 来自 vertex binding；四槽 UV 和切线由 PhongVertex 按 Geometry 元数据读取。
 struct VsInput
 {
     [[vk::location(0)]]
@@ -12,15 +9,6 @@ struct VsInput
 
     [[vk::location(1)]]
     float3 normal : NORMAL;
-
-    // [[vk::location(2)]]
-    // float3 tangent : TANGENT;
-
-    // [[vk::location(3)]]
-    // float3 bitangent : BITANGENT;
-
-    [[vk::location(4)]]
-    float2 uv : UV;
 };
 
 struct VsOutput
@@ -34,19 +22,15 @@ struct VsOutput
 renderer::render_passes::raster::PushConstants push_const;
 
 [shader("vertex")]
-VsOutput main(VsInput input)
+VsOutput main(VsInput input, uint vertex_id : SV_VertexID)
 {
-    engine::scene::Instance* instance = push_const.scene.all_instances + push_const.instance_idx;
-    engine::frame::PerFrameData* frame_data = push_const.frame_data;
+    engine::scene::Instance* instance = SceneAccess::instance(push_const.instance_idx);
 
     VsOutput output = (VsOutput)0;
 
-    const float4x4 mvp = mul(frame_data.projection, mul(frame_data.view, instance.model));
+    const float4x4 mvp = mul(engine::binding::per_frame_data.projection, mul(engine::binding::per_frame_data.view, instance.model));
     output.pos = mul(mvp, float4(input.pos, 1.0));
-    output.coarse_vertex.world_pos = mul(instance.model, float4(input.pos, 1.0)).xyz;
-    output.coarse_vertex.uv = input.uv;
-    // 这里保留与 `phong.vs.slang` 相同的法线变换约定，保证两个 layout 变体输出一致。
-    output.coarse_vertex.frag_normal = mul(instance.inv_model, float4(input.normal, 0.0)).xyz;
+    output.coarse_vertex = PhongVertex::evaluate(push_const, vertex_id, input.pos, input.normal);
 
     return output;
 }

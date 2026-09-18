@@ -23,15 +23,15 @@ struct GeometryEval
     }
 
     [ForceInline]
-    static float3* tangent(engine::geometry::Geometry* geom, uint vertex_idx)
+    static float4* tangent(engine::geometry::Geometry* geom, uint vertex_idx)
     {
         return geom.tangent_buffer + vertex_idx;
     }
 
     [ForceInline]
-    static float2* uv(engine::geometry::Geometry* geom, uint vertex_idx)
+    static float2* uv(engine::geometry::Geometry* geom, uint vertex_idx, uint set = 0)
     {
-        return geom.uv_buffer + vertex_idx;
+        return geom.uv_buffer + set * geom.vertex_count + vertex_idx;
     }
 
     [ForceInline]
@@ -62,19 +62,12 @@ struct GeometryEval
         return normalize((*normal(geom, tri.x)) * a + (*normal(geom, tri.y)) * b + (*normal(geom, tri.z)) * c);
     }
 
-    static float3 interp_tangent(engine::geometry::Geometry* geom, uint3 tri, float2 barycentrics)
+    static float2 interp_uv(engine::geometry::Geometry* geom, uint3 tri, float2 barycentrics, uint set = 0)
     {
         const float a = 1.f - barycentrics.x - barycentrics.y;
         const float b = barycentrics.x;
         const float c = barycentrics.y;
-        return normalize((*tangent(geom, tri.x)) * a + (*tangent(geom, tri.y)) * b + (*tangent(geom, tri.z)) * c);
-    }
-
-    static float2 interp_uv(engine::geometry::Geometry* geom, uint3 tri, float2 barycentrics)
-    {
-        const float a = 1.f - barycentrics.x - barycentrics.y;
-        const float b = barycentrics.x;
-        const float c = barycentrics.y;
-        return (*uv(geom, tri.x)) * a + (*uv(geom, tri.y)) * b + (*uv(geom, tri.z)) * c;
+        if (set >= geom.uv_set_count) return float2(0.0);
+        return (*uv(geom, tri.x, set)) * a + (*uv(geom, tri.y, set)) * b + (*uv(geom, tri.z, set)) * c;
     }
 };

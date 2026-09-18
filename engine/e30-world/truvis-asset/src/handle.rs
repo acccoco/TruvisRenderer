@@ -22,31 +22,46 @@ new_key_type! {
     pub struct ModelLoadHandle;
 }
 
+/// RGBA8 图片的输入解释。颜色空间来自纹理用途，不能从文件名或图片 metadata 猜测。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextureColorSpace {
+    Linear,
+    Srgb,
+}
+
 /// 一次 texture CPU decode task 的输入描述。
 ///
 /// 这是一次性 loader 请求的参数，不是长期 identity key。同一路径是否复用为同一个
 /// `TextureHandle` 由 `SceneAssetIngestor` / `SceneStore` 决定。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextureLoadDesc {
-    File { path: PathBuf },
+    File { path: PathBuf, color_space: TextureColorSpace },
     Embedded {
         identity: EmbeddedTextureId,
         bytes: Arc<[u8]>,
         mime_type: Option<String>,
+        color_space: TextureColorSpace,
     },
 }
 
 impl TextureLoadDesc {
+    pub fn color_space(&self) -> TextureColorSpace {
+        match self {
+            Self::File { color_space, .. } | Self::Embedded { color_space, .. } => *color_space,
+        }
+    }
+
     /// 返回不包含像素 payload 的诊断文本，避免把 embedded bytes 写入日志。
     pub fn source_label(&self) -> String {
         match self {
-            Self::File { path } => format!("file:{}", path.display()),
+            Self::File { path, color_space } => format!("file:{},color_space:{color_space:?}", path.display()),
             Self::Embedded {
                 identity,
                 mime_type,
                 bytes,
+                color_space,
             } => format!(
-                "embedded:image={},mime={},bytes={}",
+                "embedded:image={},mime={},bytes={},color_space:{color_space:?}",
                 identity.image_index,
                 mime_type.as_deref().unwrap_or("unknown"),
                 bytes.len()
@@ -78,8 +93,8 @@ pub struct ModelLoadDesc {
 /// distribution builder 可以共享同一份 32--128 MiB HDR 数据，避免为了跨线程再复制。
 #[derive(Debug, Clone)]
 pub enum TexturePixels {
-    /// 普通图片的 RGBA8 UNORM 像素。
-    Rgba8(Arc<[u8]>),
+    /// 普通图片的原始 RGBA8 数值；采样格式由引用它的用途决定。
+    Rgba8 { pixels: Arc<[u8]>, color_space: TextureColorSpace },
     /// HDR/EXR 的 RGBA16F 像素；每个 `u16` 保存 IEEE-754 binary16 bit pattern。
     Rgba16Float(Arc<[u16]>),
 }
@@ -114,7 +129,7 @@ impl TextureBytes {
         let expected_channel_count =
             texel_count.checked_mul(4).ok_or_else(|| format!("texture channel count overflows usize: {extent:?}"))?;
         let actual_channel_count = match &pixels {
-            TexturePixels::Rgba8(pixels) => pixels.len(),
+            TexturePixels::Rgba8 { pixels, .. } => pixels.len(),
             TexturePixels::Rgba16Float(pixels) => pixels.len(),
         };
         if actual_channel_count != expected_channel_count {
@@ -129,7 +144,8 @@ impl TextureBytes {
     #[inline]
     pub fn format(&self) -> vk::Format {
         match &self.pixels {
-            TexturePixels::Rgba8(_) => vk::Format::R8G8B8A8_UNORM,
+            TexturePixels::Rgba8 { color_space: TextureColorSpace::Linear, .. } => vk::Format::R8G8B8A8_UNORM,
+            TexturePixels::Rgba8 { color_space: TextureColorSpace::Srgb, .. } => vk::Format::R8G8B8A8_SRGB,
             TexturePixels::Rgba16Float(_) => vk::Format::R16G16B16A16_SFLOAT,
         }
     }
@@ -141,7 +157,7 @@ impl TextureBytes {
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         match &self.pixels {
-            TexturePixels::Rgba8(pixels) => pixels,
+            TexturePixels::Rgba8 { pixels, .. } => pixels,
             TexturePixels::Rgba16Float(pixels) => bytemuck::cast_slice(pixels),
         }
     }
@@ -158,17 +174,21 @@ impl TextureBytes {
 
     /// 按 texel 索引读取线性 RGB。
     ///
-    /// 普通 RGBA8 继续遵循现有 UNORM 上传语义；HDR/EXR 则从 binary16 恢复 scene-linear
-    /// 数值。该接口只服务亮度分布构建，不暴露底层 payload 布局。
+    /// sRGB RGBA8 先按 RGB transfer function 解码，Alpha 不参与；HDR/EXR 则从
+    /// binary16 恢复 scene-linear 数值。该接口只服务亮度分布构建。
     pub fn linear_rgb(&self, index: usize) -> [f32; 3] {
         assert!(index < self.texel_count(), "texture texel index out of bounds");
         let channel = index * 4;
         match &self.pixels {
-            TexturePixels::Rgba8(pixels) => [
-                pixels[channel] as f32 / 255.0,
-                pixels[channel + 1] as f32 / 255.0,
-                pixels[channel + 2] as f32 / 255.0,
-            ],
+            TexturePixels::Rgba8 { pixels, color_space } => [pixels[channel], pixels[channel + 1], pixels[channel + 2]]
+                .map(|byte| {
+                    let value = byte as f32 / 255.0;
+                    match color_space {
+                        TextureColorSpace::Linear => value,
+                        TextureColorSpace::Srgb if value <= 0.04045 => value / 12.92,
+                        TextureColorSpace::Srgb => ((value + 0.055) / 1.055).powf(2.4),
+                    }
+                }),
             TexturePixels::Rgba16Float(pixels) => [
                 half::f16::from_bits(pixels[channel]).to_f32(),
                 half::f16::from_bits(pixels[channel + 1]).to_f32(),
@@ -191,10 +211,45 @@ impl TextureBytes {
 pub struct SubmeshData {
     pub positions: Vec<glam::Vec3>,
     pub normals: Vec<glam::Vec3>,
-    pub tangents: Vec<glam::Vec3>,
-    pub uvs: Vec<glam::Vec2>,
+    /// XYZW 保留切线方向和 bitangent handedness；零向量表示需要从所选 UV 重建。
+    pub tangents: Vec<glam::Vec4>,
+    /// 每套 UV 都与 positions 等长，按 glTF TEXCOORD_n 索引；左上原点。
+    pub tex_coords: Vec<Vec<glam::Vec2>>,
+    /// 导入切线对应的 UV 集；切换法线槽 UV 时不能误用其它参数化的切线。
+    pub tangent_tex_coord: u32,
     pub indices: Vec<u32>,
     pub name: String,
+}
+
+impl SubmeshData {
+    /// 导入和 CPU 注册共用 GPU 上传前置条件；失败时不得上传不完整属性或越界索引。
+    pub fn validate(&self) -> Result<(), String> {
+        let count = self.positions.len();
+        let reason = if count == 0 {
+            Some("has no vertices")
+        } else if count > u32::MAX as usize
+            || self.tex_coords.len().checked_mul(count).is_none_or(|size| size > u32::MAX as usize)
+        {
+            Some("exceeds GPU uint vertex/UV addressing range")
+        } else if self.normals.len() != count || self.tangents.len() != count
+            || self.tex_coords.iter().any(|set| set.len() != count)
+        {
+            Some("has mismatched vertex attribute counts")
+        } else if self.positions.iter().any(|p| !p.is_finite())
+            || self.normals.iter().any(|n| !n.is_finite() || n.length_squared() <= f32::EPSILON)
+            || self.tangents.iter().any(|t| !t.is_finite())
+            || self.tex_coords.iter().flatten().any(|uv| !uv.is_finite())
+        {
+            Some("has non-finite attributes or zero normals")
+        } else if self.indices.is_empty() || !self.indices.len().is_multiple_of(3) {
+            Some("must contain triangle indices")
+        } else if self.indices.iter().any(|&vertex| vertex as usize >= count) {
+            Some("has out-of-range vertex indices")
+        } else {
+            None
+        };
+        reason.map_or(Ok(()), |reason| Err(format!("submesh '{}' {}", self.name, reason)))
+    }
 }
 
 /// upload-ready 的 CPU mesh 数据。
@@ -237,7 +292,7 @@ pub enum MaterialClass {
     Surface,
     /// 透射表面。`opacity` 只表示透明度，delta / rough 仍只由 roughness 决定。
     Transmission { opacity: f32, ior: f32 },
-    /// 自发光表面。radiance 是材质自发光辐亮度，shader 侧会再乘 base color。
+    /// 自发光表面。radiance 与 emissive factor 相加后乘 emissive 纹理，独立于 base color。
     Emissive { radiance: glam::Vec3 },
 }
 
@@ -296,7 +351,7 @@ impl MaterialClass {
 pub enum CoverageMode {
     /// 普通覆盖，`base_color.w` 不参与可见性判断。
     Opaque,
-    /// alpha mask 覆盖。`base_color.w * diffuse_texture_alpha <= alpha_cutoff` 的片元会被忽略。
+    /// alpha mask 覆盖。`base_color.w * base_color_texture_alpha < alpha_cutoff` 的片元会被忽略。
     AlphaMask { alpha_cutoff: f32 },
 }
 
@@ -336,8 +391,10 @@ pub struct RawMaterialData {
     pub roughness: f32,
     pub class: MaterialClass,
     pub coverage: CoverageMode,
-    pub diffuse_texture: Option<RawTextureSource>,
-    pub normal_texture: Option<RawTextureSource>,
+    pub textures: [Option<crate::material_texture::TextureSlot<RawTextureSource>>; crate::material_texture::TextureChannel::COUNT],
+    pub normal_scale: f32,
+    /// 独立于光学类别的发光因子；有发光贴图时按其 RGB 相乘。
+    pub emissive_factor: glam::Vec3,
     pub name: String,
 }
 

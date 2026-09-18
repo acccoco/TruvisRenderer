@@ -11,6 +11,7 @@ use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuff
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
+use truvis_asset::material_texture::{TextureChannel, TextureTransform};
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
 use truvis_world::guid_new_type::MaterialHandle;
 
@@ -31,8 +32,7 @@ struct SlotDirtyInfo {
 struct PreparedMaterial {
     data: MaterialData,
     gpu: gpu::engine::material::PbrMaterial,
-    diffuse_texture_revision: u64,
-    normal_texture_revision: u64,
+    texture_revisions: [u64; TextureChannel::COUNT],
 }
 
 /// 单个 FIF frame label 对应的材质 GPU buffer 与 staging buffer。
@@ -190,8 +190,7 @@ impl GpuMaterialStore {
                     PreparedMaterial {
                         data,
                         gpu,
-                        diffuse_texture_revision: dependency_revisions.0,
-                        normal_texture_revision: dependency_revisions.1,
+                        texture_revisions: dependency_revisions,
                     },
                 );
                 self.register(handle);
@@ -205,8 +204,7 @@ impl GpuMaterialStore {
             let Some(previous) = self.prepared_materials.get(handle) else {
                 panic!("GpuMaterialStore: material slot has no prepared snapshot");
             };
-            let dependency_changed = previous.diffuse_texture_revision != dependency_revisions.0
-                || previous.normal_texture_revision != dependency_revisions.1;
+            let dependency_changed = previous.texture_revisions != dependency_revisions;
             if source_changed || dependency_changed {
                 let data = data.clone();
                 let gpu = Self::build_gpu_material(&data, texture_resolver);
@@ -218,8 +216,7 @@ impl GpuMaterialStore {
                     PreparedMaterial {
                         data,
                         gpu,
-                        diffuse_texture_revision: dependency_revisions.0,
-                        normal_texture_revision: dependency_revisions.1,
+                        texture_revisions: dependency_revisions,
                     },
                 );
                 self.source_revisions.insert(handle, source_revision);
@@ -455,55 +452,45 @@ impl MaterialSlotResolver for GpuMaterialStore {
 
 // 内部工具方法
 impl GpuMaterialStore {
-    fn texture_dependency_revisions(data: &MaterialData, resolver: &dyn TextureResolver) -> (u64, u64) {
-        (
-            data.diffuse_texture.map_or(0, |handle| resolver.texture_revision(handle)),
-            data.normal_texture.map_or(0, |handle| resolver.texture_revision(handle)),
-        )
+    fn texture_dependency_revisions(data: &MaterialData, resolver: &dyn TextureResolver) -> [u64; TextureChannel::COUNT] {
+        std::array::from_fn(|index| data.textures[index].as_ref().map_or(0, |slot| resolver.texture_revision(slot.texture)))
     }
 
     fn same_render_projection(left: &MaterialData, right: &MaterialData) -> bool {
-        left.base_color == right.base_color
-            && left.metallic == right.metallic
-            && left.roughness == right.roughness
-            && left.class == right.class
-            && left.coverage == right.coverage
-            && left.diffuse_texture == right.diffuse_texture
-            && left.normal_texture == right.normal_texture
+        left.base_color == right.base_color && left.metallic == right.metallic && left.roughness == right.roughness
+            && left.class == right.class && left.coverage == right.coverage && left.textures == right.textures
+            && left.normal_scale == right.normal_scale
+            && left.emissive_factor == right.emissive_factor
     }
 
     fn emissive_projection_changed(left: &MaterialData, right: &MaterialData) -> bool {
-        left.class != right.class
-            || left.base_color != right.base_color
-            || left.diffuse_texture.is_some() != right.diffuse_texture.is_some()
+        left.class != right.class || left.emissive_factor != right.emissive_factor
+            || left.textures[TextureChannel::Emissive as usize] != right.textures[TextureChannel::Emissive as usize]
     }
 
-    /// 将 CPU 材质参数转换为 shader 读取的 packed GPU 数据。
-    ///
-    /// texture handle 在这里通过 resolver 转成 bindless SRV index；resolver 保证未 ready
-    /// 的 texture 也会返回 fallback，因此 GPU 数据不会包含悬空句柄。
+    /// CPU 语义只在 prepare 转为派生 ABI；SRV 与映射分别来自资源和材质，不修改共享图片。
+    /// 颜色槽保留洋红诊断图；其它槽尚未 ready 时使用各通道的中性 fallback，
+    /// 不能把诊断图解释成法线、粗糙度或发光颜色。映射参数始终保留。
     fn build_gpu_material(data: &MaterialData, resolver: &dyn TextureResolver) -> gpu::engine::material::PbrMaterial {
-        let diffuse_binding =
-            data.diffuse_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
-        let normal_binding = data.normal_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
-
+        let textures = std::array::from_fn(|index| {
+            let slot = data.textures[index].as_ref();
+            let binding = slot.filter(|slot| index == TextureChannel::BaseColor as usize || resolver.is_texture_ready(slot.texture))
+                .map(|slot| resolver.resolve_texture(slot.texture))
+                .unwrap_or(TextureBinding::null());
+            let rows = slot.map_or(TextureTransform::default(), |slot| slot.transform).affine_rows();
+            gpu::engine::material::MaterialTexture {
+                uv_row0: glam::Vec4::from_array(rows[0]).into(), uv_row1: glam::Vec4::from_array(rows[1]).into(), image: binding.srv_handle.0,
+                sampler_type: slot.map_or(binding.sampler, |slot| gpu::engine::bindless::ESamplerType_MaterialBase + slot.sampler.index()),
+                tex_coord: slot.map_or(0, |slot| slot.tex_coord), _padding_0: 0,
+            }
+        });
         gpu::engine::material::PbrMaterial {
-            base_color: data.base_color.truncate().into(),
-            metallic: data.metallic,
-            alpha_factor: data.base_color.w,
-            roughness: data.roughness,
-            material_class: Self::gpu_material_class(data.class),
-            coverage_mode: Self::gpu_coverage_mode(data.coverage),
-            opacity: data.class.opacity(),
-            ior: data.class.ior(),
-            alpha_cutoff: data.coverage.alpha_cutoff(),
-            _padding_0: 0.0,
-            emissive: data.class.emissive_radiance().into(),
-            _padding_1: 0.0,
-            diffuse_map: diffuse_binding.srv_handle.0,
-            diffuse_map_sampler_type: diffuse_binding.sampler,
-            normal_map: normal_binding.srv_handle.0,
-            normal_map_sampler_type: normal_binding.sampler,
+            base_color: data.base_color.truncate().into(), metallic: data.metallic,
+            alpha_factor: data.base_color.w, roughness: data.roughness,
+            material_class: Self::gpu_material_class(data.class), coverage_mode: Self::gpu_coverage_mode(data.coverage),
+            opacity: data.class.opacity(), ior: data.class.ior(), alpha_cutoff: data.coverage.alpha_cutoff(),
+            normal_scale: data.normal_scale, _padding_0: 0.0,
+            emissive: (data.emissive_factor + data.class.emissive_radiance()).into(), textures,
         }
     }
 

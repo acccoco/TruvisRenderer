@@ -13,10 +13,9 @@ use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 /// vertex/index buffer 上传完成后，`AssetHub` 不再保存可直接查询的 mesh CPU 数据；
 /// 自发光 light table 需要在 prepare 阶段按 active instance 重新展开 world-space
 /// 三角形，因此这里把最小的 local-space position/uv/primitive id 跟随 GPU-ready mesh 缓存。
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct RtTriangleMeta {
     pub(crate) positions: [glam::Vec3; 3],
-    pub(crate) uvs: [glam::Vec2; 3],
     pub(crate) primitive_id: u32,
     pub(crate) local_area: f32,
 }
@@ -31,6 +30,8 @@ pub struct RtGeometry {
     pub vertex_buffer: GfxVertexBuffer<VertexLayoutSoA3D>,
     /// 32-bit index buffer；ray tracing 和 raster pass 使用同一索引类型。
     pub index_buffer: GfxIndex32Buffer,
+    pub uv_set_count: u32,
+    pub tangent_tex_coord: u32,
 }
 
 // 访问器

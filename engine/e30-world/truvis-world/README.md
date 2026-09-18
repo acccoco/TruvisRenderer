@@ -18,6 +18,8 @@
   filesystem canonicalize 失败；失败 edit 不推进 revision，也不污染依赖索引。
 - file texture 通过 `GameWorld::register_texture` 进入 scene 前会先执行 filesystem canonicalize；model 主路径和
   model 内 texture 路径也在 `SceneAssetIngestor` 中 canonicalize，失败时 model import 进入 failed 状态。
+- `GameWorld::register_texture` 显式接收 `TextureColorSpace`；file/embedded 的长期纹理身份由来源和解释共同确定，
+  同源的 sRGB/Linear 引用不共享 handle。天空路径和 runtime 默认 LDR 天空选择 Linear。
 - `GameWorld` 提供 render runtime-facing 窄接口：runtime 通过 `poll_asset_loads()` 把 loader 完成结果收敛到
   CPU registry，再通过只读 `scene_view()` 快照按最终状态同步
   resource/instance/light，不直接访问 `SceneStore` 或 `AssetSystem` owner。

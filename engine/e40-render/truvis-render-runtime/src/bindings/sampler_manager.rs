@@ -39,64 +39,74 @@ impl RenderSamplerManager {
         Self { _samplers: samplers }
     }
 
+    fn create_sampler_desc(filter: vk::Filter, address_mode: vk::SamplerAddressMode) -> GfxSamplerDesc {
+        GfxSamplerDesc {
+            mag_filter: filter,
+            min_filter: filter,
+            address_mode_u: address_mode,
+            address_mode_v: address_mode,
+            address_mode_w: address_mode,
+            ..Default::default()
+        }
+    }
+
+    /// lat-long 天空只允许经度 U wrap；纬度 V 与未使用的 W 必须 clamp，
+    /// 否则南北极会彼此采样并形成错误接缝。
+    fn create_lat_long_sampler_desc() -> GfxSamplerDesc {
+        GfxSamplerDesc {
+            mag_filter: vk::Filter::LINEAR,
+            min_filter: vk::Filter::LINEAR,
+            address_mode_u: vk::SamplerAddressMode::REPEAT,
+            address_mode_v: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+            address_mode_w: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+            ..Default::default()
+        }
+    }
+
     fn create_sampler(ctx: GfxDeviceCtx<'_>) -> [GfxSampler; gpu::engine::bindless::ESamplerType__Count_ as usize] {
         let mut sampler_descs = [0; gpu::engine::bindless::ESamplerType__Count_ as usize]
             .map(|_| (String::new(), GfxSamplerDesc::default()));
 
-        fn create_sampler_desc(filter: vk::Filter, address_mode: vk::SamplerAddressMode) -> GfxSamplerDesc {
-            GfxSamplerDesc {
-                mag_filter: filter,
-                min_filter: filter,
-                mipmap_mode: if filter == vk::Filter::LINEAR {
-                    vk::SamplerMipmapMode::LINEAR
-                } else {
-                    vk::SamplerMipmapMode::NEAREST
-                },
-                address_mode_u: address_mode,
-                address_mode_v: address_mode,
-                address_mode_w: address_mode,
-                ..Default::default()
-            }
-        }
-
-        /// lat-long 天空只允许经度 U wrap；纬度 V 与未使用的 W 必须 clamp，
-        /// 否则南北极会彼此采样并形成错误接缝。
-        fn create_lat_long_sampler_desc() -> GfxSamplerDesc {
-            GfxSamplerDesc {
-                mag_filter: vk::Filter::LINEAR,
-                min_filter: vk::Filter::LINEAR,
-                mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-                address_mode_u: vk::SamplerAddressMode::REPEAT,
-                address_mode_v: vk::SamplerAddressMode::CLAMP_TO_EDGE,
-                address_mode_w: vk::SamplerAddressMode::CLAMP_TO_EDGE,
-                ..Default::default()
-            }
-        }
-
         sampler_descs[gpu::engine::bindless::ESamplerType_PointRepeat as usize] =
-            ("PointRepeat".to_string(), create_sampler_desc(vk::Filter::NEAREST, vk::SamplerAddressMode::REPEAT));
+            ("PointRepeat".to_string(), Self::create_sampler_desc(vk::Filter::NEAREST, vk::SamplerAddressMode::REPEAT));
         sampler_descs[gpu::engine::bindless::ESamplerType_PointClamp as usize] =
-            ("PointClamp".to_string(), create_sampler_desc(vk::Filter::NEAREST, vk::SamplerAddressMode::CLAMP_TO_EDGE));
+            ("PointClamp".to_string(), Self::create_sampler_desc(vk::Filter::NEAREST, vk::SamplerAddressMode::CLAMP_TO_EDGE));
         sampler_descs[gpu::engine::bindless::ESamplerType_LinearRepeat as usize] =
-            ("LinearRepeat".to_string(), create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::REPEAT));
+            ("LinearRepeat".to_string(), Self::create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::REPEAT));
         sampler_descs[gpu::engine::bindless::ESamplerType_LinearClamp as usize] =
-            ("LinearClamp".to_string(), create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::CLAMP_TO_EDGE));
+            ("LinearClamp".to_string(), Self::create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::CLAMP_TO_EDGE));
         sampler_descs[gpu::engine::bindless::ESamplerType_AnisoRepeat as usize] = (
             "AnisoRepeat".to_string(),
             GfxSamplerDesc {
                 max_anisotropy: 16,
-                ..create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::REPEAT)
+                ..Self::create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::REPEAT)
             },
         );
         sampler_descs[gpu::engine::bindless::ESamplerType_AnisoClamp as usize] = (
             "AnisoClamp".to_string(),
             GfxSamplerDesc {
                 max_anisotropy: 16,
-                ..create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                ..Self::create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::CLAMP_TO_EDGE)
             },
         );
         sampler_descs[gpu::engine::bindless::ESamplerType_LinearRepeatClamp as usize] =
-            ("LinearRepeatClamp".to_string(), create_lat_long_sampler_desc());
+            ("LinearRepeatClamp".to_string(), Self::create_lat_long_sampler_desc());
+
+        // 全部 18 种有限组合共用静态 sampler 表，避免每个材质拥有 Vulkan sampler。
+        for code in 0..18usize {
+            let filter = if code % 2 == 0 { vk::Filter::NEAREST } else { vk::Filter::LINEAR };
+            let wrap_t = (code / 2) % 3;
+            let wrap_s = code / 6;
+            let wraps = [vk::SamplerAddressMode::REPEAT, vk::SamplerAddressMode::CLAMP_TO_EDGE, vk::SamplerAddressMode::MIRRORED_REPEAT];
+            sampler_descs[gpu::engine::bindless::ESamplerType_MaterialBase as usize + code] = (
+                format!("Material-{code}"), GfxSamplerDesc {
+                    mag_filter: filter,
+                    min_filter: filter,
+                    address_mode_u: wraps[wrap_s], address_mode_v: wraps[wrap_t],
+                    ..Default::default()
+                },
+            );
+        }
 
         sampler_descs.map(|(name, desc)| GfxSampler::new(ctx, &desc, format!("bindless-sampler-{}", name)))
     }

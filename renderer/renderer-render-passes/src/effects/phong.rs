@@ -147,9 +147,6 @@ impl PhongPass {
             record_ctx,
             &target.extent.into(),
             &gpu::renderer::render_passes::raster::PushConstants {
-                frame_data: record_ctx.per_frame_gpu_data.device_address(frame_label),
-                scene: render_scene.scene_buffer_device_address(frame_label),
-
                 submesh_idx: 0,
                 instance_idx: 0,
 

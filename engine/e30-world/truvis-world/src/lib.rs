@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use truvis_asset::handle::{LoadStatus, MeshData};
+use truvis_asset::handle::{LoadStatus, MeshData, TextureColorSpace};
 use truvis_shader_binding::gpu;
 
 pub mod components;
@@ -97,13 +97,13 @@ impl GameWorld {
     }
 
     /// 注册一个 file texture 并返回 CPU world texture handle。
-    pub fn register_texture(&mut self, path: PathBuf) -> Result<TextureHandle, WorldEditError> {
+    pub fn register_texture(&mut self, path: PathBuf, color_space: TextureColorSpace) -> Result<TextureHandle, WorldEditError> {
         let canonical_path =
             std::fs::canonicalize(&path).map_err(|err| WorldEditError::FilesystemCanonicalizeFailed {
                 path: path.clone(),
                 error: err.to_string(),
             })?;
-        let (texture, is_new) = self.resources.register_texture_canonical(canonical_path);
+        let (texture, is_new) = self.resources.register_texture_canonical(canonical_path, color_space);
         if is_new {
             self.scene.mark_resource_changed();
         }
@@ -116,7 +116,7 @@ impl GameWorld {
     /// distribution build。等待期间 render-side 保持 sky fallback；失败时也保持 fallback
     /// 并记录 loader 错误。旧 texture 不会自动删除，因为它仍可能被 material 引用。
     pub fn request_sky_texture_from_path(&mut self, path: PathBuf) -> Result<TextureHandle, WorldEditError> {
-        let texture = self.register_texture(path)?;
+        let texture = self.register_texture(path, TextureColorSpace::Linear)?;
         self.update_sky_texture(Some(texture))?;
         Ok(texture)
     }
@@ -154,7 +154,7 @@ impl GameWorld {
 
     /// 更新 CPU material 参数；实际变化才推进 source revision。
     pub fn update_material(&mut self, handle: MaterialHandle, data: MaterialData) -> Result<(), WorldEditError> {
-        if self.resources.update_material(handle, data)? {
+        if self.resources.update_material(&self.scene, handle, data)? {
             self.scene.mark_resource_changed();
         }
         Ok(())

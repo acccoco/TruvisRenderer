@@ -87,13 +87,11 @@ struct EmissiveTriangleLight
     float3 normal;
     uint instance_id;
 
-    /// 三个顶点 UV，用于在采样点读取与 closest-hit 一致的 base color。
-    float2 uv0;
-    float2 uv1;
-
-    float2 uv2;
+    /// 根据几何身份读取材质所选 UV，不缓存单套 UV 的副本。
     uint geometry_id;
     uint primitive_id;
+    /// 保持 triangle light 的 16 字节 stride 边界。
+    uint2 _padding_0;
 };
 
 /// 自发光三角形 power alias table entry。

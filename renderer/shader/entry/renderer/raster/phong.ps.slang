@@ -1,3 +1,4 @@
+#include "lib/engine/scene/material_access.slangi"
 #include "lib/renderer/raster/phong.slangi"
 #include "abi/renderer/render_passes/raster/mod.slangi"
 #include "lib/engine/core/bindless.slangi"
@@ -25,35 +26,53 @@ renderer::render_passes::raster::PushConstants push_const;
 [shader("pixel")]
 PsOutput main(PsInput input)
 {
-    const float3 normal = normalize(input.coarse_vertex.frag_normal);
+    float3 normal = normalize(input.coarse_vertex.frag_normal);
 
-    engine::frame::PerFrameData* frame_data = push_const.frame_data;
-    engine::scene::GpuScene* scene = push_const.scene;
-    engine::material::PbrMaterial* mat = SceneAccess::get_material(scene, push_const.instance_idx, push_const.submesh_idx);
+    engine::material::PbrMaterial* mat = SceneAccess::get_material(push_const.instance_idx, push_const.submesh_idx);
 
-    const uint light_cnt = scene.point_light_count;
+    const uint light_cnt = engine::binding::gpu_scene.point_light_count;
 
-    const float2 delta_uv = frac(frame_data.time_ms / 1000.0f);
-    // 让示例纹理随时间滚动，便于确认 UV、sampler 和 bindless SRV 都在工作。
-    const float2 uv = input.coarse_vertex.uv + delta_uv;
-    const float4 object_color = BindlessSrv::sample(mat.diffuse_map, uv, mat.diffuse_map_sampler_type);
+    const float4 object_color = MaterialAccess::base_color_rgba(
+        mat, input.coarse_vertex.uv[engine::material::TEXTURE_BASE_COLOR]);
+    if (mat.coverage_mode == engine::material::COVERAGE_ALPHA_MASK && object_color.w < mat.alpha_cutoff) discard;
+    const engine::material::MaterialTexture normal_slot = mat.textures[engine::material::TEXTURE_NORMAL];
+    if (BindlessSrv::is_valid(normal_slot.image))
+    {
+        const float2 normal_uv = MaterialAccess::transform_uv(normal_slot, input.coarse_vertex.uv[engine::material::TEXTURE_NORMAL]);
+        float4 tangent = input.coarse_vertex.tangent;
+        if (dot(tangent.xyz, tangent.xyz) < 1e-12)
+        {
+            tangent = MaterialAccess::tangent_from_derivatives(normal,
+                ddx(input.coarse_vertex.world_pos), ddy(input.coarse_vertex.world_pos), ddx(normal_uv), ddy(normal_uv));
+        }
+        normal = MaterialAccess::normal_from_sample(normal, tangent, MaterialAccess::sample(normal_slot,
+            input.coarse_vertex.uv[engine::material::TEXTURE_NORMAL], float4(0.5, 0.5, 1, 1)).xyz, mat.normal_scale);
+    }
+    const float3 emission = mat.emissive * MaterialAccess::sample(mat.textures[engine::material::TEXTURE_EMISSIVE],
+        input.coarse_vertex.uv[engine::material::TEXTURE_EMISSIVE], float4(1)).xyz;
+    const float4 mr = MaterialAccess::sample(mat.textures[engine::material::TEXTURE_METALLIC_ROUGHNESS],
+        input.coarse_vertex.uv[engine::material::TEXTURE_METALLIC_ROUGHNESS], float4(1));
+    const float metallic = mat.metallic * mr.b;
+    const float roughness = mat.roughness * mr.g;
 
     float3 light_term = float3(0.0, 0.0, 0.0);
     for (uint i = 0; i < light_cnt; i++)
     {
-        const engine::light::PointLight point_light = scene.point_lights[i];
+        const engine::light::PointLight point_light = engine::binding::gpu_scene.point_lights[i];
         light_term += PhongLight::eval_point_light(
             point_light,
-            frame_data.camera_pos,
+            engine::binding::per_frame_data.camera_pos,
             input.coarse_vertex.world_pos,
             normal,
-            object_color
+            object_color,
+            metallic,
+            roughness
         );
     }
 
     const float3 min_color = object_color.xyz * 0.5;
 
     PsOutput output = (PsOutput)0;
-    output.color = float4(max(light_term, min_color), 1.0f);
+    output.color = float4(max(light_term, min_color) + emission, 1.0f);
     return output;
 }

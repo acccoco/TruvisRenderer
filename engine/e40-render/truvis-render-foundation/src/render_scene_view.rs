@@ -25,10 +25,8 @@ pub struct RenderSceneAccumSignature {
 /// Render pass 访问 GPU scene 的最小只读契约。
 ///
 /// concrete `RenderWorld` 和场景上传数据属于 render-backend，pass 只通过这里
-/// 读取 shader 可见根 buffer、TLAS handle，并提交光栅化 draw。
+/// 读取 TLAS handle 与版本，并提交光栅化 draw；scene root 通过全局 descriptor 读取。
 pub trait RenderSceneView {
-    fn scene_buffer_device_address(&self, frame_label: FrameLabel) -> vk::DeviceAddress;
-
     fn tlas_handle(&self, frame_label: FrameLabel) -> Option<vk::AccelerationStructureKHR>;
 
     fn accum_signature(&self, frame_label: FrameLabel) -> RenderSceneAccumSignature;

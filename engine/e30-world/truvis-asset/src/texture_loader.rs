@@ -5,7 +5,7 @@ use half::f16;
 use image::{DynamicImage, GenericImageView};
 
 use crate::asset_loader::{LoadResult, TextureLoadRequest};
-use crate::handle::{TextureBytes, TextureLoadDesc, TexturePixels};
+use crate::handle::{TextureBytes, TextureColorSpace, TextureLoadDesc, TexturePixels};
 
 /// 实际的纹理加载任务，运行在 Rayon 线程池中。
 ///
@@ -16,12 +16,20 @@ pub(crate) fn load_texture_task(req: TextureLoadRequest) -> LoadResult {
     log::info!("Loading texture: {}", req.desc.source_label());
 
     let img_result = match &req.desc {
-        TextureLoadDesc::File { path } => image::open(path),
+        TextureLoadDesc::File { path, .. } => image::open(path),
         TextureLoadDesc::Embedded { bytes, .. } => image::load_from_memory(bytes),
     };
 
     match img_result {
         Ok(img) => {
+            let color_space = req.desc.color_space();
+            if color_space == TextureColorSpace::Srgb
+                && matches!(&img, DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_))
+            {
+                let error = format!("floating-point texture must use Linear color space: {}", req.desc.source_label());
+                log::error!("{error}");
+                return LoadResult::TextureFailure(req.handle, error);
+            }
             let (width, height) = img.dimensions();
             let extent = vk::Extent3D {
                 width,
@@ -59,7 +67,7 @@ pub(crate) fn load_texture_task(req: TextureLoadRequest) -> LoadResult {
                         .collect::<Vec<_>>()
                         .into(),
                 ),
-                img => TexturePixels::Rgba8(Arc::from(img.into_rgba8().into_raw())),
+                img => TexturePixels::Rgba8 { pixels: Arc::from(img.into_rgba8().into_raw()), color_space },
             };
 
             match TextureBytes::new(pixels, extent) {
@@ -104,6 +112,7 @@ mod tests {
                 identity: EmbeddedTextureId { image_index: 0 },
                 bytes: Arc::from(encoded),
                 mime_type: Some("image/png".to_string()),
+                color_space: TextureColorSpace::Linear,
             },
         });
 

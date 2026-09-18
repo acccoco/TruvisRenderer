@@ -442,8 +442,8 @@ impl TruvisOverlayUi {
         ui.text(format!("Class: {}", Self::material_class_label(material.class)));
         ui.text(format!("Coverage: {}", Self::coverage_label(material.coverage)));
         ui.text(format!("Alpha factor: {:.3}", material.base_color.w));
-        ui.text(format!("Diffuse texture: {:?}", material.diffuse_texture));
-        ui.text(format!("Normal texture: {:?}", material.normal_texture));
+        ui.text(format!("Diffuse texture: {:?}", material.textures[0]));
+        ui.text(format!("Normal texture: {:?}", material.textures[2]));
     }
 
     fn material_class_label(class: MaterialClass) -> String {

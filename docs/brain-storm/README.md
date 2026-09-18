@@ -20,6 +20,8 @@
   asset upload、失败恢复、资源卸载和 scene invalidation 的后续能力。
 - [`scene-import-and-async-texture.md`](scene-import-and-async-texture.md)：
   FBX/glTF/GLB scene 结构导入、外部与内嵌 texture 统一建模，以及 texture 异步解码的最小实施计划。
+- [`material-texture-color-space.md`](material-texture-color-space.md)：
+  已实施的颜色空间方案，以及同条件 FBX/glTF 画面对照的验收边界。
 - [`render-scene-mirror-and-resource-system.md`](render-scene-mirror-and-resource-system.md)：
   已落地首期的 RenderWorld 持久镜像与版本对账设计，包含 AssetSystem / RenderAssetSystem 分层、GPU 副本和历史失效契约。
 - [`realtime-lighting-evolution.md`](realtime-lighting-evolution.md)：
@@ -28,6 +30,10 @@
   DLSS 画质验证、specular motion vector 后续质量、运行时降级和旧 pass 清理。
 - [`offline-rendering-evolution.md`](offline-rendering-evolution.md)：
   离线渲染设置、累计统计、专用 debug target 和交互验证能力。
+
+材质映射与能力收敛已完成，实现契约见 [Scene 生命周期](../summaries/scene-data-lifecycle.md)、
+[RT 流程](../summaries/realtime-rt-raytracing-flow.md) 和 [Editor](../summaries/editor-subsystem.md)；
+可重复输入与本轮验证范围见 [材质参考资产](fixtures/README.md)。完成的计划已移除，不再维护过期目标。
 
 ## 维护规则
 

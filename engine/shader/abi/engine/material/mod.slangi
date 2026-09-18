@@ -13,13 +13,31 @@ static const uint MATERIAL_CLASS_EMISSIVE = 2;
 static const uint COVERAGE_OPAQUE = 0;
 static const uint COVERAGE_ALPHA_MASK = 1;
 
+static const uint TEXTURE_BASE_COLOR = 0;
+static const uint TEXTURE_METALLIC_ROUGHNESS = 1;
+static const uint TEXTURE_NORMAL = 2;
+static const uint TEXTURE_EMISSIVE = 3;
+static const uint TEXTURE_CHANNEL_COUNT = 4;
+
+/// 每个材质引用独立持有映射；两行 float4 明确承载仿射系数，不依赖矩阵布局。
+struct MaterialTexture
+{
+    float4 uv_row0;
+    float4 uv_row1;
+    engine::bindless::SrvHandle image;
+    engine::bindless::ESamplerType sampler_type;
+    uint tex_coord;
+    /// 保持 MaterialTexture 的 48 字节 stride 与 16 字节行对齐。
+    uint _padding_0;
+};
+
 /// PBR 材质的 shader-visible 表示。
 ///
 /// 该结构由 render-side material manager 写入稳定 slot，instance/geometry 只保存 slot 映射。
 /// 贴图字段是 bindless SRV handle；无效 handle 时 shader 侧必须回退到常量材质参数。
 struct PbrMaterial
 {
-    /// 常量基础色；没有 diffuse_map 时直接作为 base color。
+    /// 常量基础色；与 base-color 槽采样值相乘。
     float3 base_color;
     /// 金属度，范围按资产导入结果传入，shader 侧不做额外 clamp。
     float metallic;
@@ -39,21 +57,15 @@ struct PbrMaterial
     float ior;
     /// AlphaMask 的 alpha cutoff；其他 coverage 固定写 0。
     float alpha_cutoff;
-    /// 使下一行 `emissive` 从 16 字节边界开始，保持 CPU/GPU buffer stride 可验证。
+    /// normalTexture.scale，与二维 UV scale 无关。
+    float normal_scale;
+
+    /// 独立发光 factor/radiance，只与 emissive 槽相乘，不乘 base color。
+    float3 emissive;
+    /// 使后续 MaterialTexture 数组保持 16 字节对齐。
     float _padding_0;
 
-    /// Emissive 的 radiance，会在 closest-hit 中乘以 base color 得到实际 emissive；非 Emissive 固定为 0。
-    float3 emissive;
-    /// 显式补齐 emissive 行，避免依赖 host 侧隐式尾部填充。
-    float _padding_1;
-
-    /// base color 贴图 SRV；无效时使用 `base_color`。
-    engine::bindless::SrvHandle diffuse_map;
-    /// diffuse_map 使用的全局 sampler 类型。
-    engine::bindless::ESamplerType diffuse_map_sampler_type;
-    /// 法线贴图 SRV，当前主路径尚未消费但保留 ABI。
-    engine::bindless::SrvHandle normal_map;
-    engine::bindless::ESamplerType normal_map_sampler_type;
+    MaterialTexture textures[TEXTURE_CHANNEL_COUNT];
 };
 
 }

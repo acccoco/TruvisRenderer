@@ -84,6 +84,15 @@ WebView 初始化后主动查询 scene version、selection、对象分页和所�
 还原为强类型 handle，再调用 `GameWorld` edit API。校验失败不修改 `GameWorld`，成功后响应携带新的 scene version
 和权威材质投影。
 
+材质 DTO 包含四个可选纹理槽。每槽可以编辑 UV 集、offset/scale、rotation、S/T wrap 和 单级 Filter（Nearest/Linear）；
+normal strength 与 emissive factor 独立编辑。UI rotation 显示度，DTO/CPU 保存弧度。
+`texture_mappings` patch 只替换指定槽的映射，保留图片身份及其它槽；未提供的字段保持原值。
+Renderer 校验 sampler 枚举和有限值，GameWorld 再检查引用该材质的全部 submesh 是否拥有所选 UV 集。
+任一校验失败均不提交 CPU 更新，也不推进 scene version。
+Web session 以草稿 revision 区分提交快照与后续输入；只有对应草稿的确认回包可以清除 dirty。
+材质查询与提交分别检查响应顺序，选择变化后拒绝旧材质响应，场景刷新不覆盖尚未确认的本地草稿。
+后台查询不清除材质校验错误；下一次 command 提交才清除旧错误，避免一秒轮询让失败原因消失。
+
 selection 在原生 viewport 中通过 runtime-owned 同步 raycast 得到。Renderer 保存 CPU 选择语义，并在变化后发送
 best-effort notification；WebView 同时保留主动查询和一秒 version 轮询，因此 notification 丢失不会永久破坏投影。
 

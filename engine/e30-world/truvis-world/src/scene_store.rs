@@ -365,6 +365,7 @@ impl SceneStore {
         };
         self.validate_material_handles(resources, &materials)?;
         self.validate_instance_material_count(resources, old_instance.mesh, materials.len())?;
+        self.validate_material_uv_sets(resources, old_instance.mesh, &materials)?;
         if old_instance.materials == materials {
             return Ok(());
         }
@@ -435,7 +436,31 @@ impl SceneStore {
             });
         }
         self.validate_material_handles(resources, &instance.materials)?;
-        self.validate_instance_material_count(resources, instance.mesh, instance.materials.len())
+        self.validate_instance_material_count(resources, instance.mesh, instance.materials.len())?;
+        self.validate_material_uv_sets(resources, instance.mesh, &instance.materials)
+    }
+
+    fn validate_material_uv_sets(&self, resources: &AssetStore, mesh: MeshHandle, materials: &[MaterialHandle]) -> Result<(), SceneEditError> {
+        let mesh = resources.mesh_data(mesh).ok_or(SceneEditError::MissingDependency { kind: SceneHandleKind::Mesh })?;
+        for (submesh, material) in mesh.submeshes.iter().zip(materials) {
+            let data = resources.material_data(*material).ok_or(SceneEditError::MissingDependency { kind: SceneHandleKind::Material })?;
+            data.validate_uv_sets(submesh).map_err(|reason| SceneEditError::InvalidMaterialData { reason })?;
+        }
+        Ok(())
+    }
+
+    /// 共享材质更新需要检查所有引用者，再由 AssetStore 原子提交参数和依赖。
+    pub(crate) fn validate_material_update(&self, resources: &AssetStore, material: MaterialHandle, data: &MaterialData) -> Result<(), SceneEditError> {
+        for instance in self.material_to_instances.get(&material).into_iter().flatten() {
+            let instance = &self.all_instances[*instance];
+            let mesh = resources.mesh_data(instance.mesh).expect("live instance mesh");
+            for (submesh, handle) in mesh.submeshes.iter().zip(&instance.materials) {
+                if *handle == material {
+                    data.validate_uv_sets(submesh).map_err(|reason| SceneEditError::InvalidMaterialData { reason })?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn validate_instance_material_count(
@@ -510,8 +535,9 @@ mod tests {
                 glam::vec3(0.0, 1.0, 0.0),
             ],
             normals: vec![glam::Vec3::Z; 3],
-            tangents: vec![glam::Vec3::X; 3],
-            uvs: vec![glam::Vec2::ZERO; 3],
+            tangents: vec![glam::Vec3::X.extend(1.0); 3],
+            tex_coords: vec![vec![glam::Vec2::ZERO; 3]],
+            tangent_tex_coord: 0,
             indices: vec![0, 1, 2],
             name: name.to_string(),
         }
@@ -531,8 +557,9 @@ mod tests {
             roughness: 0.5,
             class: MaterialClass::Surface,
             coverage: CoverageMode::Opaque,
-            diffuse_texture: None,
-            normal_texture: None,
+            textures: Default::default(),
+            normal_scale: 1.0,
+            emissive_factor: glam::Vec3::ZERO,
             name: name.to_string(),
         }
     }

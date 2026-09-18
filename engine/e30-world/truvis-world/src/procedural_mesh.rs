@@ -41,8 +41,9 @@ pub fn triangle() -> MeshData {
             glam::vec3(0.0, 1.0, 0.0),
         ],
         normals: vec![glam::vec3(0.0, 0.0, 1.0); 3],
-        tangents: vec![glam::vec3(1.0, 0.0, 0.0); 3],
-        uvs: vec![glam::vec2(0.0, 1.0), glam::vec2(1.0, 1.0), glam::vec2(0.5, 0.0)],
+        tangents: vec![glam::Vec4::ZERO; 3],
+        tex_coords: vec![vec![glam::vec2(0.0, 1.0), glam::vec2(1.0, 1.0), glam::vec2(0.5, 0.0)]],
+        tangent_tex_coord: 0,
         indices: vec![0, 1, 2],
         name: ProceduralMeshKind::Triangle.name().to_string(),
     })
@@ -58,13 +59,14 @@ pub fn rect() -> MeshData {
             glam::vec3(-1.0, -1.0, 0.0),
         ],
         normals: vec![glam::vec3(0.0, 0.0, 1.0); 4],
-        tangents: vec![glam::vec3(1.0, 0.0, 0.0); 4],
-        uvs: vec![
+        tangents: vec![glam::Vec4::ZERO; 4],
+        tex_coords: vec![vec![
             glam::vec2(0.0, 1.0),
             glam::vec2(1.0, 1.0),
             glam::vec2(1.0, 0.0),
             glam::vec2(0.0, 0.0),
-        ],
+        ]],
+        tangent_tex_coord: 0,
         indices: vec![0, 1, 2, 0, 2, 3],
         name: ProceduralMeshKind::Rect.name().to_string(),
     })
@@ -80,13 +82,14 @@ pub fn floor() -> MeshData {
             glam::vec3(-1.0, 0.0, 1.0),
         ],
         normals: vec![glam::vec3(0.0, 1.0, 0.0); 4],
-        tangents: vec![glam::vec3(1.0, 0.0, 0.0); 4],
-        uvs: vec![
+        tangents: vec![glam::Vec4::ZERO; 4],
+        tex_coords: vec![vec![
             glam::vec2(1.0, 0.0),
             glam::vec2(0.0, 0.0),
             glam::vec2(0.0, 1.0),
             glam::vec2(1.0, 1.0),
-        ],
+        ]],
+        tangent_tex_coord: 0,
         indices: vec![0, 1, 2, 0, 2, 3],
         name: ProceduralMeshKind::Floor.name().to_string(),
     })
@@ -122,8 +125,9 @@ pub fn cube() -> MeshData {
             glam::vec3(0.5, -0.5, 0.5),
         ],
         normals: cube_normals(),
-        tangents: cube_tangents(),
-        uvs: cube_uvs(),
+        tangents: vec![glam::Vec4::ZERO; 24],
+        tex_coords: vec![cube_uvs()],
+        tangent_tex_coord: 0,
         indices: vec![
             0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 8, 9, 10, 8, 10, 11, 12, 14, 13, 12, 15, 14, 16, 17, 18, 16, 18, 19,
             20, 22, 21, 20, 23, 22,
@@ -143,20 +147,6 @@ fn cube_normals() -> Vec<glam::Vec3> {
     ]
     .into_iter()
     .flat_map(|normal| [normal; 4])
-    .collect()
-}
-
-fn cube_tangents() -> Vec<glam::Vec3> {
-    [
-        glam::vec3(1.0, 0.0, 0.0),
-        glam::vec3(1.0, 0.0, 0.0),
-        glam::vec3(1.0, 0.0, 0.0),
-        glam::vec3(1.0, 0.0, 0.0),
-        glam::vec3(0.0, 0.0, 1.0),
-        glam::vec3(0.0, 0.0, 1.0),
-    ]
-    .into_iter()
-    .flat_map(|tangent| [tangent; 4])
     .collect()
 }
 

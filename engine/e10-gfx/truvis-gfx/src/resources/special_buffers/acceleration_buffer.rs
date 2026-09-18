@@ -17,7 +17,7 @@ impl GfxAccelerationScratchBuffer {
             ctx,
             size,
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-            None,
+            Some(ctx.acceleration_scratch_alignment),
             false,
             name,
         );

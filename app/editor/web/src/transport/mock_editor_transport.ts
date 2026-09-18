@@ -23,8 +23,12 @@ export class MockEditorTransport implements EditorTransport {
     roughness: 0.58,
     class: { kind: 'surface' },
     coverage: { kind: 'opaque' },
-    diffuse_texture: 'texture:0000000100000041',
-    normal_texture: 'texture:0000000100000042',
+    textures: [
+      { texture: 'texture:0000000100000041', mapping: { tex_coord: 0, offset: [0, 0], rotation: 0, scale: [1, 1], wrap: [0, 0], filter: 1 } },
+      null, null, null,
+    ],
+    normal_scale: 1,
+    emissive_factor: [0, 0, 0],
   };
   private readonly selection: SelectionDto = {
     instance_id: MOCK_INSTANCE_ID,
@@ -52,9 +56,18 @@ export class MockEditorTransport implements EditorTransport {
   async request(request: EditorRequest): Promise<EditorResponse> {
     await new Promise((resolve) => window.setTimeout(resolve, 34));
     if (request.category === 'command') {
-      for (const [key, value] of Object.entries(request.payload.patch)) {
+      const { texture_mappings, ...values } = request.payload.patch;
+      for (const [key, value] of Object.entries(values)) {
         if (value !== null) {
           Object.assign(this.material, { [key]: value });
+        }
+      }
+      for (const { channel, mapping } of texture_mappings ?? []) {
+        const slot = this.material.textures[channel];
+        if (slot) {
+          this.material.textures = this.material.textures.map((current, index) =>
+            index === channel ? { texture: slot.texture, mapping: structuredClone(mapping) } : current,
+          ) as MaterialDto['textures'];
         }
       }
       this.sceneVersion += 1;

@@ -281,9 +281,13 @@ struct RtDirectLighting
         return area_pdf * distance * distance / light_cos;
     }
 
-    static float2 interpolate_emissive_uv(const engine::light::EmissiveTriangleLight light, const float3 bary)
+    static float3 evaluate_emissive(engine::material::PbrMaterial* mat, const engine::light::EmissiveTriangleLight light, float3 bary)
     {
-        return light.uv0 * bary.x + light.uv1 * bary.y + light.uv2 * bary.z;
+        engine::geometry::Geometry* geom = SceneAccess::get_geometry(light.instance_id, light.geometry_id);
+        const uint3 tri = GeometryEval::triangle(geom, light.primitive_id);
+        const float2 alpha_uv = MaterialAccess::source_uv(mat, engine::material::TEXTURE_BASE_COLOR, geom, tri, bary.yz);
+        if (MaterialOpacity::is_cutout(mat, alpha_uv)) return float3(0);
+        return MaterialAccess::emission(mat, MaterialAccess::source_uv(mat, engine::material::TEXTURE_EMISSIVE, geom, tri, bary.yz));
     }
 
     static float3 sample_triangle_barycentrics(inout uint seed)
@@ -337,13 +341,12 @@ struct RtDirectLighting
         }
 
         engine::material::PbrMaterial* mat = engine::binding::gpu_scene.all_mats + light.material_slot;
-        const float2 uv = interpolate_emissive_uv(light, bary);
-        const float3 base_color = MaterialAccess::base_color(mat, uv);
+        const float3 emission = evaluate_emissive(mat, light, bary);
 
         candidate.kind = RtLightCandidate::kind_emissive_triangle();
         candidate.direction = light_dir;
         candidate.distance = distance;
-        candidate.radiance = mat.emissive * base_color;
+        candidate.radiance = emission;
         candidate.solid_angle_pdf = solid_angle_pdf;
 
         candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
@@ -744,13 +747,12 @@ struct RtDirectLighting
         }
 
         engine::material::PbrMaterial* mat = engine::binding::gpu_scene.all_mats + light.material_slot;
-        const float2 uv = interpolate_emissive_uv(light, bary);
-        const float3 base_color = MaterialAccess::base_color(mat, uv);
+        const float3 emission = evaluate_emissive(mat, light, bary);
 
         candidate.kind = RtLightCandidate::kind_emissive_triangle();
         candidate.direction = light_dir;
         candidate.distance = distance;
-        candidate.radiance = mat.emissive * base_color;
+        candidate.radiance = emission;
         candidate.solid_angle_pdf = solid_angle_pdf;
         candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
         if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)

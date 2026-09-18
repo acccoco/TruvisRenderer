@@ -114,9 +114,11 @@ impl MeshUploadQueue {
             let submesh_name =
                 if submesh.name.is_empty() { format!("{name}-submesh{submesh_index}") } else { submesh.name.clone() };
 
-            let vertex_buffer = GfxVertexBuffer::<VertexLayoutSoA3D>::new_device_local(
+            let vertex_buffer = GfxVertexBuffer::<VertexLayoutSoA3D>::new_with_tail(
                 resource_ctx,
                 vertex_count,
+                false,
+                submesh.tex_coords.len().saturating_sub(1) * vertex_count * size_of::<glam::Vec2>(),
                 format!("{submesh_name}-vertex"),
             );
             let index_buffer =
@@ -133,6 +135,8 @@ impl MeshUploadQueue {
             geometries.push(RtGeometry {
                 vertex_buffer,
                 index_buffer,
+                uv_set_count: submesh.tex_coords.len() as u32,
+                tangent_tex_coord: submesh.tangent_tex_coord,
             });
             triangle_metadata.push(Self::build_triangle_metadata(submesh));
             staging_buffers.push(vertex_stage_buffer);
@@ -340,7 +344,8 @@ impl MeshUploadQueue {
         data: &SubmeshData,
         debug_name: impl AsRef<str>,
     ) -> GfxBuffer {
-        let total_size = VertexLayoutSoA3D::buffer_size(vertex_count) as vk::DeviceSize;
+        let total_size = (VertexLayoutSoA3D::buffer_size(vertex_count)
+            + data.tex_coords.len().saturating_sub(1) * vertex_count * size_of::<glam::Vec2>()) as vk::DeviceSize;
         let stage_buffer = GfxBuffer::new_stage_buffer(resource_ctx, total_size, debug_name);
         // `VertexLayoutSoA3D` 要求 positions/normals/tangents/uvs 以 SoA 方式连续摆放。
         // 上面的 validate 已保证所有属性长度一致，因此这里可以按布局 offset 直接拷贝。
@@ -360,11 +365,19 @@ impl MeshUploadQueue {
                 stage_buffer.mapped_ptr().add(VertexLayoutSoA3D::tangent_offset(vertex_count) as usize),
                 size_of_val(data.tangents.as_slice()),
             );
-            ptr::copy_nonoverlapping(
-                data.uvs.as_ptr() as *const u8,
-                stage_buffer.mapped_ptr().add(VertexLayoutSoA3D::uv_offset(vertex_count) as usize),
-                size_of_val(data.uvs.as_slice()),
-            );
+            // 固定布局后的 UV 集连续存储；Geometry 用 vertex_count 作为集合 stride。
+            for (set, coords) in data.tex_coords.iter().enumerate() {
+                ptr::copy_nonoverlapping(
+                    coords.as_ptr() as *const u8,
+                    stage_buffer.mapped_ptr().add(VertexLayoutSoA3D::uv_offset(vertex_count) as usize
+                        + set * vertex_count * size_of::<glam::Vec2>()),
+                    size_of_val(coords.as_slice()),
+                );
+            }
+            if data.tex_coords.is_empty() {
+                ptr::write_bytes(stage_buffer.mapped_ptr().add(VertexLayoutSoA3D::uv_offset(vertex_count) as usize),
+                    0, vertex_count * size_of::<glam::Vec2>());
+            }
         }
         stage_buffer.flush(resource_ctx, 0, total_size);
         stage_buffer
@@ -401,7 +414,6 @@ impl MeshUploadQueue {
                 let local_area = 0.5 * (p1 - p0).cross(p2 - p0).length();
                 RtTriangleMeta {
                     positions: [p0, p1, p2],
-                    uvs: [data.uvs[i0], data.uvs[i1], data.uvs[i2]],
                     primitive_id: primitive_id as u32,
                     local_area,
                 }

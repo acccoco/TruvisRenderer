@@ -205,17 +205,20 @@ struct RtSharc
                 break;
             }
 
-            if (surface.material_type == MaterialType::EMISSIVE)
+            if (any(surface.emissive > 0.0f))
             {
-                // 命中自发光面：emission 作为该顶点 radiance，并按 emissive-hit MIS 调制后写入缓存，路径终止。
+                /// emission 只传播到之前的顶点，本顶点缓存只存反射 radiance。
+                /// 主路径在查询缓存前已累加本地 emission，避免普通发光材质双计能量。
                 float mis_weight = 1.0f;
                 if (!prev_is_delta && depth > 0)
                 {
                     const float light_pdf = RtDirectLighting::unified_emissive_hit_pdf(surface, ray.Direction);
                     mis_weight = Mis::power_heuristic(prev_brdf_pdf, light_pdf);
                 }
-                const SharcHitData hit_data = make_hit_data(surface);
-                SharcUpdateHit(params, state, hit_data, surface.emissive * mis_weight, Random::rnd(payload.random_seed));
+                SharcUpdateMiss(params, state, surface.emissive * mis_weight);
+            }
+            if (surface.material_type == MaterialType::EMISSIVE)
+            {
                 break;
             }
 

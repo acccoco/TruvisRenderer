@@ -345,6 +345,12 @@ impl GfxImageCreateInfo {
         }
     }
 
+    /// 同一图像需要线性和 sRGB view 时由资源 owner 显式启用 MUTABLE_FORMAT。
+    pub fn flags(mut self, flags: vk::ImageCreateFlags) -> Self {
+        self.inner.flags = flags;
+        self
+    }
+
     #[inline]
     pub fn as_info(&self) -> vk::ImageCreateInfo<'_> {
         self.inner.queue_family_indices(&self.queue_family_indices)

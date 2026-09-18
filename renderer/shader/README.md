@@ -54,6 +54,27 @@ ShaderToy 即使物理上位于 `renderer/shader`，也不能访问 Renderer 或
 
 ## Binding 唯一所有权
 
+### 材质映射与几何 ABI
+
+Engine 的 `MaterialTexture` 为 48 字节（两行 float4，随后 SRV、sampler、UV 集和 padding），
+`PbrMaterial` 为 256 字节，四槽数组从 offset 64 开始。`Geometry` 为 56 字节，包含 vertex_count、
+uv_set_count、tangent_tex_coord；UV 集连续存储，以 vertex_count 为集合 stride，tangent 为 float4。
+vertex SoA 的 tangent 起点按 16 字节对齐，不把紧凑 float3 当成 16 字节数据。
+`EmissiveTriangleLight` 为 80 字节，仅保存几何身份和采样所需几何信息，UV 由几何表按槽查询。
+Phong 的 push constants 为 16 字节，字段 offset 为 0/4/8/12；frame/scene root 使用全局 descriptor，
+不再传入 UBO device address。唯一顶点入口为 `raster/phong3d.vs.slang`，复用 `PhongVertex` 读取各槽 UV。
+
+生成的 host binding 使用自身自然对齐（MaterialTexture/PbrMaterial 为 4，Geometry 为 8），
+上传 buffer/device address 满足 shader 的访问对齐；字段 offset 和数组 stride 必须与 SPIR-V 一致。
+2026-09-17 已对照生成 binding 与 `spirv-dis`，并通过当前全部 28 个 shader 的
+`spirv-val --uniform-buffer-standard-layout`。新增/调整字段仍需重新生成和检查。
+
+realtime/offline 的 closest-hit 入口共用 `lib/renderer/realtime_rt/surface_hit.slangi`；
+raster 顶点侧按四槽分别选择 UV，片元侧与 RT 共用 Engine `MaterialAccess` 的变换、切线重建和法线解码。
+各路径的光照和 LOD 边界见 [RT 流程](../../docs/summaries/realtime-rt-raytracing-flow.md)。
+
+### 生成绑定
+
 `truvis-renderer-shader-binding` 只 allowlist `renderer::*`，generator 固定
 `allowlist_recursively(false)`。canonical Slang 基础类型从 `truvis-shader-binding` 显式 re-export；未来
 Renderer ABI 若引用具名 Engine 类型，必须通过 `ModuleRawLine` 注入到 bindgen 实际生成的 Engine namespace。
@@ -67,8 +88,8 @@ shader 路径保留兼容层。
 
 ## 增量边界
 
-- `renderer/shader/abi/renderer` 或 `lib/renderer` 变化只重编 Renderer 的 22 个 entry。
-- Engine `abi/engine` 或 `lib/engine` 变化重编 Engine、Renderer 与 Hello Triangle，共 27 个 entry。
+- `renderer/shader/abi/renderer` 或 `lib/renderer` 变化只重编 Renderer 的 21 个 entry。
+- Engine `abi/engine` 或 `lib/engine` 变化重编 Engine、Renderer 与 Hello Triangle，共 26 个 entry。
 - ShaderToy lib 变化只重编自身 2 个 entry。
 - Hello Triangle entry 变化只重编自身 1 个 entry。
 

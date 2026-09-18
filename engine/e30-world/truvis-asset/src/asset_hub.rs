@@ -112,8 +112,8 @@ impl AssetHub {
     }
 
     /// 请求从文件读取并解码纹理的 task。
-    pub fn request_texture_path(&mut self, path: impl Into<std::path::PathBuf>) -> TextureLoadHandle {
-        self.request_texture(TextureLoadDesc::File { path: path.into() })
+    pub fn request_texture_path(&mut self, path: impl Into<std::path::PathBuf>, color_space: crate::handle::TextureColorSpace) -> TextureLoadHandle {
+        self.request_texture(TextureLoadDesc::File { path: path.into(), color_space })
     }
 
     /// 请求从已拥有的 encoded bytes 解码纹理的 task。
@@ -125,11 +125,13 @@ impl AssetHub {
         identity: crate::handle::EmbeddedTextureId,
         bytes: Arc<[u8]>,
         mime_type: Option<String>,
+        color_space: crate::handle::TextureColorSpace,
     ) -> TextureLoadHandle {
         self.request_texture(TextureLoadDesc::Embedded {
             identity,
             bytes,
             mime_type,
+            color_space,
         })
     }
 

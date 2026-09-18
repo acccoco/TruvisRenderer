@@ -10,7 +10,7 @@ use truvis_shader_binding::gpu;
 use truvis_world::components::material::MaterialData;
 
 use crate::render_world::geometry::RtTriangleMeta;
-use crate::render_world::render_data::{InstanceRenderData, MeshRenderData, RenderData};
+use crate::render_world::render_data::{InstanceRenderData, RenderData};
 use crate::render_world::render_resolver::MaterialSlotResolver;
 
 const INVALID_EMISSIVE_TRIANGLE_BASE: u32 = u32::MAX;
@@ -347,7 +347,6 @@ impl RenderEmissiveLightTable {
                 submesh_idx,
                 material_slot,
                 material,
-                mesh,
                 triangles,
                 weighted_records,
             );
@@ -360,13 +359,10 @@ impl RenderEmissiveLightTable {
         submesh_idx: usize,
         material_slot: u32,
         material: &MaterialData,
-        _mesh: &MeshRenderData<'_>,
         triangles: &[RtTriangleMeta],
         weighted_records: &mut Vec<(usize, f64)>,
     ) {
-        let estimated_base_color =
-            if material.diffuse_texture.is_some() { glam::Vec3::ONE } else { material.base_color.truncate() };
-        let estimated_radiance = material.class.emissive_radiance() * estimated_base_color;
+        let estimated_radiance = material.emissive_factor + material.class.emissive_radiance();
         let luminance = Self::luminance(estimated_radiance).max(0.0);
 
         for triangle in triangles {
@@ -386,9 +382,7 @@ impl RenderEmissiveLightTable {
                 material_slot,
                 normal: normal.into(),
                 instance_id: instance.instance_slot.as_u32(),
-                uv0: triangle.uvs[0].into(),
-                uv1: triangle.uvs[1].into(),
-                uv2: triangle.uvs[2].into(),
+                _padding_0: glam::UVec2::ZERO.into(),
                 geometry_id: submesh_idx as u32,
                 primitive_id: triangle.primitive_id,
             });
@@ -401,7 +395,7 @@ impl RenderEmissiveLightTable {
     }
 
     fn is_emissive_material(material: &MaterialData) -> bool {
-        material.class.is_emissive() && material.class.emissive_radiance().max_element() > 0.0
+        (material.emissive_factor + material.class.emissive_radiance()).max_element() > 0.0
     }
 
     fn luminance(color: glam::Vec3) -> f32 {

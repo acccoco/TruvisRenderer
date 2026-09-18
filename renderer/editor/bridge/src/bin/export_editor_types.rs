@@ -40,6 +40,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "SceneVersion",
         "SelectionDto",
         "TextureId",
+        "TextureMappingDto",
+        "TextureMappingPatch",
+        "TextureSlotDto",
     ]
     .into_iter()
     .map(|name| format!("export * from './{name}';"))

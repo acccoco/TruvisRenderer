@@ -30,7 +30,9 @@ enum ESamplerType : uint
     /// Lat-long environment map: horizontal longitude wraps, vertical poles clamp.
     LinearRepeatClamp,
 
-    _Count_,
+    /// 材质 sampler 的 3*3*2 个组合，索引由 TextureSampler::index 编码。
+    MaterialBase,
+    _Count_ = MaterialBase + 18,
 };
 
 struct SrvHandle

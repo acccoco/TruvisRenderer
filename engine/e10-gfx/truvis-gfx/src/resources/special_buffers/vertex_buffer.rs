@@ -23,7 +23,12 @@ impl<L: GfxVertexLayout> GfxVertexBuffer<L> {
     }
 
     pub fn new(ctx: GfxResourceCtx<'_>, vertex_cnt: usize, mmap: bool, debug_name: impl AsRef<str>) -> Self {
-        let buffer_size = L::buffer_size(vertex_cnt);
+        Self::new_with_tail(ctx, vertex_cnt, mmap, 0, debug_name)
+    }
+
+    /// 变长顶点属性追加在固定布局后；顶点数量仍保持真实数量，不能借扩大 count 调整分配。
+    pub fn new_with_tail(ctx: GfxResourceCtx<'_>, vertex_cnt: usize, mmap: bool, tail_bytes: usize, debug_name: impl AsRef<str>) -> Self {
+        let buffer_size = L::buffer_size(vertex_cnt).checked_add(tail_bytes).expect("vertex buffer size overflow");
         let buffer = GfxBuffer::new(
             ctx,
             buffer_size as vk::DeviceSize,

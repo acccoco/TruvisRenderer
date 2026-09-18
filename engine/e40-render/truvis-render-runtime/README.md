@@ -48,7 +48,8 @@
   到达后异步构建最高 `4096x2048` 的 Alias 表，再通过共享 transfer timeline 异步上传；
   `RenderWorld` 只消费已发布的 sky 环境绑定快照。
 - `GpuTextureStore` 扫描 `SceneReadView` 中已解码的 texture CPU bytes，异步上传 GPU image，并注册
-  image view 与 bindless SRV；未 ready 或失败时通过 fallback texture 保证材质仍可安全读取。
+  每个 handle 唯一的同格式 image view 与 bindless SRV（RGBA8 按源用途使用 sRGB 或 UNORM，HDR/EXR 使用 SFLOAT）；
+  未 ready 或失败时通过 fallback texture 保证材质仍可安全读取。
   image upload 与 sky distribution buffer upload 共用 `RenderAssetSystem` 私有的 `GpuAssetUploadQueue`；
   默认 sky 的真实 texture 也复用该上传路径，但 sky fallback 由 `GpuSkyStore` 独立维护。CPU registry 中已删除的
   texture 会先移除 ready cache；已提交但未完成的 stale upload 在 timeline 到达后只销毁，不会重新 publish 到 resolver。

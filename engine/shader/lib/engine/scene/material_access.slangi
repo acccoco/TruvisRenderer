@@ -5,59 +5,142 @@
 #include "lib/engine/scene/geometry_eval.slangi"
 #include "lib/engine/scene/scene_access.slangi"
 
-/// 材质贴图读取统一集中在这里，避免 RT、raycast、raster 各自维护透明度和 fallback 规则。
+/// 仅为 shader 局部求值结果，不跨 CPU/GPU ABI。
+struct MaterialSurface
+{
+    float4 base_color;
+    float metallic;
+    float roughness;
+    float3 emissive;
+    float3 normal;
+};
+
+/// 所有入口共用槽级 UV、factor 与 fallback 语义，几何寻址仍由 GeometryEval 负责。
 struct MaterialAccess
 {
-    /// 读取 base color + alpha。
-    ///
-    /// 有 diffuse_map 时 alpha 来自贴图；无贴图时 alpha 为 1。材质常量 alpha factor
-    /// 在 `MaterialOpacity::alpha` 中统一相乘，避免 base color 采样路径重复处理透明语义。
+    static float2 transform_uv(engine::material::MaterialTexture slot, float2 uv)
+    {
+        return float2(dot(slot.uv_row0.xyz, float3(uv, 1)), dot(slot.uv_row1.xyz, float3(uv, 1)));
+    }
+
+    static float2 source_uv(engine::material::PbrMaterial* mat, uint channel,
+        engine::geometry::Geometry* geom, uint3 tri, float2 bary)
+    {
+        return GeometryEval::interp_uv(geom, tri, bary, mat.textures[channel].tex_coord);
+    }
+
+    static float4 sample(engine::material::MaterialTexture slot, float2 uv, float4 fallback)
+    {
+        if (!BindlessSrv::is_valid(slot.image)) return fallback;
+        return BindlessSrv::sample_level(slot.image, transform_uv(slot, uv), slot.sampler_type, 0.0);
+    }
+
     static float4 base_color_rgba(engine::material::PbrMaterial* mat, float2 uv)
     {
-        if (BindlessSrv::is_valid(mat.diffuse_map))
-        {
-            return BindlessSrv::sample_level(mat.diffuse_map, uv, mat.diffuse_map_sampler_type, 0.0);
-        }
-
-        return float4(mat.base_color, 1.0f);
+        return float4(mat.base_color, mat.alpha_factor) * sample(
+            mat.textures[engine::material::TEXTURE_BASE_COLOR], uv, float4(1));
     }
 
     static float3 base_color(engine::material::PbrMaterial* mat, float2 uv)
     {
         return base_color_rgba(mat, uv).xyz;
     }
+
+    static float3 emission(engine::material::PbrMaterial* mat, float2 uv)
+    {
+        return mat.emissive * sample(mat.textures[engine::material::TEXTURE_EMISSIVE], uv, float4(1)).xyz;
+    }
+
+    /// RT 三角形差分与 raster 屏幕导数共用切线重建；所有位置/法线必须位于同一空间。
+    static float4 tangent_from_derivatives(float3 n, float3 dp1, float3 dp2, float2 duv1, float2 duv2)
+    {
+        const float det = duv1.x * duv2.y - duv1.y * duv2.x;
+        if (abs(det) < 1e-12) return float4(0);
+        const float3 t = (dp1 * duv2.y - dp2 * duv1.y) / det;
+        const float3 b = (dp2 * duv1.x - dp1 * duv2.x) / det;
+        return float4(t, dot(cross(n, t), b) < 0.0 ? -1.0 : 1.0);
+    }
+
+    /// authored / 重建切线使用同一正交化和解码。零切线或退化采样回退到输入法线。
+    static float3 normal_from_sample(float3 n, float4 tangent, float3 sampled, float strength)
+    {
+        float3 t = tangent.xyz - n * dot(n, tangent.xyz);
+        if (dot(t, t) < 1e-12) return n;
+        t = normalize(t);
+        const float3 b = cross(n, t) * (tangent.w < 0.0 ? -1.0 : 1.0);
+        sampled = sampled * 2.0 - 1.0;
+        sampled.xy *= strength;
+        const float3 mapped = t * sampled.x + b * sampled.y + n * sampled.z;
+        return dot(mapped, mapped) > 1e-12 ? normalize(mapped) : n;
+    }
+
+    /// 在世界空间组合 TBN，保证非均匀 instance scale 下与 raster 的基向量变换一致。
+    /// 有 authored tangent 时保留方向与 sign；其它 UV 或缺失切线按变换后的 normal UV 重建。
+    static float3 mapped_normal(engine::material::PbrMaterial* mat, engine::geometry::Geometry* geom,
+        engine::scene::Instance* instance, uint3 tri, float2 bary)
+    {
+        const float3 n = normalize(mul(transpose(instance.inv_model),
+            float4(GeometryEval::interp_normal(geom, tri, bary), 0)).xyz);
+        const engine::material::MaterialTexture slot = mat.textures[engine::material::TEXTURE_NORMAL];
+        if (!BindlessSrv::is_valid(slot.image)) return n;
+        const float3 weights = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
+        const float4 authored = *GeometryEval::tangent(geom, tri.x) * weights.x
+            + *GeometryEval::tangent(geom, tri.y) * weights.y + *GeometryEval::tangent(geom, tri.z) * weights.z;
+        float4 tangent;
+        if (slot.tex_coord == geom.tangent_tex_coord && dot(authored.xyz, authored.xyz) > 1e-12)
+        {
+            tangent = float4(mul(instance.model, float4(authored.xyz, 0)).xyz,
+                authored.w * (determinant((float3x3)instance.model) < 0.0 ? -1.0 : 1.0));
+        }
+        else
+        {
+            const float2 uv0 = transform_uv(slot, *GeometryEval::uv(geom, tri.x, slot.tex_coord));
+            const float2 duv1 = transform_uv(slot, *GeometryEval::uv(geom, tri.y, slot.tex_coord)) - uv0;
+            const float2 duv2 = transform_uv(slot, *GeometryEval::uv(geom, tri.z, slot.tex_coord)) - uv0;
+            const float3 dp1 = mul(instance.model,
+                float4(*GeometryEval::position(geom, tri.y) - *GeometryEval::position(geom, tri.x), 0)).xyz;
+            const float3 dp2 = mul(instance.model,
+                float4(*GeometryEval::position(geom, tri.z) - *GeometryEval::position(geom, tri.x), 0)).xyz;
+            tangent = tangent_from_derivatives(n, dp1, dp2, duv1, duv2);
+        }
+        return normal_from_sample(n, tangent, sample(slot,
+            source_uv(mat, engine::material::TEXTURE_NORMAL, geom, tri, bary), float4(0.5, 0.5, 1, 1)).xyz, mat.normal_scale);
+    }
+
+    static MaterialSurface evaluate(engine::material::PbrMaterial* mat, engine::geometry::Geometry* geom,
+        engine::scene::Instance* instance, uint3 tri, float2 bary)
+    {
+        MaterialSurface surface;
+        surface.base_color = base_color_rgba(mat, source_uv(mat, engine::material::TEXTURE_BASE_COLOR, geom, tri, bary));
+        const float4 mr = sample(mat.textures[engine::material::TEXTURE_METALLIC_ROUGHNESS],
+            source_uv(mat, engine::material::TEXTURE_METALLIC_ROUGHNESS, geom, tri, bary), float4(1));
+        surface.metallic = mat.metallic * mr.b;
+        surface.roughness = mat.roughness * mr.g;
+        surface.emissive = emission(mat, source_uv(mat, engine::material::TEXTURE_EMISSIVE, geom, tri, bary));
+        surface.normal = mapped_normal(mat, geom, instance, tri, bary);
+        return surface;
+    }
 };
 
 struct MaterialOpacity
 {
-    /// 综合材质 alpha factor 与贴图 alpha 后的有效透明度。
     static float alpha(engine::material::PbrMaterial* mat, float2 uv)
     {
-        return mat.alpha_factor * MaterialAccess::base_color_rgba(mat, uv).w;
+        return MaterialAccess::base_color_rgba(mat, uv).w;
     }
 
-    /// alpha cutout 判定。
-    ///
-    /// realtime RT 与同步 raycast 共同使用该阈值，保证可见性和拾取结果不会因为路径不同而分歧。
     static bool is_cutout(engine::material::PbrMaterial* mat, float2 uv)
     {
-        if (mat.coverage_mode != engine::material::COVERAGE_ALPHA_MASK)
-        {
-            return false;
-        }
-        return alpha(mat, uv) <= mat.alpha_cutoff;
+        if (mat.coverage_mode != engine::material::COVERAGE_ALPHA_MASK) return false;
+        return alpha(mat, uv) < mat.alpha_cutoff;
     }
 
-    /// 根据 RayQuery / any-hit 候选三角形身份执行同一套 alpha test。
-    ///
-    /// TLAS 只让 AlphaMask coverage 保留 any-hit，因此这里必须用 coverage 再做一次保护；
-    /// shadow、specular motion 和同步 raycast 都通过这个 helper 解释 non-opaque candidate。
+    /// 可见性、阴影和拾取使用与颜色相同的 UV 集和变换。
     static bool is_candidate_cutout(uint instance_id, uint geometry_id, uint primitive_id, float2 barycentrics)
     {
         engine::material::PbrMaterial* mat = SceneAccess::get_material(instance_id, geometry_id);
         engine::geometry::Geometry* geometry = SceneAccess::get_geometry(instance_id, geometry_id);
         const uint3 triangle = GeometryEval::triangle(geometry, primitive_id);
-        const float2 interp_uv = GeometryEval::interp_uv(geometry, triangle, barycentrics);
-        return is_cutout(mat, interp_uv);
+        return is_cutout(mat, MaterialAccess::source_uv(mat, engine::material::TEXTURE_BASE_COLOR, geometry, triangle, barycentrics));
     }
 };

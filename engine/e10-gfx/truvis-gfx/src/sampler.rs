@@ -15,7 +15,6 @@ pub struct GfxSamplerDesc {
     pub address_mode_w: vk::SamplerAddressMode,
     pub max_anisotropy: u32,
     pub compare_op: Option<vk::CompareOp>,
-    pub mipmap_mode: vk::SamplerMipmapMode,
 }
 impl Default for GfxSamplerDesc {
     fn default() -> Self {
@@ -27,7 +26,6 @@ impl Default for GfxSamplerDesc {
             address_mode_w: vk::SamplerAddressMode::REPEAT,
             max_anisotropy: 0,
             compare_op: None,
-            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
         }
     }
 }
@@ -45,9 +43,10 @@ impl GfxSampler {
             .address_mode_u(desc.address_mode_u)
             .address_mode_v(desc.address_mode_v)
             .address_mode_w(desc.address_mode_w)
-            .mipmap_mode(desc.mipmap_mode)
+            .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
             .min_lod(0.0)
-            .max_lod(vk::LOD_CLAMP_NONE)
+            // 资源只包含一个 level，所有 sampler 固定读取 LOD 0。
+            .max_lod(0.0)
             .border_color(vk::BorderColor::INT_OPAQUE_BLACK);
 
         if desc.max_anisotropy > 0 {

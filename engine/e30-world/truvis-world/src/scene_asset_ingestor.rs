@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use slotmap::{SecondaryMap, SlotMap};
+use slotmap::SlotMap;
 use truvis_asset::asset_hub::{AssetHub, AssetLoadEvent};
 use truvis_asset::handle::{
-    EmbeddedTextureId, LoadStatus, ModelLoadDesc, ModelLoadHandle, RawSceneData, RawTextureSource, TextureLoadDesc,
+    EmbeddedTextureId, LoadStatus, ModelLoadDesc, ModelLoadHandle, RawSceneData, RawTextureSource, TextureColorSpace, TextureLoadDesc,
     TextureLoadHandle,
 };
+use truvis_asset::material_texture::{TextureChannel, TextureSlot};
 
 use crate::components::instance::Instance;
 use crate::components::material::MaterialData;
@@ -21,10 +22,12 @@ use crate::scene_store::SceneStore;
 #[derive(Default)]
 pub struct SceneAssetIngestor {
     model_imports: SlotMap<ModelImportHandle, SceneModelImportRecord>,
-    model_loads: SecondaryMap<ModelLoadHandle, ModelImportHandle>,
-    texture_loads: SecondaryMap<TextureLoadHandle, TextureHandle>,
-    texture_paths: HashMap<PathBuf, TextureHandle>,
-    embedded_textures: HashMap<(PathBuf, EmbeddedTextureId), TextureHandle>,
+    /// 完成事件尚未 ingest 时，AssetHub 已允许复用 task slot；同槽不同 generation
+    /// 必须同时保留映射，不能用只容纳一个 generation 的 SecondaryMap。
+    model_loads: HashMap<ModelLoadHandle, ModelImportHandle>,
+    texture_loads: HashMap<TextureLoadHandle, TextureHandle>,
+    texture_paths: HashMap<(PathBuf, TextureColorSpace), TextureHandle>,
+    embedded_textures: HashMap<(PathBuf, EmbeddedTextureId, TextureColorSpace), TextureHandle>,
 }
 
 struct SceneModelImportRecord {
@@ -38,8 +41,8 @@ impl SceneAssetIngestor {
         Self::default()
     }
 
-    pub(crate) fn texture_for_path(&self, path: &Path) -> Option<TextureHandle> {
-        self.texture_paths.get(path).copied()
+    pub(crate) fn texture_for_path(&self, path: &Path, color_space: TextureColorSpace) -> Option<TextureHandle> {
+        self.texture_paths.get(&(path.to_path_buf(), color_space)).copied()
     }
 
     pub(crate) fn forget_texture(&mut self, handle: TextureHandle) {
@@ -72,17 +75,19 @@ impl SceneAssetIngestor {
         assets: &mut AssetHub,
         resources: &mut AssetStore,
         path: PathBuf,
+        color_space: TextureColorSpace,
     ) -> TextureHandle {
-        if let Some(&scene_texture) = self.texture_paths.get(&path) {
+        let key = (path.clone(), color_space);
+        if let Some(&scene_texture) = self.texture_paths.get(&key) {
             if resources.contains_texture(scene_texture) {
                 return scene_texture;
             }
         }
 
-        let texture_load = assets.request_texture(TextureLoadDesc::File { path: path.clone() });
+        let texture_load = assets.request_texture(TextureLoadDesc::File { path, color_space });
         let scene_texture = resources.register_texture();
         self.texture_loads.insert(texture_load, scene_texture);
-        self.texture_paths.insert(path, scene_texture);
+        self.texture_paths.insert(key, scene_texture);
         scene_texture
     }
 
@@ -175,38 +180,23 @@ impl SceneAssetIngestor {
 
         let mut scene_materials = Vec::with_capacity(raw.materials.len());
         for material in raw.materials {
+            let mut textures: [Option<TextureSlot<TextureHandle>>; TextureChannel::COUNT] = Default::default();
+            for (channel, slot) in TextureChannel::ALL.into_iter().zip(material.textures) {
+                let Some(slot) = slot else { continue; };
+                match self.register_model_texture_ref(assets, resources, &source_path, slot.texture.clone(), channel) {
+                    Ok(texture) => textures[channel as usize] = Some(slot.with_texture(texture)),
+                    Err(error) => { self.fail_scene_import(scene_import, error); return; }
+                }
+            }
             let scene_data = MaterialData {
                 base_color: material.base_color,
                 metallic: material.metallic,
                 roughness: material.roughness,
                 class: material.class,
                 coverage: material.coverage,
-                diffuse_texture: match self.register_model_texture_ref(
-                    assets,
-                    resources,
-                    &source_path,
-                    material.diffuse_texture,
-                    "diffuse",
-                ) {
-                    Ok(texture) => texture,
-                    Err(err) => {
-                        self.fail_scene_import(scene_import, err);
-                        return;
-                    }
-                },
-                normal_texture: match self.register_model_texture_ref(
-                    assets,
-                    resources,
-                    &source_path,
-                    material.normal_texture,
-                    "normal",
-                ) {
-                    Ok(texture) => texture,
-                    Err(err) => {
-                        self.fail_scene_import(scene_import, err);
-                        return;
-                    }
-                },
+                textures,
+                normal_scale: material.normal_scale,
+                emissive_factor: material.emissive_factor,
                 name: material.name,
             };
             let scene_material = match resources.register_material(scene_data) {
@@ -304,12 +294,12 @@ impl SceneAssetIngestor {
     }
 
     fn take_scene_import_for_load(&mut self, model_load: ModelLoadHandle) -> ModelImportHandle {
-        self.model_loads.remove(model_load).expect("SceneAssetIngestor: received event for unknown model load handle")
+        self.model_loads.remove(&model_load).expect("SceneAssetIngestor: received event for unknown model load handle")
     }
 
     fn take_scene_texture_for_load(&mut self, texture_load: TextureLoadHandle) -> TextureHandle {
         self.texture_loads
-            .remove(texture_load)
+            .remove(&texture_load)
             .expect("SceneAssetIngestor: received event for unknown texture load handle")
     }
 
@@ -328,36 +318,34 @@ impl SceneAssetIngestor {
         assets: &mut AssetHub,
         resources: &mut AssetStore,
         source_path: &Path,
-        texture_source: Option<RawTextureSource>,
-        label: &'static str,
-    ) -> Result<Option<TextureHandle>, String> {
-        let Some(texture_source) = texture_source else {
-            return Ok(None);
-        };
+        texture_source: RawTextureSource,
+        channel: TextureChannel,
+    ) -> Result<TextureHandle, String> {
+        let color_space = channel.color_space();
         match texture_source {
             RawTextureSource::ExternalPath(texture_path) => {
                 let resolved_path = Self::resolve_scene_texture_path(source_path, texture_path);
                 let canonical_path = std::fs::canonicalize(&resolved_path).map_err(|err| {
-                    format!("failed to canonicalize {label} texture path '{}': {err}", resolved_path.display())
+                    format!("failed to canonicalize {} texture path '{}': {err}", channel.name(), resolved_path.display())
                 })?;
-                Ok(Some(self.register_texture_canonical(assets, resources, canonical_path)))
+                Ok(self.register_texture_canonical(assets, resources, canonical_path, color_space))
             }
             RawTextureSource::Embedded {
                 identity,
                 bytes,
                 mime_type,
             } => {
-                let key = (source_path.to_path_buf(), identity);
+                let key = (source_path.to_path_buf(), identity, color_space);
                 if let Some(&handle) = self.embedded_textures.get(&key) {
                     if resources.contains_texture(handle) {
-                        return Ok(Some(handle));
+                        return Ok(handle);
                     }
                 }
                 let handle = resources.register_texture();
-                let load = assets.request_texture_bytes(identity, bytes, mime_type);
+                let load = assets.request_texture_bytes(identity, bytes, mime_type, color_space);
                 self.texture_loads.insert(load, handle);
                 self.embedded_textures.insert(key, handle);
-                Ok(Some(handle))
+                Ok(handle)
             }
         }
     }

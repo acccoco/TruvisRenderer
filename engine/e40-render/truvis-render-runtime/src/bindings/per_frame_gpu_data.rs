@@ -1,5 +1,3 @@
-use ash::vk;
-
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
@@ -11,8 +9,7 @@ use truvis_render_foundation::frame_label::FrameLabel;
 
 /// 每个 FIF slot 一份的 `PerFrameData` UBO owner。
 ///
-/// runtime 在 prepare 阶段写入当前 frame label，pass 只读取当前 buffer 的
-/// device address 或通过全局 per-frame descriptor set 访问它。
+/// runtime 在 prepare 阶段写入当前 frame label，pass 通过全局 per-frame descriptor set 访问它。
 pub struct PerFrameGpuData {
     buffers: [GfxStructuredBuffer<gpu::engine::frame::PerFrameData>; FrameLabel::COUNT],
 }
@@ -38,11 +35,6 @@ impl PerFrameGpuData {
     #[inline]
     pub fn buffer(&self, frame_label: FrameLabel) -> &GfxStructuredBuffer<gpu::engine::frame::PerFrameData> {
         &self.buffers[*frame_label]
-    }
-
-    #[inline]
-    pub fn device_address(&self, frame_label: FrameLabel) -> vk::DeviceAddress {
-        self.buffer(frame_label).device_address()
     }
 
     #[inline]

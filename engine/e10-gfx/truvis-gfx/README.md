@@ -48,6 +48,7 @@ Vulkan RHI 抽象层，封装设备、队列、资源、同步与图形/计算/�
 - swapchain 创建前必须查询 surface 支持的 formats 与 present modes；项目默认格式和 present mode 是硬性要求，不支持时启动阶段直接失败。
 - `GfxSemaphore` 是唯一 owner，不可 clone；提交代码应传引用或 raw handle。
 - VMA-backed buffer/image 创建使用 `resources::vma_debug::with_vma_debug_name` 写入 copied allocation user data。调用点不应直接设置裸 `user_data` 指针。
+- `GfxAccelerationScratchBuffer` 按设备的 `minAccelerationStructureScratchOffsetAlignment` 分配；BLAS/TLAS 不能依赖普通 buffer 默认对齐或 VMA 分配顺序碰巧满足地址要求。该只读对齐值由 `GfxResourceCtx` 传入，scratch 的释放时机仍由 build owner 决定。
 
 ## 设计意图
 

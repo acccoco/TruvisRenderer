@@ -2,7 +2,7 @@
 import type { CoverageModeDto } from "./CoverageModeDto";
 import type { MaterialClassDto } from "./MaterialClassDto";
 import type { MaterialId } from "./MaterialId";
-import type { TextureId } from "./TextureId";
+import type { TextureSlotDto } from "./TextureSlotDto";
 
 /**
  * Web 可读取的完整材质 DTO。
@@ -10,4 +10,4 @@ import type { TextureId } from "./TextureId";
  * texture 字段仍是 GameWorld texture handle 的 opaque ID；当前第一阶段 Web 只展示绑定，
  * 不直接上传纹理或访问 GPU bindless handle。
  */
-export type MaterialDto = { id: MaterialId, name: string, base_color: [number, number, number, number], metallic: number, roughness: number, class: MaterialClassDto, coverage: CoverageModeDto, diffuse_texture: TextureId | null, normal_texture: TextureId | null, };
+export type MaterialDto = { id: MaterialId, name: string, base_color: [number, number, number, number], metallic: number, roughness: number, class: MaterialClassDto, coverage: CoverageModeDto, textures: [TextureSlotDto | null, TextureSlotDto | null, TextureSlotDto | null, TextureSlotDto | null], normal_scale: number, emissive_factor: [number, number, number], };

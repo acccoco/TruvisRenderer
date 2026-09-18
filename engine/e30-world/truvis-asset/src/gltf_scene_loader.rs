@@ -11,6 +11,8 @@ use std::sync::Arc;
 use base64::Engine;
 use gltf::buffer;
 
+use crate::material_texture::{TextureChannel, TextureSlot, TextureTransform, TextureSampler, TextureWrap, TextureFilter};
+
 use crate::asset_loader::{LoadResult, ModelLoadRequest};
 use crate::handle::{
     CoverageMode, EmbeddedTextureId, MaterialClass, MeshData, RawMaterialData, RawSceneData,
@@ -67,9 +69,29 @@ impl GltfSceneReader {
         let gltf = gltf::Gltf::open(path).map_err(|err| err.to_string())?;
         let document = gltf.document;
         let buffers = gltf::import_buffers(&document, path.parent(), gltf.blob).map_err(|err| err.to_string())?;
+        // 仅复制实际受支持槽引用的内嵌图片；未消费的输入字段不产生图片资源。
+        let mut used_images = std::collections::HashSet::new();
+        for material in document.materials() {
+            let pbr = material.pbr_metallic_roughness();
+            for info in [pbr.base_color_texture(), pbr.metallic_roughness_texture(), material.emissive_texture()]
+                .into_iter()
+                .flatten()
+            {
+                used_images.insert(info.texture().source().index());
+            }
+            if let Some(info) = material.normal_texture() {
+                used_images.insert(info.texture().source().index());
+            }
+        }
         let embedded_images = document
             .images()
-            .map(|image| Self::embedded_image_bytes(image, &buffers))
+            .map(|image| {
+                if used_images.contains(&image.index()) {
+                    Self::embedded_image_bytes(image, &buffers)
+                } else {
+                    Ok(None)
+                }
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let reader = Self {
             document,
@@ -97,7 +119,7 @@ impl GltfSceneReader {
         let mut material_index_by_gltf_index = Vec::new();
         for material in self.document.materials() {
             material_index_by_gltf_index.push(materials.len() as u32);
-            materials.push(self.copy_material(material));
+            materials.push(self.copy_material(material)?);
         }
         let default_material_index = materials.len() as u32;
         materials.push(Self::default_material());
@@ -112,7 +134,7 @@ impl GltfSceneReader {
                 let material_index =
                     Self::primitive_material_index(&material_index_by_gltf_index, &primitive, default_material_index);
                 let primitive_name = format!("{}-mesh{}-prim{}", mesh_name, mesh.index(), primitive.index());
-                meshes.push(self.copy_primitive_mesh(&primitive, primitive_name)?);
+                meshes.push(self.copy_primitive_mesh(&primitive, &materials[material_index as usize], primitive_name)?);
                 refs.push(GltfPrimitiveRef {
                     mesh_index,
                     material_index,
@@ -142,33 +164,81 @@ impl GltfSceneReader {
 
     /// 将 glTF material 复制到 AssetHub 的 raw material 边界格式。
     ///
-    /// v1 只读取当前 `MaterialData` 能表达的 PBR metallic-roughness 参数和两类贴图。
+    /// 四个核心纹理槽分别保留图片来源、UV 集、变换和 sampler。
     /// 外部 URI 保留为 importer 原始表达，稍后由 `SceneAssetIngestor` 根据 scene 路径统一解析；
     /// embedded source 只携带 owned encoded bytes。
-    fn copy_material(&self, material: gltf::Material<'_>) -> RawMaterialData {
+    fn copy_material(&self, material: gltf::Material<'_>) -> Result<RawMaterialData, String> {
         let pbr = material.pbr_metallic_roughness();
-        let base_color = pbr.base_color_factor();
-        let emissive = material.emissive_factor();
-        let name =
-            material.name().map(str::to_string).unwrap_or_else(|| Self::material_fallback_name(material.index()));
-        let transmission_factor =
-            material.transmission().map(|transmission| transmission.transmission_factor()).unwrap_or(0.0);
-        let emissive_radiance = glam::Vec3::new(emissive[0], emissive[1], emissive[2]);
+        let name = material.name().map(str::to_string).unwrap_or_else(|| Self::material_fallback_name(material.index()));
+        let transmission = material.transmission().map(|value| value.transmission_factor()).unwrap_or(0.0);
         let ior = material.ior().unwrap_or(MaterialClass::DEFAULT_IOR);
-
-        RawMaterialData {
-            base_color: glam::Vec4::new(base_color[0], base_color[1], base_color[2], base_color[3]),
+        let mut textures: [Option<TextureSlot<RawTextureSource>>; TextureChannel::COUNT] = Default::default();
+        for (channel, info) in [
+            (TextureChannel::BaseColor, pbr.base_color_texture()),
+            (TextureChannel::MetallicRoughness, pbr.metallic_roughness_texture()),
+            (TextureChannel::Emissive, material.emissive_texture()),
+        ] {
+            if let Some(info) = info {
+                let transform = info.texture_transform().map(|value| (TextureTransform {
+                    offset: value.offset().into(), rotation: value.rotation(), scale: value.scale().into(),
+                }, value.tex_coord()));
+                textures[channel as usize] = Some(self.copy_texture_slot(info.texture(), info.tex_coord(), transform)?);
+            }
+        }
+        if let Some(info) = material.normal_texture() {
+            textures[TextureChannel::Normal as usize] = Some(self.copy_texture_slot(
+                info.texture(), info.tex_coord(), Self::raw_texture_transform(info.extension_value("KHR_texture_transform"))?,
+            )?);
+        }
+        Ok(RawMaterialData {
+            base_color: pbr.base_color_factor().into(),
             metallic: pbr.metallic_factor(),
             roughness: pbr.roughness_factor(),
-            class: Self::material_class(&name, emissive_radiance, transmission_factor, ior),
+            // glTF emission 是可反射表面的独立属性，不把其变成只发光的终止材质。
+            class: Self::material_class(transmission, ior),
             coverage: Self::coverage_mode(&name, material.alpha_mode(), material.alpha_cutoff()),
-            diffuse_texture: pbr
-                .base_color_texture()
-                .and_then(|texture| self.texture_source(texture.texture().source())),
-            normal_texture: material
-                .normal_texture()
-                .and_then(|texture| self.texture_source(texture.texture().source())),
+            textures,
+            normal_scale: material.normal_texture().map_or(1.0, |value| value.scale()),
+            emissive_factor: material.emissive_factor().into(),
             name,
+        })
+    }
+
+    /// normal 在当前 gltf crate 中通过通用扩展数据暴露，复用库的字段类型与默认值。
+    fn raw_texture_transform(value: Option<&serde_json::Value>) -> Result<Option<(TextureTransform, Option<u32>)>, String> {
+        value.map(|value| {
+            let transform: gltf::json::extensions::texture::TextureTransform = serde_json::from_value(value.clone())
+                .map_err(|error| format!("invalid KHR_texture_transform: {error}"))?;
+            Ok((TextureTransform { offset: transform.offset.0.into(), rotation: transform.rotation.0,
+                scale: transform.scale.0.into() }, transform.tex_coord))
+        }).transpose()
+    }
+
+    fn copy_texture_slot(&self, texture: gltf::Texture<'_>, tex_coord: u32,
+        transform: Option<(TextureTransform, Option<u32>)>) -> Result<TextureSlot<RawTextureSource>, String> {
+        let source = self.texture_source(texture.source()).ok_or_else(|| format!("texture {} has no image source", texture.index()))?;
+        let sampler = texture.sampler();
+        let (transform, override_coord) = transform.unwrap_or_default();
+        if !transform.is_finite() {
+            return Err(format!("texture {} has non-finite transform", texture.index()));
+        }
+        Ok(TextureSlot {
+            texture: source, tex_coord: override_coord.unwrap_or(tex_coord), transform,
+            sampler: TextureSampler {
+                wrap_s: Self::texture_wrap(sampler.wrap_s()), wrap_t: Self::texture_wrap(sampler.wrap_t()),
+                filter: match sampler.mag_filter() {
+                    Some(gltf::texture::MagFilter::Nearest) => TextureFilter::Nearest,
+                    _ => TextureFilter::Linear,
+                },
+            },
+        })
+    }
+
+    fn texture_wrap(wrap: gltf::texture::WrappingMode) -> TextureWrap {
+        match wrap {
+            gltf::texture::WrappingMode::Repeat => TextureWrap::Repeat,
+            gltf::texture::WrappingMode::ClampToEdge => TextureWrap::Clamp,
+            gltf::texture::WrappingMode::MirroredRepeat => TextureWrap::MirroredRepeat,
         }
     }
 
@@ -177,7 +247,7 @@ impl GltfSceneReader {
     /// 当前 render-side mesh manager 要求 position / normal / tangent / uv 数组长度一致且
     /// index count 为 3 的倍数。glTF 允许部分属性缺失，因此这里按 v1 策略补齐默认值，
     /// 让缺属性模型仍能进入既有上传和 BLAS 构建路径。
-    fn copy_primitive_mesh(&self, primitive: &gltf::Primitive<'_>, name: String) -> Result<MeshData, String> {
+    fn copy_primitive_mesh(&self, primitive: &gltf::Primitive<'_>, material: &RawMaterialData, name: String) -> Result<MeshData, String> {
         if primitive.mode() != gltf::mesh::Mode::Triangles {
             return Err(format!("glTF primitive '{}' is not triangle list", name));
         }
@@ -204,23 +274,39 @@ impl GltfSceneReader {
             .unwrap_or_else(|| Self::generate_normals(&positions, &indices));
         let tangents = reader
             .read_tangents()
-            .map(|iter| iter.map(|tangent| glam::Vec3::new(tangent[0], tangent[1], tangent[2])).collect())
-            .unwrap_or_else(|| vec![glam::Vec3::X; vertex_count]);
-        let uvs = reader
-            .read_tex_coords(0)
-            .map(|iter| iter.into_f32().map(|uv| glam::Vec2::new(uv[0], 1.0 - uv[1])).collect())
-            .unwrap_or_else(|| vec![glam::Vec2::ZERO; vertex_count]);
-
-        Self::validate_mesh_attributes(&name, vertex_count, &normals, &tangents, &uvs, &indices)?;
-
-        Ok(MeshData::from_single_submesh(SubmeshData {
+            .map(|iter| iter.map(glam::Vec4::from_array).collect())
+            .unwrap_or_else(|| vec![glam::Vec4::ZERO; vertex_count]);
+        let uv_count = primitive.attributes().filter_map(|(semantic, _)| match semantic {
+            gltf::Semantic::TexCoords(set) => Some(set), _ => None,
+        }).max().map(|set| set.checked_add(1)
+            .ok_or_else(|| format!("glTF primitive '{name}' UV set index overflow"))).transpose()?.unwrap_or(0);
+        // 不按不可信的最大集合编号预分配；稀疏或超大编号会在首个缺失集合处返回错误。
+        let mut tex_coords = Vec::new();
+        for set in 0..uv_count {
+            let coords = reader.read_tex_coords(set)
+                .ok_or_else(|| format!("glTF primitive '{name}' is missing TEXCOORD_{set}"))?
+                .into_f32().map(glam::Vec2::from_array).collect::<Vec<_>>();
+            tex_coords.push(coords);
+        }
+        for (channel, slot) in TextureChannel::ALL.into_iter().zip(material.textures.iter()) {
+            if let Some(slot) = slot {
+                if slot.tex_coord as usize >= tex_coords.len() {
+                    return Err(format!("glTF primitive '{name}' {} requires missing TEXCOORD_{}", channel.name(), slot.tex_coord));
+                }
+            }
+        }
+        let tangent_tex_coord = material.textures[TextureChannel::Normal as usize].as_ref().map_or(0, |slot| slot.tex_coord);
+        let submesh = SubmeshData {
             positions,
             normals,
             tangents,
-            uvs,
+            tex_coords,
+            tangent_tex_coord,
             indices,
             name,
-        }))
+        };
+        submesh.validate()?;
+        Ok(MeshData::from_single_submesh(submesh))
     }
 
     /// 递归复制 node tree 中的 prefab instance。
@@ -274,12 +360,13 @@ impl GltfSceneReader {
     fn default_material() -> RawMaterialData {
         RawMaterialData {
             base_color: glam::Vec4::ONE,
-            metallic: 0.0,
-            roughness: 0.5,
+            metallic: 1.0,
+            roughness: 1.0,
             class: MaterialClass::Surface,
             coverage: CoverageMode::Opaque,
-            diffuse_texture: None,
-            normal_texture: None,
+            textures: Default::default(),
+            normal_scale: 1.0,
+            emissive_factor: glam::Vec3::ZERO,
             name: "material-default".to_string(),
         }
     }
@@ -375,20 +462,8 @@ impl GltfSceneReader {
         Ok(decoded)
     }
 
-    fn material_class(name: &str, emissive: glam::Vec3, transmission_factor: f32, ior: f32) -> MaterialClass {
-        let has_emissive = emissive.max_element() > 0.0;
-        let has_transmission = transmission_factor > 0.0;
-        if has_emissive {
-            if has_transmission {
-                log::warn!(
-                    "glTF material '{}' uses emissive and KHR_materials_transmission; v1 imports it as Emissive and ignores transmission",
-                    name
-                );
-            }
-            return MaterialClass::emissive(emissive);
-        }
-
-        if has_transmission {
+    fn material_class(transmission_factor: f32, ior: f32) -> MaterialClass {
+        if transmission_factor > 0.0 {
             return MaterialClass::transmission(1.0 - transmission_factor, ior);
         }
 
@@ -462,29 +537,7 @@ impl GltfSceneReader {
             .collect()
     }
 
-    fn validate_mesh_attributes(
-        name: &str,
-        vertex_count: usize,
-        normals: &[glam::Vec3],
-        tangents: &[glam::Vec3],
-        uvs: &[glam::Vec2],
-        indices: &[u32],
-    ) -> Result<(), String> {
-        if normals.len() != vertex_count || tangents.len() != vertex_count || uvs.len() != vertex_count {
-            return Err(format!("glTF primitive '{}' has mismatched vertex attribute counts", name));
-        }
-        if indices.is_empty() {
-            return Err(format!("glTF primitive '{}' has no indices", name));
-        }
-        if !indices.len().is_multiple_of(3) {
-            return Err(format!("glTF primitive '{}' index count is not a multiple of 3", name));
-        }
-        if indices.iter().any(|&index| index as usize >= vertex_count) {
-            return Err(format!("glTF primitive '{}' has out-of-range index", name));
-        }
 
-        Ok(())
-    }
 }
 
 #[derive(Clone, Copy)]

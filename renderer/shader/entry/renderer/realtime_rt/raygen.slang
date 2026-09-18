@@ -168,6 +168,12 @@ void main_ray_gen()
             }
         }
 
+        if (any(surface.emissive > 0.0))
+        {
+            const float3 emission = path.add_emissive(depth, surface, ray.Direction);
+            debug_state.record_emissive(emission);
+        }
+
         if (surface.material_type == MaterialType::EMISSIVE)
         {
             if (RtRestirDI::enabled() && depth == 0)
@@ -177,10 +183,9 @@ void main_ray_gen()
                 RtRestirDI::store_initial(thread_id, RtReservoir::empty());
             }
 
-            const float3 emissive_contribution = path.add_emissive(depth, surface, ray.Direction);
-            debug_state.record_emissive(emissive_contribution);
             break;
         }
+
 
         // SHARC query（第九阶段）：非 primary 的合适 surface 命中世界空间缓存时，用 cached radiance
         // 估计该顶点之后的全部出射光并提前终止路径。primary / 当前 delta / 上一段 delta /

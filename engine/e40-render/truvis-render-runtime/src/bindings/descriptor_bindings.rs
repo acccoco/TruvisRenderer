@@ -17,7 +17,7 @@ pub struct StaticDescriptorBinding {
     #[binding = 0]
     #[descriptor_type = "SAMPLER"]
     #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR | COMPUTE"]
-    #[count = 32]
+    #[count = "truvis_shader_binding::gpu::engine::bindless::ESamplerType__Count_"]
     #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND"]
     _samplers: (),
 }

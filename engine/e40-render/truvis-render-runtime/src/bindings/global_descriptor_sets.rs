@@ -103,7 +103,7 @@ impl GlobalDescriptorSets {
     fn init_descriptor_pool(ctx: GfxDeviceCtx<'_>) -> GfxDescriptorPool {
         let pool_size = [
             (vk::DescriptorType::SAMPLED_IMAGE, 512),
-            (vk::DescriptorType::SAMPLER, 32),
+            (vk::DescriptorType::SAMPLER, StaticDescriptorBinding::samplers().count),
             (vk::DescriptorType::UNIFORM_BUFFER, 32),
         ]
         .iter()

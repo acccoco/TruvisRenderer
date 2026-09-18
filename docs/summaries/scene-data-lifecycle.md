@@ -33,7 +33,7 @@ instance、light、sky 镜像和派生 GPU scene。prepare 完成后，render pa
 `AssetStore`、`AssetHub` 和 `SceneAssetIngestor`：
 
 - mesh 注册时由 CPU `AssetStore` 保留不可变顶点/index payload；渲染侧只在需要上传时借用它。
-- texture 注册后获得 `TextureHandle`，file 或 embedded bytes decode 由 `AssetHub` 异步完成；外部路径按 canonical path、embedded image 按 scene path + image identity 复用同一个 live handle。
+- texture 注册后获得 `TextureHandle`，file 或 embedded bytes decode 由 `AssetHub` 异步完成；外部路径按 `(canonical path, TextureColorSpace)`、embedded image 按 `(scene path, image identity, TextureColorSpace)` 复用。相同图片同时用于颜色槽和数据槽时拥有两个不可变 handle，互不改变解释。
 - material 保存完整 `MaterialData` 和 source revision，更新内容时维护 `material -> texture` 依赖。
 - mesh/texture 创建后不可变；不同内容使用新 handle。material 可以更新，但相等赋值不推进 revision。
 - 删除 material、mesh、texture 前分别检查 live instance、material 和 sky 引用；失败不修改表和版本。
@@ -50,6 +50,34 @@ render-side 暴露最终状态、资源 membership、material revision 和引用
 texture 失败保留 scene structure 并由 render-side 使用 fallback。
 
 ## GPU owner
+
+### 槽级材质映射
+
+`MaterialData.textures` 保存四个独立槽（BaseColor、MetallicRoughness、Normal、Emissive，索引 0–3），每槽包含图片 handle、UV 集、offset/rotation/scale 和 sampler。
+`normal_scale`、`emissive_factor` 是独立通道因子；修改映射不改变共享图片或 mesh。
+创建 instance、替换其材质以及更新已引用材质时，CPU 校验每个关联 submesh 的 UV 集；失败不提交内容或 revision。
+
+`GpuMaterialStore` 将槽级参数预计算为两行仿射系数，渲染投影比较覆盖所有槽及通道因子。
+图片的 binding revision 仍单独驱动迟到 ready 更新，所有 FIF buffer 在再次使用前上传最新参数。
+没有贴图或非颜色槽尚未 ready 时 shader 使用中性通道值；base-color 槽未 ready 时保留洋红诊断图。
+fallback 不重置槽级映射。
+
+BaseColor/Emissive（包括 FBX Diffuse）按 sRGB 解释，Normal/MR 按 Linear 解释；普通图片的原始 RGBA8
+数值分别以 `R8G8B8A8_SRGB` 或 `R8G8B8A8_UNORM` 上传，每个 handle 只发布一个同格式 view/SRV。
+sRGB 采样仅解码 RGB，Alpha 保持线性数值，材质在 shader 中将线性采样值与 base-color factor 乘一次。
+HDR/EXR 使用线性 RGBA16F；程序化注册显式选择解释，当前默认 LDR 天空使用 Linear。
+退役时注销唯一 SRV，由 image owner 按既有 FIF 生命周期释放，不使用 mutable-format image 或双 view。
+sampler 由既有 `RenderSamplerManager` 持有，18 种材质组合共享静态表；descriptor layout 与 pool 容量均引用生成 ABI。
+材质只暴露单一 Nearest/Linear Filter，Vulkan min/mag 取相同值，LOD 范围固定 [0, 0]；不保存 mip 配置。
+材质 ABI 为 256 字节，四槽数组从 offset 64 开始，槽 stride 为 48。AO 字段及额外路径衰减已删除。
+glTF 只消费 magFilter（缺省 Linear），不消费 minFilter/occlusionTexture；只有受支持槽引用的内嵌图片被复制并进入图片资源链路。
+这遵循 [Vulkan 的 OpenGL filter 映射规则](https://docs.vulkan.org/spec/latest/chapters/samplers.html)；maxLod=0 会始终选择 magFilter。
+
+`SceneAssetIngestor` 的待完成 task 映射使用以完整 generational handle 为 key 的 HashMap。
+AssetHub 返回一批事件时已移除 task record；处理其中的 model 事件可能提交新 texture task 并复用相同 slot。
+旧事件尚未 ingest 时，两代 task 的映射必须并存，因此这里不能使用 SecondaryMap。
+
+### GPU 同步顺序
 
 `RenderAssetSystem` 位于 `engine/e40-render/truvis-render-runtime/src/render_world/render_asset_system.rs`，
 由 `RenderRuntime` 持有，包含：

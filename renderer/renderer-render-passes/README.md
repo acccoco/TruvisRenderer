@@ -23,7 +23,8 @@ coordinate gizmo、selection outline 和 Phong shading。
 - 提供具体 GPU pass 的 pipeline、descriptor、dispatch/draw 逻辑。
 - 提供可接入 `truvis-render-graph` 的 pass adapter。
 - 使用 `RenderPassRecordCtx` 读取 GPU frame state、shader-visible bindings 和资源 manager。
-- 在需要场景数据的 pass 中通过 `RenderSceneView` 读取 scene buffer / TLAS / raster draw 能力，不在 render phase 访问 `GameWorld` 或重新 prepare scene。
+- 在需要场景数据的 pass 中通过 `RenderSceneView` 读取 TLAS / raster draw 能力，scene root 和帧数据复用全局 descriptor；不在 render phase 访问 `GameWorld` 或重新 prepare scene。
+- `PhongPass` 的 16 字节 push constants 只保存 instance/submesh 与显式 padding，不把 UBO 当作 device-address buffer。
 - `SelectionOutlinePass` 只负责录制 R8 mask 光栅化与 present composite；mask image 生命周期、selection
   状态和 pass 插入顺序属于具体 Renderer。
 - `CoordinateGizmoPass` 只负责在 present image 右下角叠加当前相机朝向下的三轴 gizmo；它不持有几何 buffer

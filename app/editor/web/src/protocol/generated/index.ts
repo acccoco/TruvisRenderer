@@ -20,3 +20,6 @@ export * from './SceneObjectsPage';
 export * from './SceneVersion';
 export * from './SelectionDto';
 export * from './TextureId';
+export * from './TextureMappingDto';
+export * from './TextureMappingPatch';
+export * from './TextureSlotDto';

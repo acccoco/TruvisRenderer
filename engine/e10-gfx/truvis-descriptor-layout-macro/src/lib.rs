@@ -132,12 +132,18 @@ fn get_descriptor_type(attrs: &[Attribute]) -> syn::Expr {
 
 /// 从字段属性中获取 count 值
 ///
-/// 属性格式示例：#[count = 1]
+/// 属性格式示例：#[count = 1] 或 #[count = "generated::COUNT"]。
+/// 字符串表达式允许 descriptor 数量直接引用生成 ABI，避免手工容量与 shader 枚举漂移。
 fn get_count_value(attrs: &[Attribute]) -> syn::Expr {
     for attr in attrs {
         if attr.path().is_ident("count")
             && let Meta::NameValue(meta) = &attr.meta
         {
+            if let syn::Expr::Lit(expr) = &meta.value
+                && let syn::Lit::Str(value) = &expr.lit
+            {
+                return syn::parse_str(&value.value()).expect("count must be a valid Rust expression");
+            }
             return meta.value.clone();
         }
     }

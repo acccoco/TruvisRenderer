@@ -40,6 +40,8 @@ impl<'a> GfxDeviceCtx<'a> {
 pub struct GfxResourceCtx<'a> {
     device: &'a Rc<GfxDevice>,
     allocator: &'a VMemAllocator,
+    /// AS scratch 地址的设备要求，资源封装不能依赖普通 buffer 分配碰巧满足对齐。
+    pub(crate) acceleration_scratch_alignment: vk::DeviceSize,
 }
 
 impl<'a> GfxResourceCtx<'a> {
@@ -395,6 +397,8 @@ impl Gfx {
         GfxResourceCtx {
             device: &self.gfx_core.gfx_device,
             allocator: &self.vm_allocator,
+            acceleration_scratch_alignment: self.gfx_core.physical_device._acc_struct_props
+                .min_acceleration_structure_scratch_offset_alignment as vk::DeviceSize,
         }
     }
 

@@ -25,7 +25,7 @@ impl GfxVertexLayout for VertexLayoutSoA3D {
             // 切线
             vk::VertexInputBindingDescription {
                 binding: 2,
-                stride: size_of::<glam::Vec3>() as u32,
+                stride: size_of::<glam::Vec4>() as u32,
                 input_rate: vk::VertexInputRate::VERTEX,
             },
             // UV 坐标
@@ -57,7 +57,7 @@ impl GfxVertexLayout for VertexLayoutSoA3D {
             vk::VertexInputAttributeDescription {
                 binding: 2,
                 location: 2,
-                format: vk::Format::R32G32B32_SFLOAT,
+                format: vk::Format::R32G32B32A32_SFLOAT,
                 offset: 0,
             },
             // UV 坐标
@@ -71,7 +71,7 @@ impl GfxVertexLayout for VertexLayoutSoA3D {
     }
 
     fn buffer_size(vertex_cnt: usize) -> usize {
-        vertex_cnt * (size_of::<glam::Vec3>() * 3 + size_of::<glam::Vec2>())
+        Self::uv_offset(vertex_cnt) as usize + vertex_cnt * size_of::<glam::Vec2>()
     }
     fn pos_stride() -> u32 {
         size_of::<glam::Vec3>() as u32
@@ -83,10 +83,10 @@ impl GfxVertexLayout for VertexLayoutSoA3D {
         (vertex_cnt * size_of::<glam::Vec3>()) as vk::DeviceSize
     }
     fn tangent_offset(vertex_cnt: usize) -> vk::DeviceSize {
-        (vertex_cnt * size_of::<glam::Vec3>() * 2) as vk::DeviceSize
+        (vertex_cnt * size_of::<glam::Vec3>() * 2).next_multiple_of(16) as vk::DeviceSize
     }
     fn uv_offset(vertex_cnt: usize) -> vk::DeviceSize {
-        (vertex_cnt * (size_of::<glam::Vec3>() * 3)) as vk::DeviceSize
+        Self::tangent_offset(vertex_cnt) + (vertex_cnt * size_of::<glam::Vec4>()) as vk::DeviceSize
     }
 }
 
@@ -96,7 +96,7 @@ impl VertexLayoutSoA3D {
         immediate_ctx: GfxImmediateCtx<'_>,
         positions: &[glam::Vec3],
         normals: &[glam::Vec3],
-        tangents: &[glam::Vec3],
+        tangents: &[glam::Vec4],
         uvs: &[glam::Vec2],
         name: impl AsRef<str>,
     ) -> GfxVertexBuffer<Self> {

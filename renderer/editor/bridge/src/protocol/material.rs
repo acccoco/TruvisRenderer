@@ -22,6 +22,32 @@ pub enum CoverageModeDto {
     AlphaMask { alpha_cutoff: f32 },
 }
 
+/// 槽级采样参数；rotation 使用弧度，UI 自行转换角度显示。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct TextureMappingDto {
+    pub tex_coord: u32,
+    pub offset: [f32; 2],
+    pub rotation: f32,
+    pub scale: [f32; 2],
+    /// 0 Repeat、1 Clamp、2 MirroredRepeat。
+    pub wrap: [u32; 2],
+    /// 0 Nearest、1 Linear。
+    pub filter: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct TextureSlotDto {
+    pub texture: TextureId,
+    pub mapping: TextureMappingDto,
+}
+
+/// 只编辑指定槽的映射，不替换纹理身份，也不覆盖其它槽。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct TextureMappingPatch {
+    pub channel: u32,
+    pub mapping: TextureMappingDto,
+}
+
 /// Web 可读取的完整材质 DTO。
 ///
 /// texture 字段仍是 GameWorld texture handle 的 opaque ID；当前第一阶段 Web 只展示绑定，
@@ -35,8 +61,9 @@ pub struct MaterialDto {
     pub roughness: f32,
     pub class: MaterialClassDto,
     pub coverage: CoverageModeDto,
-    pub diffuse_texture: Option<TextureId>,
-    pub normal_texture: Option<TextureId>,
+    pub textures: [Option<TextureSlotDto>; 4],
+    pub normal_scale: f32,
+    pub emissive_factor: [f32; 3],
 }
 
 /// `UpdateMaterial` 的绝对赋值 patch。
@@ -51,4 +78,7 @@ pub struct MaterialPatch {
     pub roughness: Option<f32>,
     pub class: Option<MaterialClassDto>,
     pub coverage: Option<CoverageModeDto>,
+    pub texture_mappings: Option<Vec<TextureMappingPatch>>,
+    pub normal_scale: Option<f32>,
+    pub emissive_factor: Option<[f32; 3]>,
 }

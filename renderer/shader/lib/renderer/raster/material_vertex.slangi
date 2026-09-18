@@ -1,0 +1,29 @@
+#pragma once
+#include "abi/renderer/render_passes/raster/mod.slangi"
+#include "lib/renderer/raster/phong.slangi"
+#include "lib/engine/scene/scene_access.slangi"
+#include "lib/engine/scene/geometry_eval.slangi"
+
+struct PhongVertex
+{
+    static CoarseVertex evaluate(renderer::render_passes::raster::PushConstants params, uint vertex_id, float3 position, float3 normal)
+    {
+        engine::scene::Instance* instance = SceneAccess::instance(params.instance_idx);
+        engine::geometry::Geometry* geom = SceneAccess::get_geometry(params.instance_idx, params.submesh_idx);
+        engine::material::PbrMaterial* mat = SceneAccess::get_material(params.instance_idx, params.submesh_idx);
+        CoarseVertex output = (CoarseVertex)0;
+        output.world_pos = mul(instance.model, float4(position, 1)).xyz;
+        output.frag_normal = mul(transpose(instance.inv_model), float4(normal, 0)).xyz;
+        for (uint channel = 0; channel < engine::material::TEXTURE_CHANNEL_COUNT; ++channel)
+        {
+            const uint set = mat.textures[channel].tex_coord;
+            if (set < geom.uv_set_count) output.uv[channel] = *GeometryEval::uv(geom, vertex_id, set);
+        }
+        if (mat.textures[engine::material::TEXTURE_NORMAL].tex_coord == geom.tangent_tex_coord)
+        {
+            const float4 tangent = *GeometryEval::tangent(geom, vertex_id);
+            output.tangent = float4(mul(instance.model, float4(tangent.xyz, 0)).xyz, tangent.w * (determinant((float3x3)instance.model) < 0 ? -1 : 1));
+        }
+        return output;
+    }
+};

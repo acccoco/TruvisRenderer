@@ -154,7 +154,7 @@ impl RenderRuntime {
         let default_sky_texture = {
             let _span = tracy_client::span!("RenderRuntime::new/default_sky_texture");
             world
-                .register_texture(TruvisPath::resources_path("sky.jpg"))
+                .register_texture(TruvisPath::resources_path("sky.jpg"), truvis_asset::handle::TextureColorSpace::Linear)
                 .expect("failed to register default sky texture")
         };
         world.update_sky_texture(Some(default_sky_texture)).expect("failed to assign default sky texture");

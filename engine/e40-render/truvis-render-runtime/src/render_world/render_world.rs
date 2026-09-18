@@ -279,11 +279,6 @@ impl RenderWorld {
 
 // Render pass 可见契约：隐藏 `RenderWorld` owner，只暴露 scene root、TLAS 与 draw 录制能力。
 impl RenderSceneView for RenderWorld {
-    /// 暴露 scene root buffer device address，供 shader 通过全局 descriptor 间接读取场景。
-    fn scene_buffer_device_address(&self, frame_label: FrameLabel) -> vk::DeviceAddress {
-        self.scene_buffer(frame_label).device_address()
-    }
-
     /// 暴露当前 frame label 的 TLAS handle；空场景没有 TLAS。
     fn tlas_handle(&self, frame_label: FrameLabel) -> Option<vk::AccelerationStructureKHR> {
         self.tlas(frame_label).map(|tlas| tlas.handle())
@@ -489,6 +484,10 @@ impl RenderWorld {
                     normal_buffer: geometry.vertex_buffer.normal_address(),
                     tangent_buffer: geometry.vertex_buffer.tangent_address(),
                     uv_buffer: geometry.vertex_buffer.uv_address(),
+                    vertex_count: geometry.vertex_buffer.vertex_cnt() as u32,
+                    uv_set_count: geometry.uv_set_count,
+                    tangent_tex_coord: geometry.tangent_tex_coord,
+                    _padding_0: 0,
                     index_buffer: geometry.index_buffer.device_address(),
                 };
             }

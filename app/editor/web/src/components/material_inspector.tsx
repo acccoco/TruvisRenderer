@@ -1,6 +1,6 @@
 import { useEffect, useEffectEvent, useRef } from 'react';
 
-import type { MaterialClassDto, MaterialDto, MaterialPatch } from '../protocol/generated';
+import type { MaterialClassDto, MaterialDto, MaterialPatch, TextureMappingDto } from '../protocol/generated';
 
 interface MaterialInspectorProps {
   material: MaterialDto | null;
@@ -17,6 +17,9 @@ function completePatch(patch: Partial<MaterialPatch>): MaterialPatch {
     roughness: null,
     class: null,
     coverage: null,
+    texture_mappings: null,
+    normal_scale: null,
+    emissive_factor: null,
     ...patch,
   };
 }
@@ -47,6 +50,14 @@ export function MaterialInspector({ material, dirty, updateDraft, commitMaterial
   const commitClass = (classValue: MaterialClassDto) => {
     updateDraft({ class: classValue });
     void commitMaterial(completePatch({ class: classValue }));
+  };
+  const editMapping = (channel: number, mapping: TextureMappingDto, commit: boolean) => {
+    const textures = [...material.textures] as MaterialDto['textures'];
+    const slot = textures[channel];
+    if (!slot) return;
+    textures[channel] = { ...slot, mapping };
+    updateDraft({ textures });
+    if (commit) void commitMaterial(completePatch({ texture_mappings: [{ channel, mapping }] }));
   };
   const materialClass = material.class;
   const coverageMode = material.coverage;
@@ -182,8 +193,68 @@ export function MaterialInspector({ material, dirty, updateDraft, commitMaterial
           />
         ) : null}
 
-        <ReadOnlyBinding label="Diffuse Texture" value={material.diffuse_texture} />
-        <ReadOnlyBinding label="Normal Texture" value={material.normal_texture} />
+        {(['normal_scale'] as const).map((field) => (
+          <label className="field field--row" key={field}>
+            <span>{'Normal strength'}</span>
+            <input type="number" step="0.01" value={material[field]}
+              onChange={(event) => updateDraft({ [field]: Number(event.target.value) })}
+              onBlur={(event) => void commitMaterial(completePatch({ [field]: Number(event.target.value) }))} />
+          </label>
+        ))}
+        {material.emissive_factor.map((value, axis) => (
+          <label className="field field--row" key={`emission-${axis}`}>
+            <span>Emission {'RGB'[axis]}</span>
+            <input type="number" min="0" step="0.1" value={value}
+              onChange={(event) => {
+                const factor = [...material.emissive_factor] as [number, number, number];
+                factor[axis] = Number(event.target.value); updateDraft({ emissive_factor: factor });
+              }}
+              onBlur={() => void commitMaterial(completePatch({ emissive_factor: material.emissive_factor }))} />
+          </label>
+        ))}
+        {material.textures.map((slot, channel) => (
+          <details key={channel} open={slot ? undefined : false}>
+            <summary>{['Base color', 'Metallic / roughness', 'Normal', 'Emissive'][channel]} texture</summary>
+            <ReadOnlyBinding label="Image" value={slot?.texture ?? null} />
+            {slot && <>
+              <label className="field field--row"><span>UV set</span>
+                <input type="number" min="0" step="1" value={slot.mapping.tex_coord}
+                  onChange={(event) => editMapping(channel, { ...slot.mapping, tex_coord: Number(event.target.value) }, false)}
+                  onBlur={() => editMapping(channel, slot.mapping, true)} />
+              </label>
+              {(['offset', 'scale'] as const).flatMap((field) => [0, 1].map((axis) => (
+                <label className="field field--row" key={`${field}-${axis}`}>
+                  <span>{field} {'UV'[axis]}</span>
+                  <input type="number" step="0.01" value={slot.mapping[field][axis]}
+                    onChange={(event) => {
+                      const pair = [...slot.mapping[field]] as [number, number]; pair[axis] = Number(event.target.value);
+                      editMapping(channel, { ...slot.mapping, [field]: pair }, false);
+                    }} onBlur={() => editMapping(channel, slot.mapping, true)} />
+                </label>
+              )))}
+              <label className="field field--row"><span>Rotation (degrees)</span>
+                <input type="number" step="1" value={slot.mapping.rotation * 180 / Math.PI}
+                  onChange={(event) => editMapping(channel, { ...slot.mapping, rotation: Number(event.target.value) * Math.PI / 180 }, false)}
+                  onBlur={() => editMapping(channel, slot.mapping, true)} />
+              </label>
+              {[0, 1].map((axis) => (
+                <label className="field field--row" key={`wrap-${axis}`}><span>Wrap {'UV'[axis]}</span>
+                  <select value={slot.mapping.wrap[axis]} onChange={(event) => {
+                    const wrap = [...slot.mapping.wrap] as [number, number]; wrap[axis] = Number(event.target.value);
+                    editMapping(channel, { ...slot.mapping, wrap }, true);
+                  }}>
+                    {['Repeat', 'Clamp', 'Mirrored repeat'].map((label, index) => <option key={label} value={index}>{label}</option>)}
+                  </select>
+                </label>
+              ))}
+              <label className="field field--row"><span>Filter</span>
+                <select value={slot.mapping.filter} onChange={(event) => editMapping(channel, { ...slot.mapping, filter: Number(event.target.value) }, true)}>
+                  {['Nearest', 'Linear'].map((label, index) => <option key={label} value={index}>{label}</option>)}
+                </select>
+              </label>
+            </>}
+          </details>
+        ))}
       </div>
 
       <p className="commit-note">

@@ -6047,6 +6047,7 @@ dependencies = [
  "image",
  "log",
  "rayon",
+ "serde_json",
  "slotmap",
  "tracy-client",
  "truvis-assimp-binding",

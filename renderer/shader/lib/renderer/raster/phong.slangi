@@ -13,5 +13,8 @@ struct CoarseVertex
     float3 frag_normal : FRAG_NORMAL;
 
     [[vk::location(2)]]
-    float2 uv : UV;
+    float2 uv[engine::material::TEXTURE_CHANNEL_COUNT] : UV;
+
+    [[vk::location(7)]]
+    float4 tangent : TANGENT;
 };

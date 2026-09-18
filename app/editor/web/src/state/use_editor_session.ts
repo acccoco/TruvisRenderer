@@ -30,6 +30,7 @@ export interface EditorSessionState {
   material: MaterialDto | null;
   draft: MaterialDto | null;
   dirty: boolean;
+  draftRevision: number;
   pendingRequests: number;
   lastRequestMs: number | null;
   error: string | null;
@@ -44,9 +45,9 @@ type Action =
   | { type: 'instanceDetailsReady'; value: InstanceDetailsDto }
   | { type: 'instanceDetailsStale'; instanceId: string }
   | { type: 'instanceDetailsFailed'; instanceId: string }
-  | { type: 'material'; value: MaterialDto | null }
-  | { type: 'draft'; value: Partial<MaterialDto> }
-  | { type: 'requestStart' }
+  | { type: 'material'; value: MaterialDto | null; acknowledgedDraftRevision?: number }
+  | { type: 'draft'; value: Partial<MaterialDto>; revision: number }
+  | { type: 'requestStart'; clearError: boolean }
   | { type: 'requestEnd'; elapsedMs: number }
   | { type: 'error'; value: string | null };
 
@@ -63,6 +64,7 @@ const initialState: EditorSessionState = {
   material: null,
   draft: null,
   dirty: false,
+  draftRevision: 0,
   pendingRequests: 0,
   lastRequestMs: null,
   error: null,
@@ -115,12 +117,17 @@ function reducer(state: EditorSessionState, action: Action): EditorSessionState 
       return state.inspectedInstanceId === action.instanceId
         ? { ...state, instanceDetails: null, instanceDetailsStatus: 'error' }
         : state;
-    case 'material':
-      return { ...state, material: action.value, draft: action.value, dirty: false };
+    case 'material': {
+      if (action.value && action.value.id !== state.selection?.material_id) return state;
+      // 查询和较早提交的回包不能覆盖同一材质的后续输入；只有对应草稿的确认才能清除 dirty。
+      const keepDraft = state.dirty && state.draft?.id === action.value?.id
+        && action.acknowledgedDraftRevision !== state.draftRevision;
+      return { ...state, material: action.value, draft: keepDraft ? state.draft : action.value, dirty: keepDraft };
+    }
     case 'draft':
-      return state.draft ? { ...state, draft: { ...state.draft, ...action.value }, dirty: true } : state;
+      return state.draft ? { ...state, draft: { ...state.draft, ...action.value }, dirty: true, draftRevision: action.revision } : state;
     case 'requestStart':
-      return { ...state, pendingRequests: state.pendingRequests + 1, error: null };
+      return { ...state, pendingRequests: state.pendingRequests + 1, error: action.clearError ? null : state.error };
     case 'requestEnd':
       return { ...state, pendingRequests: Math.max(0, state.pendingRequests - 1), lastRequestMs: action.elapsedMs };
     case 'error':
@@ -154,6 +161,9 @@ export function useEditorSession(): EditorSession {
   const sceneVersionRef = useRef(initialState.sceneVersion);
   const inspectedInstanceIdRef = useRef<string | null>(null);
   const instanceDetailsRequestSequenceRef = useRef(0);
+  const materialRequestSequenceRef = useRef(0);
+  const materialCommandSequenceRef = useRef(0);
+  const draftRevisionRef = useRef(0);
 
   useEffect(() => {
     sceneVersionRef.current = state.sceneVersion;
@@ -166,7 +176,8 @@ export function useEditorSession(): EditorSession {
   const request = useCallback(
     async (requestValue: EditorRequest): Promise<EditorResponse> => {
       const startedAt = performance.now();
-      dispatch({ type: 'requestStart' });
+      // 后台轮询不能擦除材质校验错误；用户下一次提交时再清除旧错误。
+      dispatch({ type: 'requestStart', clearError: requestValue.category === 'command' });
       try {
         const response = await transport.request(requestValue);
         if (response.type === 'error') {
@@ -187,12 +198,13 @@ export function useEditorSession(): EditorSession {
 
   const loadMaterial = useCallback(
     async (selection: SelectionDto | null) => {
+      const sequence = ++materialRequestSequenceRef.current;
       if (!selection) {
         dispatch({ type: 'material', value: null });
         return;
       }
       const response = await query({ type: 'get_material', material_id: selection.material_id });
-      if (response.type === 'material') {
+      if (response.type === 'material' && sequence === materialRequestSequenceRef.current) {
         dispatch({ type: 'material', value: response.payload });
       }
     },
@@ -402,7 +414,7 @@ export function useEditorSession(): EditorSession {
   );
 
   const updateDraft = useCallback((patch: Partial<MaterialDto>) => {
-    dispatch({ type: 'draft', value: patch });
+    dispatch({ type: 'draft', value: patch, revision: ++draftRevisionRef.current });
   }, []);
 
   const commitMaterial = useCallback(
@@ -410,6 +422,9 @@ export function useEditorSession(): EditorSession {
       if (!state.draft) {
         return;
       }
+      ++materialRequestSequenceRef.current;
+      const sequence = ++materialCommandSequenceRef.current;
+      const draftRevision = draftRevisionRef.current;
       try {
         const response = await request({
           category: 'command',
@@ -417,7 +432,11 @@ export function useEditorSession(): EditorSession {
         });
         if (response.type === 'command_applied') {
           dispatch({ type: 'sceneVersion', value: response.payload.scene_version });
-          dispatch({ type: 'material', value: response.payload.material });
+          // 场景通知可能先发起查询；命令确认仍可确认对应草稿，但不能覆盖后续材质选择或输入。
+          if (sequence === materialCommandSequenceRef.current) {
+            ++materialRequestSequenceRef.current;
+            dispatch({ type: 'material', value: response.payload.material, acknowledgedDraftRevision: draftRevision });
+          }
         }
       } catch (error) {
         dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });

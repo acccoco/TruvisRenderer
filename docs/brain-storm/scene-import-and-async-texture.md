@@ -12,6 +12,9 @@
 
 设计只扩展现有 `AssetHub -> SceneAssetIngestor -> AssetStore/SceneStore` 边界，不引入全局 asset database、跨线程 `GameWorld`、引用计数框架或通用异步依赖图。
 
+材质纹理槽、`KHR_texture_transform`、多 UV 和 sampler 的后续扩展由
+[Scene 生命周期](../summaries/scene-data-lifecycle.md) 与 [RT 材质求值](../summaries/realtime-rt-raytracing-flow.md) 说明当前契约；材质已收敛为四槽、单级采样。
+
 ## 当前基线
 
 当前实现事实见 [`../summaries/scene-data-lifecycle.md`](../summaries/scene-data-lifecycle.md) 和

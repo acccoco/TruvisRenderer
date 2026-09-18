@@ -50,24 +50,8 @@ impl SceneMeshRecord {
             });
         }
 
-        for (index, submesh) in data.submeshes.iter().enumerate() {
-            let count = submesh.positions.len();
-            let reason = if count == 0 {
-                Some("has no vertices")
-            } else if submesh.normals.len() != count || submesh.tangents.len() != count || submesh.uvs.len() != count {
-                Some("has mismatched vertex attribute counts")
-            } else if submesh.indices.is_empty() || !submesh.indices.len().is_multiple_of(3) {
-                Some("must contain triangle indices")
-            } else if submesh.indices.iter().any(|&vertex| vertex as usize >= count) {
-                Some("has out-of-range vertex indices")
-            } else {
-                None
-            };
-            if let Some(reason) = reason {
-                return Err(SceneEditError::InvalidMeshData {
-                    reason: format!("mesh '{}' submesh {} {}", data.name, index, reason),
-                });
-            }
+        for submesh in &data.submeshes {
+            submesh.validate().map_err(|reason| SceneEditError::InvalidMeshData { reason })?;
         }
         Ok(Self { data })
     }
@@ -247,6 +231,7 @@ impl AssetStore {
     }
 
     fn validate_material_texture_dependencies(&self, data: &MaterialData) -> Result<(), SceneEditError> {
+        data.validate().map_err(|reason| SceneEditError::InvalidMaterialData { reason })?;
         for texture in Self::material_texture_handles(data) {
             if !self.all_textures.contains_key(texture) {
                 return Err(SceneEditError::MissingDependency {
@@ -257,8 +242,8 @@ impl AssetStore {
         Ok(())
     }
 
-    fn material_texture_handles(data: &MaterialData) -> impl Iterator<Item = TextureHandle> {
-        [data.diffuse_texture, data.normal_texture].into_iter().flatten()
+    fn material_texture_handles(data: &MaterialData) -> impl Iterator<Item = TextureHandle> + '_ {
+        data.textures.iter().flatten().map(|slot| slot.texture)
     }
 
     fn add_material_texture_dependencies(&mut self, material: MaterialHandle, data: &MaterialData) {
@@ -339,14 +324,14 @@ impl AssetSystem {
         self.scene_assets.model_import_error(handle)
     }
 
-    pub(crate) fn register_texture_canonical(&mut self, path: std::path::PathBuf) -> (TextureHandle, bool) {
+    pub(crate) fn register_texture_canonical(&mut self, path: std::path::PathBuf, color_space: truvis_asset::handle::TextureColorSpace) -> (TextureHandle, bool) {
         let existing = self
             .scene_assets
-            .texture_for_path(&path)
+            .texture_for_path(&path, color_space)
             .filter(|&handle| self.store.contains_texture(handle));
         let handle = self
             .scene_assets
-            .register_texture_canonical(&mut self.assets, &mut self.store, path);
+            .register_texture_canonical(&mut self.assets, &mut self.store, path, color_space);
         (handle, existing.is_none())
     }
 
@@ -358,7 +343,8 @@ impl AssetSystem {
         self.store.register_material(data)
     }
 
-    pub(crate) fn update_material(&mut self, handle: MaterialHandle, data: MaterialData) -> Result<bool, SceneEditError> {
+    pub(crate) fn update_material(&mut self, scene: &SceneStore, handle: MaterialHandle, data: MaterialData) -> Result<bool, SceneEditError> {
+        scene.validate_material_update(&self.store, handle, &data)?;
         self.store.update_material(handle, data)
     }
 
@@ -411,9 +397,9 @@ mod tests {
                 roughness: 0.5,
                 class: MaterialClass::Surface,
                 coverage: CoverageMode::Opaque,
-                diffuse_texture: Some(texture),
-                normal_texture: None,
+                textures: [Some(truvis_asset::material_texture::TextureSlot::new(texture)), None, None, None],
                 name: "textured".to_string(),
+                ..MaterialData::default()
             })
             .unwrap();
 

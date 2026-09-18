@@ -29,6 +29,7 @@
 
 pub mod asset_hub;
 pub mod handle;
+pub mod material_texture;
 
 pub(crate) mod asset_loader;
 pub(crate) mod gltf_scene_loader;

@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 
 use truvis_assimp_binding::truvixx;
 
+use crate::material_texture::{TextureChannel, TextureSlot};
+
 use crate::asset_loader::{LoadResult, ModelLoadRequest};
 use crate::handle::{
     CoverageMode, MaterialClass, MeshData, RawMaterialData, RawSceneData, RawSceneInstanceData, RawTextureSource,
@@ -211,9 +213,8 @@ impl TruvixxSceneReader<'_> {
 
         let position_ptr = unsafe { truvixx::truvixx_mesh_get_positions(self.handle(), mesh_index) };
         let normal_ptr = unsafe { truvixx::truvixx_mesh_get_normals(self.handle(), mesh_index) };
-        let tangent_ptr = unsafe { truvixx::truvixx_mesh_get_tangents(self.handle(), mesh_index) };
         let uv_ptr = unsafe { truvixx::truvixx_mesh_get_uvs(self.handle(), mesh_index) };
-        if position_ptr.is_null() || normal_ptr.is_null() || tangent_ptr.is_null() || uv_ptr.is_null() {
+        if position_ptr.is_null() || normal_ptr.is_null() || uv_ptr.is_null() {
             return Err(format!("mesh {} is missing required vertex attributes", mesh_index));
         }
 
@@ -229,11 +230,9 @@ impl TruvixxSceneReader<'_> {
             .copied()
             .map(Self::truvixx_float3_to_vec3)
             .collect();
-        let tangents = unsafe { std::slice::from_raw_parts(tangent_ptr, vertex_count) }
-            .iter()
-            .copied()
-            .map(Self::truvixx_float3_to_vec3)
-            .collect();
+        // 当前 Assimp C ABI 未暴露 bitangent sign，不能把 XYZ 切线伪装成有效的 XYZW。
+        // 使用零标记，采样时从左上原点 UV 参数化重建基底。
+        let tangents = vec![glam::Vec4::ZERO; vertex_count];
         let uvs = unsafe { std::slice::from_raw_parts(uv_ptr, vertex_count) }
             .iter()
             .copied()
@@ -253,7 +252,8 @@ impl TruvixxSceneReader<'_> {
             positions,
             normals,
             tangents,
-            uvs,
+            tex_coords: vec![uvs],
+            tangent_tex_coord: 0,
             indices: indices.to_vec(),
             name: format!("{}-{}", self.model_name, mesh_index),
         }))
@@ -274,6 +274,12 @@ impl TruvixxSceneReader<'_> {
         let normal_map = Self::read_fixed_c_string(&mat.normal_map);
         let name = Self::read_fixed_c_string(&mat.name);
 
+        let mut textures: [Option<TextureSlot<RawTextureSource>>; TextureChannel::COUNT] = Default::default();
+        for (channel, path) in [(TextureChannel::BaseColor, diffuse_map), (TextureChannel::Normal, normal_map)] {
+            if !path.is_empty() {
+                textures[channel as usize] = Some(TextureSlot::new(RawTextureSource::ExternalPath(PathBuf::from(path))));
+            }
+        }
         // texture 路径保持为导入器原始表达，稍后由 SceneAssetIngestor 根据 scene 路径统一解析。
         Ok(RawMaterialData {
             base_color: Self::truvixx_float4_to_vec4(mat.base_color),
@@ -281,8 +287,9 @@ impl TruvixxSceneReader<'_> {
             roughness: mat.roughness,
             class: Self::material_class(mat.opacity, Self::truvixx_float4_to_vec4(mat.emissive).truncate()),
             coverage: CoverageMode::Opaque,
-            diffuse_texture: (!diffuse_map.is_empty()).then(|| RawTextureSource::ExternalPath(PathBuf::from(diffuse_map))),
-            normal_texture: (!normal_map.is_empty()).then(|| RawTextureSource::ExternalPath(PathBuf::from(normal_map))),
+            textures,
+            normal_scale: 1.0,
+            emissive_factor: glam::Vec3::ZERO,
             name: if name.is_empty() { format!("material-{}", material_index) } else { name },
         })
     }

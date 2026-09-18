@@ -2,7 +2,10 @@ use std::time::{Duration, Instant};
 
 use slotmap::{Key, KeyData};
 
+use truvis_asset::material_texture::{TextureTransform, TextureSampler, TextureWrap, TextureFilter};
+
 use truvis_editor_bridge::protocol::{
+    TextureMappingDto, TextureSlotDto,
     CoverageModeDto, DEFAULT_SCENE_PAGE_SIZE, EditorCommand, EditorError, EditorErrorCode, EditorNotification,
     EditorQuery, EditorRequest, EditorResponse, InstanceDetailsDto, InstanceId, InstanceMaterialBindingDto,
     MAX_SCENE_PAGE_SIZE, MaterialClassDto, MaterialDto, MaterialId, MaterialPatch, MeshId, MeshSummaryDto,
@@ -248,8 +251,16 @@ impl EditorController {
             roughness: data.roughness,
             class: Self::material_class_dto(data.class),
             coverage: Self::coverage_dto(data.coverage),
-            diffuse_texture: data.diffuse_texture.map(Self::encode_texture_id),
-            normal_texture: data.normal_texture.map(Self::encode_texture_id),
+            textures: std::array::from_fn(|index| data.textures[index].as_ref().map(|slot| TextureSlotDto {
+                texture: Self::encode_texture_id(slot.texture),
+                mapping: TextureMappingDto {
+                    tex_coord: slot.tex_coord, offset: slot.transform.offset.to_array(), rotation: slot.transform.rotation,
+                    scale: slot.transform.scale.to_array(), wrap: [slot.sampler.wrap_s as u32, slot.sampler.wrap_t as u32],
+                    filter: slot.sampler.filter as u32,
+                },
+            })),
+            normal_scale: data.normal_scale,
+            emissive_factor: data.emissive_factor.to_array(),
         })
     }
 
@@ -290,6 +301,26 @@ impl EditorController {
         if let Some(coverage) = patch.coverage {
             data.coverage = Self::coverage(coverage)?;
         }
+        if let Some(mappings) = patch.texture_mappings {
+            for patch in mappings {
+                let slot = data.textures.get_mut(patch.channel as usize).and_then(Option::as_mut)
+                    .ok_or_else(|| EditorError::new(EditorErrorCode::InvalidRequest, "texture slot is absent or invalid"))?;
+                let mapping = patch.mapping;
+                let wraps = [TextureWrap::Repeat, TextureWrap::Clamp, TextureWrap::MirroredRepeat];
+                let filters = [TextureFilter::Nearest, TextureFilter::Linear];
+                let invalid = || EditorError::new(EditorErrorCode::InvalidRequest, "invalid texture sampler");
+                slot.sampler = TextureSampler {
+                    wrap_s: *wraps.get(mapping.wrap[0] as usize).ok_or_else(invalid)?,
+                    wrap_t: *wraps.get(mapping.wrap[1] as usize).ok_or_else(invalid)?,
+                    filter: *filters.get(mapping.filter as usize).ok_or_else(invalid)?,
+                };
+                slot.tex_coord = mapping.tex_coord;
+                slot.transform = TextureTransform { offset: mapping.offset.into(), rotation: mapping.rotation, scale: mapping.scale.into() };
+            }
+        }
+        if let Some(value) = patch.normal_scale { data.normal_scale = value; }
+        if let Some(value) = patch.emissive_factor { data.emissive_factor = value.into(); }
+        data.validate().map_err(|reason| EditorError::new(EditorErrorCode::InvalidRequest, reason))?;
         Ok(data)
     }
 
