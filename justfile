@@ -18,6 +18,11 @@ build-all: editor-web shader cxx
 fetch-res:
     cargo run --bin fetch_res
 
+# 将 ORCA Bistro 包准备为三个只依赖 glTF/外部贴图的场景（需要 Python/Pillow 和 Blender）
+[group('2 资源生成与构建')]
+prepare-bistro source blender="C:/Program Files/Blender Foundation/Blender 4.4/blender.exe":
+    python app/truvis/scripts/prepare_bistro.py --source "{{ source }}" --blender "{{ blender }}"
+
 # 生成协议类型并构建 Web editor 生产资源
 [group('2 资源生成与构建')]
 [working-directory("app/editor/web")]

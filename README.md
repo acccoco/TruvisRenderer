@@ -46,6 +46,8 @@ just truvis
 
 `just fetch-res` 下载项目运行所需的资产与外部工具。`just truvis` 会依次构建 Web editor、shader、Debug CXX 绑定和主体应用，因此首次运行耗时会更长。
 
+准备 ORCA Bistro glTF 资产时可运行 `just prepare-bistro source=<Bistro 包目录>`；脚本只导出 glTF 与外部贴图，场景中的相机和灯光随 glTF 一起保存。
+
 构建完整 workspace 时只需执行：
 
 ```nushell
