@@ -47,10 +47,10 @@ members = [
     "renderer/samples/cornell-renderer",
     # app
     "renderer/shader/truvis-renderer-shader-binding",
-    "app/truvis",
-    "app/samples/hello-triangle",
-    "app/samples/shader-toy",
-    "app/samples/cornell",
+    "app/truvis-app",
+    "app/samples/triangle-app",
+    "app/samples/shader-toy-app",
+    "app/samples/cornell-app",
 ]
 
 [profile.dev]

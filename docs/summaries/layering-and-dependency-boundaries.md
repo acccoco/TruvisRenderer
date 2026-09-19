@@ -80,7 +80,7 @@ flowchart LR
 
 `app/` 只保留应用宿主：
 
-- `app/truvis` 的 package 名为 `truvis-app`，binary 仍为 `truvis-app`；它拥有 Tauri build、WebView、
+- `../../app/truvis-app` 的 package 名为 `truvis-app`，binary 仍为 `truvis-app`；它拥有 Tauri build、WebView、
   `TruvisDesktop`、`EditorIpc`、dialog、capabilities、icons 和关闭顺序。
 - `app/editor/web` 保存 React/TypeScript UI 和 Tauri transport。
 - `app/samples/*` 是薄 binary crate，只处理日志、图标、窗口参数和 `StandaloneWinitHost`。

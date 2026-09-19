@@ -37,7 +37,7 @@ imgui.ini
 
 # generated
 shader/generated/*
-app/truvis/gen/schemas/
+app/truvis-app/gen/schemas/
 
 # agents
 .codex

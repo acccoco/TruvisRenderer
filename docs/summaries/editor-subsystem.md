@@ -48,7 +48,7 @@ DOM viewport rect
 - `truvis-editor-bridge` 定义协议 DTO、每请求 oneshot reply 和方向受限的有界 endpoint；它不依赖
   `truvis-world`、render runtime、Tauri 或 GPU 类型。
 - `truvis_app::editor_ipc` 只负责 invoke、通知转发、背压和 timeout，不解释领域请求。
-- `app/truvis/capabilities/main-editor.json` 只授予 `main` WebView 注册和移除 Tauri event listener 的权限；
+- `../../app/truvis-app/capabilities/main-editor.json` 只授予 `main` WebView 注册和移除 Tauri event listener 的权限；
   页面不能通过 Tauri event API 向 native 侧发送业务消息。
 - `truvis_renderer::editor_controller` 是协议 DTO 到 `GameWorld` handle、查询和 edit API 的唯一适配点。
 - `truvis_renderer::desktop_command` 只处理 Tauri 本地特权命令。本机 `PathBuf` 不进入通用 Editor DTO。
@@ -134,8 +134,8 @@ RenderThread 退出后销毁 child HWND，随后停止 notification dispatcher�
 ## 代码与操作入口
 
 - 协议与 endpoint：`renderer/editor/truvis-editor-bridge/src/`
-- Tauri IPC owner：`app/truvis/src/editor_ipc.rs`
-- WebView event capability：`app/truvis/capabilities/main-editor.json`
+- Tauri IPC owner：`../../app/truvis-app/src/editor_ipc.rs`
+- WebView event capability：`../../app/truvis-app/capabilities/main-editor.json`
 - Renderer ports 与 controller：`renderer/truvis-renderer/src/renderer_ports.rs`、`renderer/truvis-renderer/src/editor_controller.rs`
 - 页面 transport：`app/editor/web/src/transport/`
 - 开发、构建和运行参数：`app/editor/README.md`
