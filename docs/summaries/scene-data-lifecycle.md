@@ -16,16 +16,17 @@ GameWorld
       │ SceneReadView
       ▼
 RenderRuntime
-├── RenderAssetSystem   texture / mesh / material / sky 的 GPU 资源与上传
-└── RenderWorld            instance 镜像、GPU scene buffer、emissive、TLAS、历史
+└── RenderWorld
+    ├── RenderAssetSystem   texture / mesh / material / sky 的 GPU 资源与上传
+    └── instance 镜像、GPU scene buffer、emissive、TLAS、历史
       │ RenderSceneView
       ▼
 render pass / shader / raycast
 ```
 
 `GameWorld` 是 update 阶段唯一的 CPU facade。它不保存 Vulkan 对象；`AssetSystem` 也不创建 GPU
-对象。`RenderAssetSystem` 是 runtime 级共享 GPU 资源 owner，`RenderWorld` 只组合一个场景的
-instance、light、sky 镜像和派生 GPU scene。prepare 完成后，render pass 不回读 CPU owner。
+对象。`RenderWorld` 同时拥有当前场景的 GPU 镜像和该 world 内跨 instance 共享的 `RenderAssetSystem`。
+跨多个 RenderWorld 的 device-level 资源共享不属于当前实现范围。prepare 完成后，render pass 不回读 CPU owner。
 
 ## CPU owner
 
@@ -80,14 +81,14 @@ AssetLoadService 返回一批事件时已移除 task record；处理其中的 sc
 ### GPU 同步顺序
 
 `RenderAssetSystem` 位于 `engine/e40-render/truvis-render-runtime/src/render_world/render_asset_system.rs`，
-由 `RenderRuntime` 持有，包含：
+由 `RenderWorld` 持有，包含：
 
 - `GpuTextureStore`：按 texture handle 安装 image/view/SRV，维护 fallback、published binding revision 和迟到完成回收。
 - `GpuMeshStore`：按 mesh handle 创建 vertex/index buffer、RtGeometry 和 BLAS；mesh 内容不可替换，删除后跨 FIF 延迟释放。
 - `GpuMaterialStore`：扫描 CPU material membership，维护 stable slot、render-side source snapshot、texture binding revision 和每 FIF dirty upload。
 - `GpuSkyStore` 与 `GpuAssetUploadQueue`：处理 sky fallback/distribution 以及 texture/sky 的异步完成。
 
-这些 manager 不保存 instance 的组合关系；material slot、image 和 BLAS 可被同一个 runtime 的场景引用。`RenderWorld`
+这些 manager 不保存 instance 的组合关系；material slot、image 和 BLAS 可被同一个 RenderWorld 的多个 instance 引用。`RenderWorld`
 中的 `RenderInstanceTable` 只保存 CPU instance handle 到 stable instance slot 的镜像、transform/material
 快照、pending/active 状态和 motion history；`SceneTlas`、emissive table、scene/indirect buffer
 和 raster draw cache 都属于场景侧。
@@ -97,7 +98,7 @@ AssetLoadService 返回一批事件时已移除 task record；处理其中的 sc
 `RenderRuntime::prepare` 的固定顺序是：
 
 1. `GameWorld::poll_asset_loads()` 调用 `AssetLoadService::update()`，让 `AssetSystem` 消费 loader 完成事件并写回 CPU resource/scene 最终状态。
-2. `RenderAssetSystem::sync()` 对账 CPU membership，移除已删除资源，借用保留的 texture/mesh 内容提交上传，poll/publish GPU completion，再扫描 material source/binding revision。
+2. `RenderWorld::sync_assets()` 调用内部 `RenderAssetSystem::sync()`，对账 CPU membership，移除已删除资源，借用保留的 texture/mesh 内容提交上传，poll/publish GPU completion，再扫描 material source/binding revision。
 3. `ShaderBindingSystem::prepare_render_data()` 刷新全局 bindless 表。
 4. `RenderWorld::prepare_render_data()` 扫描完整 instance membership，比较 transform、material 列表和 material revision，解析 mesh/material ready gate，生成 `RenderData`。
 5. analytic light、emissive table、geometry/instance/indirect buffer、TLAS 和 scene root buffer 依据本次对账结果更新；最后写 per-frame 数据。
@@ -130,7 +131,7 @@ membership 缺失后退役 slot/cache；已提交但尚未完成的 texture uplo
 延迟回收，不能把 CPU 删除直接等同于 GPU 已安全释放。
 
 `RenderRuntime::begin_frame` 先等待当前 FIF timeline、清理底层延迟释放，再向
-`RenderAssetSystem` 和 `RenderWorld` 传递 frame id。每个 material buffer、scene buffer 和 instance
+`RenderWorld` 传递 frame id，由其推进内部 `RenderAssetSystem` 和 scene manager。每个 material buffer、scene buffer 和 instance
 buffer 有自己的 FIF 副本；本帧只写当前 label，落后的 A/B/C 副本会在再次使用前补写最新目标。CPU
 loader 完成、GPU copy 入队、timeline completion、shader-visible publish 和 render 结果是不同阶段，日志
 中的任一成功都不能替代后续阶段证据。

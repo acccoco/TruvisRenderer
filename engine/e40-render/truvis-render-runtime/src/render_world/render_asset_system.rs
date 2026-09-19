@@ -21,10 +21,11 @@ pub(crate) struct RenderResourceSyncResult {
     pub(crate) sky_changed: bool,
 }
 
-/// 当前 device 的共享 GPU 资源 owner。
+/// 当前 `RenderWorld` 内的共享 GPU 资源 owner。
 ///
-/// 资源按 CPU handle 管理，和具体 `RenderWorld` 的 instance / TLAS 组合无关。一个 runtime
-/// 当前只有一个 RenderWorld，但把这个边界单独保留下来后，资源同步不会再随着场景镜像扩散。
+/// 资源按 CPU handle 管理，供同一个 RenderWorld 内的多个 instance 共享；它不属于某个
+/// instance，也不把资源同步逻辑复制到 scene mirror 中。未来若需要跨 RenderWorld 共享，
+/// 应单独抽取 device-level owner，而不是让本类型隐式跨 world 共享。
 pub(crate) struct RenderAssetSystem {
     upload_queue: GpuAssetUploadQueue,
     gpu_textures: GpuTextureStore,

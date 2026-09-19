@@ -3,7 +3,7 @@ use ash::vk;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
-use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx};
 use truvis_gfx::raytracing::acceleration::GfxAcceleration;
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
@@ -12,6 +12,8 @@ use truvis_render_foundation::render_scene_view::{RenderSceneAccumSignature, Ren
 use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
 
+use crate::bindings::shader_binding_system::ShaderBindingSystem;
+use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 use crate::render_world::environment_binding::EnvironmentBinding;
 use crate::render_world::analytic_light_table::{AnalyticLightBinding, AnalyticLightTable};
 use crate::render_world::render_data::RenderData;
@@ -32,11 +34,11 @@ use super::raster_draw_cache::{
 /// 它把 `RenderInstanceTable` 产出的 `RenderData` 转换成 shader 可读的 GPU buffer 和
 /// 光栅化 draw cache，并协调 `SceneTlas` 更新 TLAS；render pass 只能通过
 /// `RenderSceneView` 读取 prepare 后的快照。
-/// `RenderWorld` 不拥有 CPU scene 或共享 GPU resource；它拥有场景侧 managers 和当前 FIF 可用的
-/// GPU scene 表示。
+/// `RenderWorld` 不拥有 CPU scene；它拥有当前场景的 GPU 表示，以及在该 world 内供多个
+/// instance 共享的 `RenderAssetSystem`。
 pub struct RenderWorld {
-    /// RenderWorld 只拥有 scene 组合、历史与派生表；共享 GPU 资源由 runtime 级
-    /// `RenderAssetSystem` 持有并通过窄调用参数提供。
+    /// 同一个 RenderWorld 内的 texture/mesh/material/sky GPU 资源共享表；它不属于某个 instance。
+    render_assets: RenderAssetSystem,
     pub(super) render_instance_table: RenderInstanceTable,
     pub(super) analytic_light_table: AnalyticLightTable,
     pub(super) render_emissive_light_table: RenderEmissiveLightTable,
@@ -67,9 +69,23 @@ impl RenderWorld {
     /// label，把这些输入整理成 GPU 可见的 scene 表示。
     pub fn new(
         resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        queue_ctx: GfxQueueCtx<'_>,
+        gfx_resource_registry: &mut GfxResourceRegistry,
+        shader_binding_system: &mut ShaderBindingSystem,
         current_frame_id: u64,
     ) -> Self {
         let _span = tracy_client::span!("RenderWorld::new");
+        let render_assets = RenderAssetSystem::new(
+            resource_ctx,
+            device_ctx,
+            immediate_ctx,
+            queue_ctx,
+            gfx_resource_registry,
+            shader_binding_system,
+            current_frame_id,
+        );
         let render_instance_table = RenderInstanceTable::new(current_frame_id);
         let render_emissive_light_table = {
             let _span = tracy_client::span!("RenderWorld::new/render_emissive_light_table");
@@ -86,6 +102,7 @@ impl RenderWorld {
         };
 
         Self {
+            render_assets,
             render_instance_table,
             analytic_light_table,
             render_emissive_light_table,
@@ -103,24 +120,60 @@ impl RenderWorld {
     ///
     /// 调用点位于 `RenderRuntime::destroy`，此时 device 已 idle，因此 manager 资源、每个 FIF 的
     /// TLAS 和 buffer 都可以按 shutdown reason 释放。
-    pub fn destroy(mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
+    pub fn destroy(
+        mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        shader_binding_system: &mut ShaderBindingSystem,
+        gfx_resource_registry: &mut GfxResourceRegistry,
+    ) {
         self.analytic_light_table.destroy_mut(resource_ctx);
         self.render_emissive_light_table.destroy_mut(resource_ctx);
         self.scene_tlas.destroy_mut(resource_ctx, device_ctx);
         for buffers in &mut self.scene_buffers {
             buffers.destroy_mut(resource_ctx, device_ctx);
         }
+        self.render_assets.destroy(
+            resource_ctx,
+            device_ctx,
+            shader_binding_system,
+            gfx_resource_registry,
+        );
     }
 }
 
 // Runtime 内部阶段入口：`RenderRuntime` 只负责提供阶段上下文，具体 render-side scene 状态在这里推进。
 impl RenderWorld {
     pub(crate) fn begin_frame(&mut self, current_frame_id: u64) {
+        self.render_assets.begin_frame(current_frame_id);
         self.render_instance_table.begin_frame(current_frame_id);
     }
 
     pub(crate) fn request_motion_history_reset(&mut self) {
         self.render_instance_table.request_motion_history_reset();
+    }
+
+    /// 对账当前 `GameWorld` 的 CPU 资源，并推进本 world 的 GPU 资源安装。
+    ///
+    /// 资源同步必须发生在 scene buffer command 开始录制前；这样保持 texture/mesh
+    /// completion、GPU resource publish 和后续 scene prepare 的原有顺序。
+    pub(crate) fn sync_assets(
+        &mut self,
+        scene: SceneReadView<'_>,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        queue_ctx: GfxQueueCtx<'_>,
+        gfx_resource_registry: &mut GfxResourceRegistry,
+        shader_binding_system: &mut ShaderBindingSystem,
+    ) -> RenderResourceSyncResult {
+        self.render_assets.sync(
+            scene,
+            resource_ctx,
+            device_ctx,
+            queue_ctx,
+            gfx_resource_registry,
+            shader_binding_system,
+        )
     }
 
     /// 同步 raycast 需要用 instance slot 反查 CPU record；只暴露只读引用，不暴露 instance manager 修改入口。
@@ -134,7 +187,6 @@ impl RenderWorld {
     /// emissive table、TLAS/scene root。它不修改 CPU scene，只读取 `SceneReadView` 快照。
     pub(crate) fn prepare_render_data(
         &mut self,
-        render_resources: &mut RenderAssetSystem,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
@@ -145,12 +197,12 @@ impl RenderWorld {
         scene: SceneReadView<'_>,
         resource_sync_result: RenderResourceSyncResult,
     ) -> RenderWorldPrepareResult {
-        let sky_update = render_resources.update_sky_binding();
+        let sky_update = self.render_assets.update_sky_binding();
         let environment_binding = EnvironmentBinding {
             sky: sky_update.binding,
         };
 
-        render_resources.upload_materials(
+        self.render_assets.upload_materials(
             resource_ctx,
             cmd,
             transfer_barrier_mask,
@@ -160,8 +212,8 @@ impl RenderWorld {
         // instance 阶段完整对账 CPU scene。只有 mesh 与 material 都解析成功的实例会进入 active 列表。
         let (scene_render_data, instance_result) = self.render_instance_table.prepare_render_data(
             scene,
-            render_resources.material_resolver(),
-            render_resources.mesh_resolver(),
+            self.render_assets.material_resolver(),
+            self.render_assets.mesh_resolver(),
         );
         self.analytic_light_table.sync_scene(scene);
         let analytic_light_update = self.analytic_light_table.update_and_upload(
@@ -211,14 +263,14 @@ impl RenderWorld {
             self.scene_tlas.mark_dirty();
         }
 
-        let material_buffer_device_address = render_resources.material_buffer_device_address(frame_label);
+        let material_buffer_device_address = self.render_assets.material_buffer_device_address(frame_label);
         let emissive_light_binding = self.render_emissive_light_table.update_and_upload(
             resource_ctx,
             cmd,
             transfer_barrier_mask,
             frame_label,
             &scene_render_data,
-            render_resources.material_resolver(),
+            self.render_assets.material_resolver(),
         );
         Self::upload_render_data(
             &mut self.scene_buffers,
@@ -248,6 +300,7 @@ impl RenderWorld {
     }
 
     pub(crate) fn commit_submitted_frame(&mut self, frame_label: FrameLabel) {
+        self.render_assets.commit_submitted_frame(frame_label);
         self.render_instance_table.commit_submitted_frame();
         self.analytic_light_table.commit_submitted_frame(frame_label);
         self.render_emissive_light_table.commit_submitted_frame(frame_label);

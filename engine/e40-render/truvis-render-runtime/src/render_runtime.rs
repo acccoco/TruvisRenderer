@@ -24,7 +24,6 @@ use crate::present::swapchain_presenter::SwapchainPresenter;
 use crate::ray_cast::RayCastService;
 use crate::render_runtime_ctx::RenderPassRecordCtx;
 use crate::render_world::render_world::RenderWorld;
-use crate::render_world::render_asset_system::RenderAssetSystem;
 use crate::resources::cmd_allocator::CmdAllocator;
 use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 use crate::runtime_defaults::DefaultRenderRuntimeSettings;
@@ -76,7 +75,6 @@ pub struct RenderRuntime {
     dlss_sr_state: DlssSrState,
     view_accum: ViewAccumState,
     render_world: RenderWorld,
-    render_assets: RenderAssetSystem,
     ray_cast_service: RayCastService,
 
     cmd_allocator: CmdAllocator,
@@ -93,8 +91,8 @@ pub struct RenderRuntime {
 impl RenderRuntime {
     /// 创建不依赖窗口系统的 runtime root state。
     ///
-    /// 这里会初始化 `Gfx`、CPU `GameWorld`、runtime 级 GPU resource/binding/timing owner、私有
-    /// `RenderAssetSystem` 和 `RenderWorld`；共享 texture/mesh/material/sky manager 不属于场景镜像。
+    /// 这里会初始化 `Gfx`、CPU `GameWorld`、runtime 级 GPU resource/binding/timing owner 和私有
+    /// `RenderWorld`；`RenderWorld` 同时持有其内部的 `RenderAssetSystem`。
     /// 这里不会创建 surface/swapchain。窗口相关资源必须等
     /// `init_after_window` 收到平台层 raw handle 后再创建。
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
@@ -158,9 +156,9 @@ impl RenderRuntime {
                 .expect("failed to register default sky texture")
         };
         world.update_sky_texture(Some(default_sky_texture)).expect("failed to assign default sky texture");
-        let render_assets = {
-            let _span = tracy_client::span!("RenderRuntime::new/render_assets");
-            RenderAssetSystem::new(
+        let render_world = {
+            let _span = tracy_client::span!("RenderRuntime::new/render_world");
+            RenderWorld::new(
                 gfx.resource_ctx(),
                 gfx.device_ctx(),
                 gfx.immediate_ctx(),
@@ -169,10 +167,6 @@ impl RenderRuntime {
                 &mut shader_binding_system,
                 frame_timing.frame_id(),
             )
-        };
-        let render_world = {
-            let _span = tracy_client::span!("RenderRuntime::new/render_world");
-            RenderWorld::new(gfx.resource_ctx(), frame_timing.frame_id())
         };
 
         let ray_cast_service = {
@@ -214,7 +208,6 @@ impl RenderRuntime {
                 world,
                 ray_cast_service,
                 render_world,
-                render_assets,
                 gfx_resource_registry,
                 shader_binding_system,
                 frame_timing,
@@ -349,11 +342,10 @@ impl RenderRuntime {
 
         self.ray_cast_service.destroy_mut(self.gfx.resource_ctx(), self.gfx.device_ctx());
         // CPU scene/asset 与 render-side bridge 按依赖方向释放：先停止 scene runtime，
-        // 再释放 RenderWorld 场景缓存与 runtime 级共享 GPU 资源。
+        // 再由 RenderWorld 释放场景缓存和其内部的 GPU asset resources。
         self.world.destroy_scene_mut();
         self.world.destroy();
-        self.render_world.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
-        self.render_assets.destroy(
+        self.render_world.destroy(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             &mut self.shader_binding_system,
@@ -405,10 +397,9 @@ impl RenderRuntime {
         }
 
         let current_frame_id = self.frame_timing.frame_id();
-        // bindless 与 RenderAssetSystem 都使用同一个 frame id 推进延迟回收窗口，
-        // 保持 shader-visible slot 与 handle 的复用节奏一致。
+        // bindless 与 RenderWorld 内部的资源/场景 manager 都使用同一个 frame id 推进
+        // 延迟回收窗口，保持 shader-visible slot 与 handle 的复用节奏一致。
         self.shader_binding_system.begin_frame(current_frame_id);
-        self.render_assets.begin_frame(current_frame_id);
         self.render_world.begin_frame(current_frame_id);
     }
 
@@ -761,11 +752,11 @@ impl RenderRuntime {
         let cmd = self.render_world_update_cmds[*frame_label].clone();
 
         // GameWorld 同步必须发生在 Renderer update 之后、RenderWorld buffer 上传之前。
-        // loader completion 先收敛到 CPU registry；RenderAssetSystem 随后从最终资源表
-        // 对账并提交尚未安装的 texture/mesh，再由 bindless prepare 写入本帧 descriptor。
+        // loader completion 先收敛到 CPU registry；RenderWorld 随后通过内部
+        // RenderAssetSystem 从最终资源表对账并提交尚未安装的 texture/mesh，再由 bindless prepare 写入本帧 descriptor。
         self.world.poll_asset_loads();
         let scene_view = self.world.scene_view();
-        let resource_sync_result = self.render_assets.sync(
+        let resource_sync_result = self.render_world.sync_assets(
             scene_view,
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -792,7 +783,6 @@ impl RenderRuntime {
         // 后续 scene root buffer 会写入这些 shader-visible handle。
         self.shader_binding_system.prepare_render_data(self.gfx.device_ctx(), &self.gfx_resource_registry);
         let render_world_result = self.render_world.prepare_render_data(
-            &mut self.render_assets,
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.immediate_ctx(),
@@ -848,7 +838,6 @@ impl RenderRuntime {
         );
         cmd.end();
         self.gfx.queue_ctx().gfx_queue().submit(vec![GfxSubmitInfo::new(std::slice::from_ref(&cmd))], None);
-        self.render_assets.commit_submitted_frame(frame_label);
         self.render_world.commit_submitted_frame(frame_label);
     }
 }

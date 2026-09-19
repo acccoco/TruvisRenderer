@@ -1,7 +1,7 @@
 # truvis-render-runtime
 
 `truvis-render-runtime` 是被 `truvis-render-loop::RenderLoop` 驱动的渲染运行时集成层。
-它持有 `Gfx` root owner、CPU `GameWorld`、runtime 级 `RenderAssetSystem`、GPU binding/timing owners 和私有的 `RenderWorld`，
+它持有 `Gfx` root owner、CPU `GameWorld`、GPU binding/timing owners 和私有的 `RenderWorld`；`RenderWorld` 内部持有 `RenderAssetSystem`，
 并通过阶段化的 typed Ctx 向上层暴露初始化、更新、渲染、resize 与 shutdown 能力。
 
 ## 职责边界
@@ -36,12 +36,12 @@
   并由 `RenderRuntime` 持有；`DlssOptions` 同时提供 SR/RR active feature 决策。
 - runtime 内部拥有默认 120 FPS 软件上限、surface format、present mode 与 depth format 候选顺序；这些默认策略不放入
   foundation 公共配置契约。
-- `RenderAssetSystem` 是 runtime 级共享 GPU 资源 owner，内部持有 `GpuTextureStore`、`GpuMeshStore`、
-  `GpuMaterialStore`、`GpuSkyStore` 和共享 `GpuAssetUploadQueue`；资源按 CPU handle 发布、
-  按 FIF 延迟回收，不依赖某个 instance。
-- `RenderWorld` 是 runtime 私有的 scene GPU 翻译层，持有 `RenderInstanceTable`、`AnalyticLightTable`、
-  `RenderEmissiveLightTable`、scene/instance/geometry/indirect buffer、raster draw cache 和 `SceneTlas`；
-  prepare 阶段从 CPU scene 最终状态对账，render pass 只通过 `RenderSceneView` 读取它。
+- `RenderWorld` 是 runtime 私有的 scene GPU 翻译层，内部持有 `RenderAssetSystem`、`RenderInstanceTable`、
+  `AnalyticLightTable`、`RenderEmissiveLightTable`、scene/instance/geometry/indirect buffer、raster draw cache
+  和 `SceneTlas`；同一个 RenderWorld 内的多个 instance 共享资源 manager，render pass 只通过 `RenderSceneView` 读取它。
+- `RenderAssetSystem` 持有 `GpuTextureStore`、`GpuMeshStore`、`GpuMaterialStore`、`GpuSkyStore` 和
+  `GpuAssetUploadQueue`；资源按 CPU handle 发布、按 FIF 延迟回收，不依赖某个 instance。跨多个 RenderWorld
+  的 device-level 资源共享不属于当前实现范围。
 - 默认 sky 通过 `GameWorld` facade 注册为普通 `TextureAssetHandle`，再写入 `SceneStore::SceneSkyState`；
   `GpuSkyStore` 从 `GameWorld::scene_view()` 读取 sky state，持有常驻纯色 fallback sky、单线程
   `SkyDistributionBuilder`、request generation 与 active/retired distribution。当前 sky CPU texture bytes
@@ -95,15 +95,15 @@
 ## 生命周期
 
 - `RenderRuntime::new` 创建与窗口无关的 runtime root state：`Gfx`、`GameWorld`、`GfxResourceRegistry`、
-  `ShaderBindingSystem`、`FrameTiming`、`PerFrameGpuData`、`RenderAssetSystem` 和 `RenderWorld`；
-  texture/mesh/material/sky/upload queue 在 `RenderAssetSystem::new` 初始化，instance/emissive/TLAS
-  等场景 owner 在 `RenderWorld::new` 初始化。
+  `ShaderBindingSystem`、`FrameTiming`、`PerFrameGpuData` 和 `RenderWorld`；texture/mesh/material/sky/upload queue
+  与 instance/emissive/TLAS 等场景 owner 都在 `RenderWorld::new` 中初始化，前者由其内部的
+  `RenderAssetSystem` 持有。
 - `RenderRuntime::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
   swapchain 与 `SwapchainPresenter`，并返回 init Ctx 供 Renderer/子系统创建长期 GPU 资源。
 - `remaining_until_render` 读取 `FrameTiming` 的最小帧间隔；默认 120 FPS 对应约 `8.333333 ms`。外层 RenderLoop
   在剩余时间大于 1 ms 时短周期 `park_timeout(1 ms)`，最后 1 ms 内有界自旋；重负载超过间隔时不额外等待、不补帧。
 - `begin_frame` 是每帧资源回收入口：由 `FrameTiming` 一次采样更新 delta/total time、等待当前 FIF slot、重置 frame command pool、
-  清理延迟释放队列，并把当前 frame id 传给 bindless、`RenderAssetSystem` 与 `RenderWorld`；旧 sky distribution
+  清理延迟释放队列，并把当前 frame id 传给 bindless 与 `RenderWorld` 内部的资源/场景 manager；旧 sky distribution
   跨过 FIF 窗口后由 `GfxResourceRegistry` 销毁。AssetLoadService 事件只在
   prepare 边界通过 `GameWorld::poll_asset_loads()` 收敛。
 - `update_phase` 同步 present extent 到 `FrameRenderState`、acquire 当前 swapchain image，并返回 CPU update Ctx。具体窗口尺寸 render target 由 Renderer/子系统在 init/resize/shutdown 阶段管理。
@@ -111,7 +111,7 @@
   中的 DLSS SR mode 变化解析为新的 render/output extent；如果 target 尺寸变化，则返回 resize Ctx
   交给 Renderer 直接编排各子系统重建自己持有的 RT target、GBuffer 和 main-view target。
 - `prepare(render_view)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 app 提供的 `RenderView`，
-  在 `RenderRuntime` 内部同步 material/instance/mesh/texture 状态、上传 RenderWorld
+  通过 `RenderWorld` 内部同步 material/instance/mesh/texture 状态、上传 RenderWorld
   和 per-frame data，再刷新 per-frame descriptor。
 - `ray_cast_phase` 发生在 `prepare` 之后、`render_phase` 之前。同步 raycast 提交到
   graphics queue，并用 fence 阻塞等待 readback；队列顺序保证它能看到本帧 prepare
@@ -121,13 +121,13 @@
 - `present` 只提交当前 swapchain image 到 present queue；渲染命令提交由上层 render graph 完成。
 - `end_frame` 推进 `FrameTiming` frame id，切换下一帧的 FIF label。
 - `wait_idle` 在 Renderer/子系统 shutdown 前调用，确保上层资源释放时不再被 GPU command 引用。
-- `destroy` 等待 GPU idle，依次释放 present、CPU scene/assets、`RenderWorld` 场景资源、`RenderAssetSystem` 共享 GPU 资源、
+- `destroy` 等待 GPU idle，依次释放 present、CPU scene/assets、`RenderWorld` 场景资源与其内部的 `RenderAssetSystem`、
   command allocator、resource manager、sync、sampler、descriptor 等资源，最后销毁 `Gfx`。
 
 ## Prepare 数据流
 
 - `RenderRuntime::prepare_render_world` 先调用 `GameWorld::poll_asset_loads()`，收敛 loader completion 到 CPU registry；
-  `RenderAssetSystem::sync` 按 CPU registry membership 清理 texture/mesh，发布 upload completion，并扫描
+  `RenderWorld::sync_assets` 通过内部 `RenderAssetSystem::sync` 按 CPU registry membership 清理 texture/mesh，发布 upload completion，并扫描
   material source revision 与 texture binding revision。removed texture/mesh/material 会在下一次完整对账时
   从对应 render manager 移除，避免 stale upload 或 stale slot。model ready/failed 状态由 `GameWorld` 内部的
   `AssetSystem` 在 asset sync 阶段写回
