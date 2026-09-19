@@ -8,7 +8,7 @@
 - [`truvis/`](truvis/README.md)：Tauri Editor 壳，拥有 WebView、`EditorIpc`、文件对话框、嵌入 viewport 与关闭顺序。
 - [`editor/web/`](editor/web/)：React / TypeScript Editor 页面及 Tauri transport adapter。
 - `samples/hello-triangle/`：`triangle` 的薄 standalone 启动入口。
-- `samples/shader-toy/`：`shader-toy` 的薄 standalone 启动入口。
+- `samples/shader-toy/`：`shader-toy-renderer` 的薄 standalone 启动入口。
 - `samples/cornell/`：`rt-cornell` 的薄 standalone 启动入口。
 
 ## 边界约束

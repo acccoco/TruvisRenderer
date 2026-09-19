@@ -18,4 +18,4 @@
 - 本地文件对话框返回的路径只通过 `DesktopCommandSender` 进入 RenderThread。
 - parent window 必须晚于 Renderer/Runtime/Vulkan、child HWND 与 notification task 销毁。
 
-渲染侧职责见 [`renderer/truvis/README.md`](../../renderer/truvis/README.md)。
+渲染侧职责见 [`renderer/truvis-renderer/README.md`](../../renderer/truvis-renderer/README.md)。

@@ -35,16 +35,16 @@ members = [
     "cxx/rust/bindings/truvis-streamline-binding",
     "cxx/rust/bindings/truvis-vk-binding",
     # renderer
-    "renderer/truvis",
-    "renderer/editor/bridge",
+    "renderer/truvis-renderer",
+    "renderer/editor/truvis-editor-bridge",
     "renderer/renderer-kit",
     "renderer/renderer-imgui",
     "renderer/renderer-render-passes",
     "renderer/renderer-rendering",
     "renderer/renderer-render-ui",
-    "renderer/samples/hello-triangle",
-    "renderer/samples/shader-toy",
-    "renderer/samples/cornell",
+    "renderer/samples/triangle-renderer",
+    "renderer/samples/shader-toy-renderer",
+    "renderer/samples/cornell-renderer",
     # app
     "renderer/shader/truvis-renderer-shader-binding",
     "app/truvis",
@@ -100,11 +100,11 @@ renderer-render-passes = { path = "renderer/renderer-render-passes" }
 renderer-rendering = { path = "renderer/renderer-rendering" }
 renderer-render-ui = { path = "renderer/renderer-render-ui" }
 truvis-renderer-shader-binding = { path = "renderer/shader/truvis-renderer-shader-binding" }
-truvis-renderer = { path = "renderer/truvis" }
-truvis-editor-bridge = { path = "renderer/editor/bridge" }
-triangle-renderer = { path = "renderer/samples/hello-triangle" }
-shader-toy-renderer = { path = "renderer/samples/shader-toy" }
-cornell-renderer = { path = "renderer/samples/cornell" }
+truvis-renderer = { path = "renderer/truvis-renderer" }
+truvis-editor-bridge = { path = "renderer/editor/truvis-editor-bridge" }
+triangle-renderer = { path = "renderer/samples/triangle-renderer" }
+shader-toy-renderer = { path = "renderer/samples/shader-toy-renderer" }
+cornell-renderer = { path = "renderer/samples/cornell-renderer" }
 # shader
 truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
 # cxx

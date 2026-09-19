@@ -42,7 +42,7 @@ app ──> renderer ──> engine
 - [`engine/README.md`](../engine/README.md)：Engine 目录与 crate 导航。
 - [`cxx/README.md`](../cxx/README.md)：独立 native project、CXX module、构建工具与 Rust binding 契约。
 - [`renderer/README.md`](../renderer/README.md)：Renderer 层职责和组成。
-- [`renderer/truvis/README.md`](../renderer/truvis/README.md)：`TruvisRenderer`、controller、ports 和 pass 编排。
+- [`renderer/truvis-renderer/README.md`](../renderer/truvis-renderer/README.md)：`TruvisRenderer`、controller、ports 和 pass 编排。
 - [`renderer/shader/README.md`](../renderer/shader/README.md)：Renderer shader package、ABI 和 binding owner。
 - [`app/README.md`](../app/README.md)：Tauri 和 standalone 启动壳。
 - [`app/editor/README.md`](../app/editor/README.md)：Web Editor 构建与 Tauri transport。

@@ -133,9 +133,9 @@ RenderThread 退出后销毁 child HWND，随后停止 notification dispatcher�
 
 ## 代码与操作入口
 
-- 协议与 endpoint：`renderer/editor/bridge/src/`
+- 协议与 endpoint：`renderer/editor/truvis-editor-bridge/src/`
 - Tauri IPC owner：`app/truvis/src/editor_ipc.rs`
 - WebView event capability：`app/truvis/capabilities/main-editor.json`
-- Renderer ports 与 controller：`renderer/truvis/src/renderer_ports.rs`、`renderer/truvis/src/editor_controller.rs`
+- Renderer ports 与 controller：`renderer/truvis-renderer/src/renderer_ports.rs`、`renderer/truvis-renderer/src/editor_controller.rs`
 - 页面 transport：`app/editor/web/src/transport/`
 - 开发、构建和运行参数：`app/editor/README.md`

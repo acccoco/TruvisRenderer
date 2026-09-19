@@ -160,7 +160,7 @@ loader 完成、GPU copy 入队、timeline completion、shader-visible publish �
 
 - CPU：[`asset_system.rs`](../../engine/e30-world/truvis-world/src/asset_system.rs)、[`scene_store.rs`](../../engine/e30-world/truvis-world/src/scene_store.rs)
 - GPU：[`render_asset_system.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_asset_system.rs)、[`render_world.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_world.rs)
-- Cornell 验证：[`cornell_renderer.rs`](../../renderer/samples/cornell/src/cornell_renderer.rs)
+- Cornell 验证：[`cornell_renderer.rs`](../../renderer/samples/cornell-renderer/src/cornell_renderer.rs)
 
 `cargo test -p truvis-world`（4 项）、`cargo check -p truvis-render-runtime -p cornell-renderer -p cornell-app` 和
 `just cornell` 已通过构建并启动到渲染循环；启动日志观察到 FBX 导入 11 个 runtime instance、sky texture 发布和 sky

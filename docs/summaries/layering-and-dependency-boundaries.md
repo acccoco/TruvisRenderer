@@ -84,13 +84,13 @@ flowchart LR
   `TruvisDesktop`、`EditorIpc`、dialog、capabilities、icons 和关闭顺序。
 - `app/editor/web` 保存 React/TypeScript UI 和 Tauri transport。
 - `app/samples/*` 是薄 binary crate，只处理日志、图标、窗口参数和 `StandaloneWinitHost`。
-- binary 名保持 `triangle`、`shader-toy`、`rt-cornell` 和 `truvis-app`。
+- binary 名保持 `triangle`、`shader-toy-renderer`、`rt-cornell` 和 `truvis-app`。
 
 App 不引用 `truvis-world`、`truvis-gfx`、`truvis-render-runtime`、`truvis-render-graph` 或具体 pass crate。
 
 ## Editor 通信边界
 
-`renderer/editor/bridge` 中的 `truvis-editor-bridge` 仅定义 DTO、oneshot reply 和有界 channel endpoint，
+`renderer/editor/truvis-editor-bridge` 中的 `truvis-editor-bridge` 仅定义 DTO、oneshot reply 和有界 channel endpoint，
 不依赖 Tauri、GameWorld、Runtime 或 GPU 类型。
 
 ```text

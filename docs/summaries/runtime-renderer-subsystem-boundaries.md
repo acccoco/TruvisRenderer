@@ -54,7 +54,7 @@ RenderRuntime
   `SelectionOutlineSubsystem` 和 `CoordinateGizmoSubsystem` 等具体能力。
 
 主体 Truvis Renderer 的具体组合、UI/selection owner 和 pass 顺序见
-[`renderer/truvis/README.md`](../../renderer/truvis/README.md)；
+[`renderer/truvis-renderer/README.md`](../../renderer/truvis-renderer/README.md)；
 Editor 协议与线程边界见 [`editor-subsystem.md`](editor-subsystem.md)。
 
 ## Ctx 裁剪契约

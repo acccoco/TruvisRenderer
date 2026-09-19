@@ -5,11 +5,11 @@ Web 只保存可丢弃的 scene、selection 和 material 投影。
 
 ## 边界
 
-- `renderer/editor/bridge`：Rust DTO、每请求 oneshot reply，以及 Frontend/Renderer 两端的有界 channel。
+- `renderer/editor/truvis-editor-bridge`：Rust DTO、每请求 oneshot reply，以及 Frontend/Renderer 两端的有界 channel。
 - `app/editor/web`：Vite + React + TypeScript 页面；真实 backend 只通过 Tauri invoke/event 访问。
 - `app/truvis/src/editor_ipc.rs`：Tauri request、notification dispatcher、两秒 timeout 和 shutdown owner。
-- `renderer/truvis/src/editor_controller.rs`：Editor DTO 到 `GameWorld` API 和 SlotMap handle 的适配器。
-- `renderer/truvis/src/desktop_command.rs`：本地特权命令的渲染侧消费者，不属于通用 Editor DTO。
+- `renderer/truvis-renderer/src/editor_controller.rs`：Editor DTO 到 `GameWorld` API 和 SlotMap handle 的适配器。
+- `renderer/truvis-renderer/src/desktop_command.rs`：本地特权命令的渲染侧消费者，不属于通用 Editor DTO。
 
 ```text
 Tauri WebView
@@ -26,7 +26,7 @@ Bridge 和 Renderer 层都禁止依赖 Tauri。`EditorIpc` 不解释领域请求
 
 ## 协议与 IPC
 
-Rust 协议类型定义在 `renderer/editor/bridge/src/protocol/`，TypeScript 位于
+Rust 协议类型定义在 `renderer/editor/truvis-editor-bridge/src/protocol/`，TypeScript 位于
 `app/editor/web/src/protocol/generated/`，由 `ts-rs` 生成，禁止手工修改。`create_editor_bridge` 返回
 `FrontendEndpoint` 与 `RendererEndpoint`：
 
