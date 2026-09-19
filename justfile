@@ -16,7 +16,8 @@ build-all: editor-web shader cxx
 [group('2 资源生成与构建')]
 fetch-res *resource_names:
     #!nu
-    let resource_names = '{{ resource_names }}' | split row ' ' | compact
+    # just 无参数时会插入一个空字符串；过滤后再构造 cargo 参数，避免空字符串被当成资源名。
+    let resource_names = '{{ resource_names }}' | split row ' ' | where {|name| $name != '' }
     let args = ['run', '--bin', 'fetch_res', '--'] ++ $resource_names
     cargo ...$args
 
