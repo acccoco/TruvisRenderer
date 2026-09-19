@@ -112,6 +112,8 @@ class SceneExporter:
             export_format="GLTF_SEPARATE",
             export_texture_dir="textures",
             export_image_format="AUTO",
+            # prepare_meshes 会改变 Blender 的选择状态；导出整棵 scene，避免漏掉 camera、light 或未选中的 mesh。
+            use_selection=False,
             export_tangents=True,
             export_cameras=True,
             export_lights=True,
