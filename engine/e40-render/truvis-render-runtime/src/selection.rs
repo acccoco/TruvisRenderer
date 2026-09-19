@@ -1,12 +1,12 @@
 //! GameWorld 语义的选择渲染接口。
 //!
-//! 本模块只暴露 CPU `GameWorld` 层可以理解的选择描述：`InstanceHandle + submesh_index`。
+//! 本模块只暴露 CPU `GameWorld` 层可以理解的选择描述：`MeshInstanceHandle + submesh_index`。
 //! GPU instance slot、draw cache 和 ready gate 都留在 runtime 内部解析，避免 Renderer 或 pass
 //! 依赖 RenderWorld 的私有数据结构。
 
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_render_foundation::frame_label::FrameLabel;
-use truvis_world::guid_new_type::InstanceHandle;
+use truvis_world::guid_new_type::MeshInstanceHandle;
 
 /// CPU `GameWorld` 语义下的单个 submesh 选择。
 ///
@@ -15,7 +15,7 @@ use truvis_world::guid_new_type::InstanceHandle;
 /// 阶段根据当前 prepare 快照决定是否真的存在可绘制 draw。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WorldSubmeshSelection {
-    pub instance: InstanceHandle,
+    pub instance: MeshInstanceHandle,
     pub submesh_index: u32,
 }
 

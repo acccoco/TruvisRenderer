@@ -1,4 +1,4 @@
-use crate::guid_new_type::TextureHandle;
+use crate::guid_new_type::TextureAssetHandle;
 
 pub use truvis_asset::handle::{CoverageMode, MaterialClass};
 pub use truvis_asset::material_texture::{TextureChannel, TextureSlot};
@@ -6,8 +6,8 @@ pub use truvis_asset::material_texture::{TextureChannel, TextureSlot};
 /// CPU scene 中的材质语义参数。
 ///
 /// `MaterialData` 是 `GameWorld` facade 和 `SceneStore` 对外使用的材质数据形状。
-/// texture 引用使用 `TextureHandle`，因此 Renderer、instance、raycast 和 render-side
-/// manager 不需要知道 `AssetHub` 内部 loader handle。GPU material slot、bindless
+/// texture 引用使用 `TextureAssetHandle`，因此 Renderer、instance、raycast 和 render-side
+/// manager 不需要知道 `AssetLoadService` 内部 loader handle。GPU material slot、bindless
 /// texture binding 和 per-FIF material buffer 仍由 `RenderWorld` 内部 manager 维护。
 /// `class` 是 CPU -> GPU 光学类别的权威来源；`coverage` 单独表达 alpha mask 可见性。
 /// `base_color.w` 只作为 `CoverageMode::AlphaMask` 的 alpha factor，与 diffuse 贴图 alpha
@@ -20,7 +20,7 @@ pub struct MaterialData {
     pub class: MaterialClass,
     pub coverage: CoverageMode,
 
-    pub textures: [Option<TextureSlot<TextureHandle>>; TextureChannel::COUNT],
+    pub textures: [Option<TextureSlot<TextureAssetHandle>>; TextureChannel::COUNT],
     pub normal_scale: f32,
     pub emissive_factor: glam::Vec3,
     pub name: String,

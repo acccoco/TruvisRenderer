@@ -28,14 +28,15 @@ UV0 左上为 (0,0)，UV1 为 UV0 的 (1-u, 1-v)。所有 panel 共用两张图�
 | 17 four_slots | 四槽分别使用不同映射；检查 MR 的 G/B、普通表面的 emission、normal scale=0.6 |
 
 本资产用于手动/运行时对照，不是新的单元测试。它提供确定的输入和部分数值预期，不是已验证的参考渲染图。
-可通过既有 `GameWorld::request_model_import` 导入；当前应用的启动模型由 `TruvisRenderer::request_model` 指定。
+可通过既有 `GameWorld::import_scene` 导入；当前应用的启动模型由 `TruvisRenderer::request_scene` 指定，
+完成后由 Renderer 根据 `SceneData` 显式创建 instance。
 CPU 导入、身份复用、编辑校验、shader 执行、画面对照和跨 FIF 更新须分别记录，不能相互替代。
 
 ## 当前输入与采样契约
 
 四槽索引为 BaseColor=0、MetallicRoughness=1、Normal=2、Emissive=3。图片身份与槽级映射分离，
 颜色/emissive 使用 sRGB image/view，MR/normal 使用 UNORM image/view；来源相同但解释不同的图片
-对应独立 `TextureHandle`。本 fixture 有两张来源图片，其中颜色/MR 共源形成两个 handle，
+对应独立 `TextureAssetHandle`。本 fixture 有两张来源图片，其中颜色/MR 共源形成两个 handle，
 normal 使用第三个 handle。所有材质采样都执行槽级 TRS 后读取 LOD 0。
 Filter 仅有 Nearest/Linear，来自 glTF magFilter（未指定则 Linear）；输入 minFilter 不进入内部数据。
 不建立 Occlusion 槽，也不附加 AO 路径权重；共享 ORM 图片仍由 MR 引用保留。
@@ -102,7 +103,7 @@ Offline、Phong 和同参数 FBX 亮度对照仍需另行采集。截图与临�
 - 底层 Vulkan min/mag 与固定 mipmapMode 参数仍是有效 API 配置；非材质 Bindless API、image view subresource range、ReSTIR disocclusion 保持原职责，均不是旧材质兼容层。
 - 本次采用计划推荐的单 Filter 方案，不保留独立材质 min/mag、旧 Emissive 索引转换、第五空槽或协议迁移器。
 
-Review 调用链：`GltfSceneReader -> RawMaterialData -> SceneAssetIngestor/MaterialData -> GpuMaterialStore -> MaterialAccess`；
+Review 调用链：`GltfSceneReader -> RawMaterialData -> AssetSystem/MaterialData -> GpuMaterialStore -> MaterialAccess`；
 编辑为 `Inspector -> MaterialPatch -> EditorController -> SceneStore -> per-FIF material upload`。
 主要风险分别由 ABI stride/offset、Emissive NEE 与真实编辑、18 sampler 编码与 GPU 对照验证。
 保留 CPU World 权威、图片身份、GPU owner、FIF 生命周期、外观 revision、线程与 RenderGraph 顺序。

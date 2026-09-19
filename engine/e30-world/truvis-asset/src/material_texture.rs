@@ -104,7 +104,7 @@ impl TextureSampler {
     }
 }
 
-/// 一次材质纹理引用。泛型只区分 RawTextureSource 与 TextureHandle，不建立资源管理抽象。
+/// 一次材质纹理引用。泛型只区分 RawTextureSource 与 TextureAssetHandle，不建立资源管理抽象。
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextureSlot<T> {
     pub texture: T,

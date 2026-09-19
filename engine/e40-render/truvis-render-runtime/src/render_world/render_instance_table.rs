@@ -5,7 +5,7 @@ use slotmap::SecondaryMap;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_world::SceneReadView;
 use truvis_world::components::instance::Instance;
-use truvis_world::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle};
+use truvis_world::guid_new_type::{MeshInstanceHandle, MaterialAssetHandle, MeshAssetHandle};
 
 use crate::render_world::render_data::{GpuInstanceSlot, InstanceRenderData, MeshRenderData, RenderData};
 use crate::render_world::render_resolver::{MaterialSlotResolver, MeshRenderResolver};
@@ -48,25 +48,25 @@ struct RetiredSlot {
 /// 保证 after_prepare 中的同步查询能把 GPU world 结果还原成 CPU world handle。
 #[derive(Clone)]
 pub(crate) struct RayCastInstanceRecord {
-    pub(crate) instance: InstanceHandle,
-    pub(crate) mesh: MeshHandle,
-    pub(crate) materials: Vec<MaterialHandle>,
+    pub(crate) instance: MeshInstanceHandle,
+    pub(crate) mesh: MeshAssetHandle,
+    pub(crate) materials: Vec<MaterialAssetHandle>,
 }
 
 /// Render-side runtime instance manager.
 ///
-/// 它为 `InstanceHandle` 分配生命周期内稳定的 GPU instance slot，并在 mesh/material
+/// 它为 `MeshInstanceHandle` 分配生命周期内稳定的 GPU instance slot，并在 mesh/material
 /// 都 GPU ready 前保持 pending，避免 draw/TLAS 访问未就绪资源。
 /// manager 是 CPU scene read view 与 runtime 私有 `RenderData` 之间的翻译层：`GameWorld`
 /// 保存语义实例，RenderWorld 只接收按稳定 slot 排序、依赖已就绪的渲染快照。
 pub struct RenderInstanceTable {
-    bindings: SecondaryMap<InstanceHandle, InstanceBinding>,
+    bindings: SecondaryMap<MeshInstanceHandle, InstanceBinding>,
     free_slots: Vec<GpuInstanceSlot>,
     retired_slots: Vec<RetiredSlot>,
     current_frame_id: u64,
     ray_cast_records: Vec<Option<RayCastInstanceRecord>>,
     motion_history_reset_pending: bool,
-    pending_submission: Vec<(InstanceHandle, glam::Mat4)>,
+    pending_submission: Vec<(MeshInstanceHandle, glam::Mat4)>,
 }
 
 /// instance 阶段对 RenderWorld 对账暴露的结构化结果。
@@ -131,14 +131,14 @@ impl RenderInstanceTable {
         self.ray_cast_records.get(instance_slot as usize)?.as_ref()
     }
 
-    /// 将 CPU `InstanceHandle + submesh_index` 解析为当前 prepare 快照里的稳定 GPU draw key。
+    /// 将 CPU `MeshInstanceHandle + submesh_index` 解析为当前 prepare 快照里的稳定 GPU draw key。
     ///
     /// 该接口只做只读查询，不激活 pending instance，也不重新遍历 CPU scene。`ray_cast_records`
     /// 与 raster draw cache 在同一次 prepare 中生成，因此这里用它校验 slot 仍属于同一个
-    /// `InstanceHandle`，并用 material 数量作为 instance-local submesh 边界。
+    /// `MeshInstanceHandle`，并用 material 数量作为 instance-local submesh 边界。
     pub(crate) fn resolve_active_raster_submesh(
         &self,
-        instance: InstanceHandle,
+        instance: MeshInstanceHandle,
         submesh_index: u32,
     ) -> Option<(u32, u32)> {
         let binding = self.bindings.get(instance)?;
@@ -365,7 +365,7 @@ impl RenderInstanceTable {
         result
     }
 
-    fn register_instance(&mut self, handle: InstanceHandle, instance: &Instance, source_revision: u64) {
+    fn register_instance(&mut self, handle: MeshInstanceHandle, instance: &Instance, source_revision: u64) {
         // 新实例先拿到稳定 slot，但初始状态保持 pending；ready gate 由 resolver 决定。
         let slot = self.free_slots.pop().expect("RenderInstanceTable: GPU instance slots exhausted");
         self.bindings.insert(
@@ -383,7 +383,7 @@ impl RenderInstanceTable {
         log::trace!("RenderInstanceTable: register handle={:?} stable_slot={}", handle, slot.as_u32());
     }
 
-    fn retire_instance_binding(&mut self, handle: InstanceHandle) -> bool {
+    fn retire_instance_binding(&mut self, handle: MeshInstanceHandle) -> bool {
         if let Some(binding) = self.bindings.remove(handle) {
             let was_active = binding.state == InstanceState::Active;
             self.retired_slots.push(RetiredSlot {

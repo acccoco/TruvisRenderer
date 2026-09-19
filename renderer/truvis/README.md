@@ -15,7 +15,7 @@ realtime/offline 渲染子系统。它依赖 engine 与公共 Renderer capabilit
 ## 状态所有权
 
 - CPU scene 权威状态属于 runtime-owned `GameWorld`；Renderer 只在合法 update 阶段通过 `GameWorld` facade 修改它。
-- 当前 selection 属于 `TruvisRenderer`，保存 `InstanceHandle + submesh_index`，不保存 GPU instance slot。
+- 当前 selection 属于 `TruvisRenderer`，保存 `MeshInstanceHandle + submesh_index`，不保存 GPU instance slot。
 - camera、input、overlay 和 debug image 选择属于 Renderer；runtime 只消费 `RenderView` 或稳定选择语义。
 - `RealtimeRenderSubsystem` 与 `OfflineRenderSubsystem` 都由 Renderer 持有。两者拥有各自 target、累计和 temporal 状态，
   不把窗口尺寸资源下沉到 `RenderRuntime`。

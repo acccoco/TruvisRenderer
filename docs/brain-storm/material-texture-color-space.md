@@ -18,15 +18,15 @@ glTF 的槽级解释与 factor 语义来自 [glTF 2.0 规范](https://registry.k
 
 ### 必须保持的边界
 
-- `TextureHandle` 指向一种确定的上传格式。同一来源同时作颜色图和数据图时，它们是两个不同的 texture handle；相同来源且相同解释则复用。不得因导入或编辑顺序改变既有 handle 的解释。
-- `TextureLoadDesc` 仅为一次任务的输入；长期身份仍由 `SceneAssetIngestor` 管理。`TextureBytes` 的像素表示与上传格式必须一致，不让调用方另传可与像素不符的 Vulkan format。
+- `TextureAssetHandle` 指向一种确定的上传格式。同一来源同时作颜色图和数据图时，它们是两个不同的 texture handle；相同来源且相同解释则复用。不得因导入或编辑顺序改变既有 handle 的解释。
+- `TextureLoadDesc` 仅为一次任务的输入；长期身份仍由 `AssetSystem` 管理。`TextureBytes` 的像素表示与上传格式必须一致，不让调用方另传可与像素不符的 Vulkan format。
 - 纹理槽保留 UV、transform、sampler；颜色空间不进入 `MaterialTexture` shader ABI。材质最终取其纹理 handle 对应的唯一 SRV；没有槽级双 view 选择开关。
 - CPU `AssetSystem` 拥有权威资源数据；GPU image/view、bindless descriptor、迟到完成及 FIF 退役仍由 RenderThread 上的 `RenderAssetSystem` 负责。现有 prepare 顺序、线程边界和 RenderGraph pass 顺序不变。
 - BaseColor RGB = 线性采样 RGB × 线性材质 RGB factor；Alpha = 纹理 Alpha × 材质 Alpha factor。无贴图时采样中性值 1。Emissive 沿用独立发光因子乘法，Normal/MR 的语义不变。
 
 ## 实施前基线与已清理差异
 
-`GltfSceneReader` 和 `TruvixxSceneReader` 原已输出四种 `TextureChannel`；FBX diffuse 对应 BaseColor。实施前，`SceneAssetIngestor` 仅按图片来源去重；`TextureLoadDesc` 不携带解释；普通图片统一上传为 UNORM，`GpuMaterialStore` 以槽索引选择 sRGB view。这些旧契约现已移除。
+`GltfSceneReader` 和 `TruvixxSceneReader` 原已输出四种 `TextureChannel`；FBX diffuse 对应 BaseColor。实施前，`AssetSystem` 仅按图片来源去重；`TextureLoadDesc` 不携带解释；普通图片统一上传为 UNORM，`GpuMaterialStore` 以槽索引选择 sRGB view。这些旧契约现已移除。
 
 此前亮度排查实验跳过 base-color RGB factor，并仅发布 UNORM view；现已恢复统一 factor 乘法，`phong.ps.slang` 继续复用 `MaterialAccess::base_color_rgba`，实验说明已从活跃 summary 删除。
 
@@ -36,11 +36,11 @@ glTF 的槽级解释与 factor 语义来自 [glTF 2.0 规范](https://registry.k
 
 在 `truvis-asset` 定义仅有 `Srgb`、`Linear` 的 `TextureColorSpace`；把解释作为 `TextureLoadDesc` 的显式请求参数，File 与 Embedded 路径使用同一契约。用 `TextureChannel` 的一个现有职责方法统一映射：BaseColor/Emissive → `Srgb`，Normal/MetallicRoughness → `Linear`。glTF/FBX 导入仍输出现有四槽，不创建第二套 importer 配置或按后缀判断颜色空间的 helper。
 
-`SceneAssetIngestor::register_model_texture_ref` 使用当前槽传来的解释注册资源。程序化 `GameWorld::register_texture` 显式接收解释；当前应用的 LDR 天空和 `request_sky_texture_from_path` 传 `Linear`。Editor 当前只编辑已存在纹理槽的映射参数，不提供创建或替换纹理的命令，因而不新增 Editor DTO/协议或界面选项。将来若增加该功能，必须使用同一显式注册入口。
+`AssetSystem::register_scene_texture` 使用当前槽传来的解释注册资源。程序化 `GameWorld::import_texture` 显式接收解释；当前应用的 LDR 天空和 `request_sky_texture_from_path` 传 `Linear`。Editor 当前只编辑已存在纹理槽的映射参数，不提供创建或替换纹理的命令，因而不新增 Editor DTO/协议或界面选项。将来若增加该功能，必须使用同一显式注册入口。
 
 ### 2. 使资源身份与上传数据一致
 
-`SceneAssetIngestor` 的外部路径键改为 `(canonical path, TextureColorSpace)`，内嵌键改为 `(scene path, image id, TextureColorSpace)`；对应的查找、遗忘、删除和异步完成映射一并更新。同一 glTF image 同时用于 BaseColor 与 MR 时形成两个 handle、两次解码和上传；先接受这点少量资源开销，不引入共享 encoded bytes 数据库、按 view 分叉的资源所有权或内容哈希。删除任一变体时仍按现有引用检查和 FIF 退役，不牵连另一变体。
+`AssetSystem` 的外部路径键改为 `(canonical path, TextureColorSpace)`，内嵌键改为 `(scene path, image id, TextureColorSpace)`；对应的查找、遗忘、删除和异步完成映射一并更新。同一 glTF image 同时用于 BaseColor 与 MR 时形成两个 handle、两次解码和上传；先接受这点少量资源开销，不引入共享 encoded bytes 数据库、按 view 分叉的资源所有权或内容哈希。删除任一变体时仍按现有引用检查和 FIF 退役，不牵连另一变体。
 
 `TexturePixels` 用一个 RGBA8 payload 加颜色空间字段、一个 RGBA16F payload 表达格式差异；避免分别实现两套相同的字节读取、extent 校验和生命周期逻辑。`TextureBytes::format()` 据此选择 `R8G8B8A8_SRGB`、`R8G8B8A8_UNORM` 或 `R16G16B16A16_SFLOAT`。RGBA8 的像素字节保持图片解码后的值；浮点 HDR/EXR 必须为 `Linear`，若收到 `Srgb` 请求则明确失败，而非悄悄改变资源解释。用于天空分布的 `TextureBytes::linear_rgb()` 应按自身格式返回线性 RGB，不能把 sRGB 原始字节误当作线性辐亮度；当前天空仍按 Linear 注册。
 

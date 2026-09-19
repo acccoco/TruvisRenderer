@@ -9,7 +9,7 @@ use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_shader_binding::gpu;
-use truvis_world::guid_new_type::TextureHandle;
+use truvis_world::guid_new_type::TextureAssetHandle;
 use truvis_world::SceneReadView;
 
 use crate::bindings::bindless_manager::BindlessSrvHandle;
@@ -36,11 +36,11 @@ pub struct UploadedAssetTexture {
 
 /// 渲染侧纹理资产上传与绑定缓存。
 ///
-/// 它是 `TextureHandle -> shader texture binding` 的唯一转换点。加载失败或尚未完成上传时，
+/// 它是 `TextureAssetHandle -> shader texture binding` 的唯一转换点。加载失败或尚未完成上传时，
 /// `TextureResolver` 会返回 fallback 纹理，使材质 GPU 数据始终可被 shader 安全读取。
 pub struct GpuTextureStore {
-    textures: SecondaryMap<TextureHandle, UploadedAssetTexture>,
-    pending_textures: HashSet<TextureHandle>,
+    textures: SecondaryMap<TextureAssetHandle, UploadedAssetTexture>,
+    pending_textures: HashSet<TextureAssetHandle>,
     fallback: UploadedAssetTexture,
     current_frame_id: u64,
 }
@@ -184,7 +184,7 @@ impl GpuTextureStore {
     /// 检查发现删除，timeline 完成后只销毁 image，不会重新 publish。
     pub fn remove_textures(
         &mut self,
-        handles: &[TextureHandle],
+        handles: &[TextureAssetHandle],
         gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
     ) {
@@ -231,12 +231,12 @@ impl GpuTextureStore {
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
-        handle: TextureHandle,
+        handle: TextureAssetHandle,
         image: GfxImage,
     ) {
         let image_format = image.format();
         // 只有上传完成的 image 才进入全局资源管理器和 bindless 表。
-        // 从这一步开始，材质桥接层解析同一个 TextureHandle 时会拿到真实 SRV。
+        // 从这一步开始，材质桥接层解析同一个 TextureAssetHandle 时会拿到真实 SRV。
         let image_handle = gfx_resource_registry.register_image(image);
         let view_handle = gfx_resource_registry.get_or_create_image_view(
             device_ctx,
@@ -256,7 +256,7 @@ impl GpuTextureStore {
         self.textures.insert(handle, texture);
     }
 
-    pub(crate) fn needs_upload(&self, handle: TextureHandle) -> bool {
+    pub(crate) fn needs_upload(&self, handle: TextureAssetHandle) -> bool {
         !self.textures.contains_key(handle) && !self.pending_textures.contains(&handle)
     }
 
@@ -292,17 +292,17 @@ impl GpuTextureStore {
 }
 
 impl TextureResolver for GpuTextureStore {
-    fn is_texture_ready(&self, handle: TextureHandle) -> bool {
+    fn is_texture_ready(&self, handle: TextureAssetHandle) -> bool {
         self.textures.contains_key(handle)
     }
 
-    fn texture_revision(&self, handle: TextureHandle) -> u64 {
+    fn texture_revision(&self, handle: TextureAssetHandle) -> u64 {
         // 每个 generational handle 的内容不可变，因此只有 fallback -> ready 一次发布；
         // handle 本身区分删除后创建的新资源，0/1 足以表达这一代资源的 binding stamp。
         u64::from(self.textures.contains_key(handle))
     }
 
-    fn resolve_texture(&self, handle: TextureHandle) -> TextureBinding {
+    fn resolve_texture(&self, handle: TextureAssetHandle) -> TextureBinding {
         // 解析接口永远返回可写入 material buffer 的 binding。未 ready 或失败的 texture
         // 走 fallback，避免 shader 读取空 bindless 句柄。
         let texture = self.textures.get(handle).unwrap_or(&self.fallback);

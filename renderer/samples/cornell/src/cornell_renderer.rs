@@ -6,6 +6,7 @@ use truvis_render_loop::renderer::{Renderer, RendererInitCtx, RendererResizeCtx,
 use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 use truvis_shader_binding::gpu;
 use truvis_world::GameWorld;
+use truvis_world::{components::instance::Instance, guid_new_type::SceneImportHandle};
 
 use renderer_imgui::{DebugImageSelectorView, DebugInfoOverlay, ImGuiSubsystem};
 use renderer_kit::camera::Camera;
@@ -26,10 +27,12 @@ pub struct CornellRenderer {
     input: InputManager,
     debug_overlay: DebugInfoOverlay,
     render_controls: RenderControlsOverlay,
+    pending_scene_import: Option<SceneImportHandle>,
+    imported_scene_instances: bool,
 }
 
 impl CornellRenderer {
-    fn request_model(world: &mut GameWorld, camera: &mut Camera) {
+    fn request_scene(world: &mut GameWorld, camera: &mut Camera) -> SceneImportHandle {
         camera.position = glam::vec3(-400.0, 1000.0, 1000.0);
         camera.euler_yaw_deg = 330.0;
         camera.euler_pitch_deg = -27.0;
@@ -72,7 +75,30 @@ impl CornellRenderer {
         });
 
         log::info!("Loading model...");
-        world.request_model_import(TruvisPath::assets_path("fbx/cornell-box.fbx"));
+        world.import_scene(TruvisPath::assets_path("fbx/cornell-box.fbx"))
+    }
+
+    fn install_imported_scene(&mut self, world: &mut GameWorld) {
+        if self.imported_scene_instances {
+            return;
+        }
+        let Some(handle) = self.pending_scene_import else {
+            return;
+        };
+        let Some(scene_data) = world.scene_data(handle).cloned() else {
+            return;
+        };
+        for object in scene_data.objects {
+            world
+                .create_mesh_instance(Instance {
+                    name: object.name,
+                    mesh: object.mesh,
+                    materials: object.materials,
+                    transform: object.transform,
+                })
+                .expect("failed to register imported scene instance");
+        }
+        self.imported_scene_instances = true;
     }
 }
 
@@ -81,7 +107,8 @@ impl Renderer for CornellRenderer {
         self.imgui.set_hidpi_factor(ctx.scale_factor);
         self.imgui.set_display_size(ctx.window_size);
 
-        Self::request_model(&mut *ctx.runtime.world, self.camera_controller.camera_mut());
+        self.pending_scene_import =
+            Some(Self::request_scene(&mut *ctx.runtime.world, self.camera_controller.camera_mut()));
 
         self.realtime.init(&mut ctx.runtime);
         self.imgui.init(&mut ctx.runtime);
@@ -97,6 +124,7 @@ impl Renderer for CornellRenderer {
     }
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
+        self.install_imported_scene(ctx.world);
         let delta = std::time::Duration::from_secs_f32(ctx.frame_timing.delta_time_s());
         self.imgui.build_frame(delta, |ui| {
             self.debug_overlay.build_overlay_ui(

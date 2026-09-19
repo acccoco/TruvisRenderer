@@ -68,7 +68,7 @@ CPU 侧语义层，负责 asset 身份、加载状态、scene runtime 身份与 
 
 - `truvis-asset/`：纹理、mesh、material、model 等内容资产的 CPU 身份、去重、加载状态和完成事件；不创建 GPU
   image/buffer、BLAS、bindless index 或 material slot。
-- `truvis-world/`：`GameWorld`、`SceneStore` 和 `AssetHub` 聚合入口；不持有 `Gfx`、GPU resource/binding owner、swapchain 或 frame state。
+- `truvis-world/`：`GameWorld`、`SceneStore` 和 `AssetLoadService` 聚合入口；不持有 `Gfx`、GPU resource/binding owner、swapchain 或 frame state。
 
 ### `e40-render/`
 

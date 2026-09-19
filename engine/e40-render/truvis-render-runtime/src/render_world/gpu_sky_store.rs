@@ -11,7 +11,7 @@ use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::{GfxBufferHandle, GfxImageHandle, GfxImageViewHandle};
 use truvis_shader_binding::gpu;
 use truvis_world::SceneSkyState;
-use truvis_world::guid_new_type::TextureHandle;
+use truvis_world::guid_new_type::TextureAssetHandle;
 
 use crate::bindings::bindless_manager::BindlessSrvHandle;
 use crate::bindings::shader_binding_system::ShaderBindingSystem;
@@ -115,11 +115,11 @@ pub(crate) struct RenderSkyUpdateResult {
 
 /// scene sky 的 runtime 私有桥接层。
 ///
-/// `SceneStore` 只保存 `TextureHandle` 与天空语义；真实 image 由 `GpuTextureStore`
+/// `SceneStore` 只保存 `TextureAssetHandle` 与天空语义；真实 image 由 `GpuTextureStore`
 /// 持有。该 manager 拥有 distribution worker、请求 generation、active/retired Alias
 /// buffer，并保证新 texture 绝不引用旧 texture 的 distribution。
 pub(crate) struct GpuSkyStore {
-    sky_texture: Option<TextureHandle>,
+    sky_texture: Option<TextureAssetHandle>,
     sky_enabled: bool,
     sky_revision: u64,
     fallback: FallbackSkyTexture,
@@ -128,7 +128,7 @@ pub(crate) struct GpuSkyStore {
     retired_distributions: Vec<RetiredSkyDistribution>,
     distribution_builder: SkyDistributionBuilder,
     next_request_id: u64,
-    latest_request: Option<(u64, TextureHandle)>,
+    latest_request: Option<(u64, TextureAssetHandle)>,
     next_distribution_version: u32,
     last_active_distribution_version: u32,
     current_frame_id: u64,
@@ -208,7 +208,7 @@ impl GpuSkyStore {
     /// 共享 texture payload 给单线程 distribution builder，不阻塞渲染线程。
     pub(crate) fn observe_texture_loaded(
         &mut self,
-        handle: TextureHandle,
+        handle: TextureAssetHandle,
         data: &TextureBytes,
         gfx_resource_registry: &mut GfxResourceRegistry,
     ) {
@@ -423,7 +423,7 @@ impl GpuSkyStore {
         self.fallback_distribution.destroy_mut(resource_ctx);
     }
 
-    fn is_latest_request(&self, request_id: u64, texture: TextureHandle) -> bool {
+    fn is_latest_request(&self, request_id: u64, texture: TextureAssetHandle) -> bool {
         self.latest_request == Some((request_id, texture)) && self.sky_texture == Some(texture)
     }
 

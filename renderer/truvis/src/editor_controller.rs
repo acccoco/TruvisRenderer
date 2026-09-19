@@ -15,7 +15,7 @@ use truvis_editor_bridge::{EditorRequestEnvelope, RendererEndpoint};
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_world::GameWorld;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
-use truvis_world::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle, TextureHandle};
+use truvis_world::guid_new_type::{MeshInstanceHandle, MaterialAssetHandle, MeshAssetHandle, TextureAssetHandle};
 
 /// Editor 请求在单帧 update 中的处理预算。
 ///
@@ -241,7 +241,7 @@ impl EditorController {
         Some(Self::selection_dto_from_handles(selection.instance, selection.submesh_index, material))
     }
 
-    fn material_dto(world: &GameWorld, handle: MaterialHandle) -> Option<MaterialDto> {
+    fn material_dto(world: &GameWorld, handle: MaterialAssetHandle) -> Option<MaterialDto> {
         let data = world.material_data(handle)?;
         Some(MaterialDto {
             id: Self::encode_material_id(handle),
@@ -402,7 +402,7 @@ impl EditorController {
             .try_send_notification(EditorNotification::SceneVersionChanged(SceneVersion::from_u64(scene_version)));
     }
 
-    pub(crate) fn notify_selection_changed(&self, selection: Option<(InstanceHandle, u32, MaterialHandle)>) {
+    pub(crate) fn notify_selection_changed(&self, selection: Option<(MeshInstanceHandle, u32, MaterialAssetHandle)>) {
         let selection = selection.map(|(instance, submesh_index, material)| {
             Self::selection_dto_from_handles(instance, submesh_index, material)
         });
@@ -410,9 +410,9 @@ impl EditorController {
     }
 
     fn selection_dto_from_handles(
-        instance: InstanceHandle,
+        instance: MeshInstanceHandle,
         submesh_index: u32,
-        material: MaterialHandle,
+        material: MaterialAssetHandle,
     ) -> SelectionDto {
         SelectionDto {
             instance_id: Self::encode_instance_id(instance),
@@ -427,19 +427,19 @@ impl EditorController {
 }
 
 impl EditorController {
-    fn encode_instance_id(handle: InstanceHandle) -> InstanceId {
+    fn encode_instance_id(handle: MeshInstanceHandle) -> InstanceId {
         InstanceId::new(Self::encode_key("instance", handle))
     }
 
-    fn encode_material_id(handle: MaterialHandle) -> MaterialId {
+    fn encode_material_id(handle: MaterialAssetHandle) -> MaterialId {
         MaterialId::new(Self::encode_key("material", handle))
     }
 
-    fn encode_mesh_id(handle: MeshHandle) -> MeshId {
+    fn encode_mesh_id(handle: MeshAssetHandle) -> MeshId {
         MeshId::new(Self::encode_key("mesh", handle))
     }
 
-    fn encode_texture_id(handle: TextureHandle) -> TextureId {
+    fn encode_texture_id(handle: TextureAssetHandle) -> TextureId {
         TextureId::new(Self::encode_key("texture", handle))
     }
 
@@ -447,11 +447,11 @@ impl EditorController {
         format!("{prefix}:{:016x}", handle.data().as_ffi())
     }
 
-    fn decode_material_id(id: &MaterialId) -> Result<MaterialHandle, EditorError> {
+    fn decode_material_id(id: &MaterialId) -> Result<MaterialAssetHandle, EditorError> {
         Self::decode_key("material", &id.0)
     }
 
-    fn decode_instance_id(id: &InstanceId) -> Result<InstanceHandle, EditorError> {
+    fn decode_instance_id(id: &InstanceId) -> Result<MeshInstanceHandle, EditorError> {
         Self::decode_key("instance", &id.0)
     }
 

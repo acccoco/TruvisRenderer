@@ -14,9 +14,9 @@
 - 负责 CPU scene/assets 到 render-side GPU 表示的桥接，包括 texture upload、mesh upload、
   material slot、instance slot、GPU scene buffer、BLAS/TLAS 和 raster draw cache。
 - 在 `prepare` 完成后提供 runtime-owned 同步 raycast 服务，把 GPU hit 的 instance slot
-  与 submesh index 转回 CPU `InstanceHandle` / `MeshHandle` / `MaterialHandle`。
+  与 submesh index 转回 CPU `MeshInstanceHandle` / `MeshAssetHandle` / `MaterialAssetHandle`。
 - 提供 `WorldSubmeshSelection` 与只读 selection raster view，把 Renderer 提供的 CPU
-  `InstanceHandle + submesh_index` 解析到当前 prepare 快照中的 active raster draw；pending、stale
+  `MeshInstanceHandle + submesh_index` 解析到当前 prepare 快照中的 active raster draw；pending、stale
   或 submesh 越界选择只会跳过绘制，不向上层暴露 GPU slot。
 - 负责 surface/swapchain/present image wrapper、acquire/present semaphore 与窗口 resize 重建。
 - 不负责窗口事件循环、具体 Renderer/子系统编排、GUI RenderGraph 适配、Assimp 文件导入或具体 pass 逻辑。
@@ -42,7 +42,7 @@
 - `RenderWorld` 是 runtime 私有的 scene GPU 翻译层，持有 `RenderInstanceTable`、`AnalyticLightTable`、
   `RenderEmissiveLightTable`、scene/instance/geometry/indirect buffer、raster draw cache 和 `SceneTlas`；
   prepare 阶段从 CPU scene 最终状态对账，render pass 只通过 `RenderSceneView` 读取它。
-- 默认 sky 通过 `GameWorld` facade 注册为普通 `TextureHandle`，再写入 `SceneStore::SceneSkyState`；
+- 默认 sky 通过 `GameWorld` facade 注册为普通 `TextureAssetHandle`，再写入 `SceneStore::SceneSkyState`；
   `GpuSkyStore` 从 `GameWorld::scene_view()` 读取 sky state，持有常驻纯色 fallback sky、单线程
   `SkyDistributionBuilder`、request generation 与 active/retired distribution。当前 sky CPU texture bytes
   到达后异步构建最高 `4096x2048` 的 Alias 表，再通过共享 transfer timeline 异步上传；
@@ -56,10 +56,10 @@
 - `GpuMeshStore` 扫描 `SceneReadView` 中不可变的 mesh CPU 数据，在 graphics queue 上按 submesh
   创建 vertex/index buffer 和 `RtGeometry`，并为同一个 mesh 构建一个包含多 geometry input 的 BLAS；mesh 完成前不会被 `RenderInstanceTable` 激活。
   CPU registry 中已删除的 mesh 会移除 ready cache，并阻止 late BLAS/geometry completion 重新进入 resolver。
-- `GpuMaterialStore` 扫描 CPU material registry，维护 `MaterialHandle -> stable material slot` 映射、FIF
+- `GpuMaterialStore` 扫描 CPU material registry，维护 `MaterialAssetHandle -> stable material slot` 映射、FIF
   material buffer、dirty region 上传和延迟 slot 回收；texture binding revision 负责发现异步 ready。
   它在资源对账阶段复制 CPU 材质参数并生成 render-side prepared snapshot，写 GPU material buffer 时只消费这份副本。
-- `RenderInstanceTable` 扫描 CPU instance membership，同步 `InstanceHandle -> GpuInstanceSlot`，在 mesh/material 都 GPU ready 前保持 pending，并按稳定 slot 输出
+- `RenderInstanceTable` 扫描 CPU instance membership，同步 `MeshInstanceHandle -> GpuInstanceSlot`，在 mesh/material 都 GPU ready 前保持 pending，并按稳定 slot 输出
   active render list，同时为同步 raycast 生成当前 prepare 快照的 slot 反查表。每帧 motion history 推进仍属于
   instance manager 自身的 temporal 生命周期维护，不参与 dirty 传播。
 - `AnalyticLightTable` 对账 analytic light revision，按 FIF 持有 point / spot / area light structured buffer；
@@ -104,7 +104,7 @@
   在剩余时间大于 1 ms 时短周期 `park_timeout(1 ms)`，最后 1 ms 内有界自旋；重负载超过间隔时不额外等待、不补帧。
 - `begin_frame` 是每帧资源回收入口：由 `FrameTiming` 一次采样更新 delta/total time、等待当前 FIF slot、重置 frame command pool、
   清理延迟释放队列，并把当前 frame id 传给 bindless、`RenderAssetSystem` 与 `RenderWorld`；旧 sky distribution
-  跨过 FIF 窗口后由 `GfxResourceRegistry` 销毁。AssetHub 事件只在
+  跨过 FIF 窗口后由 `GfxResourceRegistry` 销毁。AssetLoadService 事件只在
   prepare 边界通过 `GameWorld::poll_asset_loads()` 收敛。
 - `update_phase` 同步 present extent 到 `FrameRenderState`、acquire 当前 swapchain image，并返回 CPU update Ctx。具体窗口尺寸 render target 由 Renderer/子系统在 init/resize/shutdown 阶段管理。
 - Renderer update 结束后，`RenderLoop` 调用 `sync_dlss_options_frame_state`，把 `DlssOptions`
@@ -130,8 +130,9 @@
   `RenderAssetSystem::sync` 按 CPU registry membership 清理 texture/mesh，发布 upload completion，并扫描
   material source revision 与 texture binding revision。removed texture/mesh/material 会在下一次完整对账时
   从对应 render manager 移除，避免 stale upload 或 stale slot。model ready/failed 状态由 `GameWorld` 内部的
-  `SceneAssetIngestor` 在 asset sync 阶段写回
-  import status，并自动完成 loader prefab 到 `SceneStore` runtime handle 的翻译。
+  `AssetSystem` 在 asset sync 阶段写回
+  import status 并发布 `SceneData`；外部 Renderer 根据 scene data 显式完成到 `SceneStore`
+  runtime handle 的翻译。
 - `RenderRuntime::prepare` 是 update 与 render 之间的固定桥接阶段，按 bindless、`RenderWorld::prepare_render_data`、
   per-frame data 的顺序准备渲染可见数据。
 - `GpuMaterialStore` 在 prepare asset sync 中扫描 material source revision；scene material 变化会推进 material
@@ -140,7 +141,7 @@
   dirty slot 局部写入 material buffer，不再在上传阶段回读 CPU owner。
 - `GpuSkyStore` 在 prepare 中直接对账 `SceneSkyState`，并在资源表提供 texture bytes 后通过
   `Arc` 共享当前 sky texture bytes 给 worker。worker 同时最多一个 in-flight build，连续切换时只保留最新 pending
-  request；CPU/GPU completion 必须同时匹配最新 request id 与 `TextureHandle` 才能发布。
+  request；CPU/GPU completion 必须同时匹配最新 request id 与 `TextureAssetHandle` 才能发布。
   在 prepare 阶段通过 `TextureResolver` 查询当前 sky texture 是否 GPU ready：image ready 而 distribution 未 ready
   时显示真实 HDRI 并使用 1x1 uniform sphere PDF；无效/全黑分布也保持 uniform。sky revision、真实 sky 切换或
   distribution 版本变化时重置累积帧。

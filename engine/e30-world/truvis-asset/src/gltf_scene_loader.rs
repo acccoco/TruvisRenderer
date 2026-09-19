@@ -2,8 +2,8 @@
 //!
 //! 本模块运行在 asset 后台线程中，职责只到“从 glTF 文件复制出 owned CPU 数据”。
 //! 它不分配 asset handle、不创建 GPU resource，也不把 glTF crate 的借用对象传出任务。
-//! 返回给 `AssetHub` 的数据必须保持为 `RawSceneData` 这套现有边界格式，后续 texture
-//! 路径解析、scene handle 分配和 render upload event 生成统一收敛在 `SceneAssetIngestor`。
+//! 返回给 `AssetLoadService` 的数据必须保持为 `RawSceneData` 这套现有边界格式，后续 texture
+//! 路径解析、scene handle 分配和 render upload event 生成统一收敛在 `AssetSystem`。
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use gltf::buffer;
 
 use crate::material_texture::{TextureChannel, TextureSlot, TextureTransform, TextureSampler, TextureWrap, TextureFilter};
 
-use crate::asset_loader::{LoadResult, ModelLoadRequest};
+use crate::asset_load_worker::{LoadResult, SceneLoadRequest};
 use crate::handle::{
     CoverageMode, EmbeddedTextureId, MaterialClass, MeshData, RawMaterialData, RawSceneData,
     RawSceneInstanceData, RawTextureSource, SubmeshData,
@@ -21,9 +21,9 @@ use crate::handle::{
 
 /// 实际的 glTF scene 导入任务。
 ///
-/// panic 会被转换为失败结果，避免后台导入异常越过 `AssetHub` 的状态机边界。
-/// `req.handle` 只用于把结果关联回 `AssetHub` 已经分配的 model asset，不参与文件读取。
-pub(crate) fn load_gltf_scene_task(req: ModelLoadRequest) -> LoadResult {
+/// panic 会被转换为失败结果，避免后台导入异常越过 `AssetLoadService` 的状态机边界。
+/// `req.handle` 只用于把结果关联回 `AssetLoadService` 已经分配的 model asset，不参与文件读取。
+pub(crate) fn load_gltf_scene_task(req: SceneLoadRequest) -> LoadResult {
     let _span = tracy_client::span!("load_gltf_scene_task");
     log::info!("Loading glTF scene: {:?}", req.desc.path);
 
@@ -32,13 +32,13 @@ pub(crate) fn load_gltf_scene_task(req: ModelLoadRequest) -> LoadResult {
         .and_then(|result| result);
 
     match result {
-        Ok(data) => LoadResult::ModelSuccess {
+        Ok(data) => LoadResult::SceneSuccess {
             handle: req.handle,
             data,
         },
         Err(error) => {
             log::error!("Failed to load glTF scene {:?}: {}", req.desc.path, error);
-            LoadResult::ModelFailure(req.handle, error)
+            LoadResult::SceneFailure(req.handle, error)
         }
     }
 }
@@ -162,10 +162,10 @@ impl GltfSceneReader {
         })
     }
 
-    /// 将 glTF material 复制到 AssetHub 的 raw material 边界格式。
+    /// 将 glTF material 复制到 AssetLoadService 的 raw material 边界格式。
     ///
     /// 四个核心纹理槽分别保留图片来源、UV 集、变换和 sampler。
-    /// 外部 URI 保留为 importer 原始表达，稍后由 `SceneAssetIngestor` 根据 scene 路径统一解析；
+    /// 外部 URI 保留为 importer 原始表达，稍后由 `AssetSystem` 根据 scene 路径统一解析；
     /// embedded source 只携带 owned encoded bytes。
     fn copy_material(&self, material: gltf::Material<'_>) -> Result<RawMaterialData, String> {
         let pbr = material.pbr_metallic_roughness();

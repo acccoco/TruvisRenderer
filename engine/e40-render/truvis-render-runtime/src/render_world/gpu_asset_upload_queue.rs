@@ -13,7 +13,7 @@ use truvis_gfx::gfx::{GfxDeviceCtx, GfxQueueCtx, GfxResourceCtx};
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_world::guid_new_type::TextureHandle;
+use truvis_world::guid_new_type::TextureAssetHandle;
 
 use crate::render_world::sky_distribution_builder::SkyDistributionBuild;
 
@@ -22,7 +22,7 @@ use crate::render_world::sky_distribution_builder::SkyDistributionBuild;
 /// timeline 完成后 image 所有权从共享 queue 移交给 `GpuTextureStore`；在此之前
 /// image 不允许注册到 `GfxResourceRegistry` 或 bindless。
 pub(crate) struct CompletedTextureUpload {
-    pub(crate) handle: TextureHandle,
+    pub(crate) handle: TextureAssetHandle,
     pub(crate) image: GfxImage,
 }
 
@@ -32,7 +32,7 @@ pub(crate) struct CompletedTextureUpload {
 /// address 发布到 scene root；stale completion 则在这里之后立即安全销毁。
 pub(crate) struct CompletedSkyDistributionUpload {
     pub(crate) request_id: u64,
-    pub(crate) texture: TextureHandle,
+    pub(crate) texture: TextureAssetHandle,
     pub(crate) source_width: u32,
     pub(crate) source_height: u32,
     pub(crate) width: u32,
@@ -58,7 +58,7 @@ enum PendingAssetUpload {
         semaphore_value: u64,
         staging_buffer: GfxBuffer,
         command_buffer: GfxCommandBuffer,
-        handle: TextureHandle,
+        handle: TextureAssetHandle,
         image: GfxImage,
     },
     SkyDistribution {
@@ -66,7 +66,7 @@ enum PendingAssetUpload {
         staging_buffer: GfxBuffer,
         command_buffer: GfxCommandBuffer,
         request_id: u64,
-        texture: TextureHandle,
+        texture: TextureAssetHandle,
         source_width: u32,
         source_height: u32,
         width: u32,
@@ -126,7 +126,7 @@ impl GpuAssetUploadQueue {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-        handle: TextureHandle,
+        handle: TextureAssetHandle,
         data: &TextureBytes,
     ) -> anyhow::Result<()> {
         let _span = tracy_client::span!("GpuAssetUploadQueue::submit_texture");

@@ -123,22 +123,23 @@ flowchart LR
 - Renderer / Subsystem targets：RT working target、main view target、GBuffer、selection outline mask 等窗口尺寸资源由具体
   Renderer/子系统持有，并在 init / resize / shutdown 阶段通过 ctx 中的 `GfxResourceRegistry` 与
   `ShaderBindingSystem` 显式创建、注册或释放。
-- Asset：`AssetHub` 只持有 texture / model loader task handle、后台任务状态和完成事件队列，并负责 Assimp / glTF model 到 owned
+- Asset：`AssetLoadService` 只持有 texture / scene loader task handle、后台任务状态和完成事件队列，并负责 Assimp / glTF scene 到 owned
   CPU payload 的导入；HDR/EXR texture payload 以共享 RGBA16F 保存，普通图片以共享 RGBA8 保存。
-  `SceneAssetIngestor` 把 loader 结果翻译为 CPU resource handle 事件；`RenderWorld` 内部的
+  `AssetSystem` 把 loader 结果翻译为 CPU resource handle，并保存 `AssetSource`、颜色空间和
+  texture 去重表；scene 完成后发布 `SceneData`，外部才创建 runtime instance。`RenderWorld` 内部的
   `GpuAssetUploadQueue` 统一持有 texture image 与 sky distribution 的 transfer command pool/timeline，
   `GpuTextureStore` 持有完成后的 texture GPU image/view/bindless 绑定；
   `SceneStore` 保存 mesh 的 submesh metadata 和 instance material 对齐约束；`GpuMeshStore` 持有每个 submesh 的 vertex/index buffer、
   `RtGeometry`、mesh 级 BLAS 和 GPU ready 状态；`GpuMaterialStore` 管理 material
-  GPU buffer、稳定 slot 以及 `MaterialHandle -> stable slot` 映射；Renderer 通过
-  `GameWorld::request_model_import` 拿到 `ModelImportHandle`，ready model CPU payload 在 `GameWorld::poll_asset_loads`
-  内部由 `SceneAssetIngestor` 自动变为 runtime instances；facade 内部通过 `SceneAssetIngestor` 把 prefab 引用解析为 CPU resource handle；`RenderInstanceTable`
+  GPU buffer、稳定 slot 以及 `MaterialAssetHandle -> stable slot` 映射；Renderer 通过
+  `GameWorld::import_scene` 拿到 `SceneImportHandle`，ready scene CPU payload 在 `GameWorld::scene_data`
+  中可查询；Renderer 根据 `SceneData` 显式创建 runtime instances；`RenderInstanceTable`
   持有 runtime instance 到稳定 GPU instance slot 的映射。CPU scene 删除 texture/mesh/material 后，对应 render manager
   负责移除 ready cache 或延迟回收 slot；已经提交但尚未完成的 texture/mesh upload 在 timeline 到达后只销毁资源，不重新发布 stale handle。
 - Scene GPU：runtime 私有 `RenderWorld` 持有 render-side texture / mesh / material / instance / sky / emissive managers、
   instance / geometry / light / indirect buffer 和当前 FIF 的 raster draw cache，并通过内部 `SceneTlas`
   持有 per-FIF TLAS；`RenderSceneView` 只向 render pass 暴露只读 scene 快照。默认 sky 由 `GameWorld` 注册为
-  `TextureHandle` 并写入 `SceneStore::SceneSkyState`，通过 `GpuTextureStore` 异步上传，并由
+  `TextureAssetHandle` 并写入 `SceneStore::SceneSkyState`，通过 `GpuTextureStore` 异步上传，并由
   `GpuSkyStore` 根据 scene sky state 提供 fallback、真实 sky binding 和 distribution，并拥有
   distribution worker、request generation 与 active/retired 状态。旧 distribution 交给
   `GfxResourceRegistry` 按退休 frame id 跨过 FIF 后销毁，stale 未发布 buffer 在 transfer timeline 完成后立即销毁。

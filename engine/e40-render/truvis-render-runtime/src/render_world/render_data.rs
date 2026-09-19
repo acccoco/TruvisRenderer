@@ -1,6 +1,6 @@
 use ash::vk;
 
-use truvis_world::guid_new_type::MaterialHandle;
+use truvis_world::guid_new_type::MaterialAssetHandle;
 
 use super::geometry::{RtGeometry, RtTriangleMeta};
 
@@ -42,8 +42,8 @@ pub(crate) struct InstanceRenderData {
     pub(crate) mesh_index: usize,
     /// 该实例每个 submesh 对应的稳定 GPU material slot。
     pub(crate) material_slots: Vec<u32>,
-    /// 该实例每个 submesh 对应的 CPU `MaterialHandle`，与 `material_slots` 顺序一致。
-    pub(crate) material_handles: Vec<MaterialHandle>,
+    /// 该实例每个 submesh 对应的 CPU `MaterialAssetHandle`，与 `material_slots` 顺序一致。
+    pub(crate) material_handles: Vec<MaterialAssetHandle>,
     /// true 表示任一 submesh material 需要 any-hit alpha test，TLAS 不能对该实例设置 FORCE_OPAQUE。
     pub(crate) requires_any_hit: bool,
     /// 由 CPU scene 提供的模型矩阵，prepare 阶段会写入 instance buffer 并参与 TLAS 构建。

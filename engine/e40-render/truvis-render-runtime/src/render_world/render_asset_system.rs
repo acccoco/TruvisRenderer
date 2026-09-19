@@ -16,8 +16,8 @@ use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 /// 资源 owner 自己消费上传完成事件；RenderWorld 只需要知道哪些材质投影和 sky 绑定
 /// 可能影响场景派生历史。texture/mesh 是否 ready 由 resolver 在 instance 阶段直接判断。
 pub(crate) struct RenderResourceSyncResult {
-    pub(crate) appearance_changed_materials: Vec<truvis_world::guid_new_type::MaterialHandle>,
-    pub(crate) emissive_changed_materials: Vec<truvis_world::guid_new_type::MaterialHandle>,
+    pub(crate) appearance_changed_materials: Vec<truvis_world::guid_new_type::MaterialAssetHandle>,
+    pub(crate) emissive_changed_materials: Vec<truvis_world::guid_new_type::MaterialAssetHandle>,
     pub(crate) sky_changed: bool,
 }
 

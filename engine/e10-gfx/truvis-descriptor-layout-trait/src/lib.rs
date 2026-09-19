@@ -8,7 +8,7 @@
 //! #[shader_layout]
 //! struct MyLayout {
 //!     #[binding = 0] uniforms: PerFrameData,
-//!     #[texture(binding = 1)] diffuse: TextureHandle,
+//!     #[texture(binding = 1)] diffuse: TextureAssetHandle,
 //!     #[sampler(binding = 2)] sampler: SamplerHandle,
 //! }
 //! ```

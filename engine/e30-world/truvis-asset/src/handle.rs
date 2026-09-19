@@ -8,18 +8,18 @@ use ash::vk;
 new_key_type! {
     /// 纹理加载任务身份。
     ///
-    /// 该 handle 只用于把后台 texture load result 关联回 `SceneAssetIngestor`，
+    /// 该 handle 只用于把后台 texture load result 关联回 `AssetSystem`，
     /// 不表示长期 texture identity、Vulkan image、image view、bindless descriptor
     /// 或 shader 可见 binding。
     pub struct TextureLoadHandle;
 }
 
 new_key_type! {
-    /// model / prefab 加载任务身份。
+    /// scene / prefab 加载任务身份。
     ///
-    /// 该 handle 只用于把后台 model import result 关联回 `SceneAssetIngestor`，
-    /// 不是长期 model database key，也不是 `SceneStore` 中的 live runtime instance handle。
-    pub struct ModelLoadHandle;
+    /// 该 handle 只用于把后台 scene import result 关联回 `AssetSystem`，
+    /// 不是长期 scene database key，也不是 `SceneStore` 中的 live runtime instance handle。
+    pub struct SceneLoadHandle;
 }
 
 /// RGBA8 图片的输入解释。颜色空间来自纹理用途，不能从文件名或图片 metadata 猜测。
@@ -32,7 +32,7 @@ pub enum TextureColorSpace {
 /// 一次 texture CPU decode task 的输入描述。
 ///
 /// 这是一次性 loader 请求的参数，不是长期 identity key。同一路径是否复用为同一个
-/// `TextureHandle` 由 `SceneAssetIngestor` / `SceneStore` 决定。
+/// `TextureAssetHandle` 由 `AssetSystem` 内部的 `AssetStore` 决定。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextureLoadDesc {
     File { path: PathBuf, color_space: TextureColorSpace },
@@ -72,18 +72,18 @@ impl TextureLoadDesc {
 
 /// embedded image 在一个 scene document 内的稳定身份。
 ///
-/// 跨 scene 的去重由 `SceneAssetIngestor` 额外组合 canonical scene path；这里不对
+/// 跨 scene 的去重由 `AssetSystem` 额外组合 canonical scene path；这里不对
 /// encoded bytes 做内容哈希，也不承担全局 asset database 的职责。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EmbeddedTextureId {
     pub image_index: u32,
 }
 
-/// 一次 model / prefab CPU import task 的输入描述。
+/// 一次 scene / prefab CPU import task 的输入描述。
 ///
-/// 这是一次性 loader 请求的参数，不表示长期 model database key，也不参与 scene 去重。
+/// 这是一次性 loader 请求的参数，不表示长期 scene database key，也不参与 scene 去重。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelLoadDesc {
+pub struct SceneLoadDesc {
     pub path: std::path::PathBuf,
 }
 
@@ -106,8 +106,8 @@ pub enum TexturePixels {
 /// Vulkan format 只能由 `TexturePixels` 推导，调用方不能单独指定，因而不会出现
 /// pixel payload 与 GPU format 不一致的状态。
 ///
-/// 当前纹理 bytes 只通过 `AssetLoadEvent::TextureLoaded` 短期交给 `SceneAssetIngestor`
-/// 和 render-side texture manager，`AssetHub` 本身不保存像素数据。
+/// 当前纹理 bytes 只通过 `AssetLoadEvent::TextureLoaded` 短期交给 `AssetSystem`
+/// 和 render-side texture manager，`AssetLoadService` 本身不保存像素数据。
 #[derive(Debug, Clone)]
 pub struct TextureBytes {
     pixels: TexturePixels,
@@ -382,7 +382,7 @@ impl CoverageMode {
 /// 后台 Assimp task 产出的 owned material CPU 数据。
 ///
 /// texture 仍以导入器返回的 source 表达，避免后台 task 直接修改 `SceneStore`。
-/// `SceneAssetIngestor` 在 asset sync 阶段解析相对路径、分配 `TextureHandle`
+/// `AssetSystem` 在 asset sync 阶段解析相对路径、分配 `TextureAssetHandle`
 /// 并提交必要的 file 或 memory texture load task。
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawMaterialData {
@@ -410,7 +410,7 @@ pub enum RawTextureSource {
 
 /// 后台 Assimp task 产出的 owned instance CPU 数据。
 ///
-/// 仍使用导入源内的 mesh/material index，稍后由 `SceneAssetIngestor` 转换成稳定
+/// 仍使用导入源内的 mesh/material index，稍后由 `AssetSystem` 转换成稳定
 /// scene handle，避免把半成品 handle 分配逻辑放入 FFI copy 任务。
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawSceneInstanceData {

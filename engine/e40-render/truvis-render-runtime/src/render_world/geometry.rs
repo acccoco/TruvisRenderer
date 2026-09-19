@@ -10,7 +10,7 @@ use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 
 /// render-side 保留的 CPU 三角形元数据。
 ///
-/// vertex/index buffer 上传完成后，`AssetHub` 不再保存可直接查询的 mesh CPU 数据；
+/// vertex/index buffer 上传完成后，`AssetLoadService` 不再保存可直接查询的 mesh CPU 数据；
 /// 自发光 light table 需要在 prepare 阶段按 active instance 重新展开 world-space
 /// 三角形，因此这里把最小的 local-space position/uv/primitive id 跟随 GPU-ready mesh 缓存。
 #[derive(Clone, Debug)]

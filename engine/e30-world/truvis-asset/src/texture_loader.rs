@@ -4,7 +4,7 @@ use ash::vk;
 use half::f16;
 use image::{DynamicImage, GenericImageView};
 
-use crate::asset_loader::{LoadResult, TextureLoadRequest};
+use crate::asset_load_worker::{LoadResult, TextureLoadRequest};
 use crate::handle::{TextureBytes, TextureColorSpace, TextureLoadDesc, TexturePixels};
 
 /// 实际的纹理加载任务，运行在 Rayon 线程池中。
@@ -96,7 +96,7 @@ mod tests {
     use slotmap::Key;
 
     use super::*;
-    use crate::asset_loader::TextureLoadRequest;
+    use crate::asset_load_worker::TextureLoadRequest;
     use crate::handle::{EmbeddedTextureId, TextureLoadDesc, TextureLoadHandle};
 
     #[test]

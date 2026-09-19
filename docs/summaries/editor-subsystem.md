@@ -12,7 +12,7 @@ Truvis Editor 由 Tauri/Tao 顶层窗口、React WebView、Windows child HWND �
 核心设计是让 UI 和 GPU scene 都不能成为第二份 CPU scene 权威状态：
 
 - `GameWorld` / `SceneStore` 是 scene、material、sky 与 light 的唯一 CPU 权威 owner。
-- 当前 selection 属于 `TruvisRenderer`，使用 CPU `InstanceHandle + submesh_index` 语义。
+- 当前 selection 属于 `TruvisRenderer`，使用 CPU `MeshInstanceHandle + submesh_index` 语义。
 - GPU scene 是 `RenderRuntime::prepare` 根据 CPU scene 生成的派生状态。
 - WebView 只保存可丢弃的展示投影；刷新后通过查询重新构建。
 - Editor IPC 只短暂承载 owned DTO 和每请求 reply，不缓存场景快照。

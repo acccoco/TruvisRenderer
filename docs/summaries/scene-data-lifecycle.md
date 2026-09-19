@@ -1,13 +1,13 @@
 # CPU AssetSystem / GameWorld 到 GPU RenderWorld 同步
 
-> 状态：当前实现事实总结（2026-09-10）。主设计见 [`render-scene-mirror-and-resource-system.md`](../brain-storm/render-scene-mirror-and-resource-system.md)。
+> 状态：当前实现事实总结（2026-09-19）。主设计见 [`asset-system-boundaries.md`](../brain-storm/asset-system-boundaries.md) 和 [`render-scene-mirror-and-resource-system.md`](../brain-storm/render-scene-mirror-and-resource-system.md)。
 
 ## 机制定位
 
 Truvis 现在把 CPU 资源、CPU 场景关系和 device 资源分成三个边界：
 
 ```text
-AssetHub / loader
+AssetLoadService / AssetLoadWorker
       │ completion 写回 CPU registry
       ▼
 GameWorld
@@ -30,10 +30,10 @@ instance、light、sky 镜像和派生 GPU scene。prepare 完成后，render pa
 ## CPU owner
 
 `AssetSystem` 位于 `engine/e30-world/truvis-world/src/asset_system.rs`，包含
-`AssetStore`、`AssetHub` 和 `SceneAssetIngestor`：
+`AssetStore`、`AssetLoadService`、scene import 状态和 load-handle 映射：
 
 - mesh 注册时由 CPU `AssetStore` 保留不可变顶点/index payload；渲染侧只在需要上传时借用它。
-- texture 注册后获得 `TextureHandle`，file 或 embedded bytes decode 由 `AssetHub` 异步完成；外部路径按 `(canonical path, TextureColorSpace)`、embedded image 按 `(scene path, image identity, TextureColorSpace)` 复用。相同图片同时用于颜色槽和数据槽时拥有两个不可变 handle，互不改变解释。
+- texture 注册后获得 `TextureAssetHandle`，file 或 embedded bytes decode 由 `AssetLoadService` 异步完成；`AssetStore` 按 `(AssetSource, TextureColorSpace)` 复用。File source 使用 canonical path，Embedded source 使用 canonical scene path + image index。相同图片同时用于颜色槽和数据槽时拥有两个不可变 handle，互不改变解释。
 - material 保存完整 `MaterialData` 和 source revision，更新内容时维护 `material -> texture` 依赖。
 - mesh/texture 创建后不可变；不同内容使用新 handle。material 可以更新，但相等赋值不推进 revision。
 - 删除 material、mesh、texture 前分别检查 live instance、material 和 sky 引用；失败不修改表和版本。
@@ -43,8 +43,8 @@ instance、light、sky 镜像和派生 GPU scene。prepare 完成后，render pa
 instance 的 mesh 内容或 mesh 引用。`SceneReadView` 同时只读借用 SceneStore 与 AssetStore，向
 render-side 暴露最终状态、资源 membership、material revision 和引用查询。
 
-`SceneAssetIngestor` 负责把 loader handle 翻译成 CPU handle。model 完成后先校验 raw scene，随后
-注册资源和 instance；结构导入完成即表示 model import `Ready`，material 可以引用仍处于
+`AssetSystem` 负责把 loader handle 翻译成 CPU handle。scene 完成后先校验 raw scene，随后
+注册资源并发布 `SceneData`，不会创建 `SceneStore` instance；material 可以引用仍处于
 `Loading` 的 texture。外部路径和 embedded bytes 都通过同一个 texture completion event 写回
 `AssetStore`。首期不做导入事务回滚，半途失败留下的无引用资源可以通过普通删除接口清理；单张
 texture 失败保留 scene structure 并由 render-side 使用 fallback。
@@ -73,8 +73,8 @@ sampler 由既有 `RenderSamplerManager` 持有，18 种材质组合共享静态
 glTF 只消费 magFilter（缺省 Linear），不消费 minFilter/occlusionTexture；只有受支持槽引用的内嵌图片被复制并进入图片资源链路。
 这遵循 [Vulkan 的 OpenGL filter 映射规则](https://docs.vulkan.org/spec/latest/chapters/samplers.html)；maxLod=0 会始终选择 magFilter。
 
-`SceneAssetIngestor` 的待完成 task 映射使用以完整 generational handle 为 key 的 HashMap。
-AssetHub 返回一批事件时已移除 task record；处理其中的 model 事件可能提交新 texture task 并复用相同 slot。
+`AssetSystem` 的待完成 task 映射使用以完整 generational handle 为 key 的 HashMap。
+AssetLoadService 返回一批事件时已移除 task record；处理其中的 scene 事件可能提交新 texture task 并复用相同 slot。
 旧事件尚未 ingest 时，两代 task 的映射必须并存，因此这里不能使用 SecondaryMap。
 
 ### GPU 同步顺序
@@ -96,7 +96,7 @@ AssetHub 返回一批事件时已移除 task record；处理其中的 model 事�
 
 `RenderRuntime::prepare` 的固定顺序是：
 
-1. `GameWorld::poll_asset_loads()` 调用 `AssetHub::update()`，让 `AssetSystem` 消费 loader 完成事件并写回 CPU resource/scene 最终状态。
+1. `GameWorld::poll_asset_loads()` 调用 `AssetLoadService::update()`，让 `AssetSystem` 消费 loader 完成事件并写回 CPU resource/scene 最终状态。
 2. `RenderAssetSystem::sync()` 对账 CPU membership，移除已删除资源，借用保留的 texture/mesh 内容提交上传，poll/publish GPU completion，再扫描 material source/binding revision。
 3. `ShaderBindingSystem::prepare_render_data()` 刷新全局 bindless 表。
 4. `RenderWorld::prepare_render_data()` 扫描完整 instance membership，比较 transform、material 列表和 material revision，解析 mesh/material ready gate，生成 `RenderData`。
@@ -150,7 +150,7 @@ loader 完成、GPU copy 入队、timeline completion、shader-visible publish �
 
 ## 代码入口
 
-- CPU：[`asset_system.rs`](../../engine/e30-world/truvis-world/src/asset_system.rs)、[`scene_store.rs`](../../engine/e30-world/truvis-world/src/scene_store.rs)、[`scene_asset_ingestor.rs`](../../engine/e30-world/truvis-world/src/scene_asset_ingestor.rs)
+- CPU：[`asset_system.rs`](../../engine/e30-world/truvis-world/src/asset_system.rs)、[`scene_store.rs`](../../engine/e30-world/truvis-world/src/scene_store.rs)
 - GPU：[`render_asset_system.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_asset_system.rs)、[`render_world.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_world.rs)
 - Cornell 验证：[`cornell_renderer.rs`](../../renderer/samples/cornell/src/cornell_renderer.rs)
 

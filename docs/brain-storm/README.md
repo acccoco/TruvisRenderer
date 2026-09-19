@@ -20,6 +20,8 @@
   asset upload、失败恢复、资源卸载和 scene invalidation 的后续能力。
 - [`scene-import-and-async-texture.md`](scene-import-and-async-texture.md)：
   FBX/glTF/GLB scene 结构导入、外部与内嵌 texture 统一建模，以及 texture 异步解码的最小实施计划。
+- [`asset-system-boundaries.md`](asset-system-boundaries.md)：
+  AssetLoadService、AssetSystem、AssetStore、SceneImportHandle、SceneData 与 GameWorld/SceneStore 的已采纳边界和后续演进约束。
 - [`material-texture-color-space.md`](material-texture-color-space.md)：
   已实施的颜色空间方案，以及同条件 FBX/glTF 画面对照的验收边界。
 - [`render-scene-mirror-and-resource-system.md`](render-scene-mirror-and-resource-system.md)：

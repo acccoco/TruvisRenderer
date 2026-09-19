@@ -13,7 +13,7 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_shader_binding::gpu;
-use truvis_world::guid_new_type::{InstanceHandle, MaterialHandle, MeshHandle};
+use truvis_world::guid_new_type::{MeshInstanceHandle, MaterialAssetHandle, MeshAssetHandle};
 
 use crate::render_world::render_instance_table::RenderInstanceTable;
 use crate::state::frame_timing::FrameTiming;
@@ -41,9 +41,9 @@ pub enum RayCastResult {
 /// 已从 GPU scene slot 转回 CPU world handle 的 closest hit。
 #[derive(Clone, Debug)]
 pub struct RayCastHit {
-    pub instance: InstanceHandle,
-    pub mesh: MeshHandle,
-    pub material: MaterialHandle,
+    pub instance: MeshInstanceHandle,
+    pub mesh: MeshAssetHandle,
+    pub material: MaterialAssetHandle,
     pub submesh_index: u32,
     pub primitive_index: u32,
     pub position_ws: glam::Vec3,

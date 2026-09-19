@@ -1,4 +1,4 @@
-use truvis_world::guid_new_type::{MaterialHandle, MeshHandle};
+use truvis_world::guid_new_type::{MaterialAssetHandle, MeshAssetHandle};
 use truvis_world::components::material::MaterialData;
 
 use crate::render_world::render_data::MeshRenderData;
@@ -11,17 +11,17 @@ pub(crate) trait MaterialSlotResolver {
     /// 解析 shader 可索引的稳定 material slot。
     ///
     /// 返回 None 表示材质尚未进入 render-side manager，依赖它的 instance 不应激活。
-    fn resolve_material_slot(&self, handle: MaterialHandle) -> Option<u32>;
+    fn resolve_material_slot(&self, handle: MaterialAssetHandle) -> Option<u32>;
 
     /// 判断 material 是否已经拥有稳定 slot。
     ///
     /// texture 是否真实 ready 不影响该判断；未 ready texture 由 material manager fallback 兜底。
-    fn is_material_ready(&self, handle: MaterialHandle) -> bool {
+    fn is_material_ready(&self, handle: MaterialAssetHandle) -> bool {
         self.resolve_material_slot(handle).is_some()
     }
 
     /// 当前资源对账发布的渲染侧材质副本；场景派生不回读 CPU AssetSystem。
-    fn material_data(&self, handle: MaterialHandle) -> Option<&MaterialData>;
+    fn material_data(&self, handle: MaterialAssetHandle) -> Option<&MaterialData>;
 }
 
 /// scene mesh handle 到 GPU-ready mesh 数据的解析接口。
@@ -32,5 +32,5 @@ pub(crate) trait MeshRenderResolver {
     /// 解析 GPU-ready mesh 数据引用。
     ///
     /// 返回的数据由 mesh manager 持有生命周期，`RenderData` 只在 prepare 阶段借用它。
-    fn resolve_mesh(&self, handle: MeshHandle) -> Option<MeshRenderData<'_>>;
+    fn resolve_mesh(&self, handle: MeshAssetHandle) -> Option<MeshRenderData<'_>>;
 }

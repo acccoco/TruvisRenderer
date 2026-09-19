@@ -11,7 +11,8 @@ use truvis_world::{
     GameWorld,
     components::instance::Instance,
     components::material::{CoverageMode, MaterialClass, MaterialData},
-    guid_new_type::MeshHandle,
+    guid_new_type::MeshAssetHandle,
+    guid_new_type::SceneImportHandle,
     procedural_mesh::ProceduralMeshKind,
 };
 
@@ -55,6 +56,8 @@ pub struct TruvisRenderer {
     desktop_command_controller: DesktopCommandController,
 
     editor_controller: EditorController,
+    pending_scene_import: Option<SceneImportHandle>,
+    imported_scene_instances: bool,
 }
 
 impl TruvisRenderer {
@@ -80,6 +83,8 @@ impl TruvisRenderer {
             selected_submesh: None,
             desktop_command_controller: ports.desktop_commands,
             editor_controller: EditorController::new(ports.editor, EditorControllerConfig::default()),
+            pending_scene_import: None,
+            imported_scene_instances: false,
         }
     }
 }
@@ -219,7 +224,7 @@ impl TruvisRenderer {
         self.overlay_ui.options_mut()
     }
 
-    fn request_model(world: &mut GameWorld, camera: &mut Camera) {
+    fn request_scene(world: &mut GameWorld, camera: &mut Camera) -> SceneImportHandle {
         camera.position = glam::vec3(270.0, 194.0, -64.0);
         camera.euler_yaw_deg = 90.0;
         camera.euler_pitch_deg = 0.0;
@@ -284,7 +289,30 @@ impl TruvisRenderer {
         });
 
         log::info!("start load sponza model");
-        world.request_model_import(TruvisPath::assets_path("fbx/sponza/sponza.fbx"));
+        world.import_scene(TruvisPath::assets_path("fbx/sponza/sponza.fbx"))
+    }
+
+    fn install_imported_scene(&mut self, world: &mut GameWorld) {
+        if self.imported_scene_instances {
+            return;
+        }
+        let Some(handle) = self.pending_scene_import else {
+            return;
+        };
+        let Some(scene_data) = world.scene_data(handle).cloned() else {
+            return;
+        };
+        for object in scene_data.objects {
+            world
+                .create_mesh_instance(Instance {
+                    name: object.name,
+                    mesh: object.mesh,
+                    materials: object.materials,
+                    transform: object.transform,
+                })
+                .expect("failed to register imported scene instance");
+        }
+        self.imported_scene_instances = true;
     }
 
     fn spawn_material_test_cubes(world: &mut GameWorld) {
@@ -292,7 +320,7 @@ impl TruvisRenderer {
         const CUBE_SCALE: f32 = 100.0;
 
         let cube_kind = ProceduralMeshKind::Cube;
-        let cube_mesh = world.register_mesh(cube_kind.mesh_data()).expect("failed to register procedural cube mesh");
+        let cube_mesh = world.import_mesh(cube_kind.mesh_data()).expect("failed to register procedural cube mesh");
         let cube_y = 100.0;
         let cube_z = -25.0;
         let cube_specs = [
@@ -361,7 +389,7 @@ impl TruvisRenderer {
                 .expect("failed to register material test cube material");
 
             world
-                .register_instance(Instance {
+                .create_mesh_instance(Instance {
                     name: format!("material-test-cube-{}-{}", MATERIAL_SOURCE, spec.name),
                     mesh: cube_mesh,
                     materials: vec![material],
@@ -377,7 +405,7 @@ impl TruvisRenderer {
         Self::spawn_emissive_cube_matrix(world, cube_mesh, EMISSIVE_CUBE_MATRIX_CONFIG);
     }
 
-    fn spawn_emissive_cube_matrix(world: &mut GameWorld, cube_mesh: MeshHandle, config: EmissiveCubeMatrixConfig) {
+    fn spawn_emissive_cube_matrix(world: &mut GameWorld, cube_mesh: MeshAssetHandle, config: EmissiveCubeMatrixConfig) {
         let palette_specs = [
             EmissiveCubePaletteSpec {
                 name: "warm-amber",
@@ -439,7 +467,7 @@ impl TruvisRenderer {
                     let material = emissive_materials[cube_index % emissive_materials.len()];
 
                     world
-                        .register_instance(Instance {
+                        .create_mesh_instance(Instance {
                             name: format!("emissive-cube-matrix-{x}-{y}-{z}"),
                             mesh: cube_mesh,
                             materials: vec![material],
@@ -499,7 +527,8 @@ impl Renderer for TruvisRenderer {
         self.imgui.set_display_size(ctx.window_size);
 
         Self::spawn_material_test_cubes(&mut *ctx.runtime.world);
-        Self::request_model(&mut *ctx.runtime.world, self.camera_controller.camera_mut());
+        self.pending_scene_import =
+            Some(Self::request_scene(&mut *ctx.runtime.world, self.camera_controller.camera_mut()));
 
         // Renderer 持有初始化顺序：场景 CPU 状态先就绪，再依次创建具体渲染资源。
         self.realtime.init(&mut ctx.runtime);
@@ -519,6 +548,7 @@ impl Renderer for TruvisRenderer {
     }
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
+        self.install_imported_scene(ctx.world);
         self.click_ray_cast_probe.update_time(ctx.frame_timing.delta_time_s());
         if self.clear_stale_selection(ctx.world) {
             self.editor_controller.notify_selection_changed(None);

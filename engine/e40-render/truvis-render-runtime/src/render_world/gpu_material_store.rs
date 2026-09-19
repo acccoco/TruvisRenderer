@@ -13,7 +13,7 @@ use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
 use truvis_asset::material_texture::{TextureChannel, TextureTransform};
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
-use truvis_world::guid_new_type::MaterialHandle;
+use truvis_world::guid_new_type::MaterialAssetHandle;
 
 use crate::render_world::render_resolver::MaterialSlotResolver;
 use crate::render_world::texture_resolver::{TextureBinding, TextureResolver};
@@ -93,21 +93,21 @@ impl MaterialBuffers {
 /// texture 异步加载过程中使用占位数据（null texture），就绪后自动标记 dirty 并更新到 GPU。
 /// GPU 端始终有合法数据可用。
 pub struct GpuMaterialStore {
-    /// 核心映射：MaterialHandle -> shader 可见 material buffer slot。
+    /// 核心映射：MaterialAssetHandle -> shader 可见 material buffer slot。
     ///
-    /// render-side bridge 直接以 CPU `MaterialHandle` 作为 key，不再额外引入第二套 GPU material handle。
-    handle_to_slot: SecondaryMap<MaterialHandle, usize>,
+    /// render-side bridge 直接以 CPU `MaterialAssetHandle` 作为 key，不再额外引入第二套 GPU material handle。
+    handle_to_slot: SecondaryMap<MaterialAssetHandle, usize>,
 
     /// 每个 slot 最近一次观察到的 CPU material revision。
-    source_revisions: SecondaryMap<MaterialHandle, u64>,
+    source_revisions: SecondaryMap<MaterialAssetHandle, u64>,
 
     /// 对账后持久保存的渲染副本；GPU 上传与场景派生不再回读 CPU AssetSystem。
-    prepared_materials: SecondaryMap<MaterialHandle, PreparedMaterial>,
+    prepared_materials: SecondaryMap<MaterialAssetHandle, PreparedMaterial>,
 
     /// slot 数据：index = GPU buffer 中的位置；None 表示已 unregister、等待延迟回收。
     ///
     /// dirty upload 通过 handle 读取上面已发布的 prepared snapshot。
-    slot_to_handle: Vec<Option<MaterialHandle>>,
+    slot_to_handle: Vec<Option<MaterialAssetHandle>>,
 
     /// 可立即分配的 slot。被删除的 slot 必须跨过 FIF 窗口后才能回到这里。
     free_slots: Vec<usize>,
@@ -147,9 +147,9 @@ impl GpuMaterialStore {
 #[derive(Default)]
 pub(crate) struct RenderMaterialUpdateResult {
     /// 本帧渲染投影发生变化的材质；RenderWorld 只对实际被 active instance 使用的材质失效历史。
-    pub(crate) appearance_changed_materials: Vec<MaterialHandle>,
+    pub(crate) appearance_changed_materials: Vec<MaterialAssetHandle>,
     /// 会改变 emissive table 输入的材质；普通 roughness/normal texture 变化不进入此列表。
-    pub(crate) emissive_changed_materials: Vec<MaterialHandle>,
+    pub(crate) emissive_changed_materials: Vec<MaterialAssetHandle>,
 }
 
 // 销毁
@@ -250,9 +250,9 @@ impl Drop for GpuMaterialStore {
 impl GpuMaterialStore {
     /// 注册新材质，分配稳定的 GPU slot。
     ///
-    /// `MaterialHandle` 是 CPU material identity；GPU 侧只额外维护稳定 slot，
+    /// `MaterialAssetHandle` 是 CPU material identity；GPU 侧只额外维护稳定 slot，
     /// 不再引入第二套长期 material handle。
-    fn register(&mut self, handle: MaterialHandle) {
+    fn register(&mut self, handle: MaterialAssetHandle) {
         let slot = self.free_slots.pop().expect("GpuMaterialStore: slots exhausted");
 
         self.handle_to_slot.insert(handle, slot);
@@ -270,7 +270,7 @@ impl GpuMaterialStore {
     /// 更新已注册材质的 dirty 状态。
     ///
     /// 会标记所有 FIF buffer 为 dirty，后续帧逐个上传当前 prepared snapshot。
-    fn update_material(&mut self, handle: MaterialHandle) {
+    fn update_material(&mut self, handle: MaterialAssetHandle) {
         let &slot = self.handle_to_slot.get(handle).expect("GpuMaterialStore: invalid handle");
 
         self.slot_to_handle[slot] = Some(handle);
@@ -298,7 +298,7 @@ impl GpuMaterialStore {
     ///
     /// slot 内容不再上传，但 slot index 会继续保留至少 `FIF_COUNT` 帧，避免在飞命令仍用旧 index
     /// 访问 material buffer 时被新材质复用。
-    fn unregister(&mut self, handle: MaterialHandle) -> bool {
+    fn unregister(&mut self, handle: MaterialAssetHandle) -> bool {
         let Some(slot) = self.handle_to_slot.remove(handle) else {
             log::debug!("GpuMaterialStore: ignore unregister for unknown handle={:?}", handle);
             return false;
@@ -426,7 +426,7 @@ impl GpuMaterialStore {
 impl GpuMaterialStore {
     /// 获取材质在 GPU buffer 中的 slot index
     #[inline]
-    pub fn get_slot_index(&self, handle: MaterialHandle) -> Option<usize> {
+    pub fn get_slot_index(&self, handle: MaterialAssetHandle) -> Option<usize> {
         self.handle_to_slot.get(handle).copied()
     }
 
@@ -438,14 +438,14 @@ impl GpuMaterialStore {
 }
 
 impl MaterialSlotResolver for GpuMaterialStore {
-    fn resolve_material_slot(&self, handle: MaterialHandle) -> Option<u32> {
+    fn resolve_material_slot(&self, handle: MaterialAssetHandle) -> Option<u32> {
         // resolver 是 RenderInstanceTable 能看到的唯一 material 接口；找不到 binding 表示
         // CPU scene 仍引用了未加载或已删除的 material，实例应保持 pending。
         let slot = self.get_slot_index(handle)?;
         u32::try_from(slot).ok()
     }
 
-    fn material_data(&self, handle: MaterialHandle) -> Option<&MaterialData> {
+    fn material_data(&self, handle: MaterialAssetHandle) -> Option<&MaterialData> {
         self.prepared_materials.get(handle).map(|prepared| &prepared.data)
     }
 }

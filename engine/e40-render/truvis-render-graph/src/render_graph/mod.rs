@@ -3,7 +3,7 @@
 //! # 核心约束
 //!
 //! RenderGraph 只关心已导入的 GPU Image，**不感知** Texture、Material 等资产概念。
-//! 资产到 GPU 资源的映射由上游模块（AssetHub、BindlessManager 等）在 Upload Phase 完成，
+//! 资产到 GPU 资源的映射由上游模块（AssetLoadService、BindlessManager 等）在 Upload Phase 完成，
 //! RenderGraph 仅消费最终的 `GfxImageHandle`。
 //!
 //! # 关键设计

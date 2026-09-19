@@ -21,7 +21,7 @@ use truvis_gfx::resources::special_buffers::acceleration_buffer::GfxAcceleration
 use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
-use truvis_world::guid_new_type::MeshHandle;
+use truvis_world::guid_new_type::MeshAssetHandle;
 use truvis_world::SceneReadView;
 use truvis_render_foundation::frame_label::FrameLabel;
 
@@ -34,7 +34,7 @@ use crate::render_world::render_resolver::MeshRenderResolver;
 /// 都仍可能被 copy 或 acceleration build 命令引用，不能交给 resolver 或提前释放。
 struct SubmittedMeshUpload {
     semaphore_value: u64,
-    handle: MeshHandle,
+    handle: MeshAssetHandle,
     command_buffer: GfxCommandBuffer,
     staging_buffers: Vec<GfxBuffer>,
     scratch_buffer: GfxAccelerationScratchBuffer,
@@ -49,7 +49,7 @@ struct SubmittedMeshUpload {
 /// `GpuMeshStore` 接管该结构后，mesh 才会进入 `meshes` map，供 instance bridge
 /// 解析为 render-side 几何数据。
 struct FinishedMeshUpload {
-    handle: MeshHandle,
+    handle: MeshAssetHandle,
     geometries: Vec<RtGeometry>,
     triangle_metadata: Vec<Vec<RtTriangleMeta>>,
     blas: GfxAcceleration,
@@ -97,7 +97,7 @@ impl MeshUploadQueue {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-        handle: MeshHandle,
+        handle: MeshAssetHandle,
         data: &MeshData,
     ) -> Result<()> {
         let _span = tracy_client::span!("MeshUploadQueue::submit_mesh_upload");
@@ -440,7 +440,7 @@ struct UploadedMesh {
 }
 
 struct RetiredMesh {
-    handle: MeshHandle,
+    handle: MeshAssetHandle,
     mesh: UploadedMesh,
     retired_frame_id: u64,
 }
@@ -456,10 +456,10 @@ impl UploadedMesh {
 
 /// 渲染侧 mesh 资产上传与 BLAS 缓存。
 ///
-/// 它把 `MeshHandle` 解析为光栅化和 ray tracing 共用的 GPU 几何数据。
+/// 它把 `MeshAssetHandle` 解析为光栅化和 ray tracing 共用的 GPU 几何数据。
 pub struct GpuMeshStore {
-    meshes: SecondaryMap<MeshHandle, UploadedMesh>,
-    pending_meshes: HashSet<MeshHandle>,
+    meshes: SecondaryMap<MeshAssetHandle, UploadedMesh>,
+    pending_meshes: HashSet<MeshAssetHandle>,
     retired_resources: Vec<RetiredMesh>,
     upload_queue: MeshUploadQueue,
     current_frame_id: u64,
@@ -545,7 +545,7 @@ impl GpuMeshStore {
     /// 中的 generational handle，不会把已删除 mesh 重新发布。
     pub fn remove_meshes(
         &mut self,
-        handles: &[MeshHandle],
+        handles: &[MeshAssetHandle],
     ) {
         for &handle in handles {
             let Some(mesh) = self.meshes.remove(handle) else {
@@ -559,7 +559,7 @@ impl GpuMeshStore {
         }
     }
 
-    pub(crate) fn needs_upload(&self, handle: MeshHandle) -> bool {
+    pub(crate) fn needs_upload(&self, handle: MeshAssetHandle) -> bool {
         !self.meshes.contains_key(handle) && !self.pending_meshes.contains(&handle)
     }
 
@@ -639,7 +639,7 @@ impl GpuMeshStore {
 }
 
 impl MeshRenderResolver for GpuMeshStore {
-    fn resolve_mesh(&self, handle: MeshHandle) -> Option<MeshRenderData<'_>> {
+    fn resolve_mesh(&self, handle: MeshAssetHandle) -> Option<MeshRenderData<'_>> {
         let mesh = self.meshes.get(handle)?;
         Some(MeshRenderData {
             geometries: mesh.geometries.as_slice(),

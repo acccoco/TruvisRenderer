@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use truvis_asset::handle::TextureBytes;
 use truvis_shader_binding::gpu;
-use truvis_world::guid_new_type::TextureHandle;
+use truvis_world::guid_new_type::TextureAssetHandle;
 
 const MAX_DISTRIBUTION_WIDTH: u32 = 4096;
 const MAX_DISTRIBUTION_HEIGHT: u32 = 2048;
@@ -15,14 +15,14 @@ const MAX_DISTRIBUTION_HEIGHT: u32 = 2048;
 /// texture handle 原样带回，使 CPU/GPU completion 都能在发布前做 generation 校验。
 pub(crate) struct SkyDistributionBuildRequest {
     pub(crate) request_id: u64,
-    pub(crate) texture: TextureHandle,
+    pub(crate) texture: TextureAssetHandle,
     pub(crate) texture_bytes: TextureBytes,
 }
 
 /// 可提交到共享 transfer queue 的 Alias distribution。
 pub(crate) struct SkyDistributionBuild {
     pub(crate) request_id: u64,
-    pub(crate) texture: TextureHandle,
+    pub(crate) texture: TextureAssetHandle,
     pub(crate) source_width: u32,
     pub(crate) source_height: u32,
     pub(crate) width: u32,
@@ -39,7 +39,7 @@ pub(crate) enum SkyDistributionBuildResult {
     Ready(SkyDistributionBuild),
     UniformFallback {
         request_id: u64,
-        texture: TextureHandle,
+        texture: TextureAssetHandle,
         source_width: u32,
         source_height: u32,
         cpu_build_elapsed: Duration,

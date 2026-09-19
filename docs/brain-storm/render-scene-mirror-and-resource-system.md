@@ -54,8 +54,8 @@ GameWorld          ──场景状态对账──> RenderWorld          ──> 
 
 | Owner | 最小操作 | 说明 |
 | --- | --- | --- |
-| AssetSystem | `create_mesh`、`import_texture`、`create_material`、`update_material` | mesh / texture 创建后不可变；material 更新写回完整内容并推进 source revision |
-| GameWorld | `create_instance`、`update_instance_transform`、`update_instance_materials` | instance 只保存引用和场景状态，修改后推进 instance source revision |
+| AssetSystem / GameWorld facade | `import_mesh`、`import_texture`、`register_material`、`update_material` | mesh / texture 创建后不可变；material 更新写回完整内容并推进 source revision |
+| GameWorld | `create_mesh_instance`、`update_instance_transform`、`update_instance_materials` | instance 只保存引用和场景状态，修改后推进 instance source revision |
 | GameWorld / SceneStore | `instances_using_material`、`instances_using_mesh` | 直接从反向索引回答引用查询和删除前检查 |
 | AssetSystem | `materials_using_texture`、`remove_orphan_*` | texture 依赖由 material / sky 反向索引检查；删除只接受无 live 引用资源 |
 
@@ -67,7 +67,7 @@ GameWorld          ──场景状态对账──> RenderWorld          ──> 
 
 | 方面 | 当前实现 | 设计约束 |
 | --- | --- | --- |
-| CPU owner | `GameWorld` 持有 `SceneStore` 与 `AssetSystem`；资源内容、loader 和场景关系分边界保存 | AssetSystem 保存资源，GameWorld 保存场景关系；导入器协调二者 |
+| CPU owner | `GameWorld` 持有 `SceneStore` 与 `AssetSystem`；资源内容、loader 和场景关系分边界保存 | AssetSystem 保存资源，GameWorld 保存场景关系；外部通过 `SceneData` 协调二者 |
 | GPU owner | `RenderRuntime` 持有 `RenderAssetSystem`；`RenderWorld` 只持有场景 managers、buffer、TLAS 与历史 | 共享资源与场景组合分开，资源 manager 不属于某个 instance |
 | 同步 | `GameWorld::poll_asset_loads` 只把 loader completion 写回 CPU registry；render prepare 由资源表全量对账 | 接收方读取最终状态，按对象版本、membership 和资源发布状态对账 |
 | RenderWorld 数据 | instance manager 持久保存 handle、slot、transform/material 快照和历史；prepare 生成当前 `RenderData` | 渲染镜像自包含，RenderData 只作为本次打包视图 |
@@ -112,12 +112,12 @@ RenderRuntime
 ├── AssetSystem
 │   ├── resource identity / CPU content / source revision
 │   ├── material -> texture dependencies
-│   └── AssetHub / load coordinator
+│   └── AssetLoadService / load coordinator
 ├── GameWorld
 │   ├── instance / transform / mesh-material references
 │   ├── light / sky state
 │   └── instance membership / source revision
-├── SceneAssetImporter / CPU edit coordination
+├── AssetSystem / CPU resource and scene import coordination
 ├── RenderAssetSystem
 │   ├── prepared material snapshots / stable material slots
 │   ├── texture image / view / bindless residency
@@ -139,7 +139,7 @@ RenderRuntime
 
 - **AssetSystem** 是 material、mesh、texture 的唯一 CPU 内容权威，管理身份、依赖和加载状态。mesh 与 texture 在创建后内容不可变；material 参数可以修改并推进 source revision。它不知道 RenderWorld 的 TLAS 或 Vulkan 对象。
 - **GameWorld** 是场景关系权威，只保存资源引用和 instance / light / sky 状态。共享材质修改影响所有引用者；只改一个 instance 的材质时，选择另一个 material handle 或显式复制资源，再修改引用。
-- **SceneAssetImporter / 编辑协调器** 通过 AssetSystem 与 GameWorld 的接口完成注册和引用验证。导入器是协调者，不持有第二份长期资源库，也不创建 Vulkan 对象。
+- **外部导入调用方 / 编辑协调器** 通过 AssetSystem 与 GameWorld 的接口完成注册和引用验证。调用方是协调者，不持有第二份长期资源库，也不创建 Vulkan 对象。
 - **RenderAssetSystem** 按 resource handle 和 device 管理首次安装、准备、发布及回收。BLAS 与 mesh buffer 同属不可变 mesh GPU resource；材质 GPU slot 不属于某个 instance 或 GameWorld。
 - **RenderWorld** 是可重新生成的渲染镜像 owner，保存场景组合和历史；TLAS 属于它。资源完成处理不直接修改它的对象表。
 - **GfxResourceRegistry** 保持底层 buffer / image 分配与释放契约。高层 owner 决定何时退役，底层执行安全释放；二者不是两份独立的 Vulkan 所有权。
@@ -147,7 +147,7 @@ RenderRuntime
 固定访问方向为：
 
 ```text
-SceneAssetImporter / CPU edit coordination -> AssetSystem + GameWorld
+External import / CPU edit coordination -> AssetSystem + GameWorld
 RenderAssetSystem::sync                -> AssetSystem::ResourceView
 RenderWorld::sync                         -> GameWorld::SceneView
 RenderWorld::resolve                      -> RenderAssetSystem::PreparedResourceView
