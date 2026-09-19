@@ -91,9 +91,6 @@ semaphore 数量，用于核对声明与实际录制顺序。
 - pass culling、自动拓扑调度或多队列 scheduler；
 - runtime prepare、asset upload 或同步 raycast 的统一编排。
 
-这些能力如需演进，方案与非目标记录在
-[`docs/brain-storm/render-graph-evolution.md`](../brain-storm/render-graph-evolution.md)。
-
 ## 与帧生命周期的关系
 
 - update：Renderer/子系统可以修改 CPU scene 与 renderer-owned 设置。

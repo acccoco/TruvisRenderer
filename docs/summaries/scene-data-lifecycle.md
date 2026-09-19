@@ -1,6 +1,6 @@
 # CPU AssetSystem / GameWorld 到 GPU RenderWorld 同步
 
-> 状态：当前实现事实总结（2026-09-19）。主设计见 [`asset-system-boundaries.md`](../brain-storm/asset-system-boundaries.md) 和 [`render-scene-mirror-and-resource-system.md`](../brain-storm/render-scene-mirror-and-resource-system.md)。
+> 状态：当前实现事实总结（2026-09-19）。本文同时记录 CPU/GPU owner、身份转换、同步顺序和资源生命周期边界。
 
 ## 机制定位
 

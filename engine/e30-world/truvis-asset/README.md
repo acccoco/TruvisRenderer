@@ -39,4 +39,4 @@ Embedded source 使用 canonical scene path 与 image index 表示。
   不生成独立的 manifest 或 metadata JSON。
 
 长期资源 source、去重和 scene import 状态见 [`truvis-world`](../truvis-world/README.md) 与
-[`asset-system-boundaries.md`](../../../docs/brain-storm/asset-system-boundaries.md)。
+[`scene-data-lifecycle.md`](../../../docs/summaries/scene-data-lifecycle.md)。

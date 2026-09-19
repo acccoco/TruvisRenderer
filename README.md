@@ -131,4 +131,3 @@ RenderGraph pass 顺序，`RenderRuntime` 负责 GPU 资源、场景同步、帧
 - [主体 Truvis Renderer](renderer/truvis-renderer/README.md)
 - [Shader 模块说明](./engine/shader/README.md)
 - [CXX 工具链与 native project](./cxx/README.md)
-- [活跃设计方向](./docs/brain-storm/README.md)

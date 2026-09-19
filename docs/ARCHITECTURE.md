@@ -48,7 +48,6 @@ app ──> renderer ──> engine
 - [`app/editor/README.md`](../app/editor/README.md)：Web Editor 构建与 Tauri transport。
 - [`truvis-render-thread/README.md`](../engine/e60-platform/truvis-render-thread/README.md)：窗口 backend 无关的渲染线程。
 - [`truvis-winit-host/README.md`](../engine/e60-platform/truvis-winit-host/README.md)：standalone 和 embedded winit 宿主。
-- [`docs/brain-storm/README.md`](brain-storm/README.md)：尚未进入主线的活跃设计方向。
 
 ## 全局约束
 
@@ -78,4 +77,3 @@ app ──> renderer ──> engine
 - `docs/ARCHITECTURE.md`：当前架构入口与最高优先级约束。
 - `docs/summaries/`：当前实现事实。
 - 模块 README：模块职责、依赖、局部生命周期和常用入口。
-- `docs/brain-storm/`：未实现但仍有工程价值的方向；完成后提炼事实并删除，不建立归档。
