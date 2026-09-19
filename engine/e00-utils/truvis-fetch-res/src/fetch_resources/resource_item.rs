@@ -1,7 +1,10 @@
-use anyhow::Context;
-use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
+
+use anyhow::Context;
+use serde::{Deserialize, Serialize};
+
 use truvis_path::TruvisPath;
 
 /// 资源类型
@@ -26,7 +29,7 @@ pub struct ResourceConfig {
 /// 单个资源项配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceItem {
-    /// 资源名称（用于日志输出）
+    /// 资源名称，也是 `fetch_res` 命令行选择资源时使用的唯一标识。
     pub name: String,
 
     /// 完整的下载 URL
@@ -54,12 +57,20 @@ pub struct ResourceItem {
     #[serde(default)]
     pub recursive_submodules: bool,
 
+    /// 是否在未显式指定资源时参与批量下载，默认 true。
+    #[serde(default = "default_download_by_default")]
+    pub download_by_default: bool,
+
     /// 可选：是否强制重新下载，默认 false
     #[serde(default)]
     pub force_download: bool,
 
     #[serde(default)]
     pub force_overwrite: bool,
+}
+
+fn default_download_by_default() -> bool {
+    true
 }
 
 impl ResourceConfig {
@@ -70,11 +81,29 @@ impl ResourceConfig {
 
         let mut config: ResourceConfig =
             toml::from_str(&content).with_context(|| format!("解析 TOML 配置失败: {:?}", path.as_ref()))?;
+        config.validate_resource_names()?;
+
         for item in &mut config.resources {
             item.target_dir = TruvisPath::workspace_path().join(&item.target_dir).to_str().unwrap().to_string();
         }
 
         Ok(config)
+    }
+
+    fn validate_resource_names(&self) -> anyhow::Result<()> {
+        let mut names = BTreeSet::new();
+
+        for item in &self.resources {
+            if item.name.trim().is_empty() {
+                anyhow::bail!("资源名称不能为空");
+            }
+
+            if !names.insert(item.name.as_str()) {
+                anyhow::bail!("资源名称重复: {}", item.name);
+            }
+        }
+
+        Ok(())
     }
 
     /// 保存配置到 TOML 文件（示例用途）

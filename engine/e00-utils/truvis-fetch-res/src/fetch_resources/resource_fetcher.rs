@@ -1,6 +1,4 @@
-use crate::fetch_resources::resource_item::{ResourceConfig, ResourceItem, ResourceType};
-use anyhow::Context;
-use log::{debug, info, warn};
+use std::collections::BTreeSet;
 use std::env;
 use std::fs::File;
 use std::io::{Cursor, Read};
@@ -10,12 +8,28 @@ use std::thread;
 use std::time::Duration;
 use std::{fs, io};
 
+use anyhow::Context;
+use log::{debug, info, warn};
+
+use crate::fetch_resources::resource_item::{ResourceConfig, ResourceItem, ResourceType};
+
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const HTTP_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const HTTP_DOWNLOAD_MAX_ATTEMPTS: usize = 3;
 const GIT_NETWORK_MAX_ATTEMPTS: usize = 3;
 const GIT_LOW_SPEED_LIMIT_BYTES: &str = "1024";
 const GIT_LOW_SPEED_TIME_SECONDS: &str = "300";
+
+/// 批量资源处理策略。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FetchSelection {
+    /// 只处理配置中默认参与下载的资源。
+    Default,
+    /// 处理配置中的全部资源。
+    All,
+    /// 只处理显式指定名称的资源。
+    Names(BTreeSet<String>),
+}
 
 /// 资源下载器
 pub struct GitHubResourceFetcher {
@@ -77,10 +91,27 @@ impl GitHubResourceFetcher {
 impl GitHubResourceFetcher {
     /// 从配置文件批量下载资源
     pub fn fetch_from_config<P: AsRef<Path>>(&self, config_path: P) -> anyhow::Result<()> {
+        self.fetch_from_config_with_selection(config_path, FetchSelection::Default)
+    }
+
+    /// 按选择策略从配置文件批量下载资源。
+    pub fn fetch_from_config_with_selection<P: AsRef<Path>>(
+        &self,
+        config_path: P,
+        selection: FetchSelection,
+    ) -> anyhow::Result<()> {
         let config = ResourceConfig::from_file(config_path)?;
+        Self::validate_selection(&config, &selection)?;
         let mut failures = Vec::new();
 
         for item in &config.resources {
+            if !Self::should_fetch(item, &selection) {
+                if matches!(&selection, FetchSelection::Default) {
+                    info!("跳过非默认资源 '{}'; 如需下载请显式指定该名称", item.name);
+                }
+                continue;
+            }
+
             if let Err(e) = self.fetch_resource(item) {
                 warn!("下载资源 '{}' 失败: {:?}", item.name, e);
                 failures.push(item.name.clone());
@@ -92,6 +123,32 @@ impl GitHubResourceFetcher {
         }
 
         Ok(())
+    }
+
+    fn validate_selection(config: &ResourceConfig, selection: &FetchSelection) -> anyhow::Result<()> {
+        let FetchSelection::Names(names) = selection else {
+            return Ok(());
+        };
+
+        let missing = names
+            .iter()
+            .filter(|name| !config.resources.iter().any(|item| item.name == **name))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if !missing.is_empty() {
+            anyhow::bail!("未找到资源: {}", missing.join(", "));
+        }
+
+        Ok(())
+    }
+
+    fn should_fetch(item: &ResourceItem, selection: &FetchSelection) -> bool {
+        match selection {
+            FetchSelection::Default => item.download_by_default,
+            FetchSelection::All => true,
+            FetchSelection::Names(names) => names.contains(&item.name),
+        }
     }
 
     /// 下载单个资源

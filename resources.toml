@@ -11,6 +11,7 @@ url = "https://github.com/acccoco/assets/releases/download/fbx/cube-coord_0.0.1.
 resource_type = "file"
 target_dir = "assets/fbx"
 rename_to = "cube-coord.fbx"
+download_by_default = false
 
 [[resources]]
 name = "cornell-box"
@@ -20,11 +21,12 @@ target_dir = "assets/fbx"
 rename_to = "cornell-box.fbx"
 
 [[resources]]
-name = "cornell-box"
+name = "cornell-box-zip"
 url = "https://github.com/acccoco/assets/releases/download/fbx/cornell-box_0.0.1.zip"
 resource_type = "zip"
 target_dir = "assets/fbx"
 rename_to = "cornell-box"
+download_by_default = false
 
 [[resources]]
 name = "sponza-1"
@@ -32,6 +34,7 @@ url = "https://github.com/acccoco/assets/releases/download/fbx/sponza-1_0.0.1.zi
 resource_type = "zip"
 target_dir = "assets/fbx"
 rename_to = "sponza-1"
+download_by_default = false
 
 [[resources]]
 name = "slang"

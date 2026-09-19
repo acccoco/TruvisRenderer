@@ -14,8 +14,11 @@ build-all: editor-web shader cxx
 
 # 拉取资源与工具
 [group('2 资源生成与构建')]
-fetch-res:
-    cargo run --bin fetch_res
+fetch-res *resource_names:
+    #!nu
+    let resource_names = '{{ resource_names }}' | split row ' ' | compact
+    let args = ['run', '--bin', 'fetch_res', '--'] ++ $resource_names
+    cargo ...$args
 
 # 将一个 Blender/FBX 场景转换为 glTF 和外部贴图（需要 Python/Pillow 和 Blender）
 [group('2 资源生成与构建')]

@@ -2,6 +2,8 @@
 //!
 //! 本 crate 读取根目录 `resources.toml`，按配置下载模型资产和外部工具资源，
 //! 并把普通文件、zip 解压产物或 Git checkout 落到 workspace 内的目标目录。
+//! 批量入口默认只处理 `download_by_default = true` 的资源，也支持按唯一 `name`
+//! 选择资源或显式处理全部配置项。
 //! Git resource 只接受 HTTP(S) URL，可按配置 checkout 指定 ref 并递归更新 submodule。
 //! HTTP 下载和 Git 命令继承进程环境中的 proxy 变量，并对常见网络失败做超时与有限重试。
 //! 路径解析依赖 `truvis-path`，日志格式由 `truvis-logs` 初始化。

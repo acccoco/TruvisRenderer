@@ -46,6 +46,15 @@ just truvis
 
 `just fetch-res` 下载项目运行所需的资产与外部工具。`just truvis` 会依次构建 Web editor、shader、Debug CXX 绑定和主体应用，因此首次运行耗时会更长。
 
+`resources.toml` 中的资源默认都会参与下载；标记 `download_by_default = false` 的按需资源需要显式指定名称：
+
+```nushell
+just fetch-res sponza-1
+just fetch-res --all
+```
+
+显式指定资源时只处理指定项；`--all` 会处理包括按需资源在内的全部配置项。
+
 场景转换可运行 `just scene-export <scene.blend 或 scene.fbx> <输出目录>`；脚本只导出 glTF 与外部贴图，场景中的相机和灯光随 glTF 一起保存。转换完成后可用 `python scripts/scene/validate_gltf.py --scene <输出目录>/scene.gltf` 校验资源引用。
 
 构建完整 workspace 时只需执行：

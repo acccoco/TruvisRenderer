@@ -11,7 +11,9 @@
 - `rtx-di/`：RTXDI 参考源码 checkout，包含递归 submodule，仅作为对照实现和文档参考；该目录不进入 git。
 - `openpbr/`：OpenPBR 参考源码 checkout，仅用于材质模型实现与文档对照；该目录不进入 git。
 
-这些资源由根目录 `resources.toml` 描述，推荐通过 `just fetch-res` 下载或刷新。Git resource 使用 HTTP(S)
+这些资源由根目录 `resources.toml` 描述，推荐通过 `just fetch-res` 下载或刷新。缺省情况下只处理
+`download_by_default = true` 的资源；按需资源可通过名称单独下载，或使用 `just fetch-res --all` 处理全部资源。
+Git resource 使用 HTTP(S)
 URL，并保留 `.git` 与 submodule 元数据，方便后续确认参考源码版本。网络受限时可在运行前设置
 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` 或对应小写环境变量；`fetch_res` 会继承这些环境变量，不把代理地址写入配置文件。
 
