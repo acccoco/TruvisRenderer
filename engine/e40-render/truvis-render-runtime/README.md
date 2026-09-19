@@ -62,6 +62,10 @@
 - `RenderInstanceTable` 扫描 CPU instance membership，同步 `MeshInstanceHandle -> GpuInstanceSlot`，在 mesh/material 都 GPU ready 前保持 pending，并按稳定 slot 输出
   active render list，同时为同步 raycast 生成当前 prepare 快照的 slot 反查表。每帧 motion history 推进仍属于
   instance manager 自身的 temporal 生命周期维护，不参与 dirty 传播。
+- instance slot 不再预设固定数量；新 slot 按稳定索引增长，删除后仍跨 FIF 窗口复用。当前 FIF 的
+  geometry、instance 和 indirect buffer 在 prepare 时按实际数据以二次幂容量扩容，扩容后整表重传。
+- bindless sampled-image descriptor 上限为 1024，descriptor pool 与生成的 layout count 使用同一来源；
+  material slot 仍由 `GpuMaterialStore` 的独立容量策略管理。
 - `AnalyticLightTable` 对账 analytic light revision，按 FIF 持有 point / spot / area light structured buffer；
   变化时标记全部 FIF，当前 frame label 使用前上传最新 `SceneReadView` light snapshot，并向 scene root 提供
   device address、count 和 analytic light version。

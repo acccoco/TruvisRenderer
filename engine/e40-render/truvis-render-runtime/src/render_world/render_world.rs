@@ -404,7 +404,8 @@ impl RenderWorld {
         let _span = tracy_client::span!("RenderWorld::prepare_render_data");
 
         update_raster_draw_cache(&mut raster_draw_cache[*frame_label], render_data);
-        let scene_needs_upload = uploaded_scene_revisions[*frame_label] != scene_revision;
+        let buffers_resized = scene_buffers[*frame_label].ensure_capacity(resource_ctx, frame_label, render_data);
+        let scene_needs_upload = buffers_resized || uploaded_scene_revisions[*frame_label] != scene_revision;
         if scene_needs_upload {
             Self::upload_mesh_buffer(scene_buffers, resource_ctx, cmd, barrier_mask, render_data, frame_label);
             Self::upload_instance_buffer(scene_buffers, resource_ctx, cmd, barrier_mask, render_data, frame_label);

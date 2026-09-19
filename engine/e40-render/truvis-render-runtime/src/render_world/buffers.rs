@@ -32,8 +32,7 @@ pub(super) struct SceneBuffers {
 impl SceneBuffers {
     /// 创建一个 FIF frame label 独占的 scene buffer 集。
     ///
-    /// 固定容量与 `RenderInstanceTable` 等上游桥接层的 slot 上限保持一致；容量不足时上传阶段
-    /// 会显式 panic，便于暴露当前后端还没有动态扩容的限制。
+    /// 初始容量只影响预分配；prepare 根据本帧实际数据扩容，不约束场景大小。
     pub(super) fn new(ctx: GfxResourceCtx<'_>, frame_label: FrameLabel) -> Self {
         let max_geometry_cnt = 1024 * 8;
         let max_instance_cnt = 1024;
@@ -82,6 +81,79 @@ impl SceneBuffers {
             ),
             accum_signature: RenderSceneAccumSignature::default(),
         }
+    }
+
+    /// 当前 FIF 的上次提交已经由 Runtime 等待完成，才允许替换这些 buffer。
+    ///
+    /// instance 容量按最高稳定 slot 计算，indirect 容量按 active submesh 数计算；两者不能
+    /// 混用。扩容保留 slot 身份，随后整表上传并更新 scene root，不影响其它在飞帧。
+    pub(super) fn ensure_capacity(
+        &mut self,
+        ctx: GfxResourceCtx<'_>,
+        frame_label: FrameLabel,
+        data: &super::render_data::RenderData<'_>,
+    ) -> bool {
+        let geometry_count = data.all_meshes.iter().map(|mesh| mesh.geometries.len()).sum();
+        let instance_count = data
+            .all_instances
+            .iter()
+            .map(|instance| instance.instance_slot.as_usize() + 1)
+            .max()
+            .unwrap_or(0);
+        let indirect_count = data.all_instances.iter().map(|instance| instance.material_slots.len()).sum();
+        let frame = frame_label;
+
+        let mut resized = false;
+        resized |= Self::grow_pair(
+            &mut self.geometry_buffer,
+            &mut self.geometry_stage_buffer,
+            geometry_count,
+            &format!("geometry-{frame}"),
+            ctx,
+        );
+        resized |= Self::grow_pair(
+            &mut self.instance_buffer,
+            &mut self.instance_stage_buffer,
+            instance_count,
+            &format!("instance-{frame}"),
+            ctx,
+        );
+        resized |= Self::grow_pair(
+            &mut self.material_indirect_buffer,
+            &mut self.material_indirect_stage_buffer,
+            indirect_count,
+            &format!("material-indirect-{frame}"),
+            ctx,
+        );
+        resized |= Self::grow_pair(
+            &mut self.geometry_indirect_buffer,
+            &mut self.geometry_indirect_stage_buffer,
+            indirect_count,
+            &format!("geometry-indirect-{frame}"),
+            ctx,
+        );
+        resized
+    }
+
+    fn grow_pair<T>(
+        device: &mut GfxStructuredBuffer<T>,
+        stage: &mut GfxStructuredBuffer<T>,
+        required: usize,
+        name: &str,
+        ctx: GfxResourceCtx<'_>,
+    ) -> bool {
+        if required <= stage.mapped_slice_ref().len() {
+            return false;
+        }
+        let capacity = required.next_power_of_two();
+        let next_device = GfxStructuredBuffer::new_ssbo(ctx, capacity, name);
+        let next_stage = GfxStructuredBuffer::new_stage_buffer(ctx, capacity, format!("{name}-stage"));
+        device.destroy_mut(ctx, DestroyReason::ImmediateRelease);
+        stage.destroy_mut(ctx, DestroyReason::ImmediateRelease);
+        *device = next_device;
+        *stage = next_stage;
+        log::info!("Scene buffer {name} grew to {capacity} elements");
+        true
     }
 
     /// 销毁该 FIF 的全部 scene buffer。
