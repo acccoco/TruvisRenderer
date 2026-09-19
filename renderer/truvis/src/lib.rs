@@ -1,11 +1,13 @@
 //! Truvis 产品 Renderer、渲染侧 controller 与 frontend 通信端口。
 
+mod bistro_scene;
 mod coordinate_gizmo;
 mod desktop_command;
 mod editor_controller;
 mod overlay_ui;
 mod renderer_ports;
 mod selection_outline;
+mod startup_scene;
 mod truvis_renderer;
 
 pub use desktop_command::{DesktopCommandSender, DesktopSkyAccepted};

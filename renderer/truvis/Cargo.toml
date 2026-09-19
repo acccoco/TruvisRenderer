@@ -25,6 +25,8 @@ ash = { workspace = true }
 glam = { workspace = true }
 imgui = { workspace = true }
 log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 slotmap = { workspace = true }
 tokio = { workspace = true }
 vk-mem = { workspace = true }

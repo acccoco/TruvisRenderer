@@ -346,8 +346,12 @@ impl RenderEmissiveLightTable {
         triangles: &[RtTriangleMeta],
         weighted_records: &mut Vec<(usize, f64)>,
     ) {
-        let estimated_base_color =
-            if material.diffuse_texture().is_some() { glam::Vec3::ONE } else { material.base_color().truncate() };
+        // 独立 emission 贴图不受 base color 调制；CPU 用单位贴图估计权重，实际辐射由 shader 采样。
+        let estimated_base_color = if material.emissive_texture().is_some() || material.diffuse_texture().is_some() {
+            glam::Vec3::ONE
+        } else {
+            material.base_color().truncate()
+        };
         let estimated_radiance = material.emissive_radiance() * estimated_base_color;
         let luminance = Self::luminance(estimated_radiance).max(0.0);
 

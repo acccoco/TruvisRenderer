@@ -55,7 +55,7 @@ impl Camera {
         let transform = glam::Mat4::from_euler(Self::CAMERA_EULER, self.yaw_rad(), self.pitch_rad(), self.roll_rad());
         let dir = transform.transform_vector3(Self::CAMERA_FORWAED);
 
-        glam::Mat4::look_to_rh(self.position, dir, Self::CAMERA_UP)
+        glam::Mat4::look_to_rh(self.position, dir, self.camera_up())
     }
 
     /// 生成右手系、Y-Up 的无限远透视投影矩阵。

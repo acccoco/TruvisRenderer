@@ -305,6 +305,9 @@ pub struct RawMaterialData {
     pub coverage: CoverageMode,
     pub diffuse_texture_path: Option<PathBuf>,
     pub normal_texture_path: Option<PathBuf>,
+    /// glTF metallic-roughness：G 为 roughness，B 为 metallic。
+    pub metallic_roughness_texture_path: Option<PathBuf>,
+    pub emissive_texture_path: Option<PathBuf>,
     pub name: String,
 }
 

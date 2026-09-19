@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use truvis_asset::asset_hub::AssetHub;
 use truvis_asset::handle::{LoadStatus, MeshData};
+use truvis_asset::scene_manifest::SceneAreaLight;
 use truvis_shader_binding::gpu;
 
 pub mod components;
@@ -115,6 +116,25 @@ impl World {
     /// 返回值是 CPU world import handle；调用方不需要知道 `AssetHub` 的内部 load handle。
     pub fn request_model_import(&mut self, path: PathBuf) -> ModelImportHandle {
         self.scene_assets.request_model_import(&mut self.assets, path)
+    }
+
+    /// 把 manifest 的离线面光源描述注册为 CPU scene 语义。
+    ///
+    /// shader ABI 的 padding 和 GPU buffer 生命周期只在 World/RenderRuntime 边界内处理，
+    /// Renderer 不需要构造 `AreaLight` 宿主投影。
+    pub fn register_area_lights(&mut self, lights: &[SceneAreaLight]) {
+        for light in lights {
+            self.register_area_light(truvis_shader_binding::gpu::engine::light::AreaLight {
+                center: glam::Vec3::from_array(light.center).into(),
+                half_u: glam::Vec3::from_array(light.half_u).into(),
+                half_v: glam::Vec3::from_array(light.half_v).into(),
+                radiance: glam::Vec3::from_array(light.radiance).into(),
+                _center_padding: 0.0,
+                _half_u_padding: 0.0,
+                _half_v_padding: 0.0,
+                _radiance_padding: 0.0,
+            });
+        }
     }
 
     /// 注册一个 file texture 并返回 CPU world texture handle。

@@ -109,9 +109,8 @@ pub struct RenderMaterialManager {
     current_frame_id: u64,
     /// 影响 CPU 材质参数语义的单调 revision。
     ///
-    /// 自发光 light table 只关心 base color / emissive / texture 引用等 CPU 参数变化；
-    /// texture 从 fallback 切换到真实 SRV 只会触发 GPU material buffer dirty，不改变这里的
-    /// power 分布近似，因此不推进该 revision。
+    /// 材质参数与 texture-ready 都推进版本，供离线累计识别 fallback 到真实贴图的切换。
+    /// light table 的 power 估计仍由其原有 CPU scene revision 驱动。
     material_revision: u64,
 }
 
@@ -229,7 +228,7 @@ impl RenderMaterialManager {
                 dirty_frame_id: frame_id,
             });
 
-        if flags.scene_changed {
+        if flags.scene_changed || flags.texture_ready_changed {
             self.material_revision = self.material_revision.saturating_add(1);
         }
 
@@ -371,6 +370,10 @@ impl RenderMaterialManager {
 
 // 访问器
 impl RenderMaterialManager {
+    pub fn material_revision(&self) -> u64 {
+        self.material_revision
+    }
+
     /// 获取材质在 GPU buffer 中的 slot index
     #[inline]
     pub fn get_slot_index(&self, handle: MaterialHandle) -> Option<usize> {
@@ -404,6 +407,10 @@ impl RenderMaterialManager {
         let diffuse_binding =
             data.diffuse_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
         let normal_binding = data.normal_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
+        let metallic_roughness_binding =
+            data.metallic_roughness_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
+        let emissive_binding =
+            data.emissive_texture.map(|h| resolver.resolve_texture(h)).unwrap_or(TextureBinding::null());
 
         gpu::engine::material::PbrMaterial {
             base_color: data.base_color.truncate().into(),
@@ -422,6 +429,10 @@ impl RenderMaterialManager {
             diffuse_map_sampler_type: diffuse_binding.sampler,
             normal_map: normal_binding.srv_handle.0,
             normal_map_sampler_type: normal_binding.sampler,
+            metallic_roughness_map: metallic_roughness_binding.srv_handle.0,
+            metallic_roughness_map_sampler_type: metallic_roughness_binding.sampler,
+            emissive_map: emissive_binding.srv_handle.0,
+            emissive_map_sampler_type: emissive_binding.sampler,
         }
     }
 

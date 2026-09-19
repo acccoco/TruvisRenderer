@@ -27,7 +27,8 @@ pub struct BindlessDescriptorBinding {
     #[binding = 0]
     #[descriptor_type = "SAMPLED_IMAGE"]
     #[stage = "FRAGMENT | RAYGEN_KHR | CLOSEST_HIT_KHR | ANY_HIT_KHR | MISS_KHR | COMPUTE"]
-    #[count = 128]
+    // 大型场景包含数百张材质贴图；保持固定 descriptor set 和稳定 slot，无需运行时重建 layout。
+    #[count = 1024]
     #[flags = "PARTIALLY_BOUND | UPDATE_AFTER_BIND | UPDATE_UNUSED_WHILE_PENDING"]
     _srvs: (),
 }

@@ -338,12 +338,11 @@ struct RtDirectLighting
 
         engine::material::PbrMaterial* mat = engine::binding::gpu_scene.all_mats + light.material_slot;
         const float2 uv = interpolate_emissive_uv(light, bary);
-        const float3 base_color = MaterialAccess::base_color(mat, uv);
 
         candidate.kind = RtLightCandidate::kind_emissive_triangle();
         candidate.direction = light_dir;
         candidate.distance = distance;
-        candidate.radiance = mat.emissive * base_color;
+        candidate.radiance = MaterialAccess::emission(mat, uv);
         candidate.solid_angle_pdf = solid_angle_pdf;
 
         candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
@@ -745,12 +744,11 @@ struct RtDirectLighting
 
         engine::material::PbrMaterial* mat = engine::binding::gpu_scene.all_mats + light.material_slot;
         const float2 uv = interpolate_emissive_uv(light, bary);
-        const float3 base_color = MaterialAccess::base_color(mat, uv);
 
         candidate.kind = RtLightCandidate::kind_emissive_triangle();
         candidate.direction = light_dir;
         candidate.distance = distance;
-        candidate.radiance = mat.emissive * base_color;
+        candidate.radiance = MaterialAccess::emission(mat, uv);
         candidate.solid_angle_pdf = solid_angle_pdf;
         candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
         if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)

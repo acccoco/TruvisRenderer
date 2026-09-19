@@ -21,10 +21,11 @@ impl RenderMode {
         }
     }
 
-    pub fn initial_from_env() -> Self {
+    /// 默认值由具体产品决定；此处只解析共同的环境变量覆盖。
+    pub fn initial_from_env(default: Self) -> Self {
         const ENV_NAME: &str = "TRUVIS_RENDER_MODE";
         let Ok(value) = env::var(ENV_NAME) else {
-            return Self::Realtime;
+            return default;
         };
 
         match Self::from_config_value(&value) {
@@ -34,7 +35,7 @@ impl RenderMode {
             }
             None => {
                 log::warn!("Ignoring unsupported {ENV_NAME} value: {value}");
-                Self::Realtime
+                default
             }
         }
     }

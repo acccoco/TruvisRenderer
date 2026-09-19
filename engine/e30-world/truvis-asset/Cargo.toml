@@ -11,6 +11,8 @@ ash = { workspace = true }
 glam = { workspace = true }
 gltf = { workspace = true }
 log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 slotmap = { workspace = true }
 crossbeam-channel = { workspace = true }
 crossbeam-utils = { workspace = true }

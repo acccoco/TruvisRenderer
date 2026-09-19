@@ -267,6 +267,11 @@ impl<'a> SceneMaterialEmissiveView<'a> {
     pub fn diffuse_texture(&self) -> Option<TextureHandle> {
         self.data.diffuse_texture
     }
+
+    #[inline]
+    pub fn emissive_texture(&self) -> Option<TextureHandle> {
+        self.data.emissive_texture
+    }
 }
 
 impl Default for SceneSkyState {
@@ -823,7 +828,14 @@ impl SceneStore {
     }
 
     fn material_texture_handles(data: &MaterialData) -> impl Iterator<Item = TextureHandle> {
-        [data.diffuse_texture, data.normal_texture].into_iter().flatten()
+        [
+            data.diffuse_texture,
+            data.normal_texture,
+            data.metallic_roughness_texture,
+            data.emissive_texture,
+        ]
+        .into_iter()
+        .flatten()
     }
 
     fn add_material_texture_dependencies(&mut self, material: MaterialHandle, data: &MaterialData) {
@@ -913,6 +925,8 @@ mod tests {
             coverage: CoverageMode::Opaque,
             diffuse_texture: None,
             normal_texture: None,
+            metallic_roughness_texture: None,
+            emissive_texture: None,
             name: name.to_string(),
         }
     }

@@ -9,6 +9,11 @@
 `AssetHub` 把硬盘文件变成 owned CPU payload，`World` 把 payload 变成 CPU scene 语义；
 `RenderWorld` 再把 CPU scene 语义变成 shader 可读取的 GPU cache、buffer、bindless handle 和 TLAS。
 
+离线场景工具可额外生成 `SceneManifest`（模型路径、相机 preset 和面光源参数）。它属于
+`truvis-asset` 的 CPU 输入描述：Renderer 只选择并提交 manifest，`World` 仍拥有注册后的
+CPU scene/light 语义，RenderRuntime 仍在 prepare 阶段派生 GPU 状态。manifest 不携带 Vulkan
+资源、RenderGraph 或 App 生命周期；Blender 只参与导出，不是运行时依赖。
+
 `World` 是 Renderer / 子系统在 update 阶段面对的 CPU 语义入口。它内部持有 `SceneStore`、
 `AssetHub` 和 `SceneAssetIngestor`，但不持有 Vulkan image、buffer、BLAS、TLAS 或 GPU slot。
 `RenderWorld` 是 `RenderRuntime` 内部的 render-side prepared world，持有 texture / mesh /
@@ -65,19 +70,36 @@ CPU scene 的 `MaterialData` 是材质语义权威来源。v1 把光学类别和
 - `MaterialClass::Emissive { radiance }`：显式自发光表面；emissive table 和 closest-hit emission 都从该 class 派生。
 - `CoverageMode::Opaque` / `CoverageMode::AlphaMask { alpha_cutoff }`：只决定可见性 alpha test 与 TLAS any-hit。
 
-GPU `PbrMaterial` 不再固定 64B；当前生成 binding 为 80B，并显式写入 `base_color`、`metallic`、
+GPU `PbrMaterial` 当前生成 binding 为 96B、align 4，并显式写入 `base_color`、`metallic`、
 `alpha_factor`、`roughness`、`material_class`、`coverage_mode`、`opacity`、`ior`、`alpha_cutoff`、
-`emissive` 与 diffuse/normal bindless handles。`RenderMaterialManager` 只从 CPU
+`emissive` 与 diffuse/normal/metallic-roughness/emissive bindless handles。新增两对 handle/sampler 位于
+offset 80/84 与 88/92。`RenderMaterialManager` 只从 CPU
 `MaterialClass/CoverageMode` 派生这些字段；closest-hit、any-hit、RayQuery shadow/specular-motion
 和 TLAS instance flags 不能各自推断透明或自发光语义。
 
 glTF 导入规则是：`alphaMode = MASK` 只导入为 `CoverageMode::AlphaMask`，未写 cutoff 时使用 `0.5`；
 `KHR_materials_transmission.transmissionFactor > 0` 导入为
 `Transmission { opacity: 1.0 - transmissionFactor, ior }`，IOR 来自 `KHR_materials_ior`，缺省为 `1.5`；
-`emissive_factor` 非零导入为 `Emissive { radiance }`。v1 class 互斥，优先级为
+`emissive_factor * KHR_materials_emissive_strength` 非零导入为 `Emissive { radiance }`。v1 class 互斥，优先级为
 `Emissive > Transmission > Surface`，冲突时打印 warning。`BLEND` v1 不做 alpha blend，coverage 降级为
 `Opaque` 并 warning。Assimp/Truvixx 把 `opacity < 0.99` 直接识别为
 `Transmission { opacity, ior: 1.5 }`，不再要求低 roughness，也不从标量 opacity 推断 alpha mask。
+
+glTF UV 保留左上角原点，与 image loader 和 Vulkan 采样一致，不额外翻转 V。
+`MaterialAccess` 统一读取 G/B 线性 metallic-roughness 及 sRGB emissive 贴图；closest-hit 与 NEE
+使用相同 emission，独立贴图不受 base color 调制。无独立 emission 贴图时保留已有
+`radiance * base_color` 语义。自发光贴图的黑色区域作为普通表面参与散射。
+四类 texture handle 都进入 `SceneStore` 的依赖追踪和 texture-ready 材质重上传链路。
+材质参数及 texture-ready 变化会推进 `RenderSceneAccumSignature.material_revision`，清空离线累计中的
+旧材质/fallback 样本；不会改变 emissive alias table 的 CPU 权重估计方式。
+
+## 场景容量与扩容
+
+`RenderInstanceManager` 按需分配稳定 slot，受 TLAS custom index 的 24 位范围约束；删除后仍跨过 FIF 窗口
+才可复用。`RenderWorldBuffers` 按 active snapshot 的最高 instance slot、geometry 数和 submesh indirect 数
+按 2 的幂扩容。仅替换已经等待完成的当前 FIF buffer，整表上传后更新 scene root device address；其它在飞帧不变。
+Bindless sampled-image descriptor set 固定为 1024 slots，pool 预算从同一 binding 定义派生；不做热重建或 slot 搬移。
+这覆盖 Bistro 的三个场景；material slots 仍保留现有 1024 上限。
 
 ## 身份转换链路
 

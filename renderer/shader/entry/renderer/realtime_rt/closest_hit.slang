@@ -10,16 +10,16 @@
 /// delta / non-delta 事件。opacity 只参与后续 transmission 采样，不参与 delta 判定。
 struct RtMaterialClassifier
 {
-    static MaterialType classify(engine::material::PbrMaterial* mat)
+    static MaterialType classify(engine::material::PbrMaterial* mat, float roughness, float3 emission)
     {
         const float smooth_delta_roughness_threshold = 0.02f;
 
-        if (mat.material_class == engine::material::MATERIAL_CLASS_EMISSIVE)
+        if (mat.material_class == engine::material::MATERIAL_CLASS_EMISSIVE && any(emission > 0.0f))
         {
             return MaterialType::EMISSIVE;
         }
 
-        const bool smooth_delta = mat.roughness <= smooth_delta_roughness_threshold;
+        const bool smooth_delta = roughness <= smooth_delta_roughness_threshold;
         if (mat.material_class == engine::material::MATERIAL_CLASS_TRANSMISSION)
         {
             return smooth_delta ? MaterialType::DELTA_TRANSMISSION : MaterialType::ROUGH_TRANSMISSION;
@@ -84,12 +84,13 @@ void main_closest_hit(inout RtTracePayload payload, in BuiltInTriangleIntersecti
     payload.surface.hit_t = RayTCurrent();
 
     payload.surface.base_color = base_color;
-    payload.surface.metallic = mat.metallic;
-    payload.surface.roughness = mat.roughness;
+    const float2 metallic_roughness = MaterialAccess::metallic_roughness(mat, interp_uv);
+    payload.surface.metallic = metallic_roughness.x;
+    payload.surface.roughness = metallic_roughness.y;
     payload.surface.opacity = mat.opacity;
     payload.surface.ior = mat.ior;
 
-    payload.surface.emissive = mat.emissive * base_color;
+    payload.surface.emissive = MaterialAccess::emission(mat, interp_uv);
 
-    payload.surface.material_type = RtMaterialClassifier::classify(mat);
+    payload.surface.material_type = RtMaterialClassifier::classify(mat, payload.surface.roughness, payload.surface.emissive);
 }

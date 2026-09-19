@@ -41,10 +41,29 @@ TruvisRenderer 是一个基于 Rust、Vulkan 1.3 和 Slang 构建的实时光线
 
 ```nushell
 just fetch-res
+just prepare-bistro 'C:/Users/你的用户名/Downloads/Bistro_v5_2'
 just truvis
 ```
 
-`just fetch-res` 下载项目运行所需的资产与外部工具。`just truvis` 会依次构建 Web editor、shader、Debug CXX 绑定和主体应用，因此首次运行耗时会更长。
+`just fetch-res` 下载基础资产与外部工具。主体应用默认打开 Bistro Interior；先从
+[NVIDIA ORCA](https://developer.nvidia.com/orca/amazon-lumberyard-bistro) 下载并解压 Bistro v5.2 完整包，
+再执行 `prepare-bistro`。准备步骤需要 Python 3 + Pillow（`python -m pip install Pillow`）和 Blender 4.4；
+Blender 路径可作为第二个参数传入。转换结果写入被 Git 忽略的 `assets/gltf/bistro/`，运行时不需要 Blender。
+
+`just truvis` 会依次构建 Web editor、shader、Debug CXX 绑定和主体应用，因此首次运行耗时会更长。
+Bistro 首次加载还需解码贴图并构建数千个 BLAS；窗口出现后需等待场景资源就绪。
+
+```nushell
+just truvis bistro-interior       # 默认餐厅
+just truvis bistro-interior-wine  # 餐厅、酒杯与液体
+just truvis bistro-exterior       # 室外街区
+```
+
+每次启动选择一个场景，也可设置 `TRUVIS_BISTRO_SCENE=interior|interior-wine|exterior`。
+初始视角来自资源包相机，环境光使用随包 HDRI，室内光源使用自发光材质。
+主体应用默认使用 Offline 累计，等待采样收敛即可查看场景。可在 overlay 切换 Realtime 并使用 DLSS RR，
+也可通过 `TRUVIS_RENDER_MODE=realtime` 覆盖启动模式；室内多光源的实时单帧路径追踪噪声较多。
+Wine 中的玻璃与液体映射到现有 Transmission；暂不表达原始场景的体吸收与嵌套介质优先级。
 
 构建完整 workspace 时只需执行：
 
@@ -115,6 +134,7 @@ RenderGraph pass 顺序，`RenderRuntime` 负责 GPU 资源、场景同步、帧
 
 - 当前以 Windows x64、NVIDIA RTX 和源码构建为主要开发目标，仓库不提供预编译安装包。
 - `.gltf` / `.glb` 当前支持 material、mesh 与 instance 导入；外部 image URI 可以作为纹理路径，GLB / data URI 内嵌贴图尚未接入现有纹理身份模型。
+- glTF 材质支持 metallic-roughness、独立 emissive 贴图及 `KHR_materials_emissive_strength`。主光追路径尚未消费 normal map。
 - ReSTIR DI 当前服务 primary direct lighting；secondary bounce 继续使用统一 NEE。
 - Offline 路径拥有独立累计状态，不复用 DLSS、ReSTIR DI、SHARC 或 realtime temporal state。
 

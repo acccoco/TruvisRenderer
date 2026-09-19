@@ -40,7 +40,7 @@ pub(crate) fn load_gltf_scene_task(req: ModelLoadRequest) -> LoadResult {
 
 /// glTF scene 的只读复制器。
 ///
-/// Reader 拥有一次 `gltf::import` 返回的 document/buffer/image 数据，只在本后台任务内
+/// Reader 拥有 document/buffer 数据，只在本后台任务内
 /// 借用它们读取 primitive、material 和 node tree。所有输出都立即复制到 Rust owned
 /// Vec/String/PathBuf，确保任务结束后不会留下 glTF crate 内部借用或 decoded image bytes。
 struct GltfSceneReader {
@@ -53,7 +53,7 @@ struct GltfSceneReader {
 impl GltfSceneReader {
     /// 加载一个 glTF / GLB 文件并复制成 `RawSceneData`。
     ///
-    /// `gltf::import` 可以读取外部 buffer 和 GLB 内嵌 buffer；本 v1 仅把外部 image URI
+    /// `gltf::import_buffers` 读取外部 buffer 和 GLB 内嵌 buffer；本 v1 仅把外部 image URI
     /// 转成 texture path，GLB/data URI 贴图暂不注册 texture handle，避免改变当前
     /// scene texture path identity 策略。
     fn load_path(path: &Path) -> Result<RawSceneData, String> {
@@ -61,7 +61,9 @@ impl GltfSceneReader {
             return Err(format!("glTF scene file does not exist: {:?}", path));
         }
 
-        let (document, buffers, _images) = gltf::import(path).map_err(|err| err.to_string())?;
+        let gltf::Gltf { document, blob } = gltf::Gltf::open(path).map_err(|err| err.to_string())?;
+        // 纹理由现有 texture loader 按需解码；此处不再串行解码并丢弃全场景贴图。
+        let buffers = gltf::import_buffers(&document, path.parent(), blob).map_err(|err| err.to_string())?;
         let reader = Self {
             document,
             buffers,
@@ -132,7 +134,7 @@ impl GltfSceneReader {
 
     /// 将 glTF material 复制到 AssetHub 的 raw material 边界格式。
     ///
-    /// v1 只读取当前 `MaterialData` 能表达的 PBR metallic-roughness 参数和两类贴图。
+    /// 只读取当前 `MaterialData` 能表达的 PBR 参数及四类外部贴图。
     /// 外部 URI 保留为 importer 原始表达，稍后由 `SceneAssetIngestor` 根据 scene 路径统一解析。
     fn copy_material(&self, material: gltf::Material<'_>) -> RawMaterialData {
         let pbr = material.pbr_metallic_roughness();
@@ -142,7 +144,7 @@ impl GltfSceneReader {
             material.name().map(str::to_string).unwrap_or_else(|| Self::material_fallback_name(material.index()));
         let transmission_factor =
             material.transmission().map(|transmission| transmission.transmission_factor()).unwrap_or(0.0);
-        let emissive_radiance = glam::Vec3::new(emissive[0], emissive[1], emissive[2]);
+        let emissive_radiance = glam::Vec3::from_array(emissive) * material.emissive_strength().unwrap_or(1.0);
         let ior = material.ior().unwrap_or(MaterialClass::DEFAULT_IOR);
 
         RawMaterialData {
@@ -156,6 +158,12 @@ impl GltfSceneReader {
                 .and_then(|texture| Self::external_texture_path(texture.texture().source())),
             normal_texture_path: material
                 .normal_texture()
+                .and_then(|texture| Self::external_texture_path(texture.texture().source())),
+            metallic_roughness_texture_path: pbr
+                .metallic_roughness_texture()
+                .and_then(|texture| Self::external_texture_path(texture.texture().source())),
+            emissive_texture_path: material
+                .emissive_texture()
                 .and_then(|texture| Self::external_texture_path(texture.texture().source())),
             name,
         }
@@ -197,7 +205,8 @@ impl GltfSceneReader {
             .unwrap_or_else(|| vec![glam::Vec3::X; vertex_count]);
         let uvs = reader
             .read_tex_coords(0)
-            .map(|iter| iter.into_f32().map(|uv| glam::Vec2::new(uv[0], 1.0 - uv[1])).collect())
+            // glTF UV 与 image loader 都以左上角为原点，直接保留 V，避免贴图上下颠倒。
+            .map(|iter| iter.into_f32().map(glam::Vec2::from_array).collect())
             .unwrap_or_else(|| vec![glam::Vec2::ZERO; vertex_count]);
 
         Self::validate_mesh_attributes(&name, vertex_count, &normals, &tangents, &uvs, &indices)?;
@@ -269,6 +278,8 @@ impl GltfSceneReader {
             coverage: CoverageMode::Opaque,
             diffuse_texture_path: None,
             normal_texture_path: None,
+            metallic_roughness_texture_path: None,
+            emissive_texture_path: None,
             name: "material-default".to_string(),
         }
     }

@@ -21,5 +21,9 @@ pub struct MaterialData {
 
     pub diffuse_texture: Option<TextureHandle>,
     pub normal_texture: Option<TextureHandle>,
+    /// 线性 metallic-roughness 贴图，与材质常量因子相乘。
+    pub metallic_roughness_texture: Option<TextureHandle>,
+    /// 独立自发光贴图；其色彩不受 base color 贴图调制。
+    pub emissive_texture: Option<TextureHandle>,
     pub name: String,
 }

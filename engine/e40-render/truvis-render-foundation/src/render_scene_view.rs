@@ -12,6 +12,8 @@ use crate::frame_label::FrameLabel;
 pub struct RenderSceneAccumSignature {
     /// TLAS revision 覆盖 instance 集合、几何引用和 transform 变化；这些变化会直接改变 primary/secondary ray 命中。
     pub tlas_revision: u64,
+    /// 材质参数及 fallback/真实贴图切换都会改变 shader 输出，必须重新累计。
+    pub material_revision: u64,
     /// 自发光三角形表、alias table 或相关材质/mesh 语义变化会改变 emissive NEE 和 hit emission。
     pub emissive_light_version: u32,
     /// analytic light 列表或参数变化会改变 direct lighting sample，因此必须让离线累计失效。

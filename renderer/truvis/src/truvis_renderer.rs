@@ -1,4 +1,3 @@
-use truvis_path::TruvisPath;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
 use truvis_render_loop::input_event::InputEvent;
@@ -6,17 +5,9 @@ use truvis_render_loop::renderer::{Renderer, RendererInitCtx, RendererResizeCtx,
 use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
 use truvis_render_runtime::render_runtime::{RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 use truvis_render_runtime::selection::WorldSubmeshSelection;
-use truvis_shader_binding::gpu;
-use truvis_world::{
-    World,
-    components::instance::Instance,
-    components::material::{CoverageMode, MaterialClass, MaterialData},
-    guid_new_type::MeshHandle,
-    procedural_mesh::ProceduralMeshKind,
-};
+use truvis_world::World;
 
 use renderer_imgui::{FrameStatsOverlayData, ImGuiSubsystem};
-use renderer_kit::camera::Camera;
 use renderer_kit::camera_controller::CameraController;
 use renderer_kit::debug_image::DebugImageSelection;
 use renderer_kit::input_state::InputManager;
@@ -32,8 +23,10 @@ use crate::overlay_ui::{
     TruvisOverlayUi,
 };
 use crate::selection_outline::SelectionOutlineSubsystem;
+use crate::startup_scene::StartupScene;
 
 pub struct TruvisRenderer {
+    startup_scene: StartupScene,
     imgui: ImGuiSubsystem,
     debug_image_selection: DebugImageSelection,
     realtime: RealtimeRenderSubsystem,
@@ -65,6 +58,7 @@ impl TruvisRenderer {
     /// 网络 owner 职责。
     pub fn new(ports: TruvisRendererPorts) -> Self {
         Self {
+            startup_scene: StartupScene::default(),
             imgui: Default::default(),
             debug_image_selection: Default::default(),
             realtime: Default::default(),
@@ -83,43 +77,6 @@ impl TruvisRenderer {
         }
     }
 }
-
-#[derive(Clone, Copy)]
-struct MaterialCubeSpec {
-    name: &'static str,
-    center: glam::Vec3,
-    base_color: glam::Vec4,
-    metallic: f32,
-    roughness: f32,
-    class: MaterialClass,
-    coverage: CoverageMode,
-}
-
-#[derive(Clone, Copy)]
-struct EmissiveCubeMatrixConfig {
-    /// 第一个 cube 的 world-space 中心点；整体平移矩阵时优先调这里。
-    start_offset: glam::Vec3,
-    /// 相邻 cube 中心点在 XYZ 三轴上的间距。
-    spacing: glam::Vec3,
-    /// 单个 cube 的等比缩放；程序化 cube 本身是边长 1 的单位模型。
-    cube_scale: f32,
-    /// XYZ 三轴实例数量；默认 20 * 1 * 10 = 200 个自发光 cube。
-    counts: glam::UVec3,
-}
-
-#[derive(Clone, Copy)]
-struct EmissiveCubePaletteSpec {
-    name: &'static str,
-    base_color: glam::Vec4,
-    radiance: glam::Vec3,
-}
-
-const EMISSIVE_CUBE_MATRIX_CONFIG: EmissiveCubeMatrixConfig = EmissiveCubeMatrixConfig {
-    start_offset: glam::Vec3::new(-800.0, 600.0, -425.0),
-    spacing: glam::Vec3::new(75.0, 60.0, 90.0),
-    cube_scale: 10.0,
-    counts: glam::UVec3::new(20, 1, 10),
-};
 
 pub(crate) struct ClickRayCastProbe {
     total_time_s: f32,
@@ -219,242 +176,6 @@ impl TruvisRenderer {
         self.overlay_ui.options_mut()
     }
 
-    fn request_model(world: &mut World, camera: &mut Camera) {
-        camera.position = glam::vec3(270.0, 194.0, -64.0);
-        camera.euler_yaw_deg = 90.0;
-        camera.euler_pitch_deg = 0.0;
-
-        world.register_point_light(gpu::engine::light::PointLight {
-            pos: glam::vec3(-800.0, 50.0, 400.0).into(),
-            color: (glam::vec3(1.0, 0.0, 0.0) * 5000.0).into(),
-            _pos_padding: Default::default(),
-            _color_padding: Default::default(),
-        });
-        world.register_point_light(gpu::engine::light::PointLight {
-            pos: glam::vec3(-100.0, 50.0, 400.0).into(),
-            color: (glam::vec3(0.0, 1.0, 0.0) * 5000.0).into(),
-            _pos_padding: Default::default(),
-            _color_padding: Default::default(),
-        });
-        world.register_point_light(gpu::engine::light::PointLight {
-            pos: glam::vec3(600.0, 50.0, 400.0).into(),
-            color: (glam::vec3(0.0, 0.0, 1.0) * 5000.0).into(),
-            _pos_padding: Default::default(),
-            _color_padding: Default::default(),
-        });
-        // RT 中 SpotLight 是半径 0.5 的 sphere emitter 再叠加 cone falloff；
-        // 主场景保留几盏显式 spot，方便观察 Analytic NEE 开关和 NeeAnalytic debug channel。
-        world.register_spot_light(gpu::engine::light::SpotLight {
-            pos: glam::vec3(-450.0, 100.0, 400.0).into(),
-            inner_angle: 30.0_f32.to_radians(),
-            color: (glam::vec3(1.0, 1.0, 0.0) * 9000.0).into(),
-            outer_angle: 60.0_f32.to_radians(),
-            dir: glam::vec3(0.0, -1.0, 0.0).into(),
-            _dir_padding: Default::default(),
-        });
-        world.register_spot_light(gpu::engine::light::SpotLight {
-            pos: glam::vec3(250.0, 100.0, 400.0).into(),
-            inner_angle: 30.0_f32.to_radians(),
-            color: (glam::vec3(0.0, 1.0, 1.0) * 9000.0).into(),
-            outer_angle: 60.0_f32.to_radians(),
-            dir: glam::vec3(0.0, -1.0, 0.0).into(),
-            _dir_padding: Default::default(),
-        });
-        // AreaLight 的正面法线由 cross(half_u, half_v) 决定；这里使用 X/Z 方向半轴，
-        // 让矩形灯法线朝 -Y，单面照向 Sponza 场景内部。
-        world.register_area_light(gpu::engine::light::AreaLight {
-            center: glam::vec3(-100.0, 200.0, 400.0).into(),
-            half_u: glam::vec3(70.0, 0.0, 0.0).into(),
-            half_v: glam::vec3(0.0, 0.0, 18.0).into(),
-            radiance: (glam::vec3(1.0, 0.16, 0.12) * 10.0).into(),
-            _center_padding: Default::default(),
-            _half_u_padding: Default::default(),
-            _half_v_padding: Default::default(),
-            _radiance_padding: Default::default(),
-        });
-        world.register_area_light(gpu::engine::light::AreaLight {
-            center: glam::vec3(600.0, 200.0, 400.0).into(),
-            half_u: glam::vec3(26.0, 0.0, 0.0).into(),
-            half_v: glam::vec3(0.0, 0.0, 26.0).into(),
-            radiance: (glam::vec3(0.12, 0.16, 1.0) * 10.0).into(),
-            _center_padding: Default::default(),
-            _half_u_padding: Default::default(),
-            _half_v_padding: Default::default(),
-            _radiance_padding: Default::default(),
-        });
-
-        log::info!("start load sponza model");
-        world.request_model_import(TruvisPath::assets_path("fbx/sponza/sponza.fbx"));
-    }
-
-    fn spawn_material_test_cubes(world: &mut World) {
-        const MATERIAL_SOURCE: &str = "procedural://material-test-cubes";
-        const CUBE_SCALE: f32 = 100.0;
-
-        let cube_kind = ProceduralMeshKind::Cube;
-        let cube_mesh = world.register_mesh(cube_kind.mesh_data()).expect("failed to register procedural cube mesh");
-        let cube_y = 100.0;
-        let cube_z = -25.0;
-        let cube_specs = [
-            MaterialCubeSpec {
-                name: "glass",
-                center: glam::vec3(-800.0, cube_y, cube_z),
-                base_color: glam::vec4(0.65, 0.85, 1.0, 1.0),
-                metallic: 0.0,
-                roughness: 0.0,
-                class: MaterialClass::transmission(0.25, MaterialClass::DEFAULT_IOR),
-                coverage: CoverageMode::Opaque,
-            },
-            MaterialCubeSpec {
-                name: "mirror",
-                center: glam::vec3(-450.0, cube_y, cube_z),
-                base_color: glam::vec4(0.96, 0.96, 0.92, 1.0),
-                metallic: 1.0,
-                roughness: 0.0,
-                class: MaterialClass::Surface,
-                coverage: CoverageMode::Opaque,
-            },
-            MaterialCubeSpec {
-                name: "glossy-plastic",
-                center: glam::vec3(-100.0, cube_y, cube_z),
-                base_color: glam::vec4(0.95, 0.08, 0.18, 1.0),
-                metallic: 0.0,
-                roughness: 0.18,
-                class: MaterialClass::Surface,
-                coverage: CoverageMode::Opaque,
-            },
-            MaterialCubeSpec {
-                name: "rough-plastic",
-                center: glam::vec3(250.0, cube_y, cube_z),
-                base_color: glam::vec4(0.18, 0.95, 0.25, 1.0),
-                metallic: 0.0,
-                roughness: 0.75,
-                class: MaterialClass::Surface,
-                coverage: CoverageMode::Opaque,
-            },
-            MaterialCubeSpec {
-                name: "emissive-reference",
-                center: glam::vec3(600.0, cube_y, cube_z),
-                base_color: glam::vec4(1.0, 0.65, 0.18, 1.0),
-                metallic: 0.0,
-                roughness: 1.0,
-                class: MaterialClass::emissive(glam::vec3(4.0, 2.2, 0.5)),
-                coverage: CoverageMode::Opaque,
-            },
-        ];
-
-        // cube 为单位模型，scale=100 且中心 y=100，使所有顶点落在给定场景范围内；
-        // 这些材质参数刻意覆盖当前 shader 的透明、镜面、光泽/粗糙 diffuse 和 emissive 分支。
-        for spec in cube_specs {
-            let material = world
-                .register_material(MaterialData {
-                    base_color: spec.base_color,
-                    metallic: spec.metallic,
-                    roughness: spec.roughness,
-                    class: spec.class,
-                    coverage: spec.coverage,
-                    diffuse_texture: None,
-                    normal_texture: None,
-                    name: format!("material-test-cube-{}-{}", MATERIAL_SOURCE, spec.name),
-                })
-                .expect("failed to register material test cube material");
-
-            world
-                .register_instance(Instance {
-                    name: format!("material-test-cube-{}-{}", MATERIAL_SOURCE, spec.name),
-                    mesh: cube_mesh,
-                    materials: vec![material],
-                    transform: glam::Mat4::from_scale_rotation_translation(
-                        glam::Vec3::splat(CUBE_SCALE),
-                        glam::Quat::IDENTITY,
-                        spec.center,
-                    ),
-                })
-                .expect("failed to register material test cube instance");
-        }
-
-        Self::spawn_emissive_cube_matrix(world, cube_mesh, EMISSIVE_CUBE_MATRIX_CONFIG);
-    }
-
-    fn spawn_emissive_cube_matrix(world: &mut World, cube_mesh: MeshHandle, config: EmissiveCubeMatrixConfig) {
-        let palette_specs = [
-            EmissiveCubePaletteSpec {
-                name: "warm-amber",
-                base_color: glam::vec4(1.0, 0.72, 0.32, 1.0),
-                radiance: glam::vec3(4.8, 2.7, 0.8) * 5.0,
-            },
-            EmissiveCubePaletteSpec {
-                name: "rose",
-                base_color: glam::vec4(1.0, 0.36, 0.54, 1.0),
-                radiance: glam::vec3(4.2, 0.9, 1.8) * 5.0,
-            },
-            EmissiveCubePaletteSpec {
-                name: "cyan",
-                base_color: glam::vec4(0.42, 0.95, 1.0, 1.0),
-                radiance: glam::vec3(1.2, 3.8, 4.8) * 5.0,
-            },
-            EmissiveCubePaletteSpec {
-                name: "lime",
-                base_color: glam::vec4(0.54, 1.0, 0.38, 1.0),
-                radiance: glam::vec3(1.4, 4.5, 1.0) * 5.0,
-            },
-            EmissiveCubePaletteSpec {
-                name: "violet",
-                base_color: glam::vec4(0.72, 0.48, 1.0, 1.0),
-                radiance: glam::vec3(2.2, 1.2, 4.8) * 5.0,
-            },
-        ];
-        let emissive_materials = palette_specs
-            .into_iter()
-            .map(|spec| {
-                world
-                    .register_material(MaterialData {
-                        base_color: spec.base_color,
-                        metallic: 0.0,
-                        roughness: 1.0,
-                        class: MaterialClass::emissive(spec.radiance),
-                        coverage: CoverageMode::Opaque,
-                        diffuse_texture: None,
-                        normal_texture: None,
-                        name: format!("emissive-cube-matrix-{}", spec.name),
-                    })
-                    .expect("failed to register emissive cube material")
-            })
-            .collect::<Vec<_>>();
-
-        let mut cube_index = 0usize;
-        // 配置使用“第一个 cube 中心点 + XYZ 间距”的语义，方便在场景中手工平移和拉开矩阵。
-        // 自发光 cube 使用显式 Emissive class；render-side emissive light table 会把这些三角形纳入 NEE。
-        for y in 0..config.counts.y {
-            for z in 0..config.counts.z {
-                for x in 0..config.counts.x {
-                    let center = config.start_offset
-                        + glam::vec3(
-                            x as f32 * config.spacing.x,
-                            y as f32 * config.spacing.y,
-                            z as f32 * config.spacing.z,
-                        );
-                    let material = emissive_materials[cube_index % emissive_materials.len()];
-
-                    world
-                        .register_instance(Instance {
-                            name: format!("emissive-cube-matrix-{x}-{y}-{z}"),
-                            mesh: cube_mesh,
-                            materials: vec![material],
-                            transform: glam::Mat4::from_scale_rotation_translation(
-                                glam::Vec3::splat(config.cube_scale),
-                                glam::Quat::IDENTITY,
-                                center,
-                            ),
-                        })
-                        .expect("failed to register emissive cube instance");
-
-                    cube_index += 1;
-                }
-            }
-        }
-    }
-
     fn cast_single_ray(ctx: &mut RenderRuntimeRayCastCtx<'_>, ray: RayCastRay) -> Result<RayCastResult, String> {
         ctx.cast_sync(std::slice::from_ref(&ray))
             .map_err(|err| err.to_string())
@@ -492,12 +213,14 @@ impl TruvisRenderer {
 
 impl Renderer for TruvisRenderer {
     fn init(&mut self, ctx: &mut RendererInitCtx<'_>) {
-        self.render_mode = RenderMode::initial_from_env();
+        self.render_mode = RenderMode::initial_from_env(RenderMode::Offline);
+        self.debug_image_selection.set_visible(false);
         self.imgui.set_hidpi_factor(ctx.scale_factor);
         self.imgui.set_display_size(ctx.window_size);
 
-        Self::spawn_material_test_cubes(&mut *ctx.runtime.world);
-        Self::request_model(&mut *ctx.runtime.world, self.camera_controller.camera_mut());
+        self.startup_scene.request(ctx.runtime.world, self.camera_controller.camera_mut());
+        self.camera_controller.set_move_speed(4.0);
+        self.path_tracing_common_settings.sky_brightness = 1.0;
 
         // Renderer 持有初始化顺序：场景 CPU 状态先就绪，再依次创建具体渲染资源。
         self.realtime.init(&mut ctx.runtime);
@@ -517,6 +240,7 @@ impl Renderer for TruvisRenderer {
     }
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
+        self.startup_scene.update(ctx.world);
         self.click_ray_cast_probe.update_time(ctx.frame_timing.delta_time_s());
         if self.clear_stale_selection(ctx.world) {
             self.editor_controller.notify_selection_changed(None);

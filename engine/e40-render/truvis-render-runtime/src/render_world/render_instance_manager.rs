@@ -11,8 +11,6 @@ use crate::render_world::dirty_router::InstanceDispatch;
 use crate::render_world::render_data::{GpuInstanceSlot, InstanceRenderData, MeshRenderData, RenderData};
 use crate::render_world::render_resolver::{MaterialSlotResolver, MeshRenderResolver};
 
-const MAX_INSTANCE_COUNT: u32 = 1024;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InstanceState {
     /// 已分配稳定 slot，但 mesh/material 依赖尚未全部 GPU-ready。
@@ -76,19 +74,15 @@ pub(crate) struct RenderInstanceUpdateResult {
 }
 
 impl RenderInstanceManager {
-    /// 创建 instance manager，并预分配稳定 GPU instance slot 池。
-    ///
-    /// slot 数量当前与 `RenderWorld` instance buffer 容量保持一致；耗尽表示 CPU scene 中可渲染实例
-    /// 已超过 runtime 当前固定容量。
+    /// 创建 instance manager；slot 随场景增长，删除后的 slot 仍跨过 FIF 窗口才复用。
     pub fn new(current_frame_id: u64) -> Self {
-        let free_slots = (0..MAX_INSTANCE_COUNT).rev().map(GpuInstanceSlot::new).collect();
         Self {
             bindings: SecondaryMap::new(),
-            free_slots,
+            free_slots: Vec::new(),
             retired_slots: Vec::new(),
             current_frame_id,
             revision: 0,
-            ray_cast_records: vec![None; MAX_INSTANCE_COUNT as usize],
+            ray_cast_records: Vec::new(),
             motion_history_reset_pending: true,
         }
     }
@@ -369,7 +363,13 @@ impl RenderInstanceManager {
 
     fn register_instance(&mut self, handle: InstanceHandle, instance: &Instance) {
         // 新实例先拿到稳定 slot，但初始状态保持 pending；ready gate 由 resolver 决定。
-        let slot = self.free_slots.pop().expect("RenderInstanceManager: GPU instance slots exhausted");
+        let slot = self.free_slots.pop().unwrap_or_else(|| {
+            let index = u32::try_from(self.ray_cast_records.len()).expect("GPU instance slot index exceeds u32");
+            let slot = GpuInstanceSlot::new(index);
+            slot.validate_tlas_custom_index();
+            self.ray_cast_records.push(None);
+            slot
+        });
         self.bindings.insert(
             handle,
             InstanceBinding {

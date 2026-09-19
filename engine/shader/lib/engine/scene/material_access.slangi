@@ -26,6 +26,31 @@ struct MaterialAccess
     {
         return base_color_rgba(mat, uv).xyz;
     }
+
+    /// glTF metallic-roughness 的 G/B 是线性数据，不能按颜色贴图做 gamma 解码。
+    static float2 metallic_roughness(engine::material::PbrMaterial* mat, float2 uv)
+    {
+        float2 factors = float2(mat.metallic, mat.roughness);
+        if (BindlessSrv::is_valid(mat.metallic_roughness_map))
+        {
+            const float4 sample = BindlessSrv::sample_level(mat.metallic_roughness_map, uv, mat.metallic_roughness_map_sampler_type, 0.0);
+            factors *= sample.bg;
+        }
+        return saturate(factors);
+    }
+
+    /// NEE 和直接命中使用同一自发光采样，避免灯罩被 base color 错误染色或两条路径亮度不一致。
+    /// 无独立贴图时保持已有程序化材质的 radiance * base color 语义。
+    static float3 emission(engine::material::PbrMaterial* mat, float2 uv)
+    {
+        if (BindlessSrv::is_valid(mat.emissive_map))
+        {
+            const float3 color = BindlessSrv::sample_level(mat.emissive_map, uv, mat.emissive_map_sampler_type, 0.0).rgb;
+            const float3 linear = select(color <= 0.04045, color / 12.92, pow((color + 0.055) / 1.055, 2.4));
+            return mat.emissive * linear;
+        }
+        return mat.emissive * base_color(mat, uv);
+    }
 };
 
 struct MaterialOpacity

@@ -235,6 +235,32 @@ impl SceneAssetIngestor {
                         return;
                     }
                 },
+                metallic_roughness_texture: match self.register_model_texture_ref(
+                    assets,
+                    scene,
+                    &source_path,
+                    material.metallic_roughness_texture_path,
+                    "metallic-roughness",
+                ) {
+                    Ok(texture) => texture,
+                    Err(err) => {
+                        self.fail_scene_import(scene_import, err);
+                        return;
+                    }
+                },
+                emissive_texture: match self.register_model_texture_ref(
+                    assets,
+                    scene,
+                    &source_path,
+                    material.emissive_texture_path,
+                    "emissive",
+                ) {
+                    Ok(texture) => texture,
+                    Err(err) => {
+                        self.fail_scene_import(scene_import, err);
+                        return;
+                    }
+                },
                 name: material.name,
             };
             let scene_material = match scene.register_material(scene_data.clone()) {
@@ -326,6 +352,8 @@ impl SceneAssetIngestor {
             for (label, path) in [
                 ("diffuse", material.diffuse_texture_path.as_ref()),
                 ("normal", material.normal_texture_path.as_ref()),
+                ("metallic-roughness", material.metallic_roughness_texture_path.as_ref()),
+                ("emissive", material.emissive_texture_path.as_ref()),
             ] {
                 let Some(path) = path else {
                     continue;

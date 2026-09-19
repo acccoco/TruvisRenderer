@@ -282,6 +282,8 @@ impl TruvixxSceneReader<'_> {
             coverage: CoverageMode::Opaque,
             diffuse_texture_path: (!diffuse_map.is_empty()).then(|| PathBuf::from(diffuse_map)),
             normal_texture_path: (!normal_map.is_empty()).then(|| PathBuf::from(normal_map)),
+            metallic_roughness_texture_path: None,
+            emissive_texture_path: None,
             name: if name.is_empty() { format!("material-{}", material_index) } else { name },
         })
     }

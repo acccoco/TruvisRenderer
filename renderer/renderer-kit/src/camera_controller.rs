@@ -6,6 +6,8 @@ use crate::input_state::InputState;
 
 pub struct CameraController {
     camera: Camera,
+    /// 场景单位决定移动速度；产品初始化时设置，输入线程不持有场景状态。
+    move_speed: f32,
     pending_pivot_raycast: Option<PivotRayCastRequest>,
     active_pivot_orbit: Option<PivotOrbitState>,
     pending_drag_pan_raycast: Option<DragPanRayCastRequest>,
@@ -69,6 +71,7 @@ impl Default for CameraController {
     fn default() -> Self {
         Self {
             camera: Camera::default(),
+            move_speed: Self::MOVE_SPEED,
             pending_pivot_raycast: None,
             active_pivot_orbit: None,
             pending_drag_pan_raycast: None,
@@ -81,6 +84,11 @@ impl Default for CameraController {
 }
 
 impl CameraController {
+    pub fn set_move_speed(&mut self, speed: f32) {
+        assert!(speed.is_finite() && speed > 0.0, "camera move speed must be positive");
+        self.move_speed = speed;
+    }
+
     const ROTATE_SENSITIVITY_DIVISOR: f32 = 7.0;
     const MOVE_SPEED: f32 = 320.0;
     const SCREEN_RAY_T_MAX: f32 = 10000.0;
@@ -256,27 +264,27 @@ impl CameraController {
         }
 
         if input_state.is_key_pressed(KeyCode::KeyW) {
-            self.camera.move_forward(delta_time_s * Self::MOVE_SPEED);
+            self.camera.move_forward(delta_time_s * self.move_speed);
             changed = true;
         }
         if input_state.is_key_pressed(KeyCode::KeyS) {
-            self.camera.move_forward(-delta_time_s * Self::MOVE_SPEED);
+            self.camera.move_forward(-delta_time_s * self.move_speed);
             changed = true;
         }
         if input_state.is_key_pressed(KeyCode::KeyA) {
-            self.camera.move_right(-delta_time_s * Self::MOVE_SPEED);
+            self.camera.move_right(-delta_time_s * self.move_speed);
             changed = true;
         }
         if input_state.is_key_pressed(KeyCode::KeyD) {
-            self.camera.move_right(delta_time_s * Self::MOVE_SPEED);
+            self.camera.move_right(delta_time_s * self.move_speed);
             changed = true;
         }
         if input_state.is_key_pressed(KeyCode::KeyE) {
-            self.camera.move_up(delta_time_s * Self::MOVE_SPEED);
+            self.camera.move_up(delta_time_s * self.move_speed);
             changed = true;
         }
         if input_state.is_key_pressed(KeyCode::KeyQ) {
-            self.camera.move_up(-delta_time_s * Self::MOVE_SPEED);
+            self.camera.move_up(-delta_time_s * self.move_speed);
             changed = true;
         }
 

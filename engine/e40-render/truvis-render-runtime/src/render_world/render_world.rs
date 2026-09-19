@@ -362,6 +362,13 @@ impl RenderWorld {
             &self.render_material_manager,
             &self.render_mesh_manager,
         );
+        if instance_result.active_set_changed {
+            log::info!(
+                "GPU scene active: {} instances, {} meshes",
+                scene_render_data.all_instances.len(),
+                scene_render_data.all_meshes.len()
+            );
+        }
         let instance_events = DirtyRouterHelper::events_from_instance_update_result(instance_result);
         DirtyRouterHelper::route_stage(
             DirtyStageKind::AfterInstance,
@@ -411,6 +418,7 @@ impl RenderWorld {
             frame_label,
             &scene_render_data,
             material_buffer_device_address,
+            self.render_material_manager.material_revision(),
             environment_binding,
             analytic_light_update.binding,
             emissive_light_binding,
@@ -509,12 +517,14 @@ impl RenderWorld {
         frame_label: FrameLabel,
         render_data: &RenderData<'_>,
         material_buffer_device_address: vk::DeviceAddress,
+        material_revision: u64,
         environment_binding: EnvironmentBinding,
         analytic_light_binding: AnalyticLightBinding,
         emissive_light_binding: EmissiveLightBinding,
     ) {
         let _span = tracy_client::span!("RenderWorld::prepare_render_data");
 
+        render_world_buffers[*frame_label].ensure_capacity(resource_ctx, frame_label, render_data);
         update_raster_draw_cache(&mut raster_draws[*frame_label], render_data);
         Self::upload_mesh_buffer(render_world_buffers, resource_ctx, cmd, barrier_mask, render_data, frame_label);
         Self::upload_instance_buffer(render_world_buffers, resource_ctx, cmd, barrier_mask, render_data, frame_label);
@@ -537,6 +547,7 @@ impl RenderWorld {
             frame_label,
             barrier_mask,
             material_buffer_device_address,
+            material_revision,
             current_tlas_revision,
             environment_binding,
             analytic_light_binding,
@@ -553,6 +564,7 @@ impl RenderWorld {
         frame_label: FrameLabel,
         barrier_mask: GfxBarrierMask,
         material_buffer_device_address: vk::DeviceAddress,
+        material_revision: u64,
         tlas_revision: u64,
         environment_binding: EnvironmentBinding,
         analytic_light_binding: AnalyticLightBinding,
@@ -606,6 +618,7 @@ impl RenderWorld {
         // 它只描述会让离线 reference 历史失效的语义版本，不暴露具体 GPU buffer 所有权。
         let accum_signature = RenderSceneAccumSignature {
             tlas_revision,
+            material_revision,
             emissive_light_version: emissive_light_binding.version,
             analytic_light_version: analytic_light_binding.version,
             sky_distribution_version: environment_binding.sky.distribution_version,

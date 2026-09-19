@@ -41,6 +41,12 @@ bindless descriptor 或 material slot。GPU 上传和 shader 可见绑定由
 - model material 引用的相对纹理路径按 model 文件所在目录解析，绝对路径保持不变；asset 层不做 scene texture identity 去重或 canonicalize，后续是否规范化由 `World` / `SceneAssetIngestor` 的 scene 规则决定。glTF v1 只把外部 image URI 注册为 texture path，GLB/data URI 嵌入贴图暂不改变 texture path 身份模型。
 - 保持 asset 层不依赖 GPU 资源缓存或 bindless 绑定策略
 
+glTF 材质同时保留 diffuse、normal、metallic-roughness 与 emissive 外部贴图路径；
+model reader 只导入 document/buffers，图片统一交给 texture loader，避免大型场景重复解码贴图。
+`KHR_materials_emissive_strength` 在 CPU 侧乘入 emissive factor。UV 保留规范的左上角原点，
+不重复翻转 V。通用材质语义、GPU 打包及当前限制见
+[`scene-data-lifecycle`](../../../docs/summaries/scene-data-lifecycle.md)。
+
 ## HDR / EXR 边界
 
 - Radiance `.hdr` 和 OpenEXR `.exr` 的 `Rgb32F` / `Rgba32F` 解码结果转换为

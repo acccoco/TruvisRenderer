@@ -18,6 +18,11 @@ build-all: editor-web shader cxx
 fetch-res:
     cargo run --bin fetch_res
 
+# 将完整 ORCA Bistro_v5_2 包准备成 Truvis 使用的三个 glTF 场景（需要 Python/Pillow 和 Blender）
+[group('2 资源生成与构建')]
+prepare-bistro source blender="C:/Program Files/Blender Foundation/Blender 4.4/blender.exe":
+    python app/truvis/scripts/prepare_bistro.py --source "{{ source }}" --blender "{{ blender }}"
+
 # 生成协议类型并构建 Web editor 生产资源
 [group('2 资源生成与构建')]
 [working-directory("app/editor/web")]
@@ -129,6 +134,19 @@ _run-cargo-bin bin *run_opts:
     # Rust 侧仍会按 TRUVIS_STREAMLINE_IMGUI 做 Debug/Release 保护；这里负责提供确定的 Truvis 启动环境。
     if $is_truvis_bin {
         $env.TRUVIS_STREAMLINE_IMGUI = if $enable_imgui { '1' } else { '0' }
+        let scenes = $opts | where {|opt| $opt in ['office', 'bistro-exterior', 'bistro-interior', 'bistro-interior-wine'] }
+        if ($scenes | length) > 1 {
+            error make { msg: 'Choose one Bistro scene per run.' }
+        }
+        if not ($scenes | is-empty) {
+            let scene = ($scenes | first)
+            if $scene == 'office' {
+                $env.TRUVIS_SCENE_MANIFEST = ((pwd) | path join 'assets' 'scenes' 'office' 'scene.json')
+                $env.TRUVIS_RENDER_MODE = 'realtime'
+            } else {
+                $env.TRUVIS_BISTRO_SCENE = ($scene | str replace 'bistro-' '')
+            }
+        }
     }
 
     # Vulkan validation 默认开启；no-validation 只在需要减少调试开销或规避 layer 问题时使用。

@@ -42,7 +42,7 @@ struct PbrMaterial
     /// 使下一行 `emissive` 从 16 字节边界开始，保持 CPU/GPU buffer stride 可验证。
     float _padding_0;
 
-    /// Emissive 的 radiance，会在 closest-hit 中乘以 base color 得到实际 emissive；非 Emissive 固定为 0。
+    /// Emissive 的 radiance，由 MaterialAccess 按独立 emissive map 或 base color 调制；非 Emissive 固定为 0。
     float3 emissive;
     /// 显式补齐 emissive 行，避免依赖 host 侧隐式尾部填充。
     float _padding_1;
@@ -54,6 +54,13 @@ struct PbrMaterial
     /// 法线贴图 SRV，当前主路径尚未消费但保留 ABI。
     engine::bindless::SrvHandle normal_map;
     engine::bindless::ESamplerType normal_map_sampler_type;
+
+    /// 线性贴图 G/B 通道分别调制 roughness/metallic；两组 handle 共占完整 16 字节。
+    engine::bindless::SrvHandle metallic_roughness_map;
+    engine::bindless::ESamplerType metallic_roughness_map_sampler_type;
+    /// sRGB 自发光贴图；有独立贴图时不乘 base color。
+    engine::bindless::SrvHandle emissive_map;
+    engine::bindless::ESamplerType emissive_map_sampler_type;
 };
 
 }

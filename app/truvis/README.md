@@ -8,6 +8,14 @@
 - `desktop`：组装 Tauri/Tao main thread、WebView、frontend ports 与 `EmbeddedWinitHost`。
 - `EditorIpc`：独占 Tauri invoke、event emit、两秒 request timeout 和 notification task。
 - `main` / `build.rs` / Tauri 配置：提供桌面应用启动与打包入口。
+- `scripts/prepare_bistro.py`：离线准备 ORCA Bistro 三个完整场景，以 Blender 导出外部 PNG 的 glTF；
+  保留源包、版权文件与 HDRI，转换 DirectX normal 的绿色通道，按源 Specular 贴图的 G/B 恢复 roughness/metallic。
+  室内沿用 Wine preset 的 emission 强度量级；不导出 analytic lights，避免与自发光表面重复照明。
+  玻璃映射为清透基色与源 IOR，液体保留基色 tint；原始体吸收和 nested priority 尚不支持。
+  Blender/Pillow 仅属于准备阶段，应用运行时仍走现有 AssetHub/World 导入链路。
+- Blender 书房场景由 `engine/e30-world/truvis-asset/scripts/export_blender_scene.py` 导出到
+  `assets/scenes/office/scene.gltf` 与 `scene.json`；App 只通过 `just truvis office` 注入 manifest 路径，
+  不拥有场景几何或材质表达。
 
 ## 边界约束
 
