@@ -68,7 +68,7 @@ rename_to = "tracy"
 
 [[resources]]
 name = "streamline"
-url = "https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.11.1/streamline-sdk-v2.11.1.zip"
+url = "https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.1/streamline-sdk-v2.14.1.zip"
 resource_type = "zip"
 target_dir = "external"
 rename_to = "streamline-sdk"
