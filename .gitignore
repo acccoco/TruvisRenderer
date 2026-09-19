@@ -38,6 +38,8 @@ imgui.ini
 # generated
 shader/generated/*
 app/truvis-app/gen/schemas/
+__pycache__/
+*.py[cod]
 
 # agents
 .codex

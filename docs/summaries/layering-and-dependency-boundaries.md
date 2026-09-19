@@ -149,6 +149,12 @@ C++ module --public C ABI DLL--> Rust binding crate --> Engine/Renderer consumer
   native 仅依赖 Vulkan C headers，通过 ash 注入的原生 `vkGetDeviceProcAddr` 建立设备函数表。
   `GfxDevice` 持有函数表；Vulkan root、RenderThread 录制、descriptor 组装和 GPU 资源生命周期仍由原 Rust owner 管理。
 
+## 离线场景工具
+
+根目录 `scripts/` 是独立的离线 tooling 层。`scripts/scene/export_gltf.py` 读取 Blender/FBX 场景并生成
+外部贴图形式的 glTF，`validate_gltf.py` 校验生成物的资源引用；这些脚本只拥有转换进程和输出目录，
+不被 Rust runtime 反向依赖。运行时仍由 `truvis-asset` 读取 glTF、解码纹理并发布 CPU scene 数据。
+
 ## 物理目录
 
 ```text

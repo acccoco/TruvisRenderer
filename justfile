@@ -1,6 +1,5 @@
 set shell := ["nu", "-c"]
 
-validation_layer_settings := justfile_directory() + "\\config\\vulkan\\khronos_validation_settings.txt"
 tracy_profiler := justfile_directory() + "\\external\\tracy\\tracy-profiler.exe"
 
 # 显示可用命令
@@ -18,10 +17,10 @@ build-all: editor-web shader cxx
 fetch-res:
     cargo run --bin fetch_res
 
-# 将 ORCA Bistro 包准备为三个只依赖 glTF/外部贴图的场景（需要 Python/Pillow 和 Blender）
+# 将一个 Blender/FBX 场景转换为 glTF 和外部贴图（需要 Python/Pillow 和 Blender）
 [group('2 资源生成与构建')]
-prepare-bistro source blender="C:/Program Files/Blender Foundation/Blender 4.4/blender.exe":
-    python app/truvis/scripts/prepare_bistro.py --source "{{ source }}" --blender "{{ blender }}"
+scene-export source output blender="C:/Program Files/Blender Foundation/Blender 5.2/blender.exe":
+    python scripts/scene/export_gltf.py --source '{{ source }}' --output-dir '{{ output }}' --blender '{{ blender }}'
 
 # 生成协议类型并构建 Web editor 生产资源
 [group('2 资源生成与构建')]
@@ -69,18 +68,7 @@ cxx-force:
 
 # 从 Cargo package metadata 发现所有单向消费 public CXX DLL 的 binding crate。
 _cxx-bindings:
-    #!nu
-    let metadata = (cargo metadata --no-deps --format-version 1 | from json)
-    let packages = (
-        $metadata.packages
-        | where {|package| ($package | get -o metadata.truvis_cxx_binding) != null }
-        | get name
-    )
-    if ($packages | is-empty) {
-        error make { msg: 'No package declares package.metadata.truvis_cxx_binding' }
-    }
-    let package_args = ($packages | each {|package| ['-p', $package] } | flatten)
-    cargo build ...$package_args
+    nu scripts/nu/build-cxx-bindings.nu '{{ justfile_directory() }}'
 
 # 运行 Triangle 示例
 [group('3 运行示例')]
@@ -120,79 +108,7 @@ _editor-web-types:
     cargo run -p truvis-editor-bridge --bin export_editor_types
 
 _run-cargo-bin bin *run_opts:
-    #!nu
-    # 所有示例的 cargo run --bin 都统一经过这里，避免 sample / rt sample / Truvis 分散维护启动环境。
-    # run_opts 采用宽松开关语义：只识别当前需要的选项，其它参数不做额外校验，保持 justfile 足够轻量。
-    let opts = '{{ run_opts }}' | split row ' ' | compact
-    let is_truvis_bin = ('{{ bin }}' == 'truvis-app')
-
-    let enable_imgui = $opts | any {|opt| $opt == 'imgui' }
-    let enable_validation = not ($opts | any {|opt| $opt == 'no-validation' })
-
-    # Truvis 通过 Streamline 环境变量控制 SL ImGui：默认关闭，只有显式传入 imgui 时开启。
-    # 其它示例即使传入 imgui 也不会读取该环境变量，因此无需额外报错。
-    # Rust 侧仍会按 TRUVIS_STREAMLINE_IMGUI 做 Debug/Release 保护；这里负责提供确定的 Truvis 启动环境。
-    if $is_truvis_bin {
-        $env.TRUVIS_STREAMLINE_IMGUI = if $enable_imgui { '1' } else { '0' }
-    }
-
-    # Vulkan validation 默认开启；no-validation 只在需要减少调试开销或规避 layer 问题时使用。
-    if $enable_validation {
-        $env.VK_LOADER_LAYERS_ENABLE = 'VK_LAYER_KHRONOS_validation'
-        $env.VK_LAYER_SETTINGS_PATH = '{{ validation_layer_settings }}'
-    }
-
-    cargo run --bin {{ bin }}
+    nu scripts/nu/run-cargo-bin.nu '{{ justfile_directory() }}' '{{ bin }}' {{ run_opts }}
 
 _cxx-cmake action tool profile:
-    #!nu
-    # CXX 手工入口的参数化规则集中在这里，避免 preset/build 两条路径维护两份 tool/profile 映射。
-    # action 只由上层 recipe 传入，用户侧暴露的是 cxx-preset / cxx-build 两个更明确的入口。
-    let action = '{{ action }}' | str downcase
-    cd '{{ justfile_directory() }}\cxx'
-
-    # tool/profile 对用户大小写宽容，但后续映射统一使用小写，减少分支组合。
-    let tool = '{{ tool }}' | str downcase
-    let profile = '{{ profile }}' | str downcase
-
-    # 先做白名单校验，再执行 cmake；这样拼写错误会停在 just 层，不会落到难读的 CMake preset 报错。
-    if ($action not-in ['preset', 'build']) {
-        error make { msg: $"Unsupported CXX action '($action)'. Use 'preset' or 'build'." }
-    }
-
-    if ($profile not-in ['debug', 'release']) {
-        error make { msg: $"Unsupported CXX profile '($profile)'. Use 'debug' or 'release'." }
-    }
-
-    # VS preset 是 multi-config：configure preset 不区分 Debug/Release，build preset 才选择 configuration。
-    # clang-cl preset 是 single-config：configure 和 build preset 都需要区分 Debug/Release。
-    # 因此这里同时计算 configure/build 两套 preset，最后按 action 选择实际调用哪一个。
-    let configure_preset = match $tool {
-        'vs2022' => 'vs2022'
-        'vs2026' => 'vs2026'
-        'clang' => {
-            if $profile == 'debug' {
-                'clang-cl-debug'
-            } else {
-                'clang-cl-release'
-            }
-        }
-        _ => {
-            error make { msg: $"Unsupported CXX tool '($tool)'. Use 'vs2022', 'vs2026', or 'clang'." }
-        }
-    }
-
-    let build_preset = match $tool {
-        'vs2022' => $"vs2022-build-($profile)"
-        'vs2026' => $"vs2026-build-($profile)"
-        'clang' => $"clang-cl-build-($profile)"
-        _ => {
-            error make { msg: $"Unsupported CXX tool '($tool)'. Use 'vs2022', 'vs2026', or 'clang'." }
-        }
-    }
-
-    if $action == 'preset' {
-        cmake --preset $configure_preset
-    } else {
-        cmake --build --preset $build_preset
-    }
+    nu scripts/nu/cxx-cmake.nu '{{ justfile_directory() }}' '{{ action }}' '{{ tool }}' '{{ profile }}'

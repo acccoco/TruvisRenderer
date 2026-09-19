@@ -289,7 +289,8 @@ impl TruvisRenderer {
         });
 
         log::info!("start load sponza model");
-        world.import_scene(TruvisPath::assets_path("fbx/sponza/sponza.fbx"))
+        // world.import_scene(TruvisPath::assets_path("fbx/sponza/sponza.fbx"))
+        world.import_scene("C:/Users/bigso/Downloads/scenes/office/office.gltf".into())
     }
 
     fn install_imported_scene(&mut self, world: &mut GameWorld) {

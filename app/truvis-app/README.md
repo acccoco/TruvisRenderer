@@ -8,8 +8,7 @@
 - `desktop`：组装 Tauri/Tao main thread、WebView、frontend ports 与 `EmbeddedWinitHost`。
 - `EditorIpc`：独占 Tauri invoke、event emit、两秒 request timeout 和 notification task。
 - `main` / `build.rs` / Tauri 配置：提供桌面应用启动与打包入口。
-- `scripts/prepare_bistro.py`：离线把 ORCA Bistro FBX 与 DDS 贴图转换为 glTF 和外部 PNG；
-  不生成独立 manifest 或相机/灯光 JSON，应用运行时继续通过现有 glTF 导入链路读取资产。
+- 场景转换工具位于根目录 [`scripts/scene/export_gltf.py`](../../scripts/scene/export_gltf.py)，不属于应用壳的运行时职责。
 
 ## 边界约束
 

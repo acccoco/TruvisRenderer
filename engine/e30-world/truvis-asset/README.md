@@ -35,8 +35,8 @@ Embedded source 使用 canonical scene path 与 image index 表示。
 - `handle.rs`：load desc、load handle、CPU payload 和 raw scene 类型。
 - `gltf_scene_loader.rs` / `truvixx_scene_loader.rs`：格式导入任务。
 - `texture_loader.rs`：图片解码任务。
-- `scripts/export_blender_scene.py`：离线导出 glTF 及外部贴图；相机和 glTF 可表达的灯光随场景导出，
-  不生成独立的 manifest 或 metadata JSON。
+- 根目录 [`scripts/scene/export_gltf.py`](../../../scripts/scene/export_gltf.py)：离线导出 glTF 及外部贴图；
+  相机和 glTF 可表达的灯光随场景导出，不生成独立的 manifest 或 metadata JSON。
 
 长期资源 source、去重和 scene import 状态见 [`truvis-world`](../truvis-world/README.md) 与
 [`scene-data-lifecycle.md`](../../../docs/summaries/scene-data-lifecycle.md)。

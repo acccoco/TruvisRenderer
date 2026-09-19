@@ -46,7 +46,7 @@ just truvis
 
 `just fetch-res` 下载项目运行所需的资产与外部工具。`just truvis` 会依次构建 Web editor、shader、Debug CXX 绑定和主体应用，因此首次运行耗时会更长。
 
-准备 ORCA Bistro glTF 资产时可运行 `just prepare-bistro source=<Bistro 包目录>`；脚本只导出 glTF 与外部贴图，场景中的相机和灯光随 glTF 一起保存。
+场景转换可运行 `just scene-export <scene.blend 或 scene.fbx> <输出目录>`；脚本只导出 glTF 与外部贴图，场景中的相机和灯光随 glTF 一起保存。转换完成后可用 `python scripts/scene/validate_gltf.py --scene <输出目录>/scene.gltf` 校验资源引用。
 
 构建完整 workspace 时只需执行：
 
