@@ -153,6 +153,10 @@ loader 完成、GPU copy 入队、timeline completion、shader-visible publish �
 - mesh/texture 不支持内容修改或同 handle 热替换。
 - CPU scene/resource 变化、异步 texture/mesh ready 和 GPU 资源退役在 FIF 下保持有效。
 
+glTF 依赖启用 `KHR_lights_punctual`，保留正常的文档验证并接受声明该必需扩展的场景。
+当前 importer 不读取 root/node light 语义，`RawSceneData` 不携带 punctual light，也不会由此生成
+`SceneStore` light；场景的 mesh、材质和节点变换继续按现有链路导入。
+
 不在首期范围：导入事务回滚、多 GameWorld 资源协调、跨线程 RenderWorld、完整 ECS extraction、mesh/texture
 热替换和按属性的复杂事件图。
 
