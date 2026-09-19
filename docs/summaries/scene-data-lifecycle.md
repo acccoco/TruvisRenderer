@@ -73,6 +73,13 @@ sampler 由既有 `RenderSamplerManager` 持有，18 种材质组合共享静态
 材质 ABI 为 256 字节，四槽数组从 offset 64 开始，槽 stride 为 48。AO 字段及额外路径衰减已删除。
 glTF 只消费 magFilter（缺省 Linear），不消费 minFilter/occlusionTexture；只有受支持槽引用的内嵌图片被复制并进入图片资源链路。
 这遵循 [Vulkan 的 OpenGL filter 映射规则](https://docs.vulkan.org/spec/latest/chapters/samplers.html)；maxLod=0 会始终选择 magFilter。
+glTF 的 `KHR_materials_emissive_strength` 在 importer 边界与 `emissiveFactor` 相乘，随后复用现有
+`RawMaterialData -> MaterialData -> GpuMaterialStore` 链路，不新增 shader-visible 字段。
+
+`RenderInstanceTable` 的 stable instance slot 按场景增长；删除后的 slot 仍跨 FIF 窗口后才复用。
+每个 FIF 的 geometry、instance 和 indirect buffer 以本帧最高 slot/实际元素数量检查容量，扩容后整表上传，
+并把新的 buffer 地址写入 scene root。bindless sampled-image descriptor 上限为 1024，descriptor pool
+直接引用生成 layout 的 count；material slot 仍保持自己的独立容量与延迟回收。
 
 `AssetSystem` 的待完成 task 映射使用以完整 generational handle 为 key 的 HashMap。
 AssetLoadService 返回一批事件时已移除 task record；处理其中的 scene 事件可能提交新 texture task 并复用相同 slot。

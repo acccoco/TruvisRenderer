@@ -199,7 +199,8 @@ impl GltfSceneReader {
             coverage: Self::coverage_mode(&name, material.alpha_mode(), material.alpha_cutoff()),
             textures,
             normal_scale: material.normal_texture().map_or(1.0, |value| value.scale()),
-            emissive_factor: material.emissive_factor().into(),
+            emissive_factor: (glam::Vec3::from_array(material.emissive_factor())
+                * material.emissive_strength().unwrap_or(1.0)),
             name,
         })
     }
