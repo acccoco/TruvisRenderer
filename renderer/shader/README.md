@@ -71,7 +71,7 @@ Phong 的 push constants 为 16 字节，字段 offset 为 0/4/8/12；frame/scen
 
 realtime/offline 的 closest-hit 入口共用 `lib/renderer/realtime_rt/surface_hit.slangi`；
 raster 顶点侧按四槽分别选择 UV，片元侧与 RT 共用 Engine `MaterialAccess` 的变换、切线重建和法线解码。
-各路径的光照和 LOD 边界见 [RT 流程](../../docs/summaries/realtime-rt-raytracing-flow.md)。
+各路径的光照和 LOD 边界见 [RT 流程](../../docs/design/realtime-raytracing-sampling.md)。
 
 ### 生成绑定
 

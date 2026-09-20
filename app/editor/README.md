@@ -52,4 +52,4 @@ just editor-web-dev
 `editor-web-dev` 启动 Vite。独立浏览器只支持 `?mock=1`，不访问真实 Renderer。
 
 完整所有权、背压和关闭顺序见
-[`docs/summaries/editor-subsystem.md`](../../docs/summaries/editor-subsystem.md)。
+[`docs/design/editor-boundary-and-consistency.md`](../../docs/design/editor-boundary-and-consistency.md)。

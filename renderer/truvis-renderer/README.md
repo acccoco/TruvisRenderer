@@ -35,6 +35,6 @@ selection outline、coordinate gizmo 与 ImGui 的顺序。具体 pass 位于 `r
 - 不绕过唯一 `RenderLoop` 帧骨架，也不让 Renderer/子系统长期持有完整 runtime 或 typed `Gfx` Ctx。
 - 主体 Renderer 的 pass 顺序、selection/overlay 策略和 realtime/offline 模式选择不进入 `SubsystemLifecycle`。
 
-跨线程 Editor、协议与一致性边界见 [`docs/summaries/editor-subsystem.md`](../../docs/summaries/editor-subsystem.md)。
+跨线程 Editor、协议与一致性边界见 [`docs/design/editor-boundary-and-consistency.md`](../../docs/design/editor-boundary-and-consistency.md)。
 Runtime/Renderer/Subsystem 的通用契约见
-[`docs/summaries/runtime-renderer-subsystem-boundaries.md`](../../docs/summaries/runtime-renderer-subsystem-boundaries.md)。
+[`docs/design/runtime-phase-contract.md`](../../docs/design/runtime-phase-contract.md)。

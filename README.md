@@ -132,10 +132,13 @@ RenderGraph pass 顺序，`RenderRuntime` 负责 GPU 资源、场景同步、帧
 ## 文档导航
 
 - [架构入口](./docs/ARCHITECTURE.md)
-- [Editor 子系统边界与一致性](./docs/summaries/editor-subsystem.md)
-- [CPU Scene 到 GPU Scene 同步机制](./docs/summaries/scene-data-lifecycle.md)
-- [RenderGraph 与帧内数据流](./docs/summaries/render-graph-and-data-flow.md)
-- [Realtime RT 采样流程](./docs/summaries/realtime-rt-raytracing-flow.md)
+- [Editor 子系统边界与一致性](./docs/design/editor-boundary-and-consistency.md)
+- [CPU Scene 到 GPU Scene 同步机制](./docs/design/scene-sync-and-render-world.md)
+- [RenderGraph 与帧内数据流](./docs/design/render-graph-and-data-flow.md)
+- [Realtime RT 采样流程](./docs/design/realtime-raytracing-sampling.md)
+- [RenderRuntime 阶段说明](./docs/summary/render-runtime-phases.md)
+- [RenderRuntime 对象层级](./docs/summary/render-runtime-object-hierarchy.md)
+- [点选流程](./docs/summary/picking-flow.md)
 - [应用壳模块说明](./app/README.md)
 - [主体 Truvis Renderer](renderer/truvis-renderer/README.md)
 - [Shader 模块说明](./engine/shader/README.md)

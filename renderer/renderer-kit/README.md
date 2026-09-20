@@ -23,4 +23,4 @@ screen ray 的 TMin 也不复用 near。
 - 纯 UI overlay、camera 和 input 不需要实现 `SubsystemLifecycle`；生命周期 trait 不引入 registry、visitor、动态分发或自动调度。
 - 相机状态属于 Renderer；runtime 只消费 `RenderView`，不依赖相机控制策略。中键 pivot、Shift+中键拖拽与滚轮锚点状态留在 `CameraController`，同步 raycast 仍由具体 Renderer 在 `after_prepare` 阶段执行。
 
-跨 crate 所有权和帧阶段见 [`docs/summaries/runtime-renderer-subsystem-boundaries.md`](../../docs/summaries/runtime-renderer-subsystem-boundaries.md)。
+跨 crate 所有权和帧阶段见 [`docs/design/runtime-phase-contract.md`](../../docs/design/runtime-phase-contract.md)。

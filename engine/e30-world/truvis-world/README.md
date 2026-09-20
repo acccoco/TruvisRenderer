@@ -57,4 +57,4 @@ pub enum AssetSource {
 `GameWorld` 再执行 CPU 删除。CPU 删除不等于 GPU 立即销毁；render-side 继续按 FIF 和
 completion 延迟回收。mesh/texture 内容不可变，内容变化创建新 handle。
 
-架构约束和导入时序见 [`scene-data-lifecycle.md`](../../../docs/summaries/scene-data-lifecycle.md)。
+架构约束和导入时序见 [`scene-sync-and-render-world.md`](../../../docs/design/scene-sync-and-render-world.md)。

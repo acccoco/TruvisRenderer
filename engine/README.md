@@ -6,7 +6,7 @@ workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
 
 ## 分层速览
 
-真实依赖边界以 Cargo 依赖和 `../docs/summaries/` 中的当前事实为准，物理目录主要用于导航。总体方向是上层依赖下层，
+真实依赖边界以 Cargo 依赖、`../docs/ARCHITECTURE.md` 和 `../docs/design/` 中的设计约束为准，物理目录主要用于导航。总体方向是上层依赖下层，
 同层 crate 默认不互相依赖，除非架构文档明确记录。
 
 一级 Rust 职责目录使用 `eNN-` 前缀标识 Engine 归属和主要架构阶段；`e40-render/`、`e60-platform/` 等目录可以包含
@@ -111,7 +111,7 @@ Tauri Editor 和 standalone sample 启动入口。Engine 不得依赖这两个�
 ## 推荐阅读顺序
 
 1. `../docs/ARCHITECTURE.md`：先确认当前架构入口、阅读顺序与最高优先级约束。
-2. `../docs/summaries/`：按主题阅读分层依赖、帧生命周期、Runtime/Renderer/Subsystem 边界、RenderGraph 数据流、线程与资源生命周期。
+2. `../docs/design/`：按主题阅读分层依赖、帧生命周期、Runtime/Renderer/Subsystem 边界、RenderGraph 数据流、线程与资源生命周期。`../docs/summary/` 只在用户明确要求时更新。
 3. 本文件：按目录和 crate 定位要阅读的模块。
 4. 各 crate 内 README：深入具体职责、生命周期和边界；重点可先看 `e10-gfx/truvis-gfx/README.md`、`e30-world/truvis-asset/README.md`、
    `e30-world/truvis-world/README.md`、`e40-render/*/README.md`、`e50-render-loop/*/README.md`、`e60-platform/*/README.md`。

@@ -44,4 +44,4 @@
 - 验证时至少确认结构体 size、align、关键字段 offset、数组 stride 或 push constant range；只确认编译通过不代表 ABI 正确。
 - 校验当前 shader 产物时，`GpuScene` 等 uniform buffer 使用项目启用的 standard uniform buffer layout；对应命令应包含 `spirv-val --uniform-buffer-standard-layout`，不能把缺少该设备特性参数造成的 validator 报错误判为字段迁移回归。
 - 如果验证发现 Slang / SPIR-V、Rust 或 C++ 任一端 layout 不一致，应优先调整共享 Slang ABI 和显式 padding，再重新生成绑定；不要在单个调用点用硬编码 offset 临时补救。
-- 修改共享 ABI 后，必须同步检查相关模块 README 或 `docs/summaries/` 是否记录了过期字段、绑定编号、buffer contract 或生命周期契约。
+- 修改共享 ABI 后，必须同步检查相关模块 README 或 `docs/design/` 是否记录了过期字段、绑定编号、buffer contract 或生命周期契约；`docs/summary/` 只有用户明确要求时才更新。

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件是项目唯一的 AI 协作规则入口，只约束“如何改”。项目结构、分层、时序和模块关系请先看 `docs/ARCHITECTURE.md`；当前实现事实以 `docs/summaries/` 为准。
+本文件是项目唯一的 AI 协作规则入口，只约束“如何改”。项目结构、分层、时序和模块关系请先看 `docs/ARCHITECTURE.md`；设计边界以 `docs/ARCHITECTURE.md` 与 `docs/design/` 为准；当前实现事实以代码、构建配置、测试、运行结果和模块 README 为准；`docs/summary/` 只在用户明确要求时更新。
 
 开始任何代码、文档或配置改动前，必须先递归读取 `.agents/rules/` 目录下所有 Markdown 规则文档，并遵守其中约束。
 
@@ -20,10 +20,10 @@
 
 - 本次改动属于哪个模块、struct、impl 或明确职责 helper 模块。
 - 是否已有相似实现、工具函数、trait、资源封装或文档约定可复用。
-- 新增或改变的依赖方向是否符合 `docs/ARCHITECTURE.md` 和 `docs/summaries/`。
+- 新增或改变的依赖方向是否符合 `docs/ARCHITECTURE.md`、`docs/design/` 和模块 README。`docs/summary/` 不属于自动同步范围。
 - 状态、资源、生命周期和销毁责任由谁拥有。
 - 是否改变线程边界、同步不变量、RenderGraph pass 顺序或 GPU resource 契约。
-- 需要同步更新哪个 `docs/summaries/` 或模块 README。
+- 需要同步更新哪个 `docs/design/` 或模块 README；只有用户明确要求时才更新 `docs/summary/`。
 
 如果上述问题无法回答清楚，应先阅读代码和文档，不要直接实现。
 
@@ -41,7 +41,8 @@
 
 - `README.md`：面向 GitHub 用户，介绍亮点与上手方式。
 - `docs/ARCHITECTURE.md`：当前架构入口、阅读顺序和最高优先级约束。
-- `docs/summaries/`：记录当前实现事实，包括分层、生命周期、状态所有权、数据流、线程和资源契约。
+- `docs/design/`：记录设计理念、设计不变量、职责边界和取舍。
+- `docs/summary/`：记录面向人的问题切片；仅在用户明确要求时更新，不作为当前实现唯一事实。
 - 模块内 `README.md`：说明模块职责、依赖与常见入口。
 
 ## 5) 提交前架构自检
