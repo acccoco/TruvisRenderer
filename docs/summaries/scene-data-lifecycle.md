@@ -30,6 +30,15 @@ render pass / shader / raycast
 
 ## CPU owner
 
+世界长度统一使用 m，世界面积使用 m²；方向、法线、UV、角度和材质参数不随单位转换。
+FBX 在 C++ `SceneImporter` 边界转换：锁定的 Assimp 5.4.3 已在根节点应用文件 `UnitScaleFactor`，
+输出 cm 世界尺度，随后前乘一次 `scale(0.01)`。局部顶点与累计节点变换共同产生米制世界位置，
+Rust loader、instance 安装、RenderWorld 和 shader 不再次转换；glTF 保持原生米制。
+程序化单位网格保持局部坐标，具体 Renderer 使用米制实例尺寸和位置。外部资源的单位差异不进入 RenderGraph。
+
+Emissive table 从最终世界顶点重算面积，alias 权重按 radiance × m² 面积归一化；只剔除非正或非有限权重，
+不以无量纲机器 epsilon 截断小面积光源。统一长度换算保持 solid-angle PDF 和 radiance，不额外补亮度倍率。
+
 `AssetSystem` 位于 `engine/e30-world/truvis-world/src/asset_system.rs`，包含
 `AssetStore`、`AssetLoadService`、scene import 状态和 load-handle 映射：
 

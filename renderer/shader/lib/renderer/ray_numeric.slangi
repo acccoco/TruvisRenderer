@@ -1,0 +1,50 @@
+/// @file ray_numeric.slangi
+/// @brief 米制 RT 距离范围和表面起点偏移。
+///
+/// 这些常量只描述 shader 内的 ray 数值契约，不是 camera far、DLSS metadata 或场景包围盒。
+/// 所有长度均使用米；TMin/TMax 是沿单位方向的 traversal interval，不能替代表面 origin offset。
+#pragma once
+
+// primary/secondary ray 的最小 traversal 参数。相机起点和 robust surface origin 已经分别处理，
+// 因此不再用一个固定正值承担自相交修复。
+static const float RT_PRIMARY_T_MIN = 0.0f;
+
+// 当前 renderer 的有限追踪策略，单位为米。它不是 projection far plane，也不改变 infinite RH projection。
+static const float RT_TRACE_T_MAX = 1000.0f;
+
+// HDRI 没有真实有限距离；该值只是环境 visibility ray 的有限保护范围，单位为米。
+static const float RT_ENVIRONMENT_T_MAX = 1000.0f;
+
+// 仅用于除零和退化几何判断，不承担 ray origin offset 职责。
+static const float RT_DISTANCE_GUARD = 1e-6f;
+static const float RT_INTERSECTION_GUARD = 1e-5f;
+
+/// 按几何法线将 ray origin 推出当前表面，避免固定米制 epsilon 在大坐标处被 float32 吞掉。
+///
+/// 算法参考 NVIDIA RTXGI PathtracerUtils.hlsli 中的 Ray Tracing Gems Chapter 6 实现：
+/// 对正常坐标使用多个 ULP 的位级偏移，对接近原点的坐标使用 float_scale 偏移。
+/// geometric_normal 必须是未经过贴图扰动的世界空间几何法线；方向决定法线朝哪一侧推出。
+static float3 offset_ray_origin(const float3 position, const float3 geometric_normal, const float3 direction)
+{
+    const float3 normal = dot(geometric_normal, direction) >= 0.0f ? geometric_normal : -geometric_normal;
+    const float origin_threshold = 1.0f / 32.0f;
+    const float float_scale = 1.0f / 65536.0f;
+    const float int_scale = 256.0f;
+
+    const int3 offset = int3(
+        int(int_scale * normal.x),
+        int(int_scale * normal.y),
+        int(int_scale * normal.z)
+    );
+    const float3 offset_position = float3(
+        asfloat(asint(position.x) + ((position.x < 0.0f) ? -offset.x : offset.x)),
+        asfloat(asint(position.y) + ((position.y < 0.0f) ? -offset.y : offset.y)),
+        asfloat(asint(position.z) + ((position.z < 0.0f) ? -offset.z : offset.z))
+    );
+
+    return float3(
+        abs(position.x) < origin_threshold ? position.x + float_scale * normal.x : offset_position.x,
+        abs(position.y) < origin_threshold ? position.y + float_scale * normal.y : offset_position.y,
+        abs(position.z) < origin_threshold ? position.z + float_scale * normal.z : offset_position.z
+    );
+}

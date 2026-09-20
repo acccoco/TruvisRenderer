@@ -4,6 +4,8 @@
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 #include <assimp/matrix4x4.h>
+#include <algorithm>
+#include <cctype>
 #include <deque>
 #include <format>
 #include <iostream>
@@ -53,6 +55,19 @@ bool SceneImporter::load(const std::filesystem::path& path)
         last_error_ = std::format("Assimp error: {}", importer_->GetErrorString());
         std::cerr << last_error_ << "\n";
         return false;
+    }
+
+    /// Assimp 5.4.3 的 FBX converter 已将 UnitScaleFactor 应用到根节点，世界尺度为 cm。
+    /// 仅在此边界前乘 cm -> m，保留轴向/层级变换；不叠加 GlobalScale 或再次缩放顶点。
+    /// 该版本 FBX_CONVERT_TO_M 属性不执行转换，不能用它代替实际根变换。
+    auto extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (extension == ".fbx")
+    {
+        aiMatrix4x4 meters_from_centimeters;
+        aiMatrix4x4::Scaling(aiVector3D(0.01f), meters_from_centimeters);
+        ai_scene_->mRootNode->mTransformation = meters_from_centimeters * ai_scene_->mRootNode->mTransformation;
     }
 
     // 处理材质

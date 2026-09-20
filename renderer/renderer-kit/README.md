@@ -11,6 +11,11 @@
 
 ## 所有权与依赖
 
+相机位置、near、raycast 距离、平移与滚轮锚点距离均使用 m；默认 near 为 0.01 m，
+移动速度为 3.2 m/s，screen ray 最大距离为 1000 m。FOV/旋转角、像素坐标和滚轮比例为各自原有量纲。
+投影仍为右手系、Y-Up、NDC depth [0,1] 的 infinite perspective；near 不等同于 RT secondary ray epsilon，
+screen ray 的 TMin 也不复用 near。
+
 - 不依赖 `imgui`、`renderer-render-passes`、`truvis-renderer-shader-binding` 或任何具体渲染 subsystem。
 - 不拥有具体 Renderer state、GUI backend、render controls、GPU pass、realtime/offline targets，也不提供可执行入口。
 - `DebugImageSelection::selected_id()` 在可见性关闭时返回 `None`；`normalize_options()` 在模式切换或窗口隐藏时仍可由 Renderer 显式调用。

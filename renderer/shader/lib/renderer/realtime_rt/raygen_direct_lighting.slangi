@@ -4,6 +4,7 @@
 #pragma once
 
 #include "lib/renderer/realtime_rt/payload.slangi"
+#include "lib/renderer/ray_numeric.slangi"
 #include "lib/engine/core/bindless.slangi"
 #include "lib/engine/core/sample.slangi"
 #include "lib/renderer/lighting/env_map.slangi"
@@ -174,27 +175,21 @@ struct RtDirectLighting
         return rq.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
     }
 
-    static float visibility_ray_t_min()
-    {
-        return 1e-4f;
-    }
-
     static RayDesc make_visibility_ray(const RtSurfaceHit surface, const float3 light_dir, const float distance, const bool finite_light)
     {
         RayDesc ray;
-        const float normal_offset = clamp(max(1e-3f, surface.hit_t * 1e-5f), 1e-3f, 2e-2f);
-        const float t_min = visibility_ray_t_min();
+        const float t_min = RT_PRIMARY_T_MIN;
         // visibility ray 的 origin 必须按当前表面法线推出，而不是按 light_dir 推出。
         // 后者在掠射角或重建 surface 上容易仍停留在几何内部，Temporal/Spatial ReSTIR 会把这种
         // 偶发自遮挡放大成黑色离群点；统一 helper 保证采样与重建候选使用同一可见性契约。
-        ray.Origin = surface.position + surface.forward_normal * normal_offset;
+        ray.Origin = offset_ray_origin(surface.position, surface.origin_normal, light_dir);
         ray.Direction = light_dir;
         ray.TMin = t_min;
         const float origin_advance = max(dot(ray.Origin - surface.position, light_dir), 0.0f);
         // finite light 的 distance 仍以未偏移的 shading point 为起点。
         // 由于 origin 按 normal 推出而不是沿 light_dir 推出，TMax 必须扣掉该偏移在 light_dir
         // 上的投影；否则 ray 可能越过 light sample，再命中被采样的 emissive triangle 自身。
-        ray.TMax = finite_light ? max(distance - origin_advance - t_min, 0.0f) : distance;
+        ray.TMax = finite_light ? max(distance - origin_advance, 0.0f) : distance;
         return ray;
     }
 
@@ -230,7 +225,7 @@ struct RtDirectLighting
 
         candidate.kind = RtLightCandidate::kind_hdri();
         candidate.direction = light_dir;
-        candidate.distance = 10000.0f;
+        candidate.distance = RT_ENVIRONMENT_T_MAX;
         candidate.solid_angle_pdf = solid_angle_pdf;
 
         candidate.shadow_ray = make_visibility_ray(surface, light_dir, candidate.distance, false);
@@ -322,7 +317,7 @@ struct RtDirectLighting
         const float3 light_position = light.p0 * bary.x + light.p1 * bary.y + light.p2 * bary.z;
         const float3 to_light = light_position - surface.position;
         const float distance = length(to_light);
-        if (distance <= 1e-4f)
+        if (distance <= RT_DISTANCE_GUARD)
         {
             return candidate;
         }
@@ -399,7 +394,7 @@ struct RtDirectLighting
 
     static float analytic_sphere_radius()
     {
-        return 0.5f;
+        return 0.005f;
     }
 
     static bool ray_sphere_nearest_hit(
@@ -421,7 +416,7 @@ struct RtDirectLighting
         }
 
         const float t = -b - sqrt(discriminant);
-        if (t <= 0.001f)
+        if (t <= RT_INTERSECTION_GUARD)
         {
             return false;
         }
@@ -430,7 +425,7 @@ struct RtDirectLighting
         return true;
     }
 
-    /// 从 shading point 对半径 0.5 的 analytic sphere emitter 做可见 solid-angle cone 采样。
+    /// 从 shading point 对半径 0.005 m 的 analytic sphere emitter 做可见 solid-angle cone 采样。
     ///
     /// 这里的 PDF 直接处在 solid angle 度量，和 HDRI / emissive triangle candidate 的 shade
     /// 契约一致。sphere emitter v1 不写入 TLAS，也不会被 BRDF path 直接命中，因此只作为 NEE
@@ -449,15 +444,16 @@ struct RtDirectLighting
         const float radius = analytic_sphere_radius();
         const float3 to_center = center - surface.position;
         const float center_distance = length(to_center);
-        if (select_pdf <= 0.0f || center_distance <= radius + 1e-4f)
+        if (select_pdf <= 0.0f || center_distance <= radius + RT_DISTANCE_GUARD)
         {
             return candidate;
         }
 
         const float3 center_dir = to_center / center_distance;
-        const float sin_theta_max2 = min(radius * radius / max(center_distance * center_distance, 1e-7f), 1.0f);
+        const float sin_theta_max2 = min(radius * radius / max(center_distance * center_distance, 1e-11f), 1.0f);
         const float cos_theta_max = sqrt(max(1.0f - sin_theta_max2, 0.0f));
         const float solid_angle = 2.0f * M_PI * (1.0f - cos_theta_max);
+        // solid_angle 是 sr；1e-7 只拒绝退化的 analytic sphere 采样锥，不是 ray offset。
         if (solid_angle <= 1e-7f)
         {
             return candidate;
@@ -574,7 +570,8 @@ struct RtDirectLighting
         const float3 normal_unnormalized = cross(area_light.half_u, area_light.half_v);
         const float half_area = length(normal_unnormalized);
         const float area = 4.0f * half_area;
-        if (select_pdf <= 0.0f || area <= 1e-7f)
+        // area 是 m²；1e-11m² 只拒绝退化矩形，不承担表面偏移或 traversal epsilon。
+        if (select_pdf <= 0.0f || area <= 1e-11f)
         {
             return candidate;
         }
@@ -585,7 +582,7 @@ struct RtDirectLighting
         const float3 light_position = area_light.center + area_light.half_u * u + area_light.half_v * v;
         const float3 to_light = light_position - surface.position;
         const float distance = length(to_light);
-        if (distance <= 1e-4f)
+        if (distance <= RT_DISTANCE_GUARD)
         {
             return candidate;
         }
@@ -696,7 +693,7 @@ struct RtDirectLighting
 
         candidate.kind = RtLightCandidate::kind_hdri();
         candidate.direction = light_dir;
-        candidate.distance = 10000.0f;
+        candidate.distance = RT_ENVIRONMENT_T_MAX;
         candidate.solid_angle_pdf = solid_angle_pdf;
         candidate.shadow_ray = make_visibility_ray(surface, light_dir, candidate.distance, false);
         const float2 env_uv = EnvMap::dir_to_uv(light_dir);
@@ -734,7 +731,7 @@ struct RtDirectLighting
         const float3 light_position = light.p0 * bary.x + light.p1 * bary.y + light.p2 * bary.z;
         const float3 to_light = light_position - surface.position;
         const float distance = length(to_light);
-        if (distance <= 1e-4f)
+        if (distance <= RT_DISTANCE_GUARD)
         {
             return candidate;
         }
@@ -786,13 +783,14 @@ struct RtDirectLighting
 
         const float3 to_center = center - surface.position;
         const float center_distance = length(to_center);
-        if (center_distance <= radius + 1e-4f)
+        if (center_distance <= radius + RT_DISTANCE_GUARD)
         {
             return candidate;
         }
-        const float sin_theta_max2 = min(radius * radius / max(center_distance * center_distance, 1e-7f), 1.0f);
+        const float sin_theta_max2 = min(radius * radius / max(center_distance * center_distance, 1e-11f), 1.0f);
         const float cos_theta_max = sqrt(max(1.0f - sin_theta_max2, 0.0f));
         const float solid_angle = 2.0f * M_PI * (1.0f - cos_theta_max);
+        // solid_angle 是 sr；该 floor 只用于避免 PDF 除零和退化候选。
         if (solid_angle <= 1e-7f)
         {
             return candidate;
@@ -801,7 +799,7 @@ struct RtDirectLighting
         const float3 light_position = center + radius * sample_normal;
         const float3 to_light = light_position - surface.position;
         const float distance = length(to_light);
-        if (distance <= 1e-4f)
+        if (distance <= RT_DISTANCE_GUARD)
         {
             return candidate;
         }
@@ -812,7 +810,7 @@ struct RtDirectLighting
         {
             return candidate;
         }
-        if (abs(nearest_distance - distance) > max(1e-3f, distance * 1e-3f))
+        if (abs(nearest_distance - distance) > max(1e-5f, distance * 1e-3f))
         {
             return candidate;
         }
@@ -896,7 +894,8 @@ struct RtDirectLighting
         const float3 normal_unnormalized = cross(area_light.half_u, area_light.half_v);
         const float half_area = length(normal_unnormalized);
         const float area = 4.0f * half_area;
-        if (area <= 1e-7f || key.sample.x < -1.0f || key.sample.x > 1.0f || key.sample.y < -1.0f || key.sample.y > 1.0f)
+        // area 是 m²；该 floor 只用于退化 area light 判断，不是 geometry offset。
+        if (area <= 1e-11f || key.sample.x < -1.0f || key.sample.x > 1.0f || key.sample.y < -1.0f || key.sample.y > 1.0f)
         {
             return candidate;
         }
@@ -905,7 +904,7 @@ struct RtDirectLighting
         const float3 light_position = area_light.center + area_light.half_u * key.sample.x + area_light.half_v * key.sample.y;
         const float3 to_light = light_position - surface.position;
         const float distance = length(to_light);
-        if (distance <= 1e-4f)
+        if (distance <= RT_DISTANCE_GUARD)
         {
             return candidate;
         }

@@ -7,7 +7,7 @@ namespace light
 
 /// 单个 point light 的 CPU/GPU 共享 ABI。
 ///
-/// realtime RT 中它不是数学上的 delta point，而是半径固定为 0.5 的 analytic sphere emitter。
+/// realtime RT 中它不是数学上的 delta point，而是半径固定为 0.005 m 的 analytic sphere emitter。
 /// `color` 表示发光球面的 radiance；raster Phong 仍把它当作调试用点光近似，不要求与 RT 能量完全一致。
 struct PointLight
 {
@@ -23,7 +23,7 @@ struct PointLight
 
 /// 单个 spot light 的 CPU/GPU 共享 ABI。
 ///
-/// realtime RT 中 spot light 与 point light 一样从半径固定为 0.5 的 sphere surface 发光，
+/// realtime RT 中 spot light 与 point light 一样从半径固定为 0.005 m 的 sphere surface 发光，
 /// 再用 `dir`、`inner_angle` 和 `outer_angle` 裁剪发射方向。角度单位固定为 radians。
 struct SpotLight
 {
@@ -44,7 +44,7 @@ struct SpotLight
 
 /// 单个矩形单面 area light 的 CPU/GPU 共享 ABI。
 ///
-/// `center` 是矩形中心，`half_u` / `half_v` 是从中心指向两条边中点的 world-space 半轴。
+/// `center` 是矩形中心，`half_u` / `half_v` 是从中心指向两条边中点的 world-space 半轴，均使用 m。
 /// shader 通过 `normalize(cross(half_u, half_v))` 得到正面法线；背面不发光。
 struct AreaLight
 {
@@ -72,7 +72,7 @@ struct AreaLight
 /// 均匀采样，并把面积 PDF 转成 solid angle PDF 后参与 NEE / MIS。
 struct EmissiveTriangleLight
 {
-    /// world-space 三角形顶点；`area` 是 world-space 面积。
+    /// world-space 三角形顶点使用 m；`area` 是 m² 面积。
     float3 p0;
     float area;
 

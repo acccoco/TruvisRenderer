@@ -298,7 +298,7 @@ impl RenderEmissiveLightTable {
         }
 
         let total_weight = weighted_records.iter().map(|(_, weight)| *weight).sum::<f64>();
-        if total_weight <= f64::EPSILON {
+        if total_weight <= 0.0 || !total_weight.is_finite() {
             return;
         }
 
@@ -388,7 +388,8 @@ impl RenderEmissiveLightTable {
             });
 
             let weight = f64::from(luminance) * f64::from(world_area);
-            if weight > f64::EPSILON {
+            // 权重含 m² 面积，不能用无量纲机器 epsilon 剔除小光源；alias 归一化会消去尺度。
+            if weight > 0.0 && weight.is_finite() {
                 weighted_records.push((light_index, weight));
             }
         }
@@ -407,7 +408,7 @@ impl RenderEmissiveLightTable {
         total_weight: f64,
     ) -> Vec<gpu::engine::light::EmissiveLightAliasEntry> {
         let count = weighted_records.len();
-        if count == 0 || total_weight <= f64::EPSILON {
+        if count == 0 || total_weight <= 0.0 || !total_weight.is_finite() {
             return Vec::new();
         }
 

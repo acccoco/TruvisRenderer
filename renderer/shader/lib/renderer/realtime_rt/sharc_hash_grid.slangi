@@ -32,7 +32,7 @@
 #endif
 
 #ifndef HASH_GRID_POSITION_BIAS
-#define HASH_GRID_POSITION_BIAS             1e-4f   // 极端场景尺度下可能需要调整
+#define HASH_GRID_POSITION_BIAS             1e-4f   // 米制 hash cell 边界扰动，不是 ray surface offset
 #endif
 
 #ifndef HASH_GRID_NORMAL_BIAS

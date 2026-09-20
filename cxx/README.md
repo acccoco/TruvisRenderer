@@ -46,6 +46,11 @@ cmake --build --preset vs2026-build-debug
 
 ## Rust FFI 边界
 
+`truvixx-assimp` 的 FBX 世界输出为 m。Assimp 5.4.3 的 `FBX_CONVERT_TO_M` 不执行实际转换；
+其 FBX converter 已将文件 `UnitScaleFactor` 应用到根节点，得到 cm 世界尺度，`SceneImporter::load`
+随后仅对 FBX 根变换前乘 `scale(0.01)`。不同时启用 GlobalScale，不再次缩放 mesh 顶点；累计节点变换
+和局部顶点共同定义米制世界坐标。其它格式不套用 FBX 规则；glTF 的生产导入路径位于 Rust loader。
+
 - 对 Rust 暴露的 target 必须是 SHARED library，并只跨 DLL 暴露 `extern "C"`、固定宽度 POD 或 opaque handle。
 - allocation/free、handle 生命周期和 callback 线程由 public C API 明确约束；exception、STL container 和 allocator
   ownership 不跨 DLL。

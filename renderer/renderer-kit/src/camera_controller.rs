@@ -82,12 +82,13 @@ impl Default for CameraController {
 
 impl CameraController {
     const ROTATE_SENSITIVITY_DIVISOR: f32 = 7.0;
-    const MOVE_SPEED: f32 = 320.0;
-    const SCREEN_RAY_T_MAX: f32 = 10000.0;
+    const MOVE_SPEED: f32 = 3.2;
+    /// screen ray 的有限拾取范围，单位 m；它独立于 camera near 和 RT secondary offset。
+    const SCREEN_RAY_T_MAX: f32 = 1000.0;
     const WHEEL_ZOOM_IDLE_RESET_S: f32 = 0.15;
     const WHEEL_ZOOM_DISTANCE_SCALE_PER_DELTA: f32 = 0.15;
     const WHEEL_ZOOM_EXP_LIMIT: f32 = 4.0;
-    const WHEEL_ZOOM_FALLBACK_DISTANCE: f32 = 320.0;
+    const WHEEL_ZOOM_FALLBACK_DISTANCE: f32 = 3.2;
 
     pub fn camera(&self) -> &Camera {
         &self.camera
@@ -113,7 +114,7 @@ impl CameraController {
         match result {
             Ok(RayCastResult::Hit(hit)) => {
                 let distance = (hit.position_ws - request.ray.origin_ws).length();
-                if hit.position_ws.is_finite() && distance.is_finite() && distance > self.camera.near.max(0.001) {
+                if hit.position_ws.is_finite() && distance.is_finite() && distance > self.camera.near.max(0.00001) {
                     self.active_pivot_orbit = Some(PivotOrbitState {
                         pivot_ws: hit.position_ws,
                         anchor_screen_pos: request.anchor_screen_pos,
@@ -192,7 +193,7 @@ impl CameraController {
         Some(RayCastRay {
             origin_ws: self.camera.position,
             direction_ws,
-            t_min: self.camera.near.max(0.001),
+            t_min: 0.0,
             t_max: Self::SCREEN_RAY_T_MAX,
         })
     }
@@ -309,7 +310,7 @@ impl CameraController {
         let ray = RayCastRay {
             origin_ws: self.camera.position,
             direction_ws,
-            t_min: self.camera.near.max(0.001),
+            t_min: 0.0,
             t_max: Self::SCREEN_RAY_T_MAX,
         };
         let fallback_anchor_ws = self.camera.position + direction_ws * Self::WHEEL_ZOOM_FALLBACK_DISTANCE;
@@ -490,7 +491,7 @@ impl CameraController {
     }
 
     fn min_camera_distance(&self) -> f32 {
-        self.camera.near.max(0.001) * 2.0
+        self.camera.near.max(0.00001) * 2.0
     }
 
     fn rotate_camera(&mut self, mouse_delta: [f64; 2]) {

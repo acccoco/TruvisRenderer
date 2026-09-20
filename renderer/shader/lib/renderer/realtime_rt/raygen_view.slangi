@@ -4,6 +4,7 @@
 #pragma once
 
 #include "lib/renderer/realtime_rt/payload.slangi"
+#include "lib/renderer/ray_numeric.slangi"
 #include "lib/renderer/realtime_rt/gbuffer.slangi"
 #include "lib/renderer/realtime_rt/raygen_material.slangi"
 #include "lib/engine/scene/geometry_eval.slangi"
@@ -29,8 +30,8 @@ struct RtRaygenView
         RayDesc ray;
         ray.Origin = engine::binding::per_frame_data.camera_pos;
         ray.Direction = direction.xyz;
-        ray.TMin = 0.001f;
-        ray.TMax = 10000.0f;
+        ray.TMin = RT_PRIMARY_T_MIN;
+        ray.TMax = RT_TRACE_T_MAX;
         return ray;
     }
 
@@ -134,10 +135,10 @@ struct RtRaygenView
     static float2 specular_motion_vector_pixels_for_direction(const RtSurfaceHit primary_hit, float3 motion_dir)
     {
         RayDesc specular_ray;
-        specular_ray.Origin = primary_hit.position + 0.001f * motion_dir;
+        specular_ray.Origin = offset_ray_origin(primary_hit.position, primary_hit.origin_normal, motion_dir);
         specular_ray.Direction = motion_dir;
-        specular_ray.TMin = 0.001f;
-        specular_ray.TMax = 10000.0f;
+        specular_ray.TMin = RT_PRIMARY_T_MIN;
+        specular_ray.TMax = RT_TRACE_T_MAX;
 
         RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> rq;
         rq.TraceRayInline(

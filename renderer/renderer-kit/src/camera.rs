@@ -5,6 +5,7 @@ use truvis_render_foundation::render_view::RenderView;
 /// 相机由 Renderer 持有和更新；runtime 只通过 [`Camera::render_view`] 读取本帧渲染视图快照。
 /// 坐标约定为右手系、Y 轴向上，未旋转时朝向 -Z；投影矩阵的 NDC 细节保持在 `glam` 投影函数约定内。
 pub struct Camera {
+    /// 世界位置，单位 m。
     pub position: glam::Vec3,
 
     pub euler_yaw_deg: f32,
@@ -13,6 +14,7 @@ pub struct Camera {
 
     pub asp: f32,
     pub fov_deg_vertical: f32,
+    /// 投影 near plane 距离，单位 m；它只控制投影深度，不是 RT secondary ray epsilon。
     pub near: f32,
 }
 
@@ -136,7 +138,9 @@ impl Default for Camera {
             euler_roll_deg: 0.0,
             asp: 1.0,
             fov_deg_vertical: 60.0,
-            near: 0.1,
+            // 米制通用默认值为 1 cm。需要毫米级近距离几何的场景应显式设置 near，
+            // 而不是把默认投影 near 当作表面自相交 offset。
+            near: 0.01,
         }
     }
 }

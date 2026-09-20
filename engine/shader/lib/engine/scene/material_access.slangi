@@ -64,7 +64,11 @@ struct MaterialAccess
     /// authored / 重建切线使用同一正交化和解码。零切线或退化采样回退到输入法线。
     static float3 normal_from_sample(float3 n, float4 tangent, float3 sampled, float strength)
     {
-        float3 t = tangent.xyz - n * dot(n, tangent.xyz);
+        // 先消除切线的世界长度尺度，再判断角度退化；单位换算不应切换 normal map fallback。
+        const float tangent_scale = max(abs(tangent.x), max(abs(tangent.y), abs(tangent.z)));
+        if (tangent_scale == 0.0) return n;
+        const float3 tangent_direction = tangent.xyz / tangent_scale;
+        float3 t = tangent_direction - n * dot(n, tangent_direction);
         if (dot(t, t) < 1e-12) return n;
         t = normalize(t);
         const float3 b = cross(n, t) * (tangent.w < 0.0 ? -1.0 : 1.0);

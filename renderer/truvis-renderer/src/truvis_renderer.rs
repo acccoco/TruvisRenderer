@@ -120,9 +120,9 @@ struct EmissiveCubePaletteSpec {
 }
 
 const EMISSIVE_CUBE_MATRIX_CONFIG: EmissiveCubeMatrixConfig = EmissiveCubeMatrixConfig {
-    start_offset: glam::Vec3::new(-800.0, 600.0, -425.0),
-    spacing: glam::Vec3::new(75.0, 60.0, 90.0),
-    cube_scale: 10.0,
+    start_offset: glam::Vec3::new(-8.0, 6.0, -4.25),
+    spacing: glam::Vec3::new(0.75, 0.6, 0.9),
+    cube_scale: 0.1,
     counts: glam::UVec3::new(20, 1, 10),
 };
 
@@ -225,32 +225,32 @@ impl TruvisRenderer {
     }
 
     fn request_scene(world: &mut GameWorld, camera: &mut Camera) -> SceneImportHandle {
-        camera.position = glam::vec3(270.0, 194.0, -64.0);
+        camera.position = glam::vec3(2.7, 1.94, -0.64);
         camera.euler_yaw_deg = 90.0;
         camera.euler_pitch_deg = 0.0;
 
         world.register_point_light(gpu::engine::light::PointLight {
-            pos: glam::vec3(-800.0, 50.0, 400.0).into(),
+            pos: glam::vec3(-8.0, 0.5, 4.0).into(),
             color: (glam::vec3(1.0, 0.0, 0.0) * 5000.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
         world.register_point_light(gpu::engine::light::PointLight {
-            pos: glam::vec3(-100.0, 50.0, 400.0).into(),
+            pos: glam::vec3(-1.0, 0.5, 4.0).into(),
             color: (glam::vec3(0.0, 1.0, 0.0) * 5000.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
         world.register_point_light(gpu::engine::light::PointLight {
-            pos: glam::vec3(600.0, 50.0, 400.0).into(),
+            pos: glam::vec3(6.0, 0.5, 4.0).into(),
             color: (glam::vec3(0.0, 0.0, 1.0) * 5000.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
-        // RT 中 SpotLight 是半径 0.5 的 sphere emitter 再叠加 cone falloff；
+        // RT 中 SpotLight 是半径 0.005 m 的 sphere emitter 再叠加 cone falloff；
         // 主场景保留几盏显式 spot，方便观察 Analytic NEE 开关和 NeeAnalytic debug channel。
         world.register_spot_light(gpu::engine::light::SpotLight {
-            pos: glam::vec3(-450.0, 100.0, 400.0).into(),
+            pos: glam::vec3(-4.5, 1.0, 4.0).into(),
             inner_angle: 30.0_f32.to_radians(),
             color: (glam::vec3(1.0, 1.0, 0.0) * 9000.0).into(),
             outer_angle: 60.0_f32.to_radians(),
@@ -258,7 +258,7 @@ impl TruvisRenderer {
             _dir_padding: Default::default(),
         });
         world.register_spot_light(gpu::engine::light::SpotLight {
-            pos: glam::vec3(250.0, 100.0, 400.0).into(),
+            pos: glam::vec3(2.5, 1.0, 4.0).into(),
             inner_angle: 30.0_f32.to_radians(),
             color: (glam::vec3(0.0, 1.0, 1.0) * 9000.0).into(),
             outer_angle: 60.0_f32.to_radians(),
@@ -268,9 +268,9 @@ impl TruvisRenderer {
         // AreaLight 的正面法线由 cross(half_u, half_v) 决定；这里使用 X/Z 方向半轴，
         // 让矩形灯法线朝 -Y，单面照向 Sponza 场景内部。
         world.register_area_light(gpu::engine::light::AreaLight {
-            center: glam::vec3(-100.0, 200.0, 400.0).into(),
-            half_u: glam::vec3(70.0, 0.0, 0.0).into(),
-            half_v: glam::vec3(0.0, 0.0, 18.0).into(),
+            center: glam::vec3(-1.0, 2.0, 4.0).into(),
+            half_u: glam::vec3(0.7, 0.0, 0.0).into(),
+            half_v: glam::vec3(0.0, 0.0, 0.18).into(),
             radiance: (glam::vec3(1.0, 0.16, 0.12) * 10.0).into(),
             _center_padding: Default::default(),
             _half_u_padding: Default::default(),
@@ -278,9 +278,9 @@ impl TruvisRenderer {
             _radiance_padding: Default::default(),
         });
         world.register_area_light(gpu::engine::light::AreaLight {
-            center: glam::vec3(600.0, 200.0, 400.0).into(),
-            half_u: glam::vec3(26.0, 0.0, 0.0).into(),
-            half_v: glam::vec3(0.0, 0.0, 26.0).into(),
+            center: glam::vec3(6.0, 2.0, 4.0).into(),
+            half_u: glam::vec3(0.26, 0.0, 0.0).into(),
+            half_v: glam::vec3(0.0, 0.0, 0.26).into(),
             radiance: (glam::vec3(0.12, 0.16, 1.0) * 10.0).into(),
             _center_padding: Default::default(),
             _half_u_padding: Default::default(),
@@ -318,16 +318,16 @@ impl TruvisRenderer {
 
     fn spawn_material_test_cubes(world: &mut GameWorld) {
         const MATERIAL_SOURCE: &str = "procedural://material-test-cubes";
-        const CUBE_SCALE: f32 = 100.0;
+        const CUBE_SCALE: f32 = 1.0;
 
         let cube_kind = ProceduralMeshKind::Cube;
         let cube_mesh = world.import_mesh(cube_kind.mesh_data()).expect("failed to register procedural cube mesh");
-        let cube_y = 100.0;
-        let cube_z = -25.0;
+        let cube_y = 1.0;
+        let cube_z = -0.25;
         let cube_specs = [
             MaterialCubeSpec {
                 name: "glass",
-                center: glam::vec3(-800.0, cube_y, cube_z),
+                center: glam::vec3(-8.0, cube_y, cube_z),
                 base_color: glam::vec4(0.65, 0.85, 1.0, 1.0),
                 metallic: 0.0,
                 roughness: 0.0,
@@ -336,7 +336,7 @@ impl TruvisRenderer {
             },
             MaterialCubeSpec {
                 name: "mirror",
-                center: glam::vec3(-450.0, cube_y, cube_z),
+                center: glam::vec3(-4.5, cube_y, cube_z),
                 base_color: glam::vec4(0.96, 0.96, 0.92, 1.0),
                 metallic: 1.0,
                 roughness: 0.0,
@@ -345,7 +345,7 @@ impl TruvisRenderer {
             },
             MaterialCubeSpec {
                 name: "glossy-plastic",
-                center: glam::vec3(-100.0, cube_y, cube_z),
+                center: glam::vec3(-1.0, cube_y, cube_z),
                 base_color: glam::vec4(0.95, 0.08, 0.18, 1.0),
                 metallic: 0.0,
                 roughness: 0.18,
@@ -354,7 +354,7 @@ impl TruvisRenderer {
             },
             MaterialCubeSpec {
                 name: "rough-plastic",
-                center: glam::vec3(250.0, cube_y, cube_z),
+                center: glam::vec3(2.5, cube_y, cube_z),
                 base_color: glam::vec4(0.18, 0.95, 0.25, 1.0),
                 metallic: 0.0,
                 roughness: 0.75,
@@ -363,7 +363,7 @@ impl TruvisRenderer {
             },
             MaterialCubeSpec {
                 name: "emissive-reference",
-                center: glam::vec3(600.0, cube_y, cube_z),
+                center: glam::vec3(6.0, cube_y, cube_z),
                 base_color: glam::vec4(1.0, 0.65, 0.18, 1.0),
                 metallic: 0.0,
                 roughness: 1.0,
@@ -372,7 +372,7 @@ impl TruvisRenderer {
             },
         ];
 
-        // cube 为单位模型，scale=100 且中心 y=100，使所有顶点落在给定场景范围内；
+        // cube 为单位模型，scale=1 m 且中心 y=1 m，使所有顶点落在给定场景范围内；
         // 这些材质参数刻意覆盖当前 shader 的透明、镜面、光泽/粗糙 diffuse 和 emissive 分支。
         for spec in cube_specs {
             let material = world

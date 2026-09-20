@@ -19,6 +19,26 @@ realtime RT 的 path 积分状态集中在 raygen 侧推进。closest-hit 和 mi
 
 ## Raygen 主循环
 
+### 世界量纲
+
+Realtime/Offline 共享米制世界坐标。primary/secondary TMin=0 m、有限追踪 TMax=1000 m；surface origin
+通过 `ray_numeric.slangi` 按 geometric normal 和 float32 ULP 推出，不再使用固定的 direction epsilon。
+visibility ray 使用同一套 origin offset，并保留有限光源的实际距离作为 TMax。GBuffer miss depth、HDRI
+environment guard 和 screen ray 仍各自拥有独立语义，当前有限范围均为1000 m；device depth、pixel motion、
+方向、cosine、solid-angle PDF 和材质参数不做长度换算。面积/距离平方保护值按 m² 定义，不能与 surface offset 混用。
+世界切线在正交化前去除长度尺度，避免 normal map fallback 随 cm/m 改变。
+
+ReSTIR absolute depth/position tolerance 分别为 0.0003/0.0004 m，相对系数保持。
+SHARC 保持 sceneScale=50，以 levelBias=log2(100) 将参考长度设为 0.01 m；这同时保持原 cm 场景的
+离散层级与物理 voxel 尺寸，position bias=0.0001 m。该 bias 只稳定 hash cell 边界，不能当作 ray surface offset，
+也不能只改 position bias 而保留 levelBias=0。
+新进程由资源创建初始化历史；当前 SHARC clear_all 仅在创建时调用，不提供运行中单位切换或完整场景重载失效保证。
+
+DLSS common constants 的 camera position/near 使用 m，near 从 infinite RH projection 的 `-w_axis.z`
+取得（[0,1] depth，不除二）。cameraFar 使用1000 m 的有限 metadata；真实投影仍为无限远，不能将该提示、
+RT TMax 或 GBuffer miss sentinel 互相当作裁剪面。
+当前 DLSS SR/RR 由投影矩阵描述深度，motion vector 保持 pixel 单位。
+
 每个像素先用像素坐标、frame id 和 `spp_idx` 初始化随机种子，再生成 camera ray。路径最大深度为
 `max_depth = 16`；Vulkan ray tracing pipeline recursion 只覆盖 shader 调用栈，真正的路径递归由 raygen 手动循环推进。
 
@@ -211,7 +231,7 @@ light = emissive_triangle_lights[base + primitive_id]
 
 analytic point / spot / area light 的 CPU 语义记录由 `SceneStore` 保存。`AnalyticLightTable` 在 analytic
 对账发现 analytic light revision 变化后读取 `SceneReadView`，分别上传 point / spot / area structured buffer，并在 scene root 中写入
-device address、count 与 `analytic_light_version`。Point / Spot 在 RT 中不是 delta light，而是半径固定为 `0.5`
+device address、count 与 `analytic_light_version`。Point / Spot 在 RT 中不是 delta light，而是半径固定为 `0.005 m`
 的 analytic sphere surface emitter；Area 是 `center + half_u + half_v` 描述的矩形单面 emitter。
 
 统一入口选中 analytic class 后，shader 先在所有 analytic light 中均匀选择一个 light。Point / Spot 从

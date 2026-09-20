@@ -79,7 +79,8 @@
 #endif
 
 #ifndef SHARC_GRID_LEVEL_BIAS
-#define SHARC_GRID_LEVEL_BIAS                   0
+// 米制参考长度为 0.01 m：保持 cm 基线的离散层级与物理 voxel 尺寸（log2(100)）。
+#define SHARC_GRID_LEVEL_BIAS                   6.64385619f
 #endif
 
 #ifndef SHARC_USE_FP16

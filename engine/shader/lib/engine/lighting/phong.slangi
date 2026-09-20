@@ -31,8 +31,9 @@ struct PhongLight
         const float specular_coef = pow(max(0.0, dot(obj_normal, halfway)), shininess);
 
         const float const_term = 1.0f;
-        const float linear_term = 0.09f;
-        const float quadratic_term = 0.032f;
+        // distance 使用 m；系数分别为 m^-1、m^-2，保持原调试衰减曲线。
+        const float linear_term = 9.0f;
+        const float quadratic_term = 320.0f;
         const float distance = length(point_light.pos - obj_pos);
 
         const float light_attenuation =

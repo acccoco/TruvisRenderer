@@ -374,12 +374,17 @@ struct RtRestirDI
         {
             return false;
         }
-        const float depth_tolerance = max(0.03f, current_key.linear_depth * 0.03f);
+        // linear_depth 是 primary ray 命中距离，单位为米；这里的 absolute floor 也是米制长度。
+        // 0.0003m 只防止近处表面的容差退化为零，不是 secondary ray 的 TMin 或 origin offset。
+        // 3% 是 temporal compatibility policy，用于允许相机/几何变化下的有限深度重投影误差。
+        const float depth_tolerance = max(0.0003f, current_key.linear_depth * 0.03f);
         if (abs(current_key.linear_depth - history_key.linear_depth) > depth_tolerance)
         {
             return false;
         }
-        const float position_tolerance = max(0.04f, current_key.linear_depth * 0.01f);
+        // 0.0004m 同样是位置比较的米制 absolute floor；1% 是独立的 temporal 复用比例。
+        // 这些阈值不能被当作几何表面偏移，否则会把历史兼容性调参耦合到 ray 数值契约。
+        const float position_tolerance = max(0.0004f, current_key.linear_depth * 0.01f);
         return length(current_key.position - history_key.position) <= position_tolerance;
     }
 

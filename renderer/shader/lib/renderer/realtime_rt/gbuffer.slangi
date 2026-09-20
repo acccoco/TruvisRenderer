@@ -19,7 +19,9 @@
 // ============================================================================
 
 /// 默认线性深度（用于 miss 情况）
-static const float DEFAULT_LINEAR_DEPTH = 10000.0f;
+// GBuffer miss 的线性深度 sentinel，单位为米；它是输出协议值，不是 RT traversal max 或 projection far。
+// 数值与当前 1000m 有限场景策略一致，但保留独立命名，避免把 miss 与 ray range 混成同一语义。
+static const float GBUFFER_MISS_LINEAR_DEPTH = 1000.0f;
 
 // ============================================================================
 // GBuffer 数据结构
@@ -147,14 +149,14 @@ static void write_dlss_rr_hit(uint2 thread_id, RtGBufferData data, float2 specul
 
 /// 写入 GBuffer（miss 情况）
 /// @param thread_id 当前像素坐标
-/// @note miss 时写入默认值：depth = DEFAULT_LINEAR_DEPTH, 其他为 0
+/// @note miss 时写入默认值：depth = GBUFFER_MISS_LINEAR_DEPTH, 其他为 0
 static void write_gbuffer_miss(uint2 thread_id)
 {
     // GBufferA：法线 normal = (0,0,0)，粗糙度 roughness = 0
     renderer::render_passes::realtime_rt::gbuffer_a.Store(thread_id, float4(0.0f, 0.0f, 0.0f, 0.0f));
 
-    // GBufferB：位置 position = (0,0,0)，深度 depth = DEFAULT_LINEAR_DEPTH
-    renderer::render_passes::realtime_rt::gbuffer_b.Store(thread_id, float4(0.0f, 0.0f, 0.0f, DEFAULT_LINEAR_DEPTH));
+    // GBufferB：位置 position = (0,0,0)，深度 depth = GBUFFER_MISS_LINEAR_DEPTH
+    renderer::render_passes::realtime_rt::gbuffer_b.Store(thread_id, float4(0.0f, 0.0f, 0.0f, GBUFFER_MISS_LINEAR_DEPTH));
 
     // GBufferC：反照率 albedo = (0,0,0)，金属度 metallic = 0
     renderer::render_passes::realtime_rt::gbuffer_c.Store(thread_id, float4(0.0f, 0.0f, 0.0f, 0.0f));

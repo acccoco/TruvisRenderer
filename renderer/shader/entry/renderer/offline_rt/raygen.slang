@@ -27,8 +27,8 @@ static RayDesc offline_camera_ray(uint2 thread_id)
     RayDesc ray;
     ray.Origin = engine::binding::per_frame_data.camera_pos;
     ray.Direction = direction.xyz;
-    ray.TMin = 0.001f;
-    ray.TMax = 10000.0f;
+    ray.TMin = RT_PRIMARY_T_MIN;
+    ray.TMax = RT_TRACE_T_MAX;
     return ray;
 }
 

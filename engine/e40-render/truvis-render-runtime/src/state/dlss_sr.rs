@@ -141,8 +141,8 @@ impl Default for DlssSrFrameConstants {
             camera_up: [0.0, 1.0, 0.0],
             camera_right: [1.0, 0.0, 0.0],
             camera_fwd: [0.0, 0.0, -1.0],
-            camera_near: 0.1,
-            camera_far: 10000.0,
+            camera_near: 0.01,
+            camera_far: 1000.0,
             camera_fov: 60.0_f32.to_radians(),
             camera_aspect_ratio: 1.0,
             motion_vectors_invalid_value: -65504.0,
@@ -266,7 +266,9 @@ impl<'a> DlssCommonConstantsBuilder<'a> {
             camera_right: Self::normalize_or(self.render_view.inv_view.x_axis.truncate(), glam::Vec3::X).to_array(),
             camera_fwd: Self::normalize_or(self.render_view.forward_ws, -glam::Vec3::Z).to_array(),
             camera_near: Self::estimate_camera_near(self.render_view.projection),
-            camera_far: 10000.0,
+            // 当前投影为 infinite RH；1000m 只是 Streamline metadata，不是投影裁剪面，
+            // 也不等同于 RT traversal max。未来接入 scene bounds 时只替换此 hint。
+            camera_far: 1000.0,
             camera_fov: Self::estimate_vertical_fov(self.render_view.projection),
             camera_aspect_ratio: Self::extent_aspect(self.frame_state.output_extent),
             motion_vectors_invalid_value: -65504.0,
@@ -290,11 +292,11 @@ impl<'a> DlssCommonConstantsBuilder<'a> {
         if cot_half_fov > f32::EPSILON { 2.0 * (1.0 / cot_half_fov).atan() } else { 60.0_f32.to_radians() }
     }
 
+    /// 当前相机使用 glam 的 [0,1] infinite RH projection，w_axis.z = -near。
+    /// 不能套用 OpenGL [-1,1] 投影的除二公式；fallback 同样使用 m。
     fn estimate_camera_near(projection: glam::Mat4) -> f32 {
-        // 当前 RenderView 没有直接保留 near/far；这里给 Streamline 提供一个稳定的近似值。
-        // 后续如果相机系统显式保存 near/far，应替换为真实相机参数。
-        let near = -projection.w_axis.z * 0.5;
-        if near.is_finite() && near > 0.0 { near } else { 0.1 }
+        let near = -projection.w_axis.z;
+        if near.is_finite() && near > 0.0 { near } else { 0.01 }
     }
 
     fn extent_aspect(extent: vk::Extent2D) -> f32 {

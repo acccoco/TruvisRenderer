@@ -33,30 +33,30 @@ pub struct CornellRenderer {
 
 impl CornellRenderer {
     fn request_scene(world: &mut GameWorld, camera: &mut Camera) -> SceneImportHandle {
-        camera.position = glam::vec3(-400.0, 1000.0, 1000.0);
+        camera.position = glam::vec3(-4.0, 10.0, 10.0);
         camera.euler_yaw_deg = 330.0;
         camera.euler_pitch_deg = -27.0;
 
         world.register_point_light(gpu::engine::light::PointLight {
-            pos: glam::vec3(-20.0, 40.0, 0.0).into(),
+            pos: glam::vec3(-0.2, 0.4, 0.0).into(),
             color: (glam::vec3(5.0, 6.0, 1.0) * 2.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
         world.register_point_light(gpu::engine::light::PointLight {
-            pos: glam::vec3(40.0, 40.0, -30.0).into(),
+            pos: glam::vec3(0.4, 0.4, -0.3).into(),
             color: (glam::vec3(1.0, 6.0, 7.0) * 3.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
         world.register_point_light(gpu::engine::light::PointLight {
-            pos: glam::vec3(40.0, 40.0, 30.0).into(),
+            pos: glam::vec3(0.4, 0.4, 0.3).into(),
             color: (glam::vec3(5.0, 1.0, 8.0) * 3.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
         });
         world.register_spot_light(gpu::engine::light::SpotLight {
-            pos: glam::vec3(0.0, 320.0, 180.0).into(),
+            pos: glam::vec3(0.0, 3.2, 1.8).into(),
             inner_angle: 12.0_f32.to_radians(),
             color: (glam::vec3(8.0, 6.0, 3.0) * 8.0).into(),
             outer_angle: 28.0_f32.to_radians(),
@@ -64,9 +64,9 @@ impl CornellRenderer {
             _dir_padding: Default::default(),
         });
         world.register_area_light(gpu::engine::light::AreaLight {
-            center: glam::vec3(0.0, 380.0, 0.0).into(),
-            half_u: glam::vec3(80.0, 0.0, 0.0).into(),
-            half_v: glam::vec3(0.0, 0.0, 80.0).into(),
+            center: glam::vec3(0.0, 3.8, 0.0).into(),
+            half_u: glam::vec3(0.8, 0.0, 0.0).into(),
+            half_v: glam::vec3(0.0, 0.0, 0.8).into(),
             radiance: (glam::vec3(1.0, 0.92, 0.75) * 2.0).into(),
             _center_padding: Default::default(),
             _half_u_padding: Default::default(),
