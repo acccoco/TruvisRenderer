@@ -30,6 +30,7 @@
 ## 2) 专项规则文档
 
 - Shader ABI、字节对齐、padding 与跨 Slang / Vulkan / Rust / C++ 内存布局规则见 `.agents/rules/shader-abi-layout.md`。
+- Web Editor 的浅色技术型 UI、Source Code Pro 字体、布局密度、组件状态与视觉一致性规则见 `.agents/rules/editor-ui-style.md`；该规则只约束 Web Editor UI，不影响 Engine、Renderer、Shader 或协议层。
 
 ## 3) 渲染项目约束
 
