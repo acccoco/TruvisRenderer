@@ -22,8 +22,6 @@ export interface EditorSessionState {
   sceneVersion: string;
   selection: SelectionDto | null;
   objects: SceneObjectSummary[];
-  pageOffset: number;
-  nextOffset: number | null;
   inspectedInstanceId: string | null;
   instanceDetails: InstanceDetailsDto | null;
   instanceDetailsStatus: InstanceDetailsStatus;
@@ -40,7 +38,7 @@ type Action =
   | { type: 'backendState'; value: EditorBackendState }
   | { type: 'sceneVersion'; value: string }
   | { type: 'selection'; value: SelectionDto | null }
-  | { type: 'objects'; value: { objects: SceneObjectSummary[]; offset: number; nextOffset: number | null } }
+  | { type: 'objects'; value: { objects: SceneObjectSummary[]; sceneVersion: string } }
   | { type: 'instanceDetailsStart'; instanceId: string }
   | { type: 'instanceDetailsReady'; value: InstanceDetailsDto }
   | { type: 'instanceDetailsStale'; instanceId: string }
@@ -56,8 +54,6 @@ const initialState: EditorSessionState = {
   sceneVersion: '—',
   selection: null,
   objects: [],
-  pageOffset: 0,
-  nextOffset: null,
   inspectedInstanceId: null,
   instanceDetails: null,
   instanceDetailsStatus: 'idle',
@@ -90,8 +86,7 @@ function reducer(state: EditorSessionState, action: Action): EditorSessionState 
       return {
         ...state,
         objects: action.value.objects,
-        pageOffset: action.value.offset,
-        nextOffset: action.value.nextOffset,
+        sceneVersion: action.value.sceneVersion,
       };
     case 'instanceDetailsStart': {
       const sameInstance = state.inspectedInstanceId === action.instanceId;
@@ -148,8 +143,6 @@ class EditorResponseError extends Error {
 export interface EditorSession {
   state: EditorSessionState;
   refresh(): Promise<void>;
-  nextPage(): Promise<void>;
-  previousPage(): Promise<void>;
   inspectInstance(instanceId: string): Promise<void>;
   updateDraft(patch: Partial<MaterialDto>): void;
   commitMaterial(patch: MaterialPatch): Promise<void>;
@@ -246,46 +239,49 @@ export function useEditorSession(): EditorSession {
     [query],
   );
 
-  const loadPage = useCallback(
-    async (offset: number, expectedSceneVersion: string | null) => {
-      const response = await query({
-        type: 'get_scene_objects',
-        offset,
-        limit: 128,
-        expected_scene_version: expectedSceneVersion,
-      });
-      if (response.type === 'scene_objects') {
-        dispatch({ type: 'sceneVersion', value: response.payload.scene_version });
-        dispatch({
-          type: 'objects',
-          value: {
-            objects: response.payload.objects,
+  const loadAllSceneObjects = useCallback(async () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      let offset = 0;
+      let expectedSceneVersion: string | null = null;
+      const objects: SceneObjectSummary[] = [];
+
+      try {
+        while (true) {
+          const response = await query({
+            type: 'get_scene_objects',
             offset,
-            nextOffset: response.payload.next_offset,
-          },
-        });
+            limit: 128,
+            expected_scene_version: expectedSceneVersion,
+          });
+          if (response.type !== 'scene_objects') {
+            throw new Error('Editor returned an unexpected scene objects response');
+          }
+
+          expectedSceneVersion = response.payload.scene_version;
+          objects.push(...response.payload.objects);
+          if (response.payload.next_offset === null) {
+            return { objects, sceneVersion: response.payload.scene_version };
+          }
+          offset = response.payload.next_offset;
+        }
+      } catch (error) {
+        if (error instanceof EditorResponseError && error.code === 'conflict') {
+          continue;
+        }
+        throw error;
       }
-    },
-    [query],
-  );
+    }
+
+    throw new Error('Scene changed repeatedly while loading objects');
+  }, [query]);
 
   const refreshProjection = useCallback(async () => {
     try {
-      const [version, selection, objects] = await Promise.all([
-        query({ type: 'get_scene_version' }),
+      const [selection, objects] = await Promise.all([
         query({ type: 'get_selection' }),
-        query({ type: 'get_scene_objects', offset: 0, limit: 128, expected_scene_version: null }),
+        loadAllSceneObjects(),
       ]);
-      if (version.type === 'scene_version') {
-        dispatch({ type: 'sceneVersion', value: version.payload });
-      }
-      if (objects.type === 'scene_objects') {
-        dispatch({ type: 'sceneVersion', value: objects.payload.scene_version });
-        dispatch({
-          type: 'objects',
-          value: { objects: objects.payload.objects, offset: 0, nextOffset: objects.payload.next_offset },
-        });
-      }
+      dispatch({ type: 'objects', value: objects });
       if (selection.type === 'selection') {
         dispatch({ type: 'selection', value: selection.payload });
         await loadMaterial(selection.payload);
@@ -293,7 +289,7 @@ export function useEditorSession(): EditorSession {
     } catch (error) {
       dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
     }
-  }, [loadMaterial, query]);
+  }, [loadAllSceneObjects, loadMaterial, query]);
 
   const refresh = useCallback(async () => {
     const inspectedInstanceId = inspectedInstanceIdRef.current;
@@ -387,25 +383,6 @@ export function useEditorSession(): EditorSession {
     };
   }, [query, refresh, state.backendState]);
 
-  const nextPage = useCallback(async () => {
-    if (state.nextOffset === null) {
-      return;
-    }
-    try {
-      await loadPage(state.nextOffset, state.sceneVersion === '—' ? null : state.sceneVersion);
-    } catch (error) {
-      dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
-    }
-  }, [loadPage, state.nextOffset, state.sceneVersion]);
-
-  const previousPage = useCallback(async () => {
-    try {
-      await loadPage(Math.max(0, state.pageOffset - 128), state.sceneVersion === '—' ? null : state.sceneVersion);
-    } catch (error) {
-      dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
-    }
-  }, [loadPage, state.pageOffset, state.sceneVersion]);
-
   const inspectInstance = useCallback(
     async (instanceId: string) => {
       await loadInstanceDetails(instanceId);
@@ -445,5 +422,5 @@ export function useEditorSession(): EditorSession {
     [request, state.draft],
   );
 
-  return { state, refresh, nextPage, previousPage, inspectInstance, updateDraft, commitMaterial };
+  return { state, refresh, inspectInstance, updateDraft, commitMaterial };
 }

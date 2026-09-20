@@ -9,7 +9,7 @@ import { useDesktopSkyAction } from './state/use_desktop_sky_action';
 import { useEditorSession } from './state/use_editor_session';
 
 export function App() {
-  const { state, refresh, nextPage, previousPage, inspectInstance, updateDraft, commitMaterial } = useEditorSession();
+  const { state, refresh, inspectInstance, updateDraft, commitMaterial } = useEditorSession();
   const desktopSky = useDesktopSkyAction();
 
   return (
@@ -29,11 +29,7 @@ export function App() {
           <ScenePanel
             objects={state.objects}
             inspectedInstanceId={state.inspectedInstanceId}
-            pageOffset={state.pageOffset}
-            nextOffset={state.nextOffset}
             onInspectInstance={(instanceId) => void inspectInstance(instanceId)}
-            onPreviousPage={() => void previousPage()}
-            onNextPage={() => void nextPage()}
           />
         )}
         viewport={<RenderViewport />}

@@ -1,26 +1,18 @@
 import { useMemo, useState } from 'react';
 
 import type { SceneObjectSummary } from '../protocol/generated';
-import { ChevronIcon, SearchIcon } from './icons';
+import { SearchIcon } from './icons';
 
 interface ScenePanelProps {
   objects: SceneObjectSummary[];
   inspectedInstanceId: string | null;
-  pageOffset: number;
-  nextOffset: number | null;
   onInspectInstance(instanceId: string): void;
-  onPreviousPage(): void;
-  onNextPage(): void;
 }
 
 export function ScenePanel({
   objects,
   inspectedInstanceId,
-  pageOffset,
-  nextOffset,
   onInspectInstance,
-  onPreviousPage,
-  onNextPage,
 }: ScenePanelProps) {
   const [search, setSearch] = useState('');
   const filteredObjects = useMemo(() => {
@@ -46,7 +38,7 @@ export function ScenePanel({
         </div>
         <div className="object-list">
           {filteredObjects.length === 0 ? (
-            <div className="empty-state">No objects on this page.</div>
+            <div className="empty-state">{search.trim() ? 'No matching objects.' : 'No objects in scene.'}</div>
           ) : (
             filteredObjects.map((object) => {
               const selected = inspectedInstanceId === object.instance_id;
@@ -68,17 +60,6 @@ export function ScenePanel({
             })
           )}
         </div>
-      </div>
-      <div className="pagination">
-        <button className="icon-button" type="button" onClick={onPreviousPage} disabled={pageOffset === 0} aria-label="Previous page">
-          <ChevronIcon direction="left" />
-        </button>
-        <span>
-          {objects.length === 0 ? '0' : `${pageOffset + 1}–${pageOffset + objects.length}`}
-        </span>
-        <button className="icon-button" type="button" onClick={onNextPage} disabled={nextOffset === null} aria-label="Next page">
-          <ChevronIcon direction="right" />
-        </button>
       </div>
     </section>
   );
