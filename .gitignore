@@ -8,12 +8,6 @@ target
 
 # resource
 assets
-external/slang
-external/tracy
-external/streamline-sdk
-external/rtx-gi
-external/rtx-di
-external/openpbr
 
 # operating system
 .DS_Store

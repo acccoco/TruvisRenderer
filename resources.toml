@@ -99,3 +99,12 @@ target_dir = "external"
 rename_to = "openpbr"
 git_ref = "v1.1.1"
 recursive_submodules = true
+
+[[resources]]
+name = "pbrtv4-repo"
+url = "https://github.com/mmp/pbrt-v4.git"
+resource_type = "git"
+target_dir = "external"
+rename_to = "pbrtv4"
+git_ref = "master"
+recursive_submodules = true
