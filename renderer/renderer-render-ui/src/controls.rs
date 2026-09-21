@@ -10,24 +10,6 @@ use truvis_render_runtime::state::dlss_sr::DlssSrMode;
 pub struct RenderControlsOverlay;
 
 impl RenderControlsOverlay {
-    /// Cornell 等只有 realtime owner 的 Renderer 使用专用窗口，不虚构不存在的 offline 状态。
-    pub fn build_realtime_window(
-        &mut self,
-        ui: &imgui::Ui,
-        dlss_options: &mut DlssOptions,
-        common_settings: &mut PathTracingCommonSettings,
-        realtime_settings: &mut RealtimeRenderSettings,
-    ) {
-        ui.window("Controls")
-            .position([10.0, 200.0], imgui::Condition::FirstUseEver)
-            .size([340.0, 360.0], imgui::Condition::FirstUseEver)
-            .build(|| {
-                Self::build_dlss_section(ui, dlss_options);
-                ui.separator();
-                Self::build_realtime_section(ui, common_settings, realtime_settings);
-            });
-    }
-
     pub fn build_render_mode_section(ui: &imgui::Ui, render_mode: &mut RenderMode, offline_sample_count: u32) {
         if let Some(_combo) = ui.begin_combo("Render Mode", render_mode.label()) {
             for mode in RenderMode::ALL {

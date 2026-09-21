@@ -28,6 +28,8 @@ const EMISSIVE_CUBE_MATRIX_CONFIG: EmissiveCubeMatrixConfig = EmissiveCubeMatrix
 };
 
 impl SponzaScene {
+    pub(super) const IMPORT_PATH: &'static str = "fbx/sponza/sponza.fbx";
+
     pub(super) fn initialize(world: &mut GameWorld, camera: &mut Camera) -> SceneImportHandle {
         camera.position = glam::vec3(2.7, 1.94, -0.64);
         camera.euler_yaw_deg = 90.0;
@@ -38,7 +40,7 @@ impl SponzaScene {
         Self::spawn_material_test_cubes(world, &samples);
 
         log::info!("start load sponza model");
-        world.import_scene(TruvisPath::assets_path("fbx/sponza/sponza.fbx"))
+        world.import_scene(TruvisPath::assets_path(Self::IMPORT_PATH))
     }
 
     fn spawn_material_test_cubes(world: &mut GameWorld, samples: &MaterialSamples) {

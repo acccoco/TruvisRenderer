@@ -2,21 +2,19 @@
 
 mod desktop_command;
 mod editor_controller;
-mod scenes;
 
 use renderer_kit::camera::Camera;
 use truvis_editor_bridge::{EditorBridgeConfig, FrontendEndpoint, RendererEndpoint, create_editor_bridge};
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_renderer::RendererClient;
+use truvis_scenes::{InitialScene, SceneInitializer};
 use truvis_world::GameWorld;
 use truvis_world::guid_new_type::MaterialAssetHandle;
 
 use self::desktop_command::DesktopCommandController;
 use self::editor_controller::{EditorController, EditorControllerConfig};
-use self::scenes::SceneInitializer;
 
 pub(crate) use self::desktop_command::DesktopCommandSender;
-pub(crate) use self::scenes::InitialScene;
 
 /// App 主线程和 RenderThread 之间的一次性通信装配结果。
 ///

@@ -21,11 +21,11 @@ use truvis_logs::LogFilePath;
 use truvis_path::TruvisPath;
 use truvis_render_loop::init_env_with_log_file;
 use truvis_renderer::TruvisRenderer;
+use truvis_scenes::StartupOptions;
 use truvis_winit_host::{EmbeddedViewportRect, EmbeddedWinitHost};
 
 use crate::client::{DesktopCommandSender, TruvisAppClient, TruvisAppWiring};
 use crate::editor_ipc::EditorIpc;
-use crate::startup_options::StartupOptions;
 
 /// Tauri command 使用的 DOM viewport 物理像素矩形。
 ///
@@ -269,9 +269,9 @@ pub struct TruvisDesktop;
 
 impl TruvisDesktop {
     pub fn run() -> Result<()> {
-        let startup_options = StartupOptions::from_process_args()?;
+        let startup_options = StartupOptions::from_process_args("truvis-app")?;
         if startup_options.show_help {
-            println!("{}", StartupOptions::usage());
+            println!("{}", StartupOptions::usage("truvis-app"));
             return Ok(());
         }
 

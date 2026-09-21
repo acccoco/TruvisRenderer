@@ -1,0 +1,16 @@
+[package]
+name = "truvis-scenes"
+version = "0.1.0"
+edition = "2024"
+description = "Shared CPU startup scenes for Truvis applications"
+
+[dependencies]
+renderer-kit = { workspace = true }
+truvis-asset = { workspace = true }
+truvis-world = { workspace = true }
+truvis-path = { workspace = true }
+truvis-shader-binding = { workspace = true }
+
+anyhow = { workspace = true }
+glam = { workspace = true }
+log = { workspace = true }

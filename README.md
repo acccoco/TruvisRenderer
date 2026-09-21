@@ -80,7 +80,7 @@ just truvis-direct
 
 `truvis-direct` 仍会构建 Web editor，但不会重新生成 shader 或 CXX 绑定，适合确认这些产物已经是最新状态时使用。
 
-所有渲染入口默认开启 Vulkan validation layer，可追加 `no-validation` 关闭。Truvis 入口还可追加 `imgui`，启用 Streamline ImGui 调试界面：
+所有渲染入口默认开启 Vulkan validation layer，可追加 `no-validation` 关闭。Truvis 和 Cornell 入口还可追加 `imgui`，启用 Streamline ImGui 调试界面：
 
 ```nushell
 just truvis imgui
@@ -88,11 +88,15 @@ just truvis no-validation
 just truvis imgui no-validation
 ```
 
-Truvis 默认启动手工材质测试场景，也可以在启动时选择 Sponza：
+Truvis 与 Cornell 都默认启动 Manual 手工材质测试场景，均可选择 Sponza 或 Cornell Box。Cornell 入口使用完整 TruvisRenderer，提供不带 Tauri/Web Editor 的 standalone 窗口：
 
 ```nushell
 just truvis --scene manual
 just truvis --scene sponza
+just truvis --scene cornell
+just cornell --scene cornell
+just cornell imgui --scene sponza
+cargo run --bin rt-cornell -- --scene manual
 cargo run --bin truvis-app -- --scene sponza
 ```
 

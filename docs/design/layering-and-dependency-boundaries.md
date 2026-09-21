@@ -47,6 +47,7 @@ App 是启动壳和产品接入层，也可以提供运行在 RenderThread 上�
 
 - Tauri invoke、emit、WebView、dialog、capabilities 只存在 App。
 - standalone sample 负责窗口入口和命令行配置，不把窗口策略下沉到通用 Renderer。
+- `truvis-scenes` 在 App 层统一场景预设、启动参数与异步导入收敛，不依赖 Tauri 或 Editor bridge。Truvis/Cornell Client 复用它，并注入同一个完整 `TruvisRenderer`。
 - App 可以创建 Editor/Client ports，并把 RenderThread Client 随 Renderer factory 移交给 RenderThread。
 - Tauri 主线程不访问 `GameWorld`、Vulkan、`ash` 或 RenderWorld 内部状态。
 - App 提供的 RenderThread Client 可以在 RendererClient 窄接口内借用 CPU `GameWorld`，但不访问 Runtime、GPU owner 或 RenderWorld。
@@ -91,7 +92,7 @@ CPU scene 的权威方向是 `GameWorld -> prepare -> RenderWorld -> RenderGraph
 
 跨层 API 评审至少检查调用方向、状态 owner、线程归属和销毁顺序。一个接口即使只返回只读数据，也不能因此忽略它携带的生命周期和线程约束。
 
-共享能力优先下沉到已有 owner；只有当多个上层确实共享同一语义时，才在 Engine 增加抽象。产品特例留在 Renderer，不为了复用少量代码扩大 Runtime API。
+共享能力优先下沉到已有 owner；只有当多个上层确实共享同一语义时，才在 Engine 增加抽象。场景与宿主特例留在 App，渲染编排留在 Renderer，不为了复用少量代码扩大 Runtime API。
 
 ## 非目标
 

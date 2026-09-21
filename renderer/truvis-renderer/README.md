@@ -11,8 +11,10 @@ realtime/offline 渲染子系统。它依赖 engine 与公共 Renderer capabilit
 - `TruvisOverlayUi`：组合 `renderer-imgui` 的诊断控件与 `renderer-render-ui` 的设置 section，决定主体 Renderer 的窗口布局和绘制顺序。
 - `SelectionOutlineSubsystem` / `CoordinateGizmoSubsystem`：持有主体 Renderer 专用效果的资源与 pass 编排状态。
 
-启动场景由 App 的 `--scene manual|sponza` 选择，默认是 `manual`。场景、Editor 请求和本地
-桌面命令由 App 的 `TruvisAppClient` 提供，并在 RenderThread 上通过 `RendererClient` 被调用。
+Truvis Tauri App 与 Cornell standalone App 共用完整 Renderer，不按宿主裁剪渲染功能。
+两个 App 均通过 `truvis-scenes` 选择 `--scene manual|sponza|cornell`，默认 `manual`。
+`TruvisAppClient` 组合场景、Editor 请求和本地桌面命令；`CornellAppClient` 只组合场景。
+两者都在 RenderThread 上通过 `RendererClient` 被调用。
 Renderer 本身只消费 CPU scene 结果并负责 GPU/RenderGraph 编排。
 
 ## 状态所有权

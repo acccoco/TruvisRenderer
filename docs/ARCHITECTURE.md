@@ -15,7 +15,7 @@ app ──> renderer ──> engine
 ## 三层职责
 
 - `engine/`：通用 Runtime、`RenderLoop`、`RenderThread`、RenderGraph、GameWorld、Vulkan RHI、窗口宿主及 shader 基础设施。Engine 不知道具体 Renderer 或 Tauri。
-- `renderer/`：具体 Renderer、Subsystem、Pass、Shader、产品 overlay 和 transport-neutral typed ports。`TruvisRenderer`、Triangle、ShaderToy 和 Cornell Renderer 都属于此层。
+- `renderer/`：具体 Renderer、Subsystem、Pass、Shader、产品 overlay 和 transport-neutral typed ports。`TruvisRenderer`、Triangle 和 ShaderToy Renderer 都属于此层；Truvis 与 Cornell App 共用完整的 `TruvisRenderer`。
 - `app/`：Tauri Editor 与 standalone sample 的启动壳，以及可注入 Renderer、运行在 RenderThread 上的产品业务 Client。Tauri `invoke/emit/AppHandle`、dialog、WebView、capabilities 和 timeout 只存在 App 主线程。
 
 ## 设计文档

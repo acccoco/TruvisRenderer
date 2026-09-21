@@ -82,7 +82,7 @@ triangle *run_opts: shader (_run-cargo-bin "triangle" run_opts)
 [group('3 运行示例')]
 shader-toy *run_opts: shader (_run-cargo-bin "shader-toy" run_opts)
 
-# 运行 Cornell 光追示例
+# 运行完整 TruvisRenderer 的 standalone 入口，默认 Manual；Cornell Box 使用 --scene cornell
 [group('3 运行示例')]
 cornell *run_opts: shader cxx-debug (_run-cargo-bin "rt-cornell" run_opts)
 

@@ -44,10 +44,10 @@ members = [
     "renderer/renderer-render-ui",
     "renderer/samples/triangle-renderer",
     "renderer/samples/shader-toy-renderer",
-    "renderer/samples/cornell-renderer",
     # app
     "renderer/shader/truvis-renderer-shader-binding",
     "app/truvis-app",
+    "app/truvis-scenes",
     "app/samples/triangle-app",
     "app/samples/shader-toy-app",
     "app/samples/cornell-app",
@@ -101,10 +101,10 @@ renderer-rendering = { path = "renderer/renderer-rendering" }
 renderer-render-ui = { path = "renderer/renderer-render-ui" }
 truvis-renderer-shader-binding = { path = "renderer/shader/truvis-renderer-shader-binding" }
 truvis-renderer = { path = "renderer/truvis-renderer" }
+truvis-scenes = { path = "app/truvis-scenes" }
 truvis-editor-bridge = { path = "renderer/editor/truvis-editor-bridge" }
 triangle-renderer = { path = "renderer/samples/triangle-renderer" }
 shader-toy-renderer = { path = "renderer/samples/shader-toy-renderer" }
-cornell-renderer = { path = "renderer/samples/cornell-renderer" }
 # shader
 truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
 # cxx

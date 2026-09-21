@@ -9,7 +9,12 @@ name = "rt-cornell"
 path = "src/main.rs"
 
 [dependencies]
-cornell-renderer = { workspace = true }
+truvis-renderer = { workspace = true }
+truvis-scenes = { workspace = true }
+renderer-kit = { workspace = true }
+truvis-world = { workspace = true }
+truvis-render-runtime = { workspace = true }
+anyhow = { workspace = true }
 truvis-render-loop = { workspace = true }
 truvis-winit-host = { workspace = true }
 truvis-logs = { workspace = true }

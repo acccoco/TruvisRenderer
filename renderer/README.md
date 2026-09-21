@@ -4,6 +4,7 @@
 传输无关的通信契约。该层可以依赖 `engine/`，但不能依赖 Tauri、WebView 或 `app/`。
 
 当前 `truvis-renderer` 拥有 Truvis 产品 Renderer 和 App Client 注入边界；五个 `renderer-*`
-目录承载公共 capability。`renderer/samples/*` 分别拥有 Triangle、ShaderToy 与 Cornell Renderer。
+目录承载公共 capability。`renderer/samples/*` 分别拥有 Triangle 与 ShaderToy Renderer。
+Truvis Tauri App 与 Cornell standalone App 共用完整的 `TruvisRenderer`，场景来自 App 层共享模块。
 `editor/truvis-editor-bridge` 保存传输无关的 Editor 协议，`renderer/shader` 保存 Renderer shader、ABI 与 binding。
 Native CXX project 与 Rust FFI binding 统一位于 [`../cxx/`](../cxx/README.md)，不镜像 Renderer 物理分层。

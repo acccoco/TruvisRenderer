@@ -907,30 +907,15 @@ dependencies = [
 name = "cornell-app"
 version = "0.1.0"
 dependencies = [
- "cornell-renderer",
+ "anyhow",
+ "renderer-kit",
  "truvis-logs",
  "truvis-path",
  "truvis-render-loop",
- "truvis-winit-host",
-]
-
-[[package]]
-name = "cornell-renderer"
-version = "0.1.0"
-dependencies = [
- "ash",
- "glam",
- "log",
- "renderer-imgui",
- "renderer-kit",
- "renderer-render-ui",
- "renderer-rendering",
- "truvis-path",
- "truvis-render-foundation",
- "truvis-render-graph",
- "truvis-render-loop",
  "truvis-render-runtime",
- "truvis-shader-binding",
+ "truvis-renderer",
+ "truvis-scenes",
+ "truvis-winit-host",
  "truvis-world",
 ]
 
@@ -6034,7 +6019,7 @@ dependencies = [
  "truvis-render-loop",
  "truvis-render-runtime",
  "truvis-renderer",
- "truvis-shader-binding",
+ "truvis-scenes",
  "truvis-winit-host",
  "truvis-world",
 ]
@@ -6281,6 +6266,20 @@ dependencies = [
  "truvis-shader-binding",
  "truvis-shader-binding-codegen",
  "truvis-shader-manifest",
+]
+
+[[package]]
+name = "truvis-scenes"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glam",
+ "log",
+ "renderer-kit",
+ "truvis-asset",
+ "truvis-path",
+ "truvis-shader-binding",
+ "truvis-world",
 ]
 
 [[package]]

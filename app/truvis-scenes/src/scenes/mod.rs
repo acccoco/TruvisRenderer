@@ -1,3 +1,4 @@
+mod cornell;
 mod manual;
 mod sponza;
 
@@ -15,6 +16,7 @@ pub enum InitialScene {
     #[default]
     Manual,
     Sponza,
+    Cornell,
 }
 
 impl InitialScene {
@@ -22,7 +24,16 @@ impl InitialScene {
         match value {
             "manual" => Some(Self::Manual),
             "sponza" => Some(Self::Sponza),
+            "cornell" => Some(Self::Cornell),
             _ => None,
+        }
+    }
+
+    fn source_path(self) -> &'static str {
+        match self {
+            Self::Manual => "<procedural>",
+            Self::Sponza => sponza::SponzaScene::IMPORT_PATH,
+            Self::Cornell => cornell::CornellScene::IMPORT_PATH,
         }
     }
 
@@ -30,6 +41,7 @@ impl InitialScene {
         match self {
             Self::Manual => "manual",
             Self::Sponza => "sponza",
+            Self::Cornell => "cornell",
         }
     }
 }
@@ -38,30 +50,33 @@ impl InitialScene {
 ///
 /// `GameWorld` 仍然拥有最终 CPU scene；本类型只保存启动预设和一个待收敛的
 /// import handle，不保存 GPU 资源、Runtime 或跨线程状态。
-pub(crate) struct SceneInitializer {
+pub struct SceneInitializer {
     preset: InitialScene,
     pending_scene_import: Option<SceneImportHandle>,
 }
 
 impl SceneInitializer {
-    pub(crate) fn new(preset: InitialScene) -> Self {
+    pub fn new(preset: InitialScene) -> Self {
         Self {
             preset,
             pending_scene_import: None,
         }
     }
 
-    pub(crate) fn initialize(&mut self, world: &mut GameWorld, camera: &mut Camera) {
+    /// 只在 Renderer init 调用一次；后续导入收敛由 update 完成。
+    pub fn initialize(&mut self, world: &mut GameWorld, camera: &mut Camera) {
         self.pending_scene_import = match self.preset {
             InitialScene::Manual => {
                 manual::ManualScene::initialize(world, camera);
                 None
             }
             InitialScene::Sponza => Some(sponza::SponzaScene::initialize(world, camera)),
+            InitialScene::Cornell => Some(cornell::CornellScene::initialize(world, camera)),
         };
     }
 
-    pub(crate) fn update(&mut self, world: &mut GameWorld) {
+    /// prepare 前收敛导入；成功或失败均结束等待，避免重复创建实例或逐帧报错。
+    pub fn update(&mut self, world: &mut GameWorld) {
         let Some(handle) = self.pending_scene_import else {
             return;
         };
@@ -70,12 +85,16 @@ impl SceneInitializer {
             LoadStatus::Unloaded | LoadStatus::Loading => {}
             LoadStatus::Failed => {
                 let error = world.scene_import_error(handle).unwrap_or("unknown scene import error");
-                log::error!("failed to load {} scene: {error}", self.preset.name());
+                log::error!("failed to load {} scene ({}): {error}", self.preset.name(), self.preset.source_path());
                 self.pending_scene_import = None;
             }
             LoadStatus::Ready => {
                 let Some(scene_data) = world.scene_data(handle).cloned() else {
-                    log::error!("{} scene import became ready without scene data", self.preset.name());
+                    log::error!(
+                        "{} scene ({}) import became ready without scene data",
+                        self.preset.name(),
+                        self.preset.source_path()
+                    );
                     self.pending_scene_import = None;
                     return;
                 };
@@ -87,7 +106,11 @@ impl SceneInitializer {
                         materials: object.materials,
                         transform: object.transform,
                     }) {
-                        log::error!("failed to register {} scene instance: {error}", self.preset.name());
+                        log::error!(
+                            "failed to register {} scene instance ({}): {error}",
+                            self.preset.name(),
+                            self.preset.source_path()
+                        );
                         break;
                     }
                 }
