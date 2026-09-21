@@ -14,15 +14,12 @@ use renderer_kit::input_state::InputManager;
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 use renderer_rendering::{OfflineRenderSubsystem, PathTracingCommonSettings, RealtimeRenderSubsystem, RenderMode};
 
-use crate::TruvisRendererPorts;
 use crate::coordinate_gizmo::CoordinateGizmoSubsystem;
-use crate::desktop_command::DesktopCommandController;
-use crate::editor_controller::{EditorController, EditorControllerConfig};
 use crate::overlay_ui::{
     DebugImageSelectionData, RaycastOverlayData, RenderControlsData, TruvisOverlayFrame, TruvisOverlayOptions,
     TruvisOverlayUi,
 };
-use crate::scenes;
+use crate::renderer_client::RendererClient;
 use crate::selection_outline::SelectionOutlineSubsystem;
 
 pub struct TruvisRenderer {
@@ -40,23 +37,13 @@ pub struct TruvisRenderer {
     click_ray_cast_probe: ClickRayCastProbe,
     selected_submesh: Option<WorldSubmeshSelection>,
 
-    /// RenderThread 独占的 Tauri 桌面特权命令消费者。
-    ///
-    /// 它只在 update 阶段短暂借用 `GameWorld`，确保文件选择结果不会让 Tauri 主线程、
-    /// WebView 或 Tauri IPC owner 越过 CPU scene 权威边界。
-    desktop_command_controller: DesktopCommandController,
-
-    editor_controller: EditorController,
-    scene_initializer: scenes::SceneInitializer,
+    /// App 提供、RenderThread 独占的 CPU scene 与 Editor 业务 Client。
+    client: Box<dyn RendererClient>,
 }
 
 impl TruvisRenderer {
-    /// 使用 frontend 壳预先创建的 [`TruvisRendererPorts`] 构造渲染侧业务状态。
-    ///
-    /// Editor IPC 生命周期属于 Tauri desktop；本 Renderer 只拥有 Editor 协议和桌面特权
-    /// command 到权威 `GameWorld` 的非阻塞 controller，避免 RenderThread 同时承担窗口壳和
-    /// 网络 owner 职责。
-    pub fn new(ports: TruvisRendererPorts, initial_scene: scenes::InitialScene) -> Self {
+    /// 使用 App 注入的 Client 构造渲染侧业务状态。
+    pub fn new(client: Box<dyn RendererClient>) -> Self {
         Self {
             imgui: Default::default(),
             debug_image_selection: Default::default(),
@@ -71,9 +58,7 @@ impl TruvisRenderer {
             overlay_ui: Default::default(),
             click_ray_cast_probe: Default::default(),
             selected_submesh: None,
-            desktop_command_controller: ports.desktop_commands,
-            editor_controller: EditorController::new(ports.editor, EditorControllerConfig::default()),
-            scene_initializer: scenes::SceneInitializer::new(initial_scene),
+            client,
         }
     }
 }
@@ -217,7 +202,7 @@ impl Renderer for TruvisRenderer {
         self.imgui.set_hidpi_factor(ctx.scale_factor);
         self.imgui.set_display_size(ctx.window_size);
 
-        self.scene_initializer.initialize(&mut *ctx.runtime.world, self.camera_controller.camera_mut());
+        self.client.initialize(&mut *ctx.runtime.world, self.camera_controller.camera_mut());
 
         // Renderer 持有初始化顺序：场景 CPU 状态先就绪，再依次创建具体渲染资源。
         self.realtime.init(&mut ctx.runtime);
@@ -237,17 +222,11 @@ impl Renderer for TruvisRenderer {
     }
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
-        self.scene_initializer.update(ctx.world);
         self.click_ray_cast_probe.update_time(ctx.frame_timing.delta_time_s());
         if self.clear_stale_selection(ctx.world) {
-            self.editor_controller.notify_selection_changed(None);
+            self.client.on_selection_changed(None);
         }
-        let desktop_update = self.desktop_command_controller.process_next(ctx.world);
-        if let Some(scene_version) = desktop_update.scene_version_changed {
-            self.editor_controller.notify_scene_version_changed(scene_version);
-        }
-        self.editor_controller.process_requests(ctx.world, self.selected_submesh);
-
+        self.client.tick(ctx.world, self.selected_submesh);
         let delta = std::time::Duration::from_secs_f32(ctx.frame_timing.delta_time_s());
         let viewport_size = glam::vec2(ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32);
         self.camera_controller.update_with_wheel_zoom(self.input.state(), viewport_size, delta);
@@ -258,7 +237,7 @@ impl Renderer for TruvisRenderer {
             let ray = self.camera_controller.make_screen_raycast(mouse_position, viewport_size);
             if ray.is_none() {
                 if self.selected_submesh.take().is_some() {
-                    self.editor_controller.notify_selection_changed(None);
+                    self.client.on_selection_changed(None);
                 }
             }
             self.click_ray_cast_probe.request_cast(screen_pos, ray);
@@ -322,11 +301,12 @@ impl Renderer for TruvisRenderer {
             let result = Self::cast_single_ray(ctx, ray);
             let selection = Self::selection_from_raycast_result(&result);
             if selection != self.selected_submesh {
-                let editor_selection = match &result {
-                    Ok(RayCastResult::Hit(hit)) => Some((hit.instance, hit.submesh_index, hit.material)),
-                    Ok(RayCastResult::Miss) | Err(_) => None,
+                let editor_selection = match (&result, selection) {
+                    (Ok(RayCastResult::Hit(hit)), Some(selection)) => Some((selection, hit.material)),
+                    (Ok(RayCastResult::Miss), None) | (Err(_), None) => None,
+                    _ => None,
                 };
-                self.editor_controller.notify_selection_changed(editor_selection);
+                self.client.on_selection_changed(editor_selection);
             }
             self.selected_submesh = selection;
             self.click_ray_cast_probe.finish_cast(screen_pos, result);
@@ -342,8 +322,7 @@ impl Renderer for TruvisRenderer {
     }
 
     fn shutdown(&mut self, ctx: &mut RendererShutdownCtx<'_>) {
-        self.desktop_command_controller.shutdown();
-        self.editor_controller.shutdown();
+        self.client.shutdown();
 
         // 与资源创建顺序相反释放，且始终早于 runtime root owner 销毁。
         self.imgui.shutdown(&mut ctx.runtime);

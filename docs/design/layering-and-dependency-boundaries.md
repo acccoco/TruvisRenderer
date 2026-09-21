@@ -31,25 +31,27 @@ Engine 不知道 Tauri、Editor DTO、具体产品 overlay 或某个 Renderer �
 
 ## Renderer 层
 
-Renderer 负责产品或 sample 的业务组合：
+Renderer 负责产品或 sample 的渲染业务组合：
 
 - 持有 camera、input、selection、overlay 和具体 subsystem。
 - 在生命周期 hook 中显式创建、resize 和销毁自己拥有的 GPU 资源。
 - 在 render hook 中决定 RenderGraph 的 pass 顺序。
 - 通过 Runtime 提供的 typed context 访问 CPU world 和已准备好的 GPU scene。
 
+App RenderThread Client 负责产品场景定义、Editor DTO 适配和 CPU scene mutation；它只能通过 `RendererClient` 借用 CPU world。
 Renderer 可以依赖 Engine 的公开类型，但 Engine 不反向依赖 Renderer。`SubsystemLifecycle` 只描述长生命周期资源能力，不把输入、更新和 pass 顺序交给运行时注册表。
 
 ## App 层
 
-App 是启动壳和产品接入层：
+App 是启动壳和产品接入层，也可以提供运行在 RenderThread 上的产品业务 Client：
 
 - Tauri invoke、emit、WebView、dialog、capabilities 只存在 App。
 - standalone sample 负责窗口入口和命令行配置，不把窗口策略下沉到通用 Renderer。
-- App 可以创建 Renderer ports，并把 Renderer 侧 ports 移交给 RenderThread。
-- App 不访问 Vulkan、`ash` 或 RenderWorld 内部状态。
+- App 可以创建 Editor/Client ports，并把 RenderThread Client 随 Renderer factory 移交给 RenderThread。
+- Tauri 主线程不访问 `GameWorld`、Vulkan、`ash` 或 RenderWorld 内部状态。
+- App 提供的 RenderThread Client 可以在 RendererClient 窄接口内借用 CPU `GameWorld`，但不访问 Runtime、GPU owner 或 RenderWorld。
 
-App 与 Engine 的直接依赖只用于启动和平台宿主，不能借此绕过 Renderer 的业务边界。
+App 主线程与 Engine 的直接依赖用于启动和平台宿主；RenderThread Client 允许使用 CPU scene facade，不能借此绕过 Renderer 的 GPU/RenderGraph 业务边界。
 
 ## 依赖与数据方向
 

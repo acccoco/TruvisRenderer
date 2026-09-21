@@ -9,7 +9,7 @@ use truvis_world::guid_new_type::{MaterialAssetHandle, SceneImportHandle};
 
 use renderer_kit::camera::Camera;
 
-/// Renderer 启动时选择的固定场景预设。
+/// App 启动时选择的固定场景预设。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InitialScene {
     #[default]

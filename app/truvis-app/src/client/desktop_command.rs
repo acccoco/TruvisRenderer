@@ -1,7 +1,7 @@
-//! Tauri 桌面壳到 RenderThread 的进程内特权命令桥。
+//! Tauri 桌面壳到 App RenderThread Client 的进程内特权命令桥。
 //!
 //! 本模块只传递不能进入通用 Editor DTO 的本地桌面能力。sender 属于 Tauri
-//! `TruvisDesktopState`，receiver 由 RenderThread 上的 `DesktopCommandController`
+//! `TruvisDesktopState`，receiver 由 RenderThread 上的 `TruvisAppClient`
 //! 独占；路径不会序列化到 Web，也不会让 Tauri IPC owner 接触 `GameWorld`。
 
 use std::path::PathBuf;
@@ -65,9 +65,9 @@ impl DesktopCommandSender {
     }
 }
 
-/// 单帧处理 desktop command 后需要通知其他 Renderer owner 的窄结果。
+/// 单帧处理 desktop command 后需要通知 App Client 的窄结果。
 ///
-/// Controller 不直接依赖 `EditorController`；`TruvisRenderer` 负责在同一 update 阶段把
+/// Controller 不直接依赖 `EditorController`；`TruvisAppClient` 负责在同一 update 阶段把
 /// scene-version 变化广播给 Tauri WebView。
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct DesktopCommandUpdate {

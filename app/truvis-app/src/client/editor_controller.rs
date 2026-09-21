@@ -35,7 +35,7 @@ impl Default for EditorControllerConfig {
     }
 }
 
-/// `TruvisRenderer` 内的 Editor 协议适配器。
+/// `TruvisAppClient` 内的 Editor 协议适配器。
 ///
 /// Controller 只在 RenderThread 的 Renderer update 阶段借用 `GameWorld`，把协议 DTO 转换成现有
 /// GameWorld 查询或 mutation。它不保存 selection、scene/material cache，也不拥有 Desktop IPC 生命周期。

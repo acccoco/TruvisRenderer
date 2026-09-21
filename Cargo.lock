@@ -6017,19 +6017,26 @@ name = "truvis-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "glam",
  "log",
  "raw-window-handle",
+ "renderer-kit",
  "serde",
+ "slotmap",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tokio",
+ "truvis-asset",
  "truvis-editor-bridge",
  "truvis-logs",
  "truvis-path",
  "truvis-render-loop",
+ "truvis-render-runtime",
  "truvis-renderer",
+ "truvis-shader-binding",
  "truvis-winit-host",
+ "truvis-world",
 ]
 
 [[package]]
@@ -6256,11 +6263,8 @@ dependencies = [
  "renderer-render-ui",
  "renderer-rendering",
  "slotmap",
- "tokio",
  "truvis-asset",
- "truvis-editor-bridge",
  "truvis-gfx",
- "truvis-path",
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-loop",

@@ -1,7 +1,8 @@
 use std::ffi::OsString;
 
 use anyhow::{Result, bail};
-use truvis_renderer::InitialScene;
+
+use crate::client::InitialScene;
 
 /// Truvis 桌面进程启动时的只读选择。
 ///

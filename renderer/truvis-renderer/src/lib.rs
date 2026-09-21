@@ -1,16 +1,11 @@
-//! Truvis 产品 Renderer、渲染侧 controller 与 frontend 通信端口。
+//! Truvis 产品 Renderer 与 App RenderThread Client 注入边界。
 
 mod coordinate_gizmo;
-mod desktop_command;
-mod editor_controller;
 mod overlay_ui;
-mod renderer_ports;
-mod scenes;
+mod renderer_client;
 mod selection_outline;
 mod truvis_renderer;
 
-pub use desktop_command::{DesktopCommandSender, DesktopSkyAccepted};
 pub use overlay_ui::TruvisOverlayOptions;
-pub use renderer_ports::{TruvisFrontendPorts, TruvisRendererPorts, create_truvis_ports};
-pub use scenes::InitialScene;
+pub use renderer_client::RendererClient;
 pub use truvis_renderer::TruvisRenderer;

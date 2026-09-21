@@ -8,20 +8,20 @@ Web 只保存可丢弃的 scene、selection 和 material 投影。
 - `renderer/editor/truvis-editor-bridge`：Rust DTO、每请求 oneshot reply，以及 Frontend/Renderer 两端的有界 channel。
 - `app/editor/web`：Vite + React + TypeScript 页面；真实 backend 只通过 Tauri invoke/event 访问。
 - `../truvis-app/src/editor_ipc.rs`：Tauri request、notification dispatcher、两秒 timeout 和 shutdown owner。
-- `renderer/truvis-renderer/src/editor_controller.rs`：Editor DTO 到 `GameWorld` API 和 SlotMap handle 的适配器。
-- `renderer/truvis-renderer/src/desktop_command.rs`：本地特权命令的渲染侧消费者，不属于通用 Editor DTO。
+- `app/truvis-app/src/client/editor_controller.rs`：RenderThread Client 中的 Editor DTO 到 `GameWorld` API 和 SlotMap handle 适配器。
+- `app/truvis-app/src/client/desktop_command.rs`：RenderThread Client 中的本地特权命令消费者，不属于通用 Editor DTO。
 
 ```text
 Tauri WebView
   -> truvis_app::editor_ipc
-       -> TruvisFrontendPorts
+       -> frontend EditorEndpoint
             <bounded in-process channels>
-       -> TruvisRendererPorts
-            -> EditorController / DesktopCommandController
+       -> TruvisAppClient (RenderThread)
+            -> EditorController / DesktopCommandController / SceneInitializer
                  -> GameWorld
 ```
 
-Bridge 和 Renderer 层都禁止依赖 Tauri。`EditorIpc` 不解释领域请求；controller 不实现
+Bridge、Renderer 和 RenderThread Client 都禁止依赖 Tauri。`EditorIpc` 不解释领域请求；controller 不实现
 `SubsystemLifecycle`。
 
 ## 协议与 IPC

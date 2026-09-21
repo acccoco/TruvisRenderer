@@ -1,21 +1,19 @@
 # truvis-renderer
 
-`truvis-renderer` 是主体产品 Renderer crate，负责组合 Editor 渲染侧 endpoint、UI/输入状态和
+`truvis-renderer` 是主体产品 Renderer crate，负责组合 RendererClient 注入边界、UI/输入状态和
 realtime/offline 渲染子系统。它依赖 engine 与公共 Renderer capability，但不依赖 Tauri 或 WebView。
 
 ## 主要职责
 
-- `TruvisRenderer`：RenderThread 上的具体 `Renderer`，持有 camera/input、GUI、overlay、selection、Editor controller
+- `TruvisRenderer`：RenderThread 上的具体 `Renderer`，持有 camera/input、GUI、overlay、selection、注入的 RendererClient
   和 realtime/offline 渲染子系统，并显式决定 update 与 RenderGraph pass 顺序。
-- `EditorController`：把 Editor 协议 DTO 适配到权威 `GameWorld` 查询与 edit API。
-- `DesktopCommandController`：消费 Tauri 本地特权命令，只把 Rust `PathBuf` 交给 `GameWorld`，不扩展通用 Editor DTO。
+- `RendererClient`：App 提供的窄生命周期接口；Renderer 只在 init/update/after_prepare/shutdown 阶段调用它。
 - `TruvisOverlayUi`：组合 `renderer-imgui` 的诊断控件与 `renderer-render-ui` 的设置 section，决定主体 Renderer 的窗口布局和绘制顺序。
 - `SelectionOutlineSubsystem` / `CoordinateGizmoSubsystem`：持有主体 Renderer 专用效果的资源与 pass 编排状态。
 
-启动场景由 `--scene manual|sponza` 选择，默认是 `manual`。`manual` 只使用 CPU 侧
-程序化 mesh，包含地面、材质测试 cube 和 UV sphere；`sponza` 保留模型导入、材质测试
-cube 及自发光 cube 阵列。场景初始化模块只借用 `GameWorld` 和相机，不拥有 GPU 资源；
-模型导入完成后仍由 RenderRuntime prepare 路径同步到 RenderWorld。
+启动场景由 App 的 `--scene manual|sponza` 选择，默认是 `manual`。场景、Editor 请求和本地
+桌面命令由 App 的 `TruvisAppClient` 提供，并在 RenderThread 上通过 `RendererClient` 被调用。
+Renderer 本身只消费 CPU scene 结果并负责 GPU/RenderGraph 编排。
 
 ## 状态所有权
 
@@ -24,7 +22,7 @@ cube 及自发光 cube 阵列。场景初始化模块只借用 `GameWorld` 和�
 - camera、input、overlay 和 debug image 选择属于 Renderer；runtime 只消费 `RenderView` 或稳定选择语义。
 - `RealtimeRenderSubsystem` 与 `OfflineRenderSubsystem` 都由 Renderer 持有。两者拥有各自 target、累计和 temporal 状态，
   不把窗口尺寸资源下沉到 `RenderRuntime`。
-- Renderer 只持有 `TruvisRendererPorts`，其中包含传输无关的 `RendererEndpoint` 与 desktop command receiver。
+- Renderer 不拥有 Editor endpoint 或 desktop command receiver；这些 receiver 属于 App Client。
 
 ## 运行与编排
 

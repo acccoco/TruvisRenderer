@@ -1,6 +1,6 @@
 # Editor Boundary 与 Consistency
 
-> 类型：设计文档。本文定义 WebView、Tauri、Renderer controller 和 GameWorld 之间的权威状态与消息边界。
+> 类型：设计文档。本文定义 WebView、Tauri、App RenderThread Client 和 GameWorld 之间的权威状态与消息边界。
 
 ## 状态权威
 
@@ -11,7 +11,7 @@ flowchart LR
     Web["React WebView"] --> Invoke["Tauri invoke"]
     Invoke --> App["app editor_ipc"]
     App --> Ports["bounded frontend ports"]
-    Ports --> Controller["Renderer EditorController"]
+    Ports --> Controller["App RenderThread Client"]
     Controller --> World["GameWorld"]
     World --> Notify["best-effort notification"]
     Notify --> Web
@@ -29,7 +29,7 @@ ID 是带 generation 的 opaque handle，WebView 不能解析 index，也不能�
 
 ## 背压
 
-App 到 Renderer 使用有界 request inbox；Renderer 到 App 使用有界 notification outbox。RenderThread 每帧按预算处理请求，不等待 Tauri 或 WebView。
+App 到 RenderThread Client 使用有界 request inbox；Client 到 App 使用有界 notification outbox。RenderThread 每帧按预算处理请求，不等待 Tauri 或 WebView。
 
 队列满、timeout、Renderer 关闭和 notification 丢失分别是边界事件。Notification 丢失不破坏权威状态，WebView 通过查询、version 轮询或刷新恢复。
 
@@ -37,7 +37,7 @@ App 到 Renderer 使用有界 request inbox；Renderer 到 App 使用有界 noti
 
 ## 编辑与恢复
 
-Renderer controller 将 DTO handle 还原为强类型 World handle，校验成功后才提交 CPU mutation。失败不会推进 scene version。
+App RenderThread Client 将 DTO handle 还原为强类型 World handle，校验成功后才提交 CPU mutation。失败不会推进 scene version。
 
 WebView 的草稿 revision 用于区分本地未确认输入和服务器回包；过期 response 不能覆盖新草稿。查询不能自动清除仍有效的 validation error。
 
@@ -45,7 +45,7 @@ selection 由 Renderer 在 after_prepare 取得 GPU raycast 结果后更新，�
 
 ## 特权命令
 
-HDRI 文件选择通过 Tauri dialog 产生本地 PathBuf，经独立有界 desktop command 进入 RenderThread。通用 Editor DTO 只返回文件名和 accepted/cancelled/error。
+HDRI 文件选择通过 Tauri dialog 产生本地 PathBuf，经独立有界 desktop command 进入 App RenderThread Client。通用 Editor DTO 只返回文件名和 accepted/cancelled/error。
 
 accepted 只表示 GameWorld 接受 CPU 请求，不表示 decode、GPU upload、sky distribution 或最终画面完成。
 
@@ -60,13 +60,13 @@ Tauri notification task 不访问 GameWorld 或 Vulkan。WebView 退出不改变
 - WebView 是投影，不是 scene authority。
 - Editor protocol 不依赖 World、Runtime 或 GPU 类型。
 - request reply、notification、CPU acceptance 和 GPU completion 语义分离。
-- Renderer controller 是 DTO 到 World API 的唯一适配点。
+- App RenderThread Client 是 DTO 到 World API 的唯一适配点；Renderer 只负责把 Client 调用放入合法生命周期阶段。
 - 任何背压策略都不能阻塞 RenderThread、Tauri main thread 或持有 desktop resource lock。
 
 ## 实现入口
 
 - [`editor_ipc.rs`](../../app/truvis-app/src/editor_ipc.rs)
-- [`editor_controller.rs`](../../renderer/truvis-renderer/src/editor_controller.rs)
+- [`client/editor_controller.rs`](../../app/truvis-app/src/client/editor_controller.rs)
 - [`truvis-editor-bridge`](../../renderer/editor/truvis-editor-bridge/src/)
 - [`app/editor/README.md`](../../app/editor/README.md)
 
@@ -78,7 +78,8 @@ WebView 不要求每个 notification 都到达，而要求下一次 query 能从
 
 ## 错误边界
 
-DTO 解码错误、业务校验失败、queue busy、timeout、Renderer shutdown 和 GPU upload 未完成是不同错误类别。controller 应保留领域错误语义，App 只负责 transport 映射。
+DTO 解码错误、业务校验失败、queue busy、timeout、Client shutdown 和 GPU upload 未完成是不同错误类别。
+RenderThread Client 保留领域错误语义，Tauri 主线程只负责 transport 映射。
 
 accepted 结果只能确认指定 owner 已接收请求；如果用户界面需要显示“可见”，必须等待后续 query、notification 或渲染状态，而不能复用 accepted 字段。
 

@@ -11,7 +11,12 @@ path = "src/main.rs"
 [dependencies]
 truvis-render-loop = { workspace = true }
 truvis-renderer = { workspace = true }
+renderer-kit = { workspace = true }
 truvis-editor-bridge = { workspace = true }
+truvis-render-runtime = { workspace = true }
+truvis-asset = { workspace = true }
+truvis-world = { workspace = true }
+truvis-shader-binding = { workspace = true }
 truvis-winit-host = { workspace = true }
 truvis-logs = { workspace = true }
 truvis-path = { workspace = true }
@@ -23,6 +28,8 @@ tauri = { workspace = true }
 tauri-plugin-dialog = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+glam = { workspace = true }
+slotmap = { workspace = true }
 
 [build-dependencies]
 tauri-build = { workspace = true }

@@ -20,9 +20,10 @@ use truvis_editor_bridge::protocol::{EditorRequest, EditorResponse};
 use truvis_logs::LogFilePath;
 use truvis_path::TruvisPath;
 use truvis_render_loop::init_env_with_log_file;
-use truvis_renderer::{DesktopCommandSender, TruvisRenderer, create_truvis_ports};
+use truvis_renderer::TruvisRenderer;
 use truvis_winit_host::{EmbeddedViewportRect, EmbeddedWinitHost};
 
+use crate::client::{DesktopCommandSender, TruvisAppClient, TruvisAppWiring};
 use crate::editor_ipc::EditorIpc;
 use crate::startup_options::StartupOptions;
 
@@ -276,8 +277,10 @@ impl TruvisDesktop {
 
         init_env_with_log_file(LogFilePath::current_exe(TruvisPath::temp_dir()));
 
-        let (frontend_ports, renderer_ports) = create_truvis_ports(EditorBridgeConfig::default());
-        let desktop_command_sender = frontend_ports.desktop_commands;
+        let wiring = TruvisAppWiring::new(EditorBridgeConfig::default());
+        let frontend_editor = wiring.frontend_editor;
+        let client_ports = wiring.client_ports;
+        let desktop_command_sender = wiring.desktop_command_sender;
         let initial_scene = startup_options.scene;
 
         let app = tauri::Builder::default()
@@ -292,10 +295,11 @@ impl TruvisDesktop {
                     .map_err(|error| std::io::Error::other(format!("failed to get Tauri parent HWND: {error}")))?
                     .as_raw();
                 let render_host = EmbeddedWinitHost::spawn(parent_window, move || {
-                    Box::new(TruvisRenderer::new(renderer_ports, initial_scene))
+                    let client = TruvisAppClient::new(client_ports, initial_scene);
+                    Box::new(TruvisRenderer::new(Box::new(client)))
                 })
                 .map_err(std::io::Error::other)?;
-                let editor_ipc = EditorIpc::start(app.handle().clone(), frontend_ports.editor);
+                let editor_ipc = EditorIpc::start(app.handle().clone(), frontend_editor);
 
                 app.manage(TruvisDesktopState::new(render_host, editor_ipc, desktop_command_sender));
                 window.show()?;

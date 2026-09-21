@@ -16,7 +16,7 @@ app ──> renderer ──> engine
 
 - `engine/`：通用 Runtime、`RenderLoop`、`RenderThread`、RenderGraph、GameWorld、Vulkan RHI、窗口宿主及 shader 基础设施。Engine 不知道具体 Renderer 或 Tauri。
 - `renderer/`：具体 Renderer、Subsystem、Pass、Shader、产品 overlay 和 transport-neutral typed ports。`TruvisRenderer`、Triangle、ShaderToy 和 Cornell Renderer 都属于此层。
-- `app/`：Tauri Editor 与 standalone sample 的启动壳。Tauri `invoke/emit/AppHandle`、dialog、WebView、capabilities 和 timeout 只存在此层。
+- `app/`：Tauri Editor 与 standalone sample 的启动壳，以及可注入 Renderer、运行在 RenderThread 上的产品业务 Client。Tauri `invoke/emit/AppHandle`、dialog、WebView、capabilities 和 timeout 只存在 App 主线程。
 
 ## 设计文档
 
@@ -48,7 +48,7 @@ app ──> renderer ──> engine
 - [`engine/README.md`](../engine/README.md)：Engine 目录与 crate 导航。
 - [`cxx/README.md`](../cxx/README.md)：native project、CXX module、构建工具与 Rust binding。
 - [`renderer/README.md`](../renderer/README.md)：Renderer 层职责和组成。
-- [`renderer/truvis-renderer/README.md`](../renderer/truvis-renderer/README.md)：`TruvisRenderer`、controller、ports 和 pass 编排。
+- [`renderer/truvis-renderer/README.md`](../renderer/truvis-renderer/README.md)：`TruvisRenderer`、RendererClient 注入边界和 pass 编排。
 - [`renderer/shader/README.md`](../renderer/shader/README.md)：Renderer shader package、ABI 和 binding owner。
 - [`app/README.md`](../app/README.md)：Tauri 和 standalone 启动壳。
 - [`app/editor/README.md`](../app/editor/README.md)：Web Editor 构建与 Tauri transport。
@@ -58,7 +58,7 @@ app ──> renderer ──> engine
 ## 全局约束
 
 - `RenderRuntime` 拥有 `Gfx`、`GameWorld`、GPU resource/binding/timing owner、`RenderWorld`、present、command 和同步资源。
-- Renderer 与 Subsystem 只通过当前 phase 的窄 Ctx 使用 Runtime 能力。
+- Renderer 与 Subsystem 只通过当前 phase 的窄 Ctx 使用 Runtime 能力；App RenderThread Client 只通过 `RendererClient` 窄接口借用 CPU `GameWorld`。
 - 具体 Renderer 拥有 camera/input、overlay、selection 和渲染子系统，并显式决定 RenderGraph pass 顺序。
 - `SubsystemLifecycle` 只约束 init/resize/shutdown，controller 不实现该 trait。
 - CPU scene 只由 `GameWorld`/`SceneStore` 权威持有；GPU scene 是 prepare 后的派生状态。
