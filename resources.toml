@@ -81,6 +81,7 @@ target_dir = "external"
 rename_to = "rtx-gi"
 git_ref = "v2.7.0"
 recursive_submodules = true
+download_by_default = false
 
 [[resources]]
 name = "nvidia-rtx-di-repo"
@@ -90,6 +91,7 @@ target_dir = "external"
 rename_to = "rtx-di"
 git_ref = "v3.0.0"
 recursive_submodules = true
+download_by_default = false
 
 [[resources]]
 name = "openpbr-repo"
@@ -99,6 +101,7 @@ target_dir = "external"
 rename_to = "openpbr"
 git_ref = "v1.1.1"
 recursive_submodules = true
+download_by_default = false
 
 [[resources]]
 name = "pbrtv4-repo"
@@ -108,3 +111,4 @@ target_dir = "external"
 rename_to = "pbrtv4"
 git_ref = "master"
 recursive_submodules = true
+download_by_default = false
