@@ -29,6 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "InstanceDetailsDto",
         "InstanceId",
         "InstanceMaterialBindingDto",
+        "InstanceTransformDto",
         "MaterialClassDto",
         "MaterialDto",
         "MaterialId",

@@ -14,7 +14,10 @@ pub use error::{EditorError, EditorErrorCode};
 pub use ids::{InstanceId, MaterialId, MeshId, SceneVersion, TextureId};
 pub use material::{TextureMappingDto, TextureMappingPatch, TextureSlotDto, CoverageModeDto, MaterialClassDto, MaterialDto, MaterialPatch};
 pub use message::{EditorCommand, EditorNotification, EditorQuery, EditorRequest, EditorResponse};
-pub use scene::{InstanceDetailsDto, InstanceMaterialBindingDto, MeshSummaryDto, SceneObjectSummary, SceneObjectsPage};
+pub use scene::{
+    InstanceDetailsDto, InstanceMaterialBindingDto, InstanceTransformDto, MeshSummaryDto, SceneObjectSummary,
+    SceneObjectsPage,
+};
 pub use selection::SelectionDto;
 
 /// 单页场景对象查询允许的最大对象数。

@@ -18,6 +18,11 @@ interface InstanceInspectorProps {
  */
 export function InstanceInspector({ details, status }: InstanceInspectorProps) {
   const statusLabel = status === 'loading' ? 'Refreshing…' : details ? 'World state' : 'No focus';
+  const transformRows = details?.transform ? [
+    { label: 'Location', values: details.transform.location, unit: '' },
+    { label: 'Rotation', values: details.transform.rotation_degrees, unit: '°', hint: 'XYZ intrinsic' },
+    { label: 'Scale', values: details.transform.scale, unit: '' },
+  ] : [];
 
   return (
     <section className="panel instance-inspector" aria-labelledby="instance-inspector-title">
@@ -37,14 +42,31 @@ export function InstanceInspector({ details, status }: InstanceInspectorProps) {
           </section>
 
           <section className="instance-detail-section">
-            <h3>Transform</h3>
-            <div className="transform-matrix" aria-label="Row-major world transform matrix">
-              {details.transform.flatMap((row, rowIndex) =>
-                row.map((value, columnIndex) => (
-                  <output key={`${rowIndex}-${columnIndex}`}>{formatMatrixValue(value)}</output>
-                )),
-              )}
-            </div>
+            <h3>World Transform</h3>
+            {details.transform ? (
+              <dl className="transform-trs">
+                {transformRows.map(({ label, values, unit, hint }) => (
+                  <div className="transform-row" key={label}>
+                    <dt>{label}{hint && <small>{hint}</small>}</dt>
+                    <dd>
+                      {values.map((value, index) => {
+                        const axis = ['X', 'Y', 'Z'][index];
+                        const formatted = value.toFixed(4);
+                        const text = `${formatted === '-0.0000' ? '0.0000' : formatted}${unit}`;
+                        return (
+                          <div className="transform-axis" key={axis}>
+                            <span aria-hidden="true">{axis}</span>
+                            <output aria-label={`${label} ${axis}`} title={text}>{text}</output>
+                          </div>
+                        );
+                      })}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            ) : (
+              <p className="instance-detail-note transform-unavailable">该变换无法完整表示为 TRS</p>
+            )}
           </section>
 
           <section className="instance-detail-section">
@@ -92,9 +114,4 @@ function InstanceInspectorEmptyState({ status }: { status: InstanceDetailsStatus
       <p>{content[1]}</p>
     </div>
   );
-}
-
-function formatMatrixValue(value: number): string {
-  const normalized = Math.abs(value) < 0.00005 ? 0 : value;
-  return normalized.toFixed(4);
 }

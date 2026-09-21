@@ -1,3 +1,4 @@
+use crate::components::transform::{TransformDecompositionError, TransformTrs};
 use crate::guid_new_type::{MaterialAssetHandle, MeshAssetHandle};
 
 /// CPU 侧的 live instance 语义数据。
@@ -21,4 +22,11 @@ pub struct Instance {
 
     /// CPU 侧 world transform；渲染运行时同步时会把它拷贝到 GPU scene 数据。
     pub transform: glam::Mat4,
+}
+
+impl Instance {
+    /// 按需分解 CPU world transform，不保存派生缓存，也不推进 scene version。
+    pub fn transform_trs(&self) -> Result<TransformTrs, TransformDecompositionError> {
+        TransformTrs::try_from_matrix(self.transform)
+    }
 }

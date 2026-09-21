@@ -19,6 +19,17 @@ flowchart LR
 
 Editor protocol 不拥有 scene，不缓存长期 snapshot，也不把本机 `PathBuf` 或 Vulkan 类型暴露给通用 DTO。
 
+## Instance Transform 投影
+
+`Instance.transform` 的 world-space `Mat4` 是唯一权威表示。`truvis-world` 按查询使用 glam 分解为
+TRS，并提供矩阵重组与 intrinsic XYZ Euler 角度转换；不保存 TRS 缓存，也不通过查询推进 scene version。
+Quaternion 用于内部旋转表示，Euler 角仅供显示，组合为 `Rx * Ry * Rz`，不能视为原始导入角度。
+
+World 检查有限值、仿射结构、退化输入与重组误差；shear 等无法可靠表示为 TRS 的矩阵不输出近似值。
+负缩放采用等价分解，不保证恢复原始各轴符号。App RenderThread Client 只装配 DTO，Web 只格式化数值；
+两者均不分解矩阵。`InstanceDetailsDto.transform` 不可用时为 `null`，其他 instance 详情仍正常返回。
+协议只携带世界单位的 Location、角度制 XYZ Rotation 和 Scale，不携带旧矩阵表达或编辑命令。
+
 ## 请求与响应
 
 Query 读取当前权威状态；Command 请求 CPU mutation；Response 只对应当前 invoke；Notification 只做 best-effort 提示。

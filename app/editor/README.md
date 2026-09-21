@@ -39,6 +39,13 @@ Rust 协议类型定义在 `renderer/editor/truvis-editor-bridge/src/protocol/`�
 `Choose HDRI` 是 Tauri-only 平台动作：完整 `PathBuf` 只经过 App/Renderer 之间的私有队列，WebView
 只接收文件名和 accepted/cancelled/error。accepted 不表示 decode、GPU upload 或 Alias distribution 已完成。
 
+## Instance Inspector
+
+Instance Inspector 的 `World Transform` 以只读 Location / Rotation / Scale 显示，Location 沿用世界单位，
+Rotation 为 intrinsic XYZ Euler 角度。矩阵分解及角度转换由 `truvis-world` 完成，Web 和 app-client
+不进行矩阵分解。无法可靠分解时仅显示该分组的提示，Mesh 和 Material Bindings 仍可查看。
+`?mock=1` 的最后一个 instance 提供不可分解示例，其余 instance 提供正常 TRS 投影。
+
 ## 构建与开发
 
 从仓库根目录执行：

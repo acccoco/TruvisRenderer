@@ -571,22 +571,79 @@ select:focus-visible {
   line-height: 1.45;
 }
 
-.transform-matrix {
+.transform-trs {
+  container-type: inline-size;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
+  gap: var(--space-2);
+  margin: 0;
 }
 
-.transform-matrix output {
+.transform-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.transform-row dt {
+  font-size: 11px;
+}
+
+.transform-row dt small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.transform-row dd {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-1);
   min-width: 0;
-  padding: 5px 3px;
+  margin: 0;
+}
+
+.transform-axis {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  min-height: var(--control-height);
+  padding: var(--space-1);
   border: 1px solid var(--border-soft);
-  border-radius: 3px;
+  border-radius: var(--radius);
   color: var(--text-strong);
   background: var(--nested-surface);
   font-family: var(--font-mono);
   font-size: 10px;
+}
+
+.transform-axis > span {
+  color: var(--muted);
+}
+
+.transform-axis output {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  white-space: nowrap;
   text-align: right;
+}
+
+.transform-unavailable {
+  color: var(--amber);
+}
+
+@container (max-width: 380px) {
+  .transform-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+
+  .transform-row dt small {
+    display: inline;
+    margin-left: var(--space-2);
+  }
 }
 
 .material-binding-list {

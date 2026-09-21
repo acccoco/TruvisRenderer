@@ -39,11 +39,23 @@ pub struct InstanceMaterialBindingDto {
     pub name: String,
 }
 
+/// World 空间的只读 TRS 投影，数学转换由 World 完成，不由协议或客户端执行。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct InstanceTransformDto {
+    /// 沿用项目世界单位，不做单位换算。
+    pub location: [f32; 3],
+
+    /// 按 X/Y/Z 排列的 intrinsic XYZ Euler 角度；组合为 Rx * Ry * Rz。
+    pub rotation_degrees: [f32; 3],
+
+    /// 等价分解的缩放，不保证恢复导入时各轴的负号分配。
+    pub scale: [f32; 3],
+}
+
 /// Web 右侧栏按需读取的完整 CPU scene instance 投影。
 ///
 /// DTO 在一次 Renderer update 查询中从同一个 `SceneReadView` 构造，Web 只把它作为
-/// 可丢弃投影。`transform` 使用 row-major 行数组，避免页面误解 glam 的 column-major
-/// 内存表达；它不属于 shader ABI，也不表示 GPU scene 已经 ready。
+/// 可丢弃投影。TRS 不属于 shader ABI，也不表示 GPU scene 已经 ready。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct InstanceDetailsDto {
     /// 构造详情时对应的 CPU scene 全局版本。
@@ -55,8 +67,8 @@ pub struct InstanceDetailsDto {
     /// `SceneStore` 持有的 instance 展示名称。
     pub name: String,
 
-    /// CPU world transform 的四行矩阵，外层索引为 row，内层索引为 column。
-    pub transform: [[f32; 4]; 4],
+    /// 无法可靠分解时为 null，其他 instance 信息仍正常返回。
+    pub transform: Option<InstanceTransformDto>,
 
     /// Instance 引用的唯一 CPU scene mesh。
     pub mesh: MeshSummaryDto,

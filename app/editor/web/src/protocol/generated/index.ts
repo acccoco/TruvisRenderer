@@ -9,6 +9,7 @@ export * from './EditorResponse';
 export * from './InstanceDetailsDto';
 export * from './InstanceId';
 export * from './InstanceMaterialBindingDto';
+export * from './InstanceTransformDto';
 export * from './MaterialClassDto';
 export * from './MaterialDto';
 export * from './MaterialId';

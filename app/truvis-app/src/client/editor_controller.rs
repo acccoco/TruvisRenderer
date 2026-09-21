@@ -8,7 +8,7 @@ use truvis_editor_bridge::protocol::{
     TextureMappingDto, TextureSlotDto,
     CoverageModeDto, DEFAULT_SCENE_PAGE_SIZE, EditorCommand, EditorError, EditorErrorCode, EditorNotification,
     EditorQuery, EditorRequest, EditorResponse, InstanceDetailsDto, InstanceId, InstanceMaterialBindingDto,
-    MAX_SCENE_PAGE_SIZE, MaterialClassDto, MaterialDto, MaterialId, MaterialPatch, MeshId, MeshSummaryDto,
+    InstanceTransformDto, MAX_SCENE_PAGE_SIZE, MaterialClassDto, MaterialDto, MaterialId, MaterialPatch, MeshId, MeshSummaryDto,
     SceneObjectSummary, SceneObjectsPage, SceneVersion, SelectionDto, TextureId,
 };
 use truvis_editor_bridge::{EditorRequestEnvelope, RendererEndpoint};
@@ -219,8 +219,12 @@ impl EditorController {
             });
         }
 
-        // glam 使用 column-major 存储；先 transpose 再导出 columns，使 wire DTO 的外层数组明确表示 matrix rows。
-        let transform = instance.transform.transpose().to_cols_array_2d();
+        // World 负责分解和角度约定；适配器只复制投影，分解失败不影响 mesh/material 详情。
+        let transform = instance.transform_trs().ok().map(|trs| InstanceTransformDto {
+            location: trs.translation.to_array(),
+            rotation_degrees: trs.rotation_euler_degrees().to_array(),
+            scale: trs.scale.to_array(),
+        });
         EditorResponse::InstanceDetails(InstanceDetailsDto {
             scene_version: SceneVersion::from_u64(view.scene_version()),
             instance_id,

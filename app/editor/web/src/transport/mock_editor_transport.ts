@@ -102,12 +102,12 @@ export class MockEditorTransport implements EditorTransport {
           scene_version: String(this.sceneVersion),
           instance_id: object.instance_id,
           name: object.name,
-          transform: [
-            [1, 0, 0, 124.5],
-            [0, 0.866, -0.5, 32],
-            [0, 0.5, 0.866, -48.25],
-            [0, 0, 0, 1],
-          ],
+          // 最后一项覆盖不可分解状态；mock 只提供投影，不执行矩阵运算。
+          transform: object === this.objects[this.objects.length - 1] ? null : {
+            location: [124.5, 32, -48.25],
+            rotation_degrees: [30, 0, 0],
+            scale: [1, 1, 1],
+          },
           mesh: {
             mesh_id: 'mesh:000000010000a410',
             name: 'Sponza_Curtain_Mesh',
