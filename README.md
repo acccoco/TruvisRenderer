@@ -88,6 +88,14 @@ just truvis no-validation
 just truvis imgui no-validation
 ```
 
+Truvis 默认启动手工材质测试场景，也可以在启动时选择 Sponza：
+
+```nushell
+just truvis --scene manual
+just truvis --scene sponza
+cargo run --bin truvis-app -- --scene sponza
+```
+
 ## 基本操作
 
 | 操作 | 输入 |

@@ -12,6 +12,11 @@ realtime/offline 渲染子系统。它依赖 engine 与公共 Renderer capabilit
 - `TruvisOverlayUi`：组合 `renderer-imgui` 的诊断控件与 `renderer-render-ui` 的设置 section，决定主体 Renderer 的窗口布局和绘制顺序。
 - `SelectionOutlineSubsystem` / `CoordinateGizmoSubsystem`：持有主体 Renderer 专用效果的资源与 pass 编排状态。
 
+启动场景由 `--scene manual|sponza` 选择，默认是 `manual`。`manual` 只使用 CPU 侧
+程序化 mesh，包含地面、材质测试 cube 和 UV sphere；`sponza` 保留模型导入、材质测试
+cube 及自发光 cube 阵列。场景初始化模块只借用 `GameWorld` 和相机，不拥有 GPU 资源；
+模型导入完成后仍由 RenderRuntime prepare 路径同步到 RenderWorld。
+
 ## 状态所有权
 
 - CPU scene 权威状态属于 runtime-owned `GameWorld`；Renderer 只在合法 update 阶段通过 `GameWorld` facade 修改它。

@@ -32,6 +32,10 @@ GameWorld::import_scene(path)
   -> MeshInstanceHandle
 ```
 
+`procedural_mesh::ProceduralMeshKind` 提供运行时内置几何，包括 `Floor`、`Cube` 和固定
+分辨率的 `UvSphere`。这些方法只生成 `MeshData`，不创建 GPU buffer 或 BLAS；场景通过
+`GameWorld::import_mesh` 注册后继续使用统一的 RenderWorld 上传路径。
+
 scene import 完成不会自动修改 `SceneStore`。外部可以过滤、复制或重复实例化
 `SceneData.objects`。`SceneImportHandle` 的 `LoadStatus::Ready` 只表示 scene 结构和资源身份
 已经写入 CPU owner；纹理解码、GPU 上传和最终画面仍是独立阶段。

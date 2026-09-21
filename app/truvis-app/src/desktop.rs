@@ -24,6 +24,7 @@ use truvis_renderer::{DesktopCommandSender, TruvisRenderer, create_truvis_ports}
 use truvis_winit_host::{EmbeddedViewportRect, EmbeddedWinitHost};
 
 use crate::editor_ipc::EditorIpc;
+use crate::startup_options::StartupOptions;
 
 /// Tauri command 使用的 DOM viewport 物理像素矩形。
 ///
@@ -267,10 +268,17 @@ pub struct TruvisDesktop;
 
 impl TruvisDesktop {
     pub fn run() -> Result<()> {
+        let startup_options = StartupOptions::from_process_args()?;
+        if startup_options.show_help {
+            println!("{}", StartupOptions::usage());
+            return Ok(());
+        }
+
         init_env_with_log_file(LogFilePath::current_exe(TruvisPath::temp_dir()));
 
         let (frontend_ports, renderer_ports) = create_truvis_ports(EditorBridgeConfig::default());
         let desktop_command_sender = frontend_ports.desktop_commands;
+        let initial_scene = startup_options.scene;
 
         let app = tauri::Builder::default()
             .plugin(tauri_plugin_dialog::init())
@@ -283,9 +291,10 @@ impl TruvisDesktop {
                     .window_handle()
                     .map_err(|error| std::io::Error::other(format!("failed to get Tauri parent HWND: {error}")))?
                     .as_raw();
-                let render_host =
-                    EmbeddedWinitHost::spawn(parent_window, move || Box::new(TruvisRenderer::new(renderer_ports)))
-                        .map_err(std::io::Error::other)?;
+                let render_host = EmbeddedWinitHost::spawn(parent_window, move || {
+                    Box::new(TruvisRenderer::new(renderer_ports, initial_scene))
+                })
+                .map_err(std::io::Error::other)?;
                 let editor_ipc = EditorIpc::start(app.handle().clone(), frontend_ports.editor);
 
                 app.manage(TruvisDesktopState::new(render_host, editor_ipc, desktop_command_sender));

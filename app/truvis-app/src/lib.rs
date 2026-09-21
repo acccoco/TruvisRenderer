@@ -2,3 +2,4 @@
 
 pub mod desktop;
 mod editor_ipc;
+mod startup_options;

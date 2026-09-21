@@ -5,10 +5,12 @@ mod desktop_command;
 mod editor_controller;
 mod overlay_ui;
 mod renderer_ports;
+mod scenes;
 mod selection_outline;
 mod truvis_renderer;
 
 pub use desktop_command::{DesktopCommandSender, DesktopSkyAccepted};
 pub use overlay_ui::TruvisOverlayOptions;
 pub use renderer_ports::{TruvisFrontendPorts, TruvisRendererPorts, create_truvis_ports};
+pub use scenes::InitialScene;
 pub use truvis_renderer::TruvisRenderer;

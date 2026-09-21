@@ -10,6 +10,7 @@ pub enum ProceduralMeshKind {
     Rect,
     Floor,
     Cube,
+    UvSphere,
 }
 
 impl ProceduralMeshKind {
@@ -19,6 +20,7 @@ impl ProceduralMeshKind {
             Self::Rect => "procedural-rect",
             Self::Floor => "procedural-floor",
             Self::Cube => "procedural-cube",
+            Self::UvSphere => "procedural-uv-sphere",
         }
     }
 
@@ -28,7 +30,82 @@ impl ProceduralMeshKind {
             Self::Rect => rect(),
             Self::Floor => floor(),
             Self::Cube => cube(),
+            Self::UvSphere => UvSphereMesh::mesh_data(),
         }
+    }
+}
+
+/// 固定分辨率的 UV sphere 生成器。
+///
+/// 球体直径固定为 1，实例通过 transform 调整大小。经度接缝保留两列顶点，
+/// 极点按扇区复制并只生成一个非退化三角形，从而让 UV、法线和切线在上传前保持
+/// 与普通 `SubmeshData` 相同的数组约束。
+struct UvSphereMesh;
+
+impl UvSphereMesh {
+    const LONGITUDE_SEGMENTS: usize = 64;
+    const LATITUDE_SEGMENTS: usize = 32;
+    const RADIUS: f32 = 0.5;
+
+    fn mesh_data() -> MeshData {
+        let columns = Self::LONGITUDE_SEGMENTS + 1;
+        let rows = Self::LATITUDE_SEGMENTS + 1;
+        let vertex_count = columns * rows;
+        let mut positions = Vec::with_capacity(vertex_count);
+        let mut normals = Vec::with_capacity(vertex_count);
+        let mut tangents = Vec::with_capacity(vertex_count);
+        let mut tex_coords = Vec::with_capacity(vertex_count);
+
+        for latitude in 0..=Self::LATITUDE_SEGMENTS {
+            let v = latitude as f32 / Self::LATITUDE_SEGMENTS as f32;
+            let theta = std::f32::consts::PI * v;
+            let sin_theta = theta.sin();
+            let cos_theta = theta.cos();
+
+            for longitude in 0..=Self::LONGITUDE_SEGMENTS {
+                let u = longitude as f32 / Self::LONGITUDE_SEGMENTS as f32;
+                let phi = std::f32::consts::TAU * u;
+                let sin_phi = phi.sin();
+                let cos_phi = phi.cos();
+                let normal = glam::vec3(sin_theta * cos_phi, cos_theta, sin_theta * sin_phi);
+
+                positions.push(normal * Self::RADIUS);
+                normals.push(normal);
+                tangents.push(glam::vec4(-sin_phi, 0.0, cos_phi, 1.0));
+                tex_coords.push(glam::vec2(u, v));
+            }
+        }
+
+        let mut indices = Vec::with_capacity(Self::LATITUDE_SEGMENTS * Self::LONGITUDE_SEGMENTS * 6);
+        for latitude in 0..Self::LATITUDE_SEGMENTS {
+            for longitude in 0..Self::LONGITUDE_SEGMENTS {
+                let a = (latitude * columns + longitude) as u32;
+                let a_next = a + 1;
+                let b = ((latitude + 1) * columns + longitude) as u32;
+                let b_next = b + 1;
+
+                if latitude == 0 {
+                    // 顶部每个扇区只保留 [a_next, b_next, b]，避免同一极点
+                    // 的重复顶点产生零面积三角形。
+                    indices.extend([a_next, b_next, b]);
+                } else if latitude + 1 == Self::LATITUDE_SEGMENTS {
+                    // 底部同理只保留 [a, a_next, b]。
+                    indices.extend([a, a_next, b]);
+                } else {
+                    indices.extend([a, a_next, b, a_next, b_next, b]);
+                }
+            }
+        }
+
+        MeshData::from_single_submesh(SubmeshData {
+            positions,
+            normals,
+            tangents,
+            tex_coords: vec![tex_coords],
+            tangent_tex_coord: 0,
+            indices,
+            name: ProceduralMeshKind::UvSphere.name().to_string(),
+        })
     }
 }
 
