@@ -6,6 +6,10 @@
 
 `GameWorld`/`SceneStore` 是 CPU scene、material、light 和 asset identity 的权威 owner。Renderer 可以通过 update Ctx 发起编辑，但不保存第二份完整 scene。
 
+Transform gizmo 属于 Renderer-owned interaction。拖拽结果在 `TruvisRenderer::update` 阶段直接写入
+`GameWorld::update_instance_transform`，不经过新的 Client API 或通知通道；随后由 prepare 将 CPU transform
+同步到 `RenderWorld`。
+
 `RenderWorld` 是 RenderThread 内的 GPU-side composition owner。它保存 render-side asset stores、instance mirror、geometry/light buffers、TLAS 和 per-FIF draw cache；它不成为 Editor 或 CPU world 的业务权威。
 
 ```mermaid

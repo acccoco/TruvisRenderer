@@ -5,7 +5,7 @@ use truvis_render_loop::renderer::{Renderer, RendererInitCtx, RendererResizeCtx,
 use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
 use truvis_render_runtime::render_runtime::{RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 use truvis_render_runtime::selection::WorldSubmeshSelection;
-use truvis_world::GameWorld;
+use truvis_world::{GameWorld, guid_new_type::MeshInstanceHandle};
 
 use renderer_imgui::{FrameStatsOverlayData, ImGuiSubsystem};
 use renderer_kit::camera_controller::CameraController;
@@ -21,6 +21,7 @@ use crate::overlay_ui::{
 };
 use crate::renderer_client::RendererClient;
 use crate::selection_outline::SelectionOutlineSubsystem;
+use crate::transform_gizmo::TransformGizmoSubsystem;
 
 pub struct TruvisRenderer {
     imgui: ImGuiSubsystem,
@@ -28,6 +29,7 @@ pub struct TruvisRenderer {
     realtime: RealtimeRenderSubsystem,
     offline: OfflineRenderSubsystem,
     selection_outline: SelectionOutlineSubsystem,
+    transform_gizmo: TransformGizmoSubsystem,
     coordinate_gizmo: CoordinateGizmoSubsystem,
     path_tracing_common_settings: PathTracingCommonSettings,
     render_mode: RenderMode,
@@ -36,6 +38,7 @@ pub struct TruvisRenderer {
     overlay_ui: TruvisOverlayUi,
     click_ray_cast_probe: ClickRayCastProbe,
     selected_submesh: Option<WorldSubmeshSelection>,
+    active_gizmo_instance: Option<MeshInstanceHandle>,
 
     /// App 提供、RenderThread 独占的 CPU scene 与 Editor 业务 Client。
     client: Box<dyn RendererClient>,
@@ -50,6 +53,7 @@ impl TruvisRenderer {
             realtime: Default::default(),
             offline: Default::default(),
             selection_outline: Default::default(),
+            transform_gizmo: Default::default(),
             coordinate_gizmo: Default::default(),
             path_tracing_common_settings: Default::default(),
             render_mode: Default::default(),
@@ -58,6 +62,7 @@ impl TruvisRenderer {
             overlay_ui: Default::default(),
             click_ray_cast_probe: Default::default(),
             selected_submesh: None,
+            active_gizmo_instance: None,
             client,
         }
     }
@@ -208,6 +213,7 @@ impl Renderer for TruvisRenderer {
         self.realtime.init(&mut ctx.runtime);
         self.offline.init(&mut ctx.runtime);
         self.selection_outline.init(&mut ctx.runtime);
+        self.transform_gizmo.init(&mut ctx.runtime);
         self.coordinate_gizmo.init(&mut ctx.runtime);
         self.imgui.init(&mut ctx.runtime);
     }
@@ -229,9 +235,46 @@ impl Renderer for TruvisRenderer {
         self.client.tick(ctx.world, self.selected_submesh);
         let delta = std::time::Duration::from_secs_f32(ctx.frame_timing.delta_time_s());
         let viewport_size = glam::vec2(ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32);
-        self.camera_controller.update_with_wheel_zoom(self.input.state(), viewport_size, delta);
 
-        if self.input.state().is_left_button_just_pressed() {
+        let gizmo_handle =
+            self.active_gizmo_instance.or_else(|| self.selected_submesh.map(|selection| selection.instance));
+        let gizmo_transform = gizmo_handle
+            .and_then(|handle| ctx.world.scene_view().get_instance(handle).map(|instance| instance.transform));
+        let active_target_missing = self.active_gizmo_instance.is_some() && gizmo_transform.is_none();
+        if active_target_missing {
+            self.active_gizmo_instance = None;
+            self.transform_gizmo.cancel_drag();
+        }
+
+        let gizmo_update = self.transform_gizmo.update(
+            gizmo_transform,
+            self.camera_controller.camera(),
+            self.input.state(),
+            viewport_size,
+        );
+        if gizmo_update.drag_started {
+            // handle 绑定只存在于 Renderer 编排层；gizmo 本身不持有 MeshInstance 身份。
+            self.active_gizmo_instance = self.selected_submesh.map(|selection| selection.instance);
+        }
+        if let (Some(handle), Some(transform)) = (self.active_gizmo_instance, gizmo_update.transform) {
+            // GameWorld 是 CPU scene 唯一权威；prepare 会在后续阶段同步 RenderWorld。
+            if let Err(err) = ctx.world.update_instance_transform(handle, transform) {
+                log::warn!("transform gizmo update failed: {err}");
+                self.active_gizmo_instance = None;
+                self.transform_gizmo.cancel_drag();
+            }
+        }
+        if gizmo_update.drag_finished {
+            self.active_gizmo_instance = None;
+        }
+
+        // gizmo 输入优先于相机交互；active drag 期间不产生新的相机 raycast 请求。
+        if self.active_gizmo_instance.is_none() && !active_target_missing {
+            self.camera_controller.update_with_wheel_zoom(self.input.state(), viewport_size, delta);
+        }
+
+        if !active_target_missing && gizmo_update.scene_pick_allowed && self.input.state().is_left_button_just_pressed()
+        {
             let mouse_position = self.input.state().mouse_position();
             let screen_pos = glam::vec2(mouse_position[0] as f32, mouse_position[1] as f32);
             let ray = self.camera_controller.make_screen_raycast(mouse_position, viewport_size);
@@ -317,6 +360,7 @@ impl Renderer for TruvisRenderer {
         self.realtime.on_resize(&mut ctx.runtime);
         self.offline.on_resize(&mut ctx.runtime);
         self.selection_outline.on_resize(&mut ctx.runtime);
+        self.transform_gizmo.on_resize(&mut ctx.runtime);
         self.coordinate_gizmo.on_resize(&mut ctx.runtime);
         self.imgui.on_resize(&mut ctx.runtime);
     }
@@ -327,6 +371,7 @@ impl Renderer for TruvisRenderer {
         // 与资源创建顺序相反释放，且始终早于 runtime root owner 销毁。
         self.imgui.shutdown(&mut ctx.runtime);
         self.coordinate_gizmo.shutdown(&mut ctx.runtime);
+        self.transform_gizmo.shutdown(&mut ctx.runtime);
         self.selection_outline.shutdown(&mut ctx.runtime);
         self.offline.shutdown(&mut ctx.runtime);
         self.realtime.shutdown(&mut ctx.runtime);
@@ -410,6 +455,12 @@ impl Renderer for TruvisRenderer {
                     ctx.present.swapchain_image_info().image_extent,
                     self.selected_submesh,
                 );
+                self.transform_gizmo.contribute_passes(
+                    &mut graph,
+                    ctx,
+                    present_targets.present_image,
+                    ctx.present.swapchain_image_info().image_extent,
+                );
                 self.coordinate_gizmo.contribute_passes(
                     &mut graph,
                     ctx,
@@ -456,6 +507,12 @@ impl Renderer for TruvisRenderer {
                     present_targets.present_image,
                     ctx.present.swapchain_image_info().image_extent,
                     self.selected_submesh,
+                );
+                self.transform_gizmo.contribute_passes(
+                    &mut graph,
+                    ctx,
+                    present_targets.present_image,
+                    ctx.present.swapchain_image_info().image_extent,
                 );
                 self.coordinate_gizmo.contribute_passes(
                     &mut graph,

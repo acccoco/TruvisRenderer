@@ -6,6 +6,9 @@
 
 `GameWorld`/`SceneStore` 是 CPU scene、material、sky、light 和 instance 的唯一权威。WebView 只保存可丢弃的展示投影；Renderer selection 是 CPU handle 语义，不是 GPU slot。
 
+Transform gizmo 的移动由 Renderer 在 update 阶段直接提交到 `GameWorld`，不新增 gizmo 专用 notification。
+Editor 通过既有的 `scene_version` 和 instance details 主动查询获得最新 transform；现有 selection 等业务通知仍按原有职责工作。
+
 ```mermaid
 flowchart LR
     Web["React WebView"] --> Invoke["Tauri invoke"]

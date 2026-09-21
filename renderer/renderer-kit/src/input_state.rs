@@ -8,6 +8,7 @@ pub struct InputState {
     pub last_mouse_pos: [f64; 2],
     pub left_button_pressed: bool,
     pub left_button_just_pressed: bool,
+    pub left_button_just_released: bool,
     pub right_button_pressed: bool,
     pub middle_button_pressed: bool,
     pub middle_button_just_pressed: bool,
@@ -44,6 +45,10 @@ impl InputState {
         self.left_button_just_pressed
     }
 
+    pub fn is_left_button_just_released(&self) -> bool {
+        self.left_button_just_released
+    }
+
     pub fn is_middle_button_pressed(&self) -> bool {
         self.middle_button_pressed
     }
@@ -78,6 +83,7 @@ impl InputManager {
     pub fn begin_frame(&mut self) {
         self.state.last_mouse_pos = self.state.crt_mouse_pos;
         self.state.left_button_just_pressed = false;
+        self.state.left_button_just_released = false;
         self.state.middle_button_just_pressed = false;
         self.state.middle_button_just_released = false;
         self.state.mouse_wheel_delta = 0.0;
@@ -96,6 +102,7 @@ impl InputManager {
                             self.state.left_button_just_pressed = !self.state.left_button_pressed;
                             self.state.left_button_pressed = true;
                         } else {
+                            self.state.left_button_just_released = self.state.left_button_pressed;
                             self.state.left_button_pressed = false;
                         }
                     }

@@ -4,6 +4,7 @@ mod coordinate_gizmo;
 mod overlay_ui;
 mod renderer_client;
 mod selection_outline;
+mod transform_gizmo;
 mod truvis_renderer;
 
 pub use overlay_ui::TruvisOverlayOptions;

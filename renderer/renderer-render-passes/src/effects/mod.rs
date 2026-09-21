@@ -3,3 +3,4 @@
 pub mod coordinate_gizmo;
 pub mod phong;
 pub mod selection_outline;
+pub mod transform_gizmo;

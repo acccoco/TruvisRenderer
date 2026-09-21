@@ -1,0 +1,37 @@
+#pragma once
+
+/// Transform gizmo 的 draw-local push constant。
+///
+/// gizmo 是 Renderer-owned overlay，不把 MeshInstance、GPU slot 或 scene buffer
+/// 暴露给 shader；这里只传本帧已经解析好的 world-space 轴和显示状态。
+namespace renderer
+{
+namespace render_passes
+{
+namespace transform_gizmo
+{
+
+/// 无 hover/active control 时使用的 sentinel 值。
+static const uint NO_AXIS = 3;
+
+struct PushConstant
+{
+    /// xyz 是 gizmo pivot，w 保持 float4 槽完整。
+    float4 origin_ws;
+    /// xyz 是当前坐标空间下的 X 轴方向，w 保持 float4 槽完整。
+    float4 axis_x_ws;
+    /// xyz 是当前坐标空间下的 Y 轴方向，w 保持 float4 槽完整。
+    float4 axis_y_ws;
+    /// xyz 是当前坐标空间下的 Z 轴方向，w 保持 float4 槽完整。
+    float4 axis_z_ws;
+    /// axis_length_ws 使用 world 单位；其余字段使用 `NO_AXIS` 或 axis id。
+    float axis_length_ws;
+    uint hovered_axis;
+    uint active_axis;
+    /// 显式补齐最后一个 scalar 槽，保持 push constant size 为 16 字节倍数。
+    uint _padding_0;
+};
+
+}
+}
+}
