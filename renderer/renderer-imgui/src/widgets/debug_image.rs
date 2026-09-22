@@ -1,6 +1,7 @@
 use renderer_kit::debug_image::{DebugImageOption, DebugImageSelection};
 
 /// 纯 CPU debug image 选择状态的 ImGui 视图，不保存 GPU image/view。
+/// 候选归一化由 Renderer 每帧维护；控件隐藏不应中断状态更新。
 pub struct DebugImageSelectorView;
 
 impl DebugImageSelectorView {
@@ -12,8 +13,6 @@ impl DebugImageSelectorView {
     }
 
     pub fn build_contents(ui: &imgui::Ui, selection: &mut DebugImageSelection, options: &[DebugImageOption]) {
-        selection.normalize_options(options);
-
         let mut visible = selection.is_visible();
         if ui.checkbox("Show", &mut visible) {
             selection.set_visible(visible);

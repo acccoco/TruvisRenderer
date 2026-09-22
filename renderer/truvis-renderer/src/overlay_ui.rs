@@ -16,165 +16,17 @@ use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialDa
 
 use crate::truvis_renderer::ClickRayCastProbe;
 
-const DEFAULT_WINDOW_MARGIN: f32 = 10.0;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OverlayLayoutMode {
-    SeparateWindows,
-    VerticalStack,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OverlayTag {
-    Diagnostics,
-    Rendering,
-    Upscaling,
-    Picking,
-    Images,
-}
-
-impl OverlayTag {
-    const STACK_ORDER: [Self; 5] = [
-        Self::Diagnostics,
-        Self::Rendering,
-        Self::Upscaling,
-        Self::Picking,
-        Self::Images,
-    ];
-}
-
-#[derive(Clone, Copy)]
-pub struct OverlayWindowOptions {
-    pub title: &'static str,
-    pub position: [f32; 2],
-    pub size: [f32; 2],
-    pub condition: imgui::Condition,
-    pub flags: imgui::WindowFlags,
-    pub visible: bool,
-}
-
-#[derive(Clone, Copy)]
-pub struct OverlayWindowSet {
-    pub diagnostics: OverlayWindowOptions,
-    pub rendering: OverlayWindowOptions,
-    pub upscaling: OverlayWindowOptions,
-    pub picking: OverlayWindowOptions,
-    pub images: OverlayWindowOptions,
-    pub stack: OverlayWindowOptions,
-}
-
-impl OverlayWindowSet {
-    fn window(self, tag: OverlayTag) -> OverlayWindowOptions {
-        match tag {
-            OverlayTag::Diagnostics => self.diagnostics,
-            OverlayTag::Rendering => self.rendering,
-            OverlayTag::Upscaling => self.upscaling,
-            OverlayTag::Picking => self.picking,
-            OverlayTag::Images => self.images,
-        }
-    }
-}
-
-impl Default for OverlayWindowSet {
-    fn default() -> Self {
-        Self {
-            diagnostics: OverlayWindowOptions {
-                title: "Diagnostics",
-                position: [10.0, 10.0],
-                size: [340.0, 170.0],
-                condition: imgui::Condition::FirstUseEver,
-                flags: imgui::WindowFlags::empty(),
-                visible: true,
-            },
-            rendering: OverlayWindowOptions {
-                title: "Controls",
-                position: [10.0, 200.0],
-                size: [340.0, 360.0],
-                condition: imgui::Condition::FirstUseEver,
-                flags: imgui::WindowFlags::empty(),
-                visible: true,
-            },
-            upscaling: OverlayWindowOptions {
-                title: "Upscaling",
-                position: [360.0, 200.0],
-                size: [300.0, 120.0],
-                condition: imgui::Condition::FirstUseEver,
-                flags: imgui::WindowFlags::empty(),
-                visible: false,
-            },
-            picking: OverlayWindowOptions {
-                title: "Raycast",
-                position: [10.0, 420.0],
-                size: [430.0, 430.0],
-                condition: imgui::Condition::FirstUseEver,
-                flags: imgui::WindowFlags::empty(),
-                visible: true,
-            },
-            images: OverlayWindowOptions {
-                title: "Debug Images",
-                position: [370.0, 10.0],
-                size: [280.0, 90.0],
-                condition: imgui::Condition::FirstUseEver,
-                flags: imgui::WindowFlags::empty(),
-                visible: true,
-            },
-            stack: OverlayWindowOptions {
-                title: "Truvis Overlay",
-                position: [10.0, 200.0],
-                size: [430.0, 650.0],
-                condition: imgui::Condition::FirstUseEver,
-                flags: imgui::WindowFlags::empty(),
-                visible: true,
-            },
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct OverlaySectionVisibility {
-    pub diagnostics: bool,
-    pub rendering: bool,
-    pub upscaling: bool,
-    pub picking: bool,
-    pub images: bool,
-}
-
-impl OverlaySectionVisibility {
-    fn is_visible(self, tag: OverlayTag) -> bool {
-        match tag {
-            OverlayTag::Diagnostics => self.diagnostics,
-            OverlayTag::Rendering => self.rendering,
-            OverlayTag::Upscaling => self.upscaling,
-            OverlayTag::Picking => self.picking,
-            OverlayTag::Images => self.images,
-        }
-    }
-}
-
-impl Default for OverlaySectionVisibility {
-    fn default() -> Self {
-        Self {
-            diagnostics: true,
-            rendering: true,
-            upscaling: true,
-            picking: true,
-            images: true,
-        }
-    }
-}
-
+/// 主面板与轻量 HUD 的显示策略；页签和滚动状态由 ImGui context 持有。
 pub struct TruvisOverlayOptions {
-    pub layout: OverlayLayoutMode,
-    pub windows: OverlayWindowSet,
-    pub sections: OverlaySectionVisibility,
+    pub show_window: bool,
+    pub show_fps_hud: bool,
 }
 
 impl Default for TruvisOverlayOptions {
     fn default() -> Self {
         Self {
-            layout: OverlayLayoutMode::SeparateWindows,
-            windows: OverlayWindowSet::default(),
-            sections: OverlaySectionVisibility::default(),
+            show_window: true,
+            show_fps_hud: true,
         }
     }
 }
@@ -193,18 +45,8 @@ impl TruvisOverlayUi {
         &mut self.options
     }
 
-    /// 绘制渲染视口内部的轻量 diagnostics / render-controls overlay。
-    ///
-    /// 材质与场景编辑已经归属 Tauri 桌面壳，Overlay 不再提供外部浏览器入口，
-    /// 避免同一编辑能力同时存在两套竞争入口。
+    /// 只组织当前可见控件；配置归一化和 picking 执行由 Renderer 的固定阶段维护。
     pub(crate) fn build(&mut self, frame: TruvisOverlayFrame<'_>) {
-        match self.options.layout {
-            OverlayLayoutMode::SeparateWindows => self.build_separate_windows(frame),
-            OverlayLayoutMode::VerticalStack => self.build_vertical_stack(frame),
-        }
-    }
-
-    fn build_separate_windows(&self, frame: TruvisOverlayFrame<'_>) {
         let TruvisOverlayFrame {
             ui,
             stats,
@@ -212,166 +54,93 @@ impl TruvisOverlayUi {
             raycast,
             mut debug_images,
         } = frame;
-
-        if self.section_visible(OverlayTag::Diagnostics) && self.window(OverlayTag::Diagnostics).visible {
-            DebugInfoOverlay::build_frame_stats_hud(ui, &stats);
+        if self.options.show_fps_hud {
+            DebugInfoOverlay::build_fps_hud(ui, &stats);
+        }
+        if !self.options.show_window {
+            return;
         }
 
-        let upscaling_is_separate =
-            self.section_visible(OverlayTag::Upscaling) && self.window(OverlayTag::Upscaling).visible;
-        if self.options.windows.stack.visible {
-            Self::build_window_with_options(ui, self.options.windows.stack, || {
-                if self.section_visible(OverlayTag::Rendering) {
-                    Self::draw_stack_section_header(ui, OverlayTag::Rendering);
-                    // 默认 separate-style 布局把渲染选项与点选结果放进同一个 Renderer 级主面板；
-                    // 控件本身复用 renderer-render-ui section，避免把渲染子系统 owner 状态迁入布局层。
-                    Self::draw_controls_contents(
-                        ui,
-                        &mut render_controls,
-                        self.section_visible(OverlayTag::Upscaling) && !upscaling_is_separate,
-                    );
-                }
-
-                if self.section_visible(OverlayTag::Picking) {
-                    Self::draw_stack_section_header(ui, OverlayTag::Picking);
-                    Self::draw_raycast_contents(ui, &raycast);
-                }
-            });
-        }
-        if upscaling_is_separate {
-            self.build_window(ui, OverlayTag::Upscaling, || {
-                RenderControlsOverlay::build_dlss_section_for_mode(
+        ui.window("Truvis Overlay")
+            .position([10.0, 40.0], imgui::Condition::FirstUseEver)
+            .size([320.0, 340.0], imgui::Condition::FirstUseEver)
+            .size_constraints([320.0, 240.0], [f32::MAX, f32::MAX])
+            .scroll_bar(false)
+            .scrollable(false)
+            .build(|| {
+                RenderControlsOverlay::build_render_mode_section(
                     ui,
-                    *render_controls.render_mode,
-                    render_controls.dlss_options,
+                    render_controls.render_mode,
+                    render_controls.offline_sample_count,
                 );
+                if let Some(_tabs) = ui.tab_bar_with_flags("TruvisTabs", imgui::TabBarFlags::FITTING_POLICY_SCROLL) {
+                    Self::build_tab(ui, "Render", || Self::draw_render_tab(ui, &mut render_controls));
+                    Self::build_tab(ui, "Sky", || Self::draw_sky_tab(ui, &mut render_controls));
+                    Self::build_tab(ui, "Post", || Self::draw_post_tab(ui, &mut render_controls));
+                    Self::build_tab(ui, "Picking", || Self::draw_raycast_contents(ui, &raycast));
+                    Self::build_tab(ui, "Debug", || {
+                        Self::draw_debug_tab(ui, &stats, &mut render_controls, &mut debug_images);
+                    });
+                }
             });
-        }
-        if self.section_visible(OverlayTag::Images) {
-            self.build_right_aligned_image_window(ui, &stats, || {
-                debug_images.build_contents(ui, *render_controls.render_mode);
+    }
+
+    /// tab 自动压入自己的 ID，使各页 child 的滚动和折叠状态独立且跨切页保留。
+    fn build_tab(ui: &imgui::Ui, label: &str, build: impl FnOnce()) {
+        if let Some(_tab) = ui.tab_item(label) {
+            ui.child_window("Contents").size([0.0, 0.0]).build(|| {
+                let _width = ui.push_item_width(ui.content_region_avail()[0] * 0.5);
+                build();
             });
         }
     }
 
-    fn build_vertical_stack(&self, frame: TruvisOverlayFrame<'_>) {
-        let TruvisOverlayFrame {
+    fn draw_render_tab(ui: &imgui::Ui, controls: &mut RenderControlsData<'_>) {
+        ui.text("Sampling");
+        RenderControlsOverlay::build_sampling_section(
             ui,
-            stats,
-            mut render_controls,
-            raycast,
-            mut debug_images,
-        } = frame;
-        let stack = self.options.windows.stack;
-        if !stack.visible {
-            return;
-        }
-
-        Self::build_window_with_options(ui, stack, || {
-            for tag in OverlayTag::STACK_ORDER {
-                if !self.section_visible(tag) {
-                    continue;
-                }
-                Self::draw_stack_section_header(ui, tag);
-                match tag {
-                    OverlayTag::Diagnostics => DebugInfoOverlay::build_frame_stats_section(ui, &stats),
-                    OverlayTag::Rendering => Self::draw_rendering_sections(ui, &mut render_controls),
-                    OverlayTag::Upscaling => RenderControlsOverlay::build_dlss_section_for_mode(
-                        ui,
-                        *render_controls.render_mode,
-                        render_controls.dlss_options,
-                    ),
-                    OverlayTag::Picking => Self::draw_raycast_contents(ui, &raycast),
-                    OverlayTag::Images => debug_images.build_contents(ui, *render_controls.render_mode),
-                }
-            }
-        });
+            *controls.render_mode,
+            controls.common_settings,
+            controls.offline_settings,
+        );
+        ui.separator();
+        ui.text("Realtime");
+        RenderControlsOverlay::build_realtime_settings_section(ui, *controls.render_mode, controls.realtime_settings);
+        ui.separator();
+        ui.text("Reconstruction");
+        RenderControlsOverlay::build_dlss_section_for_mode(ui, *controls.render_mode, controls.dlss_options);
     }
 
-    fn section_visible(&self, tag: OverlayTag) -> bool {
-        self.options.sections.is_visible(tag)
+    fn draw_sky_tab(ui: &imgui::Ui, controls: &mut RenderControlsData<'_>) {
+        RenderControlsOverlay::build_sky_section(
+            ui,
+            &mut controls.common_settings.sky_sampling_mode,
+            &mut controls.common_settings.sky_brightness,
+        );
     }
 
-    fn window(&self, tag: OverlayTag) -> OverlayWindowOptions {
-        self.options.windows.window(tag)
+    fn draw_post_tab(ui: &imgui::Ui, controls: &mut RenderControlsData<'_>) {
+        RenderControlsOverlay::build_tone_mapping_section(ui, &mut controls.common_settings.tone_mapping);
     }
 
-    fn build_window(&self, ui: &imgui::Ui, tag: OverlayTag, build: impl FnOnce()) {
-        let options = self.window(tag);
-        if !options.visible {
-            return;
-        }
-        Self::build_window_with_options(ui, options, build);
-    }
-
-    fn build_right_aligned_image_window(
-        &self,
+    fn draw_debug_tab(
         ui: &imgui::Ui,
         stats: &FrameStatsOverlayData<'_>,
-        build: impl FnOnce(),
+        controls: &mut RenderControlsData<'_>,
+        debug_images: &mut DebugImageSelectionData<'_>,
     ) {
-        let options = self.window(OverlayTag::Images);
-        if !options.visible {
-            return;
-        }
-
-        let right_aligned_x =
-            (stats.swapchain_extent.width as f32 - options.size[0] - DEFAULT_WINDOW_MARGIN).max(DEFAULT_WINDOW_MARGIN);
-        ui.window(options.title)
-            .position([right_aligned_x, options.position[1]], imgui::Condition::Always)
-            .size(options.size, options.condition)
-            .flags(options.flags)
-            .build(build);
-    }
-
-    fn build_window_with_options(ui: &imgui::Ui, options: OverlayWindowOptions, build: impl FnOnce()) {
-        ui.window(options.title)
-            .position(options.position, options.condition)
-            .size(options.size, options.condition)
-            .flags(options.flags)
-            .build(build);
-    }
-
-    fn draw_stack_section_header(ui: &imgui::Ui, tag: OverlayTag) {
-        ui.separator();
-        ui.text(match tag {
-            OverlayTag::Diagnostics => "Diagnostics",
-            OverlayTag::Rendering => "Rendering",
-            OverlayTag::Upscaling => "Upscaling",
-            OverlayTag::Picking => "Picking",
-            OverlayTag::Images => "Images",
-        });
-        ui.separator();
-    }
-
-    fn draw_controls_contents(ui: &imgui::Ui, controls: &mut RenderControlsData<'_>, include_dlss: bool) {
-        RenderControlsOverlay::build_render_mode_section(ui, controls.render_mode, controls.offline_sample_count);
-
-        if include_dlss {
-            ui.separator();
-            RenderControlsOverlay::build_dlss_section_for_mode(ui, *controls.render_mode, controls.dlss_options);
-        }
-
-        ui.separator();
-        RenderControlsOverlay::build_mode_specific_sections(
+        RenderControlsOverlay::build_debug_channel_section(
             ui,
             *controls.render_mode,
-            controls.common_settings,
             controls.realtime_settings,
             controls.offline_settings,
         );
-    }
-
-    fn draw_rendering_sections(ui: &imgui::Ui, controls: &mut RenderControlsData<'_>) {
-        RenderControlsOverlay::build_render_mode_section(ui, controls.render_mode, controls.offline_sample_count);
         ui.separator();
-        RenderControlsOverlay::build_mode_specific_sections(
-            ui,
-            *controls.render_mode,
-            controls.common_settings,
-            controls.realtime_settings,
-            controls.offline_settings,
-        );
+        ui.text("Debug Images");
+        debug_images.build_contents(ui, *controls.render_mode);
+        ui.separator();
+        ui.text("Diagnostics");
+        DebugInfoOverlay::build_frame_stats_section(ui, stats);
     }
 
     fn draw_raycast_contents(ui: &imgui::Ui, raycast: &RaycastOverlayData<'_>) {
@@ -396,7 +165,7 @@ impl TruvisOverlayUi {
         ui.separator();
 
         if let Some(error) = raycast.probe.last_error() {
-            ui.text(format!("Error: {error}"));
+            ui.text_wrapped(format!("Error: {error}"));
             return;
         }
 
@@ -411,14 +180,21 @@ impl TruvisOverlayUi {
                 ui.text(format!("Material: {:?}", hit.material));
                 ui.text(format!("Submesh: {}", hit.submesh_index));
                 ui.text(format!("Primitive: {}", hit.primitive_index));
-                Self::draw_material_info(ui, raycast.world.material_data(hit.material));
-                ui.text(format!("Hit T: {:.3}", hit.hit_t));
-                ui.text(format!(
-                    "Position: ({:.2}, {:.2}, {:.2})",
-                    hit.position_ws.x, hit.position_ws.y, hit.position_ws.z
-                ));
-                ui.text(format!("Normal: ({:.2}, {:.2}, {:.2})", hit.normal_ws.x, hit.normal_ws.y, hit.normal_ws.z));
-                ui.text(format!("UV: ({:.3}, {:.3})", hit.uv.x, hit.uv.y));
+                if ui.collapsing_header("Geometry", imgui::TreeNodeFlags::DEFAULT_OPEN) {
+                    ui.text(format!("Hit T: {:.3}", hit.hit_t));
+                    ui.text(format!(
+                        "Position: ({:.2}, {:.2}, {:.2})",
+                        hit.position_ws.x, hit.position_ws.y, hit.position_ws.z
+                    ));
+                    ui.text(format!(
+                        "Normal: ({:.2}, {:.2}, {:.2})",
+                        hit.normal_ws.x, hit.normal_ws.y, hit.normal_ws.z
+                    ));
+                    ui.text(format!("UV: ({:.3}, {:.3})", hit.uv.x, hit.uv.y));
+                }
+                if ui.collapsing_header("Material", imgui::TreeNodeFlags::empty()) {
+                    Self::draw_material_info(ui, raycast.world.material_data(hit.material));
+                }
             }
             None => {
                 ui.text("Result: waiting");
@@ -432,7 +208,7 @@ impl TruvisOverlayUi {
             return;
         };
 
-        ui.text(format!("Material name: {}", material.name));
+        ui.text_wrapped(format!("Material name: {}", material.name));
         ui.text(format!(
             "Base color: ({:.3}, {:.3}, {:.3}, {:.3})",
             material.base_color.x, material.base_color.y, material.base_color.z, material.base_color.w

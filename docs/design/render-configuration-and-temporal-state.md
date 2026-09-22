@@ -47,6 +47,10 @@ Realtime ReSTIR reservoir、SHARC cache、offline accumulation 属于对应 Rend
 
 同一语义只保留一个 owner：共享参数不在 realtime/offline 两个 subsystem 内各存一份，避免 UI 切换造成状态分叉。
 
+配置合法性由设置 owner 定义，并在 Renderer 固定 update 路径归一化，不能依赖窗口、tab 或控件是否可见。
+UI 只在用户操作时修改配置；Offline debug 候选判定由 `OfflineRenderSettings` 同时提供给控件过滤和归一化。
+Debug Image 选择同样由 Renderer 每帧归一化。单纯切页或折叠窗口不改变渲染配置、selection、图像输出或 temporal history。
+
 配置变化的生效路径是：
 
 ```text

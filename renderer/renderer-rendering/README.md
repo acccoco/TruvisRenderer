@@ -8,6 +8,7 @@
 - `offline`：`OfflineRenderSubsystem` / `OfflineRenderSettings`，以及独立的 single-frame target、跨帧累计 image、output target、sample count 和累计签名。
 - `shared`：`RenderMode`、`PathTracingCommonSettings`、`PathTracingDebugChannel`、`SkySamplingMode`、`SdrToneMappingSettings` 和 `ImageTarget`。
 - `PathTracingDebugChannel` / `SkySamplingMode` 同时服务 realtime/offline；ReSTIR DI 和 SHARC 模式只属于 realtime 模块。
+- `OfflineRenderSettings::supports_debug_channel` 是离线 debug 候选的唯一判定入口；`normalize` 将非法候选恢复为 Final 并约束 dispatch 数，由 Renderer 固定 update 路径调用，不依赖 UI。
 
 ## 生命周期与依赖
 

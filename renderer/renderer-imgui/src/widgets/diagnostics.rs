@@ -28,6 +28,15 @@ impl DebugInfoOverlay {
     }
 
     pub fn build_frame_stats_hud(ui: &imgui::Ui, stats: &FrameStatsOverlayData<'_>) {
+        Self::build_hud(ui, stats, || Self::build_frame_stats_section(ui, stats));
+    }
+
+    pub fn build_fps_hud(ui: &imgui::Ui, stats: &FrameStatsOverlayData<'_>) {
+        Self::build_hud(ui, stats, || Self::build_fps(ui));
+    }
+
+    /// 共用透明且不捕获输入的 HUD 窗口，具体内容由 Renderer 选择。
+    fn build_hud(ui: &imgui::Ui, stats: &FrameStatsOverlayData<'_>, build: impl FnOnce()) {
         ui.window("##overlay")
             .position([0.0, 0.0], imgui::Condition::Always)
             .size(
@@ -54,13 +63,17 @@ impl DebugInfoOverlay {
             )
             .build(|| {
                 ui.set_cursor_pos([5.0, 5.0]);
-                Self::build_frame_stats_section(ui, stats);
+                build();
             });
+    }
+
+    fn build_fps(ui: &imgui::Ui) {
+        ui.text(format!("FPS: {:.2}", ui.io().framerate));
     }
 
     pub fn build_frame_stats_section(ui: &imgui::Ui, stats: &FrameStatsOverlayData<'_>) {
         let camera = stats.camera;
-        ui.text(format!("FPS: {:.2}", ui.io().framerate));
+        Self::build_fps(ui);
         ui.text(format!("swapchain: {:.0}x{:.0}", stats.swapchain_extent.width, stats.swapchain_extent.height));
         ui.text(format!("CameraPos: ({:.2}, {:.2}, {:.2})", camera.position.x, camera.position.y, camera.position.z));
         ui.text(format!(

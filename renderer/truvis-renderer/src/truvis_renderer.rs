@@ -314,14 +314,15 @@ impl Renderer for TruvisRenderer {
                 },
             };
             self.overlay_ui.build(frame);
-
-            let debug_image_options = match self.render_mode {
-                RenderMode::Realtime => RealtimeRenderSubsystem::debug_image_options(),
-                RenderMode::Offline => OfflineRenderSubsystem::debug_image_options(),
-            };
-            // 选择归一化属于 Renderer 状态维护，不能依赖 Debug Images window/section 当前是否可见。
-            self.debug_image_selection.normalize_options(debug_image_options);
         });
+
+        // 配置归一化属于固定 update 路径，主窗口折叠或 tab 隐藏也必须执行。
+        self.offline.settings_mut().normalize();
+        let debug_image_options = match self.render_mode {
+            RenderMode::Realtime => RealtimeRenderSubsystem::debug_image_options(),
+            RenderMode::Offline => OfflineRenderSubsystem::debug_image_options(),
+        };
+        self.debug_image_selection.normalize_options(debug_image_options);
     }
 
     fn after_prepare(&mut self, ctx: &mut RenderRuntimeRayCastCtx<'_>) {

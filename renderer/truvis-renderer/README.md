@@ -8,7 +8,7 @@ realtime/offline 渲染子系统。它依赖 engine 与公共 Renderer capabilit
 - `TruvisRenderer`：RenderThread 上的具体 `Renderer`，持有 camera/input、GUI、overlay、selection、注入的 RendererClient
   和 realtime/offline 渲染子系统，并显式决定 update 与 RenderGraph pass 顺序。
 - `RendererClient`：App 提供的窄生命周期接口；Renderer 只在 init/update/after_prepare/shutdown 阶段调用它。
-- `TruvisOverlayUi`：组合 `renderer-imgui` 的诊断控件与 `renderer-render-ui` 的设置 section，决定主体 Renderer 的窗口布局和绘制顺序。
+- `TruvisOverlayUi`：组合 `renderer-imgui` 的诊断控件与 `renderer-render-ui` 的设置 section，提供 Render、Sky、Post、Picking、Debug 五个固定 tab 和常驻 FPS HUD。
 - `SelectionOutlineSubsystem` / `TransformGizmoSubsystem` / `CoordinateGizmoSubsystem`：持有主体 Renderer 专用效果的资源与 pass 编排状态。
   `TransformGizmoSubsystem` 只负责三轴 CPU 命中、拖拽约束和 overlay 绘制数据；它不认识 scene handle 或 raycast service。
   hover 不提交 GPU raycast，左键命中轴后由 Renderer 拦截场景选择请求，拖拽期间保持同一 instance 绑定。
@@ -21,6 +21,8 @@ Renderer 本身只消费 CPU scene 结果并负责 GPU/RenderGraph 编排。
 
 ## 状态所有权
 
+- Overlay 主窗口顶部常驻 Render Mode 与 Offline Samples，各 tab 的独立滚动状态由 ImGui context 保存；`TruvisOverlayOptions` 只控制主窗口与 FPS HUD 的显示，不提供多布局配置或磁盘持久化。
+- Offline settings 与 Debug Image 选择在 Renderer 固定 update 路径归一化；折叠窗口或切换 tab 不停止 picking、不清除 selection，也不关闭已经启用的 debug image 输出。
 - CPU scene 权威状态属于 runtime-owned `GameWorld`；Renderer 只在合法 update 阶段通过 `GameWorld` facade 修改它。
 - 当前 selection 属于 `TruvisRenderer`，保存 `MeshInstanceHandle + submesh_index`，不保存 GPU instance slot。
 - Transform gizmo 是 Renderer-owned interaction。`TruvisRenderer` 在 update 阶段绑定当前 selection，拖拽期间直接调用
