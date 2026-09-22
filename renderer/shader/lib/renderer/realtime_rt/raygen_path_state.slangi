@@ -32,6 +32,8 @@ struct RtPathState
     float3 radiance;
     /// 下一次命中或 miss 的路径 throughput。
     float3 throughput;
+    /// 累计透射 eta 的倒数平方，只供 roulette 消除 radiance 的介质尺度，不抵消吸收。
+    float roulette_eta_scale;
     /// 上一次非 delta BRDF 采样的 PDF，用于 sky miss 的 MIS 权重。
     float prev_brdf_pdf;
     /// 上一次事件是否为 delta 路径；delta 路径不与环境采样做 MIS。
@@ -42,6 +44,7 @@ struct RtPathState
         RtPathState state;
         state.radiance = float3(0.0f);
         state.throughput = float3(1.0f);
+        state.roulette_eta_scale = 1.0f;
         state.prev_brdf_pdf = 1.0f;
         state.prev_is_delta = true;
         return state;
@@ -95,6 +98,7 @@ struct RtPathState
         // emission 在材质采样阶段乘当前 throughput；后续 throughput 只影响下一跳。
         radiance += sample.emission * throughput;
         throughput *= sample.throughput;
+        roulette_eta_scale /= sample.transmission_eta * sample.transmission_eta;
         prev_brdf_pdf = sample.brdf_pdf;
         prev_is_delta = surface.is_delta_path();
     }
@@ -118,7 +122,8 @@ struct RtPathState
 
         RtRussianRouletteResult result;
         // 用最大通道作为存活概率，既保守保留高能量路径，也避免 RGB throughput 改变色相。
-        float p = max(throughput.x, max(throughput.y, throughput.z));
+        const float3 roulette_throughput = throughput * roulette_eta_scale;
+        float p = max(roulette_throughput.x, max(roulette_throughput.y, roulette_throughput.z));
         p = clamp(p, 0.05f, 0.95f);
         if (Random::rnd(payload.random_seed) > p)
         {

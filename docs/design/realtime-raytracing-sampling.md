@@ -57,6 +57,21 @@ surface origin offset、shadow ray TMax、RT TMin/TMax 和 SHARC position bias �
 
 throughput 只传播 BSDF 等实际积分权重，不把 AO 或 debug 值混入 path state。emissive hit 与 emissive NEE 使用相同 light PDF 语义，避免 MIS 概率不闭合。
 
+### 光滑介质界面
+
+`RtDielectricInterface` 统一空气与当前材质之间的方向、完整非偏振 Fresnel 和全内反射求值，
+由材质采样与确定性的透明 motion direction 共用。IOR=1 时直接透射，不计算掠射的 Fresnel 比值。
+普通镜面材质的 F0 不参与玻璃计算；当前不支持嵌套介质栈。
+
+令 `η=n入射/n出射`、`R=F`、`T=(1-opacity)*(1-F)`、`S=R+T`。反射/透射以 `R/S`、`T/S`
+选择，选中后的 throughput 分别为 `S` 和 `S*base_color*η²`；S=0 终止路径，全内反射的权重为 1。
+opacity 只衰减透射，不把损失转成反射；opacity 与颜色都逐界面应用，闭合玻璃会衰减两次，
+并非按厚度计算的体积吸收。rough transmission 仍未实现 BTDF，当前回退到普通反射表面。
+
+eta² 是 radiance transport 尺度。`RtPathState` 另外累积其倒数用于 Russian roulette，
+防止把进入介质后的尺度下降当成吸收；实际 radiance 保留 eta²。delta 链仍跳过 roulette，
+delta 后的 sky miss 不套环境 MIS。SHARC 消费同一份已补偿的材质 throughput。
+
 ## ReSTIR DI
 
 ReSTIR DI 只服务 camera primary visible surface；secondary bounce 继续走普通统一 NEE。
@@ -96,6 +111,13 @@ debug mode、sky brightness 和 NEE 开关是 pass-local 控制，不改变 Runt
 ## Sky 与 emissive
 
 HDRI importance distribution、uniform sphere fallback 和真实 sky image readiness 属于 sky resource owner；shader 采样和 PDF 查询必须读取同一 distribution 语义。
+
+Sky builder 在源分辨率上对线性亮度使用横纵 `[1,6,1]/8` 核，U 环绕、V 钳制，
+覆盖双线性 radiance 扩散到相邻 texel 的区域，再乘源 texel 立体角累加到目标 cell。
+这是线性重建平均亮度构成的近似 proposal，不是双线性天空球面积分的精确解；
+它只改变采样密度，不模糊 HDRI、不裁剪太阳，也不能为折射/反射焦散求解连接路径。
+Alias 概率与 solid-angle PDF 必须从同一份过滤权重生成；有限正总权重均参与归一化，
+全黑输入使用 uniform fallback。BRDF HDRI 包括所有 sky miss，NEE HDRI 包括所有 bounce 的环境 NEE。
 
 emissive triangle table 由 RenderWorld 在 prepare 产出 active render data 后构建。alias table 只包含有效面积和正 power record；材质变化、mesh readiness、instance transform 或绑定变化必须使 table 重新准备。
 

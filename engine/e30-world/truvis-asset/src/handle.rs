@@ -290,7 +290,9 @@ impl MeshData {
 pub enum MaterialClass {
     /// 普通表面。是否 delta / rough 由 shader 根据 roughness 决定。
     Surface,
-    /// 透射表面。`opacity` 只表示透明度，delta / rough 仍只由 roughness 决定。
+    /// 透射表面。光滑界面的 `opacity` 只吸收透射能量，不转为反射；
+    /// opacity 与 base color 逐界面作用，不表示按厚度计算的体积吸收。
+    /// delta / rough 仍只由 roughness 决定；当前 rough BTDF 尚未实现。
     Transmission { opacity: f32, ior: f32 },
     /// 自发光表面。radiance 与 emissive factor 相加后乘 emissive 纹理，独立于 base color。
     Emissive { radiance: glam::Vec3 },

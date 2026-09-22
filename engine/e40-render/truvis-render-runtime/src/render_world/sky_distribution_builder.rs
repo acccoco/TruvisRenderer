@@ -74,7 +74,7 @@ impl SkyDistributionBuilder {
                 while let Ok(command) = request_receiver.recv() {
                     match command {
                         SkyDistributionWorkerCommand::Build(request) => {
-                            let result = build_distribution(request);
+                            let result = Self::build_distribution(request);
                             if result_sender.send(result).is_err() {
                                 break;
                             }
@@ -162,141 +162,184 @@ impl Drop for SkyDistributionBuilder {
     }
 }
 
-fn build_distribution(request: SkyDistributionBuildRequest) -> SkyDistributionBuildResult {
-    let started_at = Instant::now();
-    let extent = request.texture_bytes.extent();
-    let source_width = extent.width;
-    let source_height = extent.height;
-    if source_width != source_height.saturating_mul(2) {
-        log::warn!(
-            "SkyDistributionBuilder: texture {:?} is {}x{}, expected a 2:1 lat-long environment map",
-            request.texture,
-            source_width,
-            source_height
-        );
-    }
+impl SkyDistributionBuilder {
+    /// 预过滤只用于采样 proposal，不修改 HDRI radiance。核是线性重建在 texel 区间内的
+    /// 平均权重；仍以源 texel 立体角近似球面积分，不承诺精确积分双线性天空。
+    /// 三行横向过滤缓存随扫描滚动，额外内存只与源宽度有关。
+    fn accumulate_filtered_weights(texture: &TextureBytes, width: u32, height: u32, weights: &mut [f64]) {
+        let extent = texture.extent();
+        let source_width = extent.width as usize;
+        let source_height = extent.height;
+        let mut rows = [
+            vec![0.0; source_width],
+            vec![0.0; source_width],
+            vec![0.0; source_width],
+        ];
+        Self::filter_luminance_row(texture, 0, &mut rows[1]);
+        let [previous, current, _] = &mut rows;
+        previous.copy_from_slice(current);
 
-    let Some((width, height)) = distribution_extent(source_width, source_height) else {
-        return SkyDistributionBuildResult::UniformFallback {
-            request_id: request.request_id,
-            texture: request.texture,
-            source_width,
-            source_height,
-            cpu_build_elapsed: started_at.elapsed(),
-        };
-    };
-    let entry_count = width as usize * height as usize;
-    let mut scaled_weights = vec![0.0_f64; entry_count];
-
-    // 每个源 texel 以 UV 中心归入目标 cell，并累积真实 source solid angle。
-    // 这不是普通图像缩放：小面积高亮太阳即使落入较低分辨率 cell，能量也不会消失。
-    for source_y in 0..source_height {
-        let source_solid_angle = lat_long_texel_solid_angle(source_y, source_width, source_height);
-        let target_y = ((((source_y as f64 + 0.5) * height as f64) / source_height as f64) as u32).min(height - 1);
-        for source_x in 0..source_width {
-            let source_index = source_y as usize * source_width as usize + source_x as usize;
-            let [r, g, b] = request.texture_bytes.linear_rgb(source_index);
-            let luminance = 0.2126_f64 * r as f64 + 0.7152_f64 * g as f64 + 0.0722_f64 * b as f64;
-            if !luminance.is_finite() || luminance <= 0.0 {
-                continue;
+        for source_y in 0..source_height {
+            if source_y + 1 < source_height {
+                Self::filter_luminance_row(texture, source_y + 1, &mut rows[2]);
+            } else {
+                let [_, current, next] = &mut rows;
+                next.copy_from_slice(current);
             }
-            let target_x = ((((source_x as f64 + 0.5) * width as f64) / source_width as f64) as u32).min(width - 1);
-            let target_index = target_y as usize * width as usize + target_x as usize;
-            scaled_weights[target_index] += luminance * source_solid_angle;
+            let source_solid_angle = Self::lat_long_texel_solid_angle(source_y, extent.width, source_height);
+            let target_y = ((((source_y as f64 + 0.5) * height as f64) / source_height as f64) as u32).min(height - 1);
+            for source_x in 0..source_width {
+                let luminance = (rows[0][source_x] + 6.0 * rows[1][source_x] + rows[2][source_x]) * 0.125;
+                let target_x = ((((source_x as f64 + 0.5) * width as f64) / source_width as f64) as u32).min(width - 1);
+                weights[target_y as usize * width as usize + target_x as usize] += luminance * source_solid_angle;
+            }
+            rows.rotate_left(1);
         }
     }
 
-    let total_weight: f64 = scaled_weights.iter().sum();
-    if !total_weight.is_finite() || total_weight <= f64::EPSILON {
-        return SkyDistributionBuildResult::UniformFallback {
+    /// U 环绕与 GPU LinearRepeatClamp 相同；V 钳制由调用方复用首末行实现。
+    /// 滑动三个亮度值，避免对每个输出 texel 重复解码三个 RGB。
+    fn filter_luminance_row(texture: &TextureBytes, row: u32, output: &mut [f64]) {
+        let width = output.len();
+        let base = row as usize * width;
+        let first = Self::luminance(texture, base);
+        let mut previous = Self::luminance(texture, base + width - 1);
+        let mut current = first;
+        for (x, value) in output.iter_mut().enumerate() {
+            let next = if x + 1 < width { Self::luminance(texture, base + x + 1) } else { first };
+            *value = (previous + 6.0 * current + next) * 0.125;
+            previous = current;
+            current = next;
+        }
+    }
+
+    fn luminance(texture: &TextureBytes, index: usize) -> f64 {
+        let [r, g, b] = texture.linear_rgb(index);
+        let luminance = 0.2126_f64 * r as f64 + 0.7152_f64 * g as f64 + 0.0722_f64 * b as f64;
+        if luminance.is_finite() && luminance > 0.0 { luminance } else { 0.0 }
+    }
+
+    fn build_distribution(request: SkyDistributionBuildRequest) -> SkyDistributionBuildResult {
+        let started_at = Instant::now();
+        let extent = request.texture_bytes.extent();
+        let source_width = extent.width;
+        let source_height = extent.height;
+        if source_width != source_height.saturating_mul(2) {
+            log::warn!(
+                "SkyDistributionBuilder: texture {:?} is {}x{}, expected a 2:1 lat-long environment map",
+                request.texture,
+                source_width,
+                source_height
+            );
+        }
+
+        let Some((width, height)) = Self::distribution_extent(source_width, source_height) else {
+            return SkyDistributionBuildResult::UniformFallback {
+                request_id: request.request_id,
+                texture: request.texture,
+                source_width,
+                source_height,
+                cpu_build_elapsed: started_at.elapsed(),
+            };
+        };
+        let entry_count = width as usize * height as usize;
+        let mut scaled_weights = vec![0.0_f64; entry_count];
+
+        Self::accumulate_filtered_weights(&request.texture_bytes, width, height, &mut scaled_weights);
+
+        let total_weight: f64 = scaled_weights.iter().sum();
+        if !total_weight.is_finite() || total_weight <= 0.0 {
+            return SkyDistributionBuildResult::UniformFallback {
+                request_id: request.request_id,
+                texture: request.texture,
+                source_width,
+                source_height,
+                cpu_build_elapsed: started_at.elapsed(),
+            };
+        }
+
+        // entries 先直接写入最终 solid-angle PDF，随后复用唯一的 f64 Vec 原地保存
+        // Alias scaled probability；不保留 solid_angles/probability/index 的平行大数组。
+        let mut entries = Vec::with_capacity(entry_count);
+        for (index, weight) in scaled_weights.iter().copied().enumerate() {
+            let row = index as u32 / width;
+            let cell_solid_angle = Self::lat_long_texel_solid_angle(row, width, height);
+            let solid_angle_pdf =
+                if cell_solid_angle > 0.0 { (weight / total_weight / cell_solid_angle) as f32 } else { 0.0 };
+            entries.push(gpu::engine::scene::SkyDistributionEntry {
+                alias_probability: 1.0,
+                solid_angle_pdf,
+                alias_index: index as u32,
+                _padding_0: 0,
+            });
+        }
+
+        let entry_count_f64 = entry_count as f64;
+        for weight in &mut scaled_weights {
+            *weight = *weight * entry_count_f64 / total_weight;
+        }
+        let mut small: Vec<u32> = Vec::new();
+        let mut large: Vec<u32> = Vec::new();
+        for (index, probability) in scaled_weights.iter().copied().enumerate() {
+            if probability < 1.0 {
+                small.push(index as u32);
+            } else {
+                large.push(index as u32);
+            }
+        }
+
+        while !small.is_empty() && !large.is_empty() {
+            let small_index = small.pop().unwrap();
+            let large_index = large.pop().unwrap();
+            entries[small_index as usize].alias_probability =
+                scaled_weights[small_index as usize].clamp(0.0, 1.0) as f32;
+            entries[small_index as usize].alias_index = large_index;
+
+            scaled_weights[large_index as usize] += scaled_weights[small_index as usize] - 1.0;
+            if scaled_weights[large_index as usize] < 1.0 {
+                small.push(large_index);
+            } else {
+                large.push(large_index);
+            }
+        }
+        for index in small.into_iter().chain(large) {
+            entries[index as usize].alias_probability = 1.0;
+            entries[index as usize].alias_index = index;
+        }
+
+        SkyDistributionBuildResult::Ready(SkyDistributionBuild {
             request_id: request.request_id,
             texture: request.texture,
             source_width,
             source_height,
+            width,
+            height,
+            entries,
             cpu_build_elapsed: started_at.elapsed(),
-        };
+        })
     }
 
-    // entries 先直接写入最终 solid-angle PDF，随后复用唯一的 f64 Vec 原地保存
-    // Alias scaled probability；不保留 solid_angles/probability/index 的平行大数组。
-    let mut entries = Vec::with_capacity(entry_count);
-    for (index, weight) in scaled_weights.iter().copied().enumerate() {
-        let row = index as u32 / width;
-        let cell_solid_angle = lat_long_texel_solid_angle(row, width, height);
-        let solid_angle_pdf =
-            if cell_solid_angle > 0.0 { (weight / total_weight / cell_solid_angle) as f32 } else { 0.0 };
-        entries.push(gpu::engine::scene::SkyDistributionEntry {
-            alias_probability: 1.0,
-            solid_angle_pdf,
-            alias_index: index as u32,
-            _padding_0: 0,
-        });
-    }
-
-    let entry_count_f64 = entry_count as f64;
-    for weight in &mut scaled_weights {
-        *weight = *weight * entry_count_f64 / total_weight;
-    }
-    let mut small: Vec<u32> = Vec::new();
-    let mut large: Vec<u32> = Vec::new();
-    for (index, probability) in scaled_weights.iter().copied().enumerate() {
-        if probability < 1.0 {
-            small.push(index as u32);
-        } else {
-            large.push(index as u32);
+    fn distribution_extent(source_width: u32, source_height: u32) -> Option<(u32, u32)> {
+        if source_width == 0 || source_height == 0 {
+            return None;
         }
-    }
-
-    while !small.is_empty() && !large.is_empty() {
-        let small_index = small.pop().unwrap();
-        let large_index = large.pop().unwrap();
-        entries[small_index as usize].alias_probability = scaled_weights[small_index as usize].clamp(0.0, 1.0) as f32;
-        entries[small_index as usize].alias_index = large_index;
-
-        scaled_weights[large_index as usize] += scaled_weights[small_index as usize] - 1.0;
-        if scaled_weights[large_index as usize] < 1.0 {
-            small.push(large_index);
-        } else {
-            large.push(large_index);
+        if source_width <= MAX_DISTRIBUTION_WIDTH && source_height <= MAX_DISTRIBUTION_HEIGHT {
+            return Some((source_width, source_height));
         }
-    }
-    for index in small.into_iter().chain(large) {
-        entries[index as usize].alias_probability = 1.0;
-        entries[index as usize].alias_index = index;
-    }
 
-    SkyDistributionBuildResult::Ready(SkyDistributionBuild {
-        request_id: request.request_id,
-        texture: request.texture,
-        source_width,
-        source_height,
-        width,
-        height,
-        entries,
-        cpu_build_elapsed: started_at.elapsed(),
-    })
-}
-
-fn distribution_extent(source_width: u32, source_height: u32) -> Option<(u32, u32)> {
-    if source_width == 0 || source_height == 0 {
-        return None;
-    }
-    if source_width <= MAX_DISTRIBUTION_WIDTH && source_height <= MAX_DISTRIBUTION_HEIGHT {
-        return Some((source_width, source_height));
+        let scale = (MAX_DISTRIBUTION_WIDTH as f64 / source_width as f64)
+            .min(MAX_DISTRIBUTION_HEIGHT as f64 / source_height as f64);
+        let width = ((source_width as f64 * scale).floor() as u32).clamp(1, MAX_DISTRIBUTION_WIDTH);
+        let height = ((source_height as f64 * scale).floor() as u32).clamp(1, MAX_DISTRIBUTION_HEIGHT);
+        Some((width, height))
     }
 
-    let scale = (MAX_DISTRIBUTION_WIDTH as f64 / source_width as f64)
-        .min(MAX_DISTRIBUTION_HEIGHT as f64 / source_height as f64);
-    let width = ((source_width as f64 * scale).floor() as u32).clamp(1, MAX_DISTRIBUTION_WIDTH);
-    let height = ((source_height as f64 * scale).floor() as u32).clamp(1, MAX_DISTRIBUTION_HEIGHT);
-    Some((width, height))
-}
-
-fn lat_long_texel_solid_angle(row: u32, width: u32, height: u32) -> f64 {
-    let dphi = 2.0 * std::f64::consts::PI / f64::from(width);
-    let v0 = f64::from(row) / f64::from(height);
-    let v1 = f64::from(row + 1) / f64::from(height);
-    let theta_top = (0.5 - v0) * std::f64::consts::PI;
-    let theta_bottom = (0.5 - v1) * std::f64::consts::PI;
-    dphi * (theta_top.sin() - theta_bottom.sin()).max(0.0)
+    fn lat_long_texel_solid_angle(row: u32, width: u32, height: u32) -> f64 {
+        let dphi = 2.0 * std::f64::consts::PI / f64::from(width);
+        let v0 = f64::from(row) / f64::from(height);
+        let v1 = f64::from(row + 1) / f64::from(height);
+        let theta_top = (0.5 - v0) * std::f64::consts::PI;
+        let theta_bottom = (0.5 - v1) * std::f64::consts::PI;
+        dphi * (theta_top.sin() - theta_bottom.sin()).max(0.0)
+    }
 }

@@ -47,6 +47,10 @@
   `SkyDistributionBuilder`、request generation 与 active/retired distribution。当前 sky CPU texture bytes
   到达后异步构建最高 `4096x2048` 的 Alias 表，再通过共享 transfer timeline 异步上传；
   `RenderWorld` 只消费已发布的 sky 环境绑定快照。
+  Builder 用三行缓存对源线性亮度做横纵 `[1,6,1]/8` 预过滤（U 环绕、V 钳制），
+  然后乘源立体角累加 cell 权重；额外内存为 O(源宽度)。该近似 proposal 覆盖双线性
+  天空的高亮边缘，不修改实际 HDRI。Alias 与 PDF 共享过滤权重，全黑输入回退 uniform，
+  有限正能量不按绝对 epsilon 剔除。request generation、上传和 retired buffer 生命周期保持不变。
 - `GpuTextureStore` 扫描 `SceneReadView` 中已解码的 texture CPU bytes，异步上传 GPU image，并注册
   每个 handle 唯一的同格式 image view 与 bindless SRV（RGBA8 按源用途使用 sRGB 或 UNORM，HDR/EXR 使用 SFLOAT）；
   未 ready 或失败时通过 fallback texture 保证材质仍可安全读取。

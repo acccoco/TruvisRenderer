@@ -18,8 +18,10 @@ struct RtMaterialSample
     float3 origin;
     /// 下一跳 ray direction，世界空间单位向量。
     float3 direction;
-    /// 路径 throughput 乘子，通常为 BRDF*cos/pdf 或 delta Fresnel/透射颜色。
+    /// 路径 throughput 乘子，已包含 BSDF*cos/pdf、离散分支补偿和透射 radiance 尺度。
     float3 throughput;
+    /// 仅透射事件保存 n入射/n出射；路径用其倒数平方补偿 roulette，不改变实际 radiance。
+    float transmission_eta;
     /// 当前表面直接产生的 emission；raygen 会乘旧 throughput 累加。
     float3 emission;
     /// true 表示材质采样已经终止路径。
@@ -33,10 +35,55 @@ struct RtMaterialSample
         sample.origin = surface.position;
         sample.direction = ray_dir;
         sample.throughput = float3(1.0f);
+        sample.transmission_eta = 1.0f;
         sample.emission = float3(0.0f);
         sample.done = false;
         sample.brdf_pdf = 1.0f;
         return sample;
+    }
+};
+
+/// 空气与当前材质的光滑介质界面；仅为 shader 局部结果，不属于共享 ABI。
+/// 材质采样和确定性 motion direction 共用方向、Fresnel 与全内反射判定。
+struct RtDielectricInterface
+{
+    float eta;
+    float reflectance;
+    float3 refracted_direction;
+    bool total_internal_reflection;
+
+    static RtDielectricInterface evaluate(const RtSurfaceHit surface, const float3 ray_dir)
+    {
+        RtDielectricInterface result;
+        const float ior = max(surface.ior, 1.0f);
+        result.eta = dot(ray_dir, surface.origin_normal) > 0.0f ? ior : 1.0f / ior;
+        result.reflectance = 0.0f;
+        result.refracted_direction = ray_dir;
+        result.total_internal_reflection = false;
+        // 折射率匹配时没有界面；掠射也不能进入 Fresnel 的 0/0。
+        if (ior == 1.0f)
+        {
+            return result;
+        }
+
+        const float cos_i = saturate(dot(-ray_dir, surface.forward_normal));
+        const float sin_t_squared = result.eta * result.eta * max(0.0f, 1.0f - cos_i * cos_i);
+        if (sin_t_squared >= 1.0f)
+        {
+            result.reflectance = 1.0f;
+            result.refracted_direction = float3(0.0f);
+            result.total_internal_reflection = true;
+            return result;
+        }
+
+        const float cos_t = sqrt(1.0f - sin_t_squared);
+        const float r_parallel = (cos_i - result.eta * cos_t) / (cos_i + result.eta * cos_t);
+        const float r_perpendicular = (result.eta * cos_i - cos_t) / (result.eta * cos_i + cos_t);
+        result.reflectance = saturate(0.5f * (r_parallel * r_parallel + r_perpendicular * r_perpendicular));
+        result.refracted_direction = normalize(
+            result.eta * ray_dir + (result.eta * cos_i - cos_t) * surface.forward_normal
+        );
+        return result;
     }
 };
 
@@ -58,39 +105,6 @@ struct RtMaterialSampler
         out_throughput = f0 + (1.0f - f0) * fresnel;
     }
 
-    static bool sample_refraction(
-        const RtSurfaceHit surface,
-        const float3 ray_dir,
-        out float3 out_dir,
-        out float3 out_throughput
-    )
-    {
-        // 使用未翻转法线判断进入/离开介质；forward normal 只用于实际折射方向。
-        const float eta = dot(ray_dir, surface.origin_normal) > 0.0f ? surface.ior : 1.0f / surface.ior;
-
-        out_dir = refract(ray_dir, surface.forward_normal, eta);
-        if (length(out_dir) < 1e-6f)
-        {
-            // 全内反射或数值失败交给调用方回退为镜面反射。
-            out_dir = float3(0.0f);
-            out_throughput = float3(0.0f);
-            return false;
-        }
-
-        out_throughput = surface.base_color;
-        return true;
-    }
-
-    static float dielectric_fresnel(const RtSurfaceHit surface, const float3 ray_dir)
-    {
-        const float eta = max(surface.ior, 1.0001f);
-        const float f0_sqrt = (eta - 1.0f) / (eta + 1.0f);
-        const float f0 = f0_sqrt * f0_sqrt;
-        const float cos_theta = saturate(dot(-ray_dir, surface.forward_normal));
-        const float one_minus_cos = 1.0f - cos_theta;
-        return f0 + (1.0f - f0) * one_minus_cos * one_minus_cos * one_minus_cos * one_minus_cos * one_minus_cos;
-    }
-
     static RtMaterialSample sample_delta_transmission(
         inout RtTracePayload payload,
         const RtSurfaceHit surface,
@@ -98,20 +112,35 @@ struct RtMaterialSampler
     )
     {
         RtMaterialSample sample = RtMaterialSample::make_default(surface, ray_dir);
-        const float transparency = saturate(1.0f - surface.opacity);
-        const float fresnel = dielectric_fresnel(surface, ray_dir);
-        const float refract_probability = saturate(transparency * (1.0f - fresnel));
-        const bool choose_refract = Random::rnd(payload.random_seed) < refract_probability;
+        const RtDielectricInterface boundary = RtDielectricInterface::evaluate(surface, ray_dir);
+        const float reflection = boundary.reflectance;
+        // opacity 只吸收透射能量，不把损失转给反射；颜色也只在实际透射时逐界面应用。
+        const float transmission = saturate(1.0f - surface.opacity) * (1.0f - reflection);
+        const float scattering = reflection + transmission;
+        if (scattering <= 0.0f)
+        {
+            sample.throughput = float3(0.0f);
+            sample.done = true;
+            return sample;
+        }
+
+        // 用分支能量归一化选择概率，BSDF / P(branch) 的公共因子就是 scattering。
+        // 单分支（包含全内反射）无需随机数；全内反射的 reflection=scattering=1。
+        bool choose_refract = reflection == 0.0f;
+        if (reflection > 0.0f && transmission > 0.0f)
+        {
+            choose_refract = Random::rnd(payload.random_seed) < transmission / scattering;
+        }
         if (choose_refract)
         {
-            if (!sample_refraction(surface, ray_dir, sample.direction, sample.throughput))
-            {
-                sample_perfect_reflection(surface, ray_dir, sample.direction, sample.throughput);
-            }
+            sample.direction = boundary.refracted_direction;
+            sample.transmission_eta = boundary.eta;
+            sample.throughput = scattering * surface.base_color * (boundary.eta * boundary.eta);
         }
         else
         {
-            sample_perfect_reflection(surface, ray_dir, sample.direction, sample.throughput);
+            sample.direction = reflect(ray_dir, surface.forward_normal);
+            sample.throughput = float3(scattering);
         }
         sample.origin = offset_ray_origin(surface.position, surface.origin_normal, sample.direction);
         return sample;

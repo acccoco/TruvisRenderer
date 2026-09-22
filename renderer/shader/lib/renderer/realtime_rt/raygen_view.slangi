@@ -103,18 +103,12 @@ struct RtRaygenView
 
     static float3 transparent_motion_direction(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
     {
-        float3 refraction_dir;
-        float3 refraction_throughput;
         // RR 的 motion 输入必须帧间确定，不能复用 transparent path 的随机反射/折射分支。
-        // 这里优先使用与材质采样相同 eta/normal 约定的折射方向；全内反射或数值失败时回退镜面方向。
-        if (RtMaterialSampler::sample_refraction(
-                primary_hit,
-                normalize(primary_ray_dir),
-                refraction_dir,
-                refraction_throughput
-            ))
+        // 界面求值与材质路径共用；只有全内反射时选择镜面方向。
+        const RtDielectricInterface boundary = RtDielectricInterface::evaluate(primary_hit, normalize(primary_ray_dir));
+        if (!boundary.total_internal_reflection)
         {
-            return normalize(refraction_dir);
+            return boundary.refracted_direction;
         }
         return reflection_motion_direction(primary_hit, primary_ray_dir);
     }
