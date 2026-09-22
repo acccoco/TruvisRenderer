@@ -52,6 +52,23 @@ target_dir = "assets/gltf"
 rename_to = "office"
 download_by_default = false
 
+
+[[resources]]
+name = "hdri-4k"
+url = "https://github.com/acccoco/assets/releases/download/res/hdri-4k.zip"
+resource_type = "zip"
+target_dir = "assets/hdri"
+rename_to = "4k"
+download_by_default = true
+
+[[resources]]
+name = "hdri-8k"
+url = "https://github.com/acccoco/assets/releases/download/res/hdri-8k.zip"
+resource_type = "zip"
+target_dir = "assets/hdri"
+rename_to = "8k"
+download_by_default = false
+
 [[resources]]
 name = "slang"
 url = "https://github.com/shader-slang/slang/releases/download/v2026.11/slang-2026.11-windows-x86_64.zip"
@@ -110,5 +127,16 @@ resource_type = "git"
 target_dir = "external"
 rename_to = "pbrtv4"
 git_ref = "master"
+recursive_submodules = true
+download_by_default = false
+
+
+[[resources]]
+name = "filament-repo"
+url = "https://github.com/google/filament.git"
+resource_type = "git"
+target_dir = "external"
+rename_to = "filament"
+git_ref = "v1.77.1"
 recursive_submodules = true
 download_by_default = false
