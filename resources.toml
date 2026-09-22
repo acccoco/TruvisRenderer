@@ -70,6 +70,14 @@ rename_to = "8k"
 download_by_default = false
 
 [[resources]]
+name = "textures"
+url = "https://github.com/acccoco/assets/releases/download/res/textures.zip"
+resource_type = "zip"
+target_dir = "assets"
+rename_to = "textures"
+download_by_default = true
+
+[[resources]]
 name = "slang"
 url = "https://github.com/shader-slang/slang/releases/download/v2026.11/slang-2026.11-windows-x86_64.zip"
 resource_type = "zip"
