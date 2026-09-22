@@ -51,6 +51,11 @@ analytic light 当前使用固定 `MIS = 1`，因为它没有完整的 BRDF-hit 
 
 ## 材质与坐标
 
+OpenPBR 是后续材质模型演进的基准，版本由根目录 `resources.toml` 中的 `openpbr-repo` 决定。
+当前实现尚未完整符合该模型；已实现子集和偏差必须与目标语义区分，不能仅凭参数同名直接映射。
+Realtime、Offline、NEE、ReSTIR 和 SHARC 应消费共同的材质语义与求值契约，
+采样或缓存优化不能隐式改变材质模型，也不能在消费者中另建一套材质公式。
+
 MaterialAccess 统一 UV 集、纹理变换、sampler、色彩空间和 fallback。base color、metallic/roughness、normal、emissive 的 factor 与 texture 只组合一次。
 
 surface origin offset、shadow ray TMax、RT TMin/TMax 和 SHARC position bias 是不同语义，不能用同一个 epsilon 替代。世界量纲和 PDF 度量必须保持一致。
@@ -67,6 +72,12 @@ throughput 只传播 BSDF 等实际积分权重，不把 AO 或 debug 值混入 
 选择，选中后的 throughput 分别为 `S` 和 `S*base_color*η²`；S=0 终止路径，全内反射的权重为 1。
 opacity 只衰减透射，不把损失转成反射；opacity 与颜色都逐界面应用，闭合玻璃会衰减两次，
 并非按厚度计算的体积吸收。rough transmission 仍未实现 BTDF，当前回退到普通反射表面。
+
+这套玻璃 `opacity` 是当前项目的逐界面透射衰减参数，与 OpenPBR `geometry_opacity`
+表示整个表面的存在权重不同，不能直接映射。对照依据为 OpenPBR v1.1.1
+（commit `f8d6d947dfae4c9b599965a86c22826ea7a8dbfb`）的 `index.html` 中
+“Opacity / Transparency”章节。后续迁移应统一处理材质参数、导入映射与 shader；
+确立模型基准本身不改变上述现有行为，也不触发自动参数迁移。
 
 eta² 是 radiance transport 尺度。`RtPathState` 另外累积其倒数用于 Russian roulette，
 防止把进入介质后的尺度下降当成吸收；实际 radiance 保留 eta²。delta 链仍跳过 roulette，

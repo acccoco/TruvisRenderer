@@ -126,7 +126,7 @@ target_dir = "external"
 rename_to = "openpbr"
 git_ref = "v1.1.1"
 recursive_submodules = true
-download_by_default = false
+download_by_default = true
 
 [[resources]]
 name = "pbrtv4-repo"
