@@ -14,6 +14,7 @@ pub enum EditorErrorCode {
     NotFound,
     StaleObject,
     Conflict,
+    Shutdown,
     Internal,
 }
 

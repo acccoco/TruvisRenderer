@@ -2,20 +2,20 @@ use std::time::{Duration, Instant};
 
 use slotmap::{Key, KeyData};
 
-use truvis_asset::material_texture::{TextureTransform, TextureSampler, TextureWrap, TextureFilter};
+use truvis_asset::material_texture::{TextureFilter, TextureSampler, TextureTransform, TextureWrap};
 
 use truvis_editor_bridge::protocol::{
-    TextureMappingDto, TextureSlotDto,
     CoverageModeDto, DEFAULT_SCENE_PAGE_SIZE, EditorCommand, EditorError, EditorErrorCode, EditorNotification,
     EditorQuery, EditorRequest, EditorResponse, InstanceDetailsDto, InstanceId, InstanceMaterialBindingDto,
-    InstanceTransformDto, MAX_SCENE_PAGE_SIZE, MaterialClassDto, MaterialDto, MaterialId, MaterialPatch, MeshId, MeshSummaryDto,
-    SceneObjectSummary, SceneObjectsPage, SceneVersion, SelectionDto, TextureId,
+    InstanceTransformDto, MAX_SCENE_PAGE_SIZE, MaterialClassDto, MaterialDto, MaterialId, MaterialPatch, MeshId,
+    MeshSummaryDto, SceneObjectSummary, SceneObjectsPage, SceneVersion, SelectionDto, TextureId, TextureMappingDto,
+    TextureSlotDto,
 };
-use truvis_editor_bridge::{EditorRequestEnvelope, RendererEndpoint};
+use truvis_editor_bridge::{EditorRendererEndpoint, EditorRequestEnvelope};
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_world::GameWorld;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
-use truvis_world::guid_new_type::{MeshInstanceHandle, MaterialAssetHandle, MeshAssetHandle, TextureAssetHandle};
+use truvis_world::guid_new_type::{MaterialAssetHandle, MeshAssetHandle, MeshInstanceHandle, TextureAssetHandle};
 
 /// Editor 请求在单帧 update 中的处理预算。
 ///
@@ -40,12 +40,17 @@ impl Default for EditorControllerConfig {
 /// Controller 只在 RenderThread 的 Renderer update 阶段借用 `GameWorld`，把协议 DTO 转换成现有
 /// GameWorld 查询或 mutation。它不保存 selection、scene/material cache，也不拥有 Desktop IPC 生命周期。
 pub(crate) struct EditorController {
-    endpoint: RendererEndpoint,
+    endpoint: EditorRendererEndpoint,
     config: EditorControllerConfig,
 }
 
+/// Editor 与 Automation 共用的 CPU scene DTO、opaque ID 和 mutation 校验适配器。
+///
+/// 它不保存 scene cache；所有调用都在 RenderThread update 阶段借用当前 `GameWorld`。
+pub(crate) struct WorldSceneAdapter;
+
 impl EditorController {
-    pub(crate) fn new(endpoint: RendererEndpoint, config: EditorControllerConfig) -> Self {
+    pub(crate) fn new(endpoint: EditorRendererEndpoint, config: EditorControllerConfig) -> Self {
         Self { endpoint, config }
     }
 
@@ -73,8 +78,8 @@ impl EditorController {
     ) {
         let EditorRequestEnvelope { request, reply } = envelope;
         let (response, notification) = match request {
-            EditorRequest::Query(query) => (Self::handle_query(world, selection, query), None),
-            EditorRequest::Command(command) => Self::handle_command(world, command),
+            EditorRequest::Query(query) => (WorldSceneAdapter::handle_query(world, selection, query), None),
+            EditorRequest::Command(command) => WorldSceneAdapter::handle_command(world, command),
         };
 
         // WebView 可能已刷新、timeout 或进入 shutdown；reply receiver 消失不能回滚已经
@@ -84,8 +89,14 @@ impl EditorController {
             let _ = self.endpoint.try_send_notification(notification);
         }
     }
+}
 
-    fn handle_query(world: &GameWorld, selection: Option<WorldSubmeshSelection>, query: EditorQuery) -> EditorResponse {
+impl WorldSceneAdapter {
+    pub(crate) fn handle_query(
+        world: &GameWorld,
+        selection: Option<WorldSubmeshSelection>,
+        query: EditorQuery,
+    ) -> EditorResponse {
         match query {
             EditorQuery::GetSceneVersion => {
                 EditorResponse::SceneVersion(SceneVersion::from_u64(world.scene_view().scene_version()))
@@ -107,7 +118,10 @@ impl EditorController {
         }
     }
 
-    fn handle_command(world: &mut GameWorld, command: EditorCommand) -> (EditorResponse, Option<EditorNotification>) {
+    pub(crate) fn handle_command(
+        world: &mut GameWorld,
+        command: EditorCommand,
+    ) -> (EditorResponse, Option<EditorNotification>) {
         match command {
             EditorCommand::UpdateMaterial { material_id, patch } => {
                 let handle = match Self::decode_material_id(&material_id) {
@@ -148,8 +162,8 @@ impl EditorController {
     }
 }
 
-impl EditorController {
-    fn scene_objects_page(
+impl WorldSceneAdapter {
+    pub(crate) fn scene_objects_page(
         world: &GameWorld,
         offset: u32,
         limit: u16,
@@ -194,7 +208,7 @@ impl EditorController {
     ///
     /// Instance 对 mesh/material 的引用完整性由 `SceneStore` 在注册、更新和删除边界维护；
     /// 因此 live instance 出现缺失依赖表示内部不变量已经破坏，而不是普通 stale query。
-    fn instance_details(world: &GameWorld, instance_id: InstanceId) -> EditorResponse {
+    pub(crate) fn instance_details(world: &GameWorld, instance_id: InstanceId) -> EditorResponse {
         let handle = match Self::decode_instance_id(&instance_id) {
             Ok(handle) => handle,
             Err(error) => return EditorResponse::Error(error),
@@ -242,10 +256,10 @@ impl EditorController {
         let selection = selection?;
         let instance = world.scene_view().get_instance(selection.instance)?;
         let material = *instance.materials.get(selection.submesh_index as usize)?;
-        Some(Self::selection_dto_from_handles(selection.instance, selection.submesh_index, material))
+        Some(WorldSceneAdapter::selection_dto_from_handles(selection.instance, selection.submesh_index, material))
     }
 
-    fn material_dto(world: &GameWorld, handle: MaterialAssetHandle) -> Option<MaterialDto> {
+    pub(crate) fn material_dto(world: &GameWorld, handle: MaterialAssetHandle) -> Option<MaterialDto> {
         let data = world.material_data(handle)?;
         Some(MaterialDto {
             id: Self::encode_material_id(handle),
@@ -255,20 +269,28 @@ impl EditorController {
             roughness: data.roughness,
             class: Self::material_class_dto(data.class),
             coverage: Self::coverage_dto(data.coverage),
-            textures: std::array::from_fn(|index| data.textures[index].as_ref().map(|slot| TextureSlotDto {
-                texture: Self::encode_texture_id(slot.texture),
-                mapping: TextureMappingDto {
-                    tex_coord: slot.tex_coord, offset: slot.transform.offset.to_array(), rotation: slot.transform.rotation,
-                    scale: slot.transform.scale.to_array(), wrap: [slot.sampler.wrap_s as u32, slot.sampler.wrap_t as u32],
-                    filter: slot.sampler.filter as u32,
-                },
-            })),
+            textures: std::array::from_fn(|index| {
+                data.textures[index].as_ref().map(|slot| TextureSlotDto {
+                    texture: Self::encode_texture_id(slot.texture),
+                    mapping: TextureMappingDto {
+                        tex_coord: slot.tex_coord,
+                        offset: slot.transform.offset.to_array(),
+                        rotation: slot.transform.rotation,
+                        scale: slot.transform.scale.to_array(),
+                        wrap: [slot.sampler.wrap_s as u32, slot.sampler.wrap_t as u32],
+                        filter: slot.sampler.filter as u32,
+                    },
+                })
+            }),
             normal_scale: data.normal_scale,
             emissive_factor: data.emissive_factor.to_array(),
         })
     }
 
-    fn apply_material_patch(mut data: MaterialData, patch: MaterialPatch) -> Result<MaterialData, EditorError> {
+    pub(crate) fn apply_material_patch(
+        mut data: MaterialData,
+        patch: MaterialPatch,
+    ) -> Result<MaterialData, EditorError> {
         if let Some(name) = patch.name {
             let name = name.trim();
             if name.is_empty() || name.len() > 256 {
@@ -307,8 +329,9 @@ impl EditorController {
         }
         if let Some(mappings) = patch.texture_mappings {
             for patch in mappings {
-                let slot = data.textures.get_mut(patch.channel as usize).and_then(Option::as_mut)
-                    .ok_or_else(|| EditorError::new(EditorErrorCode::InvalidRequest, "texture slot is absent or invalid"))?;
+                let slot = data.textures.get_mut(patch.channel as usize).and_then(Option::as_mut).ok_or_else(|| {
+                    EditorError::new(EditorErrorCode::InvalidRequest, "texture slot is absent or invalid")
+                })?;
                 let mapping = patch.mapping;
                 let wraps = [TextureWrap::Repeat, TextureWrap::Clamp, TextureWrap::MirroredRepeat];
                 let filters = [TextureFilter::Nearest, TextureFilter::Linear];
@@ -319,11 +342,19 @@ impl EditorController {
                     filter: *filters.get(mapping.filter as usize).ok_or_else(invalid)?,
                 };
                 slot.tex_coord = mapping.tex_coord;
-                slot.transform = TextureTransform { offset: mapping.offset.into(), rotation: mapping.rotation, scale: mapping.scale.into() };
+                slot.transform = TextureTransform {
+                    offset: mapping.offset.into(),
+                    rotation: mapping.rotation,
+                    scale: mapping.scale.into(),
+                };
             }
         }
-        if let Some(value) = patch.normal_scale { data.normal_scale = value; }
-        if let Some(value) = patch.emissive_factor { data.emissive_factor = value.into(); }
+        if let Some(value) = patch.normal_scale {
+            data.normal_scale = value;
+        }
+        if let Some(value) = patch.emissive_factor {
+            data.emissive_factor = value.into();
+        }
         data.validate().map_err(|reason| EditorError::new(EditorErrorCode::InvalidRequest, reason))?;
         Ok(data)
     }
@@ -339,7 +370,7 @@ impl EditorController {
     }
 }
 
-impl EditorController {
+impl WorldSceneAdapter {
     fn material_class(dto: MaterialClassDto) -> Result<MaterialClass, EditorError> {
         match dto {
             MaterialClassDto::Surface => Ok(MaterialClass::Surface),
@@ -408,12 +439,18 @@ impl EditorController {
 
     pub(crate) fn notify_selection_changed(&self, selection: Option<(MeshInstanceHandle, u32, MaterialAssetHandle)>) {
         let selection = selection.map(|(instance, submesh_index, material)| {
-            Self::selection_dto_from_handles(instance, submesh_index, material)
+            WorldSceneAdapter::selection_dto_from_handles(instance, submesh_index, material)
         });
         let _ = self.endpoint.try_send_notification(EditorNotification::SelectionChanged(selection));
     }
 
-    fn selection_dto_from_handles(
+    pub(crate) fn shutdown(&mut self) {
+        self.endpoint.shutdown();
+    }
+}
+
+impl WorldSceneAdapter {
+    pub(crate) fn selection_dto_from_handles(
         instance: MeshInstanceHandle,
         submesh_index: u32,
         material: MaterialAssetHandle,
@@ -425,12 +462,6 @@ impl EditorController {
         }
     }
 
-    pub(crate) fn shutdown(&mut self) {
-        self.endpoint.shutdown();
-    }
-}
-
-impl EditorController {
     fn encode_instance_id(handle: MeshInstanceHandle) -> InstanceId {
         InstanceId::new(Self::encode_key("instance", handle))
     }
@@ -447,19 +478,19 @@ impl EditorController {
         TextureId::new(Self::encode_key("texture", handle))
     }
 
-    fn encode_key<K: Key>(prefix: &str, handle: K) -> String {
+    pub(crate) fn encode_key<K: Key>(prefix: &str, handle: K) -> String {
         format!("{prefix}:{:016x}", handle.data().as_ffi())
     }
 
-    fn decode_material_id(id: &MaterialId) -> Result<MaterialAssetHandle, EditorError> {
+    pub(crate) fn decode_material_id(id: &MaterialId) -> Result<MaterialAssetHandle, EditorError> {
         Self::decode_key("material", &id.0)
     }
 
-    fn decode_instance_id(id: &InstanceId) -> Result<MeshInstanceHandle, EditorError> {
+    pub(crate) fn decode_instance_id(id: &InstanceId) -> Result<MeshInstanceHandle, EditorError> {
         Self::decode_key("instance", &id.0)
     }
 
-    fn decode_key<K: Key>(expected_prefix: &str, value: &str) -> Result<K, EditorError> {
+    pub(crate) fn decode_key<K: Key>(expected_prefix: &str, value: &str) -> Result<K, EditorError> {
         let Some((prefix, raw)) = value.split_once(':') else {
             return Err(EditorError::new(EditorErrorCode::InvalidRequest, "editor ID is missing its type prefix"));
         };
@@ -474,7 +505,7 @@ impl EditorController {
         Ok(K::from(KeyData::from_ffi(raw)))
     }
 
-    fn error(code: EditorErrorCode, message: impl Into<String>) -> EditorResponse {
+    pub(crate) fn error(code: EditorErrorCode, message: impl Into<String>) -> EditorResponse {
         EditorResponse::Error(EditorError::new(code, message))
     }
 }

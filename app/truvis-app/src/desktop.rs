@@ -26,6 +26,7 @@ use truvis_winit_host::{EmbeddedViewportRect, EmbeddedWinitHost};
 
 use crate::client::{DesktopCommandSender, TruvisAppClient, TruvisAppWiring};
 use crate::editor_ipc::EditorIpc;
+use crate::mcp_server::McpServerHandle;
 
 /// Tauri command 使用的 DOM viewport 物理像素矩形。
 ///
@@ -57,6 +58,7 @@ impl From<RenderViewportRect> for EmbeddedViewportRect {
 /// Tauri command 因长时间持锁而阻塞。
 struct TruvisDesktopResources {
     render_host: Option<EmbeddedWinitHost>,
+    mcp_server: Option<McpServerHandle>,
 }
 
 /// Tauri 主线程和 command handler 共享的桌面生命周期状态。
@@ -84,12 +86,14 @@ struct TruvisDesktopState {
 impl TruvisDesktopState {
     fn new(
         render_host: EmbeddedWinitHost,
+        mcp_server: Option<McpServerHandle>,
         editor_ipc: EditorIpc,
         desktop_command_sender: DesktopCommandSender,
     ) -> Self {
         Self {
             resources: Mutex::new(TruvisDesktopResources {
                 render_host: Some(render_host),
+                mcp_server,
             }),
             editor_ipc,
             desktop_command_sender,
@@ -115,6 +119,7 @@ impl TruvisDesktopState {
         let mut resources = self.resources.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         Some(TruvisDesktopResources {
             render_host: resources.render_host.take(),
+            mcp_server: resources.mcp_server.take(),
         })
     }
 
@@ -154,16 +159,22 @@ impl TruvisDesktopState {
         Ok(())
     }
 
-    /// 关闭顺序是本集成最重要的生命周期不变量：RenderThread → child HWND →
-    /// Editor notification task → Tauri parent HWND。
+    /// 关闭顺序固定为：停止 MCP 接收 → RenderThread/Automation receiver → join MCP
+    /// → Editor notification task。这样 HTTP handler 不会访问已销毁的 World。
     fn shutdown(&self) {
         let Some(mut resources) = self.take_resources() else {
             return;
         };
+        if let Some(mcp_server) = resources.mcp_server.as_ref() {
+            mcp_server.stop_accepting();
+        }
         if let Some(render_host) = resources.render_host.take() {
             if let Err(error) = render_host.shutdown() {
                 log::error!("failed to shut down embedded render host cleanly: {error}");
             }
+        }
+        if let Some(mut mcp_server) = resources.mcp_server.take() {
+            mcp_server.join();
         }
         self.editor_ipc.shutdown();
     }
@@ -279,6 +290,7 @@ impl TruvisDesktop {
 
         let wiring = TruvisAppWiring::new(EditorBridgeConfig::default());
         let frontend_editor = wiring.frontend_editor;
+        let frontend_automation = wiring.frontend_automation;
         let client_ports = wiring.client_ports;
         let desktop_command_sender = wiring.desktop_command_sender;
         let initial_scene = startup_options.scene;
@@ -294,6 +306,7 @@ impl TruvisDesktop {
                     .window_handle()
                     .map_err(|error| std::io::Error::other(format!("failed to get Tauri parent HWND: {error}")))?
                     .as_raw();
+                let mcp_server = Some(McpServerHandle::start(frontend_automation).map_err(std::io::Error::other)?);
                 let render_host = EmbeddedWinitHost::spawn(parent_window, move || {
                     let client = TruvisAppClient::new(client_ports, initial_scene);
                     Box::new(TruvisRenderer::new(Box::new(client)))
@@ -301,7 +314,7 @@ impl TruvisDesktop {
                 .map_err(std::io::Error::other)?;
                 let editor_ipc = EditorIpc::start(app.handle().clone(), frontend_editor);
 
-                app.manage(TruvisDesktopState::new(render_host, editor_ipc, desktop_command_sender));
+                app.manage(TruvisDesktopState::new(render_host, mcp_server, editor_ipc, desktop_command_sender));
                 window.show()?;
                 Ok(())
             })

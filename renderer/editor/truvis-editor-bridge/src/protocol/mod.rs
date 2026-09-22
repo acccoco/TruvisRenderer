@@ -3,6 +3,7 @@
 //! Rust 类型是协议权威来源；Web 侧 TypeScript 由这些类型生成。所有 GameWorld handle 都只以
 //! session-local opaque string 表达，协议不会暴露 SlotMap 或 GPU slot 结构。
 
+mod automation;
 mod error;
 mod ids;
 mod material;
@@ -10,9 +11,16 @@ mod message;
 mod scene;
 mod selection;
 
+pub use automation::{
+    AutomationCommand, AutomationNotification, AutomationQuery, AutomationRequest, AutomationResponse,
+    SceneImportStatusDto, SceneSummaryDto,
+};
 pub use error::{EditorError, EditorErrorCode};
 pub use ids::{InstanceId, MaterialId, MeshId, SceneVersion, TextureId};
-pub use material::{TextureMappingDto, TextureMappingPatch, TextureSlotDto, CoverageModeDto, MaterialClassDto, MaterialDto, MaterialPatch};
+pub use material::{
+    CoverageModeDto, MaterialClassDto, MaterialDto, MaterialPatch, TextureMappingDto, TextureMappingPatch,
+    TextureSlotDto,
+};
 pub use message::{EditorCommand, EditorNotification, EditorQuery, EditorRequest, EditorResponse};
 pub use scene::{
     InstanceDetailsDto, InstanceMaterialBindingDto, InstanceTransformDto, MeshSummaryDto, SceneObjectSummary,

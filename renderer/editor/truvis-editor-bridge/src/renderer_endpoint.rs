@@ -1,22 +1,21 @@
 use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::EditorRequestEnvelope;
-use crate::protocol::EditorNotification;
+use crate::RequestEnvelope;
 
 /// RenderThread 上 Renderer 独占的跨线程 endpoint。
 ///
 /// Renderer 每帧通过 `try_receive_request` 按预算消费请求，并通过 request 自带的 oneshot
 /// 非阻塞返回结果。任何方法都不会等待 Desktop 或持有跨线程锁。
-pub struct RendererEndpoint {
-    request_receiver: Receiver<EditorRequestEnvelope>,
-    notification_sender: Sender<EditorNotification>,
+pub struct RendererEndpoint<Request, Response, Notification> {
+    request_receiver: Receiver<RequestEnvelope<Request, Response>>,
+    notification_sender: Sender<Notification>,
 }
 
-impl RendererEndpoint {
+impl<Request, Response, Notification> RendererEndpoint<Request, Response, Notification> {
     pub(crate) fn new(
-        request_receiver: Receiver<EditorRequestEnvelope>,
-        notification_sender: Sender<EditorNotification>,
+        request_receiver: Receiver<RequestEnvelope<Request, Response>>,
+        notification_sender: Sender<Notification>,
     ) -> Self {
         Self {
             request_receiver,
@@ -25,15 +24,12 @@ impl RendererEndpoint {
     }
 
     /// 非阻塞读取一条 editor 请求。
-    pub fn try_receive_request(&mut self) -> Result<EditorRequestEnvelope, TryRecvError> {
+    pub fn try_receive_request(&mut self) -> Result<RequestEnvelope<Request, Response>, TryRecvError> {
         self.request_receiver.try_recv()
     }
 
     /// 非阻塞发送 best-effort notification。
-    pub fn try_send_notification(
-        &self,
-        notification: EditorNotification,
-    ) -> Result<(), TrySendError<EditorNotification>> {
+    pub fn try_send_notification(&self, notification: Notification) -> Result<(), TrySendError<Notification>> {
         self.notification_sender.try_send(notification)
     }
 

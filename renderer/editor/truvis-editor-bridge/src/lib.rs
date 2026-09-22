@@ -1,7 +1,4 @@
-//! Truvis Web 编辑器的协议与跨线程通信边界。
-//!
-//! 本 crate 只拥有 editor DTO、transport envelope 和有界 channel endpoint。它不依赖
-//! `truvis-world`、render runtime 或任何 GPU 类型，也不缓存 selection、scene 或 material 状态。
+//! Truvis Web 编辑器与 Automation 的跨线程协议和有界 endpoint。
 
 mod envelope;
 mod frontend_endpoint;
@@ -10,21 +7,29 @@ mod renderer_endpoint;
 
 use tokio::sync::mpsc;
 
-pub use envelope::EditorRequestEnvelope;
+pub use envelope::RequestEnvelope;
 pub use frontend_endpoint::FrontendEndpoint;
 pub use renderer_endpoint::RendererEndpoint;
 
-/// EditorBridge 两条有界队列的容量配置。
-///
-/// request 与 notification 分离后，可以分别表达拒绝新请求和 best-effort 通知丢弃。
-/// response 由每个请求自带的 oneshot 返回，不构成共享队列或场景状态缓存。
+pub type EditorFrontendEndpoint =
+    FrontendEndpoint<protocol::EditorRequest, protocol::EditorResponse, protocol::EditorNotification>;
+pub type EditorRendererEndpoint =
+    RendererEndpoint<protocol::EditorRequest, protocol::EditorResponse, protocol::EditorNotification>;
+pub type AutomationFrontendEndpoint =
+    FrontendEndpoint<protocol::AutomationRequest, protocol::AutomationResponse, protocol::AutomationNotification>;
+pub type AutomationRendererEndpoint =
+    RendererEndpoint<protocol::AutomationRequest, protocol::AutomationResponse, protocol::AutomationNotification>;
+pub type EditorRequestEnvelope = RequestEnvelope<protocol::EditorRequest, protocol::EditorResponse>;
+pub type EditorBridgeConfig = EndpointConfig;
+
+/// Editor 与 Automation 共用的有界队列配置。
 #[derive(Clone, Copy, Debug)]
-pub struct EditorBridgeConfig {
+pub struct EndpointConfig {
     pub request_capacity: usize,
     pub notification_capacity: usize,
 }
 
-impl Default for EditorBridgeConfig {
+impl Default for EndpointConfig {
     fn default() -> Self {
         Self {
             request_capacity: 256,
@@ -33,14 +38,18 @@ impl Default for EditorBridgeConfig {
     }
 }
 
-/// 创建方向受限的 Frontend / Renderer endpoint。
-///
-/// 两条队列全部有界；Render 侧只使用 `try_recv` / `try_send`，每个 request 通过独立
-/// oneshot 返回 response。双方不会共享 `Mutex` 或场景对象。
-pub fn create_editor_bridge(config: EditorBridgeConfig) -> (FrontendEndpoint, RendererEndpoint) {
+pub fn create_editor_bridge(config: EndpointConfig) -> (EditorFrontendEndpoint, EditorRendererEndpoint) {
     let (request_sender, request_receiver) = mpsc::channel(config.request_capacity);
     let (notification_sender, notification_receiver) = mpsc::channel(config.notification_capacity);
+    (
+        FrontendEndpoint::new(request_sender, notification_receiver),
+        RendererEndpoint::new(request_receiver, notification_sender),
+    )
+}
 
+pub fn create_automation_bridge(config: EndpointConfig) -> (AutomationFrontendEndpoint, AutomationRendererEndpoint) {
+    let (request_sender, request_receiver) = mpsc::channel(config.request_capacity);
+    let (notification_sender, notification_receiver) = mpsc::channel(config.notification_capacity);
     (
         FrontendEndpoint::new(request_sender, notification_receiver),
         RendererEndpoint::new(request_receiver, notification_sender),

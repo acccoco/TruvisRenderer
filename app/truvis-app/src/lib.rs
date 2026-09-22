@@ -3,3 +3,4 @@
 pub mod desktop;
 mod client;
 mod editor_ipc;
+mod mcp_server;

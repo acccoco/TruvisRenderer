@@ -24,12 +24,16 @@ truvis-path = { workspace = true }
 raw-window-handle = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 tauri = { workspace = true }
 tauri-plugin-dialog = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 anyhow = { workspace = true }
 glam = { workspace = true }
 slotmap = { workspace = true }
+rmcp = { workspace = true }
+axum = { workspace = true }
 
 [build-dependencies]
 tauri-build = { workspace = true }

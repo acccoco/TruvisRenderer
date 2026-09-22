@@ -2,9 +2,10 @@
 
 mod desktop_command;
 mod editor_controller;
+mod world_automation_controller;
 
 use renderer_kit::camera::Camera;
-use truvis_editor_bridge::{EditorBridgeConfig, FrontendEndpoint, RendererEndpoint, create_editor_bridge};
+use truvis_editor_bridge::{AutomationFrontendEndpoint, AutomationRendererEndpoint, EditorBridgeConfig, EditorFrontendEndpoint, EditorRendererEndpoint, create_automation_bridge, create_editor_bridge};
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_renderer::RendererClient;
 use truvis_scenes::{InitialScene, SceneInitializer};
@@ -21,7 +22,8 @@ pub(crate) use self::desktop_command::DesktopCommandSender;
 /// `frontend_editor` 和 sender 留在 Tauri 主线程；`client_ports` 只随 Renderer factory
 /// 移入 RenderThread，避免 App 主线程持有 CPU scene 或请求 receiver。
 pub(crate) struct TruvisAppWiring {
-    pub(crate) frontend_editor: FrontendEndpoint,
+    pub(crate) frontend_editor: EditorFrontendEndpoint,
+    pub(crate) frontend_automation: AutomationFrontendEndpoint,
     pub(crate) client_ports: TruvisAppClientPorts,
     pub(crate) desktop_command_sender: DesktopCommandSender,
 }
@@ -29,11 +31,17 @@ pub(crate) struct TruvisAppWiring {
 impl TruvisAppWiring {
     pub(crate) fn new(config: EditorBridgeConfig) -> Self {
         let (frontend_editor, editor) = create_editor_bridge(config);
+        let (frontend_automation, automation) = create_automation_bridge(truvis_editor_bridge::EndpointConfig {
+            request_capacity: 64,
+            notification_capacity: 16,
+        });
         let (desktop_command_sender, desktop_commands) = DesktopCommandController::create();
         Self {
             frontend_editor,
+            frontend_automation,
             client_ports: TruvisAppClientPorts {
                 editor,
+                automation,
                 desktop_commands,
             },
             desktop_command_sender,
@@ -43,7 +51,8 @@ impl TruvisAppWiring {
 
 /// 只包含 RenderThread 侧 receiver 的 Client 构造输入。
 pub(crate) struct TruvisAppClientPorts {
-    editor: RendererEndpoint,
+    editor: EditorRendererEndpoint,
+    automation: AutomationRendererEndpoint,
     desktop_commands: DesktopCommandController,
 }
 
@@ -51,6 +60,7 @@ pub(crate) struct TruvisAppClientPorts {
 pub(crate) struct TruvisAppClient {
     scene: SceneInitializer,
     editor: EditorController,
+    automation: world_automation_controller::WorldAutomationController,
     desktop_commands: DesktopCommandController,
 }
 
@@ -59,6 +69,7 @@ impl TruvisAppClient {
         Self {
             scene: SceneInitializer::new(initial_scene),
             editor: EditorController::new(ports.editor, EditorControllerConfig::default()),
+            automation: world_automation_controller::WorldAutomationController::new(ports.automation),
             desktop_commands: ports.desktop_commands,
         }
     }
@@ -77,6 +88,7 @@ impl RendererClient for TruvisAppClient {
             self.editor.notify_scene_version_changed(scene_version);
         }
         self.editor.process_requests(world, selection);
+        self.automation.process_requests(world);
     }
 
     fn on_selection_changed(&mut self, selection: Option<(WorldSubmeshSelection, MaterialAssetHandle)>) {
@@ -87,5 +99,6 @@ impl RendererClient for TruvisAppClient {
     fn shutdown(&mut self) {
         self.desktop_commands.shutdown();
         self.editor.shutdown();
+        self.automation.shutdown();
     }
 }
