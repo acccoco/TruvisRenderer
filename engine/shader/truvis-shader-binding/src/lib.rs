@@ -88,6 +88,12 @@ mod slang_traits {
         }
     }
 
+    impl From<Float3> for glam::Vec3 {
+        fn from(value: Float3) -> Self {
+            Self::new(value.x, value.y, value.z)
+        }
+    }
+
     impl From<glam::Vec3> for Float3 {
         fn from(value: glam::Vec3) -> Self {
             Float3 {

@@ -32,6 +32,7 @@ pub enum SceneEditError {
     /// mesh payload 不满足 scene store 的长期语义约束。
     InvalidMeshData { reason: String },
     InvalidMaterialData { reason: String },
+    InvalidLightData { reason: String },
     /// instance 的 material 列表与 mesh submesh 数量不匹配。
     MaterialCountMismatch { expected: usize, actual: usize },
 }
@@ -46,6 +47,7 @@ impl fmt::Display for SceneEditError {
             }
             Self::InvalidMeshData { reason } => write!(f, "invalid mesh data: {reason}"),
             Self::InvalidMaterialData { reason } => write!(f, "invalid material data: {reason}"),
+            Self::InvalidLightData { reason } => write!(f, "invalid light data: {reason}"),
             Self::MaterialCountMismatch { expected, actual } => {
                 write!(f, "material count mismatch: expected {expected}, got {actual}")
             }

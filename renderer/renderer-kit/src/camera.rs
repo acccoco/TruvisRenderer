@@ -67,6 +67,20 @@ impl Camera {
         glam::Mat4::perspective_infinite_rh(self.fov_deg_vertical.to_radians(), self.asp, self.near)
     }
 
+    /// 原生 viewport 物理像素投影，供 overlay 绘制与 CPU 命中共用；不含 temporal jitter。
+    pub fn project_to_viewport(&self, world_position: glam::Vec3, viewport: glam::Vec2) -> Option<glam::Vec2> {
+        if !viewport.is_finite() || viewport.min_element() <= 0.0 {
+            return None;
+        }
+        let clip = self.get_projection_matrix() * self.get_view_matrix() * world_position.extend(1.0);
+        if !clip.is_finite() || clip.w <= 0.0 || clip.z < 0.0 {
+            return None;
+        }
+        let ndc = clip.truncate() / clip.w;
+        let screen = glam::vec2((ndc.x + 1.0) * 0.5 * viewport.x, (1.0 - ndc.y) * 0.5 * viewport.y);
+        screen.is_finite().then_some(screen)
+    }
+
     pub fn render_view(&self) -> RenderView {
         RenderView::new(self.get_view_matrix(), self.get_projection_matrix(), self.position, self.camera_forward())
     }

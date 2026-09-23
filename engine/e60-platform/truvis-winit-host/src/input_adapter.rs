@@ -9,6 +9,7 @@ pub(crate) struct WinitInputAdapter;
 impl WinitInputAdapter {
     pub(crate) fn from_winit_event(event: &WindowEvent) -> InputEvent {
         match event {
+            WindowEvent::Focused(focused) => InputEvent::Focused(*focused),
             WindowEvent::CursorMoved { position, .. } => InputEvent::MouseMoved {
                 physical_position: [position.x, position.y],
             },

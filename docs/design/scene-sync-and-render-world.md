@@ -56,6 +56,10 @@ CPU 删除先检查反向引用，再移除 SceneStore/AssetSystem membership。
 
 GPU 资源按自己的 owner 延迟回收，不能把 CPU 删除直接等同于 Vulkan image/buffer 已安全释放。
 
+灯光拖拽只通过 `GameWorld::update_light_position` 修改 CPU 权威位置，并同时推进
+light revision 和 scene version。prepare 使用既有 AnalyticLightTable 完整对账，标记全部 FIF，
+当前副本上传后才进入渲染；图标 hover/selection 不修改 World，也不影响光照累计签名。
+
 ## FIF 与 capacity
 
 每个 material buffer、scene buffer 和 instance buffer 维护 per-FIF 副本。本帧只写当前 label；落后副本在再次使用前补写最新目标。

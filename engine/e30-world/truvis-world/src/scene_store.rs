@@ -10,6 +10,7 @@ use crate::components::material::MaterialData;
 use crate::edit_error::{SceneEditError, SceneHandleKind};
 use crate::guid_new_type::{MeshInstanceHandle, LightHandle, MaterialAssetHandle, MeshAssetHandle, TextureAssetHandle};
 use crate::asset_system::AssetStore;
+use crate::LightTarget;
 
 /// CPU scene 中的 sky / environment 权威状态。
 ///
@@ -104,6 +105,15 @@ impl<'a> SceneReadView<'a> {
     #[inline]
     pub fn scene_version(&self) -> u64 {
         self.scene.scene_version
+    }
+
+    /// 按带类型身份读取世界位置，不创建 transform 副本。
+    pub fn light_position(&self, target: LightTarget) -> Option<glam::Vec3> {
+        match target {
+            LightTarget::Point(handle) => self.scene.all_point_lights.get(handle).map(|light| light.pos.into()),
+            LightTarget::Spot(handle) => self.scene.all_spot_lights.get(handle).map(|light| light.pos.into()),
+            LightTarget::Area(handle) => self.scene.all_area_lights.get(handle).map(|light| light.center.into()),
+        }
     }
 
     /// 返回全部 live point light。
@@ -378,6 +388,29 @@ impl SceneStore {
         let revision = self.instance_revisions.get_mut(handle).expect("SceneStore: instance revision missing");
         *revision = revision.saturating_add(1).max(1);
         self.bump_scene_version();
+        Ok(())
+    }
+
+    /// 修改位置不改变灯光形状；只有实际变化才使 GPU 灯光快照与 Editor 投影失效。
+    pub fn update_light_position(&mut self, target: LightTarget, position: glam::Vec3) -> Result<(), SceneEditError> {
+        let stored = match target {
+            LightTarget::Point(handle) => self.all_point_lights.get_mut(handle).map(|light| &mut light.pos),
+            LightTarget::Spot(handle) => self.all_spot_lights.get_mut(handle).map(|light| &mut light.pos),
+            LightTarget::Area(handle) => self.all_area_lights.get_mut(handle).map(|light| &mut light.center),
+        }
+        .ok_or(SceneEditError::StaleHandle {
+            kind: SceneHandleKind::Light,
+        })?;
+        if !position.is_finite() {
+            return Err(SceneEditError::InvalidLightData {
+                reason: "position must be finite".into(),
+            });
+        }
+        if glam::Vec3::from(*stored) != position {
+            *stored = position.into();
+            self.bump_light_revision();
+            self.bump_scene_version();
+        }
         Ok(())
     }
 

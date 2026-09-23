@@ -9,6 +9,8 @@ pub struct InputState {
     pub left_button_pressed: bool,
     pub left_button_just_pressed: bool,
     pub left_button_just_released: bool,
+    /// 同帧后续 MouseMoved 不得改变按下命中点，否则快速拖动可能选中背景网格。
+    pub left_button_press_position: [f64; 2],
     pub right_button_pressed: bool,
     pub middle_button_pressed: bool,
     pub middle_button_just_pressed: bool,
@@ -18,6 +20,23 @@ pub struct InputState {
 }
 
 impl InputState {
+    /// 相机手势占用时不启动对象选择。
+    pub fn is_navigating(&self) -> bool {
+        self.right_button_pressed
+            || self.middle_button_pressed
+            || self.mouse_wheel_delta != 0.0
+            || [
+                KeyCode::KeyW,
+                KeyCode::KeyA,
+                KeyCode::KeyS,
+                KeyCode::KeyD,
+                KeyCode::KeyQ,
+                KeyCode::KeyE,
+            ]
+            .into_iter()
+            .any(|key| self.is_key_pressed(key))
+    }
+
     pub fn is_key_pressed(&self, key_code: KeyCode) -> bool {
         self.key_pressed.get(&key_code).copied().unwrap_or(false)
     }
@@ -80,6 +99,15 @@ impl InputManager {
         &self.state
     }
 
+    pub fn reset(&mut self) {
+        let position = self.state.crt_mouse_pos;
+        self.state = InputState {
+            crt_mouse_pos: position,
+            last_mouse_pos: position,
+            ..Default::default()
+        };
+    }
+
     pub fn begin_frame(&mut self) {
         self.state.last_mouse_pos = self.state.crt_mouse_pos;
         self.state.left_button_just_pressed = false;
@@ -91,6 +119,7 @@ impl InputManager {
 
     pub fn process_event(&mut self, event: &InputEvent) {
         match event {
+            InputEvent::Focused(false) | InputEvent::Resized { .. } => self.reset(),
             InputEvent::KeyboardInput { key_code, state } => {
                 self.state.key_pressed.insert(*key_code, *state == ElementState::Pressed);
             }
@@ -100,6 +129,9 @@ impl InputManager {
                     MouseButton::Left => {
                         if pressed {
                             self.state.left_button_just_pressed = !self.state.left_button_pressed;
+                            if self.state.left_button_just_pressed {
+                                self.state.left_button_press_position = self.state.crt_mouse_pos;
+                            }
                             self.state.left_button_pressed = true;
                         } else {
                             self.state.left_button_just_released = self.state.left_button_pressed;
@@ -127,7 +159,7 @@ impl InputManager {
             InputEvent::MouseWheel { delta } => {
                 self.state.mouse_wheel_delta += *delta;
             }
-            InputEvent::Resized { .. } | InputEvent::Other => {}
+            InputEvent::Focused(true) | InputEvent::Other => {}
         }
     }
 }

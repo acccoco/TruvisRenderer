@@ -13,6 +13,7 @@ mod asset_system;
 pub mod components;
 mod edit_error;
 pub mod guid_new_type;
+mod light_target;
 pub mod procedural_mesh;
 mod scene_store;
 
@@ -23,6 +24,7 @@ pub use crate::edit_error::{SceneEditError, SceneHandleKind, WorldEditError};
 use crate::guid_new_type::{
     LightHandle, MaterialAssetHandle, MeshAssetHandle, MeshInstanceHandle, SceneImportHandle, TextureAssetHandle,
 };
+pub use crate::light_target::LightTarget;
 use crate::scene_store::SceneStore;
 pub use crate::scene_store::{SceneReadView, SceneSkyState};
 
@@ -258,6 +260,12 @@ impl GameWorld {
     /// 移除一个 CPU runtime instance。
     pub fn remove_mesh_instance(&mut self, handle: MeshInstanceHandle) -> Result<(), WorldEditError> {
         self.scene.remove_instance(handle).map_err(Into::into)
+    }
+
+    /// 修改灯光世界位置，保留形状参数并推进场景和灯光版本。
+    pub fn update_light_position(&mut self, target: LightTarget, position: glam::Vec3) -> Result<(), WorldEditError> {
+        self.scene.update_light_position(target, position)?;
+        Ok(())
     }
 
     /// 注册 point light。

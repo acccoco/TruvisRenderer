@@ -7,7 +7,7 @@
 `GameWorld`/`SceneStore` 是 CPU scene、material、sky、light 和 instance 的唯一权威。WebView 只保存可丢弃的展示投影；Renderer selection 是 CPU handle 语义，不是 GPU slot。
 
 Transform gizmo 的移动由 Renderer 在 update 阶段直接提交到 `GameWorld`，不新增 gizmo 专用 notification。
-Editor 通过既有的 `scene_version` 和 instance details 主动查询获得最新 transform；现有 selection 等业务通知仍按原有职责工作。
+Editor 通过既有的 `scene_version` 和 instance/light details 主动查询获得最新 transform/position；现有 selection 等业务通知仍按原有职责工作。
 
 ```mermaid
 flowchart LR
@@ -55,7 +55,11 @@ App RenderThread Client 将 DTO handle 还原为强类型 World handle，校验�
 
 WebView 的草稿 revision 用于区分本地未确认输入和服务器回包；过期 response 不能覆盖新草稿。查询不能自动清除仍有效的 validation error。
 
-selection 由 Renderer 在 after_prepare 取得 GPU raycast 结果后更新，并发送通知；WebView 同时保留主动查询，避免通知丢失导致永久过期。
+selection 由 Renderer 唯一持有：灯光图标在 update 通过 CPU 屏幕命中更新，网格在 after_prepare
+取得 GPU raycast 结果后更新。两者共用 tagged selection DTO 与通知；灯光 ID 包含类别和 generation。
+WebView 定期查询 selection，通知丢失时无需依赖 scene version 变化即可恢复。
+灯光详情只提供类型、身份和位置；切换灯光时使旧 instance/material 请求失效，旧回包不能覆盖当前 Inspector。
+ScenePanel 独立查看网格的行为仍保留，不反向改变 Renderer selection。
 
 ## 特权命令
 

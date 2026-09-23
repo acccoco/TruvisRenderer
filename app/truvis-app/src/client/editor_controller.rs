@@ -11,9 +11,11 @@ use truvis_editor_bridge::protocol::{
     MeshSummaryDto, SceneObjectSummary, SceneObjectsPage, SceneVersion, SelectionDto, TextureId, TextureMappingDto,
     TextureSlotDto,
 };
+use truvis_editor_bridge::protocol::{LightDetailsDto, LightId, LightKindDto};
 use truvis_editor_bridge::{EditorRendererEndpoint, EditorRequestEnvelope};
-use truvis_render_runtime::selection::WorldSubmeshSelection;
+use truvis_renderer::{SceneSelection, SelectionChange};
 use truvis_world::GameWorld;
+use truvis_world::LightTarget;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
 use truvis_world::guid_new_type::{MaterialAssetHandle, MeshAssetHandle, MeshInstanceHandle, TextureAssetHandle};
 
@@ -55,7 +57,7 @@ impl EditorController {
     }
 
     /// 按单帧预算处理 Query / Command。
-    pub(crate) fn process_requests(&mut self, world: &mut GameWorld, selection: Option<WorldSubmeshSelection>) {
+    pub(crate) fn process_requests(&mut self, world: &mut GameWorld, selection: Option<SceneSelection>) {
         let started_at = Instant::now();
         for _ in 0..self.config.max_requests_per_frame {
             if started_at.elapsed() >= self.config.max_time_per_frame {
@@ -73,7 +75,7 @@ impl EditorController {
     fn process_request(
         &self,
         world: &mut GameWorld,
-        selection: Option<WorldSubmeshSelection>,
+        selection: Option<SceneSelection>,
         envelope: EditorRequestEnvelope,
     ) {
         let EditorRequestEnvelope { request, reply } = envelope;
@@ -92,15 +94,55 @@ impl EditorController {
 }
 
 impl WorldSceneAdapter {
+    fn light_identity(target: LightTarget) -> (LightId, LightKindDto) {
+        let (prefix, handle, kind) = match target {
+            LightTarget::Point(handle) => ("point", handle, LightKindDto::Point),
+            LightTarget::Spot(handle) => ("spot", handle, LightKindDto::Spot),
+            LightTarget::Area(handle) => ("area", handle, LightKindDto::Area),
+        };
+        (LightId(Self::encode_key(prefix, handle)), kind)
+    }
+
+    fn light_selection_dto(target: LightTarget) -> SelectionDto {
+        let (light_id, kind) = Self::light_identity(target);
+        SelectionDto::Light { light_id, kind }
+    }
+
+    fn light_details(world: &GameWorld, light_id: LightId) -> EditorResponse {
+        let prefix = light_id.0.split_once(':').map(|(prefix, _)| prefix).unwrap_or("");
+        let target = match prefix {
+            "point" => Self::decode_key("point", &light_id.0).map(LightTarget::Point),
+            "spot" => Self::decode_key("spot", &light_id.0).map(LightTarget::Spot),
+            "area" => Self::decode_key("area", &light_id.0).map(LightTarget::Area),
+            _ => return Self::error(EditorErrorCode::InvalidRequest, "invalid light ID kind"),
+        };
+        let target = match target {
+            Ok(value) => value,
+            Err(error) => return EditorResponse::Error(error),
+        };
+        let scene = world.scene_view();
+        let Some(position) = scene.light_position(target) else {
+            return Self::error(EditorErrorCode::StaleObject, "light ID is no longer valid");
+        };
+        let (_, kind) = Self::light_identity(target);
+        EditorResponse::LightDetails(LightDetailsDto {
+            scene_version: SceneVersion::from_u64(scene.scene_version()),
+            light_id,
+            kind,
+            position: position.to_array(),
+        })
+    }
+
     pub(crate) fn handle_query(
         world: &GameWorld,
-        selection: Option<WorldSubmeshSelection>,
+        selection: Option<SceneSelection>,
         query: EditorQuery,
     ) -> EditorResponse {
         match query {
             EditorQuery::GetSceneVersion => {
                 EditorResponse::SceneVersion(SceneVersion::from_u64(world.scene_view().scene_version()))
             }
+            EditorQuery::GetLightDetails { light_id } => Self::light_details(world, light_id),
             EditorQuery::GetSelection => EditorResponse::Selection(Self::selection_dto(world, selection)),
             EditorQuery::GetSceneObjects {
                 offset,
@@ -252,11 +294,18 @@ impl WorldSceneAdapter {
         })
     }
 
-    fn selection_dto(world: &GameWorld, selection: Option<WorldSubmeshSelection>) -> Option<SelectionDto> {
-        let selection = selection?;
-        let instance = world.scene_view().get_instance(selection.instance)?;
-        let material = *instance.materials.get(selection.submesh_index as usize)?;
-        Some(WorldSceneAdapter::selection_dto_from_handles(selection.instance, selection.submesh_index, material))
+    fn selection_dto(world: &GameWorld, selection: Option<SceneSelection>) -> Option<SelectionDto> {
+        match selection? {
+            SceneSelection::Submesh(selection) => {
+                let instance = world.scene_view().get_instance(selection.instance)?;
+                let material = *instance.materials.get(selection.submesh_index as usize)?;
+                Some(Self::selection_dto_from_handles(selection.instance, selection.submesh_index, material))
+            }
+            SceneSelection::Light(target) => {
+                world.scene_view().light_position(target)?;
+                Some(Self::light_selection_dto(target))
+            }
+        }
     }
 
     pub(crate) fn material_dto(world: &GameWorld, handle: MaterialAssetHandle) -> Option<MaterialDto> {
@@ -437,9 +486,12 @@ impl EditorController {
             .try_send_notification(EditorNotification::SceneVersionChanged(SceneVersion::from_u64(scene_version)));
     }
 
-    pub(crate) fn notify_selection_changed(&self, selection: Option<(MeshInstanceHandle, u32, MaterialAssetHandle)>) {
-        let selection = selection.map(|(instance, submesh_index, material)| {
-            WorldSceneAdapter::selection_dto_from_handles(instance, submesh_index, material)
+    pub(crate) fn notify_selection_changed(&self, selection: Option<SelectionChange>) {
+        let selection = selection.map(|change| match change {
+            SelectionChange::Submesh { selection, material } => {
+                WorldSceneAdapter::selection_dto_from_handles(selection.instance, selection.submesh_index, material)
+            }
+            SelectionChange::Light(target) => WorldSceneAdapter::light_selection_dto(target),
         });
         let _ = self.endpoint.try_send_notification(EditorNotification::SelectionChanged(selection));
     }
@@ -455,7 +507,7 @@ impl WorldSceneAdapter {
         submesh_index: u32,
         material: MaterialAssetHandle,
     ) -> SelectionDto {
-        SelectionDto {
+        SelectionDto::Submesh {
             instance_id: Self::encode_instance_id(instance),
             submesh_index,
             material_id: Self::encode_material_id(material),

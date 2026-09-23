@@ -1,0 +1,10 @@
+#pragma once
+
+namespace renderer { namespace render_passes { namespace light_overlay {
+/// 固定 vertex input record：两个 float4，offset 为 0/16，stride 为 32 bytes。
+struct Vertex
+{
+    float4 position;
+    float4 color;
+};
+}}}

@@ -81,10 +81,10 @@ impl TransformGizmoFrame {
         }
 
         let axis_ws = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z];
-        let projected_origin = Self::project(origin_ws, camera, viewport)?;
+        let projected_origin = camera.project_to_viewport(origin_ws, viewport)?;
         let projected_axes = Axis::all().map(|axis| {
             let endpoint = origin_ws + axis.direction() * axis_length_ws;
-            Some((projected_origin, Self::project(endpoint, camera, viewport)?))
+            Some((projected_origin, camera.project_to_viewport(endpoint, viewport)?))
         });
 
         Some(Self {
@@ -93,18 +93,6 @@ impl TransformGizmoFrame {
             axis_length_ws,
             projected_axes,
         })
-    }
-
-    fn project(world_position: glam::Vec3, camera: &Camera, viewport: glam::Vec2) -> Option<glam::Vec2> {
-        let clip = camera.get_projection_matrix() * camera.get_view_matrix() * world_position.extend(1.0);
-        if !clip.is_finite() || clip.w <= f32::EPSILON {
-            return None;
-        }
-        let ndc = clip.truncate() / clip.w;
-        if !ndc.is_finite() {
-            return None;
-        }
-        Some(glam::vec2((ndc.x + 1.0) * 0.5 * viewport.x, (1.0 - ndc.y) * 0.5 * viewport.y))
     }
 
     fn screen_ray(camera: &Camera, screen_pos: glam::Vec2, viewport: glam::Vec2) -> Option<GizmoRay> {
@@ -258,7 +246,7 @@ impl TransformGizmoSubsystem {
         input: &InputState,
         viewport: glam::Vec2,
     ) -> TransformGizmoUpdate {
-        // update 阶段只计算输入结果；具体 MeshInstance mutation 由 TruvisRenderer 编排。
+        // update 阶段只计算输入结果；具体场景 mutation 由 TruvisRenderer 编排。
         let Some(transform) = target_transform.filter(|transform| transform.is_finite()) else {
             self.frame = None;
             return TransformGizmoUpdate {
@@ -280,63 +268,21 @@ impl TransformGizmoSubsystem {
 
         let mouse_position = input.mouse_position();
         let mouse_pos = glam::vec2(mouse_position[0] as f32, mouse_position[1] as f32);
-        if let Some(axis) = self.state.active_axis {
-            if input.is_left_button_just_released() || !input.is_left_button_pressed() {
-                self.state.active_axis = None;
-                self.state.drag = None;
-                self.state.hovered_axis = None;
-                return TransformGizmoUpdate {
-                    drag_finished: true,
-                    scene_pick_allowed: false,
-                    ..Default::default()
-                };
-            }
-
-            let Some(drag) = self.state.drag.as_ref() else {
-                self.state.active_axis = None;
-                return TransformGizmoUpdate {
-                    drag_finished: true,
-                    scene_pick_allowed: false,
-                    ..Default::default()
-                };
-            };
-            let Some(current_parameter) =
-                frame.axis_parameter_from_pivot(drag.pivot_ws, axis, camera, mouse_pos, viewport)
-            else {
-                return TransformGizmoUpdate {
-                    scene_pick_allowed: false,
-                    ..Default::default()
-                };
-            };
-            if !drag.pivot_ws.is_finite() {
-                return TransformGizmoUpdate {
-                    scene_pick_allowed: false,
-                    ..Default::default()
-                };
-            }
-            let delta = current_parameter - drag.start_parameter;
-            let new_transform = glam::Mat4::from_translation(drag.axis_ws * delta) * drag.initial_transform;
-            if !new_transform.is_finite() {
-                return TransformGizmoUpdate {
-                    scene_pick_allowed: false,
-                    ..Default::default()
-                };
-            }
-            if let Some(updated_frame) = TransformGizmoFrame::new(new_transform, camera, viewport) {
-                self.frame = Some(updated_frame);
-            }
-            return TransformGizmoUpdate {
-                transform: Some(new_transform),
-                scene_pick_allowed: false,
-                ..Default::default()
-            };
+        if self.state.active_axis.is_some() {
+            return self.update_drag(camera, input, viewport, mouse_pos);
         }
 
-        self.state.hovered_axis = self.frame.as_ref().and_then(|frame| frame.hit_axis(mouse_pos));
+        let hit_position = if input.is_left_button_just_pressed() {
+            let position = input.left_button_press_position;
+            glam::vec2(position[0] as f32, position[1] as f32)
+        } else {
+            mouse_pos
+        };
+        self.state.hovered_axis = self.frame.as_ref().and_then(|frame| frame.hit_axis(hit_position));
         if input.is_left_button_just_pressed() {
             if let Some(axis) = self.state.hovered_axis {
                 if let Some(start_parameter) =
-                    self.frame.as_ref().and_then(|frame| frame.axis_parameter(axis, camera, mouse_pos, viewport))
+                    self.frame.as_ref().and_then(|frame| frame.axis_parameter(axis, camera, hit_position, viewport))
                 {
                     self.state.active_axis = Some(axis);
                     self.state.drag = Some(AxisDragState {
@@ -345,11 +291,9 @@ impl TransformGizmoSubsystem {
                         axis_ws: axis.direction(),
                         start_parameter,
                     });
-                    return TransformGizmoUpdate {
-                        drag_started: true,
-                        scene_pick_allowed: false,
-                        ..Default::default()
-                    };
+                    let mut update = self.update_drag(camera, input, viewport, mouse_pos);
+                    update.drag_started = true;
+                    return update;
                 }
             }
         }
@@ -358,6 +302,42 @@ impl TransformGizmoSubsystem {
             scene_pick_allowed: true,
             ..Default::default()
         }
+    }
+
+    /// 松开所在帧仍提交最终位置；按下与松开合并到同帧时也只消费一次交互。
+    fn update_drag(
+        &mut self,
+        camera: &Camera,
+        input: &InputState,
+        viewport: glam::Vec2,
+        mouse_pos: glam::Vec2,
+    ) -> TransformGizmoUpdate {
+        let transform = self.state.active_axis.zip(self.state.drag.as_ref()).and_then(|(axis, drag)| {
+            let parameter =
+                self.frame.as_ref()?.axis_parameter_from_pivot(drag.pivot_ws, axis, camera, mouse_pos, viewport)?;
+            let transform = glam::Mat4::from_translation(drag.axis_ws * (parameter - drag.start_parameter))
+                * drag.initial_transform;
+            transform.is_finite().then_some(transform)
+        });
+        if let Some(transform) = transform {
+            self.refresh_frame(Some(transform), camera, viewport);
+        }
+        let finished =
+            input.is_left_button_just_released() || !input.is_left_button_pressed() || self.state.drag.is_none();
+        if finished {
+            self.state = TransformGizmoState::default();
+        }
+        TransformGizmoUpdate {
+            transform,
+            drag_finished: finished,
+            scene_pick_allowed: false,
+            ..Default::default()
+        }
+    }
+
+    /// 只刷新展示，不重复消费选择灯光的同一次鼠标按下。
+    pub(crate) fn refresh_frame(&mut self, transform: Option<glam::Mat4>, camera: &Camera, viewport: glam::Vec2) {
+        self.frame = transform.and_then(|value| TransformGizmoFrame::new(value, camera, viewport));
     }
 
     pub(crate) fn cancel_drag(&mut self) -> bool {

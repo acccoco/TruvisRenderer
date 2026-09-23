@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::protocol::{
-    EditorError, InstanceDetailsDto, InstanceId, MaterialDto, MaterialId, MaterialPatch, SceneObjectsPage,
-    SceneVersion, SelectionDto,
+    EditorError, InstanceDetailsDto, InstanceId, LightDetailsDto, LightId, MaterialDto, MaterialId, MaterialPatch,
+    SceneObjectsPage, SceneVersion, SelectionDto,
 };
 
 /// 不修改 GameWorld 的 Editor 查询。
@@ -13,6 +13,9 @@ use crate::protocol::{
 pub enum EditorQuery {
     GetSceneVersion,
     GetSelection,
+    GetLightDetails {
+        light_id: LightId,
+    },
     GetSceneObjects {
         offset: u32,
         limit: u16,
@@ -53,6 +56,7 @@ pub enum EditorRequest {
 pub enum EditorResponse {
     SceneVersion(SceneVersion),
     Selection(Option<SelectionDto>),
+    LightDetails(LightDetailsDto),
     SceneObjects(SceneObjectsPage),
     InstanceDetails(InstanceDetailsDto),
     Material(MaterialDto),

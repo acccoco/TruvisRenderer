@@ -31,6 +31,7 @@ export class MockEditorTransport implements EditorTransport {
     emissive_factor: [0, 0, 0],
   };
   private readonly selection: SelectionDto = {
+    type: 'submesh',
     instance_id: MOCK_INSTANCE_ID,
     submesh_index: 1,
     material_id: MOCK_MATERIAL_ID,
@@ -82,6 +83,8 @@ export class MockEditorTransport implements EditorTransport {
     switch (request.payload.type) {
       case 'get_scene_version':
         return { type: 'scene_version', payload: String(this.sceneVersion) };
+      case 'get_light_details':
+        return { type: 'light_details', payload: { scene_version: String(this.sceneVersion), light_id: request.payload.light_id, kind: 'point', position: [0, 1, 0] } };
       case 'get_selection':
         return { type: 'selection', payload: this.selection };
       case 'get_instance_details': {

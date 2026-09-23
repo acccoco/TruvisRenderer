@@ -6,6 +6,7 @@
 mod automation;
 mod error;
 mod ids;
+mod light;
 mod material;
 mod message;
 mod scene;
@@ -17,6 +18,7 @@ pub use automation::{
 };
 pub use error::{EditorError, EditorErrorCode};
 pub use ids::{InstanceId, MaterialId, MeshId, SceneVersion, TextureId};
+pub use light::{LightDetailsDto, LightId, LightKindDto};
 pub use material::{
     CoverageModeDto, MaterialClassDto, MaterialDto, MaterialPatch, TextureMappingDto, TextureMappingPatch,
     TextureSlotDto,

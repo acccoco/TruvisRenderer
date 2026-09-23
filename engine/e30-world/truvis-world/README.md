@@ -55,6 +55,14 @@ pub enum AssetSource {
 内部 image index。`AssetSource + TextureColorSpace` 是唯一 texture 去重 key，handle 只表示
 资源本身，source metadata 用于诊断、重载和持久化。
 
+## 灯光位置编辑
+
+`LightTarget::{Point, Spot, Area}(LightHandle)` 显式区分三个独立 SlotMap 的身份，裸 key 不可跨类型查询。
+`SceneReadView::light_position` 按类型读取位置；`GameWorld::update_light_position` 只修改 pos/center，
+保留方向、角度、半轴和辐射参数。失效 handle 或非有限位置拒绝写入；相同位置不推进版本。
+实际变化同时推进 scene version 和 light revision，由既有 AnalyticLightTable 对账并上传 FIF 快照。
+World 不保存 gizmo transform、图标尺寸或辅助显示范围。
+
 ## 删除与生命周期
 
 `SceneStore` 先检查 live instance/sky 引用，`AssetStore` 检查 material/texture 依赖，

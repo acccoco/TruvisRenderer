@@ -37,13 +37,18 @@ scene / ray tracing or raster
 -> denoise or temporal pass when enabled
 -> DLSS / upscale when enabled
 -> tone mapping / SDR
--> selection outline / gizmo / GUI
+-> selection outline / light overlay / transform gizmo / coordinate gizmo / GUI
 -> present
 ```
 
 实际 pass 可能按 RenderMode 变化。顺序的设计依据是读写依赖和最终输出契约，不是 subsystem 注册顺序。
 
 RT、raster 和 GUI 可以共享 scene view，但不能把“加入 graph”理解为资源所有权转移。每个 pass 只声明自己需要的读写范围。
+
+灯光 overlay 在两种 RenderMode 的主图 resolve 后使用同一编排入口。图标和线框仅对
+present image 声明 COLOR_ATTACHMENT_READ_WRITE，不读取深度、不写累计历史。
+投影和 CPU 命中共用最终 viewport 物理像素快照，辅助线段裁剪 near plane 后才展开。
+GPU vertex buffer 按 FIF 分开管理，只在当前 label 已等待完成后上传，pass 不自行提交。
 
 ## 状态推导
 

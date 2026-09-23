@@ -34,7 +34,7 @@ Rust 协议类型定义在 `renderer/editor/truvis-editor-bridge/src/protocol/`�
 - Renderer 每帧最多处理 `32` 条、最多使用 `500 μs`，只在 update 阶段访问 `GameWorld`。
 - notification outbox 容量为 `64`，队列满时允许丢弃。
 - `../truvis-app/capabilities/main-editor.json` 只允许 `main` WebView listen/unlisten notification event。
-- 页面保留一秒 `scene_version` 轮询，以恢复刷新或事件丢失造成的投影失效。
+- 页面保留一秒 `scene_version` 与 selection 轮询，以恢复刷新或事件丢失造成的投影失效。
 
 `Choose HDRI` 是 Tauri-only 平台动作：完整 `PathBuf` 只经过 App/Renderer 之间的私有队列，WebView
 只接收文件名和 accepted/cancelled/error。accepted 不表示 decode、GPU upload 或 Alias distribution 已完成。
@@ -47,6 +47,10 @@ Rotation 为 intrinsic XYZ Euler 角度。矩阵分解及角度转换由 `truvis
 `?mock=1` 的最后一个 instance 提供不可分解示例，其余 instance 提供正常 TRS 投影。
 
 ## 构建与开发
+
+灯光 selection 使用带类型的 opaque LightId；`GetLightDetails` 只查询类型、身份与世界位置。
+选中灯光后显示只读 Light Inspector，并使旧 instance/material 查询失效。位置更新通过 scene version
+刷新，不增加拖动专用协议。ScenePanel 仍可独立查看网格，灯光创建与参数编辑不在此接口范围内。
 
 从仓库根目录执行：
 

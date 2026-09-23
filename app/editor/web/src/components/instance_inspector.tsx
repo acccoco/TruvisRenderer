@@ -1,3 +1,4 @@
+import { TransformValues } from './transform_values';
 import type { InstanceDetailsDto } from '../protocol/generated';
 import type { InstanceDetailsStatus } from '../state/use_editor_session';
 
@@ -49,17 +50,7 @@ export function InstanceInspector({ details, status }: InstanceInspectorProps) {
                   <div className="transform-row" key={label}>
                     <dt>{label}{hint && <small>{hint}</small>}</dt>
                     <dd>
-                      {values.map((value, index) => {
-                        const axis = ['X', 'Y', 'Z'][index];
-                        const formatted = value.toFixed(4);
-                        const text = `${formatted === '-0.0000' ? '0.0000' : formatted}${unit}`;
-                        return (
-                          <div className="transform-axis" key={axis}>
-                            <span aria-hidden="true">{axis}</span>
-                            <output aria-label={`${label} ${axis}`} title={text}>{text}</output>
-                          </div>
-                        );
-                      })}
+                      <TransformValues label={label} values={values} unit={unit} />
                     </dd>
                   </div>
                 ))}

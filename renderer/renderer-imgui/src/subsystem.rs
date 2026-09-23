@@ -69,6 +69,10 @@ impl ImGuiSubsystem {
         }
     }
 
+    pub fn captures_mouse(&self) -> bool {
+        self.imgui_ctx.io().want_capture_mouse
+    }
+
     pub fn set_hidpi_factor(&mut self, factor: f64) {
         self.hidpi_factor = factor;
     }
@@ -108,6 +112,18 @@ impl ImGuiSubsystem {
                 io.want_capture_mouse
             }
             InputEvent::KeyboardInput { .. } => io.want_capture_keyboard,
+            InputEvent::Focused(focused) => {
+                if !focused {
+                    for button in [
+                        imgui::MouseButton::Left,
+                        imgui::MouseButton::Right,
+                        imgui::MouseButton::Middle,
+                    ] {
+                        io.add_mouse_button_event(button, false);
+                    }
+                }
+                false
+            }
             InputEvent::Other => false,
         }
     }

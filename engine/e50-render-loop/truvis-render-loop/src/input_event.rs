@@ -65,6 +65,8 @@ pub enum KeyCode {
 /// swapchain 重建仍由 render loop 的 latest-size 路径驱动。
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputEvent {
+    /// 失焦必须终止持续按键和拖拽，不能等待可能丢失的松键事件。
+    Focused(bool),
     /// 键盘按键状态变化。
     KeyboardInput { key_code: KeyCode, state: ElementState },
     /// 鼠标按键状态变化。

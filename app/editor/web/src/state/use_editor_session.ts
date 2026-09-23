@@ -7,6 +7,7 @@ import type {
   EditorRequest,
   EditorResponse,
   InstanceDetailsDto,
+  LightDetailsDto,
   MaterialDto,
   MaterialPatch,
   SceneObjectSummary,
@@ -24,6 +25,8 @@ export interface EditorSessionState {
   objects: SceneObjectSummary[];
   inspectedInstanceId: string | null;
   instanceDetails: InstanceDetailsDto | null;
+  inspectedLightId: string | null;
+  lightDetails: LightDetailsDto | null;
   instanceDetailsStatus: InstanceDetailsStatus;
   material: MaterialDto | null;
   draft: MaterialDto | null;
@@ -39,6 +42,7 @@ type Action =
   | { type: 'sceneVersion'; value: string }
   | { type: 'selection'; value: SelectionDto | null }
   | { type: 'objects'; value: { objects: SceneObjectSummary[]; sceneVersion: string } }
+  | { type: 'lightDetails'; value: LightDetailsDto | null; lightId: string }
   | { type: 'instanceDetailsStart'; instanceId: string }
   | { type: 'instanceDetailsReady'; value: InstanceDetailsDto }
   | { type: 'instanceDetailsStale'; instanceId: string }
@@ -56,6 +60,8 @@ const initialState: EditorSessionState = {
   objects: [],
   inspectedInstanceId: null,
   instanceDetails: null,
+  inspectedLightId: null,
+  lightDetails: null,
   instanceDetailsStatus: 'idle',
   material: null,
   draft: null,
@@ -73,10 +79,16 @@ function reducer(state: EditorSessionState, action: Action): EditorSessionState 
     case 'sceneVersion':
       return { ...state, sceneVersion: action.value };
     case 'selection': {
-      const keepsMaterial = state.selection?.material_id === action.value?.material_id;
+      const keepsMaterial = state.selection?.type === 'submesh' && action.value?.type === 'submesh'
+        && state.selection.material_id === action.value.material_id;
+      const lightId = action.value?.type === 'light' ? action.value.light_id : null;
+      const previousLightId = state.selection?.type === 'light' ? state.selection.light_id : null;
+      const lightChanged = lightId !== previousLightId;
       return {
         ...state,
         selection: action.value,
+        ...(lightChanged ? { inspectedLightId: lightId, lightDetails: null } : {}),
+        ...(lightChanged && lightId ? { inspectedInstanceId: null, instanceDetails: null, instanceDetailsStatus: 'idle' as const } : {}),
         material: keepsMaterial ? state.material : null,
         draft: keepsMaterial ? state.draft : null,
         dirty: keepsMaterial ? state.dirty : false,
@@ -88,16 +100,21 @@ function reducer(state: EditorSessionState, action: Action): EditorSessionState 
         objects: action.value.objects,
         sceneVersion: action.value.sceneVersion,
       };
+    case 'lightDetails':
+      return state.inspectedLightId === action.lightId ? { ...state, lightDetails: action.value } : state;
     case 'instanceDetailsStart': {
       const sameInstance = state.inspectedInstanceId === action.instanceId;
       return {
         ...state,
         inspectedInstanceId: action.instanceId,
+        inspectedLightId: null,
+        lightDetails: null,
         instanceDetails: sameInstance ? state.instanceDetails : null,
         instanceDetailsStatus: 'loading',
       };
     }
     case 'instanceDetailsReady':
+      if (state.inspectedInstanceId !== action.value.instance_id) return state;
       return {
         ...state,
         inspectedInstanceId: action.value.instance_id,
@@ -113,7 +130,7 @@ function reducer(state: EditorSessionState, action: Action): EditorSessionState 
         ? { ...state, instanceDetails: null, instanceDetailsStatus: 'error' }
         : state;
     case 'material': {
-      if (action.value && action.value.id !== state.selection?.material_id) return state;
+      if (action.value && (state.selection?.type !== 'submesh' || action.value.id !== state.selection.material_id)) return state;
       // 查询和较早提交的回包不能覆盖同一材质的后续输入；只有对应草稿的确认才能清除 dirty。
       const keepDraft = state.dirty && state.draft?.id === action.value?.id
         && action.acknowledgedDraftRevision !== state.draftRevision;
@@ -155,6 +172,10 @@ export function useEditorSession(): EditorSession {
   const inspectedInstanceIdRef = useRef<string | null>(null);
   const instanceDetailsRequestSequenceRef = useRef(0);
   const materialRequestSequenceRef = useRef(0);
+  const lightDetailsRequestSequenceRef = useRef(0);
+  const inspectedLightIdRef = useRef<string | null>(null);
+  const selectionRef = useRef<SelectionDto | null>(null);
+  const selectionEpochRef = useRef(0);
   const materialCommandSequenceRef = useRef(0);
   const draftRevisionRef = useRef(0);
 
@@ -164,7 +185,8 @@ export function useEditorSession(): EditorSession {
 
   useEffect(() => {
     inspectedInstanceIdRef.current = state.inspectedInstanceId;
-  }, [state.inspectedInstanceId]);
+    inspectedLightIdRef.current = state.inspectedLightId;
+  }, [state.inspectedInstanceId, state.inspectedLightId]);
 
   const request = useCallback(
     async (requestValue: EditorRequest): Promise<EditorResponse> => {
@@ -192,7 +214,7 @@ export function useEditorSession(): EditorSession {
   const loadMaterial = useCallback(
     async (selection: SelectionDto | null) => {
       const sequence = ++materialRequestSequenceRef.current;
-      if (!selection) {
+      if (selection?.type !== 'submesh') {
         dispatch({ type: 'material', value: null });
         return;
       }
@@ -214,6 +236,8 @@ export function useEditorSession(): EditorSession {
     async (instanceId: string) => {
       const requestSequence = ++instanceDetailsRequestSequenceRef.current;
       inspectedInstanceIdRef.current = instanceId;
+      inspectedLightIdRef.current = null;
+      ++lightDetailsRequestSequenceRef.current;
       dispatch({ type: 'instanceDetailsStart', instanceId });
       try {
         const response = await query({ type: 'get_instance_details', instance_id: instanceId });
@@ -238,6 +262,41 @@ export function useEditorSession(): EditorSession {
     },
     [query],
   );
+
+  const loadLightDetails = useCallback(async (lightId: string) => {
+    const sequence = ++lightDetailsRequestSequenceRef.current;
+    try {
+      const response = await query({ type: 'get_light_details', light_id: lightId });
+      if (sequence !== lightDetailsRequestSequenceRef.current) return;
+      if (response.type !== 'light_details') throw new Error('Unexpected light details response');
+      dispatch({ type: 'lightDetails', lightId, value: response.payload });
+    } catch (error) {
+      if (sequence !== lightDetailsRequestSequenceRef.current) return;
+      dispatch({ type: 'lightDetails', lightId, value: null });
+      dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
+    }
+  }, [query]);
+
+  // 通知和主动查询共用入口；改变身份时先使在途详情请求失效。
+  const acceptSelection = useCallback((selection: SelectionDto | null) => {
+    const changed = JSON.stringify(selectionRef.current) !== JSON.stringify(selection);
+    if (changed) {
+      ++selectionEpochRef.current;
+      ++materialRequestSequenceRef.current;
+      ++materialCommandSequenceRef.current;
+      ++lightDetailsRequestSequenceRef.current;
+      if (selection?.type === 'light') {
+        ++instanceDetailsRequestSequenceRef.current;
+        inspectedInstanceIdRef.current = null;
+        inspectedLightIdRef.current = selection.light_id;
+      } else {
+        inspectedLightIdRef.current = null;
+      }
+    }
+    selectionRef.current = selection;
+    dispatch({ type: 'selection', value: selection });
+    return changed;
+  }, []);
 
   const loadAllSceneObjects = useCallback(async () => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -276,30 +335,37 @@ export function useEditorSession(): EditorSession {
   }, [query]);
 
   const refreshProjection = useCallback(async () => {
+    const epoch = selectionEpochRef.current;
     try {
       const [selection, objects] = await Promise.all([
         query({ type: 'get_selection' }),
         loadAllSceneObjects(),
       ]);
       dispatch({ type: 'objects', value: objects });
-      if (selection.type === 'selection') {
-        dispatch({ type: 'selection', value: selection.payload });
+      if (selection.type === 'selection' && epoch === selectionEpochRef.current) {
+        acceptSelection(selection.payload);
         await loadMaterial(selection.payload);
       }
     } catch (error) {
       dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
     }
-  }, [loadAllSceneObjects, loadMaterial, query]);
+  }, [acceptSelection, loadAllSceneObjects, loadMaterial, query]);
 
   const refresh = useCallback(async () => {
     const inspectedInstanceId = inspectedInstanceIdRef.current;
+    const inspectedLightId = inspectedLightIdRef.current;
     await Promise.all([
       refreshProjection(),
       inspectedInstanceId ? loadInstanceDetails(inspectedInstanceId) : Promise.resolve(),
+      inspectedLightId ? loadLightDetails(inspectedLightId) : Promise.resolve(),
     ]);
-  }, [loadInstanceDetails, refreshProjection]);
+  }, [loadInstanceDetails, loadLightDetails, refreshProjection]);
 
-  const selectedInstanceId = state.selection?.instance_id ?? null;
+  const selectedInstanceId = state.selection?.type === 'submesh' ? state.selection.instance_id : null;
+  const selectedLightId = state.selection?.type === 'light' ? state.selection.light_id : null;
+  useEffect(() => {
+    if (selectedLightId) void loadLightDetails(selectedLightId);
+  }, [loadLightDetails, selectedLightId]);
   const previousSelectedInstanceIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -325,7 +391,7 @@ export function useEditorSession(): EditorSession {
         // 通知只携带失效信号；具体需要重新获取哪些场景投影由 Web 决定。
         void refresh();
       } else {
-        dispatch({ type: 'selection', value: notification.payload });
+        acceptSelection(notification.payload);
         void loadMaterial(notification.payload).catch((error) => {
           dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
         });
@@ -347,7 +413,7 @@ export function useEditorSession(): EditorSession {
       removeNotificationListener();
       transport.close();
     };
-  }, [loadMaterial, refresh, refreshProjection, transport]);
+  }, [acceptSelection, loadMaterial, refresh, refreshProjection, transport]);
 
   useEffect(() => {
     if (state.backendState !== 'ready') {
@@ -361,8 +427,12 @@ export function useEditorSession(): EditorSession {
         return;
       }
       polling = true;
-      void query({ type: 'get_scene_version' })
-        .then((response) => {
+      const epoch = selectionEpochRef.current;
+      void Promise.all([query({ type: 'get_scene_version' }), query({ type: 'get_selection' })])
+        .then(([response, selection]) => {
+          if (active && epoch === selectionEpochRef.current && selection.type === 'selection') {
+            if (acceptSelection(selection.payload)) void loadMaterial(selection.payload).catch((error) => dispatch({ type: 'error', value: String(error) }));
+          }
           if (active && response.type === 'scene_version' && response.payload !== sceneVersionRef.current) {
             return refresh();
           }
@@ -381,7 +451,7 @@ export function useEditorSession(): EditorSession {
       active = false;
       window.clearInterval(timer);
     };
-  }, [query, refresh, state.backendState]);
+  }, [acceptSelection, loadMaterial, query, refresh, state.backendState]);
 
   const inspectInstance = useCallback(
     async (instanceId: string) => {

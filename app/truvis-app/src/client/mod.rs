@@ -5,12 +5,14 @@ mod editor_controller;
 mod world_automation_controller;
 
 use renderer_kit::camera::Camera;
-use truvis_editor_bridge::{AutomationFrontendEndpoint, AutomationRendererEndpoint, EditorBridgeConfig, EditorFrontendEndpoint, EditorRendererEndpoint, create_automation_bridge, create_editor_bridge};
-use truvis_render_runtime::selection::WorldSubmeshSelection;
+use truvis_editor_bridge::{
+    AutomationFrontendEndpoint, AutomationRendererEndpoint, EditorBridgeConfig, EditorFrontendEndpoint,
+    EditorRendererEndpoint, create_automation_bridge, create_editor_bridge,
+};
 use truvis_renderer::RendererClient;
+use truvis_renderer::{SceneSelection, SelectionChange};
 use truvis_scenes::{InitialScene, SceneInitializer};
 use truvis_world::GameWorld;
-use truvis_world::guid_new_type::MaterialAssetHandle;
 
 use self::desktop_command::DesktopCommandController;
 use self::editor_controller::{EditorController, EditorControllerConfig};
@@ -80,7 +82,7 @@ impl RendererClient for TruvisAppClient {
         self.scene.initialize(world, camera);
     }
 
-    fn tick(&mut self, world: &mut GameWorld, selection: Option<WorldSubmeshSelection>) {
+    fn tick(&mut self, world: &mut GameWorld, selection: Option<SceneSelection>) {
         self.scene.update(world);
 
         let desktop_update = self.desktop_commands.process_next(world);
@@ -91,8 +93,7 @@ impl RendererClient for TruvisAppClient {
         self.automation.process_requests(world);
     }
 
-    fn on_selection_changed(&mut self, selection: Option<(WorldSubmeshSelection, MaterialAssetHandle)>) {
-        let selection = selection.map(|(selection, material)| (selection.instance, selection.submesh_index, material));
+    fn on_selection_changed(&mut self, selection: Option<SelectionChange>) {
         self.editor.notify_selection_changed(selection);
     }
 

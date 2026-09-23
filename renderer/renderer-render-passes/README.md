@@ -27,6 +27,7 @@ coordinate gizmo、selection outline 和 Phong shading。
 - `PhongPass` 的 16 字节 push constants 只保存 instance/submesh 与显式 padding，不把 UBO 当作 device-address buffer。
 - `SelectionOutlinePass` 只负责录制 R8 mask 光栅化与 present composite；mask image 生命周期、selection
   状态和 pass 插入顺序属于具体 Renderer。
+- `LightOverlayPass` 只录制 CPU 生成的 clip-space 三角形，先线框后图标，present attachment 使用 LOAD/STORE 和 alpha blend；不读取 scene depth，也不修改 World。顶点来自 Renderer ABI，position/color offset 为 0/16、stride 为 32；CPU alignment 为 4，Vulkan vertex input 由显式格式和 offset 定义。buffer owner 属于 `LightOverlaySubsystem`。
 - `CoordinateGizmoPass` 只负责在 present image 右下角叠加当前相机朝向下的三轴 gizmo；它不持有几何 buffer
   或中间 image，pass 插入顺序属于具体 Renderer。
 - `ImageClearPass` 只负责通过 pass-local storage image descriptor 把目标写成确定颜色；具体 pipeline 必须通过

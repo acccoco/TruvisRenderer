@@ -1,4 +1,5 @@
 import { EditorWorkspace } from './components/editor_workspace';
+import { LightInspector } from './components/light_inspector';
 import { InstanceInspector } from './components/instance_inspector';
 import { MaterialInspector } from './components/material_inspector';
 import { RenderViewport } from './components/render_viewport';
@@ -34,8 +35,8 @@ export function App() {
         )}
         viewport={<RenderViewport />}
         inspector={(
-          <aside className="inspector-sidebar" aria-label="Instance and material inspector">
-            <InstanceInspector details={state.instanceDetails} status={state.instanceDetailsStatus} />
+          <aside className="inspector-sidebar" aria-label="Scene selection inspector">
+            {state.inspectedLightId ? <LightInspector details={state.lightDetails} /> : <InstanceInspector details={state.instanceDetails} status={state.instanceDetailsStatus} />}
             <MaterialInspector
               material={state.draft}
               dirty={state.dirty}
