@@ -138,7 +138,6 @@ git_ref = "master"
 recursive_submodules = true
 download_by_default = false
 
-
 [[resources]]
 name = "filament-repo"
 url = "https://github.com/google/filament.git"
@@ -146,5 +145,15 @@ resource_type = "git"
 target_dir = "external"
 rename_to = "filament"
 git_ref = "v1.77.1"
+recursive_submodules = true
+download_by_default = false
+
+[[resources]]
+name = "bevy-repo"
+url = "https://github.com/bevyengine/bevy.git"
+resource_type = "git"
+target_dir = "external"
+rename_to = "bevy"
+git_ref = "v0.20.0-rc.1"
 recursive_submodules = true
 download_by_default = false
