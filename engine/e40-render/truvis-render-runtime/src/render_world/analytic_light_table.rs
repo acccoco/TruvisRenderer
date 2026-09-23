@@ -100,7 +100,6 @@ impl AnalyticLightFrameBuffers {
 /// analytic light 阶段对外返回的结构化结果。
 pub(crate) struct RenderAnalyticLightUpdateResult {
     pub(crate) binding: AnalyticLightBinding,
-    pub(crate) changed: bool,
 }
 
 /// runtime 私有的 analytic light GPU buffer owner。
@@ -210,7 +209,6 @@ impl AnalyticLightTable {
                 self.area_light_count,
                 self.version,
             ),
-            changed,
         }
     }
 

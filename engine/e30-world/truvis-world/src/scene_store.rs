@@ -1,25 +1,26 @@
 use std::collections::{HashMap, HashSet};
 
 use slotmap::{SecondaryMap, SlotMap};
-
 use truvis_asset::handle::{MeshData, TextureBytes};
 use truvis_shader_binding::gpu;
 
-use crate::components::instance::Instance;
-use crate::components::material::MaterialData;
-use crate::edit_error::{SceneEditError, SceneHandleKind};
-use crate::guid_new_type::{MeshInstanceHandle, LightHandle, MaterialAssetHandle, MeshAssetHandle, TextureAssetHandle};
-use crate::asset_system::AssetStore;
-use crate::LightTarget;
+use crate::{
+    AreaLightShape, LightPatch, LightTarget, TextureRecord,
+    asset_system::AssetStore,
+    components::{instance::Instance, material::MaterialData},
+    edit_error::{SceneEditError, SceneHandleKind},
+    guid_new_type::{LightHandle, MaterialAssetHandle, MeshAssetHandle, MeshInstanceHandle, TextureAssetHandle},
+};
 
 /// CPU scene 中的 sky / environment 权威状态。
 ///
-/// 这里仅保存 Renderer 可编辑的语义状态：是否启用、引用的 scene texture 以及语义版本。
+/// 这里仅保存 Renderer 可编辑的语义状态：是否启用、亮度、引用的 scene texture 以及语义版本。
 /// GPU SRV、fallback texture、importance distribution 和 retired buffer 都属于 render-side
 /// `GpuSkyStore`，不会进入 `SceneStore`。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneSkyState {
     pub enabled: bool,
+    pub brightness: f32,
     pub texture: Option<TextureAssetHandle>,
     pub revision: u64,
 }
@@ -28,6 +29,7 @@ impl Default for SceneSkyState {
     fn default() -> Self {
         Self {
             enabled: true,
+            brightness: 1.0,
             texture: None,
             revision: 0,
         }
@@ -114,6 +116,11 @@ impl<'a> SceneReadView<'a> {
             LightTarget::Spot(handle) => self.scene.all_spot_lights.get(handle).map(|light| light.pos.into()),
             LightTarget::Area(handle) => self.scene.all_area_lights.get(handle).map(|light| light.center.into()),
         }
+    }
+
+    /// CPU 纹理记录只读借用，不表示 GPU ready。
+    pub fn texture_record(&self, handle: TextureAssetHandle) -> Option<&'a TextureRecord> {
+        self.resources.texture_record(handle)
     }
 
     /// 返回全部 live point light。
@@ -294,14 +301,26 @@ impl SceneStore {
         Ok(())
     }
 
-    /// 更新 sky 是否参与 scene 环境光。
-    pub fn update_sky_enabled(&mut self, enabled: bool) {
-        if self.sky_state.enabled == enabled {
-            return;
+    /// 原子修改环境开关和倍率；失败或 no-op 不推进版本。
+    pub fn update_sky_parameters(
+        &mut self,
+        enabled: Option<bool>,
+        brightness: Option<f32>,
+    ) -> Result<(), SceneEditError> {
+        let brightness = brightness.unwrap_or(self.sky_state.brightness);
+        if !brightness.is_finite() || brightness < 0.0 {
+            return Err(SceneEditError::InvalidSkyData {
+                reason: "brightness must be finite and nonnegative".into(),
+            });
         }
-        self.sky_state.enabled = enabled;
-        self.bump_sky_revision();
-        self.bump_scene_version();
+        let enabled = enabled.unwrap_or(self.sky_state.enabled);
+        if enabled != self.sky_state.enabled || brightness != self.sky_state.brightness {
+            self.sky_state.enabled = enabled;
+            self.sky_state.brightness = brightness;
+            self.bump_sky_revision();
+            self.bump_scene_version();
+        }
+        Ok(())
     }
 
     /// 向 CPU scene 添加一个 live instance，并返回它的 runtime 身份。
@@ -391,23 +410,98 @@ impl SceneStore {
         Ok(())
     }
 
-    /// 修改位置不改变灯光形状；只有实际变化才使 GPU 灯光快照与 Editor 投影失效。
-    pub fn update_light_position(&mut self, target: LightTarget, position: glam::Vec3) -> Result<(), SceneEditError> {
-        let stored = match target {
-            LightTarget::Point(handle) => self.all_point_lights.get_mut(handle).map(|light| &mut light.pos),
-            LightTarget::Spot(handle) => self.all_spot_lights.get_mut(handle).map(|light| &mut light.pos),
-            LightTarget::Area(handle) => self.all_area_lights.get_mut(handle).map(|light| &mut light.center),
-        }
-        .ok_or(SceneEditError::StaleHandle {
+    /// 候选参数完整校验后一次提交；Gizmo 和 Inspector 共用版本推进，不覆盖未编辑字段。
+    pub fn update_light(&mut self, target: LightTarget, patch: LightPatch) -> Result<(), SceneEditError> {
+        let stale = SceneEditError::StaleHandle {
             kind: SceneHandleKind::Light,
-        })?;
-        if !position.is_finite() {
-            return Err(SceneEditError::InvalidLightData {
-                reason: "position must be finite".into(),
-            });
-        }
-        if glam::Vec3::from(*stored) != position {
-            *stored = position.into();
+        };
+        let changed = match target {
+            LightTarget::Point(handle) => {
+                let light = self.all_point_lights.get_mut(handle).ok_or(stale)?;
+                if patch.has_spot_fields() || patch.has_area_fields() {
+                    return Err(LightPatch::invalid("unsupported point light field"));
+                }
+                let position = patch.position.unwrap_or(light.pos.into());
+                let radiance = patch.radiance.unwrap_or(light.color.into());
+                LightPatch::validate_common(position, radiance)?;
+                let changed = position != light.pos.into() || radiance != light.color.into();
+                light.pos = position.into();
+                light.color = radiance.into();
+                changed
+            }
+            LightTarget::Spot(handle) => {
+                let light = self.all_spot_lights.get_mut(handle).ok_or(stale)?;
+                if patch.has_area_fields() {
+                    return Err(LightPatch::invalid("unsupported spot light field"));
+                }
+                let position = patch.position.unwrap_or(light.pos.into());
+                let radiance = patch.radiance.unwrap_or(light.color.into());
+                LightPatch::validate_common(position, radiance)?;
+                let direction = match patch.direction {
+                    Some(value) if value == glam::Vec3::from(light.dir) => value,
+                    Some(value) => value
+                        .try_normalize()
+                        .filter(|v| v.is_finite())
+                        .ok_or_else(|| LightPatch::invalid("direction must be finite and nonzero"))?,
+                    None => light.dir.into(),
+                };
+                let inner = patch.inner_angle.unwrap_or(light.inner_angle);
+                let outer = patch.outer_angle.unwrap_or(light.outer_angle);
+                if !direction.is_finite() ||
+                    direction.length_squared() <= 0.0 ||
+                    !inner.is_finite() ||
+                    !outer.is_finite() ||
+                    inner < 0.0 ||
+                    inner > outer ||
+                    outer > std::f32::consts::PI
+                {
+                    return Err(LightPatch::invalid("require 0 <= inner <= outer <= pi and valid direction"));
+                }
+                let changed = position != light.pos.into() ||
+                    radiance != light.color.into() ||
+                    direction != light.dir.into() ||
+                    inner != light.inner_angle ||
+                    outer != light.outer_angle;
+                light.pos = position.into();
+                light.color = radiance.into();
+                light.dir = direction.into();
+                light.inner_angle = inner;
+                light.outer_angle = outer;
+                changed
+            }
+            LightTarget::Area(handle) => {
+                let light = self.all_area_lights.get_mut(handle).ok_or(stale)?;
+                if patch.has_spot_fields() {
+                    return Err(LightPatch::invalid("unsupported area light field"));
+                }
+                let position = patch.position.unwrap_or(light.center.into());
+                let radiance = patch.radiance.unwrap_or(light.radiance.into());
+                LightPatch::validate_common(position, radiance)?;
+                let (u, v) = if patch.has_area_fields() {
+                    let mut shape =
+                        AreaLightShape::from_axes(light.half_u.into(), light.half_v.into()).ok_or_else(|| {
+                            LightPatch::invalid("area axes cannot be represented as rotation and dimensions")
+                        })?;
+                    if shape.matches_patch(patch) {
+                        (light.half_u.into(), light.half_v.into())
+                    } else {
+                        shape.apply(patch)?
+                    }
+                } else {
+                    (light.half_u.into(), light.half_v.into())
+                };
+                let changed = position != light.center.into() ||
+                    radiance != light.radiance.into() ||
+                    u != light.half_u.into() ||
+                    v != light.half_v.into();
+                light.center = position.into();
+                light.radiance = radiance.into();
+                light.half_u = u.into();
+                light.half_v = v.into();
+                changed
+            }
+        };
+        if changed {
             self.bump_light_revision();
             self.bump_scene_version();
         }
@@ -427,7 +521,7 @@ impl SceneStore {
 
     /// 向 CPU scene 添加一个 live spot light。
     ///
-    /// spot light 在 realtime RT 中表示半径固定为 0.5 的 sphere emitter，并额外带 cone
+    /// spot light 在 realtime RT 中表示半径固定为 0.005 m 的 sphere emitter，并额外带 cone
     /// falloff；这里不做角度或方向归一化，调用方和 shader ABI 注释共同约束输入单位。
     pub fn register_spot_light(&mut self, light: gpu::engine::light::SpotLight) -> LightHandle {
         let handle = self.all_spot_lights.insert(light);
@@ -446,7 +540,6 @@ impl SceneStore {
         self.bump_scene_version();
         handle
     }
-
 }
 
 // 场景关系索引与 edit 校验

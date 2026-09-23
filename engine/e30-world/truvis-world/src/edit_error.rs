@@ -33,6 +33,9 @@ pub enum SceneEditError {
     InvalidMeshData { reason: String },
     InvalidMaterialData { reason: String },
     InvalidLightData { reason: String },
+    InvalidSkyData {
+        reason: String,
+    },
     /// instance 的 material 列表与 mesh submesh 数量不匹配。
     MaterialCountMismatch { expected: usize, actual: usize },
 }
@@ -47,6 +50,7 @@ impl fmt::Display for SceneEditError {
             }
             Self::InvalidMeshData { reason } => write!(f, "invalid mesh data: {reason}"),
             Self::InvalidMaterialData { reason } => write!(f, "invalid material data: {reason}"),
+            Self::InvalidSkyData { reason } => write!(f, "invalid sky data: {reason}"),
             Self::InvalidLightData { reason } => write!(f, "invalid light data: {reason}"),
             Self::MaterialCountMismatch { expected, actual } => {
                 write!(f, "material count mismatch: expected {expected}, got {actual}")

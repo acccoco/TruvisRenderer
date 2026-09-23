@@ -1,4 +1,5 @@
 import { EditorWorkspace } from './components/editor_workspace';
+import { EnvironmentInspector } from './components/environment_inspector';
 import { LightInspector } from './components/light_inspector';
 import { InstanceInspector } from './components/instance_inspector';
 import { MaterialInspector } from './components/material_inspector';
@@ -10,7 +11,8 @@ import { useDesktopSkyAction } from './state/use_desktop_sky_action';
 import { useEditorSession } from './state/use_editor_session';
 
 export function App() {
-  const { state, refresh, inspectInstance, updateDraft, commitMaterial } = useEditorSession();
+  const session = useEditorSession();
+  const { state, refresh, inspectObject, updateDraft, commitMaterial } = session;
   const desktopSky = useDesktopSkyAction();
 
   return (
@@ -29,20 +31,26 @@ export function App() {
         scenePanel={(
           <ScenePanel
             objects={state.objects}
-            inspectedInstanceId={state.inspectedInstanceId}
-            onInspectInstance={(instanceId) => void inspectInstance(instanceId)}
+            inspectedObject={state.inspectedObject}
+            onInspectObject={inspectObject}
           />
         )}
         viewport={<RenderViewport />}
         inspector={(
           <aside className="inspector-sidebar" aria-label="Scene selection inspector">
-            {state.inspectedLightId ? <LightInspector details={state.lightDetails} /> : <InstanceInspector details={state.instanceDetails} status={state.instanceDetailsStatus} />}
-            <MaterialInspector
-              material={state.draft}
-              dirty={state.dirty}
-              updateDraft={updateDraft}
-              commitMaterial={commitMaterial}
-            />
+            {state.inspectedObject?.type === 'light' ? <LightInspector key={state.inspectedObject.light_id}
+              details={state.details?.type === 'light' ? state.details.value : null} status={state.detailsStatus}
+              draft={state.lightDraft} onDraft={session.updateLightDraft} onCommit={session.commitLight} />
+              : state.inspectedObject?.type === 'environment' ? <EnvironmentInspector
+                details={state.details?.type === 'environment' ? state.details.value : null} status={state.detailsStatus}
+                draft={state.environmentDraft} onDraft={session.updateEnvironmentDraft} onCommit={session.commitEnvironment} desktopSky={desktopSky} />
+              : <>
+                <InstanceInspector details={state.details?.type === 'instance' ? state.details.value : null} status={state.detailsStatus}
+                  materialId={state.materialId} onSelectMaterial={session.selectMaterial} />
+                {state.inspectedObject?.type === 'instance' && <MaterialInspector key={state.materialId}
+                  material={session.materialDraft} dirty={Object.keys(state.materialDraft).length > 0}
+                  updateDraft={updateDraft} commitMaterial={commitMaterial} />}
+              </>}
           </aside>
         )}
       />

@@ -104,7 +104,6 @@ impl OfflineRenderSettings {
         OfflineSettingsAccumSignature {
             debug_channel: self.debug_channel,
             sky_sampling_mode: common_settings.sky_sampling_mode,
-            sky_brightness_bits: common_settings.sky_brightness.to_bits(),
             emissive_nee_enabled: common_settings.emissive_nee_enabled,
             analytic_nee_enabled: common_settings.analytic_nee_enabled,
         }
@@ -115,7 +114,6 @@ impl OfflineRenderSettings {
 struct OfflineSettingsAccumSignature {
     debug_channel: PathTracingDebugChannel,
     sky_sampling_mode: SkySamplingMode,
-    sky_brightness_bits: u32,
     emissive_nee_enabled: bool,
     analytic_nee_enabled: bool,
 }
@@ -359,7 +357,7 @@ impl OfflineRenderSubsystem {
         let targets = &resources.targets;
         let debug_channel = self.settings.debug_channel.shader_channel();
         let sky_sampling_mode = common_settings.sky_sampling_mode.shader_mode();
-        let sky_brightness = common_settings.sky_brightness;
+        let sky_brightness = ctx.render_scene.sky_brightness(frame_label);
         let emissive_nee_enabled = common_settings.emissive_nee_enabled;
         let analytic_nee_enabled = common_settings.analytic_nee_enabled;
 

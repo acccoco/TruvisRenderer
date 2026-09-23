@@ -43,7 +43,7 @@ Realtime ReSTIR reservoir、SHARC cache、offline accumulation 属于对应 Rend
 
 ## Renderer 配置
 
-`PathTracingCommonSettings` 保存 realtime/offline 共享的 sky、NEE 和 post process 参数；Realtime 和 Offline 各自保存 debug channel、ReSTIR/SHARC mode 或 ray dispatch count。
+`PathTracingCommonSettings` 保存 realtime/offline 共享的 sky sampling、NEE 和 post process 参数；Realtime 和 Offline 各自保存 debug channel、ReSTIR/SHARC mode 或 ray dispatch count。
 
 同一语义只保留一个 owner：共享参数不在 realtime/offline 两个 subsystem 内各存一份，避免 UI 切换造成状态分叉。
 
@@ -158,3 +158,11 @@ UI / startup option
 ## 非目标
 
 本文不承诺所有 Renderer 都支持 DLSS、ReSTIR 或 SHARC，也不把启动环境变量视为稳定的公共配置 API。
+
+## 环境倍率与光照历史
+
+环境启用和 brightness 由 World 的 SceneSkyState 唯一持有；ImGui 与 Web 均通过 World API 编辑。
+RenderSceneView 暴露当前 FIF 的有效倍率，实时/离线填写已有 sky_brightness shader 参数。
+离线签名保存 Sky 语义 revision 和 distribution 发布版本；ReSTIR CPU 比较 Sky revision，shader 继续检查发布版本。
+Runtime 在 prepare 发现灯光语义或环境变化后显式请求 DLSS reset，同时失效 ViewAccum；
+不能把每 FIF 灯光副本补传视为新的 CPU 编辑，也不能将 ViewAccum reset 等同于 DLSS reset。

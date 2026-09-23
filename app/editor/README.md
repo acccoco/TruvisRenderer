@@ -46,11 +46,20 @@ Rotation 为 intrinsic XYZ Euler 角度。矩阵分解及角度转换由 `truvis
 不进行矩阵分解。无法可靠分解时仅显示该分组的提示，Mesh 和 Material Bindings 仍可查看。
 `?mock=1` 的最后一个 instance 提供不可分解示例，其余 instance 提供正常 TRS 投影。
 
-## 构建与开发
+## Scene 列表与参数编辑
 
-灯光 selection 使用带类型的 opaque LightId；`GetLightDetails` 只查询类型、身份与世界位置。
-选中灯光后显示只读 Light Inspector，并使旧 instance/material 查询失效。位置更新通过 scene version
-刷新，不增加拖动专用协议。ScenePanel 仍可独立查看网格，灯光创建与参数编辑不在此接口范围内。
+`useEditorSession` 聚合有界分页，ScenePanel 默认显示 MeshInstance、Point、Spot、Area 和唯一 Environment 条目。
+`All / Lights / MeshInstance` 与名称搜索仅过滤列表，Lights 包含 HDRI，不改变渲染可见性。
+Web 的 `inspectedObject` 独立于 Renderer selection；左栏不修改 Gizmo 选择，实际视口选择变化才切换 Inspector。
+Instance 材质始终从当前 bindings 选择，默认首项或视口命中的 submesh。
+
+Light Inspector 编辑位置、线性 RGB 发光值，以及 Spot 方向/锥角、Area 朝向/宽高。
+字段 patch 合并 World 最新值，不会用旧详情覆盖 Gizmo 位置；失败保留草稿，迟到回包受身份和字段 revision 保护。
+Area 半轴仍是权威，无法可靠分解时只禁止形状编辑。
+Environment Inspector 查询当前纹理文件名与 CPU 加载状态，复用顶部 Tauri 换图动作，并编辑启用和亮度。
+CPU Ready 和 command applied 均不代表 GPU 上传或画面完成。独立浏览器 `?mock=1` 提供三类灯光和环境编辑示例，文件选择只在桌面可用。
+
+## 构建与开发
 
 从仓库根目录执行：
 

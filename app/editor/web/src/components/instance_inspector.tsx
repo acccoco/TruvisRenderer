@@ -1,13 +1,15 @@
 import { TransformValues } from './transform_values';
 import type { InstanceDetailsDto } from '../protocol/generated';
-import type { InstanceDetailsStatus } from '../state/use_editor_session';
+import type { ObjectDetailsStatus } from '../state/use_editor_session';
 
 interface InstanceInspectorProps {
   /** 当前 Web inspector focus 对应的 owned CPU scene 投影。 */
   details: InstanceDetailsDto | null;
 
   /** 详情查询状态；它只描述 Web 投影，不表示 render-side instance GPU ready。 */
-  status: InstanceDetailsStatus;
+  status: ObjectDetailsStatus;
+  materialId: string | null;
+  onSelectMaterial(id: string): void;
 }
 
 /**
@@ -17,7 +19,7 @@ interface InstanceInspectorProps {
  * 重名消歧，名称只负责主展示；material 顺序显式显示 submesh index，避免页面建立
  * 另一套 binding 关系。
  */
-export function InstanceInspector({ details, status }: InstanceInspectorProps) {
+export function InstanceInspector({ details, status, materialId, onSelectMaterial }: InstanceInspectorProps) {
   const statusLabel = status === 'loading' ? 'Refreshing…' : details ? 'World state' : 'No focus';
   const transformRows = details?.transform ? [
     { label: 'Location', values: details.transform.location, unit: '' },
@@ -73,7 +75,7 @@ export function InstanceInspector({ details, status }: InstanceInspectorProps) {
                 {details.materials.map((binding) => (
                   <li key={binding.submesh_index}>
                     <span className="binding-index">Submesh {binding.submesh_index}</span>
-                    <strong>{binding.name}</strong>
+                    <button type="button" className="material-binding-button" aria-pressed={materialId === binding.material_id} onClick={() => onSelectMaterial(binding.material_id)}>{binding.name}</button>
                     <code title={binding.material_id}>{binding.material_id}</code>
                   </li>
                 ))}
@@ -90,7 +92,7 @@ export function InstanceInspector({ details, status }: InstanceInspectorProps) {
   );
 }
 
-function InstanceInspectorEmptyState({ status }: { status: InstanceDetailsStatus }) {
+function InstanceInspectorEmptyState({ status }: { status: ObjectDetailsStatus }) {
   const content = status === 'loading'
     ? ['Loading instance…', 'Reading the current CPU World projection.']
     : status === 'stale'

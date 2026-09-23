@@ -235,7 +235,12 @@ impl WorldAutomationController {
                 material: Some(material),
             },
             EditorResponse::Error(error) => AutomationResponse::Error(error),
-            EditorResponse::LightDetails(_) | EditorResponse::SceneVersion(_) | EditorResponse::Selection(_) => {
+            EditorResponse::Environment(_) |
+            EditorResponse::EnvironmentApplied(_) |
+            EditorResponse::LightApplied(_) |
+            EditorResponse::LightDetails(_) |
+            EditorResponse::SceneVersion(_) |
+            EditorResponse::Selection(_) => {
                 AutomationResponse::Error(EditorError::new(EditorErrorCode::Internal, "unexpected editor response"))
             }
         }

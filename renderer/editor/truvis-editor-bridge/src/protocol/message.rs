@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::protocol::{
-    EditorError, InstanceDetailsDto, InstanceId, LightDetailsDto, LightId, MaterialDto, MaterialId, MaterialPatch,
-    SceneObjectsPage, SceneVersion, SelectionDto,
+    EditorError, EnvironmentDetailsDto, EnvironmentPatch, InstanceDetailsDto, InstanceId, LightDetailsDto, LightId,
+    LightPatch, MaterialDto, MaterialId, MaterialPatch, SceneObjectsPage, SceneVersion, SelectionDto,
 };
 
 /// 不修改 GameWorld 的 Editor 查询。
@@ -12,6 +12,7 @@ use crate::protocol::{
 #[ts(tag = "type", rename_all = "snake_case")]
 pub enum EditorQuery {
     GetSceneVersion,
+    GetEnvironment,
     GetSelection,
     GetLightDetails {
         light_id: LightId,
@@ -34,6 +35,13 @@ pub enum EditorQuery {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(tag = "type", rename_all = "snake_case")]
 pub enum EditorCommand {
+    UpdateLight {
+        light_id: LightId,
+        patch: LightPatch,
+    },
+    UpdateEnvironment {
+        patch: EnvironmentPatch,
+    },
     UpdateMaterial {
         material_id: MaterialId,
         patch: MaterialPatch,
@@ -57,6 +65,9 @@ pub enum EditorResponse {
     SceneVersion(SceneVersion),
     Selection(Option<SelectionDto>),
     LightDetails(LightDetailsDto),
+    Environment(EnvironmentDetailsDto),
+    LightApplied(LightDetailsDto),
+    EnvironmentApplied(EnvironmentDetailsDto),
     SceneObjects(SceneObjectsPage),
     InstanceDetails(InstanceDetailsDto),
     Material(MaterialDto),

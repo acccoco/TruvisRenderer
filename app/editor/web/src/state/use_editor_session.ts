@@ -1,496 +1,300 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
-  EditorErrorCode,
-  EditorNotification,
-  EditorQuery,
-  EditorRequest,
-  EditorResponse,
-  InstanceDetailsDto,
-  LightDetailsDto,
-  MaterialDto,
-  MaterialPatch,
-  SceneObjectSummary,
-  SelectionDto,
+  EditorCommand, EditorNotification, EditorQuery, EditorRequest, EditorResponse,
+  EnvironmentDetailsDto, EnvironmentPatch, InstanceDetailsDto, LightDetailsDto, LightPatch,
+  MaterialDto, MaterialPatch, SceneObjectSummary, SelectionDto,
 } from '../protocol/generated';
 import { createEditorTransport } from '../transport/create_editor_transport';
-import type { EditorBackendState, EditorTransport } from '../transport/editor_transport';
+import type { EditorBackendState } from '../transport/editor_transport';
 
-export type InstanceDetailsStatus = 'idle' | 'loading' | 'ready' | 'stale' | 'error';
+export type ObjectDetailsStatus = 'idle' | 'loading' | 'ready' | 'stale' | 'error';
+export type InspectedObject = { type: 'instance'; instance_id: string } | { type: 'light'; light_id: string } | { type: 'environment' };
+export type InspectorDetails = { type: 'instance'; value: InstanceDetailsDto } | { type: 'light'; value: LightDetailsDto } | { type: 'environment'; value: EnvironmentDetailsDto };
 
-export interface EditorSessionState {
+interface EditorSessionState {
   backendState: EditorBackendState;
   sceneVersion: string;
   selection: SelectionDto | null;
   objects: SceneObjectSummary[];
-  inspectedInstanceId: string | null;
-  instanceDetails: InstanceDetailsDto | null;
-  inspectedLightId: string | null;
-  lightDetails: LightDetailsDto | null;
-  instanceDetailsStatus: InstanceDetailsStatus;
+  inspectedObject: InspectedObject | null;
+  details: InspectorDetails | null;
+  detailsStatus: ObjectDetailsStatus;
+  materialId: string | null;
   material: MaterialDto | null;
-  draft: MaterialDto | null;
-  dirty: boolean;
-  draftRevision: number;
+  materialDraft: Partial<MaterialDto>;
+  lightDraft: Partial<LightPatch>;
+  environmentDraft: Partial<EnvironmentPatch>;
   pendingRequests: number;
   lastRequestMs: number | null;
   error: string | null;
 }
 
-type Action =
-  | { type: 'backendState'; value: EditorBackendState }
-  | { type: 'sceneVersion'; value: string }
-  | { type: 'selection'; value: SelectionDto | null }
-  | { type: 'objects'; value: { objects: SceneObjectSummary[]; sceneVersion: string } }
-  | { type: 'lightDetails'; value: LightDetailsDto | null; lightId: string }
-  | { type: 'instanceDetailsStart'; instanceId: string }
-  | { type: 'instanceDetailsReady'; value: InstanceDetailsDto }
-  | { type: 'instanceDetailsStale'; instanceId: string }
-  | { type: 'instanceDetailsFailed'; instanceId: string }
-  | { type: 'material'; value: MaterialDto | null; acknowledgedDraftRevision?: number }
-  | { type: 'draft'; value: Partial<MaterialDto>; revision: number }
-  | { type: 'requestStart'; clearError: boolean }
-  | { type: 'requestEnd'; elapsedMs: number }
-  | { type: 'error'; value: string | null };
-
-const initialState: EditorSessionState = {
-  backendState: 'unavailable',
-  sceneVersion: '—',
-  selection: null,
-  objects: [],
-  inspectedInstanceId: null,
-  instanceDetails: null,
-  inspectedLightId: null,
-  lightDetails: null,
-  instanceDetailsStatus: 'idle',
-  material: null,
-  draft: null,
-  dirty: false,
-  draftRevision: 0,
-  pendingRequests: 0,
-  lastRequestMs: null,
-  error: null,
-};
-
-function reducer(state: EditorSessionState, action: Action): EditorSessionState {
-  switch (action.type) {
-    case 'backendState':
-      return { ...state, backendState: action.value };
-    case 'sceneVersion':
-      return { ...state, sceneVersion: action.value };
-    case 'selection': {
-      const keepsMaterial = state.selection?.type === 'submesh' && action.value?.type === 'submesh'
-        && state.selection.material_id === action.value.material_id;
-      const lightId = action.value?.type === 'light' ? action.value.light_id : null;
-      const previousLightId = state.selection?.type === 'light' ? state.selection.light_id : null;
-      const lightChanged = lightId !== previousLightId;
-      return {
-        ...state,
-        selection: action.value,
-        ...(lightChanged ? { inspectedLightId: lightId, lightDetails: null } : {}),
-        ...(lightChanged && lightId ? { inspectedInstanceId: null, instanceDetails: null, instanceDetailsStatus: 'idle' as const } : {}),
-        material: keepsMaterial ? state.material : null,
-        draft: keepsMaterial ? state.draft : null,
-        dirty: keepsMaterial ? state.dirty : false,
-      };
-    }
-    case 'objects':
-      return {
-        ...state,
-        objects: action.value.objects,
-        sceneVersion: action.value.sceneVersion,
-      };
-    case 'lightDetails':
-      return state.inspectedLightId === action.lightId ? { ...state, lightDetails: action.value } : state;
-    case 'instanceDetailsStart': {
-      const sameInstance = state.inspectedInstanceId === action.instanceId;
-      return {
-        ...state,
-        inspectedInstanceId: action.instanceId,
-        inspectedLightId: null,
-        lightDetails: null,
-        instanceDetails: sameInstance ? state.instanceDetails : null,
-        instanceDetailsStatus: 'loading',
-      };
-    }
-    case 'instanceDetailsReady':
-      if (state.inspectedInstanceId !== action.value.instance_id) return state;
-      return {
-        ...state,
-        inspectedInstanceId: action.value.instance_id,
-        instanceDetails: action.value,
-        instanceDetailsStatus: 'ready',
-      };
-    case 'instanceDetailsStale':
-      return state.inspectedInstanceId === action.instanceId
-        ? { ...state, instanceDetails: null, instanceDetailsStatus: 'stale' }
-        : state;
-    case 'instanceDetailsFailed':
-      return state.inspectedInstanceId === action.instanceId
-        ? { ...state, instanceDetails: null, instanceDetailsStatus: 'error' }
-        : state;
-    case 'material': {
-      if (action.value && (state.selection?.type !== 'submesh' || action.value.id !== state.selection.material_id)) return state;
-      // 查询和较早提交的回包不能覆盖同一材质的后续输入；只有对应草稿的确认才能清除 dirty。
-      const keepDraft = state.dirty && state.draft?.id === action.value?.id
-        && action.acknowledgedDraftRevision !== state.draftRevision;
-      return { ...state, material: action.value, draft: keepDraft ? state.draft : action.value, dirty: keepDraft };
-    }
-    case 'draft':
-      return state.draft ? { ...state, draft: { ...state.draft, ...action.value }, dirty: true, draftRevision: action.revision } : state;
-    case 'requestStart':
-      return { ...state, pendingRequests: state.pendingRequests + 1, error: action.clearError ? null : state.error };
-    case 'requestEnd':
-      return { ...state, pendingRequests: Math.max(0, state.pendingRequests - 1), lastRequestMs: action.elapsedMs };
-    case 'error':
-      return { ...state, error: action.value, pendingRequests: 0 };
-  }
-}
-
 class EditorResponseError extends Error {
-  readonly code: EditorErrorCode;
-
-  constructor(code: EditorErrorCode, message: string) {
-    super(message);
-    this.name = 'EditorResponseError';
-    this.code = code;
-  }
+  constructor(readonly code: string, message: string) { super(message); }
 }
 
-export interface EditorSession {
-  state: EditorSessionState;
-  refresh(): Promise<void>;
-  inspectInstance(instanceId: string): Promise<void>;
-  updateDraft(patch: Partial<MaterialDto>): void;
-  commitMaterial(patch: MaterialPatch): Promise<void>;
-}
+/** 当前检查对象、在途请求和草稿的唯一协调入口；World 数据只作为可丢弃投影。 */
+export function useEditorSession() {
+  const [transport] = useState(createEditorTransport);
+  const [state, setState] = useState<EditorSessionState>({
+    backendState: 'unavailable', sceneVersion: '0', selection: null, objects: [], inspectedObject: null,
+    details: null, detailsStatus: 'idle', materialId: null, material: null,
+    materialDraft: {}, lightDraft: {}, environmentDraft: {}, pendingRequests: 0, lastRequestMs: null, error: null,
+  });
+  const current = useRef(state);
+  const active = useRef(true);
+  const epoch = useRef(0);
+  const detailsSequence = useRef(0);
+  const materialSequence = useRef(0);
+  const listSequence = useRef(0);
+  const objectsVersion = useRef('0');
+  const materialEpoch = useRef(0);
+  const selectionSequence = useRef(0);
+  const editRevision = useRef(0);
+  const fieldRevisions = useRef<Record<string, number>>({});
+  const commandTail = useRef<Promise<void>>(Promise.resolve());
 
-export function useEditorSession(): EditorSession {
-  const [state, dispatch] = useReducer(reducer, initialState);
-  const [transport] = useState<EditorTransport>(() => createEditorTransport());
-  const sceneVersionRef = useRef(initialState.sceneVersion);
-  const inspectedInstanceIdRef = useRef<string | null>(null);
-  const instanceDetailsRequestSequenceRef = useRef(0);
-  const materialRequestSequenceRef = useRef(0);
-  const lightDetailsRequestSequenceRef = useRef(0);
-  const inspectedLightIdRef = useRef<string | null>(null);
-  const selectionRef = useRef<SelectionDto | null>(null);
-  const selectionEpochRef = useRef(0);
-  const materialCommandSequenceRef = useRef(0);
-  const draftRevisionRef = useRef(0);
-
-  useEffect(() => {
-    sceneVersionRef.current = state.sceneVersion;
-  }, [state.sceneVersion]);
-
-  useEffect(() => {
-    inspectedInstanceIdRef.current = state.inspectedInstanceId;
-    inspectedLightIdRef.current = state.inspectedLightId;
-  }, [state.inspectedInstanceId, state.inspectedLightId]);
-
-  const request = useCallback(
-    async (requestValue: EditorRequest): Promise<EditorResponse> => {
-      const startedAt = performance.now();
-      // 后台轮询不能擦除材质校验错误；用户下一次提交时再清除旧错误。
-      dispatch({ type: 'requestStart', clearError: requestValue.category === 'command' });
-      try {
-        const response = await transport.request(requestValue);
-        if (response.type === 'error') {
-          throw new EditorResponseError(response.payload.code, response.payload.message);
-        }
-        return response;
-      } finally {
-        dispatch({ type: 'requestEnd', elapsedMs: performance.now() - startedAt });
-      }
-    },
-    [transport],
-  );
-
-  const query = useCallback(
-    (payload: EditorQuery) => request({ category: 'query', payload }),
-    [request],
-  );
-
-  const loadMaterial = useCallback(
-    async (selection: SelectionDto | null) => {
-      const sequence = ++materialRequestSequenceRef.current;
-      if (selection?.type !== 'submesh') {
-        dispatch({ type: 'material', value: null });
-        return;
-      }
-      const response = await query({ type: 'get_material', material_id: selection.material_id });
-      if (response.type === 'material' && sequence === materialRequestSequenceRef.current) {
-        dispatch({ type: 'material', value: response.payload });
-      }
-    },
-    [query],
-  );
-
-  /**
-   * 查询 Web 当前聚焦 instance 的 owned 详情投影。
-   *
-   * sequence 只解决页面内快速切换产生的响应乱序，不成为 scene identity 或缓存版本；
-   * scene 的权威失效判断仍来自 `scene_version` 和 App 返回的 `stale_object`。
-   */
-  const loadInstanceDetails = useCallback(
-    async (instanceId: string) => {
-      const requestSequence = ++instanceDetailsRequestSequenceRef.current;
-      inspectedInstanceIdRef.current = instanceId;
-      inspectedLightIdRef.current = null;
-      ++lightDetailsRequestSequenceRef.current;
-      dispatch({ type: 'instanceDetailsStart', instanceId });
-      try {
-        const response = await query({ type: 'get_instance_details', instance_id: instanceId });
-        if (requestSequence !== instanceDetailsRequestSequenceRef.current) {
-          return;
-        }
-        if (response.type !== 'instance_details') {
-          throw new Error('Editor returned an unexpected instance details response');
-        }
-        dispatch({ type: 'instanceDetailsReady', value: response.payload });
-      } catch (error) {
-        if (requestSequence !== instanceDetailsRequestSequenceRef.current) {
-          return;
-        }
-        if (error instanceof EditorResponseError && error.code === 'stale_object') {
-          dispatch({ type: 'instanceDetailsStale', instanceId });
-          return;
-        }
-        dispatch({ type: 'instanceDetailsFailed', instanceId });
-        dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
-      }
-    },
-    [query],
-  );
-
-  const loadLightDetails = useCallback(async (lightId: string) => {
-    const sequence = ++lightDetailsRequestSequenceRef.current;
-    try {
-      const response = await query({ type: 'get_light_details', light_id: lightId });
-      if (sequence !== lightDetailsRequestSequenceRef.current) return;
-      if (response.type !== 'light_details') throw new Error('Unexpected light details response');
-      dispatch({ type: 'lightDetails', lightId, value: response.payload });
-    } catch (error) {
-      if (sequence !== lightDetailsRequestSequenceRef.current) return;
-      dispatch({ type: 'lightDetails', lightId, value: null });
-      dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
-    }
-  }, [query]);
-
-  // 通知和主动查询共用入口；改变身份时先使在途详情请求失效。
-  const acceptSelection = useCallback((selection: SelectionDto | null) => {
-    const changed = JSON.stringify(selectionRef.current) !== JSON.stringify(selection);
-    if (changed) {
-      ++selectionEpochRef.current;
-      ++materialRequestSequenceRef.current;
-      ++materialCommandSequenceRef.current;
-      ++lightDetailsRequestSequenceRef.current;
-      if (selection?.type === 'light') {
-        ++instanceDetailsRequestSequenceRef.current;
-        inspectedInstanceIdRef.current = null;
-        inspectedLightIdRef.current = selection.light_id;
-      } else {
-        inspectedLightIdRef.current = null;
-      }
-    }
-    selectionRef.current = selection;
-    dispatch({ type: 'selection', value: selection });
-    return changed;
+  // 同步更新 ref，让同一事件内的提交和异步回包看到一致身份；不等待 React effect。
+  const change = useCallback((patch: Partial<EditorSessionState>) => {
+    if (!active.current) return;
+    current.current = { ...current.current, ...patch };
+    setState(current.current);
   }, []);
 
-  const loadAllSceneObjects = useCallback(async () => {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      let offset = 0;
-      let expectedSceneVersion: string | null = null;
-      const objects: SceneObjectSummary[] = [];
+  const observeVersion = useCallback((version: string) => {
+    if (BigInt(version) > BigInt(current.current.sceneVersion)) change({ sceneVersion: version });
+  }, [change]);
 
+  const request = useCallback(async (value: EditorRequest): Promise<EditorResponse> => {
+    const started = performance.now();
+    change({ pendingRequests: current.current.pendingRequests + 1 });
+    try {
+      const response = await transport.request(value);
+      if (response.type === 'error') throw new EditorResponseError(response.payload.code, response.payload.message);
+      return response;
+    } finally {
+      change({ pendingRequests: Math.max(0, current.current.pendingRequests - 1), lastRequestMs: performance.now() - started });
+    }
+  }, [change, transport]);
+  const query = useCallback((payload: EditorQuery) => request({ category: 'query', payload }), [request]);
+
+  const loadMaterial = useCallback(async (id: string, inspection: number) => {
+    const sequence = ++materialSequence.current;
+    try {
+      const response = await query({ type: 'get_material', material_id: id });
+      if (epoch.current !== inspection || sequence !== materialSequence.current || current.current.materialId !== id) return;
+      if (response.type !== 'material') throw new Error('Unexpected material response');
+      change({ material: response.payload });
+    } catch (error) {
+      if (epoch.current === inspection && sequence === materialSequence.current) change({ error: String(error) });
+    }
+  }, [change, query]);
+
+  const selectMaterial = useCallback((id: string | null) => {
+    if (current.current.materialId === id) return;
+    ++materialSequence.current;
+    ++materialEpoch.current;
+    fieldRevisions.current = {};
+    change({ materialId: id, material: null, materialDraft: {} });
+    if (id) void loadMaterial(id, epoch.current);
+  }, [change, loadMaterial]);
+
+  const loadDetails = useCallback(async (target: InspectedObject, inspection: number, preferredSubmesh?: number) => {
+    const sequence = ++detailsSequence.current;
+    change({ detailsStatus: 'loading' });
+    try {
+      const response = await query(target.type === 'instance'
+        ? { type: 'get_instance_details', instance_id: target.instance_id }
+        : target.type === 'light' ? { type: 'get_light_details', light_id: target.light_id } : { type: 'get_environment' });
+      if (epoch.current !== inspection || sequence !== detailsSequence.current) return;
+      let details: InspectorDetails;
+      if (response.type === 'instance_details') details = { type: 'instance', value: response.payload };
+      else if (response.type === 'light_details') details = { type: 'light', value: response.payload };
+      else if (response.type === 'environment') details = { type: 'environment', value: response.payload };
+      else throw new Error('Unexpected object details response');
+      observeVersion(details.value.scene_version);
+      change({ details, detailsStatus: 'ready' });
+      if (details.type === 'instance') {
+        const bindings = details.value.materials;
+        const binding = preferredSubmesh !== undefined ? bindings.find((item) => item.submesh_index === preferredSubmesh)
+          : bindings.find((item) => item.material_id === current.current.materialId);
+        const id = (binding ?? bindings[0])?.material_id ?? null;
+        if (id !== current.current.materialId) selectMaterial(id);
+        else if (id) await loadMaterial(id, inspection);
+      }
+    } catch (error) {
+      if (epoch.current !== inspection || sequence !== detailsSequence.current) return;
+      const stale = error instanceof EditorResponseError && error.code === 'stale_object';
+      change({ ...(stale ? { details: null, material: null } : {}), detailsStatus: stale ? 'stale' : 'error', error: String(error) });
+    }
+  }, [change, loadMaterial, observeVersion, query, selectMaterial]);
+
+  const inspectObject = useCallback((target: InspectedObject | null, submesh?: number) => {
+    if (submesh === undefined && JSON.stringify(target) === JSON.stringify(current.current.inspectedObject)) return;
+    const inspection = ++epoch.current;
+    ++selectionSequence.current;
+    ++detailsSequence.current;
+    ++materialSequence.current;
+    ++materialEpoch.current;
+    fieldRevisions.current = {};
+    change({ inspectedObject: target, details: null, detailsStatus: target ? 'loading' : 'idle',
+      materialId: null, material: null, materialDraft: {}, lightDraft: {}, environmentDraft: {}, error: null });
+    if (target) void loadDetails(target, inspection, submesh);
+  }, [change, loadDetails]);
+
+  const acceptSelection = useCallback((selection: SelectionDto | null) => {
+    if (JSON.stringify(selection) === JSON.stringify(current.current.selection)) return;
+    change({ selection });
+    if (selection?.type === 'submesh') inspectObject({ type: 'instance', instance_id: selection.instance_id }, selection.submesh_index);
+    else if (selection?.type === 'light') inspectObject({ type: 'light', light_id: selection.light_id });
+    else inspectObject(null);
+  }, [change, inspectObject]);
+
+  const loadObjects = useCallback(async () => {
+    const sequence = ++listSequence.current;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let offset = 0;
+      let version: string | null = null;
+      const objects: SceneObjectSummary[] = [];
       try {
         while (true) {
-          const response = await query({
-            type: 'get_scene_objects',
-            offset,
-            limit: 128,
-            expected_scene_version: expectedSceneVersion,
-          });
-          if (response.type !== 'scene_objects') {
-            throw new Error('Editor returned an unexpected scene objects response');
-          }
-
-          expectedSceneVersion = response.payload.scene_version;
+          const response = await query({ type: 'get_scene_objects', offset, limit: 128, expected_scene_version: version });
+          if (sequence !== listSequence.current) return;
+          if (response.type !== 'scene_objects') throw new Error('Unexpected scene objects response');
+          version = response.payload.scene_version;
           objects.push(...response.payload.objects);
           if (response.payload.next_offset === null) {
-            return { objects, sceneVersion: response.payload.scene_version };
+            objectsVersion.current = version;
+            change({ objects }); observeVersion(version); return;
           }
           offset = response.payload.next_offset;
         }
       } catch (error) {
-        if (error instanceof EditorResponseError && error.code === 'conflict') {
-          continue;
-        }
-        throw error;
+        if (sequence !== listSequence.current) return;
+        if (error instanceof EditorResponseError && error.code === 'conflict') continue;
+        change({ error: String(error) }); return;
       }
     }
-
-    throw new Error('Scene changed repeatedly while loading objects');
-  }, [query]);
-
-  const refreshProjection = useCallback(async () => {
-    const epoch = selectionEpochRef.current;
-    try {
-      const [selection, objects] = await Promise.all([
-        query({ type: 'get_selection' }),
-        loadAllSceneObjects(),
-      ]);
-      dispatch({ type: 'objects', value: objects });
-      if (selection.type === 'selection' && epoch === selectionEpochRef.current) {
-        acceptSelection(selection.payload);
-        await loadMaterial(selection.payload);
-      }
-    } catch (error) {
-      dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
-    }
-  }, [acceptSelection, loadAllSceneObjects, loadMaterial, query]);
+    change({ error: 'Scene changed repeatedly while loading objects' });
+  }, [change, observeVersion, query]);
 
   const refresh = useCallback(async () => {
-    const inspectedInstanceId = inspectedInstanceIdRef.current;
-    const inspectedLightId = inspectedLightIdRef.current;
-    await Promise.all([
-      refreshProjection(),
-      inspectedInstanceId ? loadInstanceDetails(inspectedInstanceId) : Promise.resolve(),
-      inspectedLightId ? loadLightDetails(inspectedLightId) : Promise.resolve(),
-    ]);
-  }, [loadInstanceDetails, loadLightDetails, refreshProjection]);
-
-  const selectedInstanceId = state.selection?.type === 'submesh' ? state.selection.instance_id : null;
-  const selectedLightId = state.selection?.type === 'light' ? state.selection.light_id : null;
-  useEffect(() => {
-    if (selectedLightId) void loadLightDetails(selectedLightId);
-  }, [loadLightDetails, selectedLightId]);
-  const previousSelectedInstanceIdRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (selectedInstanceId && selectedInstanceId !== previousSelectedInstanceIdRef.current) {
-      void loadInstanceDetails(selectedInstanceId);
-    }
-    previousSelectedInstanceIdRef.current = selectedInstanceId;
-  }, [loadInstanceDetails, selectedInstanceId]);
-
-  useEffect(() => {
-    let active = true;
-    const removeStateListener = transport.onState((backendState) => {
-      if (active) {
-        dispatch({ type: 'backendState', value: backendState });
-      }
-    });
-    const removeNotificationListener = transport.onNotification((notification: EditorNotification) => {
-      if (!active) {
-        return;
-      }
-      if (notification.type === 'scene_version_changed') {
-        dispatch({ type: 'sceneVersion', value: notification.payload });
-        // 通知只携带失效信号；具体需要重新获取哪些场景投影由 Web 决定。
-        void refresh();
-      } else {
-        acceptSelection(notification.payload);
-        void loadMaterial(notification.payload).catch((error) => {
-          dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
-        });
-      }
-    });
-
-    void transport
-      .connect()
-      .then(() => (active ? refreshProjection() : undefined))
-      .catch((error) => {
-        if (active) {
-          dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
-        }
-      });
-
-    return () => {
-      active = false;
-      removeStateListener();
-      removeNotificationListener();
-      transport.close();
-    };
-  }, [acceptSelection, loadMaterial, refresh, refreshProjection, transport]);
-
-  useEffect(() => {
-    if (state.backendState !== 'ready') {
-      return;
-    }
-
-    let active = true;
-    let polling = false;
-    const timer = window.setInterval(() => {
-      if (polling) {
-        return;
-      }
-      polling = true;
-      const epoch = selectionEpochRef.current;
-      void Promise.all([query({ type: 'get_scene_version' }), query({ type: 'get_selection' })])
-        .then(([response, selection]) => {
-          if (active && epoch === selectionEpochRef.current && selection.type === 'selection') {
-            if (acceptSelection(selection.payload)) void loadMaterial(selection.payload).catch((error) => dispatch({ type: 'error', value: String(error) }));
-          }
-          if (active && response.type === 'scene_version' && response.payload !== sceneVersionRef.current) {
-            return refresh();
-          }
-        })
-        .catch((error) => {
-          if (active) {
-            dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
-          }
-        })
-        .finally(() => {
-          polling = false;
-        });
-    }, 1_000);
-
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [acceptSelection, loadMaterial, query, refresh, state.backendState]);
-
-  const inspectInstance = useCallback(
-    async (instanceId: string) => {
-      await loadInstanceDetails(instanceId);
-    },
-    [loadInstanceDetails],
-  );
+    const target = current.current.inspectedObject;
+    await Promise.all([loadObjects(), target ? loadDetails(target, epoch.current) : Promise.resolve()]);
+  }, [loadDetails, loadObjects]);
 
   const updateDraft = useCallback((patch: Partial<MaterialDto>) => {
-    dispatch({ type: 'draft', value: patch, revision: ++draftRevisionRef.current });
-  }, []);
+    for (const key of Object.keys(patch)) fieldRevisions.current[key] = ++editRevision.current;
+    change({ materialDraft: { ...current.current.materialDraft, ...patch } });
+  }, [change]);
+  const updateLightDraft = useCallback((patch: Partial<LightPatch>) => {
+    for (const key of Object.keys(patch)) fieldRevisions.current[key] = ++editRevision.current;
+    change({ lightDraft: { ...current.current.lightDraft, ...patch } });
+  }, [change]);
+  const updateEnvironmentDraft = useCallback((patch: Partial<EnvironmentPatch>) => {
+    for (const key of Object.keys(patch)) fieldRevisions.current[key] = ++editRevision.current;
+    change({ environmentDraft: { ...current.current.environmentDraft, ...patch } });
+  }, [change]);
 
-  const commitMaterial = useCallback(
-    async (patch: MaterialPatch) => {
-      if (!state.draft) {
-        return;
-      }
-      ++materialRequestSequenceRef.current;
-      const sequence = ++materialCommandSequenceRef.current;
-      const draftRevision = draftRevisionRef.current;
+  // 同一页面的 mutation 按用户提交顺序发送；回包只确认对应字段的 revision。
+  const commit = useCallback((command: EditorCommand) => {
+    const inspection = epoch.current;
+    const materialId = current.current.materialId;
+    const materialInspection = materialEpoch.current;
+    const submitted = Object.entries(command.patch).filter(([, value]) => value !== null && value !== undefined)
+      .map(([key]) => key === 'texture_mappings' ? 'textures' : key);
+    const revisions = { ...fieldRevisions.current };
+    const work = commandTail.current.then(async () => {
       try {
-        const response = await request({
-          category: 'command',
-          payload: { type: 'update_material', material_id: state.draft.id, patch },
-        });
-        if (response.type === 'command_applied') {
-          dispatch({ type: 'sceneVersion', value: response.payload.scene_version });
-          // 场景通知可能先发起查询；命令确认仍可确认对应草稿，但不能覆盖后续材质选择或输入。
-          if (sequence === materialCommandSequenceRef.current) {
-            ++materialRequestSequenceRef.current;
-            dispatch({ type: 'material', value: response.payload.material, acknowledgedDraftRevision: draftRevision });
+        if (epoch.current === inspection) change({ error: null });
+        const response = await request({ category: 'command', payload: command });
+        if (epoch.current !== inspection || (command.type === 'update_material' && (current.current.materialId !== materialId || materialEpoch.current !== materialInspection))) return;
+        const clearAcknowledged = <T extends object>(draft: T): T => {
+          const next = { ...draft };
+          for (const key of submitted) if (fieldRevisions.current[key] === revisions[key]) {
+            delete next[key as keyof T]; delete fieldRevisions.current[key];
           }
-        }
+          return next;
+        };
+        if (response.type === 'command_applied') {
+          ++materialSequence.current;
+          observeVersion(response.payload.scene_version);
+          change({ material: response.payload.material, materialDraft: clearAcknowledged(current.current.materialDraft) });
+        } else if (response.type === 'light_applied' || response.type === 'environment_applied') {
+          ++detailsSequence.current;
+          observeVersion(response.payload.scene_version);
+          const newer = !current.current.details || BigInt(response.payload.scene_version) >= BigInt(current.current.details.value.scene_version);
+          if (response.type === 'light_applied') change({
+            ...(newer ? { details: { type: 'light', value: response.payload } as InspectorDetails } : {}),
+            detailsStatus: 'ready', lightDraft: clearAcknowledged(current.current.lightDraft),
+          });
+          else change({
+            ...(newer ? { details: { type: 'environment', value: response.payload } as InspectorDetails } : {}),
+            detailsStatus: 'ready', environmentDraft: clearAcknowledged(current.current.environmentDraft),
+          });
+        } else throw new Error('Unexpected command response');
       } catch (error) {
-        dispatch({ type: 'error', value: error instanceof Error ? error.message : String(error) });
+        if (epoch.current === inspection && current.current.materialId === materialId && materialEpoch.current === materialInspection) change({ error: String(error) });
       }
-    },
-    [request, state.draft],
-  );
+    });
+    commandTail.current = work;
+    return work;
+  }, [change, observeVersion, request]);
 
-  return { state, refresh, inspectInstance, updateDraft, commitMaterial };
+  const commitMaterial = useCallback((patch: MaterialPatch) => {
+    const id = current.current.materialId;
+    return id ? commit({ type: 'update_material', material_id: id, patch }) : Promise.resolve();
+  }, [commit]);
+  const commitLight = useCallback((patch: Partial<LightPatch>) => {
+    const target = current.current.inspectedObject;
+    return target?.type === 'light' ? commit({ type: 'update_light', light_id: target.light_id, patch: {
+      position: null, radiance: null, direction: null, inner_angle_degrees: null, outer_angle_degrees: null,
+      rotation_degrees: null, width: null, height: null, ...patch,
+    } }) : Promise.resolve();
+  }, [commit]);
+  const commitEnvironment = useCallback((patch: Partial<EnvironmentPatch>) =>
+    current.current.inspectedObject?.type === 'environment'
+      ? commit({ type: 'update_environment', patch: { enabled: null, brightness: null, ...patch } }) : Promise.resolve(), [commit]);
+
+  useEffect(() => {
+    active.current = true;
+    let disposed = false;
+    let polling = false;
+    const removeState = transport.onState((backendState) => change({ backendState }));
+    const removeNotification = transport.onNotification((notification: EditorNotification) => {
+      if (disposed) return;
+      if (notification.type === 'selection_changed') {
+        ++selectionSequence.current; acceptSelection(notification.payload);
+      } else { observeVersion(notification.payload); void refresh(); }
+    });
+    const poll = async () => {
+      if (polling || disposed) return;
+      polling = true;
+      const selectionRequest = ++selectionSequence.current;
+      try {
+        const [version, selection] = await Promise.all([query({ type: 'get_scene_version' }), query({ type: 'get_selection' })]);
+        if (disposed) return;
+        if (selection.type === 'selection' && selectionRequest === selectionSequence.current) acceptSelection(selection.payload);
+        if (version.type === 'scene_version' && (BigInt(version.payload) > BigInt(objectsVersion.current)
+          || (current.current.inspectedObject && (!current.current.details || BigInt(version.payload) > BigInt(current.current.details.value.scene_version))))) await refresh();
+        else if (current.current.details?.type === 'environment' && current.current.details.value.load_state === 'loading') {
+          // CPU asset 完成不一定推进 scene version；加载期间继续读取权威 record。
+          await loadDetails({ type: 'environment' }, epoch.current);
+        }
+      } catch (error) { if (!disposed) change({ error: String(error) }); }
+      finally { polling = false; }
+    };
+    void transport.connect().then(async () => { if (!disposed) { await poll(); await refresh(); } })
+      .catch((error) => { if (!disposed) change({ error: String(error) }); });
+    const timer = window.setInterval(() => { if (current.current.backendState === 'ready') void poll(); }, 1000);
+    return () => {
+      disposed = true; active.current = false; ++epoch.current; ++selectionSequence.current;
+      window.clearInterval(timer); removeState(); removeNotification(); transport.close();
+    };
+  }, [acceptSelection, change, loadDetails, observeVersion, query, refresh, transport]);
+
+  return { state, refresh, inspectObject, selectMaterial, updateDraft, commitMaterial,
+    updateLightDraft, commitLight, updateEnvironmentDraft, commitEnvironment,
+    materialDraft: state.material ? { ...state.material, ...state.materialDraft } : null,
+  };
 }

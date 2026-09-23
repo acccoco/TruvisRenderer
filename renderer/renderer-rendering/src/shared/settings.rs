@@ -10,8 +10,6 @@ pub use renderer_render_passes::post_process::settings::{
 pub struct PathTracingCommonSettings {
     /// HDRI / sky 直接光采样模式。
     pub sky_sampling_mode: SkySamplingMode,
-    /// sky radiance 倍率；只缩放光照能量，不改变 importance sampling 的 PDF。
-    pub sky_brightness: f32,
     /// 是否额外启用自发光三角形 NEE。
     pub emissive_nee_enabled: bool,
     /// 是否额外启用 analytic light NEE。
@@ -24,7 +22,6 @@ impl Default for PathTracingCommonSettings {
     fn default() -> Self {
         Self {
             sky_sampling_mode: SkySamplingMode::Importance,
-            sky_brightness: 1.0,
             emissive_nee_enabled: true,
             analytic_nee_enabled: true,
             post_process: SdrPostProcessSettings::default(),

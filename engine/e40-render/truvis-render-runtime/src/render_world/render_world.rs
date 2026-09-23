@@ -52,13 +52,15 @@ pub struct RenderWorld {
     appearance_revision: u64,
     /// 场景 instance/indirect 数据版本；材质只变时不触发大块 scene buffer 重传。
     scene_revision: u64,
+    /// 跨 FIF 比较 CPU 灯光语义，避免每个副本补传时重复 reset。
+    last_light_revision: u32,
     /// 各 FIF scene buffer 已提交的渲染镜像版本；未提交时保持旧版本，下一次 prepare 会重试。
     uploaded_scene_revisions: [u64; FrameLabel::COUNT],
     pending_scene_revisions: [Option<u64>; FrameLabel::COUNT],
 }
 
 pub(crate) struct RenderWorldPrepareResult {
-    pub(crate) sky_changed: bool,
+    pub(crate) lighting_changed: bool,
 }
 
 // 生命周期：创建和销毁 `RenderWorld` 拥有的长期 GPU 资源。
@@ -111,6 +113,7 @@ impl RenderWorld {
             raster_draw_cache: FrameLabel::ALL.map(|_| Vec::new()),
             appearance_revision: 0,
             scene_revision: 0,
+            last_light_revision: 0,
             uploaded_scene_revisions: [0; FrameLabel::COUNT],
             pending_scene_revisions: [None; FrameLabel::COUNT],
         }
@@ -222,7 +225,8 @@ impl RenderWorld {
             transfer_barrier_mask,
             frame_label,
         );
-        let _analytic_light_changed = analytic_light_update.changed;
+        let light_changed = self.last_light_revision != scene.light_revision();
+        self.last_light_revision = scene.light_revision();
 
         let used_materials = scene_render_data
             .all_instances
@@ -294,8 +298,11 @@ impl RenderWorld {
             self.appearance_revision,
         );
 
+        let sky = scene.sky_state();
+        self.scene_buffers[*frame_label].sky_brightness = if sky.enabled { sky.brightness } else { 0.0 };
+        self.scene_buffers[*frame_label].accum_signature.sky_revision = sky.revision;
         RenderWorldPrepareResult {
-            sky_changed: sky_update.changed || resource_sync_result.sky_changed,
+            lighting_changed: light_changed || sky_update.changed || resource_sync_result.sky_changed,
         }
     }
 
@@ -335,6 +342,10 @@ impl RenderSceneView for RenderWorld {
     /// 暴露当前 frame label 的 TLAS handle；空场景没有 TLAS。
     fn tlas_handle(&self, frame_label: FrameLabel) -> Option<vk::AccelerationStructureKHR> {
         self.tlas(frame_label).map(|tlas| tlas.handle())
+    }
+
+    fn sky_brightness(&self, frame_label: FrameLabel) -> f32 {
+        self.scene_buffers[*frame_label].sky_brightness
     }
 
     fn accum_signature(&self, frame_label: FrameLabel) -> RenderSceneAccumSignature {
@@ -504,6 +515,7 @@ impl RenderWorld {
             emissive_light_version: emissive_light_binding.version,
             analytic_light_version: analytic_light_binding.version,
             sky_distribution_version: environment_binding.sky.distribution_version,
+            sky_revision: 0, // 同一次 prepare 随 CPU 环境投影填充。
             appearance_revision,
         };
         scene_buffers[frame_index].accum_signature = accum_signature;

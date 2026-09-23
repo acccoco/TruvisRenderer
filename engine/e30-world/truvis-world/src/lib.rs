@@ -13,11 +13,12 @@ mod asset_system;
 pub mod components;
 mod edit_error;
 pub mod guid_new_type;
+mod light_parameters;
 mod light_target;
 pub mod procedural_mesh;
 mod scene_store;
 
-pub use crate::asset_system::{AssetSource, AssetSystem, GeneratedSourceKey, SceneData, SceneObjectData};
+pub use crate::asset_system::{AssetSource, AssetSystem, GeneratedSourceKey, SceneData, SceneObjectData, TextureRecord, TextureState};
 use crate::components::instance::Instance;
 use crate::components::material::MaterialData;
 pub use crate::edit_error::{SceneEditError, SceneHandleKind, WorldEditError};
@@ -27,6 +28,8 @@ use crate::guid_new_type::{
 pub use crate::light_target::LightTarget;
 use crate::scene_store::SceneStore;
 pub use crate::scene_store::{SceneReadView, SceneSkyState};
+
+pub use crate::light_parameters::{AreaLightShape, LightPatch};
 
 /// CPU 侧场景状态的聚合容器。
 ///
@@ -206,9 +209,18 @@ impl GameWorld {
         self.scene.update_sky_texture(texture, &self.resources.store).map_err(Into::into)
     }
 
+    /// 原子修改环境参数，失败不推进版本。
+    pub fn update_sky_parameters(
+        &mut self,
+        enabled: Option<bool>,
+        brightness: Option<f32>,
+    ) -> Result<(), WorldEditError> {
+        self.scene.update_sky_parameters(enabled, brightness).map_err(Into::into)
+    }
+
     /// 更新 CPU sky 是否启用。
     pub fn update_sky_enabled(&mut self, enabled: bool) {
-        self.scene.update_sky_enabled(enabled);
+        self.scene.update_sky_parameters(Some(enabled), None).expect("unchanged brightness is valid");
     }
 
     /// 查询当前 CPU material 参数。
@@ -264,8 +276,19 @@ impl GameWorld {
 
     /// 修改灯光世界位置，保留形状参数并推进场景和灯光版本。
     pub fn update_light_position(&mut self, target: LightTarget, position: glam::Vec3) -> Result<(), WorldEditError> {
-        self.scene.update_light_position(target, position)?;
+        self.update_light(
+            target,
+            LightPatch {
+                position: Some(position),
+                ..Default::default()
+            },
+        )?;
         Ok(())
+    }
+
+    /// 按字段合并最新灯光参数，校验成功后提交。
+    pub fn update_light(&mut self, target: LightTarget, patch: LightPatch) -> Result<(), WorldEditError> {
+        self.scene.update_light(target, patch).map_err(Into::into)
     }
 
     /// 注册 point light。

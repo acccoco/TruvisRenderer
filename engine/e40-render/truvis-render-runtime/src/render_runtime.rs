@@ -793,9 +793,10 @@ impl RenderRuntime {
             scene_view,
             resource_sync_result,
         );
-        if render_world_result.sky_changed {
-            // sky 从 fallback 切换到真实贴图时，历史累积帧已经不再对应当前环境光。
+        if render_world_result.lighting_changed {
+            // 灯光编辑和环境切换使本帧历史失效；DLSS 与累计各自维护 reset。
             self.view_accum.reset();
+            self.dlss_sr_state.request_reset();
         }
 
         // per-frame uniform 放在 GPU scene 上传之后写入同一条命令缓冲，保证本帧 shader

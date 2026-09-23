@@ -467,7 +467,7 @@ impl GpuSkyStore {
         shader_binding_system: &mut ShaderBindingSystem,
     ) -> FallbackSkyTexture {
         // sky fallback 需要视觉中性，避免材质缺失用的洋红色污染环境光。
-        // PathTracingCommonSettings::sky_brightness 仍是唯一生效的天空亮度控制。
+        // 环境倍率由 SceneSkyState 经本帧只读投影提供，关闭时倍率为零。
         let pixels: [u8; 4] = [10, 13, 15, 255];
         let image = GfxImage::from_rgba8(resource_ctx, immediate_ctx, 1, 1, &pixels, "FallbackSky");
         let image_format = image.format();

@@ -60,8 +60,15 @@ WebView 的草稿 revision 用于区分本地未确认输入和服务器回包�
 selection 由 Renderer 唯一持有：灯光图标在 update 通过 CPU 屏幕命中更新，网格在 after_prepare
 取得 GPU raycast 结果后更新。两者共用 tagged selection DTO 与通知；灯光 ID 包含类别和 generation。
 WebView 定期查询 selection，通知丢失时无需依赖 scene version 变化即可恢复。
-灯光详情只提供类型、身份和位置；切换灯光时使旧 instance/material 请求失效，旧回包不能覆盖当前 Inspector。
-ScenePanel 独立查看网格的行为仍保留，不反向改变 Renderer selection。
+Web 只保留一个 `inspectedObject`，可检查 Instance、Light 或 Environment；左栏检查不反向修改 Renderer selection。
+只有实际 selection 变化才更新检查对象，重复轮询不抢占左栏选择。材质编辑绑定当前 instance 的 material bindings。
+混合列表保持有界分页和版本校验；标签与搜索仅过滤完整 Web 投影。
+
+灯光与环境修改使用字段 patch，由 World 合并最新状态并原子校验；Gizmo 与 Inspector 共用灯光 mutation。
+Web 按检查批次、材质身份与字段 revision 丢弃旧回包，刷新仅合并未编辑字段；命令按提交顺序发送。
+LightDetails 的类别专有参数使用 tagged DTO，Environment 是单例，换图不改变其检查身份。
+Area 半轴是权威，朝向/尺寸只按需转换；Spot UI 使用角度，World 保持弧度。
+环境加载期间继续查询 CPU texture record，即使 scene version 未变化也能收敛到 Ready/Failed；不将其视为 GPU 完成。
 
 ## 特权命令
 

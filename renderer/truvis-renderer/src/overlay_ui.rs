@@ -112,10 +112,11 @@ impl TruvisOverlayUi {
     }
 
     fn draw_sky_tab(ui: &imgui::Ui, controls: &mut RenderControlsData<'_>) {
+        ui.checkbox("Environment Enabled", controls.sky_enabled);
         RenderControlsOverlay::build_sky_section(
             ui,
             &mut controls.common_settings.sky_sampling_mode,
-            &mut controls.common_settings.sky_brightness,
+            controls.sky_brightness,
         );
     }
 
@@ -255,6 +256,8 @@ pub(crate) struct RenderControlsData<'a> {
     pub(crate) realtime_settings: &'a mut RealtimeRenderSettings,
     pub(crate) offline_settings: &'a mut OfflineRenderSettings,
     pub(crate) offline_sample_count: u32,
+    pub(crate) sky_brightness: &'a mut f32,
+    pub(crate) sky_enabled: &'a mut bool,
 }
 
 pub(crate) struct RaycastOverlayData<'a> {

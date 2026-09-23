@@ -406,6 +406,9 @@ impl Renderer for TruvisRenderer {
         );
         self.frame_view = camera.render_view();
 
+        let sky = *ctx.world.scene_view().sky_state();
+        let mut sky_brightness = sky.brightness;
+        let mut sky_enabled = sky.enabled;
         self.imgui.build_frame(delta, |ui| {
             let offline_sample_count = self.offline.sample_count();
             let frame = TruvisOverlayFrame {
@@ -422,6 +425,8 @@ impl Renderer for TruvisRenderer {
                     realtime_settings: self.realtime.settings_mut(),
                     offline_settings: self.offline.settings_mut(),
                     offline_sample_count,
+                    sky_brightness: &mut sky_brightness,
+                    sky_enabled: &mut sky_enabled,
                 },
                 raycast: RaycastOverlayData {
                     probe: &self.click_ray_cast_probe,
@@ -435,6 +440,12 @@ impl Renderer for TruvisRenderer {
             };
             self.overlay_ui.build(frame);
         });
+
+        if sky_brightness != sky.brightness || sky_enabled != sky.enabled {
+            if let Err(error) = ctx.world.update_sky_parameters(Some(sky_enabled), Some(sky_brightness)) {
+                log::warn!("Environment edit rejected: {error}");
+            }
+        }
 
         // 配置归一化属于固定 update 路径，主窗口折叠或 tab 隐藏也必须执行。
         self.offline.settings_mut().normalize();

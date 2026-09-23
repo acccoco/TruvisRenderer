@@ -1,4 +1,5 @@
 import type {
+  LightDetailsDto, LightPatch, EnvironmentDetailsDto,
   EditorNotification,
   EditorRequest,
   EditorResponse,
@@ -36,11 +37,24 @@ export class MockEditorTransport implements EditorTransport {
     submesh_index: 1,
     material_id: MOCK_MATERIAL_ID,
   };
-  private readonly objects: SceneObjectSummary[] = Array.from({ length: 18 }, (_, index) => ({
+  private readonly instances: Extract<SceneObjectSummary, { type: 'instance' }>[] = Array.from({ length: 18 }, (_, index) => ({
+    type: 'instance',
     instance_id: index === 3 ? MOCK_INSTANCE_ID : `instance:000000010000${(1001 + index).toString(16).padStart(4, '0')}`,
     name: index === 3 ? 'Sponza_Curtain_West' : `Sponza_Instance_${String(index + 1).padStart(2, '0')}`,
     material_count: index % 4 === 3 ? 3 : (index % 2) + 1,
   }));
+  private readonly lights: LightDetailsDto[] = [
+    { light_id: 'point:0000000100000001', scene_version: '24', position: [0, 1, 0], radiance: [8, 6, 4], parameters: { kind: 'point' } },
+    { light_id: 'spot:0000000100000001', scene_version: '24', position: [2, 3, 0], radiance: [10, 10, 10], parameters: { kind: 'spot', direction: [0, -1, 0], inner_angle_degrees: 20, outer_angle_degrees: 40 } },
+    { light_id: 'area:0000000100000001', scene_version: '24', position: [0, 4, 0], radiance: [3, 3, 3], parameters: { kind: 'area', shape: { rotation_degrees: [90, 0, 0], width: 2, height: 3 } } },
+  ];
+  private environment: EnvironmentDetailsDto = { scene_version: '24', enabled: true, brightness: 1, texture_id: null, file_name: null, load_state: 'unset' };
+  private get objects(): SceneObjectSummary[] {
+    return [...this.instances, ...this.lights.map((light): SceneObjectSummary => ({
+      type: light.parameters.kind, light_id: light.light_id, name: `${light.parameters.kind} Light 1`,
+    })), { type: 'environment', name: 'Environment / HDRI (not set)' }];
+  }
+
   private readonly stateListeners = new Set<(state: EditorBackendState) => void>();
   private readonly notificationListeners = new Set<(notification: EditorNotification) => void>();
 
@@ -57,6 +71,19 @@ export class MockEditorTransport implements EditorTransport {
   async request(request: EditorRequest): Promise<EditorResponse> {
     await new Promise((resolve) => window.setTimeout(resolve, 34));
     if (request.category === 'command') {
+      if (request.payload.type === 'update_light') return this.updateLight(request.payload.light_id, request.payload.patch);
+      if (request.payload.type === 'update_environment') {
+        const patch = request.payload.patch;
+        if (patch.brightness !== null && (!Number.isFinite(patch.brightness) || patch.brightness < 0))
+          return { type: 'error', payload: { code: 'invalid_request', message: 'Brightness must be finite and nonnegative' } };
+        const next = { ...this.environment, enabled: patch.enabled ?? this.environment.enabled, brightness: patch.brightness ?? this.environment.brightness };
+        if (JSON.stringify(next) !== JSON.stringify(this.environment)) next.scene_version = this.changed();
+        next.scene_version = String(this.sceneVersion);
+        this.environment = next;
+        return { type: 'environment_applied', payload: structuredClone(next) };
+      }
+
+      this.material.id = request.payload.material_id;
       const { texture_mappings, ...values } = request.payload.patch;
       for (const [key, value] of Object.entries(values)) {
         if (value !== null) {
@@ -83,13 +110,18 @@ export class MockEditorTransport implements EditorTransport {
     switch (request.payload.type) {
       case 'get_scene_version':
         return { type: 'scene_version', payload: String(this.sceneVersion) };
-      case 'get_light_details':
-        return { type: 'light_details', payload: { scene_version: String(this.sceneVersion), light_id: request.payload.light_id, kind: 'point', position: [0, 1, 0] } };
+      case 'get_environment': return { type: 'environment', payload: { ...this.environment, scene_version: String(this.sceneVersion) } };
+      case 'get_light_details': {
+        const id = request.payload.light_id;
+        const light = this.lights.find((entry) => entry.light_id === id);
+        return light ? { type: 'light_details', payload: { ...structuredClone(light), scene_version: String(this.sceneVersion) } }
+          : { type: 'error', payload: { code: 'stale_object', message: 'Light no longer exists' } };
+      }
       case 'get_selection':
         return { type: 'selection', payload: this.selection };
       case 'get_instance_details': {
         const instanceId = request.payload.instance_id;
-        const object = this.objects.find((candidate) => candidate.instance_id === instanceId);
+        const object = this.instances.find((candidate) => candidate.instance_id === instanceId);
         if (!object) {
           return {
             type: 'error',
@@ -106,7 +138,7 @@ export class MockEditorTransport implements EditorTransport {
           instance_id: object.instance_id,
           name: object.name,
           // 最后一项覆盖不可分解状态；mock 只提供投影，不执行矩阵运算。
-          transform: object === this.objects[this.objects.length - 1] ? null : {
+          transform: object === this.instances[this.instances.length - 1] ? null : {
             location: [124.5, 32, -48.25],
             rotation_degrees: [30, 0, 0],
             scale: [1, 1, 1],
@@ -120,7 +152,7 @@ export class MockEditorTransport implements EditorTransport {
         return { type: 'instance_details', payload: details };
       }
       case 'get_material':
-        return { type: 'material', payload: { ...this.material } };
+        return { type: 'material', payload: { ...structuredClone(this.material), id: request.payload.material_id } };
       case 'get_scene_objects': {
         const offset = request.payload.offset;
         const limit = request.payload.limit || 128;
@@ -135,6 +167,42 @@ export class MockEditorTransport implements EditorTransport {
         };
       }
     }
+  }
+
+  private changed(): string {
+    const version = String(++this.sceneVersion);
+    this.emitNotification({ type: 'scene_version_changed', payload: version });
+    return version;
+  }
+
+  private updateLight(id: string, patch: LightPatch): EditorResponse {
+    const index = this.lights.findIndex((light) => light.light_id === id);
+    if (index < 0) return { type: 'error', payload: { code: 'stale_object', message: 'Light no longer exists' } };
+    const next = structuredClone(this.lights[index]);
+    const p = next.parameters;
+    if (patch.position) next.position = patch.position;
+    if (patch.radiance) next.radiance = patch.radiance;
+    if (p.kind === 'spot') {
+      if (patch.direction) {
+        const length = Math.hypot(...patch.direction);
+        p.direction = patch.direction.map((v) => v / length) as [number, number, number];
+      }
+      p.inner_angle_degrees = patch.inner_angle_degrees ?? p.inner_angle_degrees;
+      p.outer_angle_degrees = patch.outer_angle_degrees ?? p.outer_angle_degrees;
+    }
+    if (p.kind === 'area' && p.shape) {
+      p.shape.rotation_degrees = patch.rotation_degrees ?? p.shape.rotation_degrees;
+      p.shape.width = patch.width ?? p.shape.width;
+      p.shape.height = patch.height ?? p.shape.height;
+    }
+    const invalid = next.position.some((v) => !Number.isFinite(v)) || next.radiance.some((v) => !Number.isFinite(v) || v < 0)
+      || (p.kind === 'spot' && (p.direction.some((v) => !Number.isFinite(v)) || p.inner_angle_degrees < 0 || p.outer_angle_degrees > 180 || p.inner_angle_degrees > p.outer_angle_degrees))
+      || (p.kind === 'area' && p.shape && (p.shape.width <= 0 || p.shape.height <= 0));
+    if (invalid) return { type: 'error', payload: { code: 'invalid_request', message: 'Invalid light parameters' } };
+    if (JSON.stringify(next) !== JSON.stringify(this.lights[index])) next.scene_version = this.changed();
+    next.scene_version = String(this.sceneVersion);
+    this.lights[index] = next;
+    return { type: 'light_applied', payload: structuredClone(next) };
   }
 
   onState(listener: (state: EditorBackendState) => void): () => void {

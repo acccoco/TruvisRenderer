@@ -1,5 +1,4 @@
 use ash::vk;
-
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 
 use crate::frame_label::FrameLabel;
@@ -18,6 +17,8 @@ pub struct RenderSceneAccumSignature {
     pub analytic_light_version: u32,
     /// sky 分布版本覆盖 HDRI importance table 与 fallback/真实贴图切换；它影响 sky radiance 与 PDF。
     pub sky_distribution_version: u32,
+    /// CPU 环境启用、亮度与纹理引用的语义版本，独立于采样分布发布。
+    pub sky_revision: u64,
     /// active instance 使用的 material/transform 投影变化版本。
     pub appearance_revision: u64,
 }
@@ -30,6 +31,9 @@ pub trait RenderSceneView {
     fn tlas_handle(&self, frame_label: FrameLabel) -> Option<vk::AccelerationStructureKHR>;
 
     fn accum_signature(&self, frame_label: FrameLabel) -> RenderSceneAccumSignature;
+
+    /// prepare 已确定的当前 FIF 环境倍率；关闭时为零。
+    fn sky_brightness(&self, frame_label: FrameLabel) -> f32;
 
     fn draw_raster(&self, frame_label: FrameLabel, cmd: &GfxCommandBuffer, before_draw: &mut dyn FnMut(u32, u32));
 }

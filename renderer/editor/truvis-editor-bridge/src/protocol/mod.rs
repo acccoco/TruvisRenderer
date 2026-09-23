@@ -4,6 +4,7 @@
 //! session-local opaque string 表达，协议不会暴露 SlotMap 或 GPU slot 结构。
 
 mod automation;
+mod environment;
 mod error;
 mod ids;
 mod light;
@@ -16,9 +17,10 @@ pub use automation::{
     AutomationCommand, AutomationNotification, AutomationQuery, AutomationRequest, AutomationResponse,
     SceneImportStatusDto, SceneSummaryDto,
 };
+pub use environment::{EnvironmentDetailsDto, EnvironmentLoadState, EnvironmentPatch};
 pub use error::{EditorError, EditorErrorCode};
 pub use ids::{InstanceId, MaterialId, MeshId, SceneVersion, TextureId};
-pub use light::{LightDetailsDto, LightId, LightKindDto};
+pub use light::{AreaLightShapeDto, LightDetailsDto, LightId, LightKindDto, LightParametersDto, LightPatch};
 pub use material::{
     CoverageModeDto, MaterialClassDto, MaterialDto, MaterialPatch, TextureMappingDto, TextureMappingPatch,
     TextureSlotDto,

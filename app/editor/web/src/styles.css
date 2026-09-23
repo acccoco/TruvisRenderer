@@ -445,7 +445,7 @@ select:focus-visible {
   position: relative;
   display: grid;
   width: 100%;
-  grid-template-columns: minmax(0, 1fr) 72px;
+  grid-template-columns: minmax(0, 1fr) 52px;
   align-items: center;
   min-height: 32px;
   padding: 0 var(--space-2);
@@ -1076,3 +1076,23 @@ input[type="range"] {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Scene 筛选及参数编辑复用浅色技术编辑器 tokens。 */
+.scene-filters { display: flex; gap: var(--space-1); padding: var(--space-2); }
+.scene-filters button, .material-binding-button, .instance-detail-section > button {
+  min-height: 28px; padding: var(--space-1) var(--space-2); border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface-input); color: var(--text); cursor: pointer;
+}
+.scene-filters button { flex: 1; font-size: 11px; padding-inline: var(--space-1); }
+.scene-filters button:hover, .material-binding-button:hover, .instance-detail-section > button:hover:not(:disabled) { background: var(--cyan-soft); }
+.scene-filters button[aria-pressed="true"], .material-binding-button[aria-pressed="true"] { background: var(--selected-bg); color: var(--selected-text); border-color: var(--cyan); }
+.instance-detail-section > button:disabled { opacity: 0.5; cursor: default; }
+.material-binding-button { text-align: left; overflow: hidden; text-overflow: ellipsis; }
+.vector-field { min-width: 0; margin: 0; padding: var(--space-2) 0; border: 0; border-top: 1px solid var(--border-soft); }
+.vector-field legend { color: var(--text-strong); font-size: 12px; padding-right: var(--space-2); }
+.vector-field > div { display: grid; gap: var(--space-1); }
+.numeric-field { min-width: 0; }
+.numeric-field input { width: 100%; min-width: 0; }
+.numeric-field input[aria-invalid="true"] { border-color: var(--red); }
+.field-error { grid-column: 1 / -1; color: var(--red); }
+.texture-file { overflow-wrap: anywhere; }

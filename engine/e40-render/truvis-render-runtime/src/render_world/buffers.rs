@@ -27,6 +27,7 @@ pub(super) struct SceneBuffers {
 
     /// 当前 FIF 的 scene 语义版本快照，供离线累计判断历史图像是否仍可复用。
     pub(super) accum_signature: RenderSceneAccumSignature,
+    pub(super) sky_brightness: f32,
 }
 
 impl SceneBuffers {
@@ -80,6 +81,7 @@ impl SceneBuffers {
                 format!("instance geometry stage buffer-{}", frame_label),
             ),
             accum_signature: RenderSceneAccumSignature::default(),
+            sky_brightness: 1.0,
         }
     }
 

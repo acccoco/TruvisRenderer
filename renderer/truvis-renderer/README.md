@@ -80,3 +80,9 @@ prepare、overlay 与 Offline 累计签名共用同一视图；after_prepare 相
 跨线程 Editor、协议与一致性边界见 [`docs/design/editor-boundary-and-consistency.md`](../../docs/design/editor-boundary-and-consistency.md)。
 Runtime/Renderer/Subsystem 的通用契约见
 [`docs/design/runtime-phase-contract.md`](../../docs/design/runtime-phase-contract.md)。
+
+## 场景环境编辑
+
+Sky tab 的 enabled/brightness 从 World 读取为本次 UI 临时值，修改后经 GameWorld 原子提交；
+PathTracingCommonSettings 只保留采样策略，不缓存环境倍率。Web Environment Inspector 与 ImGui 共用同一权威。
+灯光 Inspector 与 Gizmo 共用字段级 World mutation，图标、线框和位置继续读取既有三张灯光表。

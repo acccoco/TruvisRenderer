@@ -7,4 +7,4 @@ import type { SceneVersion } from "./SceneVersion";
 /**
  * 不修改 GameWorld 的 Editor 查询。
  */
-export type EditorQuery = { "type": "get_scene_version" } | { "type": "get_selection" } | { "type": "get_light_details", light_id: LightId, } | { "type": "get_scene_objects", offset: number, limit: number, expected_scene_version: SceneVersion | null, } | { "type": "get_instance_details", instance_id: InstanceId, } | { "type": "get_material", material_id: MaterialId, };
+export type EditorQuery = { "type": "get_scene_version" } | { "type": "get_environment" } | { "type": "get_selection" } | { "type": "get_light_details", light_id: LightId, } | { "type": "get_scene_objects", offset: number, limit: number, expected_scene_version: SceneVersion | null, } | { "type": "get_instance_details", instance_id: InstanceId, } | { "type": "get_material", material_id: MaterialId, };

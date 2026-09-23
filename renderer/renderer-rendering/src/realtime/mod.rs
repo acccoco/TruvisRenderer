@@ -55,6 +55,8 @@ pub struct RealtimeRenderSubsystem {
     settings: RealtimeRenderSettings,
     /// ReSTIR DI 的最小 CPU history signature；用于 mode/reset 变化时切断上一帧 history。
     restir_last_mode: Cell<RtRestirDiMode>,
+    /// 环境语义变化时拒绝上一帧 reservoir，分布版本仍由 shader 检查。
+    restir_last_sky_revision: Cell<u64>,
 }
 
 /// Realtime 渲染子系统自有配置。
@@ -552,7 +554,7 @@ impl RealtimeRenderSubsystem {
         let main_view_targets = &resources.main_view_targets;
         let debug_channel = self.settings.debug_channel.shader_channel();
         let sky_sampling_mode = common_settings.sky_sampling_mode.shader_mode();
-        let sky_brightness = common_settings.sky_brightness;
+        let sky_brightness = ctx.render_scene.sky_brightness(frame_label);
         let emissive_nee_enabled = common_settings.emissive_nee_enabled;
         let analytic_nee_enabled = common_settings.analytic_nee_enabled;
         let restir_di_mode = self.settings.restir_di_mode;
@@ -561,14 +563,16 @@ impl RealtimeRenderSubsystem {
         let frame_id = record_ctx.frame_timing.frame_id();
         let previous_frame_label =
             FrameLabel::from_usize((frame_id as usize + FrameLabel::COUNT - 1) % FrameLabel::COUNT);
-        // CPU 侧只负责切断明显不连续的 history：首帧、mode 变化和 DLSS reset。
-        // sky/emissive/analytic light 的版本拒绝在 shader reservoir metadata 中完成，
-        // 这样 resize/reset 语义留在 realtime 渲染子系统，scene 语义变化留在 GPU scene ABI。
-        let restir_history_valid = restir_di_mode.is_enabled()
-            && frame_id > 0
-            && self.restir_last_mode.get() == restir_di_mode
-            && !record_ctx.dlss_sr_state.constants().reset;
+        // CPU 拒绝首帧、mode/reset 与 Sky 语义变化的历史；亮度不改变采样分布。
+        // shader 继续检查 distribution/emissive/analytic 发布版本，不混用两类 revision。
+        let sky_revision = ctx.render_scene.accum_signature(frame_label).sky_revision;
+        let restir_history_valid = restir_di_mode.is_enabled() &&
+            self.restir_last_sky_revision.get() == sky_revision &&
+            frame_id > 0 &&
+            self.restir_last_mode.get() == restir_di_mode &&
+            !record_ctx.dlss_sr_state.constants().reset;
         self.restir_last_mode.set(restir_di_mode);
+        self.restir_last_sky_revision.set(sky_revision);
 
         // compute graph 导入的是 renderer-owned 外部图像；RenderGraph 只接管本图内的状态转换，
         // 不拥有图像生命周期。owner 必须活到 graph 录制与提交完成之后。

@@ -113,3 +113,14 @@ light revision 和 scene version。prepare 使用既有 AnalyticLightTable 完�
 本文不定义完整 glTF/FBX importer 格式，不描述具体 RenderGraph pass，也不把当前支持范围写成未来能力承诺。
 
 资源导入、CPU scene mutation 和 GPU upload 分属不同阶段；需要解释某个协议或 UI 恢复行为时链接 Editor design，而不在此复制。
+
+## 灯光与环境参数编辑
+
+`GameWorld::update_light` 按 patch 合并当前三张灯光表；位置 Gizmo 复用该入口。
+所有候选值校验后一次写入，失败和 no-op 不推进 light/scene revision。
+Area 以 center/half_u/half_v 为权威，旋转和尺寸不另存缓存。
+
+`SceneSkyState` 拥有 enabled、texture、brightness 和语义 revision；有效倍率为 enabled ? brightness : 0。
+prepare 将倍率和 Sky revision 写入当前 FIF 的 CPU 渲染投影，通过 RenderSceneView 只读提供给 pass，
+仍使用已有 RT push constant，不增加 shader ABI。关闭环境保留纹理资源，亮度改变不重建 importance distribution。
+Sky 语义 revision 与异步 distribution 发布版本独立，均参与各自消费者的历史判定。

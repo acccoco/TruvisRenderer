@@ -1,23 +1,24 @@
 use std::time::{Duration, Instant};
 
 use slotmap::{Key, KeyData};
-
 use truvis_asset::material_texture::{TextureFilter, TextureSampler, TextureTransform, TextureWrap};
-
-use truvis_editor_bridge::protocol::{
-    CoverageModeDto, DEFAULT_SCENE_PAGE_SIZE, EditorCommand, EditorError, EditorErrorCode, EditorNotification,
-    EditorQuery, EditorRequest, EditorResponse, InstanceDetailsDto, InstanceId, InstanceMaterialBindingDto,
-    InstanceTransformDto, MAX_SCENE_PAGE_SIZE, MaterialClassDto, MaterialDto, MaterialId, MaterialPatch, MeshId,
-    MeshSummaryDto, SceneObjectSummary, SceneObjectsPage, SceneVersion, SelectionDto, TextureId, TextureMappingDto,
-    TextureSlotDto,
+use truvis_editor_bridge::{
+    EditorRendererEndpoint, EditorRequestEnvelope,
+    protocol::{
+        AreaLightShapeDto, CoverageModeDto, DEFAULT_SCENE_PAGE_SIZE, EditorCommand, EditorError, EditorErrorCode,
+        EditorNotification, EditorQuery, EditorRequest, EditorResponse, EnvironmentDetailsDto, EnvironmentLoadState,
+        InstanceDetailsDto, InstanceId, InstanceMaterialBindingDto, InstanceTransformDto, LightDetailsDto, LightId,
+        LightKindDto, LightParametersDto, MAX_SCENE_PAGE_SIZE, MaterialClassDto, MaterialDto, MaterialId,
+        MaterialPatch, MeshId, MeshSummaryDto, SceneObjectSummary, SceneObjectsPage, SceneVersion, SelectionDto,
+        TextureId, TextureMappingDto, TextureSlotDto,
+    },
 };
-use truvis_editor_bridge::protocol::{LightDetailsDto, LightId, LightKindDto};
-use truvis_editor_bridge::{EditorRendererEndpoint, EditorRequestEnvelope};
 use truvis_renderer::{SceneSelection, SelectionChange};
-use truvis_world::GameWorld;
-use truvis_world::LightTarget;
-use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
-use truvis_world::guid_new_type::{MaterialAssetHandle, MeshAssetHandle, MeshInstanceHandle, TextureAssetHandle};
+use truvis_world::{
+    AreaLightShape, AssetSource, GameWorld, LightTarget, SceneEditError, TextureState, WorldEditError,
+    components::material::{CoverageMode, MaterialClass, MaterialData},
+    guid_new_type::{MaterialAssetHandle, MeshAssetHandle, MeshInstanceHandle, TextureAssetHandle},
+};
 
 /// Editor 请求在单帧 update 中的处理预算。
 ///
@@ -108,29 +109,92 @@ impl WorldSceneAdapter {
         SelectionDto::Light { light_id, kind }
     }
 
-    fn light_details(world: &GameWorld, light_id: LightId) -> EditorResponse {
-        let prefix = light_id.0.split_once(':').map(|(prefix, _)| prefix).unwrap_or("");
-        let target = match prefix {
-            "point" => Self::decode_key("point", &light_id.0).map(LightTarget::Point),
-            "spot" => Self::decode_key("spot", &light_id.0).map(LightTarget::Spot),
-            "area" => Self::decode_key("area", &light_id.0).map(LightTarget::Area),
-            _ => return Self::error(EditorErrorCode::InvalidRequest, "invalid light ID kind"),
-        };
-        let target = match target {
-            Ok(value) => value,
-            Err(error) => return EditorResponse::Error(error),
-        };
+    fn decode_light_id(light_id: &LightId) -> Result<LightTarget, EditorError> {
+        match light_id.0.split_once(':').map(|(prefix, _)| prefix) {
+            Some("point") => Self::decode_key("point", &light_id.0).map(LightTarget::Point),
+            Some("spot") => Self::decode_key("spot", &light_id.0).map(LightTarget::Spot),
+            Some("area") => Self::decode_key("area", &light_id.0).map(LightTarget::Area),
+            _ => Err(EditorError::new(EditorErrorCode::InvalidRequest, "invalid light ID kind")),
+        }
+    }
+
+    fn light_dto(world: &GameWorld, light_id: LightId) -> Result<LightDetailsDto, EditorError> {
+        let target = Self::decode_light_id(&light_id)?;
         let scene = world.scene_view();
-        let Some(position) = scene.light_position(target) else {
-            return Self::error(EditorErrorCode::StaleObject, "light ID is no longer valid");
+        let stale = || EditorError::new(EditorErrorCode::StaleObject, "light ID is no longer valid");
+        let position = scene.light_position(target).ok_or_else(stale)?.to_array();
+        let (radiance, parameters) = match target {
+            LightTarget::Point(id) => {
+                let light = scene.point_light_map().get(id).ok_or_else(stale)?;
+                (glam::Vec3::from(light.color).to_array(), LightParametersDto::Point)
+            }
+            LightTarget::Spot(id) => {
+                let light = scene.spot_light_map().get(id).ok_or_else(stale)?;
+                (
+                    glam::Vec3::from(light.color).to_array(),
+                    LightParametersDto::Spot {
+                        direction: glam::Vec3::from(light.dir).to_array(),
+                        inner_angle_degrees: light.inner_angle.to_degrees(),
+                        outer_angle_degrees: light.outer_angle.to_degrees(),
+                    },
+                )
+            }
+            LightTarget::Area(id) => {
+                let light = scene.area_light_map().get(id).ok_or_else(stale)?;
+                (
+                    glam::Vec3::from(light.radiance).to_array(),
+                    LightParametersDto::Area {
+                        shape: AreaLightShape::from_axes(light.half_u.into(), light.half_v.into()).map(|shape| {
+                            AreaLightShapeDto {
+                                rotation_degrees: shape.rotation_degrees.to_array(),
+                                width: shape.width,
+                                height: shape.height,
+                            }
+                        }),
+                    },
+                )
+            }
         };
-        let (_, kind) = Self::light_identity(target);
-        EditorResponse::LightDetails(LightDetailsDto {
+        Ok(LightDetailsDto {
             scene_version: SceneVersion::from_u64(scene.scene_version()),
             light_id,
-            kind,
-            position: position.to_array(),
+            position,
+            radiance,
+            parameters,
         })
+    }
+
+    fn environment_dto(world: &GameWorld) -> EnvironmentDetailsDto {
+        let scene = world.scene_view();
+        let sky = scene.sky_state();
+        let record = sky.texture.and_then(|id| scene.texture_record(id));
+        let file_name = record.map(|record| match &record.source {
+            AssetSource::File { path } => path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+            AssetSource::Embedded { image_index, .. } => format!("Embedded image {image_index}"),
+            AssetSource::Generated { .. } => "Generated texture".into(),
+        });
+        let load_state = record.map_or(EnvironmentLoadState::Unset, |record| match record.state {
+            TextureState::Loading => EnvironmentLoadState::Loading,
+            TextureState::Ready => EnvironmentLoadState::Ready,
+            TextureState::Failed => EnvironmentLoadState::Failed,
+        });
+        EnvironmentDetailsDto {
+            scene_version: SceneVersion::from_u64(scene.scene_version()),
+            enabled: sky.enabled,
+            brightness: sky.brightness,
+            texture_id: sky.texture.map(Self::encode_texture_id),
+            file_name,
+            load_state,
+        }
+    }
+
+    fn edit_error(error: WorldEditError) -> EditorResponse {
+        let code = if matches!(error, WorldEditError::Scene(SceneEditError::StaleHandle { .. })) {
+            EditorErrorCode::StaleObject
+        } else {
+            EditorErrorCode::InvalidRequest
+        };
+        Self::error(code, error.to_string())
     }
 
     pub(crate) fn handle_query(
@@ -142,7 +206,10 @@ impl WorldSceneAdapter {
             EditorQuery::GetSceneVersion => {
                 EditorResponse::SceneVersion(SceneVersion::from_u64(world.scene_view().scene_version()))
             }
-            EditorQuery::GetLightDetails { light_id } => Self::light_details(world, light_id),
+            EditorQuery::GetLightDetails { light_id } => {
+                Self::light_dto(world, light_id).map(EditorResponse::LightDetails).unwrap_or_else(EditorResponse::Error)
+            }
+            EditorQuery::GetEnvironment => EditorResponse::Environment(Self::environment_dto(world)),
             EditorQuery::GetSelection => EditorResponse::Selection(Self::selection_dto(world, selection)),
             EditorQuery::GetSceneObjects {
                 offset,
@@ -164,7 +231,41 @@ impl WorldSceneAdapter {
         world: &mut GameWorld,
         command: EditorCommand,
     ) -> (EditorResponse, Option<EditorNotification>) {
+        let previous_version = world.scene_view().scene_version();
         match command {
+            EditorCommand::UpdateLight { light_id, patch } => {
+                let target = match Self::decode_light_id(&light_id) {
+                    Ok(target) => target,
+                    Err(e) => return (EditorResponse::Error(e), None),
+                };
+                let patch = truvis_world::LightPatch {
+                    position: patch.position.map(Into::into),
+                    radiance: patch.radiance.map(Into::into),
+                    direction: patch.direction.map(Into::into),
+                    inner_angle: patch.inner_angle_degrees.map(f32::to_radians),
+                    outer_angle: patch.outer_angle_degrees.map(f32::to_radians),
+                    rotation_degrees: patch.rotation_degrees.map(Into::into),
+                    width: patch.width,
+                    height: patch.height,
+                };
+                if let Err(e) = world.update_light(target, patch) {
+                    return (Self::edit_error(e), None);
+                }
+                let response = Self::light_dto(world, light_id)
+                    .map(EditorResponse::LightApplied)
+                    .unwrap_or_else(EditorResponse::Error);
+                (response, Self::version_notification(world, previous_version))
+            }
+            EditorCommand::UpdateEnvironment { patch } => {
+                if let Err(e) = world.update_sky_parameters(patch.enabled, patch.brightness) {
+                    return (Self::edit_error(e), None);
+                }
+                (
+                    EditorResponse::EnvironmentApplied(Self::environment_dto(world)),
+                    Self::version_notification(world, previous_version),
+                )
+            }
+
             EditorCommand::UpdateMaterial { material_id, patch } => {
                 let handle = match Self::decode_material_id(&material_id) {
                     Ok(handle) => handle,
@@ -205,6 +306,11 @@ impl WorldSceneAdapter {
 }
 
 impl WorldSceneAdapter {
+    fn version_notification(world: &GameWorld, previous: u64) -> Option<EditorNotification> {
+        let current = world.scene_view().scene_version();
+        (current != previous).then(|| EditorNotification::SceneVersionChanged(SceneVersion::from_u64(current)))
+    }
+
     pub(crate) fn scene_objects_page(
         world: &GameWorld,
         offset: u32,
@@ -225,19 +331,46 @@ impl WorldSceneAdapter {
 
         let limit = if limit == 0 { DEFAULT_SCENE_PAGE_SIZE } else { limit.min(MAX_SCENE_PAGE_SIZE) } as usize;
         let offset = offset as usize;
-        let instances = view.instance_map();
+        let instances = view.instance_map().iter().map(|(handle, instance)| SceneObjectSummary::Instance {
+            instance_id: Self::encode_instance_id(handle),
+            name: instance.name.clone(),
+            material_count: instance.materials.len() as u32,
+        });
+        let points = view.point_light_map().keys().enumerate().map(|(i, id)| SceneObjectSummary::Point {
+            light_id: Self::light_identity(LightTarget::Point(id)).0,
+            name: format!("Point Light {}", i + 1),
+        });
+        let spots = view.spot_light_map().keys().enumerate().map(|(i, id)| SceneObjectSummary::Spot {
+            light_id: Self::light_identity(LightTarget::Spot(id)).0,
+            name: format!("Spot Light {}", i + 1),
+        });
+        let areas = view.area_light_map().keys().enumerate().map(|(i, id)| SceneObjectSummary::Area {
+            light_id: Self::light_identity(LightTarget::Area(id)).0,
+            name: format!("Area Light {}", i + 1),
+        });
+        let total = view.instance_map().len() +
+            view.point_light_map().len() +
+            view.spot_light_map().len() +
+            view.area_light_map().len() +
+            1;
+        let environment = SceneObjectSummary::Environment {
+            name: if view.sky_state().texture.is_some() {
+                "Environment / HDRI"
+            } else {
+                "Environment / HDRI (not set)"
+            }
+            .into(),
+        };
         let objects = instances
-            .iter()
+            .chain(points)
+            .chain(spots)
+            .chain(areas)
+            .chain(std::iter::once(environment))
             .skip(offset)
             .take(limit)
-            .map(|(handle, instance)| SceneObjectSummary {
-                instance_id: Self::encode_instance_id(handle),
-                name: instance.name.clone(),
-                material_count: instance.materials.len() as u32,
-            })
             .collect::<Vec<_>>();
         let consumed = offset.saturating_add(objects.len());
-        let next_offset = (consumed < instances.len()).then_some(consumed as u32);
+        let next_offset = (consumed < total).then_some(consumed as u32);
 
         EditorResponse::SceneObjects(SceneObjectsPage {
             scene_version: SceneVersion::from_u64(scene_version),

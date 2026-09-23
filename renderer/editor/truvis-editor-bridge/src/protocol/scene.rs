@@ -1,19 +1,33 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::protocol::{InstanceId, MaterialId, MeshId, SceneVersion};
+use crate::protocol::{InstanceId, LightId, MaterialId, MeshId, SceneVersion};
 
-/// 场景对象列表中的轻量 instance 摘要。
+/// 场景混合列表；对象身份独立于显示名称与 GPU slot。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct SceneObjectSummary {
-    /// 当前 session 内用于查询和稳定列表 key 的 opaque identity。
-    pub instance_id: InstanceId,
-
-    /// `SceneStore` 持有的展示名称；名称不要求唯一，不能替代 `instance_id`。
-    pub name: String,
-
-    /// instance-local material binding 数量，与 mesh submesh 数量保持一致。
-    pub material_count: u32,
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(tag = "type", rename_all = "snake_case")]
+pub enum SceneObjectSummary {
+    Instance {
+        instance_id: InstanceId,
+        name: String,
+        material_count: u32,
+    },
+    Point {
+        light_id: LightId,
+        name: String,
+    },
+    Spot {
+        light_id: LightId,
+        name: String,
+    },
+    Area {
+        light_id: LightId,
+        name: String,
+    },
+    Environment {
+        name: String,
+    },
 }
 
 /// Instance 详情中的 CPU scene mesh 引用。

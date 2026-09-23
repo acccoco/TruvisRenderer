@@ -108,6 +108,10 @@ struct SceneMaterialRecord {
 }
 
 impl AssetStore {
+    pub(crate) fn texture_record(&self, handle: TextureAssetHandle) -> Option<&TextureRecord> {
+        self.all_textures.get(handle)
+    }
+
     pub(crate) fn contains_texture(&self, handle: TextureAssetHandle) -> bool {
         self.all_textures.contains_key(handle)
     }
