@@ -50,6 +50,23 @@ pub enum PathTracingDebugChannel {
 }
 
 impl PathTracingDebugChannel {
+    /// radiance 通道共用显示变换；只有 Final 可更新自动测光，数据通道保持诊断语义。
+    pub fn is_radiance(self) -> bool {
+        matches!(
+            self,
+            Self::Final
+                | Self::NeeHdri
+                | Self::Emission
+                | Self::BrdfHdri
+                | Self::NeeBounce0
+                | Self::NeeBounce1
+                | Self::NeeEmissive
+                | Self::NeeAnalytic
+                | Self::RestirFinalContribution
+                | Self::SharcCache
+        )
+    }
+
     pub const ALL: [Self; 21] = [
         Self::Final,
         Self::ForwardNormal,

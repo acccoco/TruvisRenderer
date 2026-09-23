@@ -11,6 +11,7 @@ truvis-gfx = { workspace = true }
 truvis-render-foundation = { workspace = true }
 truvis-render-graph = { workspace = true }
 truvis-render-runtime = { workspace = true }
+truvis-renderer-shader-binding = { workspace = true }
 
 ash = { workspace = true }
 glam = { workspace = true }

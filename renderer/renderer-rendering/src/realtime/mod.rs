@@ -4,12 +4,13 @@ use std::{cell::Cell, env};
 
 use slotmap::Key;
 
+use crate::post_process::SdrPostProcessInput;
 use renderer_kit::debug_image::DebugImageOption;
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 use renderer_render_passes::post_process::dlss_rr::{DlssRrPass, DlssRrRgPass};
 use renderer_render_passes::post_process::dlss_sr::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
+use renderer_render_passes::post_process::image_clear::{ImageClearPass, ImageClearRgPass};
 use renderer_render_passes::post_process::resolve::{ResolveDebugImage, ResolvePass, ResolveRgPass};
-use renderer_render_passes::post_process::sdr::{SdrPass, SdrRgPass};
 use renderer_render_passes::ray_tracing::realtime::{
     RealtimeRtPass, RealtimeRtRgPass, RestirReservoirRgImages, RestirSurfaceKeyRgImages,
 };
@@ -223,12 +224,12 @@ impl RtRestirDiMode {
 }
 
 struct RealtimeRenderResources {
+    image_clear_pass: ImageClearPass,
     realtime_rt_pass: RealtimeRtPass,
     /// DLSS SR 是外部 opaque pass，不拥有 shader pipeline；只在 SR/DLAA 分支被加入 compute graph。
     dlss_sr_pass: DlssSrPass,
     /// DLSS RR 是 SR 基础设施上的替代 evaluate 分支，不与 `dlss_sr_pass` 连续运行。
     dlss_rr_pass: DlssRrPass,
-    sdr_pass: SdrPass,
     resolve_pass: ResolvePass,
     gbuffer: GBuffer,
     /// RT 私有工作图像。它们的格式/用途由 realtime 渲染子系统决定，因此不再放在 engine runtime state。
@@ -274,7 +275,7 @@ impl RealtimeRenderResources {
         );
         let dlss_sr_pass = DlssSrPass::new();
         let dlss_rr_pass = DlssRrPass::new();
-        let sdr_pass = SdrPass::new(ctx.device_ctx, ctx.shader_binding_system.global_descriptor_sets());
+        let image_clear_pass = ImageClearPass::new(ctx.device_ctx, ctx.shader_binding_system.global_descriptor_sets());
         let resolve_pass = ResolvePass::new(
             ctx.device_ctx,
             ctx.shader_binding_system.global_descriptor_sets(),
@@ -359,10 +360,10 @@ impl RealtimeRenderResources {
         });
 
         Self {
+            image_clear_pass,
             realtime_rt_pass,
             dlss_sr_pass,
             dlss_rr_pass,
-            sdr_pass,
             resolve_pass,
             gbuffer,
             rt_targets,
@@ -379,15 +380,20 @@ impl RealtimeRenderResources {
     }
 
     fn destroy(mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
+        self.image_clear_pass.destroy(ctx.device_ctx);
         // pass pipeline 本身只依赖 device；target image/view 依赖 resource manager。
         // shutdown 阶段 runtime 已经 wait idle，先销毁 pipeline 再释放 target 不会影响 GPU 引用安全，
         // 但 target 仍必须在 runtime `GfxResourceRegistry` 销毁前显式释放。
         self.realtime_rt_pass.destroy(ctx.resource_ctx, ctx.device_ctx);
         self.dlss_sr_pass.destroy();
         self.dlss_rr_pass.destroy();
-        self.sdr_pass.destroy(ctx.device_ctx);
         self.resolve_pass.destroy(ctx.device_ctx);
-        self.gbuffer.destroy(ctx.resource_ctx, ctx.device_ctx, &mut *ctx.gfx_resource_registry, DestroyReason::Shutdown);
+        self.gbuffer.destroy(
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            &mut *ctx.gfx_resource_registry,
+            DestroyReason::Shutdown,
+        );
         self.rt_targets.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
@@ -533,7 +539,7 @@ impl RealtimeRenderSubsystem {
         rg_builder: &mut RenderGraphBuilder<'a>,
         ctx: &'a SubsystemRenderCtx<'a>,
         common_settings: &PathTracingCommonSettings,
-    ) {
+    ) -> Option<SdrPostProcessInput> {
         let resources = self.resources();
         let record_ctx = ctx.record_ctx;
         let frame_label = record_ctx.frame_timing.frame_label();
@@ -563,7 +569,6 @@ impl RealtimeRenderSubsystem {
             && self.restir_last_mode.get() == restir_di_mode
             && !record_ctx.dlss_sr_state.constants().reset;
         self.restir_last_mode.set(restir_di_mode);
-        let tone_mapping = common_settings.tone_mapping;
 
         // compute graph 导入的是 renderer-owned 外部图像；RenderGraph 只接管本图内的状态转换，
         // 不拥有图像生命周期。owner 必须活到 graph 录制与提交完成之后。
@@ -726,6 +731,25 @@ impl RealtimeRenderSubsystem {
         );
 
         rg_builder.export_image(render_target, RgImageState::SHADER_READ_FRAGMENT, None);
+        if ctx.render_scene.tlas_handle(frame_label).is_none() {
+            // 无有效场景时输出确定黑色，不执行 DLSS 或测光，不消费曝光历史。
+            for (image, extent, name) in [
+                (single_frame_image, single_frame_target.extent, "rt-clear-source"),
+                (render_target, record_ctx.frame_state.output_extent, "rt-clear-output"),
+            ] {
+                rg_builder.add_pass(
+                    name,
+                    ImageClearRgPass {
+                        clear_pass: &resources.image_clear_pass,
+                        record_ctx,
+                        dst_image: image,
+                        image_extent: extent,
+                        clear_color: glam::Vec4::ZERO,
+                    },
+                );
+            }
+            return None;
+        }
 
         rg_builder.add_pass(
             "ray-tracing",
@@ -763,94 +787,58 @@ impl RealtimeRenderSubsystem {
         );
 
         let dlss_options = *record_ctx.dlss_options;
-        if dlss_options.is_rr_active() {
-            rg_builder
-                .add_pass(
-                    "dlss-rr",
-                    DlssRrRgPass {
-                        dlss_rr_pass: &resources.dlss_rr_pass,
-                        record_ctx,
-                        resource_ctx: ctx.resource_ctx,
-                        input_color: single_frame_image,
-                        output_color: dlss_output,
-                        depth,
-                        motion_vectors,
-                        diffuse_albedo: rr_diffuse_albedo,
-                        specular_albedo: rr_specular_albedo,
-                        normal_roughness: gbuffer_a,
-                        specular_motion_vectors: rr_specular_motion_vectors,
-                    },
-                )
-                .add_pass(
-                    "hdr-to-sdr",
-                    SdrRgPass {
-                        sdr_pass: &resources.sdr_pass,
-                        record_ctx,
-                        src_image: dlss_output,
-                        dst_image: render_target,
-                        src_image_extent: record_ctx.frame_state.output_extent,
-                        dst_image_extent: record_ctx.frame_state.output_extent,
-                        debug_channel,
-                        tone_mapping,
-                    },
-                );
+        let (source, source_extent) = if dlss_options.is_rr_active() {
+            rg_builder.add_pass(
+                "dlss-rr",
+                DlssRrRgPass {
+                    dlss_rr_pass: &resources.dlss_rr_pass,
+                    record_ctx,
+                    resource_ctx: ctx.resource_ctx,
+                    input_color: single_frame_image,
+                    output_color: dlss_output,
+                    depth,
+                    motion_vectors,
+                    diffuse_albedo: rr_diffuse_albedo,
+                    specular_albedo: rr_specular_albedo,
+                    normal_roughness: gbuffer_a,
+                    specular_motion_vectors: rr_specular_motion_vectors,
+                },
+            );
+            (dlss_output, record_ctx.frame_state.output_extent)
         } else if dlss_options.is_sr_active() {
-            // SR/DLAA 分支用 Streamline output 进入 SDR；不再运行传统 denoise/accum，
-            // 也不在 SR 后追加第二个 upscale pass。
-            let dlss_sr_exposure_target = resources.dlss_sr_exposure.exposure();
-            let dlss_sr_exposure = rg_builder.import_image(
+            let target = resources.dlss_sr_exposure.exposure();
+            let exposure = rg_builder.import_image(
                 "dlss-sr-exposure",
-                dlss_sr_exposure_target.image,
-                Some(dlss_sr_exposure_target.view),
-                dlss_sr_exposure_target.format,
+                target.image,
+                Some(target.view),
+                target.format,
                 DLSS_SR_INPUT_READ,
                 None,
             );
-
-            rg_builder
-                .add_pass(
-                    "dlss-sr",
-                    DlssSrRgPass {
-                        dlss_sr_pass: &resources.dlss_sr_pass,
-                        record_ctx,
-                        resource_ctx: ctx.resource_ctx,
-                        input_color: single_frame_image,
-                        output_color: dlss_output,
-                        depth,
-                        motion_vectors,
-                        exposure: dlss_sr_exposure,
-                    },
-                )
-                .add_pass(
-                    "hdr-to-sdr",
-                    SdrRgPass {
-                        sdr_pass: &resources.sdr_pass,
-                        record_ctx,
-                        src_image: dlss_output,
-                        dst_image: render_target,
-                        src_image_extent: record_ctx.frame_state.output_extent,
-                        dst_image_extent: record_ctx.frame_state.output_extent,
-                        debug_channel,
-                        tone_mapping,
-                    },
-                );
-        } else {
-            // Native fallback 直接把低分辨率/原生 RT color 送入 SDR。此时 render/output extent
-            // 通常相等；若未来支持非 DLSS upscale，这里需要重新明确尺寸契约。
             rg_builder.add_pass(
-                "hdr-to-sdr",
-                SdrRgPass {
-                    sdr_pass: &resources.sdr_pass,
+                "dlss-sr",
+                DlssSrRgPass {
+                    dlss_sr_pass: &resources.dlss_sr_pass,
                     record_ctx,
-                    src_image: single_frame_image,
-                    dst_image: render_target,
-                    src_image_extent: record_ctx.frame_state.render_extent,
-                    dst_image_extent: record_ctx.frame_state.output_extent,
-                    debug_channel,
-                    tone_mapping,
+                    resource_ctx: ctx.resource_ctx,
+                    input_color: single_frame_image,
+                    output_color: dlss_output,
+                    depth,
+                    motion_vectors,
+                    exposure,
                 },
             );
-        }
+            (dlss_output, record_ctx.frame_state.output_extent)
+        } else {
+            (single_frame_image, record_ctx.frame_state.render_extent)
+        };
+        Some(SdrPostProcessInput {
+            source,
+            destination: render_target,
+            source_extent,
+            destination_extent: record_ctx.frame_state.output_extent,
+            channel: self.settings.debug_channel,
+        })
     }
 
     /// 返回 ImGui 选择器可见的稳定元数据，不暴露当前 FIF 的 GPU handle。

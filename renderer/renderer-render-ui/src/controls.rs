@@ -1,7 +1,8 @@
 use renderer_rendering::offline::OfflineRenderSettings;
 use renderer_rendering::realtime::{RealtimeRenderSettings, RtRestirDiMode, RtSharcMode};
 use renderer_rendering::shared::{
-    PathTracingCommonSettings, PathTracingDebugChannel, RenderMode, SdrToneMappingSettings, SkySamplingMode,
+    ColorGradingSettings, ExposureMode, MeteringMode, PathTracingCommonSettings, PathTracingDebugChannel, RenderMode,
+    SdrPostProcessSettings, SkySamplingMode, ToneMappingMode,
 };
 use truvis_render_runtime::state::dlss_options::DlssOptions;
 use truvis_render_runtime::state::dlss_sr::DlssSrMode;
@@ -145,14 +146,77 @@ impl RenderControlsOverlay {
         }
     }
 
-    pub fn build_tone_mapping_section(ui: &imgui::Ui, tone_mapping: &mut SdrToneMappingSettings) {
+    pub fn build_post_process_section(ui: &imgui::Ui, post_process: &mut SdrPostProcessSettings) {
+        ui.text("Exposure");
+        let exposure = &mut post_process.exposure;
+        for (mode, label) in [
+            (ExposureMode::Auto, "Auto Exposure"),
+            (ExposureMode::Manual, "Manual Exposure"),
+        ] {
+            if ui.radio_button_bool(label, exposure.mode == mode) {
+                exposure.mode = mode;
+            }
+            ui.same_line();
+        }
+        ui.new_line();
+        if exposure.mode == ExposureMode::Manual {
+            ui.slider_config("Manual gain (stops)", -24.0_f32, 24.0_f32)
+                .display_format("%.2f")
+                .build(&mut exposure.manual_ev);
+        } else {
+            ui.slider_config("Compensation (stops)", -8.0_f32, 8.0_f32)
+                .display_format("%.2f")
+                .build(&mut exposure.auto_compensation_ev);
+            ui.checkbox("Lock auto exposure", &mut exposure.locked);
+            for (mode, label) in [
+                (MeteringMode::CenterWeighted, "Center weighted"),
+                (MeteringMode::Average, "Whole image"),
+            ] {
+                if ui.radio_button_bool(label, exposure.metering == mode) {
+                    exposure.metering = mode;
+                }
+                ui.same_line();
+            }
+            ui.new_line();
+            ui.slider("Min gain (stops)", -24.0, 24.0, &mut exposure.min_ev);
+            ui.slider("Max gain (stops)", -24.0, 24.0, &mut exposure.max_ev);
+            ui.slider("Low percentile", 0.0, 1.0, &mut exposure.low_percentile);
+            ui.slider("High percentile", 0.0, 1.0, &mut exposure.high_percentile);
+            ui.slider("Darken time (s)", 0.01, 10.0, &mut exposure.darken_seconds);
+            ui.slider("Brighten time (s)", 0.01, 10.0, &mut exposure.brighten_seconds);
+            ui.text_wrapped("Realtime adapts over time; Offline meters the accumulated image directly. Debug channels freeze Final metering. Positive stops brighten the image.");
+        }
+
+        ui.separator();
+        ui.text("Color Grading");
+        let grading = &mut post_process.color_grading;
+        if ui.button("Reset grading to neutral") {
+            *grading = ColorGradingSettings::default();
+        }
+        for (label, min, max, value) in [
+            ("Temperature (offset)", -100.0, 100.0, &mut grading.temperature),
+            ("Tint (offset)", -100.0, 100.0, &mut grading.tint),
+            ("Contrast", 0.5, 1.5, &mut grading.contrast),
+            ("Shadows (stops)", -2.0, 2.0, &mut grading.shadows_ev),
+            ("Midtones (stops)", -2.0, 2.0, &mut grading.midtones_ev),
+            ("Highlights (stops)", -2.0, 2.0, &mut grading.highlights_ev),
+            ("Saturation", 0.0, 2.0, &mut grading.saturation),
+        ] {
+            ui.slider_config(label, min, max).display_format("%.2f").build(value);
+        }
+        ui.text_wrapped("Positive Temperature warms; positive Tint shifts toward magenta. Tonal gains preserve black.");
+        ui.separator();
         ui.text("Tone Mapping");
-        ui.slider_config("Exposure EV", -8.0_f32, 8.0_f32).display_format("%.2f").build(&mut tone_mapping.exposure_ev);
-        ui.slider_config("ACES Strength", 0.0_f32, 1.0_f32)
-            .display_format("%.2f")
-            .build(&mut tone_mapping.aces_strength);
-        ui.slider_config("White Point", 1.0_f32, 32.0_f32)
-            .display_format("%.2f")
-            .build(&mut tone_mapping.aces_white_point);
+        for (mode, label) in [
+            (ToneMappingMode::AcesFitted, "ACES fitted"),
+            (ToneMappingMode::AgX, "AgX"),
+            (ToneMappingMode::PbrNeutral, "Khronos PBR Neutral"),
+            (ToneMappingMode::None, "None"),
+        ] {
+            if ui.radio_button_bool(label, post_process.tone_mapping == mode) {
+                post_process.tone_mapping = mode;
+            }
+        }
+        ui.checkbox("Dithering", &mut post_process.dither);
     }
 }

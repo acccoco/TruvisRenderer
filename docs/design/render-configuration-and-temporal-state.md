@@ -43,9 +43,64 @@ Realtime ReSTIR reservoir、SHARC cache、offline accumulation 属于对应 Rend
 
 ## Renderer 配置
 
-`PathTracingCommonSettings` 保存 realtime/offline 共享的 sky、NEE 和 tone mapping 参数；Realtime 和 Offline 各自保存 debug channel、ReSTIR/SHARC mode 或 ray dispatch count。
+`PathTracingCommonSettings` 保存 realtime/offline 共享的 sky、NEE 和 post process 参数；Realtime 和 Offline 各自保存 debug channel、ReSTIR/SHARC mode 或 ray dispatch count。
 
 同一语义只保留一个 owner：共享参数不在 realtime/offline 两个 subsystem 内各存一份，避免 UI 切换造成状态分叉。
+
+### SDR 显示与曝光
+
+`TruvisRenderer` 唯一持有 `SdrPostProcess`，Realtime/Offline 提供本帧 HDR 输入和各自 SDR target。
+`SdrPostProcessSettings` 保存曝光、Color Grading、AgX/ACES fitted/PBR Neutral/None 与 dithering 开关；固定 update 路径归一化参数。
+默认 Khronos PBR Neutral、Manual、手动增益 0 stops、中性调色、dithering 开启；切换 Auto 后默认中心加权测光，自动补偿为 0 stops。
+增益 stops 为正时提亮，不是物理相机 EV100。
+
+测光使用曝光与 Color Grading 前的原始 linear sRGB/Rec.709 HDR，不包含 GUI/gizmo。256-bin log2 直方图覆盖
+[-12,20]，跳过非有限 RGB 和非正亮度，范围外正亮度计入两端 bin。中心权重为
+`clamp(round(16 * exp2(-2 * dot(p,p))), 1, 16)`，其中 `p=2*(pixel+0.5)/extent-1`；全屏权重为 1。
+默认在加权 CDF 的 10%～90% 区间内按 bin 中心求平均 log 亮度，边界 bin 只贡献实际保留的权重。
+该统计近似只影响显示测光，不裁剪或修改源 radiance。
+
+目标自动增益为 `clamp(log2(0.18)-mean_log_luminance, min_ev, max_ev)`，默认范围 [-16,+16]。
+Auto 显示倍率为 `exp2(current_auto_ev + auto_compensation_ev)`，Manual 为 `exp2(manual_ev)`。
+Manual 不读取自动历史或补偿；切换模式保留各自参数，不折算增益。0.18 指显示变换前的中灰，不是屏幕编码值。
+Realtime 在 stops 空间以 `1-exp(-dt/tau)` 适应，dt 限制为 [0,0.25] 秒，压暗/提亮时间常数默认为
+0.25/1.0 秒。Offline 每批累积完成后直接采用该均值图的测光目标，不依赖墙钟时间。
+
+曝光历史只存在于 Renderer-owned 1×1 RGBA32F image：x=当前自动增益，y=目标增益，z=有效标记，
+w=等待下一次有效测光直接采用目标的标记。w 保证空直方图不会提前消耗 mode 切换的首次测光语义。
+直方图使用单份 256×1 R32_UINT image；二者不按 FIF 独立轮转，通过同队列跨帧 image barrier 同步。
+
+- 首次有效测光、重新进入 Auto、Realtime/Offline 切换后的首次有效测光直接采用目标。
+- 锁定只冻结自动测光结果，用户补偿和显示曲线仍可调整；锁定期间不执行直方图计算。
+- 相机普通移动、resize、DLSS mode/reset 不清空曝光历史；没有单独的 camera-cut 检测。
+- 全黑/无有效样本保持已有值；没有历史时使用 0 stops。无 TLAS 的清屏分支不推进曝光。
+- Manual 不执行测光。非 Final 通道冻结最后一次 Final 自动增益，返回 Final 后恢复所选模式。
+- 曝光、Color Grading、曲线和 dithering 均不进入 Offline accumulation signature；线性 HDR 累积不受显示设置影响。
+
+### Color Grading 与显示映射
+
+顺序固定为曝光 → 白平衡 → Contrast → Shadows/Midtones/Highlights → Saturation → Tone Mapping。
+`ColorGradingSettings` 只保存用户参数，白平衡矩阵与分区增益由关联方法在 SDR pass 录制时派生，
+不保存第二份配置或派生历史。中性参数显式恒等，所有调色独立于所选 Tone Mapping。
+
+- Temperature/Tint 默认 0、范围 [-100,100]，为相对偏移而非 Kelvin；正值分别偏暖、偏洋红。
+- Contrast 默认 1、范围 [0.5,1.5]，以 linear Rec.709 亮度 0.18 为中心做 log 对比度，再等比例缩放 RGB。
+- Shadows/Midtones/Highlights 默认 0、范围 [-2,2] stops；暗部在亮度 [0,0.3] 渐退、亮部在 [0.55,1] 渐入，
+  中间调为剩余权重。一次计算权重后混合三个线性增益，不读取邻域、不抬升严格黑色；大幅调节不保证亮度排序。
+- Saturation 默认 1、范围 [0,2]，使用当前 Rec.709 亮度与 RGB 的插值/外推；0 输出灰度。
+- 白平衡后及饱和度后的负通道归零，非法值防护不代替 HDR 亮度压缩。没有广色域映射或摄影式细节恢复。
+- 设置统一在 Renderer update 中归一化，非有限值恢复默认；更改调色不清空曝光历史。
+
+白平衡与分区参考 Unity Graphics `03ca85dffdde4b7bc1d6870074e6f5ff9f0352a3`，
+采用相同版本的 ColorUtils/Color.hlsl 参数与矩阵；对比度采用项目自定义亮度公式，
+不复现 Unity 的 LogC/ACEScc 调色空间。来源入口见 renderer-rendering README。
+
+Tone Mapping 提供固定的 ACES fitted、AgX、Khronos PBR Neutral 与 None，不开放通用强度或曲线形状。
+None 仍执行曝光、调色和 SDR 范围输出。数据可视化通道整体绕过该显示流程；radiance 通道共享调色，
+但只有 Final 更新原始 HDR 测光，因此调色不会被自动曝光反向抵消。
+
+不引入 pre-exposure、Local Exposure、物理相机标定或 HDR 显示。DLSS 输入 radiance、固定 exposure tag
+及 pre/exposure scale 保持原契约。实时眼适应与 DLSS 内部曝光处理是不同职责。
 
 配置合法性由设置 owner 定义，并在 Renderer 固定 update 路径归一化，不能依赖窗口、tab 或控件是否可见。
 UI 只在用户操作时修改配置；Offline debug 候选判定由 `OfflineRenderSettings` 同时提供给控件过滤和归一化。

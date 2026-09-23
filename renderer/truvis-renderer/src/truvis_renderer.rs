@@ -12,7 +12,9 @@ use renderer_kit::camera_controller::CameraController;
 use renderer_kit::debug_image::DebugImageSelection;
 use renderer_kit::input_state::InputManager;
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
-use renderer_rendering::{OfflineRenderSubsystem, PathTracingCommonSettings, RealtimeRenderSubsystem, RenderMode};
+use renderer_rendering::{
+    OfflineRenderSubsystem, PathTracingCommonSettings, RealtimeRenderSubsystem, RenderMode, SdrPostProcess,
+};
 
 use crate::coordinate_gizmo::CoordinateGizmoSubsystem;
 use crate::overlay_ui::{
@@ -28,6 +30,7 @@ pub struct TruvisRenderer {
     debug_image_selection: DebugImageSelection,
     realtime: RealtimeRenderSubsystem,
     offline: OfflineRenderSubsystem,
+    sdr_post_process: SdrPostProcess,
     selection_outline: SelectionOutlineSubsystem,
     transform_gizmo: TransformGizmoSubsystem,
     coordinate_gizmo: CoordinateGizmoSubsystem,
@@ -52,6 +55,7 @@ impl TruvisRenderer {
             debug_image_selection: Default::default(),
             realtime: Default::default(),
             offline: Default::default(),
+            sdr_post_process: Default::default(),
             selection_outline: Default::default(),
             transform_gizmo: Default::default(),
             coordinate_gizmo: Default::default(),
@@ -212,6 +216,7 @@ impl Renderer for TruvisRenderer {
         // Renderer 持有初始化顺序：场景 CPU 状态先就绪，再依次创建具体渲染资源。
         self.realtime.init(&mut ctx.runtime);
         self.offline.init(&mut ctx.runtime);
+        self.sdr_post_process.init(&mut ctx.runtime);
         self.selection_outline.init(&mut ctx.runtime);
         self.transform_gizmo.init(&mut ctx.runtime);
         self.coordinate_gizmo.init(&mut ctx.runtime);
@@ -318,6 +323,7 @@ impl Renderer for TruvisRenderer {
 
         // 配置归一化属于固定 update 路径，主窗口折叠或 tab 隐藏也必须执行。
         self.offline.settings_mut().normalize();
+        self.path_tracing_common_settings.post_process.normalize();
         let debug_image_options = match self.render_mode {
             RenderMode::Realtime => RealtimeRenderSubsystem::debug_image_options(),
             RenderMode::Offline => OfflineRenderSubsystem::debug_image_options(),
@@ -374,6 +380,7 @@ impl Renderer for TruvisRenderer {
         self.coordinate_gizmo.shutdown(&mut ctx.runtime);
         self.transform_gizmo.shutdown(&mut ctx.runtime);
         self.selection_outline.shutdown(&mut ctx.runtime);
+        self.sdr_post_process.shutdown(&mut ctx.runtime);
         self.offline.shutdown(&mut ctx.runtime);
         self.realtime.shutdown(&mut ctx.runtime);
     }
@@ -396,42 +403,40 @@ impl Renderer for TruvisRenderer {
 
         // Renderer 持有实时/离线模式选择；具体渲染子系统只负责向 RenderGraph 贡献自己的 compute subgraph。
         // 两条分支都生成同一队列上的第一段 submit，保证后续 present graph 可按统一顺序消费结果。
-        let compute_submit = match self.render_mode {
+        let mut graph = RenderGraphBuilder::new();
+        let display = match self.render_mode {
             RenderMode::Realtime => {
-                let mut graph = RenderGraphBuilder::new();
-                self.realtime.contribute_compute_passes(&mut graph, &subsystem_ctx, &self.path_tracing_common_settings);
-                let compiled_graph = graph.compile();
-                if log::log_enabled!(log::Level::Debug) {
-                    static PRINT_RT_COMPUTE_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
-                    PRINT_RT_COMPUTE_DEBUG_INFO.call_once(|| {
-                        compiled_graph.print_execution_plan();
-                    });
-                }
-
-                let cmd = self.realtime.compute_cmd(frame_label);
-                cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "rt-compute-graph");
-                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
-                cmd.end();
-                compiled_graph.build_submit_info(std::slice::from_ref(cmd))
+                self.realtime.contribute_compute_passes(&mut graph, &subsystem_ctx, &self.path_tracing_common_settings)
             }
             RenderMode::Offline => {
-                let mut graph = RenderGraphBuilder::new();
-                self.offline.contribute_compute_passes(&mut graph, &subsystem_ctx, &self.path_tracing_common_settings);
-                let compiled_graph = graph.compile();
-                if log::log_enabled!(log::Level::Debug) {
-                    static PRINT_OFFLINE_COMPUTE_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
-                    PRINT_OFFLINE_COMPUTE_DEBUG_INFO.call_once(|| {
-                        compiled_graph.print_execution_plan();
-                    });
-                }
-
-                let cmd = self.offline.compute_cmd(frame_label);
-                cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "offline-compute-graph");
-                compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
-                cmd.end();
-                compiled_graph.build_submit_info(std::slice::from_ref(cmd))
+                self.offline.contribute_compute_passes(&mut graph, &subsystem_ctx, &self.path_tracing_common_settings)
             }
         };
+        self.sdr_post_process.contribute(
+            &mut graph,
+            &subsystem_ctx,
+            display,
+            self.render_mode,
+            self.path_tracing_common_settings.post_process,
+        );
+        let compiled_graph = graph.compile();
+        if log::log_enabled!(log::Level::Debug) {
+            static PRINT_RT_COMPUTE_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
+            static PRINT_OFFLINE_COMPUTE_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
+            let once = match self.render_mode {
+                RenderMode::Realtime => &PRINT_RT_COMPUTE_DEBUG_INFO,
+                RenderMode::Offline => &PRINT_OFFLINE_COMPUTE_DEBUG_INFO,
+            };
+            once.call_once(|| compiled_graph.print_execution_plan());
+        }
+        let (cmd, label) = match self.render_mode {
+            RenderMode::Realtime => (self.realtime.compute_cmd(frame_label), "rt-compute-graph"),
+            RenderMode::Offline => (self.offline.compute_cmd(frame_label), "offline-compute-graph"),
+        };
+        cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, label);
+        compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
+        cmd.end();
+        let compute_submit = compiled_graph.build_submit_info(std::slice::from_ref(cmd));
 
         // present subgraph 同样按模式委派给对应渲染子系统；GUI 与 debug viewer 只读取该分支导出的
         // render target，避免 realtime/offline 两套资源在同一帧互相暴露状态。

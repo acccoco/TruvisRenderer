@@ -7,5 +7,8 @@ pub(crate) mod targets;
 
 pub use debug_channel::PathTracingDebugChannel;
 pub use render_mode::RenderMode;
-pub use settings::{PathTracingCommonSettings, SdrToneMappingSettings, SkySamplingMode};
+pub use settings::{
+    ColorGradingSettings, ExposureMode, ExposureSettings, MeteringMode, PathTracingCommonSettings,
+    SdrPostProcessSettings, SkySamplingMode, ToneMappingMode,
+};
 pub use targets::ImageTarget;

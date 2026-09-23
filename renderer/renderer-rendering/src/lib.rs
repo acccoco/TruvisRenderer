@@ -7,3 +7,9 @@ pub mod shared;
 pub use offline::{OfflineRenderSettings, OfflineRenderSubsystem};
 pub use realtime::{RealtimeRenderSettings, RealtimeRenderSubsystem};
 pub use shared::{ImageTarget, PathTracingCommonSettings, PathTracingDebugChannel, RenderMode, SkySamplingMode};
+
+pub mod post_process;
+pub use post_process::{SdrPostProcess, SdrPostProcessInput};
+pub use shared::settings::{
+    ColorGradingSettings, ExposureMode, ExposureSettings, MeteringMode, SdrPostProcessSettings, ToneMappingMode,
+};

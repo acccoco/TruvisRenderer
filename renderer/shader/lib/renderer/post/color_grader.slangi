@@ -1,0 +1,44 @@
+#pragma once
+#include "abi/renderer/render_passes/sdr/mod.slangi"
+
+/// 曝光后的 linear Rec.709 调色。白平衡矩阵与分区增益由 CPU 派生，无状态且不读取邻域。
+struct ColorGrader {
+    /// 仅处理非法值与负通道，不裁剪有限 HDR 上限；显示范围在 tone mapping 后收敛。
+    static float3 finite_color(float3 color) {
+        return float3(isfinite(color.x) ? max(color.x, 0.0f) : 0.0f,
+                      isfinite(color.y) ? max(color.y, 0.0f) : 0.0f,
+                      isfinite(color.z) ? max(color.z, 0.0f) : 0.0f);
+    }
+
+    static float luminance(float3 color) {
+        return dot(color, float3(0.2126f, 0.7152f, 0.0722f));
+    }
+
+    static float3 apply(float3 color, renderer::render_passes::sdr::PushConstant params) {
+        color = finite_color(float3(dot(params.white_balance_r.xyz, color),
+                                    dot(params.white_balance_g.xyz, color),
+                                    dot(params.white_balance_b.xyz, color)));
+        float y = luminance(color);
+        if (params.contrast != 1.0f && y > 0.0f) {
+            /// 等价于 Y'=0.18*(Y/0.18)^contrast 后缩放 RGB；直接计算比值避免中间 Y' 溢出。
+            /// log2(Y)-log2(0.18) 避免微小亮度除法下溢，零亮度不执行 log 或除法。
+            float gain = exp2((params.contrast - 1.0f) * (log2(y) - log2(0.18f)));
+            color = finite_color(color * gain);
+        }
+        if (any(params.tonal_gains != float3(1.0f))) {
+            /// Unity Graphics 03ca85dffdde4b7bc1d6870074e6f5ff9f0352a3 / LutBuilderHdr.shader。
+            /// 适配为固定 Rec.709 亮度分区与标量增益；大幅调节不保证亮度排序，且不会抬升纯黑。
+            y = luminance(color);
+            float shadows = 1.0f - smoothstep(0.0f, 0.3f, y);
+            float highlights = smoothstep(0.55f, 1.0f, y);
+            float midtones = 1.0f - shadows - highlights;
+            color *= dot(float3(shadows, midtones, highlights), params.tonal_gains);
+        }
+        if (params.saturation != 1.0f) {
+            y = luminance(color);
+            color = y + params.saturation * (color - y);
+        }
+        /// 白平衡与过饱和可产生负通道；本模型仅归零，不引入广色域映射。
+        return finite_color(color);
+    }
+};

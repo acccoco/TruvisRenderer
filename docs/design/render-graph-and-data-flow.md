@@ -36,12 +36,26 @@ scene / ray tracing or raster
 -> primary outputs / resolve
 -> denoise or temporal pass when enabled
 -> DLSS / upscale when enabled
--> tone mapping / SDR
+-> histogram clear / build / exposure reduce-adapt（Auto、Final、未锁定时）
+-> exposure / color grading / tone mapping / SDR dithering（同一 SDR pass）
 -> selection outline / gizmo / GUI
 -> present
 ```
 
 实际 pass 可能按 RenderMode 变化。顺序的设计依据是读写依赖和最终输出契约，不是 subsystem 注册顺序。
+
+`SdrPostProcess` 在当前 compute graph 中统一接收 native/DLSS HDR 或 Offline 累积均值，随后写入
+对应 subsystem 的 SDR target。小型曝光资源和内置 LUT 由它唯一拥有，target 所有权仍属于原 subsystem。
+测光 pass 的 clear→原子 histogram→reduce 以及曝光 history→SDR 读依赖均用 image access 声明；
+曝光历史以 compute read/write 状态导入和导出，涵盖上一帧归约写和显示读取。不能仅凭 FIF slot
+等待或同队列提交顺序省略内存依赖。新增功能没有扩展 RenderGraph buffer 跟踪，也没有额外 queue submit。
+
+Color Grading 通过 112 字节 SDR push constant 接收白平衡三行矩阵、对比度、饱和度和分区增益；
+矩阵行按 16 字节边界排列，不新增 descriptor、pass、资源或同步。测光始终读取原始 HDR。
+
+SDR pass 输出显示线性 RGB，由现有 sRGB attachment 编码。Dithering 先使用准确 sRGB 函数编码，
+加入 ±0.5/255 的固定空间噪声，再解码回线性，因此不能在 resolve 中再次手工 gamma 编码。
+输入和输出尺寸通过各自的实际 extent 传递，SDR dispatch 与 OOB 检查依据 destination extent。
 
 RT、raster 和 GUI 可以共享 scene view，但不能把“加入 graph”理解为资源所有权转移。每个 pass 只声明自己需要的读写范围。
 

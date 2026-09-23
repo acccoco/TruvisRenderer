@@ -30,6 +30,8 @@ Renderer 本身只消费 CPU scene 结果并负责 GPU/RenderGraph 编排。
 - camera、input、overlay 和 debug image 选择属于 Renderer；runtime 只消费 `RenderView` 或稳定选择语义。
 - `RealtimeRenderSubsystem` 与 `OfflineRenderSubsystem` 都由 Renderer 持有。两者拥有各自 target、累计和 temporal 状态，
   不把窗口尺寸资源下沉到 `RenderRuntime`。
+- `SdrPostProcess` 由 Renderer 单独持有唯一实例，接收两种模式的 HDR 输出，共用曝光历史、AgX LUT 和显示 pass。
+  显示设置由 `PathTracingCommonSettings` 持有，曝光参数在固定 update 中归一化；更改显示设置不重置 Offline spp。
 - Renderer 不拥有 Editor endpoint 或 desktop command receiver；这些 receiver 属于 App Client。
 
 ## 运行与编排

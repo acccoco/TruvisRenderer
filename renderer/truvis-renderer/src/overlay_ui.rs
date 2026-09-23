@@ -120,7 +120,7 @@ impl TruvisOverlayUi {
     }
 
     fn draw_post_tab(ui: &imgui::Ui, controls: &mut RenderControlsData<'_>) {
-        RenderControlsOverlay::build_tone_mapping_section(ui, &mut controls.common_settings.tone_mapping);
+        RenderControlsOverlay::build_post_process_section(ui, &mut controls.common_settings.post_process);
     }
 
     fn draw_debug_tab(

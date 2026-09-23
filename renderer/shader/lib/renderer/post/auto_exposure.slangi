@@ -1,0 +1,46 @@
+#pragma once
+#include "abi/renderer/render_passes/auto_exposure/mod.slangi"
+
+/// 参考 Bevy 56635836 的 log histogram/CDF；本项目固定 256 bins，完整保留边界 bin 的部分权重。
+struct AutoExposureMeter {
+    static bool sample(float3 rgb, uint2 pixel, uint2 size, uint mode, out uint bin, out uint weight) {
+        bin = 0;
+        weight = 0;
+        if (!all(isfinite(rgb))) return false;
+        float y = dot(rgb, float3(0.2126f, 0.7152f, 0.0722f));
+        if (!isfinite(y) || y <= 0.0f) return false;
+        bin = min(uint(saturate((log2(y) + 12.0f) / 32.0f) * 256.0f), 255u);
+        float2 p = ((float2(pixel) + 0.5f) / float2(size)) * 2.0f - 1.0f;
+        weight = mode == 0 ? uint(clamp(round(16.0f * exp2(-2.0f * dot(p, p))), 1.0f, 16.0f)) : 1u;
+        return true;
+    }
+
+    static float4 reduce(renderer::render_passes::auto_exposure::PushConstant params, float4 previous) {
+        /// z 表示曾成功测光；w 保留待 snap 标志，确保空直方图不会消耗“首次有效测光”。
+        previous.w = max(previous.w, float(params.instant));
+        float total = 0.0f;
+        for (uint i = 0; i < 256; ++i) total += float(renderer::render_passes::auto_exposure::histogram[uint2(i, 0)]);
+        if (total <= 0.0f) return previous;
+        float low = total * params.low_percentile;
+        float high = total * params.high_percentile;
+        float cumulative = 0.0f;
+        float sum = 0.0f;
+        float count = 0.0f;
+        for (uint i = 0; i < 256; ++i) {
+            float next = cumulative + float(renderer::render_passes::auto_exposure::histogram[uint2(i, 0)]);
+            float weight = max(0.0f, min(next, high) - max(cumulative, low));
+            sum += weight * (-12.0f + (float(i) + 0.5f) * (32.0f / 256.0f));
+            count += weight;
+            cumulative = next;
+        }
+        if (count <= 0.0f) return previous;
+        float target = clamp(log2(0.18f) - sum / count, params.min_ev, params.max_ev);
+        float current = target;
+        if (previous.z > 0.0f && previous.w == 0.0f) {
+            float tau = target < previous.x ? params.darken_seconds : params.brighten_seconds;
+            float alpha = 1.0f - exp(-clamp(params.delta_seconds, 0.0f, 0.25f) / tau);
+            current = lerp(previous.x, target, alpha);
+        }
+        return float4(current, target, 1.0f, 0.0f);
+    }
+};

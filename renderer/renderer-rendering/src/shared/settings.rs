@@ -1,4 +1,6 @@
-pub use renderer_render_passes::post_process::sdr::SdrToneMappingSettings;
+pub use renderer_render_passes::post_process::settings::{
+    ColorGradingSettings, ExposureMode, ExposureSettings, MeteringMode, SdrPostProcessSettings, ToneMappingMode,
+};
 
 /// realtime / offline path tracing 共享的 Renderer 层调试参数。
 ///
@@ -14,8 +16,8 @@ pub struct PathTracingCommonSettings {
     pub emissive_nee_enabled: bool,
     /// 是否额外启用 analytic light NEE。
     pub analytic_nee_enabled: bool,
-    /// SDR 输出路径的 tone mapping 参数。
-    pub tone_mapping: SdrToneMappingSettings,
+    /// SDR 输出路径的曝光、调色、显示映射与 dithering 参数。
+    pub post_process: SdrPostProcessSettings,
 }
 
 impl Default for PathTracingCommonSettings {
@@ -25,7 +27,7 @@ impl Default for PathTracingCommonSettings {
             sky_brightness: 8.0,
             emissive_nee_enabled: true,
             analytic_nee_enabled: true,
-            tone_mapping: SdrToneMappingSettings::default(),
+            post_process: SdrPostProcessSettings::default(),
         }
     }
 }
