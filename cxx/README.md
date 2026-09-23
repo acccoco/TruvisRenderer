@@ -34,7 +34,11 @@ required/optional sidecar；Rust 部署器只解析统一 schema，并把 native
 just cxx-debug
 just cxx
 just cxx-force
+just cxx-compile-commands
 ```
+
+`cxx-debug` 只构建并部署 Debug native 产物；最终的 `cargo run` 会在同一个 Cargo 构建图中编译所需 Rust binding。
+需要更新 clangd 数据库时单独运行 `cxx-compile-commands`，它不会构建 native target 或 Rust binding。
 
 也可以直接使用独立 CMake project：
 
