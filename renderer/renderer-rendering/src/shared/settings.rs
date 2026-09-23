@@ -24,7 +24,7 @@ impl Default for PathTracingCommonSettings {
     fn default() -> Self {
         Self {
             sky_sampling_mode: SkySamplingMode::Importance,
-            sky_brightness: 8.0,
+            sky_brightness: 1.0,
             emissive_nee_enabled: true,
             analytic_nee_enabled: true,
             post_process: SdrPostProcessSettings::default(),
