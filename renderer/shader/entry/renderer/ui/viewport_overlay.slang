@@ -1,4 +1,4 @@
-#include "abi/renderer/render_passes/light_overlay/mod.slangi"
+#include "abi/renderer/render_passes/viewport_overlay/mod.slangi"
 
 struct VsOutput
 {

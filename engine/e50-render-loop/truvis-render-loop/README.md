@@ -23,6 +23,9 @@
 - GUI frame 构建、pass 贡献、overlay 和输入消费均通过具体类型由 Renderer 显式调用，不进入 `RenderLoop`。
 - winit backend 只负责窗口、事件循环和事件适配；本 crate 不依赖 `winit`，也不反向依赖线程宿主。
 
+原生窗口通过 `RenderThreadControl::publish_resize` 同时发布尺寸 generation 和 `InputEvent::Resized`。
+即使窗口恢复原尺寸，也会在下一次 update 前清理旧交互；DLSS 内部 resize 不走该窗口通道。
+
 ## Ctx 边界
 
 - `RendererInitCtx` 包装 `RenderRuntimeInitCtx` 并附带窗口 size / scale factor；Renderer 直接用 `&mut ctx.runtime`

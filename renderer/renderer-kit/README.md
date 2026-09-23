@@ -15,6 +15,9 @@
 移动速度为 3.2 m/s，screen ray 最大距离为 1000 m。FOV/旋转角、像素坐标和滚轮比例为各自原有量纲。
 投影仍为右手系、Y-Up、NDC depth [0,1] 的 infinite perspective；near 不等同于 RT secondary ray epsilon，
 screen ray 的 TMin 也不复用 near。
+`Camera::project_to_viewport`、`project_segment_to_viewport` 与 `screen_ray_direction` 共用无 jitter 矩阵和原生窗口局部物理像素。
+线段先在齐次空间裁剪 near plane，再投影；无效投影返回 None。灯光与 gizmo 复用投影，相机导航与 gizmo 复用反投影。
+屏幕图形构造、选中状态与命中优先级仍归具体 Renderer。
 
 - 不依赖 `imgui`、`renderer-render-passes`、`truvis-renderer-shader-binding` 或任何具体渲染 subsystem。
 - 不拥有具体 Renderer state、GUI backend、render controls、GPU pass、realtime/offline targets，也不提供可执行入口。

@@ -9,5 +9,4 @@
 #include "abi/renderer/render_passes/resolve/mod.slangi"
 #include "abi/renderer/render_passes/sdr/mod.slangi"
 #include "abi/renderer/render_passes/selection_outline/mod.slangi"
-#include "abi/renderer/render_passes/transform_gizmo/mod.slangi"
-#include "abi/renderer/render_passes/light_overlay/mod.slangi"
+#include "abi/renderer/render_passes/viewport_overlay/mod.slangi"

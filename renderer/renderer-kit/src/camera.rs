@@ -73,6 +73,66 @@ impl Camera {
             return None;
         }
         let clip = self.get_projection_matrix() * self.get_view_matrix() * world_position.extend(1.0);
+        Self::clip_to_viewport(clip, viewport)
+    }
+
+    /// 屏幕物理像素到世界射线方向，导航与 gizmo 使用同一反投影约定。
+    pub fn screen_ray_direction(&self, screen_pos: glam::Vec2, viewport_size: glam::Vec2) -> Option<glam::Vec3> {
+        if !screen_pos.is_finite()
+            || !viewport_size.is_finite()
+            || viewport_size.x <= 0.0
+            || viewport_size.y <= 0.0
+            || screen_pos.x < 0.0
+            || screen_pos.y < 0.0
+            || screen_pos.x >= viewport_size.x
+            || screen_pos.y >= viewport_size.y
+        {
+            return None;
+        }
+
+        let uv = screen_pos / viewport_size;
+        let ndc = glam::vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+        let target_vs = self.get_projection_matrix().inverse() * glam::vec4(ndc.x, ndc.y, 1.0, 1.0);
+        let direction_vs = target_vs.truncate();
+        if !direction_vs.is_finite() || direction_vs.length_squared() <= f32::EPSILON {
+            return None;
+        }
+
+        let direction_ws = self.get_view_matrix().inverse().transform_vector3(direction_vs.normalize());
+        if !direction_ws.is_finite() || direction_ws.length_squared() <= f32::EPSILON {
+            return None;
+        }
+
+        Some(direction_ws.normalize())
+    }
+
+    /// 先在齐次空间裁剪 near plane，再投影；返回端点保留原始线段方向。
+    pub fn project_segment_to_viewport(
+        &self,
+        a: glam::Vec3,
+        b: glam::Vec3,
+        viewport: glam::Vec2,
+    ) -> Option<(glam::Vec2, glam::Vec2)> {
+        if !viewport.is_finite() || viewport.min_element() <= 0.0 {
+            return None;
+        }
+        let view_projection = self.get_projection_matrix() * self.get_view_matrix();
+        let mut a = view_projection * a.extend(1.0);
+        let mut b = view_projection * b.extend(1.0);
+        if !a.is_finite() || !b.is_finite() || (a.z < 0.0 && b.z < 0.0) {
+            return None;
+        }
+        if a.z < 0.0 {
+            a = a.lerp(b, -a.z / (b.z - a.z));
+            a.z = 0.0;
+        } else if b.z < 0.0 {
+            b = a.lerp(b, -a.z / (b.z - a.z));
+            b.z = 0.0;
+        }
+        Some((Self::clip_to_viewport(a, viewport)?, Self::clip_to_viewport(b, viewport)?))
+    }
+
+    fn clip_to_viewport(clip: glam::Vec4, viewport: glam::Vec2) -> Option<glam::Vec2> {
         if !clip.is_finite() || clip.w <= 0.0 || clip.z < 0.0 {
             return None;
         }

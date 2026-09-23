@@ -2,7 +2,7 @@
 
 `renderer-render-passes` 存放 TruvisRenderer 与 sample Renderer 共享的具体 render pass 实现，
 例如 real-time / offline ray tracing、accumulation、SDR、image clear、resolve、
-coordinate gizmo、selection outline 和 Phong shading。
+viewport overlay、selection outline 和 Phong shading。
 
 ## Shader 所有权
 
@@ -19,7 +19,7 @@ coordinate gizmo、selection outline 和 Phong shading。
 
 - `ray_tracing`：realtime/offline RT pass 和两者共享的 `GfxRtPipeline`；offline 不引用 realtime 内部模块。
 - `post_process`：accum、image clear、resolve、SDR 和 DLSS SR/RR RenderGraph adapter。
-- `effects`：coordinate gizmo、selection outline 与 Phong 等产品效果。
+- `effects`：viewport overlay、selection outline 与 Phong 等产品效果。
 - 提供具体 GPU pass 的 pipeline、descriptor、dispatch/draw 逻辑。
 - 提供可接入 `truvis-render-graph` 的 pass adapter。
 - 使用 `RenderPassRecordCtx` 读取 GPU frame state、shader-visible bindings 和资源 manager。
@@ -27,9 +27,9 @@ coordinate gizmo、selection outline 和 Phong shading。
 - `PhongPass` 的 16 字节 push constants 只保存 instance/submesh 与显式 padding，不把 UBO 当作 device-address buffer。
 - `SelectionOutlinePass` 只负责录制 R8 mask 光栅化与 present composite；mask image 生命周期、selection
   状态和 pass 插入顺序属于具体 Renderer。
-- `LightOverlayPass` 只录制 CPU 生成的 clip-space 三角形，先线框后图标，present attachment 使用 LOAD/STORE 和 alpha blend；不读取 scene depth，也不修改 World。顶点来自 Renderer ABI，position/color offset 为 0/16、stride 为 32；CPU alignment 为 4，Vulkan vertex input 由显式格式和 offset 定义。buffer owner 属于 `LightOverlaySubsystem`。
-- `CoordinateGizmoPass` 只负责在 present image 右下角叠加当前相机朝向下的三轴 gizmo；它不持有几何 buffer
-  或中间 image，pass 插入顺序属于具体 Renderer。
+- `ViewportOverlayPass` 录制统一 CPU clip-space 三角形；present attachment 使用 LOAD/STORE、无深度 alpha blend，并声明 COLOR_ATTACHMENT_READ_WRITE。无 descriptor 或 push constant。
+  顶点来自 Renderer 的 `viewport_overlay::Vertex` ABI，size/stride 为 32、alignment 为 4、position/color offset 为 0/16；Vulkan vertex input 显式指定 float4 格式。
+  唯一 pipeline 与每 FIF buffer 的 owner 为 `ViewportOverlaySubsystem`，图形语义、输入与顶点顺序留在 Renderer。
 - `ImageClearPass` 只负责通过 pass-local storage image descriptor 把目标写成确定颜色；具体 pipeline 必须通过
   RenderGraph 声明目标图像写状态，并决定何时清理历史。
 - `ResolvePass` 在同一个 dynamic rendering scope 内先绘制全屏 main image，再按需重新绑定 sampled image

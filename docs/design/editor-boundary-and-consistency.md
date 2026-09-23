@@ -7,6 +7,8 @@
 `GameWorld`/`SceneStore` 是 CPU scene、material、sky、light 和 instance 的唯一权威。WebView 只保存可丢弃的展示投影；Renderer selection 是 CPU handle 语义，不是 GPU slot。
 
 Transform gizmo 的移动由 Renderer 在 update 阶段直接提交到 `GameWorld`，不新增 gizmo 专用 notification。
+Renderer 的所有选择来源共用私有提交入口，集中比较、赋值、通知和旧 gizmo 展示失效；材质 handle 仅随网格通知传递。
+灯光和 gizmo 统一 GPU 绘制不会改变 selection DTO 或 Editor 请求协议。普通选择不重置 InputState，拖动对象从按下到松开保持绑定。
 Editor 通过既有的 `scene_version` 和 instance/light details 主动查询获得最新 transform/position；现有 selection 等业务通知仍按原有职责工作。
 
 ```mermaid

@@ -9,9 +9,10 @@ realtime/offline 渲染子系统。它依赖 engine 与公共 Renderer capabilit
   和 realtime/offline 渲染子系统，并显式决定 update 与 RenderGraph pass 顺序。
 - `RendererClient`：App 提供的窄生命周期接口；Renderer 只在 init/update/after_prepare/shutdown 阶段调用它。
 - `TruvisOverlayUi`：组合 `renderer-imgui` 的诊断控件与 `renderer-render-ui` 的设置 section，提供 Render、Sky、Post、Picking、Debug 五个固定 tab 和常驻 FPS HUD。
-- `LightOverlaySubsystem` / `SelectionOutlineSubsystem` / `TransformGizmoSubsystem` / `CoordinateGizmoSubsystem`：持有主体 Renderer 专用效果的资源与 pass 编排状态。
-  `TransformGizmoSubsystem` 只负责三轴 CPU 命中、拖拽约束和 overlay 绘制数据；它不认识 scene handle 或 raycast service。
-  hover 不提交 GPU raycast，左键命中轴后由 Renderer 拦截场景选择请求，拖拽期间保持同一 instance 或带类型灯光身份绑定，失焦、resize 或目标失效时结束交互。
+- `ViewportOverlaySubsystem`：统一持有灯光、transform gizmo 和坐标 gizmo 的唯一 pipeline、每 FIF vertex buffer 与最终顶点数组；`SelectionOutlineSubsystem` 独立持有网格描边资源。
+- `LightOverlay`：CPU 图标投影、稳定排序、矩形命中及选中灯光辅助线段快照。
+- `TransformGizmo`：CPU 轴投影、命中与平移计算，不认识 scene handle。`AxisDragState` 保存活动轴，Renderer 独立绑定拖动对象。
+- `OverlayGeometry`：共用屏幕线段、实心箭头和三角形裁剪；坐标 gizmo 直接在此构造，不再单独持有 GPU subsystem。
 
 Truvis Tauri App 与 Cornell standalone App 共用完整 Renderer，不按宿主裁剪渲染功能。
 两个 App 均通过 `truvis-scenes` 选择 `--scene manual|sponza|cornell`，默认 `manual`。
@@ -35,21 +36,33 @@ Renderer 本身只消费 CPU scene 结果并负责 GPU/RenderGraph 编排。
 ## 运行与编排
 
 `TruvisRenderer::render` 根据当前 `RenderMode` 选择 realtime 或 offline 渲染子系统，并显式组织主图 resolve、
-selection outline、light overlay、transform gizmo、coordinate gizmo 与 ImGui 的顺序。具体 pass 位于 `renderer-render-passes`，渲染 owner 位于
+selection outline、viewport overlay 与 ImGui 的顺序。具体 pass 位于 `renderer-render-passes`，渲染 owner 位于
 `renderer-rendering`，ImGui 与设置控件分别位于 `renderer-imgui` 和 `renderer-render-ui`；`renderer-kit` 只提供基础契约和 CPU 状态。
 
 ## 灯光辅助显示
 
-`LightOverlaySubsystem` 在 update 从 CPU scene 构造无 jitter 投影，图标绘制和命中共用该快照。
+`LightOverlay` 在 update 从 CPU scene 构造无 jitter 投影，图标绘制和命中共用该快照。
 图标为 24×24 viewport 物理像素，命中矩形为 28×28；远到近稳定绘制，逆序命中。
-交互优先级为已有拖拽/UI、transform gizmo、灯光图标、场景 GPU raycast；相机导航期间不开始选择。
+交互优先级为已有拖拽、UI/导航阻止新交互、transform gizmo、灯光图标、场景 GPU raycast。
+轴命中即消费点击，即使不能建立拖动；hover 只显示最高优先级目标。
 图标命中不提交 GPU 查询；新选择同帧刷新 gizmo 展示，但不重复消费按下事件。
 输入保留按下时的物理像素位置，松开帧提交最终拖动位置；失焦、resize 或目标失效会取消拖动并清理按键。
 
 图标与选中灯光线框使用无深度 alpha overlay，不进入光照、降噪或累计。
 Point 的 0.25 m 球形标记、Spot 的 1 m 辅助射线长度不代表有限照射范围；
 Area 使用真实矩形半轴和正面方向。线框只作显示，不参与拾取。
-每个 FIF 独立 vertex buffer，在当前 label 完成等待后写入或扩容，shutdown 先于 Runtime 回收。
+统一 pass 内按辅助线框、灯光图标、transform gizmo、坐标 gizmo 顺序追加顶点。
+transform 轴保留 96 像素基准的世界轴长和投影缩短，箭杆宽 4 像素、箭头宽 14 像素、长 min(16, 轴屏幕长度 × 0.4)。
+短于 8 像素的轴不画也不命中；命中半径 10 像素，等距离选择后绘制的轴。裁剪掉原终点时只画箭杆。
+坐标 gizmo 保留 112 像素区域和 24 像素边距，在 CPU 裁剪到该区域。
+
+update 在交互前生成命中数据，成功 mutation 后刷新展示，并固定本帧 `RenderView`。
+`commit_selection` 集中比较、通知和废弃旧 gizmo；普通选择不清空输入。after_prepare 改选网格时下一次 update 才生成新 gizmo。
+render 依据最终 selection 从空数组构建颜色和顶点，不读取 World，也不再次消费输入。
+prepare、overlay 与 Offline 累计签名共用同一视图；after_prepare 相机查询结果下一帧生效。
+
+每个 FIF 独立 vertex buffer，在当前 label 完成等待后写入或按需扩容，shutdown 先于 Runtime 回收。
+仅 DLSS 内部尺寸变化不取消交互；真实输出 extent 变化取消拖动和旧展示。普通 resize 保留 buffer，present format 变化才重建 pipeline。
 
 ## 边界约束
 

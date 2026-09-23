@@ -46,6 +46,17 @@ Renderer hook 与 Runtime phase 一一对应但不等价：
 - `on_resize` 传播窗口尺寸变化。
 - `shutdown` 在 Runtime 销毁前释放 Renderer-owned GPU 资源。
 
+## 主体 Renderer 的帧快照
+
+`TruvisRenderer::update` 完成交互和 World mutation 后，保存本帧 `RenderView` 及 CPU overlay 展示快照。
+`render_view()`、主图 prepare、overlay 和 Offline 累计签名使用该视图；after_prepare 相机查询引起的变化下一帧才进入快照。
+after_prepare 的网格 picking 通过统一 selection 提交入口清除旧 gizmo，render 依据最终 selection 生成顶点，不访问 World。
+每帧输入只消费一次，展示可在 mutation 后刷新；上传不修改展示语义。
+
+`on_resize` 比较实际输出 extent：仅 DLSS 内部尺寸变化继续更新渲染资源，但保留拖动和 CPU overlay。
+原生 `publish_resize` 同时投递 Resized 输入，覆盖最小化或变尺寸后回到原尺寸的取消行为。
+输出 extent 变化清空输入、拖动和旧展示；present format 变化仅重建 overlay pipeline。零尺寸不执行 overlay 投影、上传或 draw。
+
 ## Ctx 裁剪
 
 ```mermaid

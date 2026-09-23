@@ -37,7 +37,7 @@ scene / ray tracing or raster
 -> denoise or temporal pass when enabled
 -> DLSS / upscale when enabled
 -> tone mapping / SDR
--> selection outline / light overlay / transform gizmo / coordinate gizmo / GUI
+-> selection outline / viewport overlay / GUI
 -> present
 ```
 
@@ -45,10 +45,12 @@ scene / ray tracing or raster
 
 RT、raster 和 GUI 可以共享 scene view，但不能把“加入 graph”理解为资源所有权转移。每个 pass 只声明自己需要的读写范围。
 
-灯光 overlay 在两种 RenderMode 的主图 resolve 后使用同一编排入口。图标和线框仅对
-present image 声明 COLOR_ATTACHMENT_READ_WRITE，不读取深度、不写累计历史。
+Viewport overlay 在两种 RenderMode 的主图 resolve 和 selection outline 后使用同一编排入口。
+一个无深度 alpha pass 按灯光辅助线框、图标、transform gizmo、坐标 gizmo 顺序绘制；
+仅对 present image 声明 COLOR_ATTACHMENT_READ_WRITE，使用 LOAD/STORE，不读取深度、不写累计历史。
 投影和 CPU 命中共用最终 viewport 物理像素快照，辅助线段裁剪 near plane 后才展开。
-GPU vertex buffer 按 FIF 分开管理，只在当前 label 已等待完成后上传，pass 不自行提交。
+`ViewportOverlaySubsystem` 独占 pipeline 与 FIF vertex buffer，当前 label 等待完成后才上传或扩容，pass 不自行提交。
+GPU 上传只消费最终 CPU 顶点，不再修补选中颜色或追加语义数据。
 
 ## 状态推导
 

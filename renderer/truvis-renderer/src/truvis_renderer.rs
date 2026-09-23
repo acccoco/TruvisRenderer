@@ -14,15 +14,15 @@ use renderer_kit::input_state::InputManager;
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 use renderer_rendering::{OfflineRenderSubsystem, PathTracingCommonSettings, RealtimeRenderSubsystem, RenderMode};
 
-use crate::coordinate_gizmo::CoordinateGizmoSubsystem;
 use crate::overlay_ui::{
     DebugImageSelectionData, RaycastOverlayData, RenderControlsData, TruvisOverlayFrame, TruvisOverlayOptions,
     TruvisOverlayUi,
 };
 use crate::renderer_client::RendererClient;
 use crate::selection_outline::SelectionOutlineSubsystem;
-use crate::transform_gizmo::TransformGizmoSubsystem;
-use crate::{SceneSelection, SelectionChange, light_overlay::LightOverlaySubsystem};
+use crate::transform_gizmo::TransformGizmo;
+use crate::viewport_overlay::ViewportOverlaySubsystem;
+use crate::{SceneSelection, SelectionChange, light_overlay::LightOverlay};
 
 pub struct TruvisRenderer {
     imgui: ImGuiSubsystem,
@@ -30,8 +30,11 @@ pub struct TruvisRenderer {
     realtime: RealtimeRenderSubsystem,
     offline: OfflineRenderSubsystem,
     selection_outline: SelectionOutlineSubsystem,
-    transform_gizmo: TransformGizmoSubsystem,
-    coordinate_gizmo: CoordinateGizmoSubsystem,
+    transform_gizmo: TransformGizmo,
+    viewport_overlay: ViewportOverlaySubsystem,
+    /// 与本帧 prepare 共用的相机快照；after_prepare 相机调整留待下一帧。
+    frame_view: RenderView,
+    output_extent: ash::vk::Extent2D,
     path_tracing_common_settings: PathTracingCommonSettings,
     render_mode: RenderMode,
     camera_controller: CameraController,
@@ -40,7 +43,7 @@ pub struct TruvisRenderer {
     click_ray_cast_probe: ClickRayCastProbe,
     selection: Option<SceneSelection>,
     active_gizmo_target: Option<GizmoTarget>,
-    light_overlay: LightOverlaySubsystem,
+    light_overlay: LightOverlay,
     focused: bool,
 
     /// App 提供、RenderThread 独占的 CPU scene 与 Editor 业务 Client。
@@ -80,6 +83,8 @@ impl GizmoTarget {
 impl TruvisRenderer {
     /// 使用 App 注入的 Client 构造渲染侧业务状态。
     pub fn new(client: Box<dyn RendererClient>) -> Self {
+        let camera_controller = CameraController::default();
+        let frame_view = camera_controller.camera().render_view();
         Self {
             imgui: Default::default(),
             debug_image_selection: Default::default(),
@@ -87,10 +92,12 @@ impl TruvisRenderer {
             offline: Default::default(),
             selection_outline: Default::default(),
             transform_gizmo: Default::default(),
-            coordinate_gizmo: Default::default(),
+            viewport_overlay: Default::default(),
+            frame_view,
+            output_extent: Default::default(),
             path_tracing_common_settings: Default::default(),
             render_mode: Default::default(),
-            camera_controller: Default::default(),
+            camera_controller,
             input: Default::default(),
             overlay_ui: Default::default(),
             click_ray_cast_probe: Default::default(),
@@ -128,6 +135,11 @@ impl Default for ClickRayCastProbe {
 }
 
 impl ClickRayCastProbe {
+    fn clear_pending(&mut self) {
+        self.pending_ray = None;
+        self.pending_screen_pos = None;
+    }
+
     fn update_time(&mut self, delta_time_s: f32) {
         self.total_time_s += delta_time_s.max(0.0);
     }
@@ -217,21 +229,34 @@ impl TruvisRenderer {
         }
     }
 
-    fn clear_stale_selection(&mut self, world: &GameWorld) -> bool {
-        if self.selection.is_some_and(|selection| !selection.is_valid(world)) {
-            self.selection = None;
-            self.cancel_interaction();
-            return true;
+    /// 所有选择来源共用提交入口；通知材质不进入权威 selection。
+    fn commit_selection(&mut self, change: Option<SelectionChange>) {
+        let selection = change.map(|change| match change {
+            SelectionChange::Submesh { selection, .. } => SceneSelection::Submesh(selection),
+            SelectionChange::Light(target) => SceneSelection::Light(target),
+        });
+        self.click_ray_cast_probe.clear_pending();
+        if self.selection == selection {
+            return;
         }
-        false
+        self.selection = selection;
+        self.active_gizmo_target = None;
+        self.transform_gizmo.cancel_drag();
+        self.client.on_selection_changed(change);
+    }
+
+    fn clear_stale_selection(&mut self, world: &GameWorld) {
+        if self.selection.is_some_and(|selection| !selection.is_valid(world)) {
+            self.cancel_interaction();
+            self.commit_selection(None);
+        }
     }
 
     fn cancel_interaction(&mut self) {
         self.active_gizmo_target = None;
         self.transform_gizmo.cancel_drag();
         self.input.reset();
-        self.click_ray_cast_probe.pending_ray = None;
-        self.click_ray_cast_probe.pending_screen_pos = None;
+        self.click_ray_cast_probe.clear_pending();
     }
 
     /// 两种 render mode 共用 overlay 顺序；pass 只借用各自 owner 的本帧资源。
@@ -250,9 +275,7 @@ impl TruvisRenderer {
             extent,
             self.selection.and_then(SceneSelection::submesh),
         );
-        self.light_overlay.contribute_passes(graph, ctx, present_image);
-        self.transform_gizmo.contribute_passes(graph, ctx, present_image, extent);
-        self.coordinate_gizmo.contribute_passes(graph, ctx, present_image, extent);
+        self.viewport_overlay.contribute_passes(graph, ctx, present_image);
         self.imgui.contribute_passes(graph, subsystem_ctx, present_image, extent);
     }
 }
@@ -264,14 +287,14 @@ impl Renderer for TruvisRenderer {
         self.imgui.set_display_size(ctx.window_size);
 
         self.client.initialize(&mut *ctx.runtime.world, self.camera_controller.camera_mut());
+        self.frame_view = self.camera_controller.camera().render_view();
+        self.output_extent = ctx.runtime.present.swapchain_image_info().image_extent;
 
         // Renderer 持有初始化顺序：场景 CPU 状态先就绪，再依次创建具体渲染资源。
         self.realtime.init(&mut ctx.runtime);
         self.offline.init(&mut ctx.runtime);
         self.selection_outline.init(&mut ctx.runtime);
-        self.light_overlay.init(&mut ctx.runtime);
-        self.transform_gizmo.init(&mut ctx.runtime);
-        self.coordinate_gizmo.init(&mut ctx.runtime);
+        self.viewport_overlay.init(&mut ctx.runtime);
         self.imgui.init(&mut ctx.runtime);
     }
 
@@ -309,17 +332,14 @@ impl Renderer for TruvisRenderer {
 
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
         self.click_ray_cast_probe.update_time(ctx.frame_timing.delta_time_s());
-        if self.clear_stale_selection(ctx.world) {
-            self.client.on_selection_changed(None);
-        }
+        self.clear_stale_selection(ctx.world);
         self.client.tick(ctx.world, self.selection);
-        if self.clear_stale_selection(ctx.world) {
-            self.client.on_selection_changed(None);
-        }
+        self.clear_stale_selection(ctx.world);
         let delta = std::time::Duration::from_secs_f32(ctx.frame_timing.delta_time_s());
         let viewport_size = glam::vec2(ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32);
         if viewport_size.min_element() <= 0.0 {
             self.cancel_interaction();
+            self.light_overlay.clear();
             return;
         }
         self.camera_controller.camera_mut().set_aspect_ratio(viewport_size.x / viewport_size.y);
@@ -352,21 +372,15 @@ impl Renderer for TruvisRenderer {
         self.light_overlay.project(ctx.world.scene_view(), camera, viewport_size);
         let mouse = self.input.state().mouse_position();
         let screen_pos = glam::vec2(mouse[0] as f32, mouse[1] as f32);
-        if pointer_available && gizmo_update.scene_pick_allowed && self.input.state().is_left_button_just_pressed() {
+        if pointer_available && !gizmo_update.consumed && self.input.state().is_left_button_just_pressed() {
             let press_position = self.input.state().left_button_press_position;
             let press_screen = glam::vec2(press_position[0] as f32, press_position[1] as f32);
             if let Some(target) = self.light_overlay.hit_test(press_screen) {
-                let selection = Some(SceneSelection::Light(target));
-                if self.selection != selection {
-                    self.client.on_selection_changed(Some(SelectionChange::Light(target)));
-                }
-                self.selection = selection;
-                self.click_ray_cast_probe.pending_ray = None;
-                self.click_ray_cast_probe.pending_screen_pos = None;
+                self.commit_selection(Some(SelectionChange::Light(target)));
             } else {
                 let ray = self.camera_controller.make_screen_raycast(press_position, viewport_size);
-                if ray.is_none() && self.selection.take().is_some() {
-                    self.client.on_selection_changed(None);
+                if ray.is_none() {
+                    self.commit_selection(None);
                 }
                 self.click_ray_cast_probe.request_cast(press_screen, ray);
             }
@@ -378,12 +392,14 @@ impl Renderer for TruvisRenderer {
             camera,
             viewport_size,
         );
-        self.light_overlay.refresh_geometry(
+        let gizmo_hover = self.transform_gizmo.update_hover(pointer_available.then_some(screen_pos));
+        self.light_overlay.refresh_snapshot(
             ctx.world.scene_view(),
             camera,
             self.selection.and_then(SceneSelection::light),
-            pointer_available.then_some(screen_pos),
+            (pointer_available && !gizmo_hover).then_some(screen_pos),
         );
+        self.frame_view = camera.render_view();
 
         self.imgui.build_frame(delta, |ui| {
             let offline_sample_count = self.offline.sample_count();
@@ -442,22 +458,17 @@ impl Renderer for TruvisRenderer {
 
         if let Some((ray, screen_pos)) = self.click_ray_cast_probe.take_pending_cast() {
             let result = Self::cast_single_ray(ctx, ray);
-            let selection = Self::selection_from_raycast_result(&result).map(SceneSelection::Submesh);
-            if selection != self.selection {
-                let notification = match (&result, selection) {
-                    (Ok(RayCastResult::Hit(hit)), Some(SceneSelection::Submesh(selection))) => {
-                        Some(SelectionChange::Submesh {
-                            selection,
-                            material: hit.material,
-                        })
-                    }
-                    _ => None,
-                };
-                self.client.on_selection_changed(notification);
-                // 本帧已 prepare，不能读取 World 重新绑定新网格；清除旧 frame，下一次 update 生成。
-                self.transform_gizmo.cancel_drag();
-            }
-            self.selection = selection;
+            let notification = match &result {
+                Ok(RayCastResult::Hit(hit)) => {
+                    Self::selection_from_raycast_result(&result).map(|selection| SelectionChange::Submesh {
+                        selection,
+                        material: hit.material,
+                    })
+                }
+                _ => None,
+            };
+            // 新网格没有本帧 World 展示快照；提交会清掉旧 gizmo，下一次 update 再生成。
+            self.commit_selection(notification);
             self.click_ray_cast_probe.finish_cast(screen_pos, result);
         }
     }
@@ -466,10 +477,13 @@ impl Renderer for TruvisRenderer {
         self.realtime.on_resize(&mut ctx.runtime);
         self.offline.on_resize(&mut ctx.runtime);
         self.selection_outline.on_resize(&mut ctx.runtime);
-        self.cancel_interaction();
-        self.light_overlay.on_resize(&mut ctx.runtime);
-        self.transform_gizmo.on_resize(&mut ctx.runtime);
-        self.coordinate_gizmo.on_resize(&mut ctx.runtime);
+        let extent = ctx.runtime.present.swapchain_image_info().image_extent;
+        if extent != self.output_extent {
+            self.output_extent = extent;
+            self.cancel_interaction();
+            self.light_overlay.clear();
+        }
+        self.viewport_overlay.on_resize(&mut ctx.runtime);
         self.imgui.on_resize(&mut ctx.runtime);
     }
 
@@ -478,9 +492,7 @@ impl Renderer for TruvisRenderer {
 
         // 与资源创建顺序相反释放，且始终早于 runtime root owner 销毁。
         self.imgui.shutdown(&mut ctx.runtime);
-        self.coordinate_gizmo.shutdown(&mut ctx.runtime);
-        self.transform_gizmo.shutdown(&mut ctx.runtime);
-        self.light_overlay.shutdown(&mut ctx.runtime);
+        self.viewport_overlay.shutdown(&mut ctx.runtime);
         self.selection_outline.shutdown(&mut ctx.runtime);
         self.offline.shutdown(&mut ctx.runtime);
         self.realtime.shutdown(&mut ctx.runtime);
@@ -494,13 +506,19 @@ impl Renderer for TruvisRenderer {
         // 离线累计失效由 Renderer 在每帧 render 前统一判断：相机、场景和离线设置都已经进入
         // 本帧确定状态，离线渲染子系统只保存历史签名并在变化时清空自己的 accum_image。
         self.offline.update_accum_signature(
-            self.camera_controller.camera().render_view().accum_signature(),
+            self.frame_view.accum_signature(),
             ctx.render_scene.accum_signature(frame_label),
             &self.path_tracing_common_settings,
         );
 
         self.imgui.prepare_render_data(&subsystem_ctx);
-        self.light_overlay.prepare_render(ctx, self.selection.and_then(SceneSelection::light));
+        self.viewport_overlay.prepare_render(
+            ctx,
+            &self.frame_view,
+            &self.light_overlay,
+            &self.transform_gizmo,
+            self.selection.and_then(SceneSelection::light),
+        );
         let selected_debug_image_id = self.debug_image_selection.selected_id();
 
         // Renderer 持有实时/离线模式选择；具体渲染子系统只负责向 RenderGraph 贡献自己的 compute subgraph。
@@ -611,6 +629,6 @@ impl Renderer for TruvisRenderer {
     }
 
     fn render_view(&self) -> RenderView {
-        self.camera_controller.camera().render_view()
+        self.frame_view
     }
 }

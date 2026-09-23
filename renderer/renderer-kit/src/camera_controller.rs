@@ -189,7 +189,7 @@ impl CameraController {
     /// 根据窗口物理像素坐标生成世界空间射线，供 Renderer 在 after_prepare 阶段执行同步查询。
     pub fn make_screen_raycast(&self, mouse_position: [f64; 2], viewport_size: glam::Vec2) -> Option<RayCastRay> {
         let screen_pos = glam::vec2(mouse_position[0] as f32, mouse_position[1] as f32);
-        let direction_ws = Self::screen_ray_direction(&self.camera, screen_pos, viewport_size)?;
+        let direction_ws = self.camera.screen_ray_direction(screen_pos, viewport_size)?;
         Some(RayCastRay {
             origin_ws: self.camera.position,
             direction_ws,
@@ -306,7 +306,7 @@ impl CameraController {
         pending_wheel_delta: f32,
     ) -> Option<WheelZoomRayCastRequest> {
         let anchor_screen_pos = glam::vec2(mouse_position[0] as f32, mouse_position[1] as f32);
-        let direction_ws = Self::screen_ray_direction(&self.camera, anchor_screen_pos, viewport_size)?;
+        let direction_ws = self.camera.screen_ray_direction(anchor_screen_pos, viewport_size)?;
         let ray = RayCastRay {
             origin_ws: self.camera.position,
             direction_ws,
@@ -372,8 +372,7 @@ impl CameraController {
         let Some(orbit) = self.active_pivot_orbit.as_ref() else {
             return;
         };
-        let Some(direction_ws) = Self::screen_ray_direction(&self.camera, orbit.anchor_screen_pos, viewport_size)
-        else {
+        let Some(direction_ws) = self.camera.screen_ray_direction(orbit.anchor_screen_pos, viewport_size) else {
             self.active_pivot_orbit = None;
             return;
         };
@@ -390,7 +389,7 @@ impl CameraController {
         let distance = drag_pan.distance;
         let mouse_position = input_state.mouse_position();
         let screen_pos = glam::vec2(mouse_position[0] as f32, mouse_position[1] as f32);
-        let Some(direction_ws) = Self::screen_ray_direction(&self.camera, screen_pos, viewport_size) else {
+        let Some(direction_ws) = self.camera.screen_ray_direction(screen_pos, viewport_size) else {
             self.active_drag_pan = None;
             return;
         };
@@ -451,7 +450,7 @@ impl CameraController {
             return false;
         }
 
-        let Some(direction_ws) = Self::screen_ray_direction(&self.camera, anchor_screen_pos, viewport_size) else {
+        let Some(direction_ws) = self.camera.screen_ray_direction(anchor_screen_pos, viewport_size) else {
             self.active_wheel_zoom = None;
             return false;
         };
@@ -497,34 +496,5 @@ impl CameraController {
     fn rotate_camera(&mut self, mouse_delta: [f64; 2]) {
         self.camera.rotate_yaw(-mouse_delta[0] as f32 / Self::ROTATE_SENSITIVITY_DIVISOR);
         self.camera.rotate_pitch(-mouse_delta[1] as f32 / Self::ROTATE_SENSITIVITY_DIVISOR);
-    }
-
-    fn screen_ray_direction(camera: &Camera, screen_pos: glam::Vec2, viewport_size: glam::Vec2) -> Option<glam::Vec3> {
-        if !screen_pos.is_finite()
-            || !viewport_size.is_finite()
-            || viewport_size.x <= 0.0
-            || viewport_size.y <= 0.0
-            || screen_pos.x < 0.0
-            || screen_pos.y < 0.0
-            || screen_pos.x >= viewport_size.x
-            || screen_pos.y >= viewport_size.y
-        {
-            return None;
-        }
-
-        let uv = screen_pos / viewport_size;
-        let ndc = glam::vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-        let target_vs = camera.get_projection_matrix().inverse() * glam::vec4(ndc.x, ndc.y, 1.0, 1.0);
-        let direction_vs = target_vs.truncate();
-        if !direction_vs.is_finite() || direction_vs.length_squared() <= f32::EPSILON {
-            return None;
-        }
-
-        let direction_ws = camera.get_view_matrix().inverse().transform_vector3(direction_vs.normalize());
-        if !direction_ws.is_finite() || direction_ws.length_squared() <= f32::EPSILON {
-            return None;
-        }
-
-        Some(direction_ws.normalize())
     }
 }
