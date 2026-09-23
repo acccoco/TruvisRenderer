@@ -4,12 +4,12 @@ use std::cell::Cell;
 
 use slotmap::Key;
 
+use crate::post_process::SdrPostProcessInput;
 use renderer_kit::debug_image::DebugImageOption;
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 use renderer_render_passes::post_process::accum::{AccumPass, AccumRgPass};
 use renderer_render_passes::post_process::image_clear::{ImageClearPass, ImageClearRgPass};
 use renderer_render_passes::post_process::resolve::{ResolveDebugImage, ResolvePass, ResolveRgPass};
-use renderer_render_passes::post_process::sdr::{SdrPass, SdrRgPass};
 use renderer_render_passes::ray_tracing::offline::{OfflineRtPass, OfflineRtRgPass};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
@@ -211,7 +211,6 @@ struct OfflineRenderResources {
     offline_rt_pass: OfflineRtPass,
     image_clear_pass: ImageClearPass,
     accum_pass: AccumPass,
-    sdr_pass: SdrPass,
     resolve_pass: ResolvePass,
     targets: OfflineTargets,
     compute_cmds: [GfxCommandBuffer; FrameLabel::COUNT],
@@ -232,7 +231,6 @@ impl OfflineRenderResources {
         );
         let image_clear_pass = ImageClearPass::new(ctx.device_ctx, ctx.shader_binding_system.global_descriptor_sets());
         let accum_pass = AccumPass::new(ctx.device_ctx, ctx.shader_binding_system.global_descriptor_sets());
-        let sdr_pass = SdrPass::new(ctx.device_ctx, ctx.shader_binding_system.global_descriptor_sets());
         let resolve_pass = ResolvePass::new(
             ctx.device_ctx,
             ctx.shader_binding_system.global_descriptor_sets(),
@@ -261,7 +259,6 @@ impl OfflineRenderResources {
             offline_rt_pass,
             image_clear_pass,
             accum_pass,
-            sdr_pass,
             resolve_pass,
             targets,
             compute_cmds,
@@ -273,9 +270,13 @@ impl OfflineRenderResources {
         self.offline_rt_pass.destroy(ctx.resource_ctx, ctx.device_ctx);
         self.image_clear_pass.destroy(ctx.device_ctx);
         self.accum_pass.destroy(ctx.device_ctx);
-        self.sdr_pass.destroy(ctx.device_ctx);
         self.resolve_pass.destroy(ctx.device_ctx);
-        self.targets.destroy(ctx.resource_ctx, ctx.device_ctx, &mut *ctx.gfx_resource_registry, DestroyReason::Shutdown);
+        self.targets.destroy(
+            ctx.resource_ctx,
+            ctx.device_ctx,
+            &mut *ctx.gfx_resource_registry,
+            DestroyReason::Shutdown,
+        );
     }
 }
 
@@ -348,7 +349,7 @@ impl OfflineRenderSubsystem {
         rg_builder: &mut RenderGraphBuilder<'a>,
         ctx: &'a SubsystemRenderCtx<'a>,
         common_settings: &PathTracingCommonSettings,
-    ) {
+    ) -> Option<SdrPostProcessInput> {
         let resources = self.resources();
         let record_ctx = ctx.record_ctx;
         let frame_label = record_ctx.frame_timing.frame_label();
@@ -361,7 +362,6 @@ impl OfflineRenderSubsystem {
         let sky_brightness = common_settings.sky_brightness;
         let emissive_nee_enabled = common_settings.emissive_nee_enabled;
         let analytic_nee_enabled = common_settings.analytic_nee_enabled;
-        let tone_mapping = common_settings.tone_mapping;
 
         let single_frame_target = targets.single_frame_image(frame_label);
         let single_frame_image = rg_builder.import_image(
@@ -431,7 +431,7 @@ impl OfflineRenderSubsystem {
                         clear_color,
                     },
                 );
-            return;
+            return None;
         }
 
         let sample_states = self.accum_state.take_next_sample_batch(self.settings.effective_ray_dispatch_count());
@@ -469,19 +469,13 @@ impl OfflineRenderSubsystem {
                     },
                 );
         }
-        rg_builder.add_pass(
-            "offline-hdr-to-sdr",
-            SdrRgPass {
-                sdr_pass: &resources.sdr_pass,
-                record_ctx,
-                src_image: accum_image,
-                dst_image: render_target,
-                src_image_extent: accum_target.extent,
-                dst_image_extent: render_target_info.extent,
-                debug_channel,
-                tone_mapping,
-            },
-        );
+        Some(SdrPostProcessInput {
+            source: accum_image,
+            destination: render_target,
+            source_extent: accum_target.extent,
+            destination_extent: render_target_info.extent,
+            channel: self.settings.debug_channel,
+        })
     }
 
     pub fn contribute_present_passes<'a>(

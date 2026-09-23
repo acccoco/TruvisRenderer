@@ -13,26 +13,7 @@ use truvis_shader_manifest::ShaderArtifactPath;
 
 use crate::compute_pass::ComputePass;
 
-/// SDR 输出路径的 tone mapping 参数。
-///
-/// 这些参数只服务当前 RT pipeline 的 SDR sRGB 显示映射。曲线使用实时渲染常用的
-/// ACES fitted approximation，不表达完整 ACES / OCIO / HDR10 display transform。
-#[derive(Clone, Copy)]
-pub struct SdrToneMappingSettings {
-    pub exposure_ev: f32,
-    pub aces_strength: f32,
-    pub aces_white_point: f32,
-}
-
-impl Default for SdrToneMappingSettings {
-    fn default() -> Self {
-        Self {
-            exposure_ev: 0.0,
-            aces_strength: 1.0,
-            aces_white_point: 11.2,
-        }
-    }
-}
+pub use super::settings::SdrPostProcessSettings;
 
 pub struct SdrPassData {
     pub src_image: GfxImageViewHandle,
@@ -40,9 +21,11 @@ pub struct SdrPassData {
 
     pub dst_image: GfxImageViewHandle,
     pub dst_image_size: vk::Extent2D,
-    /// 当前 RT 调试通道。0 使用 tone mapping；非 0 通道保留 HDR debug color。
-    pub debug_channel: u32,
-    pub tone_mapping: SdrToneMappingSettings,
+    /// CPU 唯一判定通道语义：radiance 使用显示映射，数据通道直接透传。
+    pub radiance_channel: bool,
+    pub post_process: SdrPostProcessSettings,
+    pub exposure: GfxImageViewHandle,
+    pub agx_lut: GfxImageViewHandle,
 }
 
 #[derive(DescriptorBinding)]
@@ -58,6 +41,16 @@ struct SdrDescriptorBinding {
     #[stage = "COMPUTE"]
     #[count = 1]
     _dst_image: (),
+    #[binding = 2]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "COMPUTE"]
+    #[count = 1]
+    _exposure: (),
+    #[binding = 3]
+    #[descriptor_type = "SAMPLED_IMAGE"]
+    #[stage = "COMPUTE"]
+    #[count = 1]
+    _agx_lut: (),
 }
 
 /// HDR 到 SDR 的 compute pass。
@@ -101,8 +94,24 @@ impl SdrPass {
                 0,
                 image_info(image_view(data.dst_image)),
             ),
+            SdrDescriptorBinding::exposure().write_image(
+                vk::DescriptorSet::null(),
+                0,
+                image_info(image_view(data.exposure)),
+            ),
+            SdrDescriptorBinding::agx_lut().write_image(
+                vk::DescriptorSet::null(),
+                0,
+                vec![
+                    vk::DescriptorImageInfo::default()
+                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                        .image_view(image_view(data.agx_lut)),
+                ],
+            ),
         ];
 
+        let grading = data.post_process.color_grading;
+        let white_balance = grading.white_balance_matrix().transpose();
         let frame_label = record_ctx.frame_timing.frame_label();
         self.sdr_pass.exec(
             cmd,
@@ -110,12 +119,21 @@ impl SdrPass {
             record_ctx.shader_bindings.global_descriptor_sets(),
             &descriptor_writes,
             &gpu::renderer::render_passes::sdr::PushConstant {
-                image_size: glam::uvec2(data.src_image_size.width, data.src_image_size.height).into(),
-                channel: data.debug_channel,
-                exposure_ev: data.tone_mapping.exposure_ev,
-                aces_strength: data.tone_mapping.aces_strength,
-                aces_white_point: data.tone_mapping.aces_white_point,
-                _padding_1: Default::default(),
+                image_size: glam::uvec2(data.dst_image_size.width, data.dst_image_size.height).into(),
+                src_size: glam::uvec2(data.src_image_size.width, data.src_image_size.height).into(),
+                radiance_channel: data.radiance_channel as u32,
+                tone_mapping_mode: data.post_process.tone_mapping as u32,
+                exposure_mode: data.post_process.exposure.mode as u32,
+                dither: data.post_process.dither as u32,
+                manual_ev: data.post_process.exposure.manual_ev,
+                auto_compensation_ev: data.post_process.exposure.auto_compensation_ev,
+                contrast: grading.contrast,
+                saturation: grading.saturation,
+                white_balance_r: white_balance.x_axis.extend(0.0).into(),
+                white_balance_g: white_balance.y_axis.extend(0.0).into(),
+                white_balance_b: white_balance.z_axis.extend(0.0).into(),
+                tonal_gains: grading.tonal_gains().into(),
+                _padding_0: 0.0,
             },
             glam::uvec3(
                 data.dst_image_size.width.div_ceil(gpu::renderer::render_passes::sdr::SHADER_X as u32),
@@ -127,6 +145,8 @@ impl SdrPass {
 }
 
 pub struct SdrRgPass<'a> {
+    pub exposure: RgImageHandle,
+    pub agx_lut: RgImageHandle,
     pub sdr_pass: &'a SdrPass,
 
     pub record_ctx: RenderPassRecordCtx<'a>,
@@ -136,11 +156,20 @@ pub struct SdrRgPass<'a> {
 
     pub src_image_extent: vk::Extent2D,
     pub dst_image_extent: vk::Extent2D,
-    pub debug_channel: u32,
-    pub tone_mapping: SdrToneMappingSettings,
+    pub radiance_channel: bool,
+    pub post_process: SdrPostProcessSettings,
 }
 impl<'a> RgPass for SdrRgPass<'a> {
     fn setup(&mut self, builder: &mut RgPassBuilder) {
+        builder.read_image(self.exposure, RgImageState::STORAGE_READ_COMPUTE);
+        builder.read_image(
+            self.agx_lut,
+            RgImageState::new(
+                vk::PipelineStageFlags2::COMPUTE_SHADER,
+                vk::AccessFlags2::SHADER_SAMPLED_READ,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            ),
+        );
         builder.read_image(self.src_image, RgImageState::STORAGE_READ_COMPUTE);
         builder.write_image(self.dst_image, RgImageState::STORAGE_WRITE_COMPUTE);
     }
@@ -156,8 +185,10 @@ impl<'a> RgPass for SdrRgPass<'a> {
                 dst_image,
                 src_image_size: self.src_image_extent,
                 dst_image_size: self.dst_image_extent,
-                debug_channel: self.debug_channel,
-                tone_mapping: self.tone_mapping,
+                radiance_channel: self.radiance_channel,
+                exposure: ctx.get_image_view_handle(self.exposure).unwrap(),
+                agx_lut: ctx.get_image_view_handle(self.agx_lut).unwrap(),
+                post_process: self.post_process,
             },
             &self.record_ctx,
         );

@@ -1,0 +1,81 @@
+#pragma once
+#include "lib/renderer/post/color_grader.slangi"
+
+/// Bevy 566358363126dd69f6e457e47f306c68f8041d2a / tonemapping_shared.wgsl。
+/// AgX default contrast 与 ACES fitted 均以 linear sRGB 输入/输出；矩阵按行显式 dot，避免转置歧义。
+struct SdrToneMapper {
+    static float3 agx(float3 color) {
+        float3 prepared = float3(
+            dot(color, float3(0.84247906f, 0.0784336f, 0.07922375f)),
+            dot(color, float3(0.04232824f, 0.87846864f, 0.07916613f)),
+            dot(color, float3(0.04237565f, 0.0784336f, 0.87914297f)));
+        prepared += select(prepared < 0.00003051757f, float3(0.00001525878f), float3(0.0f));
+        float3 p = saturate((log2(prepared) - log2(0.18f) + 10.0f) / 16.5f) * 31.0f;
+        float b0 = floor(p.z);
+        float b1 = min(b0 + 1.0f, 31.0f);
+        float2 uv0 = (float2(p.x + b0 * 32.0f, p.y) + 0.5f) / float2(1024.0f, 32.0f);
+        float2 uv1 = (float2(p.x + b1 * 32.0f, p.y) + 0.5f) / float2(1024.0f, 32.0f);
+        float3 c0 = renderer::render_passes::sdr::agx_lut.SampleLevel(
+            engine::binding::global_samplers[engine::bindless::ESamplerType::LinearClamp], uv0, 0).rgb;
+        float3 c1 = renderer::render_passes::sdr::agx_lut.SampleLevel(
+            engine::binding::global_samplers[engine::bindless::ESamplerType::LinearClamp], uv1, 0).rgb;
+        return lerp(c0, c1, p.z - b0);
+    }
+
+    static float fit(float v) {
+        /// 高亮处将分子分母同除 v²，避免有限 HDR 的平方溢出；不裁剪输入能量。
+        if (v > 1.0f) {
+            float inv = 1.0f / v;
+            return (1.0f + 0.0245786f * inv - 0.000090537f * inv * inv)
+                / (0.983729f + 0.4329510f * inv + 0.238081f * inv * inv);
+        }
+        return (v * (v + 0.0245786f) - 0.000090537f)
+            / (v * (0.983729f * v + 0.4329510f) + 0.238081f);
+    }
+
+    static float3 aces(float3 color) {
+        float3 v = float3(
+            dot(color, float3(0.59719f, 0.35458f, 0.04823f)),
+            dot(color, float3(0.07600f, 0.90834f, 0.01566f)),
+            dot(color, float3(0.02840f, 0.13383f, 0.83777f)));
+        v = float3(fit(v.x), fit(v.y), fit(v.z));
+        return saturate(float3(
+            dot(v, float3(1.60475f, -0.53108f, -0.07367f)),
+            dot(v, float3(-0.10208f, 1.10813f, -0.00605f)),
+            dot(v, float3(-0.00327f, -0.07276f, 1.07602f))));
+    }
+
+    /// KhronosGroup/ToneMapping b5a2eed5ddf6c2227090449399de9c7affb9e4c9 / PBR_Neutral/pbrNeutral.glsl。
+    /// Copyright (c) 2024 The Khronos Group, Inc. Apache-2.0；许可见 renderer-rendering/resources/LICENSE-APACHE。
+    /// 从 GLSL 改写为 Slang 关联方法；保留官方常量与公式，输入/输出均为 linear Rec.709。
+    static float3 pbr_neutral(float3 color) {
+        const float start_compression = 0.8f - 0.04f;
+        const float desaturation = 0.15f;
+        float x = min(color.r, min(color.g, color.b));
+        float offset = x < 0.08f ? x - 6.25f * x * x : 0.04f;
+        color -= offset;
+        float peak = max(color.r, max(color.g, color.b));
+        if (peak < start_compression) return color;
+        float d = 1.0f - start_compression;
+        float new_peak = 1.0f - d * d / (peak + d - start_compression);
+        color *= new_peak / peak;
+        float g = 1.0f - 1.0f / (desaturation * (peak - new_peak) + 1.0f);
+        return lerp(color, float3(new_peak), g);
+    }
+
+    static float3 encode_srgb(float3 x) {
+        return select(x <= 0.0031308f, 12.92f * x, 1.055f * pow(x, 1.0f / 2.4f) - 0.055f);
+    }
+    static float3 decode_srgb(float3 x) {
+        return select(x <= 0.04045f, x / 12.92f, pow((x + 0.055f) / 1.055f, 2.4f));
+    }
+    static float3 map(float3 hdr, renderer::render_passes::sdr::PushConstant params, float ev, float noise) {
+        float3 color = ColorGrader::apply(ColorGrader::finite_color(hdr) * exp2(ev), params);
+        uint mode = params.tone_mapping_mode;
+        if (mode == 0) color = agx(color);
+        else if (mode == 1) color = aces(color);
+        else if (mode == 3) color = pbr_neutral(color);
+        /// None 也遵循 SDR 输出范围；dither 在显示编码空间而非线性空间加入。
+        return decode_srgb(saturate(encode_srgb(saturate(color)) + noise));
+    }
+};

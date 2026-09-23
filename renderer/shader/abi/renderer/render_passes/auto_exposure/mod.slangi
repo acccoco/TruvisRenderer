@@ -1,0 +1,26 @@
+#pragma once
+#include "abi/engine/mod.slangi"
+
+namespace renderer { namespace render_passes { namespace auto_exposure {
+static const uint SET_NUM = engine::binding::GLOBAL_SETS_COUNT;
+static const uint BIN_COUNT = 256;
+#ifdef __SLANG__
+[[vk::binding(0, SET_NUM)]] RWTexture2D<float4> src_image;
+[[vk::binding(1, SET_NUM)]] RWTexture2D<uint> histogram;
+[[vk::binding(2, SET_NUM)]] RWTexture2D<float4> exposure;
+#endif
+/// uint2 字段放在 8 字节边界，整体 48 字节；host struct alignment 为 4。
+struct PushConstant {
+    uint2 image_size;
+    uint metering_mode;
+    uint instant;
+    float low_percentile;
+    float high_percentile;
+    float min_ev;
+    float max_ev;
+    float delta_seconds;
+    float darken_seconds;
+    float brighten_seconds;
+    uint _padding_0;
+};
+}}}

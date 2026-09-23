@@ -4482,6 +4482,7 @@ dependencies = [
  "truvis-render-foundation",
  "truvis-render-graph",
  "truvis-render-runtime",
+ "truvis-renderer-shader-binding",
  "vk-mem",
 ]
 

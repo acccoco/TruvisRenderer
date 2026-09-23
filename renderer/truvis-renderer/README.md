@@ -31,9 +31,14 @@ Renderer 本身只消费 CPU scene 结果并负责 GPU/RenderGraph 编排。
 - camera、input、overlay 和 debug image 选择属于 Renderer；runtime 只消费 `RenderView` 或稳定选择语义。
 - `RealtimeRenderSubsystem` 与 `OfflineRenderSubsystem` 都由 Renderer 持有。两者拥有各自 target、累计和 temporal 状态，
   不把窗口尺寸资源下沉到 `RenderRuntime`。
+- `SdrPostProcess` 由 Renderer 单独持有唯一实例，接收两种模式的 HDR 输出，共用曝光历史、AgX LUT 和显示 pass。
+  显示设置由 `PathTracingCommonSettings` 持有，曝光参数在固定 update 中归一化；更改显示设置不重置 Offline spp。
 - Renderer 不拥有 Editor endpoint 或 desktop command receiver；这些 receiver 属于 App Client。
 
 ## 运行与编排
+
+compute 与 present graph 分别在局部作用域完成录制；compute 的资源借用结束后才进入 present 编排。
+两种模式只选择各自的输入目标和命令缓冲，共用 SDR 后处理及 present/overlay 编排；GPU owner 保持独立。
 
 `TruvisRenderer::render` 根据当前 `RenderMode` 选择 realtime 或 offline 渲染子系统，并显式组织主图 resolve、
 selection outline、viewport overlay 与 ImGui 的顺序。具体 pass 位于 `renderer-render-passes`，渲染 owner 位于

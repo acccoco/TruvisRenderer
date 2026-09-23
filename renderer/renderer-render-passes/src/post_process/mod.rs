@@ -6,3 +6,6 @@ pub mod dlss_sr;
 pub mod image_clear;
 pub mod resolve;
 pub mod sdr;
+
+pub mod auto_exposure;
+pub mod settings;
