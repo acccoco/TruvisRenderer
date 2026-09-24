@@ -1,6 +1,6 @@
-use std::{env, ffi::CStr, num::NonZeroU32, time::Duration};
+use std::{ffi::CStr, num::NonZeroU32, time::Duration};
 
-use ash::vk::{self, Handle};
+use ash::vk;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
@@ -11,10 +11,7 @@ use truvis_gfx::gfx::{Gfx, GfxDeviceInfoCtx};
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_path::TruvisPath;
 use truvis_render_foundation::frame_label::FrameLabel;
-use truvis_render_foundation::render_view::RenderView;
 use truvis_shader_binding::gpu;
-use truvis_streamline_binding::dlss;
-use truvis_utils::ConfigUtils;
 use truvis_world::GameWorld;
 
 use crate::bindings::global_descriptor_sets::PerFrameDescriptorBinding;
@@ -27,14 +24,11 @@ use crate::render_world::render_world::RenderWorld;
 use crate::resources::cmd_allocator::CmdAllocator;
 use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 use crate::runtime_defaults::DefaultRenderRuntimeSettings;
-use crate::state::dlss_options::{DlssFeature, DlssOptions};
-use crate::state::dlss_sr::{DlssSrMode, DlssSrState};
 use crate::state::frame_state::FrameRenderState;
 use crate::state::frame_timing::FrameTiming;
-use crate::state::view_accum::ViewAccumState;
 
 pub use crate::render_runtime_ctx::{
-    RenderRuntimeInitCtx, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx,
+    RenderFrameInput, RenderRuntimeInitCtx, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx,
     RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx,
 };
 
@@ -55,7 +49,7 @@ pub use crate::render_runtime_ctx::{
 /// let update_ctx = render_runtime.update_phase();
 /// // ... 使用 update_ctx 执行 Renderer/子系统 CPU 更新 ...
 /// drop(update_ctx);
-/// render_runtime.prepare(render_view);
+/// render_runtime.prepare(&frame_input);
 /// let render_ctx = render_runtime.render_phase();
 /// // ... 执行 Renderer/子系统 render graph 工作 ...
 /// drop(render_ctx);
@@ -71,9 +65,8 @@ pub struct RenderRuntime {
     frame_timing: FrameTiming,
     per_frame_gpu_data: PerFrameGpuData,
     frame_state: FrameRenderState,
-    dlss_options: DlssOptions,
-    dlss_sr_state: DlssSrState,
-    view_accum: ViewAccumState,
+    requested_render_extent: vk::Extent2D,
+    history_invalidated: bool,
     render_world: RenderWorld,
     ray_cast_service: RayCastService,
 
@@ -84,7 +77,6 @@ pub struct RenderRuntime {
     render_world_update_cmds: Vec<GfxCommandBuffer>,
 
     swapchain_presenter: Option<SwapchainPresenter>,
-    last_applied_dlss_options: DlssOptions,
 }
 
 // 创建与初始化
@@ -102,9 +94,6 @@ impl RenderRuntime {
             let _span = tracy_client::span!("RenderRuntime::new/Gfx");
             Gfx::new("Truvis".to_string(), extra_instance_ext)
         };
-        Self::query_streamline_dlss_support(&gfx);
-        Self::query_streamline_dlss_rr_support(&gfx);
-
         let frame_state = {
             let _span = tracy_client::span!("RenderRuntime::new/frame_state");
             // runtime 创建时还没有 surface/swapchain，只能先保存格式和一个占位 extent。
@@ -124,9 +113,9 @@ impl RenderRuntime {
             }
         };
 
-        let (view_accum, fif_timeline_semaphore) = {
+        let fif_timeline_semaphore = {
             let _span = tracy_client::span!("RenderRuntime::new/sync");
-            (ViewAccumState::default(), GfxSemaphore::new_timeline(gfx.device_ctx(), 0, "render-timeline"))
+            GfxSemaphore::new_timeline(gfx.device_ctx(), 0, "render-timeline")
         };
 
         let (mut gfx_resource_registry, mut cmd_allocator, frame_timing, mut shader_binding_system) = {
@@ -203,8 +192,6 @@ impl RenderRuntime {
                 fif_timeline_semaphore,
                 render_world_update_cmds: cmds,
                 swapchain_presenter: None,
-                last_applied_dlss_options: DlssOptions::NATIVE,
-
                 world,
                 ray_cast_service,
                 render_world,
@@ -213,9 +200,8 @@ impl RenderRuntime {
                 frame_timing,
                 per_frame_gpu_data,
                 frame_state,
-                dlss_options: Self::initial_dlss_options(),
-                dlss_sr_state: DlssSrState::default(),
-                view_accum,
+                requested_render_extent: vk::Extent2D { width: 400, height: 400 },
+                history_invalidated: false,
             }
         }
     }
@@ -232,87 +218,10 @@ impl RenderRuntime {
         .unwrap_or(vk::Format::UNDEFINED)
     }
 
-    fn query_streamline_dlss_support(gfx: &Gfx) {
-        // 当前 Gfx 从 sl.interposer.dll 加载 Vulkan entry，Streamline 会通过
-        // vkCreateInstance/vkCreateDevice proxy 绑定 Vulkan root；手动调用
-        // slSetVulkanInfo 只适用于不走 proxy 的集成方式。
-        match dlss::query_support(gfx.physical_device().vk_handle().as_raw()) {
-            Ok(support) => {
-                log::info!(
-                    "DLSS SR support: supported={}, flags={}, max_viewports={}, max_cpu_threads={}",
-                    support.supported,
-                    support.flags,
-                    support.max_num_viewports,
-                    support.max_num_cpu_threads
-                );
-            }
-            Err(err) => {
-                log::warn!("DLSS SR support query failed: {}", err);
-            }
-        }
-    }
-
-    fn query_streamline_dlss_rr_support(gfx: &Gfx) {
-        match dlss::query_rr_support(gfx.physical_device().vk_handle().as_raw()) {
-            Ok(support) => {
-                log::info!(
-                    "DLSS RR support: supported={}, flags={}, max_viewports={}, max_cpu_threads={}",
-                    support.supported,
-                    support.flags,
-                    support.max_num_viewports,
-                    support.max_num_cpu_threads
-                );
-            }
-            Err(err) => {
-                log::warn!("DLSS RR support query failed: {}", err);
-            }
-        }
-    }
-
-    fn initial_dlss_options() -> DlssOptions {
-        let mut options = DlssOptions::default();
-
-        // 环境变量只作为启动时调试入口，便于自动化 validation/resize 测试直接进入指定 SR mode。
-        // 运行中 mode 仍由 ImGui 修改 `DlssOptions`，再由 sync_dlss_options_frame_state 统一生效。
-        if let Ok(value) = env::var("TRUVIS_DLSS_SR_MODE") {
-            match DlssSrMode::from_config_value(&value) {
-                Some(mode) => {
-                    options.dlss_sr_mode = mode;
-                    log::info!("Initial DLSS SR mode from TRUVIS_DLSS_SR_MODE={value}: {mode:?}");
-                }
-                None => {
-                    log::warn!("Ignoring unsupported TRUVIS_DLSS_SR_MODE value: {value}");
-                }
-            }
-        }
-        if let Ok(value) = env::var("TRUVIS_DLSS_RR") {
-            match ConfigUtils::parse_bool_env(&value) {
-                Some(enabled) => {
-                    options.dlss_rr_enabled = enabled;
-                    log::info!("Initial DLSS RR enabled from TRUVIS_DLSS_RR={value}: {enabled}");
-                }
-                None => {
-                    log::warn!("Ignoring unsupported TRUVIS_DLSS_RR value: {value}");
-                }
-            }
-        }
-
-        options
-    }
 }
 
 // 销毁
 impl RenderRuntime {
-    fn free_streamline_feature_resources(feature: DlssFeature, context: &'static str) {
-        let result = match feature {
-            DlssFeature::SuperResolution => dlss::free_resources(0),
-            DlssFeature::RayReconstruction => dlss::free_rr_resources(0),
-        };
-        if let Err(err) = result {
-            log::warn!("Failed to free {feature:?} resources for viewport 0 {context}: {err}");
-        }
-    }
-
     /// 等待当前 device 上已提交的 GPU 工作完成。
     ///
     /// runtime 在 Renderer/子系统 shutdown 前调用它，确保上层持有的 pipeline、descriptor、buffer
@@ -372,6 +281,7 @@ impl RenderRuntime {
     /// 再重置命令池和延迟释放队列；`GameWorld::poll_asset_loads` 在 update 之后的 prepare 边界执行。
     pub fn begin_frame(&mut self) {
         let _span = tracy_client::span!("RenderRuntime::begin_frame");
+        self.history_invalidated = false;
         self.frame_timing.begin_frame();
 
         {
@@ -415,12 +325,12 @@ impl RenderRuntime {
         self.acquire_image();
 
         RenderRuntimeUpdateCtx {
+            device_ctx: self.gfx.device_ctx(),
             world: &mut self.world,
-            dlss_options: &mut self.dlss_options,
             frame_state: &self.frame_state,
-            view_accum: &self.view_accum,
             swapchain_extent: self.frame_state.output_extent,
             frame_timing: &self.frame_timing,
+            requested_render_extent: &mut self.requested_render_extent,
         }
     }
 
@@ -429,14 +339,10 @@ impl RenderRuntime {
     /// 这是 update 与 render 之间的语义翻译边界：Renderer 仍拥有 camera/input state，
     /// runtime 只读取 render view 快照，并把 `GameWorld`、asset/material/instance bridge 的状态整理成
     /// render pass 可读取的 `RenderSceneView`。
-    pub fn prepare(&mut self, render_view: &RenderView) {
+    pub fn prepare(&mut self, input: &RenderFrameInput) {
         let _span = tracy_client::span!("RenderRuntime::prepare");
 
-        self.update_view_accum(render_view);
-        // DLSS constants 与本帧相机快照绑定，必须在 render graph 录制 evaluate 前更新。
-        let dlss_active = self.dlss_options.is_dlss_active();
-        self.dlss_sr_state.update(render_view, &self.frame_state, dlss_active);
-        self.prepare_render_world(render_view);
+        self.prepare_render_world(input);
         self.update_perframe_descriptor_set();
     }
 
@@ -454,6 +360,7 @@ impl RenderRuntime {
             render_scene: &self.render_world,
             render_instance_table: self.render_world.render_instance_table(),
             ray_cast_service: &mut self.ray_cast_service,
+            history_invalidated: self.history_invalidated,
         }
     }
 
@@ -474,9 +381,6 @@ impl RenderRuntime {
             record_ctx: RenderPassRecordCtx {
                 frame_timing: &self.frame_timing,
                 frame_state: &self.frame_state,
-                dlss_options: &self.dlss_options,
-                view_accum: &self.view_accum,
-                dlss_sr_state: &self.dlss_sr_state,
                 shader_bindings: self.shader_binding_system.view(),
                 gfx_resource_registry: &self.gfx_resource_registry,
                 per_frame_gpu_data: &self.per_frame_gpu_data,
@@ -505,79 +409,26 @@ impl RenderRuntime {
         self.swapchain_presenter.as_ref().unwrap().current_image_acquired()
     }
 
-    /// 根据当前 DLSS options 同步 frame render state。
+    pub fn frame_state(&self) -> &FrameRenderState {
+        &self.frame_state
+    }
+
+    /// 应用 Renderer 提交的内部渲染尺寸。
     ///
-    /// DLSS mode 变化可能只影响 pass 分支，也可能改变低分辨率 render extent。前者只需要
-    /// 重置 DLSS history，后者必须让 Renderer/子系统重建 RT/GBuffer/DLSS input targets。
-    pub fn sync_dlss_options_frame_state(&mut self) -> Option<RenderRuntimeResizeCtx<'_>> {
-        let old_state = self.frame_state;
-        let old_options = self.last_applied_dlss_options;
-        let old_feature = old_options.active_feature();
-        let requested_options = self.dlss_options;
+    /// Runtime 只比较并写入中性的 `FrameRenderState`；尺寸来源和其派生策略属于 Renderer。
+    pub fn sync_render_extent(&mut self) -> Option<RenderRuntimeResizeCtx<'_>> {
         let output_extent = self.swapchain_presenter.as_ref().unwrap().extent();
-        if old_options == requested_options && old_state.output_extent == output_extent {
+        let new_render_extent = self.requested_render_extent;
+        let changed = self.frame_state.output_extent != output_extent
+            || self.frame_state.render_extent != new_render_extent;
+        if !changed {
             return None;
         }
 
-        let new_state = self.resolve_frame_state_for_output(output_extent);
-        let new_options = self.dlss_options;
-        let new_feature = new_options.active_feature();
-        let dlss_options_changed = old_options != new_options;
-
-        if !dlss_options_changed && old_state == new_state {
-            return None;
-        }
-
-        let mut gpu_idle_waited = false;
-
-        if dlss_options_changed {
-            log::info!(
-                "DLSS options changed: mode {:?} -> {:?}, rr {} -> {}",
-                old_options.sr_mode(),
-                new_options.sr_mode(),
-                old_options.rr_enabled(),
-                new_options.rr_enabled()
-            );
-            self.dlss_sr_state.request_reset();
-            self.render_world.request_motion_history_reset();
-            if old_feature != new_feature {
-                if let Some(feature) = old_feature {
-                    // slFreeResources 会销毁 Streamline 内部 Vulkan image/buffer；必须先等待上一帧
-                    // evaluate 相关 GPU work 完成，再释放旧 feature 在 viewport 0 上的内部资源。
-                    self.gfx.wait_idel();
-                    gpu_idle_waited = true;
-                    Self::free_streamline_feature_resources(feature, "after DLSS feature switch");
-                }
-            }
-        }
-
-        self.last_applied_dlss_options = new_options;
-
-        if old_state == new_state {
-            return None;
-        }
-
-        log::info!(
-            "Frame render state changed: render={}x{}, output={}x{} -> render={}x{}, output={}x{}",
-            old_state.render_extent.width,
-            old_state.render_extent.height,
-            old_state.output_extent.width,
-            old_state.output_extent.height,
-            new_state.render_extent.width,
-            new_state.render_extent.height,
-            new_state.output_extent.width,
-            new_state.output_extent.height
-        );
-
-        // 这是非 WSI resize 的运行时 target 尺寸变化，旧 per-frame image 可能仍被前几帧引用；
-        // 重建前等待 device idle，保持 target owner 的显式 destroy/rebuild 路径简单可靠。
-        if !gpu_idle_waited {
-            self.gfx.wait_idel();
-        }
-        self.frame_state = new_state;
-        self.view_accum.reset();
-        // render extent 变化会让 DLSS history 的 sample grid 失效，即使相机没有变化也必须 reset。
-        self.dlss_sr_state.request_reset();
+        self.gfx.wait_idel();
+        self.frame_state.output_extent = output_extent;
+        self.frame_state.render_extent = new_render_extent;
+        self.history_invalidated = true;
         self.render_world.request_motion_history_reset();
 
         Some(RenderRuntimeResizeCtx {
@@ -588,8 +439,9 @@ impl RenderRuntime {
             gfx_resource_registry: &mut self.gfx_resource_registry,
             shader_binding_system: &mut self.shader_binding_system,
             frame_timing: &self.frame_timing,
-            frame_state: &self.frame_state,
+            frame_state: &mut self.frame_state,
             present: self.swapchain_presenter.as_ref().unwrap().view(),
+            requested_render_extent: &mut self.requested_render_extent,
         })
     }
 
@@ -661,8 +513,9 @@ impl RenderRuntime {
             gfx_resource_registry: &mut self.gfx_resource_registry,
             shader_binding_system: &mut self.shader_binding_system,
             frame_timing: &self.frame_timing,
-            frame_state: &self.frame_state,
+            frame_state: &mut self.frame_state,
             present: self.swapchain_presenter.as_ref().unwrap().view(),
+            requested_render_extent: &mut self.requested_render_extent,
         })
     }
 
@@ -722,10 +575,11 @@ impl RenderRuntime {
             gfx_resource_registry: &mut self.gfx_resource_registry,
             shader_binding_system: &mut self.shader_binding_system,
             frame_timing: &self.frame_timing,
-            frame_state: &self.frame_state,
+            frame_state: &mut self.frame_state,
             cmd_allocator: &mut self.cmd_allocator,
             swapchain_image_info: self.swapchain_presenter.as_ref().unwrap().swapchain_image_info(),
             present: self.swapchain_presenter.as_ref().unwrap().view(),
+            requested_render_extent: &mut self.requested_render_extent,
         }
     }
 }
@@ -737,15 +591,11 @@ impl RenderRuntime {
     /// 根据 app render view 快照更新 main view 累积帧计数。
     ///
     /// 累积渲染关心最终视图/投影是否变化；后续 pass 根据这里的计数决定是否复用上一帧结果。
-    fn update_view_accum(&mut self, render_view: &RenderView) {
-        self.view_accum.update_accum_frames(render_view.accum_signature());
-    }
-
     /// 准备 render pass 可见的 GPU scene 与 per-frame uniform。
     ///
     /// 该函数把所有 staging copy 录到同一个 command buffer，最后一次提交到 graphics queue；
     /// render graph 在后续命令提交中通过常规 queue 顺序看到这些写入。
-    fn prepare_render_world(&mut self, render_view: &RenderView) {
+    fn prepare_render_world(&mut self, input: &RenderFrameInput) {
         let _span = tracy_client::span!("RenderRuntime::prepare_render_world");
         let frame_extent = self.frame_state.render_extent;
         let frame_label = self.frame_timing.frame_label();
@@ -793,17 +643,16 @@ impl RenderRuntime {
             scene_view,
             resource_sync_result,
         );
-        if render_world_result.lighting_changed {
-            // 灯光编辑和环境切换使本帧历史失效；DLSS 与累计各自维护 reset。
-            self.view_accum.reset();
-            self.dlss_sr_state.request_reset();
+        if render_world_result.history_invalidated {
+            self.history_invalidated = true;
+            self.render_world.request_motion_history_reset();
         }
 
         // per-frame uniform 放在 GPU scene 上传之后写入同一条命令缓冲，保证本帧 shader
         // 看到的相机、分辨率、时间和 scene buffer 都来自同一个 prepare 快照。
-        let previous_view = self.dlss_sr_state.motion_vector_previous_view().unwrap_or(*render_view);
-        // shader 只接收采样方向的 jitter；Streamline 的回正 jitterOffset 保留在 DLSS constants 中。
-        let temporal_jitter_px = self.dlss_sr_state.constants().sampling_jitter_offset;
+        let previous_view = input.previous_view;
+        let render_view = input.render_view;
+        let temporal_jitter_px = input.temporal_jitter_px;
         let per_frame_data = gpu::engine::frame::PerFrameData {
             projection: render_view.projection.into(),
             view: render_view.view.into(),
@@ -866,126 +715,17 @@ impl RenderRuntime {
         self.sync_frame_extent_after_present_resize();
     }
 
-    /// 同步 present extent 到 runtime frame state，并在尺寸变化时清空历史累积。
+    /// 同步 present extent 到 runtime frame state。
     fn sync_frame_extent_after_present_resize(&mut self) {
         let swapchain_extent = self.swapchain_presenter.as_ref().unwrap().extent();
         if self.frame_state.output_extent == swapchain_extent {
             return;
         }
-
-        // 尺寸变化会让历史累积图像的内容语义失效，但图像本身属于 renderer-owned target。
-        // runtime 只更新 shader/per-frame data 会读取的 extent，并清零累积帧计数；
-        // 具体 image 重建由 Renderer 在自身 on_resize 阶段显式编排。
-        let old_options = self.last_applied_dlss_options;
-        let old_feature = old_options.active_feature();
-        self.frame_state = self.resolve_frame_state_for_output(swapchain_extent);
-        let new_options = self.dlss_options;
-        let new_feature = new_options.active_feature();
-        if old_feature != new_feature {
-            if let Some(feature) = old_feature {
-                // resize 期间查询 optimal settings 失败可能把当前 DLSS feature 降级为 Off；
-                // 此时同样需要先等待上一帧 evaluate 完成，再释放原 viewport resource。
-                self.gfx.wait_idel();
-                Self::free_streamline_feature_resources(feature, "after resize fallback");
-            }
-        }
-        self.last_applied_dlss_options = new_options;
-        self.view_accum.reset();
-        self.dlss_sr_state.request_reset();
+        self.frame_state.output_extent = swapchain_extent;
+        self.requested_render_extent = swapchain_extent;
+        self.frame_state.render_extent = swapchain_extent;
+        self.history_invalidated = true;
         self.render_world.request_motion_history_reset();
-    }
-
-    fn resolve_frame_state_for_output(&mut self, output_extent: vk::Extent2D) -> FrameRenderState {
-        let mut frame_state = self.frame_state;
-        frame_state.output_extent = output_extent;
-
-        let mode = self.dlss_options.dlss_sr_mode;
-        if mode == DlssSrMode::Off || mode == DlssSrMode::Dlaa {
-            // Off 是 native fallback；DLAA 仍走 kFeatureDLSS，但不做低分辨率渲染。
-            frame_state.render_extent = output_extent;
-            return frame_state;
-        }
-
-        // SR/RR upscale mode 都由 Streamline 决定低分辨率 render extent；renderer-owned
-        // RT/GBuffer/DLSS input targets 会用这个尺寸重建，output 仍保持 swapchain extent。
-        let streamline_mode = mode.to_streamline_mode();
-        let (settings_label, settings_result) = if self.dlss_options.is_rr_active() {
-            const IDENTITY_MATRIX: [f32; 16] = [
-                1.0, 0.0, 0.0, 0.0, //
-                0.0, 1.0, 0.0, 0.0, //
-                0.0, 0.0, 1.0, 0.0, //
-                0.0, 0.0, 0.0, 1.0,
-            ];
-            // `slDLSSDGetOptimalSettings` 的尺寸查询只依赖 mode/output extent；binding
-            // 复用 RR set-options 结构，因此这里用 identity 填充矩阵字段，避免在
-            // frame-state 派生阶段引入 `RenderView` 依赖。
-            let options = dlss::DlssRrOptions {
-                mode: streamline_mode,
-                output_width: output_extent.width,
-                output_height: output_extent.height,
-                color_buffers_hdr: true,
-                normal_roughness_packed: true,
-                world_to_camera_view: IDENTITY_MATRIX,
-                camera_view_to_world: IDENTITY_MATRIX,
-            };
-            ("DLSS RR", dlss::get_rr_optimal_settings(options))
-        } else {
-            let options = dlss::DlssOptions {
-                mode: streamline_mode,
-                output_width: output_extent.width,
-                output_height: output_extent.height,
-                color_buffers_hdr: true,
-            };
-            ("DLSS SR", dlss::get_optimal_settings(options))
-        };
-
-        match settings_result {
-            Ok(settings) if settings.optimal_render_width > 0 && settings.optimal_render_height > 0 => {
-                frame_state.render_extent = vk::Extent2D {
-                    width: settings.optimal_render_width,
-                    height: settings.optimal_render_height,
-                };
-                log::info!(
-                    "{} optimal settings: mode={:?}, output={}x{}, render={}x{}, sharpness={:.3}, min={}x{}, max={}x{}",
-                    settings_label,
-                    mode,
-                    output_extent.width,
-                    output_extent.height,
-                    settings.optimal_render_width,
-                    settings.optimal_render_height,
-                    settings.optimal_sharpness,
-                    settings.render_width_min,
-                    settings.render_height_min,
-                    settings.render_width_max,
-                    settings.render_height_max
-                );
-            }
-            Ok(settings) => {
-                log::warn!(
-                    "{} returned invalid optimal render extent {}x{} for mode {:?}; falling back to Off/native.",
-                    settings_label,
-                    settings.optimal_render_width,
-                    settings.optimal_render_height,
-                    mode
-                );
-                // 不接受 0 尺寸 optimal settings。直接降级 Off，保证后续 graph 仍有 native target。
-                self.dlss_options.dlss_sr_mode = DlssSrMode::Off;
-                frame_state.render_extent = output_extent;
-            }
-            Err(err) => {
-                log::warn!(
-                    "{} optimal settings failed for mode {:?}: {}; falling back to Off/native.",
-                    settings_label,
-                    mode,
-                    err
-                );
-                // capability/driver/runtime 异常都按 native fallback 处理，避免因为 DLSS 不可用阻塞 app 启动。
-                self.dlss_options.dlss_sr_mode = DlssSrMode::Off;
-                frame_state.render_extent = output_extent;
-            }
-        }
-
-        frame_state
     }
 
     /// 刷新当前 FIF per-frame descriptor set。

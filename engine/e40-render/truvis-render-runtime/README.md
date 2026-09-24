@@ -32,8 +32,8 @@
   shader binding view。全局 set 1 只保存 Material/Scene 数据动态索引的 asset texture 与 sky SRV，固定管线 target
   不进入该表。
 - `FrameTiming` 是 runtime-owned 帧状态，统一承载 frame id、FIF label、delta/total time 和可选最小帧间隔；`PerFrameGpuData` 承载 per-FIF `PerFrameData` UBO。
-- `FrameRenderState`、`DlssOptions`、`ViewAccumState` 和 `DlssSrState` 定义在本 crate，
-  并由 `RenderRuntime` 持有；`DlssOptions` 同时提供 SR/RR active feature 决策。
+- `FrameRenderState`、`FrameTiming`、FIF、per-frame UBO 和 history invalidation 由本 crate 持有；
+  DLSS、ViewAccum 和具体 Renderer temporal state 不属于 Runtime。
 - runtime 内部拥有默认 120 FPS 软件上限、surface format、present mode 与 depth format 候选顺序；这些默认策略不放入
   foundation 公共配置契约。
 - `RenderWorld` 是 runtime 私有的 scene GPU 翻译层，内部持有 `RenderAssetSystem`、`RenderInstanceTable`、
@@ -81,9 +81,9 @@
 ## 对外接口
 
 - crate 生命周期入口保持在 `present`、`render_runtime_ctx` 和 `render_runtime`；
-  Renderer 层相机不属于 runtime 公共 API，prepare 阶段只接收 `RenderView` 快照。
-- runtime-owned render state 通过 `state::{frame_state, dlss_options, view_accum, frame_timing, dlss_sr}` 模块公开；
-  其中 `dlss_options` 提供 `DlssOptions`，作为 SR/RR active 判断、旧 feature 比较和资源释放的统一 owner；foundation 只保留 FIF 基础索引、资源句柄、view trait 和 `GfxResourceAccess` 契约。
+  Renderer 层相机不属于 runtime 公共 API，prepare 阶段只接收 `RenderFrameInput` 快照。
+- runtime-owned render state 通过 `state::{frame_state, frame_timing}` 模块公开；DLSS 类型在 Renderer pass 层，
+  `TruvisRenderer` 负责其配置、能力、资源和 temporal state。
 - GPU resource owner 通过 `resources` 模块公开，包括 `GfxResourceRegistry`、`CmdAllocator` 和 `StageBufferManager`。
 - shader-visible binding owner 通过 `bindings` 模块公开，包括 `ShaderBindingSystem`、`GlobalDescriptorSets`、`BindlessManager` 和 `PerFrameGpuData`。
   `BindlessManager` 只提供 sampled-image SRV 注册与 FIF 延迟回收，不提供 combined-image-sampler 或 storage-image 表。
@@ -115,10 +115,9 @@
   跨过 FIF 窗口后由 `GfxResourceRegistry` 销毁。AssetLoadService 事件只在
   prepare 边界通过 `GameWorld::poll_asset_loads()` 收敛。
 - `update_phase` 同步 present extent 到 `FrameRenderState`、acquire 当前 swapchain image，并返回 CPU update Ctx。具体窗口尺寸 render target 由 Renderer/子系统在 init/resize/shutdown 阶段管理。
-- Renderer update 结束后，`RenderLoop` 调用 `sync_dlss_options_frame_state`，把 `DlssOptions`
-  中的 DLSS SR mode 变化解析为新的 render/output extent；如果 target 尺寸变化，则返回 resize Ctx
-  交给 Renderer 直接编排各子系统重建自己持有的 RT target、GBuffer 和 main-view target。
-- `prepare(render_view)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 app 提供的 `RenderView`，
+- Renderer update 结束后，`RenderLoop` 调用 `sync_render_extent`，把 Renderer 提交的中性内部尺寸请求
+  应用到 `FrameRenderState`；如果 target 尺寸变化，则返回 resize Ctx 交给 Renderer 编排子系统重建。
+- `prepare(RenderFrameInput)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 Renderer 提供的当前/上一帧视图与 jitter，
   通过 `RenderWorld` 内部同步 material/instance/mesh/texture 状态、上传 RenderWorld
   和 per-frame data，再刷新 per-frame descriptor。
 - `ray_cast_phase` 发生在 `prepare` 之后、`render_phase` 之前。同步 raycast 提交到

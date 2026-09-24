@@ -20,5 +20,5 @@ pub mod resources;
 mod runtime_defaults;
 /// CPU GameWorld 语义的选择绘制接口。
 pub mod selection;
-/// runtime 派生帧状态、DLSS 选项、时间快照和 DLSS SR 状态。
+/// runtime 派生帧状态与时间快照。
 pub mod state;

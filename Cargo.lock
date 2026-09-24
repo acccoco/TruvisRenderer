@@ -6504,7 +6504,6 @@ dependencies = [
  "truvis-render-graph",
  "truvis-shader-binding",
  "truvis-shader-manifest",
- "truvis-streamline-binding",
  "truvis-utils",
  "truvis-world",
  "vk-mem",
@@ -6539,6 +6538,8 @@ dependencies = [
  "truvis-render-loop",
  "truvis-render-runtime",
  "truvis-shader-binding",
+ "truvis-streamline-binding",
+ "truvis-utils",
  "truvis-world",
  "vk-mem",
 ]

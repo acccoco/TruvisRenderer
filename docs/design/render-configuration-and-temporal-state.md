@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart LR
-    Config["Renderer / UI configuration"] --> Derive["Runtime derive"]
+    Config["Renderer / UI configuration"] --> Derive["Renderer derive"]
     Derive --> Frame["FrameRenderState"]
     Frame --> Targets["render/output targets"]
     View["camera / scene / settings signature"] --> History["ViewAccumState / DlssSrState"]
@@ -19,25 +19,25 @@ flowchart LR
 
 ## Runtime 配置
 
-`DlssOptions` 由 Runtime 持有并通过 update Ctx 暴露给 Renderer。`DlssSrMode` 决定 native、DLAA 或 SR render extent；RR 是否启用由独立选项决定。
+`DlssOptions`、effective DLSS mode、能力查询和 optimal extent 由 `TruvisRenderer` 持有。`DlssSrMode` 决定 native、DLAA 或 SR render extent；RR 是否启用由独立选项决定。Streamline 仍由 Engine/Gfx 默认初始化。
 
 `DefaultRenderRuntimeSettings` 只描述 Runtime 初始化策略，例如默认 FPS 上限、surface/present mode 和 depth format 候选。Renderer 不应依赖设备必然选择某个格式。
 
 ## FrameRenderState
 
-`FrameRenderState` 由 Runtime 根据真实 output extent、DLSS mode 和设备能力生成：
+`FrameRenderState` 由 Runtime 保存并应用 Renderer 提交的内部尺寸请求：
 
 - `render_extent`：RT、GBuffer、motion vector、DLSS input 的内部尺寸。
 - `output_extent`：swapchain、GUI、present 和 DLSS output 的尺寸。
 - HDR color 与 depth format：窗口 target 和 attachment 的格式契约。
 
-Renderer/subsystem 只读取该 state，并在 init/resize 时用它创建自身 target。它不能直接覆盖 render extent。
+Renderer/subsystem 只读取该 state，并在 init/resize 时提交自身 target 所需的 render extent。
 
 ## Temporal state
 
-`DlssSrState` 保存 DLSS evaluate 所需的 jitter、previous view、common constants 和 reset 标记。`ViewAccumState` 保存 main view 的历史签名和稳定帧计数。两者都由 Runtime 管理，Renderer 不直接替换内部历史。
+`DlssSrState` 保存 DLSS evaluate 所需的 jitter、previous view、common constants 和 reset 标记。`ViewAccumState` 保存 main view 的历史签名和稳定帧计数。两者都由 `TruvisRenderer` 管理。
 
-相机、尺寸、DLSS mode、sky binding 或 scene 变化导致历史不匹配时，Runtime 请求 reset。reset 是“下一次 evaluate 不使用旧 history”的语义，不等价于立刻清除所有图像。
+Runtime 只在尺寸和 scene/lighting 语义变化时发出通用 history invalidation；`TruvisRenderer` 再分别通知 DLSS、ViewAccum 和 ReSTIR。reset 是“下一次 evaluate 不使用旧 history”的语义，不等价于立刻清除所有图像。
 
 Realtime ReSTIR reservoir、SHARC cache、offline accumulation 属于对应 Renderer subsystem 的 temporal resources，不进入 `DlssOptions` 或 `DlssSrState`。
 
@@ -133,10 +133,11 @@ UI / startup option
 
 ## 实现入口
 
-- [`dlss_options.rs`](../../engine/e40-render/truvis-render-runtime/src/state/dlss_options.rs)
-- [`dlss_sr.rs`](../../engine/e40-render/truvis-render-runtime/src/state/dlss_sr.rs)
+- [`dlss.rs`](../../renderer/truvis-renderer/src/dlss.rs)
+- [`dlss_options.rs`](../../renderer/renderer-render-passes/src/post_process/dlss_options.rs)
+- [`dlss_sr_state.rs`](../../renderer/renderer-render-passes/src/post_process/dlss_sr_state.rs)
 - [`frame_state.rs`](../../engine/e40-render/truvis-render-runtime/src/state/frame_state.rs)
-- [`view_accum.rs`](../../engine/e40-render/truvis-render-runtime/src/state/view_accum.rs)
+- [`view_accum.rs`](../../renderer/truvis-renderer/src/view_accum.rs)
 
 ## Reset 与生效边界
 
@@ -164,5 +165,5 @@ UI / startup option
 环境启用和 brightness 由 World 的 SceneSkyState 唯一持有；ImGui 与 Web 均通过 World API 编辑。
 RenderSceneView 暴露当前 FIF 的有效倍率，实时/离线填写已有 sky_brightness shader 参数。
 离线签名保存 Sky 语义 revision 和 distribution 发布版本；ReSTIR CPU 比较 Sky revision，shader 继续检查发布版本。
-Runtime 在 prepare 发现灯光语义或环境变化后显式请求 DLSS reset，同时失效 ViewAccum；
-不能把每 FIF 灯光副本补传视为新的 CPU 编辑，也不能将 ViewAccum reset 等同于 DLSS reset。
+Runtime 在 prepare 发现灯光语义或环境变化后发出通用 history invalidation；Renderer 在 render 前分别
+失效 DLSS、ViewAccum 和 ReSTIR，不能把每 FIF 灯光副本补传视为新的 CPU 编辑，也不能将 ViewAccum reset 等同于 DLSS reset。

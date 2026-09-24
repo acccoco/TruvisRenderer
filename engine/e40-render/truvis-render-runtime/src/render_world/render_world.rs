@@ -60,7 +60,7 @@ pub struct RenderWorld {
 }
 
 pub(crate) struct RenderWorldPrepareResult {
-    pub(crate) lighting_changed: bool,
+    pub(crate) history_invalidated: bool,
 }
 
 // 生命周期：创建和销毁 `RenderWorld` 拥有的长期 GPU 资源。
@@ -302,7 +302,12 @@ impl RenderWorld {
         self.scene_buffers[*frame_label].sky_brightness = if sky.enabled { sky.brightness } else { 0.0 };
         self.scene_buffers[*frame_label].accum_signature.sky_revision = sky.revision;
         RenderWorldPrepareResult {
-            lighting_changed: light_changed || sky_update.changed || resource_sync_result.sky_changed,
+            history_invalidated: scene_changed
+                || appearance_changed
+                || emissive_changed
+                || light_changed
+                || sky_update.changed
+                || resource_sync_result.sky_changed,
         }
     }
 

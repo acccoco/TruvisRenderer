@@ -3,9 +3,8 @@
 //! [`Renderer`] 表达具体产品或 sample 可以填充的渲染业务阶段；[`RenderLoop`](crate::RenderLoop)
 //! 是唯一完整帧骨架，并负责把 `RenderRuntime` 的生命周期阶段裁剪成 hook ctx。
 
-use truvis_render_foundation::render_view::RenderView;
 use truvis_render_runtime::render_runtime::{
-    RenderRuntimeInitCtx, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx,
+    RenderFrameInput, RenderRuntimeInitCtx, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx,
     RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx,
 };
 
@@ -57,7 +56,7 @@ pub trait Renderer {
     /// 更新 Renderer 自己的 CPU 状态。
     ///
     /// 该 hook 发生在 runtime update phase 中，早于 runtime prepare。Renderer 在此
-    /// 显式更新相机、overlay、UI frame state、`DlssOptions` 或其他自有状态。
+    /// 显式更新相机、overlay、UI frame state、Renderer-owned DLSS options 或其他自有状态。
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx);
 
     /// 在 runtime prepare 完成后、render graph 组图前执行 Renderer 同步查询。
@@ -73,10 +72,11 @@ pub trait Renderer {
     /// 渲染能力保留在具体子系统类型上，不通过 `RenderLoop` 或通用生命周期 trait 派发。
     fn render(&mut self, ctx: &RenderRuntimeRenderCtx);
 
-    /// 提供 runtime prepare 阶段使用的当前渲染视图。
-    ///
-    /// 相机所有权留在具体 Renderer 中，runtime 只在本帧 prepare 调用期间读取视图快照。
-    fn render_view(&self) -> RenderView;
+    /// 提供 runtime prepare 阶段使用的当前逐帧视图输入。
+    fn render_frame_input(
+        &mut self,
+        frame_state: &truvis_render_runtime::state::frame_state::FrameRenderState,
+    ) -> RenderFrameInput;
 
     /// 响应 swapchain 或窗口尺寸相关资源重建。
     ///

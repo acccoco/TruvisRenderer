@@ -18,6 +18,8 @@ truvis-render-graph = { workspace = true }
 truvis-asset = { workspace = true }
 truvis-world = { workspace = true }
 truvis-shader-binding = { workspace = true }
+truvis-streamline-binding = { workspace = true }
+truvis-utils = { workspace = true }
 
 ash = { workspace = true }
 glam = { workspace = true }

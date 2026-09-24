@@ -5,6 +5,7 @@
 //! 发生在 ray tracing 之后、SDR pass 之前。
 
 use crate::streamline_pass::{SL_INPUT_READ, SL_WRITE, image_resource, to_streamline_constants};
+use crate::post_process::dlss_options::DlssFrameSnapshot;
 use ash::vk::{self, Handle};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
@@ -41,9 +42,10 @@ impl DlssSrPass {
         cmd: &GfxCommandBuffer,
         record_ctx: &RenderPassRecordCtx<'_>,
         resource_ctx: GfxResourceCtx<'_>,
+        snapshot: DlssFrameSnapshot,
         data: DlssSrPassData<'_>,
     ) {
-        let dlss_options = *record_ctx.dlss_options;
+        let dlss_options = snapshot.options;
         if !dlss_options.is_sr_active() {
             return;
         }
@@ -62,7 +64,7 @@ impl DlssSrPass {
             return;
         }
 
-        let constants = to_streamline_constants(record_ctx.dlss_sr_state.constants());
+        let constants = to_streamline_constants(snapshot.constants);
         // `ImageResource` 中的 layout/format/usage 会被 Streamline 作为 Vulkan resource tag 契约读取。
         // 这里不要临时推断 layout，必须和 `setup()` 中声明的 RenderGraph 状态同步维护。
         let desc = dlss::DlssEvaluateDesc {
@@ -135,6 +137,7 @@ pub struct DlssSrPassData<'a> {
 pub struct DlssSrRgPass<'a> {
     pub dlss_sr_pass: &'a DlssSrPass,
     pub record_ctx: RenderPassRecordCtx<'a>,
+    pub snapshot: DlssFrameSnapshot,
     pub resource_ctx: GfxResourceCtx<'a>,
     pub input_color: RgImageHandle,
     pub output_color: RgImageHandle,
@@ -169,6 +172,7 @@ impl RgPass for DlssSrRgPass<'_> {
             ctx.cmd,
             &self.record_ctx,
             self.resource_ctx,
+            self.snapshot,
             DlssSrPassData {
                 input_color,
                 input_color_view,

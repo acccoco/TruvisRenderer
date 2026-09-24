@@ -9,7 +9,7 @@ use truvis_gfx::gfx::GfxResourceCtx;
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageView;
 use truvis_render_graph::render_graph::RgImageState;
-use truvis_render_runtime::state::dlss_sr::DlssSrFrameConstants;
+use crate::post_process::dlss_sr_state::DlssSrFrameConstants;
 use truvis_streamline_binding::dlss;
 
 /// Streamline 输入资源在 evaluate 前的稳定状态。

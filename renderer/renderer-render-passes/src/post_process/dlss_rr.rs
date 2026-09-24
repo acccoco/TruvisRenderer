@@ -4,6 +4,7 @@
 //! 不再追加普通 `kFeatureDLSS` SR pass，也不再运行 legacy denoise/accum。
 
 use crate::streamline_pass::{SL_INPUT_READ, SL_WRITE, image_resource, to_streamline_constants};
+use crate::post_process::dlss_options::DlssFrameSnapshot;
 use ash::vk;
 use ash::vk::Handle;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -28,9 +29,10 @@ impl DlssRrPass {
         cmd: &GfxCommandBuffer,
         record_ctx: &RenderPassRecordCtx<'_>,
         resource_ctx: GfxResourceCtx<'_>,
+        snapshot: DlssFrameSnapshot,
         data: DlssRrPassData<'_>,
     ) {
-        let dlss_options = *record_ctx.dlss_options;
+        let dlss_options = snapshot.options;
         if !dlss_options.is_rr_active() {
             return;
         }
@@ -51,7 +53,7 @@ impl DlssRrPass {
             return;
         }
 
-        let frame_constants = record_ctx.dlss_sr_state.constants();
+        let frame_constants = snapshot.constants;
         let rr_options = dlss::DlssRrOptions {
             mode: streamline_mode,
             output_width: output_extent.width,
@@ -152,6 +154,7 @@ pub struct DlssRrPassData<'a> {
 pub struct DlssRrRgPass<'a> {
     pub dlss_rr_pass: &'a DlssRrPass,
     pub record_ctx: RenderPassRecordCtx<'a>,
+    pub snapshot: DlssFrameSnapshot,
     pub resource_ctx: GfxResourceCtx<'a>,
     pub input_color: RgImageHandle,
     pub output_color: RgImageHandle,
@@ -197,6 +200,7 @@ impl RgPass for DlssRrRgPass<'_> {
             ctx.cmd,
             &self.record_ctx,
             self.resource_ctx,
+            self.snapshot,
             DlssRrPassData {
                 input_color,
                 input_color_view,

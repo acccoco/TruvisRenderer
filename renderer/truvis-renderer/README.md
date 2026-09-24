@@ -7,6 +7,8 @@ realtime/offline 渲染子系统。它依赖 engine 与公共 Renderer capabilit
 
 - `TruvisRenderer`：RenderThread 上的具体 `Renderer`，持有 camera/input、GUI、overlay、selection、注入的 RendererClient
   和 realtime/offline 渲染子系统，并显式决定 update 与 RenderGraph pass 顺序。
+- `TruvisDlssState` 与 `ViewAccumState`：集中持有 Truvis 的 DLSS requested/effective 配置、NVIDIA capability、
+  SR/RR resource lifecycle、temporal snapshot 和主视图累计状态；Streamline 初始化仍由 Engine/Gfx 负责。
 - `RendererClient`：App 提供的窄生命周期接口；Renderer 只在 init/update/after_prepare/shutdown 阶段调用它。
 - `TruvisOverlayUi`：组合 `renderer-imgui` 的诊断控件与 `renderer-render-ui` 的设置 section，提供 Render、Sky、Post、Picking、Debug 五个固定 tab 和常驻 FPS HUD。
 - `ViewportOverlaySubsystem`：统一持有灯光、transform gizmo 和坐标 gizmo 的唯一 pipeline、每 FIF vertex buffer 与最终顶点数组；`SelectionOutlineSubsystem` 独立持有网格描边资源。

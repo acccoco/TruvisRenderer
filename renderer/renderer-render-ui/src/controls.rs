@@ -4,8 +4,8 @@ use renderer_rendering::shared::{
     ColorGradingSettings, ExposureMode, MeteringMode, PathTracingCommonSettings, PathTracingDebugChannel, RenderMode,
     SdrPostProcessSettings, SkySamplingMode, ToneMappingMode,
 };
-use truvis_render_runtime::state::dlss_options::DlssOptions;
-use truvis_render_runtime::state::dlss_sr::DlssSrMode;
+use renderer_rendering::DlssOptions;
+use renderer_rendering::DlssSrMode;
 
 #[derive(Default)]
 pub struct RenderControlsOverlay;

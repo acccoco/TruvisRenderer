@@ -3,7 +3,6 @@ use itertools::Itertools;
 
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_render_foundation::frame_label::FrameLabel;
-use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
 use truvis_render_loop::input_event::InputEvent;
 use truvis_render_loop::renderer::{Renderer, RendererInitCtx, RendererResizeCtx, RendererShutdownCtx};
@@ -59,7 +58,7 @@ impl Renderer for ShaderToyRenderer {
                 ui,
                 self.camera_controller.camera(),
                 ctx.swapchain_extent,
-                ctx.view_accum.accum_frames_num(),
+                0,
             );
         });
 
@@ -107,8 +106,13 @@ impl Renderer for ShaderToyRenderer {
         ctx.queue_ctx.gfx_queue().submit(vec![submit_info], None);
     }
 
-    fn render_view(&self) -> RenderView {
-        self.camera_controller.camera().render_view()
+    fn render_frame_input(&mut self, _frame_state: &truvis_render_runtime::state::frame_state::FrameRenderState) -> truvis_render_runtime::render_runtime::RenderFrameInput {
+        let view = self.camera_controller.camera().render_view();
+        truvis_render_runtime::render_runtime::RenderFrameInput {
+            render_view: view,
+            previous_view: view,
+            temporal_jitter_px: [0.0, 0.0],
+        }
     }
 
     fn on_resize(&mut self, ctx: &mut RendererResizeCtx<'_>) {

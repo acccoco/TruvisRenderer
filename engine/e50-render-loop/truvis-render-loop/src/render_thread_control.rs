@@ -53,7 +53,7 @@ impl RenderThreadControl {
         self.size.store(Self::pack_size(size), Ordering::Relaxed);
         self.resize_generation.fetch_add(1, Ordering::Release);
         // 原生 resize 即使最终回到原尺寸，也必须在恢复 update 前取消旧交互。
-        // DLSS 内部尺寸调整不经过窗口控制通道，不会产生此输入。
+        // Renderer 内部尺寸调整不经过窗口控制通道，不会产生此输入。
         self.send_input(InputEvent::Resized {
             physical_width: size[0],
             physical_height: size[1],

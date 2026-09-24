@@ -170,11 +170,11 @@ impl RenderLoop {
             renderer.update(&mut update_ctx);
         }
 
-        // DlssOptions 可能在 update/UI 阶段改变 DLSS SR mode。必须在 prepare/render graph 之前
-        // 同步 render/output extent，并让 renderer-owned RT/GBuffer/DLSS targets 跟着重建。
+        // Renderer 可能在 update/UI 阶段改变内部 render extent。必须在 prepare/render graph 之前
+        // 同步 frame state，并让 renderer-owned targets 跟着重建。
         {
-            let _span = tracy_client::span!("RenderLoop::sync_dlss_options_frame_state");
-            if let Some(runtime) = render_runtime.sync_dlss_options_frame_state() {
+            let _span = tracy_client::span!("RenderLoop::sync_render_extent");
+            if let Some(runtime) = render_runtime.sync_render_extent() {
                 let image_extent = runtime.present.swapchain_image_info().image_extent;
                 let new_size = [image_extent.width, image_extent.height];
                 let mut renderer_ctx = RendererResizeCtx {
@@ -201,7 +201,8 @@ impl RenderLoop {
 
         {
             let _span = tracy_client::span!("RenderLoop::prepare");
-            render_runtime.prepare(&renderer.render_view());
+            let frame_input = renderer.render_frame_input(render_runtime.frame_state());
+            render_runtime.prepare(&frame_input);
         }
         {
             let _span = tracy_client::span!("RenderLoop::after_prepare");

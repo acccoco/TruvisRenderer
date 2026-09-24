@@ -4,6 +4,7 @@ use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
+use truvis_render_foundation::render_view::RenderView;
 use truvis_world::GameWorld;
 
 use crate::bindings::per_frame_gpu_data::PerFrameGpuData;
@@ -14,11 +15,19 @@ use crate::render_world::render_instance_table::RenderInstanceTable;
 use crate::resources::cmd_allocator::CmdAllocator;
 use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 use crate::selection::WorldSubmeshRasterView;
-use crate::state::dlss_options::DlssOptions;
-use crate::state::dlss_sr::DlssSrState;
 use crate::state::frame_state::FrameRenderState;
 use crate::state::frame_timing::FrameTiming;
-use crate::state::view_accum::ViewAccumState;
+
+/// Renderer 为 runtime prepare 提供的中性逐帧视图输入。
+///
+/// Runtime 只负责把这些值写入 per-frame GPU 数据，不理解它们是否来自 DLSS、native
+/// 或其它 Renderer-owned temporal 管线。
+#[derive(Clone, Copy)]
+pub struct RenderFrameInput {
+    pub render_view: RenderView,
+    pub previous_view: RenderView,
+    pub temporal_jitter_px: [f32; 2],
+}
 
 /// pass 录制阶段的只读共享渲染上下文。
 ///
@@ -28,9 +37,6 @@ use crate::state::view_accum::ViewAccumState;
 pub struct RenderPassRecordCtx<'a> {
     pub frame_timing: &'a FrameTiming,
     pub frame_state: &'a FrameRenderState,
-    pub dlss_options: &'a DlssOptions,
-    pub view_accum: &'a ViewAccumState,
-    pub dlss_sr_state: &'a DlssSrState,
     pub shader_bindings: ShaderBindingView<'a>,
     pub gfx_resource_registry: &'a GfxResourceRegistry,
     pub per_frame_gpu_data: &'a PerFrameGpuData,
@@ -39,20 +45,29 @@ pub struct RenderPassRecordCtx<'a> {
 /// Update 阶段上下文，借用 CPU 端更新需要的 RenderRuntime 字段。
 ///
 /// 在 app 执行 update 工作期间保持存活；drop 前 RenderRuntime 会保持借用锁定。
-/// 这个阶段允许修改 `GameWorld` 与 runtime DLSS 选项，但还没有把 CPU 语义数据翻译到 GPU scene。
+/// 这个阶段允许修改 `GameWorld` 与 Renderer-owned requests，但还没有把 CPU 语义数据翻译到 GPU scene。
 pub struct RenderRuntimeUpdateCtx<'a> {
+    pub(crate) device_ctx: GfxDeviceCtx<'a>,
     /// CPU 语义世界；update 阶段允许 Renderer/子系统修改 scene、asset 请求和运行时实例。
     pub world: &'a mut GameWorld,
-    /// 可变 DLSS 选项；修改后由 runtime 在 prepare/render 前统一同步派生状态。
-    pub dlss_options: &'a mut DlssOptions,
     /// 当前帧渲染目标状态快照，已在 acquire 前与 swapchain 同步。
     pub frame_state: &'a FrameRenderState,
-    /// 当前 main view 的累积状态，只读暴露给上层 UI 或调试逻辑。
-    pub view_accum: &'a ViewAccumState,
     /// 当前 swapchain extent，便于 app 在 update 阶段同步相机纵横比。
     pub swapchain_extent: vk::Extent2D,
     /// 当前帧序号、FIF label 和时间快照。
     pub frame_timing: &'a FrameTiming,
+    /// Renderer 在 update 阶段提交的期望内部渲染尺寸。
+    pub(crate) requested_render_extent: &'a mut vk::Extent2D,
+}
+
+impl RenderRuntimeUpdateCtx<'_> {
+    pub fn set_render_extent(&mut self, extent: vk::Extent2D) {
+        *self.requested_render_extent = extent;
+    }
+
+    pub fn wait_idle(&self) {
+        self.device_ctx.device().wait_idle();
+    }
 }
 
 /// Render 阶段上下文，对 GPU 命令录制需要的 RenderRuntime 状态进行只读共享借用。
@@ -93,9 +108,14 @@ pub struct RenderRuntimeRayCastCtx<'a> {
     pub(crate) render_scene: &'a dyn RenderSceneView,
     pub(crate) render_instance_table: &'a RenderInstanceTable,
     pub(crate) ray_cast_service: &'a mut RayCastService,
+    pub(crate) history_invalidated: bool,
 }
 
 impl RenderRuntimeRayCastCtx<'_> {
+    pub fn history_invalidated(&self) -> bool {
+        self.history_invalidated
+    }
+
     /// 同步执行一批 world-space raycast。
     ///
     /// 返回结果与输入 ray 顺序一致。该调用会提交 GPU ray tracing 命令并等待 fence，
@@ -141,13 +161,21 @@ pub struct RenderRuntimeInitCtx<'a> {
     /// 当前帧序号、FIF label 和时间快照。
     pub frame_timing: &'a FrameTiming,
     /// 当前 main view / frame 的渲染目标状态。
-    pub frame_state: &'a FrameRenderState,
+    pub frame_state: &'a mut FrameRenderState,
     /// 命令分配器，供初始化阶段创建长期或一次性 command buffer。
     pub cmd_allocator: &'a mut CmdAllocator,
     /// 初始 swapchain image 信息，供上层创建窗口尺寸相关资源。
     pub swapchain_image_info: GfxSwapchainImageInfo,
     /// 初始化后可用的 present 边界只读引用。
     pub present: PresentView<'a>,
+    pub(crate) requested_render_extent: &'a mut vk::Extent2D,
+}
+
+impl RenderRuntimeInitCtx<'_> {
+    pub fn set_render_extent(&mut self, extent: vk::Extent2D) {
+        *self.requested_render_extent = extent;
+        self.frame_state.render_extent = extent;
+    }
 }
 
 /// Swapchain resize 上下文，仅在 swapchain 实际重建时产生。
@@ -169,9 +197,17 @@ pub struct RenderRuntimeResizeCtx<'a> {
     /// 当前帧序号、FIF label 和时间快照。
     pub frame_timing: &'a FrameTiming,
     /// resize 后的 main view / frame 渲染目标状态。
-    pub frame_state: &'a FrameRenderState,
+    pub frame_state: &'a mut FrameRenderState,
     /// 已重建完成的 present 边界只读引用。
     pub present: PresentView<'a>,
+    pub(crate) requested_render_extent: &'a mut vk::Extent2D,
+}
+
+impl RenderRuntimeResizeCtx<'_> {
+    pub fn set_render_extent(&mut self, extent: vk::Extent2D) {
+        *self.requested_render_extent = extent;
+        self.frame_state.render_extent = extent;
+    }
 }
 
 /// Shutdown 阶段上下文，保证 Renderer/子系统可在 runtime 与 Gfx 存活时释放 GPU 资源。

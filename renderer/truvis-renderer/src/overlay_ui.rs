@@ -10,7 +10,7 @@ use renderer_kit::debug_image::{DebugImageOption, DebugImageSelection};
 use renderer_render_ui::RenderControlsOverlay;
 use renderer_rendering::{OfflineRenderSettings, PathTracingCommonSettings, RealtimeRenderSettings, RenderMode};
 use truvis_render_runtime::ray_cast::RayCastResult;
-use truvis_render_runtime::state::dlss_options::DlssOptions;
+use renderer_rendering::DlssOptions;
 use truvis_world::GameWorld;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
 

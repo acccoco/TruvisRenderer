@@ -19,7 +19,7 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
-use truvis_render_runtime::state::dlss_options::DlssOptions;
+use renderer_render_passes::post_process::dlss_options::{DlssFrameSnapshot, DlssOptions};
 
 use crate::realtime::gbuffer::GBuffer;
 use crate::realtime::resources::{
@@ -541,6 +541,8 @@ impl RealtimeRenderSubsystem {
         rg_builder: &mut RenderGraphBuilder<'a>,
         ctx: &'a SubsystemRenderCtx<'a>,
         common_settings: &PathTracingCommonSettings,
+        dlss_snapshot: DlssFrameSnapshot,
+        history_reset: bool,
     ) -> Option<SdrPostProcessInput> {
         let resources = self.resources();
         let record_ctx = ctx.record_ctx;
@@ -570,7 +572,7 @@ impl RealtimeRenderSubsystem {
             self.restir_last_sky_revision.get() == sky_revision &&
             frame_id > 0 &&
             self.restir_last_mode.get() == restir_di_mode &&
-            !record_ctx.dlss_sr_state.constants().reset;
+            !dlss_snapshot.constants.reset && !history_reset;
         self.restir_last_mode.set(restir_di_mode);
         self.restir_last_sky_revision.set(sky_revision);
 
@@ -790,13 +792,14 @@ impl RealtimeRenderSubsystem {
             },
         );
 
-        let dlss_options = *record_ctx.dlss_options;
+        let dlss_options = dlss_snapshot.options;
         let (source, source_extent) = if dlss_options.is_rr_active() {
             rg_builder.add_pass(
                 "dlss-rr",
                 DlssRrRgPass {
                     dlss_rr_pass: &resources.dlss_rr_pass,
                     record_ctx,
+                    snapshot: dlss_snapshot,
                     resource_ctx: ctx.resource_ctx,
                     input_color: single_frame_image,
                     output_color: dlss_output,
@@ -824,6 +827,7 @@ impl RealtimeRenderSubsystem {
                 DlssSrRgPass {
                     dlss_sr_pass: &resources.dlss_sr_pass,
                     record_ctx,
+                    snapshot: dlss_snapshot,
                     resource_ctx: ctx.resource_ctx,
                     input_color: single_frame_image,
                     output_color: dlss_output,
@@ -933,6 +937,7 @@ impl RealtimeRenderSubsystem {
         ctx: &'a SubsystemRenderCtx<'a>,
         _common_settings: &PathTracingCommonSettings,
         selected_debug_image_id: Option<&str>,
+        dlss_options: DlssOptions,
     ) -> RtPresentGraphTargets {
         let resources = self.resources();
         let record_ctx = ctx.record_ctx;
@@ -955,7 +960,7 @@ impl RealtimeRenderSubsystem {
         let present_image = present_target.image;
         let debug_image = selected_debug_image_id
             .and_then(|id| {
-                self.debug_image_source(frame_label, *record_ctx.dlss_options, id)
+                self.debug_image_source(frame_label, dlss_options, id)
                     .map(|(source, final_state)| (id, source, final_state))
             })
             .map(|(id, source, final_state)| {
