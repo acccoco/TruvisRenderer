@@ -6,8 +6,9 @@
 
 - `TruvisLogger::init()` 初始化 `env_logger`，供 engine、tooling 和 app 入口复用。
 - `TruvisLogger::init_with_file()` 初始化 console + file 双输出；调用方传入文件路径，本 crate 不直接解析 workspace 路径。
+- `TruvisLogger::init_tool_with_file()` 为 workspace 工具初始化日志；默认只输出 `message`，传入 `verbose = true` 时使用完整 formatter。
 - `LogFilePath::current_exe()` 根据当前 exe 名称生成 `.temp/logs/{exe}-{time}-{pid}.log` 风格的默认路径。
-- formatter 输出时间、级别、线程上下文、消息、模块路径和源码位置。
+- runtime formatter 输出时间、级别、线程上下文、消息、模块路径和源码位置；工具默认只显示消息，保留对应级别的颜色和样式。
 - `ThreadLogContext` 在线程第一次写日志时捕获线程名称和 tid，并通过 thread-local 缓存复用。
 
 ## 文件日志
@@ -25,6 +26,7 @@
 
 - 线程名称优先使用 Rust thread name；未命名线程使用稳定占位名称。
 - tid 使用 Windows native thread id，用于在当前进程内区分线程；formatter 输出形如 `[main(123)]`。
+- 线程上下文只属于 runtime 的完整 formatter；工具只有在 `--verbose` 时显示这些字段。
 - tid 捕获被封装在独立函数中；如果后续需要对齐 OS native tid，可以局部替换实现，不影响业务日志调用点。
 
 ## 边界约束

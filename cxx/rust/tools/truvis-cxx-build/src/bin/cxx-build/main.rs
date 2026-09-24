@@ -68,12 +68,14 @@ impl BuildProfile {
 struct CliOptions {
     profile: BuildProfile,
     force: bool,
+    verbose: bool,
 }
 
 impl CliOptions {
     fn parse() -> Result<Self, String> {
         let mut profile = BuildProfile::All;
         let mut force = false;
+        let mut verbose = false;
         let mut args = std::env::args().skip(1);
 
         while let Some(arg) = args.next() {
@@ -87,14 +89,15 @@ impl CliOptions {
                     };
                 }
                 "--force" | "-f" => force = true,
+                "--verbose" => verbose = true,
                 "--help" | "-h" => {
-                    return Err("Usage: cxx-build [--profile debug|release|all] [--force]".to_string());
+                    return Err("Usage: cxx-build [--profile debug|release|all] [--force] [--verbose]".to_string());
                 }
                 _ => return Err(format!("Unsupported cxx-build arg '{arg}'")),
             }
         }
 
-        Ok(Self { profile, force })
+        Ok(Self { profile, force, verbose })
     }
 }
 
@@ -573,9 +576,8 @@ impl CxxBuildFileHelper {
 }
 
 fn main() -> Result<(), String> {
-    TruvisLogger::init_with_file(LogFilePath::current_exe(TruvisPath::temp_dir()));
-
     let options = CliOptions::parse()?;
+    TruvisLogger::init_tool_with_file(LogFilePath::current_exe(TruvisPath::temp_dir()), options.verbose);
     let workspace_dir = TruvisPath::workspace_path();
     let target_dir = TruvisPath::target_path();
     let layout = CxxBuildLayout::new(workspace_dir, target_dir);

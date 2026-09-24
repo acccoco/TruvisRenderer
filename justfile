@@ -12,7 +12,7 @@ default:
 build-all: editor-web shader cxx
     cargo build --all
 
-# 拉取资源与工具
+# 拉取资源与工具，可追加 --verbose
 [group('2 资源生成与构建')]
 fetch-res *resource_names:
     #!nu
@@ -40,34 +40,34 @@ editor-web-dev: _editor-web-types
     npm install
     npm run dev
 
-# 增量编译 shader 并更新 Rust 绑定
+# 增量编译 shader 并更新 Rust 绑定，可追加 --verbose
 [group('2 资源生成与构建')]
-shader:
-    cargo run --bin shader-build -- --manifest shader-packages.toml
+shader *tool_opts:
+    cargo run --bin shader-build -- --manifest shader-packages.toml {{ tool_opts }}
     cargo build -p truvis-shader-binding -p truvis-renderer-shader-binding
 
-# 强制重新编译全部 shader 并更新 Rust 绑定
+# 强制重新编译全部 shader 并更新 Rust 绑定，可追加 --verbose
 [group('2 资源生成与构建')]
-shader-force:
-    cargo run --bin shader-build -- --manifest shader-packages.toml --force
+shader-force *tool_opts:
+    cargo run --bin shader-build -- --manifest shader-packages.toml --force {{ tool_opts }}
     cargo build -p truvis-shader-binding -p truvis-renderer-shader-binding
 
-# 增量准备 Debug CXX 产物，供 dev cargo run / just truvis 使用
+# 增量准备 Debug CXX 产物，供 dev cargo run / just truvis 使用，可追加 --verbose
 [group('2 资源生成与构建')]
-cxx-debug:
-    cargo run --bin cxx-build -- --profile debug
+cxx-debug *tool_opts:
+    cargo run --bin cxx-build -- --profile debug {{ tool_opts }}
     just _cxx-bindings
 
-# 增量编译 Debug + Release CXX 项目并更新 Rust 绑定
+# 增量编译 Debug + Release CXX 项目并更新 Rust 绑定，可追加 --verbose
 [group('2 资源生成与构建')]
-cxx:
-    cargo run --bin cxx-build -- --profile all
+cxx *tool_opts:
+    cargo run --bin cxx-build -- --profile all {{ tool_opts }}
     just _cxx-bindings
 
-# 强制重新编译 Debug + Release CXX 项目并更新 Rust 绑定
+# 强制重新编译 Debug + Release CXX 项目并更新 Rust 绑定，可追加 --verbose
 [group('2 资源生成与构建')]
-cxx-force:
-    cargo run --bin cxx-build -- --profile all --force
+cxx-force *tool_opts:
+    cargo run --bin cxx-build -- --profile all --force {{ tool_opts }}
     just _cxx-bindings
 
 # 从 Cargo package metadata 发现所有单向消费 public CXX DLL 的 binding crate。

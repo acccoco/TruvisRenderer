@@ -4,8 +4,9 @@
 //! console/file 双输出、日志格式和文件保留策略。调用方负责决定 `.temp` 根目录并把日志路径传进来，
 //! 因此这里不直接依赖 `truvis-path`，避免基础层同层 crate 之间形成不必要的路径依赖。
 //!
-//! 日志格式由本 crate 统一维护。每条日志会输出当前线程名称和 Windows 系统线程 ID（`GetCurrentThreadId`），
-//! 线程上下文通过 thread-local 缓存，保证同一线程只在首次写日志时捕获名称和 tid。
+//! runtime 的完整日志格式由本 crate 统一维护，包含当前线程名称和 Windows 系统线程 ID
+//!（`GetCurrentThreadId`）；workspace 工具默认使用只保留级别和消息的紧凑格式。
+//! 线程上下文通过 thread-local 缓存，保证同一线程只在首次写详细日志时捕获名称和 tid。
 
 use std::{
     env, fs,
@@ -20,22 +21,35 @@ const DEFAULT_RETAINED_LOG_FILES: usize = 3;
 
 /// 项目统一日志初始化入口。
 ///
-/// 这个类型承载对外 API：调用方只选择 console-only 还是 console + file，具体 formatter、双写 writer、
-/// 文件保留策略和 `env_logger` 安装顺序都封装在本 crate 内部。这里刻意不保存全局状态，
-/// 因为 `env_logger` 自身已经通过 `log` facade 管理全局 logger 安装。
+/// 这个类型承载对外 API：调用方选择 runtime 或工具日志格式，以及 console-only 或 console + file，
+/// 具体 formatter、双写 writer、文件保留策略和 `env_logger` 安装顺序都封装在本 crate 内部。
+/// 这里刻意不保存全局状态，因为 `env_logger` 自身已经通过 `log` facade 管理全局 logger 安装。
 pub struct TruvisLogger;
 
 impl TruvisLogger {
     pub fn init() {
-        EnvLoggerInstaller::install(None);
+        EnvLoggerInstaller::install(None, LogFormat::Detailed);
     }
 
     pub fn init_with_file(log_file_path: impl AsRef<Path>) {
-        let log_file_path = log_file_path.as_ref();
+        Self::init_file(log_file_path.as_ref(), LogFormat::Detailed);
+    }
+
+    /// 初始化工具日志。默认只输出消息，`verbose` 只切换展示格式，
+    /// 不改变日志级别和日志内容。
+    pub fn init_tool_with_file(log_file_path: impl AsRef<Path>, verbose: bool) {
+        let format = if verbose { LogFormat::Detailed } else { LogFormat::Compact };
+        Self::init_file(log_file_path.as_ref(), format);
+    }
+
+    fn init_file(log_file_path: &Path, format: LogFormat) {
         match LogFileOutput::open(log_file_path) {
             Ok(file) => {
                 LogRetentionPolicy::new(DEFAULT_RETAINED_LOG_FILES).retain_for_current_log(log_file_path);
-                EnvLoggerInstaller::install(Some(env_logger::Target::Pipe(Box::new(TeeWriter::new(file)))))
+                EnvLoggerInstaller::install(
+                    Some(env_logger::Target::Pipe(Box::new(TeeWriter::new(file)))),
+                    format,
+                )
             }
             Err(err) => {
                 eprintln!(
@@ -43,10 +57,16 @@ impl TruvisLogger {
                     log_file_path.display(),
                     err
                 );
-                Self::init();
+                EnvLoggerInstaller::install(None, format);
             }
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum LogFormat {
+    Detailed,
+    Compact,
 }
 
 /// 默认文件日志路径生成器。
@@ -347,15 +367,17 @@ impl LogFileOutput {
 /// `env_logger` 安装器。
 ///
 /// 这个类型集中维护 filter、formatter、target 和 ANSI write style 的安装顺序。它不做路径选择，
-/// 也不做文件 IO，因此 console-only 和 file backend 可以共享完全一致的 formatter。
+/// 也不做文件 IO，因此 console-only 和 file backend 可以共享调用方选择的 formatter。
 struct EnvLoggerInstaller;
 
 impl EnvLoggerInstaller {
-    fn install(target: Option<env_logger::Target>) {
+    fn install(target: Option<env_logger::Target>, format: LogFormat) {
         let mut builder = env_logger::Builder::new();
-        builder
-            .format(LogFormatter::format)
-            .filter(None, if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info });
+        match format {
+            LogFormat::Detailed => builder.format(LogFormatter::format),
+            LogFormat::Compact => builder.format(LogFormatter::format_compact),
+        };
+        builder.filter(None, if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info });
 
         if let Some(target) = target {
             // `Target::Pipe` 在 env_logger 中不能自动探测终端能力；这里必须生成 ANSI，
@@ -367,7 +389,7 @@ impl EnvLoggerInstaller {
     }
 }
 
-/// 单条日志格式化器。
+/// runtime 的完整单条日志格式化器。
 ///
 /// formatter 只处理“如何展示一条 record”，线程上下文捕获交给 `ThreadLogContext`，
 /// 输出目标交给 `EnvLoggerInstaller` / `TeeWriter`。这样格式规则可以保持集中，业务侧继续只使用 `log` facade。
@@ -375,19 +397,9 @@ struct LogFormatter;
 
 impl LogFormatter {
     fn format(buf: &mut env_logger::fmt::Formatter, record: &log::Record<'_>) -> io::Result<()> {
+        let level_style = Self::level_style(buf, record.level());
         let info_style =
             buf.default_level_style(log::Level::Info).fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Green)));
-        let warn_style =
-            buf.default_level_style(log::Level::Warn).fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Yellow)));
-        let error_style =
-            buf.default_level_style(log::Level::Error).fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Red)));
-
-        let level_style = match record.level() {
-            log::Level::Info => info_style,
-            log::Level::Warn => warn_style,
-            log::Level::Error => error_style,
-            _ => buf.default_level_style(record.level()),
-        };
         let grey_style = info_style.fg_color(Some(anstyle::Color::Rgb(anstyle::RgbColor(110, 110, 110))));
 
         let line = record.line().unwrap_or(!0);
@@ -406,5 +418,27 @@ impl LogFormatter {
                 tid = thread_ctx.tid.as_str()
             )
         })
+    }
+
+    /// 工具默认使用的紧凑格式，只显示消息，保留对应级别的样式。
+    fn format_compact(buf: &mut env_logger::fmt::Formatter, record: &log::Record<'_>) -> io::Result<()> {
+        let level_style = Self::level_style(buf, record.level());
+        writeln!(buf, "{level_style}{}{level_style:#}", record.args())
+    }
+
+    fn level_style(buf: &env_logger::fmt::Formatter, level: log::Level) -> anstyle::Style {
+        let info_style =
+            buf.default_level_style(log::Level::Info).fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Green)));
+        let warn_style =
+            buf.default_level_style(log::Level::Warn).fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Yellow)));
+        let error_style =
+            buf.default_level_style(log::Level::Error).fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Red)));
+
+        match level {
+            log::Level::Info => info_style,
+            log::Level::Warn => warn_style,
+            log::Level::Error => error_style,
+            _ => buf.default_level_style(level),
+        }
     }
 }
