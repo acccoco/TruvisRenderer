@@ -217,7 +217,9 @@ impl GltfSceneReader {
 
     fn copy_texture_slot(&self, texture: gltf::Texture<'_>, tex_coord: u32,
         transform: Option<(TextureTransform, Option<u32>)>) -> Result<TextureSlot<RawTextureSource>, String> {
-        let source = self.texture_source(texture.source()).ok_or_else(|| format!("texture {} has no image source", texture.index()))?;
+        let source = self
+            .texture_source(texture.source())?
+            .ok_or_else(|| format!("texture {} has no image source", texture.index()))?;
         let sampler = texture.sampler();
         let (transform, override_coord) = transform.unwrap_or_default();
         if !transform.is_finite() {
@@ -372,12 +374,19 @@ impl GltfSceneReader {
         }
     }
 
-    fn texture_source(&self, image: gltf::image::Image<'_>) -> Option<RawTextureSource> {
+    fn texture_source(&self, image: gltf::image::Image<'_>) -> Result<Option<RawTextureSource>, String> {
         match image.source() {
             gltf::image::Source::Uri { uri, .. } if !uri.starts_with("data:") => {
-                Some(RawTextureSource::ExternalPath(PathBuf::from(uri)))
+                let path = Self::percent_decode(uri)
+                    .map_err(|error| format!("invalid external image URI '{uri}': {error}"))
+                    .and_then(|bytes| {
+                        String::from_utf8(bytes).map_err(|error| {
+                            format!("invalid external image URI '{uri}': decoded path is not UTF-8: {error}")
+                        })
+                    })?;
+                Ok(Some(RawTextureSource::ExternalPath(PathBuf::from(path))))
             }
-            gltf::image::Source::Uri { mime_type, .. } => self
+            gltf::image::Source::Uri { mime_type, .. } => Ok(self
                 .embedded_images
                 .get(image.index())
                 .cloned()
@@ -388,8 +397,8 @@ impl GltfSceneReader {
                     },
                     bytes,
                     mime_type: mime_type.map(str::to_owned).or(embedded_mime_type),
-                }),
-            gltf::image::Source::View { mime_type, .. } => self
+                })),
+            gltf::image::Source::View { mime_type, .. } => Ok(self
                 .embedded_images
                 .get(image.index())
                 .cloned()
@@ -400,7 +409,7 @@ impl GltfSceneReader {
                     },
                     bytes,
                     mime_type: Some(mime_type.to_owned()).or(embedded_mime_type),
-                }),
+                })),
         }
     }
 
@@ -425,7 +434,8 @@ impl GltfSceneReader {
                         .decode(encoded)
                         .map_err(|err| format!("invalid embedded image data URI: {err}"))?
                 } else {
-                    Self::percent_decode_data_uri(encoded)?
+                    Self::percent_decode(encoded)
+                        .map_err(|err| format!("invalid embedded image data URI: {err}"))?
                 };
                 let uri_mime_type = metadata
                     .strip_prefix("data:")
@@ -438,7 +448,7 @@ impl GltfSceneReader {
         }
     }
 
-    fn percent_decode_data_uri(value: &str) -> Result<Vec<u8>, String> {
+    fn percent_decode(value: &str) -> Result<Vec<u8>, String> {
         let bytes = value.as_bytes();
         let mut decoded = Vec::with_capacity(bytes.len());
         let mut index = 0;
@@ -449,14 +459,14 @@ impl GltfSceneReader {
                 continue;
             }
             if index + 2 >= bytes.len() {
-                return Err("invalid percent escape in embedded image data URI".to_string());
+                return Err("incomplete percent escape".to_string());
             }
             let high = bytes[index + 1] as char;
             let low = bytes[index + 2] as char;
             let value = high
                 .to_digit(16)
                 .and_then(|high| low.to_digit(16).map(|low| (high << 4) | low))
-                .ok_or_else(|| "invalid percent escape in embedded image data URI".to_string())?;
+                .ok_or_else(|| "invalid percent escape".to_string())?;
             decoded.push(value as u8);
             index += 3;
         }
@@ -553,6 +563,6 @@ mod tests {
 
     #[test]
     fn percent_decodes_non_base64_data_uri_payload() {
-        assert_eq!(GltfSceneReader::percent_decode_data_uri("PNG%00%FF"), Ok(vec![b'P', b'N', b'G', 0, 255]));
+        assert_eq!(GltfSceneReader::percent_decode("PNG%00%FF"), Ok(vec![b'P', b'N', b'G', 0, 255]));
     }
 }

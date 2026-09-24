@@ -19,8 +19,9 @@
 
 ## Scene 与纹理输入
 
-Assimp / glTF loader 只复制 owned scene 数据。`RawTextureSource` 保留外部路径或 embedded
-bytes；路径解析、canonicalize、`AssetSource` 构造以及
+Assimp / glTF loader 只复制 owned scene 数据。glTF loader 在把外部 image URI 复制为
+`RawTextureSource::ExternalPath` 前完成 percent-decoding，并对非法 percent escape 或无效
+UTF-8 直接失败；`RawTextureSource` 随后保留已解码的本地路径或 embedded bytes。路径解析、canonicalize、`AssetSource` 构造以及
 `AssetSource + TextureColorSpace` 去重由 `truvis-world` 的 `AssetSystem` 负责。
 Embedded source 使用 canonical scene path 与 image index 表示。
 
