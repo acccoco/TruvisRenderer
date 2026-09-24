@@ -21,6 +21,28 @@ flowchart LR
 
 `DlssOptions`、effective DLSS mode、能力查询和 optimal extent 由 `TruvisRenderer` 持有。`DlssSrMode` 决定 native、DLAA 或 SR render extent；RR 是否启用由独立选项决定。Streamline 仍由 Engine/Gfx 默认初始化。
 
+DLSS 的 Streamline options 由 `TruvisDlssState` 统一提交：SR options 在 mode/resize 生效边界设置，
+RR options 还包含逐帧相机矩阵，因此在 `frame_input` 确定当前 view 后每帧更新。更新矩阵不释放 feature，
+也不重置 temporal history。
+
+requested 配置保留用户选择，effective 配置统一决定实际模式和内部尺寸；Offline 强制 native，
+返回 Realtime 后恢复受设备能力约束的用户选择，不在 Renderer 各生命周期入口重复覆盖尺寸。
+update 派生目标尺寸：尺寸变化只提交请求，由随后 Runtime 的 idle/resize 边界统一释放旧 feature、
+提交 SR options 并 reset history；尺寸不变但配置改变时才在 update 的 idle 边界完成这些操作。
+输出尺寸变化由现有 resize 回调处理，不另存一份已配置输出尺寸或 pending 状态。
+
+SR/RR options 提交失败通过 `StreamlineError` 向上传播，在 Renderer hook 边界以带阶段信息的
+`expect` 终止当前渲染执行路径，不继续 evaluate，也不增加自动回退或重试。optimal-settings 查询
+与资源释放仍沿用已有错误策略。逐帧 snapshot 保留 prepare 使用的 jitter 和 view，避免
+after_prepare 的 history reset 改写本帧已上传输入。
+
+binding wrapper 使用同一 frame token 提交 constants、resource tags 和 `slEvaluateFeature`。
+当前 Streamline 2.14.1 的 SR/RR `slAllocateResources` 内部构造 `EventData{viewport, 0}`，无法读取
+当前帧 tags，因此不用于此路径；feature 由当前帧 evaluate 创建。源码依据是 SDK 的
+`source/plugins/sl.dlss/dlssEntry.cpp` 与 `source/plugins/sl.dlss_d/dlss_dEntry.cpp`。
+Renderer 在 update、resize 和 shutdown 的 GPU idle 边界释放旧 feature，Runtime 不理解 DLSS API，
+也不为 Streamline 私有资源插入应用侧 barrier。此生命周期约束不等于验证了 NGX 内部 GPU 同步。
+
 `DefaultRenderRuntimeSettings` 只描述 Runtime 初始化策略，例如默认 FPS 上限、surface/present mode 和 depth format 候选。Renderer 不应依赖设备必然选择某个格式。
 
 ## FrameRenderState
@@ -130,6 +152,8 @@ UI / startup option
 - DLSS history 不能与 Renderer 私有 accumulation history 混用。
 - shared setting 只有一个语义 owner。
 - mode 切换的资源释放必须满足 GPU 完成条件。
+- DLSS options 只有 `TruvisDlssState` 一个 owner；pass 只提交当前帧 tags、constants 和 evaluate。
+- constants、tags 和 evaluate 必须使用同一 frame token；RR 相机矩阵必须来自同帧 view。
 
 ## 实现入口
 

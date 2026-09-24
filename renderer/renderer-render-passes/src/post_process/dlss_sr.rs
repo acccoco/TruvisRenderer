@@ -4,8 +4,8 @@
 //! RenderGraph 只负责把输入/输出图像转到 Streamline 期望的 layout，并保证 evaluate
 //! 发生在 ray tracing 之后、SDR pass 之前。
 
-use crate::streamline_pass::{SL_INPUT_READ, SL_WRITE, image_resource, to_streamline_constants};
 use crate::post_process::dlss_options::DlssFrameSnapshot;
+use crate::streamline_pass::{SL_INPUT_READ, SL_WRITE, image_resource, to_streamline_constants};
 use ash::vk::{self, Handle};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
@@ -19,8 +19,8 @@ pub const DLSS_SR_INPUT_READ: RgImageState = SL_INPUT_READ;
 
 /// Streamline DLSS SR 的无状态 pass owner。
 ///
-/// Streamline feature resource 生命周期由全局 runtime 与 viewport 管理；本结构只负责每帧
-/// 组装 options/constants/resource tags 并在当前 command buffer 上调用 evaluate。
+/// Streamline feature resource 由 `TruvisDlssState` 管理；本结构只负责每帧组装 constants、
+/// resource tags，并在当前 command buffer 上调用 evaluate。
 pub struct DlssSrPass;
 
 impl DlssSrPass {
@@ -47,20 +47,6 @@ impl DlssSrPass {
     ) {
         let dlss_options = snapshot.options;
         if !dlss_options.is_sr_active() {
-            return;
-        }
-        let mode = dlss_options.sr_mode();
-
-        let output_extent = record_ctx.frame_state.output_extent;
-        // options 必须与 runtime 计算出的 output extent 一致；render extent 则来自输入图像尺寸。
-        let options = dlss::DlssOptions {
-            mode: mode.to_streamline_mode(),
-            output_width: output_extent.width,
-            output_height: output_extent.height,
-            color_buffers_hdr: true,
-        };
-        if let Err(err) = dlss::set_options(0, options) {
-            log::error!("DLSS SR set options failed: {}", err);
             return;
         }
 

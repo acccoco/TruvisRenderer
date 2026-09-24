@@ -171,7 +171,7 @@ TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_get_optimal_settings(
 );
 // 设置指定 viewport 的 SR options；evaluate 前必须与 output resource extent 一致。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_set_options(uint32_t viewport_id, const TruvixxSlDlssOptions* options);
-// 在传入的 Vulkan command buffer 上 tag resource 并执行 kFeatureDLSS。
+// 在传入的 Vulkan command buffer 上 tag resource，并用同一 frame token 执行 kFeatureDLSS。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_evaluate(const TruvixxSlDlssEvaluateDesc* desc);
 // 释放指定 viewport 的 kFeatureDLSS 内部资源。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_free_resources(uint32_t viewport_id);
@@ -185,7 +185,7 @@ TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_set_options(
     uint32_t viewport_id,
     const TruvixxSlDlssRrOptions* options
 );
-// 在传入的 Vulkan command buffer 上 tag resource 并执行 kFeatureDLSS_RR。
+// 在传入的 Vulkan command buffer 上 tag resource，并用同一 frame token 执行 kFeatureDLSS_RR。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_evaluate(const TruvixxSlDlssRrEvaluateDesc* desc);
 // 释放指定 viewport 的 kFeatureDLSS_RR 内部资源。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_free_resources(uint32_t viewport_id);

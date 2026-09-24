@@ -8,7 +8,13 @@ realtime/offline 渲染子系统。它依赖 engine 与公共 Renderer capabilit
 - `TruvisRenderer`：RenderThread 上的具体 `Renderer`，持有 camera/input、GUI、overlay、selection、注入的 RendererClient
   和 realtime/offline 渲染子系统，并显式决定 update 与 RenderGraph pass 顺序。
 - `TruvisDlssState` 与 `ViewAccumState`：集中持有 Truvis 的 DLSS requested/effective 配置、NVIDIA capability、
-  SR/RR resource lifecycle、temporal snapshot 和主视图累计状态；Streamline 初始化仍由 Engine/Gfx 负责。
+  SR/RR resource lifecycle、Streamline options、temporal snapshot 和主视图累计状态；Streamline 初始化仍由
+  Engine/Gfx 负责。DLSS feature 在 update/resize/shutdown 的 idle 边界释放，下一次 DLSS pass 在完成
+  resource tags 后通过当前帧 evaluate 创建 feature。SR options 在配置边界设置，RR options 的相机矩阵
+  由 `TruvisDlssState::frame_input` 逐帧更新，不因更新矩阵而释放 feature 或 reset history。
+  尺寸改变时 update 只提交请求，释放、配置和 reset 统一在随后 resize 执行；仅配置改变时在 update
+  执行。Offline 的 native 尺寸由 effective 配置统一派生，保留 requested 供返回 Realtime 恢复。
+  SR/RR options 提交错误经 `Result` 传播到 Renderer hook，以阶段明确的 `expect` 终止渲染执行路径。
 - `RendererClient`：App 提供的窄生命周期接口；Renderer 只在 init/update/after_prepare/shutdown 阶段调用它。
 - `TruvisOverlayUi`：组合 `renderer-imgui` 的诊断控件与 `renderer-render-ui` 的设置 section，提供 Render、Sky、Post、Picking、Debug 五个固定 tab 和常驻 FPS HUD。
 - `ViewportOverlaySubsystem`：统一持有灯光、transform gizmo 和坐标 gizmo 的唯一 pipeline、每 FIF vertex buffer 与最终顶点数组；`SelectionOutlineSubsystem` 独立持有网格描边资源。

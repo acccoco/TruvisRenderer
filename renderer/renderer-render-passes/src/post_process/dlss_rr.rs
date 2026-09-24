@@ -3,8 +3,8 @@
 //! RR 是 DLSS SR 基础设施上的替代 evaluate 分支：开启 RR 时调用 `kFeatureDLSS_RR`，
 //! 不再追加普通 `kFeatureDLSS` SR pass，也不再运行 legacy denoise/accum。
 
-use crate::streamline_pass::{SL_INPUT_READ, SL_WRITE, image_resource, to_streamline_constants};
 use crate::post_process::dlss_options::DlssFrameSnapshot;
+use crate::streamline_pass::{SL_INPUT_READ, SL_WRITE, image_resource, to_streamline_constants};
 use ash::vk;
 use ash::vk::Handle;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -36,37 +36,7 @@ impl DlssRrPass {
         if !dlss_options.is_rr_active() {
             return;
         }
-        let mode = dlss_options.sr_mode();
-
-        let output_extent = record_ctx.frame_state.output_extent;
-        let streamline_mode = mode.to_streamline_mode();
-        // RR 是 DLSS SR 的扩展。即使本帧只 evaluate `kFeatureDLSS_RR`，也要先维护
-        // compatible SR options，让 Streamline 看到同一 viewport 的基础 DLSS mode/output 契约。
-        let sr_options = dlss::DlssOptions {
-            mode: streamline_mode,
-            output_width: output_extent.width,
-            output_height: output_extent.height,
-            color_buffers_hdr: true,
-        };
-        if let Err(err) = dlss::set_options(0, sr_options) {
-            log::error!("DLSS RR compatible SR set options failed: {}", err);
-            return;
-        }
-
         let frame_constants = snapshot.constants;
-        let rr_options = dlss::DlssRrOptions {
-            mode: streamline_mode,
-            output_width: output_extent.width,
-            output_height: output_extent.height,
-            color_buffers_hdr: true,
-            normal_roughness_packed: true,
-            world_to_camera_view: frame_constants.world_to_camera_view,
-            camera_view_to_world: frame_constants.camera_view_to_world,
-        };
-        if let Err(err) = dlss::set_rr_options(0, rr_options) {
-            log::error!("DLSS RR set options failed: {}", err);
-            return;
-        }
 
         let desc = dlss::DlssRrEvaluateDesc {
             frame_index: record_ctx.frame_timing.frame_id() as u32,

@@ -356,6 +356,7 @@ pub fn set_options(viewport_id: u32, options: DlssOptions) -> Result<(), Streaml
 }
 
 /// 设置当前 viewport 的 DLSS Ray Reconstruction options。
+/// 相机矩阵属于逐帧数据，即使 mode/output extent 不变，也必须在 evaluate 前更新。
 pub fn set_rr_options(viewport_id: u32, options: DlssRrOptions) -> Result<(), StreamlineError> {
     let ffi_options = options.to_ffi();
     check(unsafe { truvixx::truvixx_sl_dlss_rr_set_options(viewport_id, &ffi_options) }, "DLSS RR set options")
@@ -364,7 +365,8 @@ pub fn set_rr_options(viewport_id: u32, options: DlssRrOptions) -> Result<(), St
 /// 调用 `slEvaluateFeature(kFeatureDLSS)`。
 ///
 /// 调用方必须已经在同一个 command buffer 上准备好 resource layout，并保证 constants 与
-/// input/output extent 匹配。这里不恢复 Vulkan pipeline state，具体需求由上层 pass 控制。
+/// input/output extent 匹配。C++ wrapper 使用同一 frame token 提交 tags 并 evaluate；
+/// options 由 Renderer 在 mode/resize 边界集中设置。
 pub fn evaluate(desc: DlssEvaluateDesc) -> Result<(), StreamlineError> {
     let ffi = truvixx::TruvixxSlDlssEvaluateDesc {
         frame_index: desc.frame_index,
@@ -382,6 +384,8 @@ pub fn evaluate(desc: DlssEvaluateDesc) -> Result<(), StreamlineError> {
 }
 
 /// 调用 `slEvaluateFeature(kFeatureDLSS_RR)`。
+///
+/// C++ wrapper 在当前帧 resource tags 完成后 evaluate，由 SDK 在该帧创建所需的 feature resource。
 pub fn evaluate_rr(desc: DlssRrEvaluateDesc) -> Result<(), StreamlineError> {
     let ffi = truvixx::TruvixxSlDlssRrEvaluateDesc {
         frame_index: desc.frame_index,

@@ -50,6 +50,9 @@ C++ wrapper 不静态导入 `sl.interposer.dll`。`truvixx_sl_init` 会先使用
 - 把 `sl::LogType` 映射成稳定的 `TruvixxSlLogType`，避免 Rust 直接依赖 Streamline C++ ABI。
 - 把 Rust 传入的稳定 feature flags 翻译成 Streamline SDK 的 feature id。
 - 把 DLSS SR/RR 的 C++ SDK types 包装成稳定 C ABI POD，Rust 只传 Vulkan handles 和显式资源契约。
+- SR options 由具体 Renderer 在 mode/resize 边界设置；RR options 包含相机矩阵，必须逐帧提交。
+- evaluate wrapper 使用同一 frame token 提交 constants、tags 并调用 `slEvaluateFeature`。Streamline
+  2.14.1 的 `slAllocateResources` 固定读取 frame 0，不用于此按帧 tagging 路径；feature 由 evaluate 创建。
 - 通过 Rust 传入的全局 `TruvixxSlLogCallback` 转发日志事件。
 - 在 `LoadLibraryW` / `GetProcAddress` 失败时，通过同一条日志链路输出路径和 Win32 错误。
 
@@ -127,6 +130,7 @@ StreamlineRuntime::drop
 - C++ 不负责最终日志输出。
 - C++ wrapper 不静态链接 `sl.interposer.lib`，只能通过 Rust 传入的绝对路径加载 SL DLL。
 - SR/RR evaluate 是 opaque external command；Rust Renderer 层负责 RenderGraph resource state、
-  pass 顺序和 GPU idle 后再释放旧 feature resources。
+  pass 顺序、options 归属和 GPU idle 后再释放旧 feature resources。Runtime 不接触 DLSS API，
+  也不为 Streamline 私有资源构造 Vulkan barrier。
 - Streamline 初始化失败是启动失败，不做同进程 runtime retry。
 - 业务侧统一通过 `log` facade 接收日志，具体输出格式由 `truvis-logs` 维护。

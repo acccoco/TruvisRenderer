@@ -3,7 +3,9 @@ use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
 use truvis_render_loop::input_event::{ElementState, InputEvent};
 use truvis_render_loop::renderer::{Renderer, RendererInitCtx, RendererResizeCtx, RendererShutdownCtx};
 use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
-use truvis_render_runtime::render_runtime::{RenderFrameInput, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
+use truvis_render_runtime::render_runtime::{
+    RenderFrameInput, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx,
+};
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_world::{GameWorld, LightTarget, WorldEditError, guid_new_type::MeshInstanceHandle};
 
@@ -16,6 +18,7 @@ use renderer_rendering::{
     OfflineRenderSubsystem, PathTracingCommonSettings, RealtimeRenderSubsystem, RenderMode, SdrPostProcess,
 };
 
+use crate::dlss::TruvisDlssState;
 use crate::overlay_ui::{
     DebugImageSelectionData, RaycastOverlayData, RenderControlsData, TruvisOverlayFrame, TruvisOverlayOptions,
     TruvisOverlayUi,
@@ -23,9 +26,8 @@ use crate::overlay_ui::{
 use crate::renderer_client::RendererClient;
 use crate::selection_outline::SelectionOutlineSubsystem;
 use crate::transform_gizmo::TransformGizmo;
-use crate::viewport_overlay::ViewportOverlaySubsystem;
-use crate::dlss::TruvisDlssState;
 use crate::view_accum::ViewAccumState;
+use crate::viewport_overlay::ViewportOverlaySubsystem;
 use crate::{SceneSelection, SelectionChange, light_overlay::LightOverlay};
 
 pub struct TruvisRenderer {
@@ -301,10 +303,9 @@ impl Renderer for TruvisRenderer {
         self.client.initialize(&mut *ctx.runtime.world, self.camera_controller.camera_mut());
         self.frame_view = self.camera_controller.camera().render_view();
         self.output_extent = ctx.runtime.present.swapchain_image_info().image_extent;
-        self.dlss.init(&mut ctx.runtime);
-        if self.render_mode == RenderMode::Offline {
-            ctx.runtime.set_render_extent(ctx.runtime.frame_state.output_extent);
-        }
+        self.dlss
+            .init(&mut ctx.runtime, self.render_mode == RenderMode::Realtime)
+            .expect("DLSS init configuration failed");
 
         // Renderer 持有初始化顺序：场景 CPU 状态先就绪，再依次创建具体渲染资源。
         self.realtime.init(&mut ctx.runtime);
@@ -467,9 +468,9 @@ impl Renderer for TruvisRenderer {
             RenderMode::Offline => OfflineRenderSubsystem::debug_image_options(),
         };
         self.debug_image_selection.normalize_options(debug_image_options);
-        self.dlss.update(ctx);
-        if self.render_mode == RenderMode::Offline {
-            ctx.set_render_extent(ctx.swapchain_extent);
+        if self.dlss.update(ctx, self.render_mode == RenderMode::Realtime).expect("DLSS update configuration failed") {
+            self.view_accum.reset();
+            self.history_reset_pending = true;
         }
         self.view_accum.update(self.frame_view.accum_signature());
     }
@@ -513,13 +514,9 @@ impl Renderer for TruvisRenderer {
     }
 
     fn on_resize(&mut self, ctx: &mut RendererResizeCtx<'_>) {
-        self.dlss.resize(&mut ctx.runtime);
+        self.dlss.resize(&mut ctx.runtime).expect("DLSS resize configuration failed");
         self.view_accum.reset();
         self.history_reset_pending = true;
-        if self.render_mode == RenderMode::Offline {
-            let output_extent = ctx.runtime.present.swapchain_image_info().image_extent;
-            ctx.runtime.set_render_extent(output_extent);
-        }
         self.realtime.on_resize(&mut ctx.runtime);
         self.offline.on_resize(&mut ctx.runtime);
         self.selection_outline.on_resize(&mut ctx.runtime);
@@ -672,7 +669,10 @@ impl Renderer for TruvisRenderer {
         ctx.queue_ctx.gfx_queue().submit(vec![compute_submit, present_submit], None);
     }
 
-    fn render_frame_input(&mut self, frame_state: &truvis_render_runtime::state::frame_state::FrameRenderState) -> RenderFrameInput {
-        self.dlss.frame_input(self.frame_view, frame_state)
+    fn render_frame_input(
+        &mut self,
+        frame_state: &truvis_render_runtime::state::frame_state::FrameRenderState,
+    ) -> RenderFrameInput {
+        self.dlss.frame_input(self.frame_view, frame_state).expect("DLSS frame input configuration failed")
     }
 }

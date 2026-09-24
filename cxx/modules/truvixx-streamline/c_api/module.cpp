@@ -485,7 +485,9 @@ int32_t truvixx_sl_init(const TruvixxSlInitDesc* desc)
     preferences.numPathsToPlugins = static_cast<uint32_t>(std::size(plugin_paths));
     preferences.pathToLogsAndData = log_dir;
     preferences.logMessageCallback = sl_log_callback;
-    preferences.flags = sl::PreferenceFlags::eDisableCLStateTracking | sl::PreferenceFlags::eUseFrameBasedResourceTagging;
+    // 保留 Streamline 的 command-list state tracking；禁用它会把 pipeline state 恢复责任
+    // 推回宿主，而当前 Vulkan RenderGraph 没有也不应维护 Streamline 的内部状态快照。
+    preferences.flags = sl::PreferenceFlags::eUseFrameBasedResourceTagging;
     preferences.featuresToLoad = features_to_load.data();
     preferences.numFeaturesToLoad = feature_count;
     preferences.engine = sl::EngineType::eCustom;
@@ -655,7 +657,8 @@ int32_t truvixx_sl_dlss_evaluate(const TruvixxSlDlssEvaluateDesc* desc)
     }
 
     const sl::BaseStructure* inputs[] = { &viewport };
-    // 当前 wrapper 只执行普通 SR；RR 后续应切换 feature id 和 tag 集合，而不是在这里追加第二次 SR。
+    /// Streamline 2.14.1 的 slAllocateResources 内部固定查询 frame 0，不能消费这里的按帧 tags。
+    /// 由携带当前 frame token 的 evaluate 创建 feature；旧 feature 已由 Renderer 在 GPU idle 后释放。
     const sl::Result evaluate_result =
         g_sl_api.sl_evaluate_feature(sl::kFeatureDLSS, *frame, inputs, static_cast<uint32_t>(sizeof(inputs) / sizeof(inputs[0])), command_buffer);
     return static_cast<int32_t>(evaluate_result);
@@ -779,6 +782,7 @@ int32_t truvixx_sl_dlss_rr_evaluate(const TruvixxSlDlssRrEvaluateDesc* desc)
     }
 
     const sl::BaseStructure* inputs[] = { &viewport };
+    /// RR 与 SR 一样，通过当前帧 evaluate 创建 feature，不能调用固定读取 frame 0 的 allocation API。
     const sl::Result evaluate_result = g_sl_api.sl_evaluate_feature(
         sl::kFeatureDLSS_RR,
         *frame,

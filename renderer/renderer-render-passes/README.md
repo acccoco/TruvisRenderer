@@ -18,7 +18,9 @@ viewport overlay、selection outline 和 Phong shading。
 ## 主要职责
 
 - `ray_tracing`：realtime/offline RT pass 和两者共享的 `GfxRtPipeline`；offline 不引用 realtime 内部模块。
-- `post_process`：accum、image clear、resolve、SDR 和 DLSS SR/RR RenderGraph adapter。
+- `post_process`：accum、image clear、resolve、SDR 和 DLSS SR/RR RenderGraph adapter。DLSS options、
+  feature 释放和 temporal reset 属于 `TruvisDlssState`；这里的 pass 只构造当前帧 tags、
+  constants 并调用 binding evaluate，feature 创建随同一 frame token 的 evaluate 完成。
 - `effects`：viewport overlay、selection outline 与 Phong 等产品效果。
 - 提供具体 GPU pass 的 pipeline、descriptor、dispatch/draw 逻辑。
 - 提供可接入 `truvis-render-graph` 的 pass adapter。
