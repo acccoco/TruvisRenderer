@@ -56,7 +56,11 @@ shader-force *tool_opts:
 [group('2 资源生成与构建')]
 cxx-debug *tool_opts:
     cargo run --bin cxx-build -- --profile debug {{ tool_opts }}
-    just _cxx-bindings
+
+# 只生成 clangd 使用的 compile_commands.json，不构建 native target 或 Rust binding
+[group('2 资源生成与构建')]
+cxx-compile-commands *tool_opts:
+    cargo run --bin cxx-build -- --compile-commands {{ tool_opts }}
 
 # 增量编译 Debug + Release CXX 项目并更新 Rust 绑定，可追加 --verbose
 [group('2 资源生成与构建')]

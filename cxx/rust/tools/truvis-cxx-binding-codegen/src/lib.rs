@@ -109,9 +109,6 @@ impl<'a> CxxBindingGenerator<'a> {
 
     fn emit_rerun_inputs(&self) {
         println!("cargo:rerun-if-changed={}", self.spec.header.display());
-        for include_root in &self.spec.include_roots {
-            println!("cargo:rerun-if-changed={}", include_root.display());
-        }
     }
 
     fn content_hash(content: &[u8]) -> String {

@@ -68,6 +68,7 @@ impl BuildProfile {
 struct CliOptions {
     profile: BuildProfile,
     force: bool,
+    compile_commands: bool,
     verbose: bool,
 }
 
@@ -75,12 +76,15 @@ impl CliOptions {
     fn parse() -> Result<Self, String> {
         let mut profile = BuildProfile::All;
         let mut force = false;
+        let mut compile_commands = false;
         let mut verbose = false;
+        let mut profile_specified = false;
         let mut args = std::env::args().skip(1);
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--profile" => {
+                    profile_specified = true;
                     let value = args.next().ok_or_else(|| "--profile 需要参数：debug、release 或 all".to_string())?;
                     profile = if value.eq_ignore_ascii_case("all") {
                         BuildProfile::All
@@ -89,15 +93,28 @@ impl CliOptions {
                     };
                 }
                 "--force" | "-f" => force = true,
+                "--compile-commands" => compile_commands = true,
                 "--verbose" => verbose = true,
                 "--help" | "-h" => {
-                    return Err("Usage: cxx-build [--profile debug|release|all] [--force] [--verbose]".to_string());
+                    return Err(
+                        "Usage: cxx-build [--profile debug|release|all] [--force] [--compile-commands] [--verbose]"
+                            .to_string(),
+                    );
                 }
                 _ => return Err(format!("Unsupported cxx-build arg '{arg}'")),
             }
         }
 
-        Ok(Self { profile, force, verbose })
+        if compile_commands && (force || profile_specified) {
+            return Err("--compile-commands 不能与 --profile 或 --force 一起使用".to_string());
+        }
+
+        Ok(Self {
+            profile,
+            force,
+            compile_commands,
+            verbose,
+        })
     }
 }
 
@@ -179,10 +196,7 @@ impl CxxBuildRunner {
 
     fn run(&self, profile: BuildProfile) -> Result<(), String> {
         // Configure 刷新 CMake build graph；compiler/linker 是否执行完全由 generator 决定，Rust 不维护 native 输入快照。
-        self.run_cmake(&["--preset", self.cmake_preset.configure], "configure")?;
-        if let Err(err) = self.sync_compile_commands() {
-            log::warn!("Skip compile_commands.json sync: {err}");
-        }
+        Self::run_cmake(&self.layout, &["--preset", self.cmake_preset.configure], "configure")?;
 
         for build_type in profile.build_types() {
             self.run_profile(*build_type)?;
@@ -201,15 +215,15 @@ impl CxxBuildRunner {
             args.push("--clean-first");
         }
 
-        self.run_cmake(&args, &format!("build {}", build_type.label()))?;
+        Self::run_cmake(&self.layout, &args, &format!("build {}", build_type.label()))?;
         CxxRuntimePackager::deploy(&self.layout, self.cmake_preset.output_key, build_type)
     }
 
-    fn run_cmake(&self, args: &[&str], action: &str) -> Result<(), String> {
+    fn run_cmake(layout: &CxxBuildLayout, args: &[&str], action: &str) -> Result<(), String> {
         log::info!("Run cmake {}: cmake {}", action, args.join(" "));
 
         let status = std::process::Command::new("cmake")
-            .current_dir(self.layout.cxx_project_dir())
+            .current_dir(layout.cxx_project_dir())
             .args(args)
             .status()
             .map_err(|err| format!("无法执行 cmake {action}: {err}"))?;
@@ -224,16 +238,16 @@ impl CxxBuildRunner {
         ))
     }
 
-    fn sync_compile_commands(&self) -> Result<(), String> {
-        self.run_cmake(&["--preset", "clang-cl-debug"], "configure compile_commands")?;
+    fn sync_compile_commands(layout: &CxxBuildLayout) -> Result<(), String> {
+        Self::run_cmake(layout, &["--preset", "clang-cl-debug"], "configure compile_commands")?;
 
-        let source_path = self.layout.compile_commands_source();
+        let source_path = layout.compile_commands_source();
         if !source_path.is_file() {
             return Err(format!("clang-cl-debug preset 没有生成 compile_commands.json: {}", source_path.display()));
         }
 
-        let cxx_copy_path = self.layout.compile_commands_cxx_copy();
-        let vscode_copy_path = self.layout.compile_commands_vscode_copy();
+        let cxx_copy_path = layout.compile_commands_cxx_copy();
+        let vscode_copy_path = layout.compile_commands_vscode_copy();
         CxxBuildFileHelper::copy_if_changed_to_path(&source_path, &cxx_copy_path)?;
         CxxBuildFileHelper::copy_if_changed_to_path(&source_path, &vscode_copy_path)?;
 
@@ -583,6 +597,10 @@ fn main() -> Result<(), String> {
     let layout = CxxBuildLayout::new(workspace_dir, target_dir);
     if !layout.cxx_project_dir().join("CMakeLists.txt").is_file() {
         return Err(format!("CXX CMake project 不存在: {}", layout.cxx_project_dir().display()));
+    }
+
+    if options.compile_commands {
+        return CxxBuildRunner::sync_compile_commands(&layout);
     }
 
     log::info!("cxx_project_dir: {:?}", layout.cxx_project_dir());
