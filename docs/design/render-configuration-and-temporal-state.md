@@ -73,6 +73,8 @@ DLSS 的唯一 pending reset 属于 `DlssSrState`。after_prepare 只合并 rese
 报告 `NotRun / Succeeded / Failed`，不扩展 RenderGraph 通用接口。submit 正常返回后，Succeeded
 消费 reset，Failed 请求 reset，NotRun 保留 reset 并在主视图推进时请求 reset。
 DLSS 错误不回滚相机/实例历史，不在录制中切换 fallback。
+Streamline 成功后报告的显存预算警告仍属于 Succeeded，由 C++ evaluate 封装按 SDK 契约转换；
+警告保留日志，不因此 reset。其它失败继续按 Failed 处理，具体 SDK 边界见 binding 模块 README。
 
 ReSTIR 不再依赖 DLSS reset。CPU 独立检查模式、连续帧、appearance/sky 版本及自己的显式 reset；
 shader 保留资源版本、表面与遮挡检查。普通 transform 仍使其场景版本失效，Offline 累计也仍重启。

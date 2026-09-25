@@ -172,7 +172,8 @@ TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_get_optimal_settings(
 );
 // 设置指定 viewport 的 SR options；evaluate 前必须与 output resource extent 一致。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_set_options(uint32_t viewport_id, const TruvixxSlDlssOptions* options);
-// 在传入的 Vulkan command buffer 上 tag resource，并用同一 frame token 执行 kFeatureDLSS。
+/// 在传入的 Vulkan command buffer 上 tag resource，并用同一 frame token 执行 kFeatureDLSS。
+/// 返回 0 表示 evaluate 成功，包含 SDK 成功后报告的显存预算警告；真实错误返回原 sl::Result。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_evaluate(const TruvixxSlDlssEvaluateDesc* desc);
 // 释放指定 viewport 的 kFeatureDLSS 内部资源。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_free_resources(uint32_t viewport_id);
@@ -186,7 +187,8 @@ TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_set_options(
     uint32_t viewport_id,
     const TruvixxSlDlssRrOptions* options
 );
-// 在传入的 Vulkan command buffer 上 tag resource，并用同一 frame token 执行 kFeatureDLSS_RR。
+/// 在传入的 Vulkan command buffer 上 tag resource，并用同一 frame token 执行 kFeatureDLSS_RR。
+/// 返回值与 SR evaluate 相同；预算警告仍由 SDK 日志桥报告。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_evaluate(const TruvixxSlDlssRrEvaluateDesc* desc);
 // 释放指定 viewport 的 kFeatureDLSS_RR 内部资源。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_free_resources(uint32_t viewport_id);

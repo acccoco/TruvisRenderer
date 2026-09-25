@@ -55,6 +55,9 @@ C++ wrapper 不静态导入 `sl.interposer.dll`。`truvixx_sl_init` 会先使用
   它是 render extent 的 R32_SFLOAT 世界距离，与同帧 normal/depth 和 view/projection 矩阵配套。
 - evaluate wrapper 使用同一 frame token 提交 constants、tags 并调用 `slEvaluateFeature`。Streamline
   2.14.1 的 `slAllocateResources` 固定读取 frame 0，不用于此按帧 tagging 路径；feature 由 evaluate 创建。
+- evaluate 返回 0 表示成功。Streamline 2.14.1 的 `sl.common/commonInterface.cpp::slEvaluateFeatureInternal`
+  只在 evaluate 成功后将显存预算超限报告为 `eWarnOutOfVRAM`；C++ wrapper 将此警告归为成功，SDK
+  警告仍通过日志桥输出，避免错误触发历史 reset。其它错误值原样传播，不将所有非零结果视为成功。
 - 通过 Rust 传入的全局 `TruvixxSlLogCallback` 转发日志事件。
 - 在 `LoadLibraryW` / `GetProcAddress` 失败时，通过同一条日志链路输出路径和 Win32 错误。
 

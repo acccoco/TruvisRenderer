@@ -62,6 +62,14 @@ struct SlApi
         return module != nullptr && sl_init != nullptr && sl_shutdown != nullptr;
     }
 
+    /// Streamline 2.14.1 的 slEvaluateFeatureInternal 只在 evaluate 成功后返回此预算警告。
+    /// SDK 已通过日志桥报告警告；不能将它当作失败，让 Renderer 每帧重新 reset 历史。
+    /// 这里只转换 evaluate 的这一种警告，真实错误保持原值。
+    static int32_t evaluation_result(sl::Result result)
+    {
+        return static_cast<int32_t>(result == sl::Result::eWarnOutOfVRAM ? sl::Result::eOk : result);
+    }
+
     void reset()
     {
         // reset 同时服务两条路径：
@@ -661,7 +669,7 @@ int32_t truvixx_sl_dlss_evaluate(const TruvixxSlDlssEvaluateDesc* desc)
     /// 由携带当前 frame token 的 evaluate 创建 feature；旧 feature 已由 Renderer 在 GPU idle 后释放。
     const sl::Result evaluate_result =
         g_sl_api.sl_evaluate_feature(sl::kFeatureDLSS, *frame, inputs, static_cast<uint32_t>(sizeof(inputs) / sizeof(inputs[0])), command_buffer);
-    return static_cast<int32_t>(evaluate_result);
+    return SlApi::evaluation_result(evaluate_result);
 }
 
 int32_t truvixx_sl_dlss_free_resources(uint32_t viewport_id)
@@ -790,7 +798,7 @@ int32_t truvixx_sl_dlss_rr_evaluate(const TruvixxSlDlssRrEvaluateDesc* desc)
         static_cast<uint32_t>(sizeof(inputs) / sizeof(inputs[0])),
         command_buffer
     );
-    return static_cast<int32_t>(evaluate_result);
+    return SlApi::evaluation_result(evaluate_result);
 }
 
 int32_t truvixx_sl_dlss_rr_free_resources(uint32_t viewport_id)
