@@ -50,6 +50,8 @@ compute 与 present graph 分别在局部作用域完成录制；compute 的资�
 
 `render` 返回主视图场景是否实际提交；无 TLAS 清屏返回 false。相机历史与 jitter 在提交后确认，
 Loop 用同一结果确认 Runtime instance 历史，避免 prepare 或仅 present 推进运动历史。
+DLSS pass 的帧内 evaluate 结果在 submit 返回后交回 `DlssSrState`：成功消费唯一 reset pending，
+失败请求 reset，未执行不消费；普通 transform 不请求 DLSS reset。ReSTIR 保留独立场景版本和 reset。
 
 `TruvisRenderer::render` 根据当前 `RenderMode` 选择 realtime 或 offline 渲染子系统，并显式组织主图 resolve、
 selection outline、viewport overlay 与 ImGui 的顺序。具体 pass 位于 `renderer-render-passes`，渲染 owner 位于

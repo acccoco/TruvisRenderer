@@ -10,7 +10,9 @@ pub use shared::{ImageTarget, PathTracingCommonSettings, PathTracingDebugChannel
 
 pub mod post_process;
 pub use post_process::{SdrPostProcess, SdrPostProcessInput};
-pub use renderer_render_passes::post_process::dlss_options::{DlssFeature, DlssFrameSnapshot, DlssOptions};
+pub use renderer_render_passes::post_process::dlss_options::{
+    DlssEvaluation, DlssFeature, DlssFrameSnapshot, DlssOptions,
+};
 pub use renderer_render_passes::post_process::dlss_sr_state::{DlssSrFrameConstants, DlssSrMode, DlssSrState};
 pub use shared::settings::{
     ColorGradingSettings, ExposureMode, ExposureSettings, MeteringMode, SdrPostProcessSettings, ToneMappingMode,

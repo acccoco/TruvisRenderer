@@ -231,17 +231,18 @@ impl RenderWorld {
         if scene_changed {
             self.scene_revision = self.scene_revision.saturating_add(1).max(1);
         }
+        let material_appearance_changed =
+            resource_sync_result.appearance_changed_materials.iter().any(|material| used_materials.contains(material));
+        let material_emissive_changed =
+            resource_sync_result.emissive_changed_materials.iter().any(|material| used_materials.contains(material));
         let appearance_changed = instance_result.active_set_changed
             || instance_result.transform_changed
             || instance_result.material_binding_changed
-            || resource_sync_result
-                .appearance_changed_materials
-                .iter()
-                .any(|material| used_materials.contains(material));
+            || material_appearance_changed;
         let emissive_changed = instance_result.active_set_changed
             || instance_result.transform_changed
             || instance_result.material_binding_changed
-            || resource_sync_result.emissive_changed_materials.iter().any(|material| used_materials.contains(material));
+            || material_emissive_changed;
         if appearance_changed {
             self.appearance_revision = self.appearance_revision.saturating_add(1).max(1);
         }
@@ -292,8 +293,8 @@ impl RenderWorld {
         self.scene_buffers[*frame_label].accum_signature.sky_revision = sky.revision;
         RenderWorldPrepareResult {
             history_invalidated: scene_changed
-                || appearance_changed
-                || emissive_changed
+                || material_appearance_changed
+                || material_emissive_changed
                 || light_changed
                 || sky_update.changed
                 || resource_sync_result.sky_changed,

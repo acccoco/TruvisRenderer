@@ -4,6 +4,8 @@ use truvis_streamline_binding::dlss;
 
 use truvis_render_runtime::state::frame_state::FrameRenderState;
 
+use super::dlss_options::DlssEvaluation;
+
 /// DLSS Super Resolution / DLAA 模式。
 ///
 /// 这里只表示 `kFeatureDLSS` 的模式选择；Ray Reconstruction 后续作为独立开关，
@@ -343,7 +345,9 @@ impl Default for DlssSrState {
 impl DlssSrState {
     #[inline]
     pub fn constants(&self) -> DlssSrFrameConstants {
-        self.constants
+        let mut constants = self.constants;
+        constants.reset |= self.reset_pending;
+        constants
     }
 
     #[inline]
@@ -365,12 +369,18 @@ impl DlssSrState {
         self.jitter_sequence.reset();
     }
 
+    /// 只能在本帧命令 submit 正常返回后调用，evaluate 成功录制本身不能消费 reset。
     /// 与 instance history 使用同一主视图提交边界；清屏帧释放准备记录但不推进历史。
-    pub fn finish_rendered_frame(&mut self, scene_submitted: bool) {
+    pub fn finish_rendered_frame(&mut self, scene_submitted: bool, evaluation: DlssEvaluation) {
         let view = self.prepared_view.take().expect("camera frame was not prepared");
         if scene_submitted {
             self.previous_view = Some(view);
             self.jitter_sequence = self.prepared_jitter;
+        }
+        match evaluation {
+            DlssEvaluation::Succeeded => self.reset_pending = false,
+            DlssEvaluation::Failed => self.reset_pending = true,
+            DlssEvaluation::NotRun => self.reset_pending |= scene_submitted,
         }
     }
 
@@ -391,6 +401,5 @@ impl DlssSrState {
             DlssCommonConstantsBuilder::new(render_view, previous_view, frame_state, jitter_offset, reset).build();
 
         self.prepared_view = Some(*render_view);
-        self.reset_pending = false;
     }
 }

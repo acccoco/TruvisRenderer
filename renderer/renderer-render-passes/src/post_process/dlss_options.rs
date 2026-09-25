@@ -1,6 +1,15 @@
 use super::dlss_sr_state::DlssSrFrameConstants;
 use super::dlss_sr_state::DlssSrMode;
 
+/// 同步录制期间的 evaluate 结果；Succeeded 仍需所属命令 submit 返回才能消费 reset。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DlssEvaluation {
+    #[default]
+    NotRun,
+    Succeeded,
+    Failed,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct DlssFrameSnapshot {
     pub options: DlssOptions,

@@ -4,7 +4,9 @@
 //! RenderGraph 只负责把输入/输出图像转到 Streamline 期望的 layout，并保证 evaluate
 //! 发生在 ray tracing 之后、SDR pass 之前。
 
-use crate::post_process::dlss_options::DlssFrameSnapshot;
+use std::cell::Cell;
+
+use crate::post_process::dlss_options::{DlssEvaluation, DlssFrameSnapshot};
 use crate::streamline_pass::{SL_INPUT_READ, SL_WRITE, image_resource, to_streamline_constants};
 use ash::vk::{self, Handle};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
@@ -36,7 +38,7 @@ impl DlssSrPass {
     /// - viewport 当前固定为 0，mode/resize 时由 runtime 负责 reset/free resources；
     /// - 输入 color/depth/mvec 已由 RenderGraph 转到 `SHADER_READ_ONLY_OPTIMAL`；
     /// - output color 已由 RenderGraph 转到 `GENERAL`；
-    /// - 失败只记录日志，不在 pass 内切换 fallback，避免在录制中的 graph 改变执行分支。
+    /// - 失败记录日志并返回结果，由 Renderer 保留 reset，不在录制中的 graph 切换 fallback。
     pub fn evaluate(
         &self,
         cmd: &GfxCommandBuffer,
@@ -44,10 +46,10 @@ impl DlssSrPass {
         resource_ctx: GfxResourceCtx<'_>,
         snapshot: DlssFrameSnapshot,
         data: DlssSrPassData<'_>,
-    ) {
+    ) -> DlssEvaluation {
         let dlss_options = snapshot.options;
         if !dlss_options.is_sr_active() {
-            return;
+            return DlssEvaluation::NotRun;
         }
 
         let constants = to_streamline_constants(snapshot.constants);
@@ -92,10 +94,15 @@ impl DlssSrPass {
         };
 
         cmd.begin_label("DLSS SR", glam::vec4(0.25, 0.6, 1.0, 1.0));
-        if let Err(err) = dlss::evaluate(desc) {
-            log::error!("DLSS SR evaluate failed: {}", err);
-        }
+        let result = match dlss::evaluate(desc) {
+            Ok(()) => DlssEvaluation::Succeeded,
+            Err(err) => {
+                log::error!("DLSS SR evaluate failed: {}", err);
+                DlssEvaluation::Failed
+            }
+        };
         cmd.end_label();
+        result
     }
 }
 
@@ -121,6 +128,7 @@ pub struct DlssSrPassData<'a> {
 /// 该 adapter 的职责是声明图像状态并把 `RgImageHandle` 解析成 `DlssSrPassData`。
 /// 它不拥有 Streamline runtime，也不决定当前是否启用 SR；执行分支由 RT pipeline 添加 pass 时决定。
 pub struct DlssSrRgPass<'a> {
+    pub evaluation: &'a Cell<DlssEvaluation>,
     pub dlss_sr_pass: &'a DlssSrPass,
     pub record_ctx: RenderPassRecordCtx<'a>,
     pub snapshot: DlssFrameSnapshot,
@@ -154,7 +162,7 @@ impl RgPass for DlssSrRgPass<'_> {
         let (exposure, exposure_view) =
             ctx.get_image_and_view(self.exposure).expect("DlssSrRgPass: exposure not found");
 
-        self.dlss_sr_pass.evaluate(
+        let evaluation = self.dlss_sr_pass.evaluate(
             ctx.cmd,
             &self.record_ctx,
             self.resource_ctx,
@@ -172,5 +180,6 @@ impl RgPass for DlssSrRgPass<'_> {
                 exposure_view,
             },
         );
+        self.evaluation.set(evaluation);
     }
 }

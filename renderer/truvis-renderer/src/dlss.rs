@@ -1,7 +1,7 @@
 use std::env;
 
 use ash::vk::{self, Handle};
-use renderer_rendering::{DlssFeature, DlssFrameSnapshot, DlssOptions, DlssSrFrameConstants, DlssSrMode, DlssSrState};
+use renderer_rendering::{DlssEvaluation, DlssFeature, DlssFrameSnapshot, DlssOptions, DlssSrMode, DlssSrState};
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_runtime::render_runtime_ctx::{
     RenderFrameInput, RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeUpdateCtx,
@@ -18,7 +18,6 @@ pub(crate) struct TruvisDlssState {
     /// 记录可能由 evaluate 创建的 feature；无 TLAS 时可能跳过 pass，不代表已经实际分配。
     feature_to_release: Option<DlssFeature>,
     sr_state: DlssSrState,
-    current_snapshot: DlssFrameSnapshot,
 }
 
 impl Default for TruvisDlssState {
@@ -30,10 +29,6 @@ impl Default for TruvisDlssState {
             rr_supported: false,
             feature_to_release: None,
             sr_state: DlssSrState::default(),
-            current_snapshot: DlssFrameSnapshot {
-                options: DlssOptions::NATIVE,
-                constants: DlssSrFrameConstants::default(),
-            },
         }
     }
 }
@@ -88,10 +83,6 @@ impl TruvisDlssState {
     ) -> Result<RenderFrameInput, StreamlineError> {
         self.sr_state.update(&render_view, frame_state, self.effective.is_dlss_active());
         let constants = self.sr_state.constants();
-        self.current_snapshot = DlssFrameSnapshot {
-            options: self.effective,
-            constants,
-        };
         if self.effective.is_rr_active() {
             dlss::set_rr_options(0, self.streamline_rr_options(frame_state.output_extent))?;
         }
@@ -103,9 +94,11 @@ impl TruvisDlssState {
     }
 
     /// evaluate 可能创建 feature；记录其归属，供下一次 mode/resize/shutdown 在 GPU idle 边界释放。
-    pub fn snapshot(&mut self, history_reset: bool) -> DlssFrameSnapshot {
-        let mut snapshot = self.current_snapshot;
-        snapshot.constants.reset |= history_reset;
+    pub fn snapshot(&mut self) -> DlssFrameSnapshot {
+        let snapshot = DlssFrameSnapshot {
+            options: self.effective,
+            constants: self.sr_state.constants(),
+        };
         self.feature_to_release = snapshot.options.active_feature();
         snapshot
     }
@@ -114,8 +107,8 @@ impl TruvisDlssState {
         self.sr_state.request_reset();
     }
 
-    pub fn finish_rendered_frame(&mut self, scene_submitted: bool) {
-        self.sr_state.finish_rendered_frame(scene_submitted);
+    pub fn finish_rendered_frame(&mut self, scene_submitted: bool, evaluation: DlssEvaluation) {
+        self.sr_state.finish_rendered_frame(scene_submitted, evaluation);
     }
 
     pub fn shutdown(&mut self, ctx: &mut truvis_render_runtime::render_runtime_ctx::RenderRuntimeShutdownCtx<'_>) {
@@ -208,8 +201,8 @@ impl TruvisDlssState {
             output_height: output_extent.height,
             color_buffers_hdr: true,
             normal_roughness_packed: true,
-            world_to_camera_view: self.current_snapshot.constants.world_to_camera_view,
-            camera_view_to_world: self.current_snapshot.constants.camera_view_to_world,
+            world_to_camera_view: self.sr_state.constants().world_to_camera_view,
+            camera_view_to_world: self.sr_state.constants().camera_view_to_world,
         }
     }
 

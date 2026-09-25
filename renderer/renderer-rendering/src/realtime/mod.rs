@@ -7,6 +7,7 @@ use slotmap::Key;
 use crate::post_process::SdrPostProcessInput;
 use renderer_kit::debug_image::DebugImageOption;
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
+use renderer_render_passes::post_process::dlss_options::{DlssEvaluation, DlssFrameSnapshot, DlssOptions};
 use renderer_render_passes::post_process::dlss_rr::{DlssRrPass, DlssRrRgPass};
 use renderer_render_passes::post_process::dlss_sr::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
 use renderer_render_passes::post_process::image_clear::{ImageClearPass, ImageClearRgPass};
@@ -19,7 +20,6 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
-use renderer_render_passes::post_process::dlss_options::{DlssFrameSnapshot, DlssOptions};
 
 use crate::realtime::gbuffer::GBuffer;
 use crate::realtime::resources::{
@@ -55,8 +55,10 @@ pub struct RealtimeRenderSubsystem {
     settings: RealtimeRenderSettings,
     /// ReSTIR DI 的最小 CPU history signature；用于 mode/reset 变化时切断上一帧 history。
     restir_last_mode: Cell<RtRestirDiMode>,
-    /// 环境语义变化时拒绝上一帧 reservoir，分布版本仍由 shader 检查。
-    restir_last_sky_revision: Cell<u64>,
+    /// 独立于 DLSS，保留 transform/材质和环境编辑的保守失效；shader 仍校验资源版本。
+    restir_last_scene_versions: Cell<(u64, u64)>,
+    /// ReSTIR 读取相邻 FIF，跳过主视图后不能误用旧 slot 的 reservoir。
+    restir_last_frame_id: Cell<Option<u64>>,
 }
 
 /// Realtime 渲染子系统自有配置。
@@ -542,6 +544,7 @@ impl RealtimeRenderSubsystem {
         ctx: &'a SubsystemRenderCtx<'a>,
         common_settings: &PathTracingCommonSettings,
         dlss_snapshot: DlssFrameSnapshot,
+        dlss_evaluation: &'a Cell<DlssEvaluation>,
         history_reset: bool,
     ) -> Option<SdrPostProcessInput> {
         let resources = self.resources();
@@ -565,16 +568,18 @@ impl RealtimeRenderSubsystem {
         let frame_id = record_ctx.frame_timing.frame_id();
         let previous_frame_label =
             FrameLabel::from_usize((frame_id as usize + FrameLabel::COUNT - 1) % FrameLabel::COUNT);
-        // CPU 拒绝首帧、mode/reset 与 Sky 语义变化的历史；亮度不改变采样分布。
-        // shader 继续检查 distribution/emissive/analytic 发布版本，不混用两类 revision。
-        let sky_revision = ctx.render_scene.accum_signature(frame_label).sky_revision;
-        let restir_history_valid = restir_di_mode.is_enabled() &&
-            self.restir_last_sky_revision.get() == sky_revision &&
-            frame_id > 0 &&
-            self.restir_last_mode.get() == restir_di_mode &&
-            !dlss_snapshot.constants.reset && !history_reset;
+        // ReSTIR 保留自身的场景编辑与连续帧判定；DLSS reset 不再驱动 reservoir 生命周期。
+        let scene_signature = ctx.render_scene.accum_signature(frame_label);
+        let scene_versions = (scene_signature.sky_revision, scene_signature.appearance_revision);
+        let has_tlas = ctx.render_scene.tlas_handle(frame_label).is_some();
+        let restir_history_valid = restir_di_mode.is_enabled()
+            && self.restir_last_scene_versions.get() == scene_versions
+            && self.restir_last_frame_id.get().is_some_and(|previous| previous.checked_add(1) == Some(frame_id))
+            && self.restir_last_mode.get() == restir_di_mode
+            && !history_reset;
         self.restir_last_mode.set(restir_di_mode);
-        self.restir_last_sky_revision.set(sky_revision);
+        self.restir_last_scene_versions.set(scene_versions);
+        self.restir_last_frame_id.set(has_tlas.then_some(frame_id));
 
         // compute graph 导入的是 renderer-owned 外部图像；RenderGraph 只接管本图内的状态转换，
         // 不拥有图像生命周期。owner 必须活到 graph 录制与提交完成之后。
@@ -737,7 +742,7 @@ impl RealtimeRenderSubsystem {
         );
 
         rg_builder.export_image(render_target, RgImageState::SHADER_READ_FRAGMENT, None);
-        if ctx.render_scene.tlas_handle(frame_label).is_none() {
+        if !has_tlas {
             // 无有效场景时输出确定黑色，不执行 DLSS 或测光，不消费曝光历史。
             for (image, extent, name) in [
                 (single_frame_image, single_frame_target.extent, "rt-clear-source"),
@@ -797,6 +802,7 @@ impl RealtimeRenderSubsystem {
             rg_builder.add_pass(
                 "dlss-rr",
                 DlssRrRgPass {
+                    evaluation: dlss_evaluation,
                     dlss_rr_pass: &resources.dlss_rr_pass,
                     record_ctx,
                     snapshot: dlss_snapshot,
@@ -825,6 +831,7 @@ impl RealtimeRenderSubsystem {
             rg_builder.add_pass(
                 "dlss-sr",
                 DlssSrRgPass {
+                    evaluation: dlss_evaluation,
                     dlss_sr_pass: &resources.dlss_sr_pass,
                     record_ctx,
                     snapshot: dlss_snapshot,

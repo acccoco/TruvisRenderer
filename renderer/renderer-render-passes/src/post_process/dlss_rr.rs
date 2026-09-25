@@ -3,7 +3,9 @@
 //! RR 是 DLSS SR 基础设施上的替代 evaluate 分支：开启 RR 时调用 `kFeatureDLSS_RR`，
 //! 不再追加普通 `kFeatureDLSS` SR pass，也不再运行 legacy denoise/accum。
 
-use crate::post_process::dlss_options::DlssFrameSnapshot;
+use std::cell::Cell;
+
+use crate::post_process::dlss_options::{DlssEvaluation, DlssFrameSnapshot};
 use crate::streamline_pass::{SL_INPUT_READ, SL_WRITE, image_resource, to_streamline_constants};
 use ash::vk;
 use ash::vk::Handle;
@@ -31,10 +33,10 @@ impl DlssRrPass {
         resource_ctx: GfxResourceCtx<'_>,
         snapshot: DlssFrameSnapshot,
         data: DlssRrPassData<'_>,
-    ) {
+    ) -> DlssEvaluation {
         let dlss_options = snapshot.options;
         if !dlss_options.is_rr_active() {
-            return;
+            return DlssEvaluation::NotRun;
         }
         let frame_constants = snapshot.constants;
 
@@ -95,10 +97,15 @@ impl DlssRrPass {
         };
 
         cmd.begin_label("DLSS RR", glam::vec4(0.35, 0.95, 0.75, 1.0));
-        if let Err(err) = dlss::evaluate_rr(desc) {
-            log::error!("DLSS RR evaluate failed: {}", err);
-        }
+        let result = match dlss::evaluate_rr(desc) {
+            Ok(()) => DlssEvaluation::Succeeded,
+            Err(err) => {
+                log::error!("DLSS RR evaluate failed: {}", err);
+                DlssEvaluation::Failed
+            }
+        };
         cmd.end_label();
+        result
     }
 }
 
@@ -122,6 +129,7 @@ pub struct DlssRrPassData<'a> {
 }
 
 pub struct DlssRrRgPass<'a> {
+    pub evaluation: &'a Cell<DlssEvaluation>,
     pub dlss_rr_pass: &'a DlssRrPass,
     pub record_ctx: RenderPassRecordCtx<'a>,
     pub snapshot: DlssFrameSnapshot,
@@ -166,7 +174,7 @@ impl RgPass for DlssRrRgPass<'_> {
             .get_image_and_view(self.specular_motion_vectors)
             .expect("DlssRrRgPass: specular_motion_vectors not found");
 
-        self.dlss_rr_pass.evaluate(
+        let evaluation = self.dlss_rr_pass.evaluate(
             ctx.cmd,
             &self.record_ctx,
             self.resource_ctx,
@@ -190,5 +198,6 @@ impl RgPass for DlssRrRgPass<'_> {
                 specular_motion_vectors_view,
             },
         );
+        self.evaluation.set(evaluation);
     }
 }

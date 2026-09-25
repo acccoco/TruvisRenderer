@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
 use truvis_render_loop::input_event::{ElementState, InputEvent};
@@ -15,7 +17,8 @@ use renderer_kit::debug_image::DebugImageSelection;
 use renderer_kit::input_state::InputManager;
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 use renderer_rendering::{
-    OfflineRenderSubsystem, PathTracingCommonSettings, RealtimeRenderSubsystem, RenderMode, SdrPostProcess,
+    DlssEvaluation, OfflineRenderSubsystem, PathTracingCommonSettings, RealtimeRenderSubsystem, RenderMode,
+    SdrPostProcess,
 };
 
 use crate::dlss::TruvisDlssState;
@@ -54,7 +57,7 @@ pub struct TruvisRenderer {
     focused: bool,
     dlss: TruvisDlssState,
     view_accum: ViewAccumState,
-    history_reset_pending: bool,
+    restir_reset_pending: bool,
 
     /// App 提供、RenderThread 独占的 CPU scene 与 Editor 业务 Client。
     client: Box<dyn RendererClient>,
@@ -118,7 +121,7 @@ impl TruvisRenderer {
             focused: true,
             dlss: Default::default(),
             view_accum: Default::default(),
-            history_reset_pending: false,
+            restir_reset_pending: false,
             client,
         }
     }
@@ -470,14 +473,14 @@ impl Renderer for TruvisRenderer {
         self.debug_image_selection.normalize_options(debug_image_options);
         if self.dlss.update(ctx, self.render_mode == RenderMode::Realtime).expect("DLSS update configuration failed") {
             self.view_accum.reset();
-            self.history_reset_pending = true;
+            self.restir_reset_pending = true;
         }
         self.view_accum.update(self.frame_view.accum_signature());
     }
 
     fn after_prepare(&mut self, ctx: &mut RenderRuntimeRayCastCtx<'_>) {
         if ctx.history_invalidated() {
-            self.history_reset_pending = true;
+            self.restir_reset_pending = true;
             self.view_accum.reset();
             self.dlss.reset();
         }
@@ -516,7 +519,7 @@ impl Renderer for TruvisRenderer {
     fn on_resize(&mut self, ctx: &mut RendererResizeCtx<'_>) {
         self.dlss.resize(&mut ctx.runtime).expect("DLSS resize configuration failed");
         self.view_accum.reset();
-        self.history_reset_pending = true;
+        self.restir_reset_pending = true;
         self.realtime.on_resize(&mut ctx.runtime);
         self.offline.on_resize(&mut ctx.runtime);
         self.selection_outline.on_resize(&mut ctx.runtime);
@@ -565,8 +568,8 @@ impl Renderer for TruvisRenderer {
             self.selection.and_then(SceneSelection::light),
         );
         let selected_debug_image_id = self.debug_image_selection.selected_id();
-        let dlss_snapshot = self.dlss.snapshot(self.history_reset_pending);
-        self.history_reset_pending = false;
+        let dlss_snapshot = self.dlss.snapshot();
+        let dlss_evaluation = Cell::new(DlssEvaluation::NotRun);
 
         // compute graph 的资源借用在录制后结束；提交信息只保存 Vulkan handle，资源继续由 subsystem 持有。
         let (compute_submit, scene_submitted) = {
@@ -577,7 +580,8 @@ impl Renderer for TruvisRenderer {
                     &subsystem_ctx,
                     &self.path_tracing_common_settings,
                     dlss_snapshot,
-                    dlss_snapshot.constants.reset,
+                    &dlss_evaluation,
+                    self.restir_reset_pending,
                 ),
                 RenderMode::Offline => self.offline.contribute_compute_passes(
                     &mut graph,
@@ -669,7 +673,17 @@ impl Renderer for TruvisRenderer {
         // 两种模式都保持 compute -> present 的提交顺序。timeline signal 放在 present graph，
         // 因此上层 runtime 只需要等待同一个 frame_id 即可观察最终 swapchain 写入完成。
         ctx.queue_ctx.gfx_queue().submit(vec![compute_submit, present_submit], None);
-        self.dlss.finish_rendered_frame(scene_submitted);
+        if dlss_snapshot.options.is_dlss_active() {
+            log::debug!(
+                "DLSS frame={frame_id}, reset={}, evaluation={:?}, scene_submitted={scene_submitted}",
+                dlss_snapshot.constants.reset,
+                dlss_evaluation.get()
+            );
+        }
+        self.dlss.finish_rendered_frame(scene_submitted, dlss_evaluation.get());
+        if scene_submitted && self.render_mode == RenderMode::Realtime {
+            self.restir_reset_pending = false;
+        }
         scene_submitted
     }
 

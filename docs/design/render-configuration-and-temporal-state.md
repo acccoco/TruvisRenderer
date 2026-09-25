@@ -64,7 +64,18 @@ Renderer/subsystem 只读取该 state，并在 init/resize 时提交自身 targe
 普通 DLSS reset 请求不清空相机/实例运动历史或修改已上传 jitter；初始化、模式/尺寸重配置
 在 prepare 前重启 jitter，但仍保留上一提交相机。
 
-Runtime 只在尺寸和 scene/lighting 语义变化时发出通用 history invalidation；`TruvisRenderer` 再分别通知 DLSS、ViewAccum 和 ReSTIR。reset 是“下一次 evaluate 不使用旧 history”的语义，不等价于立刻清除所有图像。
+Runtime 在尺寸、实例集合、材质外观和 lighting 语义变化时发出通用 history invalidation。
+普通 transform 不触发该通知，但继续更新 TLAS、appearance/emissive 与 Offline 签名。
+`TruvisRenderer` 分别通知 DLSS、ViewAccum 和 ReSTIR；各消费者保留自己的有效性策略。
+
+DLSS 的唯一 pending reset 属于 `DlssSrState`。after_prepare 只合并 reset 原因，不改本帧已上传
+输入；snapshot 是录制参数，不另存跨帧 reset。SR/RR pass 通过当前 render 作用域的 `Cell`
+报告 `NotRun / Succeeded / Failed`，不扩展 RenderGraph 通用接口。submit 正常返回后，Succeeded
+消费 reset，Failed 请求 reset，NotRun 保留 reset 并在主视图推进时请求 reset。
+DLSS 错误不回滚相机/实例历史，不在录制中切换 fallback。
+
+ReSTIR 不再依赖 DLSS reset。CPU 独立检查模式、连续帧、appearance/sky 版本及自己的显式 reset；
+shader 保留资源版本、表面与遮挡检查。普通 transform 仍使其场景版本失效，Offline 累计也仍重启。
 
 Realtime ReSTIR reservoir、SHARC cache、offline accumulation 属于对应 Renderer subsystem 的 temporal resources，不进入 `DlssOptions` 或 `DlssSrState`。
 
