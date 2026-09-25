@@ -673,13 +673,6 @@ impl Renderer for TruvisRenderer {
         // 两种模式都保持 compute -> present 的提交顺序。timeline signal 放在 present graph，
         // 因此上层 runtime 只需要等待同一个 frame_id 即可观察最终 swapchain 写入完成。
         ctx.queue_ctx.gfx_queue().submit(vec![compute_submit, present_submit], None);
-        if dlss_snapshot.options.is_dlss_active() {
-            log::debug!(
-                "DLSS frame={frame_id}, reset={}, evaluation={:?}, scene_submitted={scene_submitted}",
-                dlss_snapshot.constants.reset,
-                dlss_evaluation.get()
-            );
-        }
         self.dlss.finish_rendered_frame(scene_submitted, dlss_evaluation.get());
         if scene_submitted && self.render_mode == RenderMode::Realtime {
             self.restir_reset_pending = false;
