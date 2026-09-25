@@ -2,7 +2,6 @@ use std::collections::{HashSet, VecDeque};
 use std::mem::size_of_val;
 use std::ptr;
 
-use anyhow::Result;
 use ash::vk;
 use slotmap::SecondaryMap;
 
@@ -92,6 +91,7 @@ impl MeshUploadQueue {
         }
     }
 
+    /// 沿用底层资源创建与队列提交的 fail-fast 契约；正常返回只表示已入队，不表示 GPU-ready。
     fn submit_mesh_upload(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -99,7 +99,7 @@ impl MeshUploadQueue {
         queue_ctx: GfxQueueCtx<'_>,
         handle: MeshAssetHandle,
         data: &MeshData,
-    ) -> Result<()> {
+    ) {
         let _span = tracy_client::span!("MeshUploadQueue::submit_mesh_upload");
         let name = data.name.clone();
         let mut geometries = Vec::with_capacity(data.submeshes.len());
@@ -258,8 +258,6 @@ impl MeshUploadQueue {
             blas,
             name,
         });
-
-        Ok(())
     }
 
     /// 非阻塞推进上传队列，并返回已经 GPU-ready 的 mesh。
@@ -506,17 +504,8 @@ impl GpuMeshStore {
             let Some(data) = scene.mesh_data(handle) else {
                 continue;
             };
-            match self
-                .upload_queue
-                .submit_mesh_upload(resource_ctx, device_ctx, queue_ctx, handle, data)
-            {
-                Ok(()) => {
-                    self.pending_meshes.insert(handle);
-                }
-                Err(err) => {
-                    log::error!("Failed to submit mesh upload {:?}: {}", handle, err);
-                }
-            }
+            self.upload_queue.submit_mesh_upload(resource_ctx, device_ctx, queue_ctx, handle, data);
+            self.pending_meshes.insert(handle);
         }
 
         for finished in self.upload_queue.update(resource_ctx, device_ctx) {

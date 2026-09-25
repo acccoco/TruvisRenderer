@@ -54,6 +54,10 @@ CPU 变更集合只表示需要读取最终状态的身份，不是 changelog �
 
 loader 完成、GPU copy 入队、timeline completion、shader-visible publish 和最终 render 结果是不同阶段。任一日志成功不能替代后续阶段证据。
 
+Mesh GPU 资源创建和队列提交沿用底层 fail-fast 行为，不提供上传失败后的自动重试。
+提交正常返回后才标记 Pending upload；timeline 完成并安装到 resolver 后报告实际发布的 mesh handle，
+通过已有反向引用唤醒依赖实例。等待完成不属于失败，也不依赖 instance 再次编辑。
+
 CPU 删除先检查反向引用，再移除 SceneStore/AssetSystem membership。instance 删除记录旧 handle，RenderWorld 下一次局部对账撤销 slot；资源 owner 继续按资源 membership 清理 cache，未完成上传只销毁 stale result。
 
 GPU 资源按自己的 owner 延迟回收，不能把 CPU 删除直接等同于 Vulkan image/buffer 已安全释放。
