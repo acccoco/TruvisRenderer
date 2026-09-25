@@ -104,7 +104,7 @@ void main_ray_gen()
                 }
                 else
                 {
-                    RtRaygenView::write_primary_miss_outputs(thread_id);
+                    RtRaygenView::write_primary_miss_outputs(thread_id, ray.Direction);
                     if (RtRestirDI::enabled())
                     {
                         // miss/debug 像素不属于 primary direct lighting，必须显式写空 key 和空 reservoir。
@@ -124,7 +124,7 @@ void main_ray_gen()
             if (!gbuffer_written)
             {
                 // sky pixel 也必须写满 GBuffer/DLSS 输入，避免 storage image 中保留上一帧几何数据。
-                RtRaygenView::write_primary_miss_outputs(thread_id);
+                RtRaygenView::write_primary_miss_outputs(thread_id, ray.Direction);
                 if (RtRestirDI::enabled())
                 {
                     // sky miss 没有 primary surface；清空 ReSTIR 输入，防止 temporal/final phase

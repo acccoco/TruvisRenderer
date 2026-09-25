@@ -45,8 +45,8 @@ struct RtRaygenView
 
     static bool is_projectable_clip(float4 clip_position)
     {
-        // w 接近 0 表示点不可稳定投影到屏幕，motion vector 回退为 0 更安全。
-        return abs(clip_position.w) > 1e-6f;
+        // 负 w 位于相机背后；它与近零 w、非有限值一样没有可用的历史投影。
+        return all(isfinite(clip_position)) && clip_position.w > 1e-6f;
     }
 
     static float2 clip_to_pixel(float4 clip_position)
@@ -57,16 +57,16 @@ struct RtRaygenView
         return uv * engine::binding::per_frame_data.resolution;
     }
 
-    static float4 project_world_to_clip(float3 world_position, float4x4 view, float4x4 projection)
+    static float4 project_world_to_clip(float4 world_position, float4x4 view, float4x4 projection)
     {
-        const float4 view_position = mul(view, float4(world_position, 1.0f));
+        const float4 view_position = mul(view, world_position);
         return mul(projection, view_position);
     }
 
     /// 计算 DLSS 使用的 pixel-space 2D motion vector。
     ///
     /// 方向约定为“当前像素回溯到上一帧位置”，即 previous_pixel - current_pixel。
-    static float2 motion_vector_pixels(float3 current_world_position, float3 previous_world_position)
+    static float2 motion_vector_pixels(float4 current_world_position, float4 previous_world_position)
     {
         const float4 current_clip = project_world_to_clip(
             current_world_position,
@@ -81,10 +81,16 @@ struct RtRaygenView
 
         if (!is_projectable_clip(current_clip) || !is_projectable_clip(previous_clip))
         {
-            return float2(0.0f, 0.0f);
+            return float2(renderer::render_passes::realtime_rt::DLSS_MOTION_VECTOR_INVALID_VALUE);
         }
 
-        return clip_to_pixel(previous_clip) - clip_to_pixel(current_clip);
+        const float2 motion = clip_to_pixel(previous_clip) - clip_to_pixel(current_clip);
+        const float invalid = renderer::render_passes::realtime_rt::DLSS_MOTION_VECTOR_INVALID_VALUE;
+        if (!all(isfinite(motion)) || any(abs(motion) > -invalid))
+        {
+            return float2(invalid);
+        }
+        return motion;
     }
 
     static float2 instance_motion_vector_pixels(uint instance_id, float3 object_position)
@@ -93,7 +99,7 @@ struct RtRaygenView
         engine::scene::Instance* instance = SceneAccess::instance(instance_id);
         const float3 current_world_position = mul(instance.model, float4(object_position, 1.0f)).xyz;
         const float3 previous_world_position = mul(instance.prev_model, float4(object_position, 1.0f)).xyz;
-        return motion_vector_pixels(current_world_position, previous_world_position);
+        return motion_vector_pixels(float4(current_world_position, 1.0f), float4(previous_world_position, 1.0f));
     }
 
     static float3 reflection_motion_direction(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
@@ -202,10 +208,12 @@ struct RtRaygenView
     }
 
     /// miss 像素也必须写入 DLSS 输入，避免 SR/RR 读取上一帧残留。
-    static void write_primary_miss_outputs(uint2 thread_id)
+    static void write_primary_miss_outputs(uint2 thread_id, float3 primary_ray_dir)
     {
         RtGBufferWriter::write_gbuffer_miss(thread_id);
-        RtGBufferWriter::write_dlss_sr_miss(thread_id);
+        // 无限远天空共用无 jitter 投影；w=0 排除 camera translation，保留旋转和 FOV 变化。
+        const float4 direction = float4(primary_ray_dir, 0.0f);
+        RtGBufferWriter::write_dlss_sr_miss(thread_id, motion_vector_pixels(direction, direction));
         RtGBufferWriter::write_dlss_rr_miss(thread_id);
     }
 };

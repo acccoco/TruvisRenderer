@@ -77,6 +77,17 @@ DLSS 错误不回滚相机/实例历史，不在录制中切换 fallback。
 ReSTIR 不再依赖 DLSS reset。CPU 独立检查模式、连续帧、appearance/sky 版本及自己的显式 reset；
 shader 保留资源版本、表面与遮挡检查。普通 transform 仍使其场景版本失效，Offline 累计也仍重启。
 
+## Motion vector 输入
+
+Primary MV 用前后模型与无 jitter 相机矩阵投影同一个 object-space 点，输出 pixel-space
+`previous - current`。天空将当前 primary ray 的世界方向作为齐次 `(d, 0)`，同样投影到前后相机；
+相机纯平移不影响无限远天空，旋转与 FOV 变化保留运动。天空 device depth 保持 1.0。
+
+两条路径共用投影检查：clip 有限且 w>1e-6，除法后 MV 有限、分量幅值不超过 65504；
+允许 previous 在屏幕外，不 clamp 回屏幕。无效投影输出共享 ABI 常量 `(-65504, -65504)`。
+该值是项目的有限屏外回溯策略；`cameraMotionIncluded=true` 时不依赖 Streamline 将其识别为
+专用无效标记。输入保持 `R32G32_SFLOAT`，幅值限制也避免未来 fp16 存储溢出。
+
 Realtime ReSTIR reservoir、SHARC cache、offline accumulation 属于对应 Renderer subsystem 的 temporal resources，不进入 `DlssOptions` 或 `DlssSrState`。
 
 ## Renderer 配置

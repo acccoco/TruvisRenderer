@@ -3,6 +3,7 @@ use truvis_render_foundation::render_view::RenderView;
 use truvis_streamline_binding::dlss;
 
 use truvis_render_runtime::state::frame_state::FrameRenderState;
+use truvis_renderer_shader_binding::gpu::renderer::render_passes::realtime_rt::DLSS_MOTION_VECTOR_INVALID_VALUE;
 
 use super::dlss_options::DlssEvaluation;
 
@@ -147,7 +148,7 @@ impl Default for DlssSrFrameConstants {
             camera_far: 1000.0,
             camera_fov: 60.0_f32.to_radians(),
             camera_aspect_ratio: 1.0,
-            motion_vectors_invalid_value: -65504.0,
+            motion_vectors_invalid_value: DLSS_MOTION_VECTOR_INVALID_VALUE,
             depth_inverted: false,
             camera_motion_included: false,
             motion_vectors_3d: false,
@@ -273,7 +274,7 @@ impl<'a> DlssCommonConstantsBuilder<'a> {
             camera_far: 1000.0,
             camera_fov: Self::estimate_vertical_fov(self.render_view.projection),
             camera_aspect_ratio: Self::extent_aspect(self.frame_state.output_extent),
-            motion_vectors_invalid_value: -65504.0,
+            motion_vectors_invalid_value: DLSS_MOTION_VECTOR_INVALID_VALUE,
             depth_inverted: false,
             camera_motion_included: true,
             motion_vectors_3d: false,
