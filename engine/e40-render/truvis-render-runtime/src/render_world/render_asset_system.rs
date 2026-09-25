@@ -13,9 +13,10 @@ use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 
 /// 一次资源对账对 RenderWorld 的最小结果。
 ///
-/// 资源 owner 自己消费上传完成事件；RenderWorld 只需要知道哪些材质投影和 sky 绑定
-/// 可能影响场景派生历史。texture/mesh 是否 ready 由 resolver 在 instance 阶段直接判断。
+/// 资源 owner 自己消费上传完成事件；mesh 发布与材质投影变化经 CPU 反向引用触发
+/// instance 局部对账。实际 ready 仍由 resolver 判断，不能将上传入队当作发布。
 pub(crate) struct RenderResourceSyncResult {
+    pub(crate) published_meshes: Vec<truvis_world::guid_new_type::MeshAssetHandle>,
     pub(crate) appearance_changed_materials: Vec<truvis_world::guid_new_type::MaterialAssetHandle>,
     pub(crate) emissive_changed_materials: Vec<truvis_world::guid_new_type::MaterialAssetHandle>,
     pub(crate) sky_changed: bool,
@@ -128,10 +129,11 @@ impl RenderAssetSystem {
 
         let material_result: RenderMaterialUpdateResult =
             self.gpu_materials.sync_scene(scene, &self.gpu_textures);
-        self.gpu_meshes
+        let published_meshes = self.gpu_meshes
             .sync_scene(scene, resource_ctx, device_ctx, queue_ctx);
 
         RenderResourceSyncResult {
+            published_meshes,
             appearance_changed_materials: material_result.appearance_changed_materials,
             emissive_changed_materials: material_result.emissive_changed_materials,
             sky_changed,

@@ -24,6 +24,7 @@ enum-map = { workspace = true }
 log = { workspace = true }
 raw-window-handle = { workspace = true }
 slotmap = { workspace = true }
+indexmap = { workspace = true }
 vk-mem = { workspace = true }
 anyhow = { workspace = true }
 image = { workspace = true }

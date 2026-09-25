@@ -6490,6 +6490,7 @@ dependencies = [
  "enum-map",
  "glam",
  "image",
+ "indexmap 2.12.1",
  "itertools 0.10.5",
  "log",
  "raw-window-handle",
@@ -6650,6 +6651,7 @@ name = "truvis-world"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "indexmap 2.12.1",
  "log",
  "slotmap",
  "truvis-asset",

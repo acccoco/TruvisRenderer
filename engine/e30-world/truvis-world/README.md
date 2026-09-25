@@ -11,6 +11,8 @@
 - `GameWorld` 组合两个 owner，并在需要同时检查资源引用和场景引用时编排顺序。
 - RenderRuntime 只通过 `SceneReadView` 借用最终 CPU 状态；GPU image、buffer、BLAS、descriptor
   和 frame state 属于 render-side owner。
+- instance 有效新增、删除及编辑写入去重 handle 集合；Runtime 在 prepare 用 `take_instance_changes`
+  接管完整批次并同步对账，不携带字段事件或 GPU ready 状态，不等待 GPU 才清理 CPU 变更。
 
 ## 对外流程
 

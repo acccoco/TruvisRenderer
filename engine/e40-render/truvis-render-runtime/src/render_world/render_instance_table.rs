@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use indexmap::IndexSet;
 use slotmap::SecondaryMap;
 
 use truvis_render_foundation::frame_label::FrameLabel;
@@ -59,6 +60,8 @@ pub(crate) struct RayCastInstanceRecord {
 /// 保存语义实例，RenderWorld 只接收按稳定 slot 排序、依赖已就绪的渲染快照。
 pub struct RenderInstanceTable {
     bindings: SecondaryMap<MeshInstanceHandle, InstanceBinding>,
+    /// 镜像首次建立时读取完整 membership，后续只处理编辑/资源发布候选。
+    initialized: bool,
     free_slots: Vec<GpuInstanceSlot>,
     retired_slots: Vec<RetiredSlot>,
     current_frame_id: u64,
@@ -82,6 +85,7 @@ impl RenderInstanceTable {
     pub fn new(current_frame_id: u64) -> Self {
         Self {
             bindings: SecondaryMap::new(),
+            initialized: false,
             free_slots: Vec::new(),
             retired_slots: Vec::new(),
             current_frame_id,
@@ -157,10 +161,15 @@ impl RenderInstanceTable {
     pub fn prepare_render_data<'a>(
         &mut self,
         scene: SceneReadView<'_>,
+        mut candidates: IndexSet<MeshInstanceHandle>,
         material_slot_resolver: &dyn MaterialSlotResolver,
         mesh_resolver: &'a dyn MeshRenderResolver,
     ) -> (RenderData<'a>, RenderInstanceUpdateResult) {
-        let update_result = self.sync_scene_instances(scene, material_slot_resolver, mesh_resolver);
+        if !self.initialized {
+            candidates.extend(scene.instance_map().keys());
+            self.initialized = true;
+        }
+        let update_result = self.sync_scene_instances(scene, candidates, material_slot_resolver, mesh_resolver);
         self.pending_submission.clear();
         let reset_motion_history = self.motion_history_reset_pending;
         let mut update_result = update_result;
@@ -256,43 +265,30 @@ impl RenderInstanceTable {
     fn sync_scene_instances(
         &mut self,
         scene: SceneReadView<'_>,
+        candidates: IndexSet<MeshInstanceHandle>,
         material_slot_resolver: &dyn MaterialSlotResolver,
         mesh_resolver: &dyn MeshRenderResolver,
     ) -> RenderInstanceUpdateResult {
         let mut result = RenderInstanceUpdateResult::default();
-        // 完整扫描直接收敛新增和最终状态，不要求 instance remove/update event 被可靠消费。
-        for (handle, instance) in scene.instance_map() {
-            if !self.bindings.contains_key(handle) {
-                let revision = scene
-                    .instance_revision(handle)
-                    .expect("RenderInstanceTable: instance revision missing during scene scan");
-                self.register_instance(handle, instance, revision);
-            }
+        if !candidates.is_empty() {
+            log::debug!("RenderInstanceTable: reconcile {} candidate instances", candidates.len());
         }
-
-        // stale 扫描是完整 membership 对账的一部分，删除实例后在这里退役稳定 slot。
-        let stale_handles = self
-            .bindings
-            .iter()
-            .filter_map(|(handle, _)| scene.get_instance(handle).is_none().then_some(handle))
-            .collect::<Vec<_>>();
-        for handle in stale_handles {
-            if self.retire_instance_binding(handle) {
-                result.active_set_changed = true;
-            }
-        }
-
-        for (handle, binding) in self.bindings.iter_mut() {
+        // handle 只限定对账范围；删除、新增和字段变化都由最终状态决定。
+        for handle in candidates {
             let Some(instance) = scene.get_instance(handle) else {
+                result.active_set_changed |= self.retire_instance_binding(handle);
                 continue;
             };
-
             let source_revision = scene
                 .instance_revision(handle)
-                .expect("RenderInstanceTable: instance revision missing during binding sync");
+                .expect("RenderInstanceTable: live instance revision missing");
+            if !self.bindings.contains_key(handle) {
+                self.register_instance(handle, instance, source_revision);
+            }
+            let binding = self.bindings.get_mut(handle).expect("instance binding just installed");
             let source_changed = binding.source_revision_seen != source_revision;
-            let transform_changed = binding.source.transform != instance.transform;
-            let material_binding_changed = binding.source.materials != instance.materials;
+            let transform_changed = source_changed && binding.source.transform != instance.transform;
+            let material_binding_changed = source_changed && binding.source.materials != instance.materials;
             if source_changed {
                 binding.source.clone_from(instance);
                 binding.source_revision_seen = source_revision;

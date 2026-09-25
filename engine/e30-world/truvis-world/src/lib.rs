@@ -48,6 +48,11 @@ pub struct GameWorld {
 
 // 创建与销毁
 impl GameWorld {
+    /// 将去重后的实例变更身份交给 prepare；不携带字段事件或 GPU ready 状态。
+    pub fn take_instance_changes(&mut self) -> indexmap::IndexSet<MeshInstanceHandle> {
+        self.scene.take_instance_changes()
+    }
+
     /// 创建 CPU world，并在内部初始化 scene store 和 asset system。
     pub fn new() -> Self {
         Self {

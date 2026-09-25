@@ -11,3 +11,4 @@ truvis-shader-binding = { workspace = true }
 glam = { workspace = true }
 log = { workspace = true }
 slotmap = { workspace = true }
+indexmap = { workspace = true }

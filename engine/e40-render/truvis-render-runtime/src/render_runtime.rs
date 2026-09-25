@@ -605,6 +605,7 @@ impl RenderRuntime {
         // loader completion 先收敛到 CPU registry；RenderWorld 随后通过内部
         // RenderAssetSystem 从最终资源表对账并提交尚未安装的 texture/mesh，再由 bindless prepare 写入本帧 descriptor。
         self.world.poll_asset_loads();
+        let instance_changes = self.world.take_instance_changes();
         let scene_view = self.world.scene_view();
         let resource_sync_result = self.render_world.sync_assets(
             scene_view,
@@ -642,6 +643,7 @@ impl RenderRuntime {
             self.frame_timing.frame_label(),
             scene_view,
             resource_sync_result,
+            instance_changes,
         );
         if render_world_result.history_invalidated {
             self.history_invalidated = true;

@@ -494,8 +494,9 @@ impl GpuMeshStore {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-    ) {
+    ) -> Vec<MeshAssetHandle> {
         let _span = tracy_client::span!("GpuMeshStore::sync_scene");
+        let mut published = Vec::new();
         self.reclaim_retired_resources(resource_ctx, device_ctx);
 
         for handle in scene.mesh_handles() {
@@ -535,8 +536,10 @@ impl GpuMeshStore {
                 finished.blas.destroy(resource_ctx, device_ctx, DestroyReason::DeferredCleanup);
                 continue;
             }
+            published.push(finished.handle);
             self.install_uploaded_mesh(device_ctx, finished);
         }
+        published
     }
 
     /// 移除 scene mesh 对应的 GPU-ready cache。

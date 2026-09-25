@@ -31,28 +31,30 @@ material、mesh、texture manager 各自拥有 GPU slot 或 ready cache。instan
 
 ## Final-state reconciliation
 
-prepare 读取 CPU 的最终状态，并对照当前 render-side membership、source revision、published revision 和 per-FIF uploaded revision。
+SceneStore 在有效 instance mutation 时记录去重的 generational handle，包含删除的旧 handle，不保存字段事件或矩阵快照。prepare 接管整个批次，读取 CPU 最终存在性与字段，更新 render-side binding。
 
 同一帧的多次编辑不需要抵消事件：移动后换材质、创建后删除或 A→B→C 都通过最终状态对账处理。异步 texture/mesh ready 通过独立 completion/revision 触发重新准备。
 
-当前生产路径不把旧 changelog/dirty dispatch 作为跨层语义消息。局部 dirty 仍可作为 GPU buffer 尚未追平的 bookkeeping，但不能被解释成 CPU scene 的历史事件。
+mesh 发布与 material 渲染投影变化通过现有 CPU 反向引用找到受影响 instance，与 CPU 编辑合并去重。资源候选即使 source revision 未变也重算 ready/派生状态。首次建立镜像执行完整 membership 初始化；常规帧无全量扫描兜底或 Pending 轮询。
+
+CPU 变更集合只表示需要读取最终状态的身份，不是 changelog 或操作重放；它在同步对账完成后即释放，不等待 GPU。GPU 副本追平由 render-side bookkeeping 独立维护。
 
 ## prepare 顺序
 
 1. `GameWorld::poll_asset_loads()` 消费 loader 完成事件并写回 CPU final state。
 2. `RenderWorld::sync_assets()` 对账 membership、上传队列和 GPU completion。
 3. `ShaderBindingSystem::prepare_render_data()` 刷新 bindless/global binding。
-4. RenderWorld 扫描完整 instance membership，解析 mesh/material ready gate，生成 `RenderData`。
+4. 合并 CPU 编辑和资源变化的 instance 候选，局部对账 membership/ready，然后打包 `RenderData`。
 5. 更新 analytic/emissive/light/geometry/instance/indirect buffer、TLAS 和 scene root。
 6. 写 per-frame 数据，向 RenderGraph 暴露只读 `RenderSceneView`。
 
-完整扫描包含 hidden、pending 和 not-ready instance；只有本次扫描未出现的 handle 才能退役 render-side mirror。
+变更发现不依赖可见性；候选 handle 在 CPU 中不存在才退役 binding。变更 handle 消费为 O(D)，完整 RenderData 打包、资源表同步和依赖访问另计，不宣称整个 prepare 为 O(D)。
 
 ## 异步与删除
 
 loader 完成、GPU copy 入队、timeline completion、shader-visible publish 和最终 render 结果是不同阶段。任一日志成功不能替代后续阶段证据。
 
-CPU 删除先检查反向引用，再移除 SceneStore/AssetSystem membership。RenderWorld 下一次完整扫描撤销 slot/cache；未完成上传只销毁 stale result。
+CPU 删除先检查反向引用，再移除 SceneStore/AssetSystem membership。instance 删除记录旧 handle，RenderWorld 下一次局部对账撤销 slot；资源 owner 继续按资源 membership 清理 cache，未完成上传只销毁 stale result。
 
 GPU 资源按自己的 owner 延迟回收，不能把 CPU 删除直接等同于 Vulkan image/buffer 已安全释放。
 
@@ -71,7 +73,7 @@ light revision 和 scene version。prepare 使用既有 AnalyticLightTable 完�
 - CPU final state 由 World/ResourceSystem 权威持有。
 - RenderWorld 只保存 GPU 派生状态与 render-side composition。
 - CPU handle、source revision、published revision 和 per-FIF upload revision 不合并成一个全局 dirty 数。
-- 完整 membership 对账是删除检测的依据，不能使用可见列表代替。
+- 所有 instance mutation 必须记录变更 handle；删除由候选身份的 CPU 最终存在性判断，不能使用可见列表代替。
 - Render pass 只读取 prepare 后的 scene view，不修改 CPU scene。
 
 ## 实现入口
@@ -83,7 +85,7 @@ light revision 和 scene version。prepare 使用既有 AnalyticLightTable 完�
 
 ## Readiness 与视图
 
-`RenderData` 是 prepare 的只读打包视图，不是 CPU scene 的第二份权威。pending、hidden 和 not-ready instance 仍需要参与 membership 对账，不能因为本帧不可见就当成已删除。
+`RenderData` 是 prepare 的只读打包视图，不是 CPU scene 的第二份权威。Pending 实例等待资源发布触发再次对账，不能因为本帧不可见就当成已删除。mesh geometry/BLAS 和 material slot 决定 ready；texture 使用 fallback，不阻止激活。
 
 `RenderSceneView` 只暴露当前 FIF 可安全使用的 scene root、TLAS、draw cache 和资源视图。pass 不应该通过 view 反查或修改 SceneStore。
 
@@ -104,7 +106,7 @@ light revision 和 scene version。prepare 使用既有 AnalyticLightTable 完�
 - 新资源是否先进入 CPU owner 再进入 RenderWorld？
 - GPU slot 是否能从 CPU handle 安全反查？
 - ready gate 是否覆盖所有依赖资源？
-- 删除是否经过完整 membership 扫描？
+- 删除是否记录完整 generational handle 并在局部对账中退役？
 - late completion 是否会重新 publish stale handle？
 - 新 buffer capacity 是否同步 descriptor 和每个 FIF？
 

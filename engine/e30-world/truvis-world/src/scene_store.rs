@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use indexmap::IndexSet;
 use slotmap::{SecondaryMap, SlotMap};
 use truvis_asset::handle::{MeshData, TextureBytes};
 use truvis_shader_binding::gpu;
@@ -227,6 +228,8 @@ pub(crate) struct SceneStore {
     all_instances: SlotMap<MeshInstanceHandle, Instance>,
     /// 每个 instance 的 source revision；只在有效 transform/material 编辑后推进。
     instance_revisions: SecondaryMap<MeshInstanceHandle, u64>,
+    /// 只记录待对账身份，包含已删除 handle；紧凑存储使消费成本与变更数相关。
+    changed_instances: IndexSet<MeshInstanceHandle>,
     /// CPU sky / environment 权威状态。
     sky_state: SceneSkyState,
     /// material -> instance 反向依赖索引，用于查询与删除拒绝。
@@ -244,6 +247,11 @@ pub(crate) struct SceneStore {
 }
 // 创建与初始化
 impl SceneStore {
+    /// prepare 同步接管整个批次；CPU 最终状态仍由 SceneStore 持有。
+    pub(crate) fn take_instance_changes(&mut self) -> IndexSet<MeshInstanceHandle> {
+        std::mem::take(&mut self.changed_instances)
+    }
+
     fn bump_scene_version(&mut self) {
         // u64 饱和在实际工程生命周期内不可达；使用饱和加法保持“不会回退”的协议契约。
         self.scene_version = self.scene_version.saturating_add(1);
@@ -331,6 +339,7 @@ impl SceneStore {
         self.validate_instance_dependencies(resources, &instance)?;
         let handle = self.all_instances.insert(instance);
         self.instance_revisions.insert(handle, 1);
+        self.changed_instances.insert(handle);
         let instance = self.all_instances.get(handle).expect("SceneStore: instance disappeared after insert").clone();
         self.add_instance_dependencies(handle, &instance);
         self.bump_scene_version();
@@ -348,6 +357,7 @@ impl SceneStore {
             });
         };
         self.instance_revisions.remove(handle);
+        self.changed_instances.insert(handle);
         self.remove_instance_dependencies(handle, &instance);
         self.bump_scene_version();
         Ok(())
@@ -371,6 +381,7 @@ impl SceneStore {
             return Ok(());
         }
         instance.transform = transform;
+        self.changed_instances.insert(handle);
         let revision = self.instance_revisions.get_mut(handle).expect("SceneStore: instance revision missing");
         *revision = revision.saturating_add(1).max(1);
         self.bump_scene_version();
@@ -404,6 +415,7 @@ impl SceneStore {
         let instance =
             self.all_instances.get_mut(handle).expect("SceneStore: instance disappeared after dependency validation");
         instance.materials = materials;
+        self.changed_instances.insert(handle);
         let revision = self.instance_revisions.get_mut(handle).expect("SceneStore: instance revision missing");
         *revision = revision.saturating_add(1).max(1);
         self.bump_scene_version();
@@ -775,6 +787,7 @@ impl SceneStore {
             !self.all_point_lights.is_empty() || !self.all_spot_lights.is_empty() || !self.all_area_lights.is_empty();
         self.all_instances.clear();
         self.instance_revisions.clear();
+        self.changed_instances.clear();
         self.sky_state = SceneSkyState::default();
         self.material_to_instances.clear();
         self.mesh_to_instances.clear();

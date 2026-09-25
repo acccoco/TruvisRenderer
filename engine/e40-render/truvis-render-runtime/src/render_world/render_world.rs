@@ -199,6 +199,7 @@ impl RenderWorld {
         frame_label: FrameLabel,
         scene: SceneReadView<'_>,
         resource_sync_result: RenderResourceSyncResult,
+        mut instance_changes: indexmap::IndexSet<truvis_world::guid_new_type::MeshInstanceHandle>,
     ) -> RenderWorldPrepareResult {
         let sky_update = self.render_assets.update_sky_binding();
         let environment_binding = EnvironmentBinding {
@@ -212,9 +213,16 @@ impl RenderWorld {
             frame_label,
         );
 
-        // instance 阶段完整对账 CPU scene。只有 mesh 与 material 都解析成功的实例会进入 active 列表。
+        // CPU 编辑与资源发布合并为同一候选集合；ready 不依赖 instance source revision 变化。
+        for &mesh in &resource_sync_result.published_meshes {
+            instance_changes.extend(scene.instances_using_mesh(mesh));
+        }
+        for &material in &resource_sync_result.appearance_changed_materials {
+            instance_changes.extend(scene.instances_using_material(material));
+        }
         let (scene_render_data, instance_result) = self.render_instance_table.prepare_render_data(
             scene,
+            instance_changes,
             self.render_assets.material_resolver(),
             self.render_assets.mesh_resolver(),
         );
