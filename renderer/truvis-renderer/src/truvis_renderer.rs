@@ -35,6 +35,8 @@ use crate::{SceneSelection, SelectionChange, light_overlay::LightOverlay};
 
 pub struct TruvisRenderer {
     imgui: ImGuiSubsystem,
+    /// 主 overlay 的布局缩放；字体和 ImGui 全局 style 仍由 ImGuiSubsystem 独立管理。
+    ui_scale: f32,
     debug_image_selection: DebugImageSelection,
     realtime: RealtimeRenderSubsystem,
     offline: OfflineRenderSubsystem,
@@ -100,6 +102,7 @@ impl TruvisRenderer {
         let frame_view = camera_controller.camera().render_view();
         Self {
             imgui: Default::default(),
+            ui_scale: 1.0,
             debug_image_selection: Default::default(),
             realtime: Default::default(),
             offline: Default::default(),
@@ -300,6 +303,7 @@ impl TruvisRenderer {
 impl Renderer for TruvisRenderer {
     fn init(&mut self, ctx: &mut RendererInitCtx<'_>) {
         self.render_mode = RenderMode::initial_from_env();
+        self.ui_scale = ctx.scale_factor as f32;
         self.imgui.set_hidpi_factor(ctx.scale_factor);
         self.imgui.set_display_size(ctx.window_size);
 
@@ -429,6 +433,7 @@ impl Renderer for TruvisRenderer {
             let offline_sample_count = self.offline.sample_count();
             let frame = TruvisOverlayFrame {
                 ui,
+                ui_scale: self.ui_scale,
                 stats: FrameStatsOverlayData {
                     camera: self.camera_controller.camera(),
                     swapchain_extent: ctx.swapchain_extent,

@@ -49,6 +49,7 @@ impl TruvisOverlayUi {
     pub(crate) fn build(&mut self, frame: TruvisOverlayFrame<'_>) {
         let TruvisOverlayFrame {
             ui,
+            ui_scale,
             stats,
             mut render_controls,
             raycast,
@@ -61,10 +62,11 @@ impl TruvisOverlayUi {
             return;
         }
 
+        // 这些值以 100% DPI 下的物理像素为基准，只缩放首次出现时的主窗口几何。
         ui.window("Truvis Overlay")
-            .position([10.0, 40.0], imgui::Condition::FirstUseEver)
-            .size([320.0, 340.0], imgui::Condition::FirstUseEver)
-            .size_constraints([320.0, 240.0], [f32::MAX, f32::MAX])
+            .position([10.0 * ui_scale, 40.0 * ui_scale], imgui::Condition::FirstUseEver)
+            .size([320.0 * ui_scale, 340.0 * ui_scale], imgui::Condition::FirstUseEver)
+            .size_constraints([320.0 * ui_scale, 240.0 * ui_scale], [f32::MAX, f32::MAX])
             .scroll_bar(false)
             .scrollable(false)
             .build(|| {
@@ -243,6 +245,7 @@ impl TruvisOverlayUi {
 
 pub(crate) struct TruvisOverlayFrame<'a> {
     pub(crate) ui: &'a imgui::Ui,
+    pub(crate) ui_scale: f32,
     pub(crate) stats: FrameStatsOverlayData<'a>,
     pub(crate) render_controls: RenderControlsData<'a>,
     pub(crate) raycast: RaycastOverlayData<'a>,
