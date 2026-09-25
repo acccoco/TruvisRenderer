@@ -19,10 +19,10 @@ struct PerFrameData
     float4x4 inv_view;
     /// 当前帧 projection 逆矩阵，用于从 NDC / clip 空间回推 view-space 方向。
     float4x4 inv_projection;
-    /// 上一帧用于 motion vector 回溯的 view 矩阵。
+    /// 上一提交主视图帧用于 motion vector 回溯的 view 矩阵。
     ///
-    /// DLSS history reset、新视图或无上一帧历史时由 runtime 写为当前帧 view，
-    /// 保证第一帧不会产生脏 motion vector。
+    /// 首次建立相机历史时使用当前 view；普通 DLSS reset 不改变运动历史。
+    /// 相机与实例 previous 必须对应同一次主视图提交，不能随 FIF 副本轮转。
     float4x4 prev_view;
     /// 上一帧用于 motion vector 回溯的 projection 矩阵。
     float4x4 prev_projection;
