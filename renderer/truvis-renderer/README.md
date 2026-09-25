@@ -48,6 +48,9 @@ Renderer 本身只消费 CPU scene 结果并负责 GPU/RenderGraph 编排。
 compute 与 present graph 分别在局部作用域完成录制；compute 的资源借用结束后才进入 present 编排。
 两种模式只选择各自的输入目标和命令缓冲，共用 SDR 后处理及 present/overlay 编排；GPU owner 保持独立。
 
+`render` 返回主视图场景是否实际提交；无 TLAS 清屏返回 false。相机历史与 jitter 在提交后确认，
+Loop 用同一结果确认 Runtime instance 历史，避免 prepare 或仅 present 推进运动历史。
+
 `TruvisRenderer::render` 根据当前 `RenderMode` 选择 realtime 或 offline 渲染子系统，并显式组织主图 resolve、
 selection outline、viewport overlay 与 ImGui 的顺序。具体 pass 位于 `renderer-render-passes`，渲染 owner 位于
 `renderer-rendering`，ImGui 与设置控件分别位于 `renderer-imgui` 和 `renderer-render-ui`；`renderer-kit` 只提供基础契约和 CPU 状态。

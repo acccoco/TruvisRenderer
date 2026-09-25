@@ -59,6 +59,11 @@ Renderer/subsystem 只读取该 state，并在 init/resize 时提交自身 targe
 
 `DlssSrState` 保存 DLSS evaluate 所需的 jitter、previous view、common constants 和 reset 标记。`ViewAccumState` 保存 main view 的历史签名和稳定帧计数。两者都由 `TruvisRenderer` 管理。
 
+相机 previous 对齐上一实际提交的主视图，prepare 只生成本帧 view/constants 与候选 jitter。
+主视图 submit 正常返回后才推进相机和 jitter；无主视图提交释放本帧准备数据并保留历史。
+普通 DLSS reset 请求不清空相机/实例运动历史或修改已上传 jitter；初始化、模式/尺寸重配置
+在 prepare 前重启 jitter，但仍保留上一提交相机。
+
 Runtime 只在尺寸和 scene/lighting 语义变化时发出通用 history invalidation；`TruvisRenderer` 再分别通知 DLSS、ViewAccum 和 ReSTIR。reset 是“下一次 evaluate 不使用旧 history”的语义，不等价于立刻清除所有图像。
 
 Realtime ReSTIR reservoir、SHARC cache、offline accumulation 属于对应 Renderer subsystem 的 temporal resources，不进入 `DlssOptions` 或 `DlssSrState`。

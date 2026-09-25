@@ -320,7 +320,9 @@ impl<'a> DlssCommonConstantsBuilder<'a> {
 pub struct DlssSrState {
     constants: DlssSrFrameConstants,
     previous_view: Option<RenderView>,
-    motion_vector_previous_view: Option<RenderView>,
+    /// 本帧 prepare 的 view 与候选 jitter；只有主视图 submit 才成为跨帧历史。
+    prepared_view: Option<RenderView>,
+    prepared_jitter: DlssJitterSequence,
     jitter_sequence: DlssJitterSequence,
     reset_pending: bool,
 }
@@ -330,7 +332,8 @@ impl Default for DlssSrState {
         Self {
             constants: DlssSrFrameConstants::default(),
             previous_view: None,
-            motion_vector_previous_view: None,
+            prepared_view: None,
+            prepared_jitter: DlssJitterSequence::default(),
             jitter_sequence: DlssJitterSequence::default(),
             reset_pending: true,
         }
@@ -345,20 +348,30 @@ impl DlssSrState {
 
     #[inline]
     pub fn motion_vector_previous_view(&self) -> Option<RenderView> {
-        self.motion_vector_previous_view
+        self.previous_view
     }
 
     /// 请求下一次 evaluate 重置 DLSS history。
     ///
     /// 调用点包括窗口尺寸变化、render extent 变化、DLSS mode 切换和未来场景大跳变。
     pub fn request_reset(&mut self) {
-        self.previous_view = None;
-        self.motion_vector_previous_view = None;
-        self.jitter_sequence.reset();
         self.reset_pending = true;
-        self.constants.sampling_jitter_offset = [0.0, 0.0];
-        self.constants.jitter_offset = [0.0, 0.0];
-        self.constants.reset = true;
+    }
+
+    /// 配置/尺寸变化在 prepare 前重启采样；仍保留上一实际提交主视图的相机。
+    pub fn reconfigure(&mut self) {
+        assert!(self.prepared_view.is_none(), "cannot reconfigure after frame prepare");
+        self.request_reset();
+        self.jitter_sequence.reset();
+    }
+
+    /// 与 instance history 使用同一主视图提交边界；清屏帧释放准备记录但不推进历史。
+    pub fn finish_rendered_frame(&mut self, scene_submitted: bool) {
+        let view = self.prepared_view.take().expect("camera frame was not prepared");
+        if scene_submitted {
+            self.previous_view = Some(view);
+            self.jitter_sequence = self.prepared_jitter;
+        }
     }
 
     /// 根据当前视图更新 common constants。
@@ -369,14 +382,15 @@ impl DlssSrState {
     /// `dlss_active` 决定本帧是否生成 temporal jitter。DLSS 关闭时必须写 0 且不推进
     /// jitter sequence，避免 native 路径和下一次 DLSS reset 继承不可见的采样状态。
     pub fn update(&mut self, render_view: &RenderView, frame_state: &FrameRenderState, dlss_active: bool) {
+        assert!(self.prepared_view.is_none(), "camera frame prepared twice");
         let previous_view = self.previous_view.unwrap_or(*render_view);
         let reset = self.reset_pending || self.previous_view.is_none();
-        let jitter_offset = self.jitter_sequence.next_offset(dlss_active);
+        self.prepared_jitter = self.jitter_sequence;
+        let jitter_offset = self.prepared_jitter.next_offset(dlss_active);
         self.constants =
             DlssCommonConstantsBuilder::new(render_view, previous_view, frame_state, jitter_offset, reset).build();
 
-        self.motion_vector_previous_view = Some(previous_view);
-        self.previous_view = Some(*render_view);
+        self.prepared_view = Some(*render_view);
         self.reset_pending = false;
     }
 }

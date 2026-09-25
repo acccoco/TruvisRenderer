@@ -114,6 +114,10 @@ impl TruvisDlssState {
         self.sr_state.request_reset();
     }
 
+    pub fn finish_rendered_frame(&mut self, scene_submitted: bool) {
+        self.sr_state.finish_rendered_frame(scene_submitted);
+    }
+
     pub fn shutdown(&mut self, ctx: &mut truvis_render_runtime::render_runtime_ctx::RenderRuntimeShutdownCtx<'_>) {
         if self.feature_to_release.is_some() {
             ctx.device_ctx.device().wait_idle();
@@ -184,7 +188,7 @@ impl TruvisDlssState {
         if self.effective.is_dlss_active() {
             dlss::set_options(0, self.streamline_sr_options(output_extent))?;
         }
-        self.sr_state.request_reset();
+        self.sr_state.reconfigure();
         Ok(())
     }
 

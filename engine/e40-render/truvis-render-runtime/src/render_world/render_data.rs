@@ -48,11 +48,6 @@ pub(crate) struct InstanceRenderData {
     pub(crate) requires_any_hit: bool,
     /// 由 CPU scene 提供的模型矩阵，prepare 阶段会写入 instance buffer 并参与 TLAS 构建。
     pub(crate) transform: glam::Mat4,
-    /// 上一帧用于 DLSS motion vector 回溯的模型矩阵。
-    ///
-    /// 新激活实例或 history reset 帧会由 `RenderInstanceTable` 写为当前 transform，
-    /// 避免旧 slot 历史污染当前帧 temporal 输入。
-    pub(crate) previous_transform: glam::Mat4,
 }
 
 /// 用于渲染的 mesh GPU 数据引用。

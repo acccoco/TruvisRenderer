@@ -66,6 +66,16 @@ light revision 和 scene version。prepare 使用既有 AnalyticLightTable 完�
 
 每个 material buffer、scene buffer 和 instance buffer 维护 per-FIF 副本。本帧只写当前 label；落后副本在再次使用前补写最新目标。
 
+`RenderInstanceTable` 只在最终 transform 改变时推进实例版本。dirty 集合保存尚需运动历史或 FIF
+同步的 Active 身份；各副本记录上传的 current/previous 版本对。常规上传仅写不匹配的
+`model/inv_model` 或 `prev_model`，不比较 staging 矩阵，不复制完整 instance 表。
+结构 revision 仅控制集合、绑定布局与容量变化的完整上传；transform 仍更新 TLAS、emissive 和累计签名。
+
+上传 submit 返回只确认 GPU 副本版本；主视图 render submit 返回才推进上一渲染帧 transform。
+相机历史使用同一提交边界。无主视图提交保留历史；present 失败不回滚已提交历史。
+物体停止后继续保持 dirty，直到全部 FIF 都为 `(current, current)` 且渲染历史已追平。
+新增/重新激活令 previous=current；buffer 重建只重写当前副本，保留 CPU 运动历史。
+
 动态容量扩展必须同时更新 CPU mirror、GPU buffer、descriptor count 和当前 FIF 的上传路径。扩展不能改变已有 handle 语义，也不能在 GPU 仍使用旧 buffer 时直接销毁旧资源。
 
 ## 设计不变量

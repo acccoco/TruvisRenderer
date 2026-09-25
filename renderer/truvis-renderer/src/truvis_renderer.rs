@@ -543,7 +543,7 @@ impl Renderer for TruvisRenderer {
         self.realtime.shutdown(&mut ctx.runtime);
     }
 
-    fn render(&mut self, ctx: &RenderRuntimeRenderCtx) {
+    fn render(&mut self, ctx: &RenderRuntimeRenderCtx) -> bool {
         let subsystem_ctx = SubsystemRenderCtx::from_runtime(ctx);
         let frame_label = ctx.record_ctx.frame_timing.frame_label();
         let frame_id = ctx.record_ctx.frame_timing.frame_id();
@@ -569,7 +569,7 @@ impl Renderer for TruvisRenderer {
         self.history_reset_pending = false;
 
         // compute graph 的资源借用在录制后结束；提交信息只保存 Vulkan handle，资源继续由 subsystem 持有。
-        let compute_submit = {
+        let (compute_submit, scene_submitted) = {
             let mut graph = RenderGraphBuilder::new();
             let display = match self.render_mode {
                 RenderMode::Realtime => self.realtime.contribute_compute_passes(
@@ -585,6 +585,8 @@ impl Renderer for TruvisRenderer {
                     &self.path_tracing_common_settings,
                 ),
             };
+            // 两种主视图子系统仅在加入场景 RT pass 时返回 display；无 TLAS 清屏返回 None。
+            let uses_scene = display.is_some();
             self.sdr_post_process.contribute(
                 &mut graph,
                 &subsystem_ctx,
@@ -609,7 +611,7 @@ impl Renderer for TruvisRenderer {
             cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, label);
             compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
             cmd.end();
-            compiled_graph.build_submit_info(std::slice::from_ref(cmd))
+            (compiled_graph.build_submit_info(std::slice::from_ref(cmd)), uses_scene)
         };
 
         // 两种模式共用 present 编排，只选择各自的目标和命令缓冲，不重复 overlay 顺序。
@@ -667,6 +669,8 @@ impl Renderer for TruvisRenderer {
         // 两种模式都保持 compute -> present 的提交顺序。timeline signal 放在 present graph，
         // 因此上层 runtime 只需要等待同一个 frame_id 即可观察最终 swapchain 写入完成。
         ctx.queue_ctx.gfx_queue().submit(vec![compute_submit, present_submit], None);
+        self.dlss.finish_rendered_frame(scene_submitted);
+        scene_submitted
     }
 
     fn render_frame_input(

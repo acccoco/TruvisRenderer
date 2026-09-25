@@ -23,6 +23,10 @@
 
 ## 状态所有权
 
+Instance transform 采用版本驱动的 dirty 集合与每 FIF current/previous 版本对，仅复制变化矩阵。
+prepare 上传提交确认副本版本；Loop 在 Renderer 返回后调用 `finish_rendered_frame`，仅主视图
+实际提交时推进运动历史。稳定后退出 dirty；结构上传和容量重建复用同一矩阵写入路径。
+
 - `GameWorld` 承载 CPU 侧 `SceneStore` 与 `AssetSystem`，供 update/prepare 阶段读取或修改；Renderer-facing
   model import、procedural mesh/material、runtime instance 和 analytic light 注册通过 `GameWorld` facade 进入，
 -  render runtime 只通过 `GameWorld::poll_asset_loads()` 收敛 loader 状态和 `GameWorld::scene_view()`
@@ -64,8 +68,8 @@
   material buffer、dirty region 上传和延迟 slot 回收；texture binding revision 负责发现异步 ready。
   它在资源对账阶段复制 CPU 材质参数并生成 render-side prepared snapshot，写 GPU material buffer 时只消费这份副本。
 - `RenderInstanceTable` 首次初始化完整 membership，后续仅对账 CPU 编辑与资源反向引用合并的候选 handle；同步 `MeshInstanceHandle -> GpuInstanceSlot`，在 mesh/material 都 GPU ready 前保持 pending，并按稳定 slot 输出
-  active render list，同时为同步 raycast 生成当前 prepare 快照的 slot 反查表。每帧 motion history 推进仍属于
-  instance manager 自身的 temporal 生命周期维护，不参与 dirty 传播。
+  active render list，同时为同步 raycast 生成当前 prepare 快照的 slot 反查表。运动历史与 FIF 版本
+  由 instance manager 的 dirty 集合收敛，不向 GameWorld 反向传播 previous 更新。
 - instance slot 不再预设固定数量；新 slot 按稳定索引增长，删除后仍跨 FIF 窗口复用。当前 FIF 的
   geometry、instance 和 indirect buffer 在 prepare 时按实际数据以二次幂容量扩容，扩容后整表重传。
 - bindless sampled-image descriptor 上限为 1024，descriptor pool 与生成的 layout count 使用同一来源；

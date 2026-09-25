@@ -67,7 +67,7 @@ impl Renderer for TriangleRenderer {
         );
     }
 
-    fn render(&mut self, ctx: &RenderRuntimeRenderCtx) {
+    fn render(&mut self, ctx: &RenderRuntimeRenderCtx) -> bool {
         let subsystem_ctx = SubsystemRenderCtx::from_runtime(ctx);
         self.imgui.prepare_render_data(&subsystem_ctx);
 
@@ -102,6 +102,7 @@ impl Renderer for TriangleRenderer {
 
         let submit_info = compiled_graph.build_submit_info(std::slice::from_ref(cmd));
         ctx.queue_ctx.gfx_queue().submit(vec![submit_info], None);
+        false
     }
 
     fn render_frame_input(&mut self, _frame_state: &truvis_render_runtime::state::frame_state::FrameRenderState) -> truvis_render_runtime::render_runtime::RenderFrameInput {

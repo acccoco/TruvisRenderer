@@ -346,6 +346,11 @@ impl RenderRuntime {
         self.update_perframe_descriptor_set();
     }
 
+    /// 主视图提交结果由 Loop 同帧交回；上传已入队不等于该快照已经用于渲染。
+    pub fn finish_rendered_frame(&mut self, scene_submitted: bool) {
+        self.render_world.finish_rendered_frame(scene_submitted);
+    }
+
     /// prepare 后、render graph 组图前的 Renderer 同步查询阶段。
     ///
     /// 此阶段只暴露同步 raycast 能力。GPU scene/TLAS 已提交到 graphics queue，后续
@@ -429,7 +434,6 @@ impl RenderRuntime {
         self.frame_state.output_extent = output_extent;
         self.frame_state.render_extent = new_render_extent;
         self.history_invalidated = true;
-        self.render_world.request_motion_history_reset();
 
         Some(RenderRuntimeResizeCtx {
             device_ctx: self.gfx.device_ctx(),
@@ -647,7 +651,6 @@ impl RenderRuntime {
         );
         if render_world_result.history_invalidated {
             self.history_invalidated = true;
-            self.render_world.request_motion_history_reset();
         }
 
         // per-frame uniform 放在 GPU scene 上传之后写入同一条命令缓冲，保证本帧 shader
@@ -690,7 +693,7 @@ impl RenderRuntime {
         );
         cmd.end();
         self.gfx.queue_ctx().gfx_queue().submit(vec![GfxSubmitInfo::new(std::slice::from_ref(&cmd))], None);
-        self.render_world.commit_submitted_frame(frame_label);
+        self.render_world.commit_uploaded_frame(frame_label);
     }
 }
 
@@ -727,7 +730,6 @@ impl RenderRuntime {
         self.requested_render_extent = swapchain_extent;
         self.frame_state.render_extent = swapchain_extent;
         self.history_invalidated = true;
-        self.render_world.request_motion_history_reset();
     }
 
     /// 刷新当前 FIF per-frame descriptor set。

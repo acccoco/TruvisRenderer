@@ -213,7 +213,8 @@ impl RenderLoop {
         {
             let _span = tracy_client::span!("RenderLoop::render");
             let render_ctx = render_runtime.render_phase();
-            renderer.render(&render_ctx);
+            let scene_submitted = renderer.render(&render_ctx);
+            render_runtime.finish_rendered_frame(scene_submitted);
         }
 
         {

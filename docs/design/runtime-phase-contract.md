@@ -43,6 +43,8 @@ Renderer hook 与 Runtime phase 一一对应但不等价：
 - `render_view` 提供纯数据快照，Runtime 在 `prepare` 中读取。
 - `after_prepare` 处理需要已完成 GPU scene 的即时查询，例如 picking。
 - `render` 创建 RenderGraph 并决定 pass 顺序。
+- `render` 返回本帧主视图是否已使用 prepare 场景快照并完成 submit；Loop 随即调用
+  `RenderRuntime::finish_rendered_frame` 确认实例历史，然后进入 present。
 - `on_resize` 传播窗口尺寸变化。
 - `shutdown` 在 Runtime 销毁前释放 Renderer-owned GPU 资源。
 
@@ -52,6 +54,10 @@ Renderer hook 与 Runtime phase 一一对应但不等价：
 `render_view()`、主图 prepare、overlay 和 Offline 累计签名使用该视图；after_prepare 相机查询引起的变化下一帧才进入快照。
 after_prepare 的网格 picking 通过统一 selection 提交入口清除旧 gizmo，render 依据最终 selection 生成顶点，不访问 World。
 每帧输入只消费一次，展示可在 mutation 后刷新；上传不修改展示语义。
+
+上传提交与主视图提交分别确认：前者推进当前 FIF 的数据版本，后者推进相机/实例运动历史。
+无 TLAS 的清屏帧、仅 overlay/present 和不消费 Runtime scene 的示例返回 false；无需等待 GPU
+执行完成，也不以 present 成功为确认条件。同一 prepare 只允许同帧确认一次，source 保持冻结。
 
 `on_resize` 比较实际输出 extent：仅 DLSS 内部尺寸变化继续更新渲染资源，但保留拖动和 CPU overlay。
 原生 `publish_resize` 同时投递 Resized 输入，覆盖最小化或变尺寸后回到原尺寸的取消行为。

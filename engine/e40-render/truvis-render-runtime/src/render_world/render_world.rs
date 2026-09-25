@@ -13,15 +13,15 @@ use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
 
 use crate::bindings::shader_binding_system::ShaderBindingSystem;
-use crate::resources::gfx_resource_registry::GfxResourceRegistry;
-use crate::render_world::environment_binding::EnvironmentBinding;
 use crate::render_world::analytic_light_table::{AnalyticLightBinding, AnalyticLightTable};
+use crate::render_world::environment_binding::EnvironmentBinding;
+use crate::render_world::render_asset_system::{RenderAssetSystem, RenderResourceSyncResult};
 use crate::render_world::render_data::RenderData;
 use crate::render_world::render_emissive_light_table::EmissiveLightBinding;
 use crate::render_world::render_emissive_light_table::RenderEmissiveLightTable;
 use crate::render_world::render_instance_table::RenderInstanceTable;
 use crate::render_world::scene_tlas::SceneTlas;
-use crate::render_world::render_asset_system::{RenderResourceSyncResult, RenderAssetSystem};
+use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 use crate::selection::{WorldSubmeshRasterView, WorldSubmeshSelection};
 
 use super::buffers::SceneBuffers;
@@ -136,12 +136,7 @@ impl RenderWorld {
         for buffers in &mut self.scene_buffers {
             buffers.destroy_mut(resource_ctx, device_ctx);
         }
-        self.render_assets.destroy(
-            resource_ctx,
-            device_ctx,
-            shader_binding_system,
-            gfx_resource_registry,
-        );
+        self.render_assets.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_registry);
     }
 }
 
@@ -152,8 +147,8 @@ impl RenderWorld {
         self.render_instance_table.begin_frame(current_frame_id);
     }
 
-    pub(crate) fn request_motion_history_reset(&mut self) {
-        self.render_instance_table.request_motion_history_reset();
+    pub(crate) fn finish_rendered_frame(&mut self, scene_submitted: bool) {
+        self.render_instance_table.finish_rendered_frame(scene_submitted);
     }
 
     /// 对账当前 `GameWorld` 的 CPU 资源，并推进本 world 的 GPU 资源安装。
@@ -206,12 +201,7 @@ impl RenderWorld {
             sky: sky_update.binding,
         };
 
-        self.render_assets.upload_materials(
-            resource_ctx,
-            cmd,
-            transfer_barrier_mask,
-            frame_label,
-        );
+        self.render_assets.upload_materials(resource_ctx, cmd, transfer_barrier_mask, frame_label);
 
         // CPU 编辑与资源发布合并为同一候选集合；ready 不依赖 instance source revision 变化。
         for &mesh in &resource_sync_result.published_meshes {
@@ -227,12 +217,8 @@ impl RenderWorld {
             self.render_assets.mesh_resolver(),
         );
         self.analytic_light_table.sync_scene(scene);
-        let analytic_light_update = self.analytic_light_table.update_and_upload(
-            resource_ctx,
-            cmd,
-            transfer_barrier_mask,
-            frame_label,
-        );
+        let analytic_light_update =
+            self.analytic_light_table.update_and_upload(resource_ctx, cmd, transfer_barrier_mask, frame_label);
         let light_changed = self.last_light_revision != scene.light_revision();
         self.last_light_revision = scene.light_revision();
 
@@ -241,10 +227,7 @@ impl RenderWorld {
             .iter()
             .flat_map(|instance| instance.material_handles.iter().copied())
             .collect::<std::collections::HashSet<_>>();
-        let scene_changed = instance_result.active_set_changed
-            || instance_result.transform_changed
-            || instance_result.material_binding_changed
-            || instance_result.temporal_data_changed;
+        let scene_changed = instance_result.active_set_changed || instance_result.material_binding_changed;
         if scene_changed {
             self.scene_revision = self.scene_revision.saturating_add(1).max(1);
         }
@@ -258,10 +241,7 @@ impl RenderWorld {
         let emissive_changed = instance_result.active_set_changed
             || instance_result.transform_changed
             || instance_result.material_binding_changed
-            || resource_sync_result
-                .emissive_changed_materials
-                .iter()
-                .any(|material| used_materials.contains(material));
+            || resource_sync_result.emissive_changed_materials.iter().any(|material| used_materials.contains(material));
         if appearance_changed {
             self.appearance_revision = self.appearance_revision.saturating_add(1).max(1);
         }
@@ -286,6 +266,7 @@ impl RenderWorld {
         );
         Self::upload_render_data(
             &mut self.scene_buffers,
+            &mut self.render_instance_table,
             &mut self.uploaded_scene_revisions,
             &mut self.pending_scene_revisions,
             &mut self.scene_tlas,
@@ -319,9 +300,9 @@ impl RenderWorld {
         }
     }
 
-    pub(crate) fn commit_submitted_frame(&mut self, frame_label: FrameLabel) {
+    pub(crate) fn commit_uploaded_frame(&mut self, frame_label: FrameLabel) {
         self.render_assets.commit_submitted_frame(frame_label);
-        self.render_instance_table.commit_submitted_frame();
+        self.render_instance_table.commit_uploaded_frame(frame_label);
         self.analytic_light_table.commit_submitted_frame(frame_label);
         self.render_emissive_light_table.commit_submitted_frame(frame_label);
         let index = *frame_label;
@@ -406,6 +387,7 @@ impl RenderWorld {
     /// scene root buffer 最后写入，确保它记录的 device address 与本帧实际 buffer/TLAS 对齐。
     fn upload_render_data(
         scene_buffers: &mut [SceneBuffers; FrameLabel::COUNT],
+        instances: &mut RenderInstanceTable,
         uploaded_scene_revisions: &mut [u64; FrameLabel::COUNT],
         pending_scene_revisions: &mut [Option<u64>; FrameLabel::COUNT],
         scene_tlas: &mut SceneTlas,
@@ -436,16 +418,24 @@ impl RenderWorld {
             pending_scene_revisions[*frame_label] = Some(scene_revision);
         }
 
+        let buffers = &mut scene_buffers[*frame_label];
+        let regions = instances.prepare_transform_uploads(
+            frame_label,
+            scene_needs_upload,
+            buffers.instance_stage_buffer.mapped_slice(),
+        );
+        Self::flush_copy_regions_and_barrier(
+            resource_ctx,
+            cmd,
+            &mut buffers.instance_stage_buffer,
+            &mut buffers.instance_buffer,
+            barrier_mask,
+            &regions,
+        );
+
         // TLAS instance 描述使用稳定 instance slot 与 transform，因此必须在 instance buffer
         // 写入逻辑之后构建，保证 GPU scene buffer、TLAS custom index 和 raster draw cache 对齐。
-        scene_tlas.build_or_update(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            render_data,
-            frame_id,
-            frame_label,
-        );
+        scene_tlas.build_or_update(resource_ctx, device_ctx, immediate_ctx, render_data, frame_id, frame_label);
         let current_tlas_revision = scene_tlas.tlas_revision(frame_label);
 
         Self::upload_scene_buffer(
@@ -573,7 +563,7 @@ impl RenderWorld {
             crt_geometry_idx += mesh.geometries.len();
         }
 
-        flush_copy_and_barrier(
+        Self::flush_copy_and_barrier(
             resource_ctx,
             cmd,
             crt_geometry_stage_buffer,
@@ -630,15 +620,11 @@ impl RenderWorld {
                 panic!("instance material cnt can not be larger than buffer");
             }
 
-            instance_buffer_slices[instance_slot] = gpu::engine::scene::Instance {
-                geometry_indirect_idx: crt_geometry_indirect_idx as u32,
-                geometry_count: submesh_cnt as u32,
-                material_indirect_idx: crt_material_indirect_idx as u32,
-                material_count: submesh_cnt as u32,
-                model: instance.transform.into(),
-                inv_model: instance.transform.inverse().into(),
-                prev_model: instance.previous_transform.into(),
-            };
+            let record = &mut instance_buffer_slices[instance_slot];
+            record.geometry_indirect_idx = crt_geometry_indirect_idx as u32;
+            record.geometry_count = submesh_cnt as u32;
+            record.material_indirect_idx = crt_material_indirect_idx as u32;
+            record.material_count = submesh_cnt as u32;
 
             // 将 geometry 索引写入间接索引 buffer。
             // mesh 在 RenderData 中去重，instance 只保存它引用的 submesh 范围。
@@ -657,21 +643,14 @@ impl RenderWorld {
             }
         }
 
-        flush_copy_and_barrier(
-            resource_ctx,
-            cmd,
-            crt_instance_stage_buffer,
-            &mut crt_gpu_buffers.instance_buffer,
-            barrier_mask,
-        );
-        flush_copy_and_barrier(
+        Self::flush_copy_and_barrier(
             resource_ctx,
             cmd,
             crt_geometry_indirect_stage_buffer,
             &mut crt_gpu_buffers.geometry_indirect_buffer,
             barrier_mask,
         );
-        flush_copy_and_barrier(
+        Self::flush_copy_and_barrier(
             resource_ctx,
             cmd,
             crt_material_indirect_stage_buffer,
@@ -679,34 +658,48 @@ impl RenderWorld {
             barrier_mask,
         );
     }
-}
 
-/// 三个操作：
-/// 1. 将 stage buffer 的数据 *全部* flush 到 buffer 中
-/// 2. 从 stage buffer 中将 *所有* 数据复制到目标 buffer 中
-/// 3. 添加 barrier，确保后续访问时 Copy 已经完成且数据可用
-///
-/// 当前 scene buffer 上传采用整 buffer copy，简化 dirty tracking；调用者负责传入后续 shader
-/// 阶段需要的可见性 mask。
-fn flush_copy_and_barrier(
-    resource_ctx: GfxResourceCtx<'_>,
-    cmd: &GfxCommandBuffer,
-    stage_buffer: &mut GfxBuffer,
-    dst: &mut GfxBuffer,
-    barrier_mask: GfxBarrierMask,
-) {
-    let buffer_size = stage_buffer.size();
-    stage_buffer.flush(resource_ctx, 0, buffer_size);
-    cmd.cmd_copy_buffer(
-        stage_buffer,
-        dst,
-        &[vk::BufferCopy {
-            size: buffer_size,
-            ..Default::default()
-        }],
-    );
-    cmd.buffer_memory_barrier(
-        vk::DependencyFlags::empty(),
-        &[GfxBufferBarrier::default().mask(barrier_mask).buffer(dst.vk_buffer(), 0, vk::WHOLE_SIZE)],
-    );
+    /// 结构表完整上传也使用同一范围复制与可见性逻辑。
+    fn flush_copy_and_barrier(
+        resource_ctx: GfxResourceCtx<'_>,
+        cmd: &GfxCommandBuffer,
+        stage_buffer: &mut GfxBuffer,
+        dst: &mut GfxBuffer,
+        barrier_mask: GfxBarrierMask,
+    ) {
+        let buffer_size = stage_buffer.size();
+        Self::flush_copy_regions_and_barrier(
+            resource_ctx,
+            cmd,
+            stage_buffer,
+            dst,
+            barrier_mask,
+            &[vk::BufferCopy {
+                size: buffer_size,
+                ..Default::default()
+            }],
+        );
+    }
+
+    /// 只 flush/copy 实际改动区域；整体 barrier 保留既有 shader 可见性契约。
+    fn flush_copy_regions_and_barrier(
+        resource_ctx: GfxResourceCtx<'_>,
+        cmd: &GfxCommandBuffer,
+        stage_buffer: &mut GfxBuffer,
+        dst: &mut GfxBuffer,
+        barrier_mask: GfxBarrierMask,
+        regions: &[vk::BufferCopy],
+    ) {
+        if regions.is_empty() {
+            return;
+        }
+        for region in regions {
+            stage_buffer.flush(resource_ctx, region.src_offset, region.size);
+        }
+        cmd.cmd_copy_buffer(stage_buffer, dst, regions);
+        cmd.buffer_memory_barrier(
+            vk::DependencyFlags::empty(),
+            &[GfxBufferBarrier::default().mask(barrier_mask).buffer(dst.vk_buffer(), 0, vk::WHOLE_SIZE)],
+        );
+    }
 }

@@ -70,7 +70,9 @@ pub trait Renderer {
     ///
     /// Renderer 在这里创建 RenderGraph，并显式决定具体渲染子系统与 GUI pass 的加入顺序。
     /// 渲染能力保留在具体子系统类型上，不通过 `RenderLoop` 或通用生命周期 trait 派发。
-    fn render(&mut self, ctx: &RenderRuntimeRenderCtx);
+    /// 返回 true 表示本帧主视图实际使用 prepare 场景快照且 submit 已正常返回。
+    /// 仅清屏、overlay/present 或不使用 Runtime scene 的 Renderer 返回 false。
+    fn render(&mut self, ctx: &RenderRuntimeRenderCtx) -> bool;
 
     /// 提供 runtime prepare 阶段使用的当前逐帧视图输入。
     fn render_frame_input(
