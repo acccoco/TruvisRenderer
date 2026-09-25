@@ -63,14 +63,14 @@ impl OfflineRenderSettings {
     pub const MIN_RAY_DISPATCH_COUNT: u32 = 1;
     pub const MAX_RAY_DISPATCH_COUNT: u32 = 8;
 
-    /// 离线不维护 realtime 的 reservoir、specular motion 或 SHARC cache。
+    /// 离线不维护 realtime 的 reservoir、specular hit distance 或 SHARC cache。
     pub fn supports_debug_channel(channel: PathTracingDebugChannel) -> bool {
         !matches!(
             channel,
             PathTracingDebugChannel::RestirInitialWeight
                 | PathTracingDebugChannel::RestirTemporalValid
                 | PathTracingDebugChannel::RestirFinalContribution
-                | PathTracingDebugChannel::SpecularMotionMagnitude
+                | PathTracingDebugChannel::SpecularHitDistance
                 | PathTracingDebugChannel::SharcHashGrid
                 | PathTracingDebugChannel::SharcCache
                 | PathTracingDebugChannel::SharcQueryDepth

@@ -1,5 +1,9 @@
 # renderer-rendering
 
+RR 输入使用单通道 specular hit distance，生命周期由 `DlssRrInputTargets` 管理；不保留 specular MV。
+shader/FFI 契约、反射距离近似与 debug 规则见
+[`render-configuration-and-temporal-state.md`](../../docs/design/render-configuration-and-temporal-state.md)。
+
 `renderer-rendering` 拥有与界面实现无关的 realtime/offline 渲染子系统、设置和长期 GPU 资源。
 
 ## 所有权分组

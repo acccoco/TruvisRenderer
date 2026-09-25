@@ -154,7 +154,8 @@ typedef struct
     TruvixxSlImageResource diffuse_albedo;
     TruvixxSlImageResource specular_albedo;
     TruvixxSlImageResource normal_roughness;
-    TruvixxSlImageResource specular_motion_vectors;
+    /// R32_SFLOAT：primary surface 到最近反射命中的世界距离，按 render extent 提交。
+    TruvixxSlImageResource specular_hit_distance;
     uint32_t use_linear_depth;
 } TruvixxSlDlssRrEvaluateDesc;
 

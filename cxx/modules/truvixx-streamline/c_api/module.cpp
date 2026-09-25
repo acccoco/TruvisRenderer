@@ -756,7 +756,7 @@ int32_t truvixx_sl_dlss_rr_evaluate(const TruvixxSlDlssRrEvaluateDesc* desc)
     sl::Resource diffuse_albedo = make_image_resource(desc->diffuse_albedo);
     sl::Resource specular_albedo = make_image_resource(desc->specular_albedo);
     sl::Resource normal_roughness = make_image_resource(desc->normal_roughness);
-    sl::Resource specular_motion_vectors = make_image_resource(desc->specular_motion_vectors);
+    sl::Resource specular_hit_distance = make_image_resource(desc->specular_hit_distance);
 
     const sl::Extent render_extent{ 0, 0, desc->input_color.width, desc->input_color.height };
     const sl::Extent output_extent{ 0, 0, desc->output_color.width, desc->output_color.height };
@@ -770,7 +770,7 @@ int32_t truvixx_sl_dlss_rr_evaluate(const TruvixxSlDlssRrEvaluateDesc* desc)
         sl::ResourceTag(&diffuse_albedo, sl::kBufferTypeAlbedo, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
         sl::ResourceTag(&specular_albedo, sl::kBufferTypeSpecularAlbedo, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
         sl::ResourceTag(&normal_roughness, sl::kBufferTypeNormalRoughness, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
-        sl::ResourceTag(&specular_motion_vectors, sl::kBufferTypeSpecularMotionVectors, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
+        sl::ResourceTag(&specular_hit_distance, sl::kBufferTypeSpecularHitDistance, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
     };
 
     auto* command_buffer = to_vk_handle<sl::CommandBuffer*>(desc->command_buffer);

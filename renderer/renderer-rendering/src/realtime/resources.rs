@@ -3,6 +3,7 @@
 use ash::vk;
 use slotmap::Key;
 
+use truvis_gfx::commands::barrier::GfxImageBarrier;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
@@ -10,6 +11,7 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
 use truvis_render_runtime::state::frame_state::FrameRenderState;
+use truvis_renderer_shader_binding::gpu::renderer::render_passes::realtime_rt::RR_FAR_HIT_DISTANCE;
 
 use crate::shared::targets::{ImageTarget, PerFrameImageSet, TargetImageDesc, create_image};
 
@@ -579,17 +581,16 @@ impl Drop for DlssSrExposureTarget {
 /// DLSS Ray Reconstruction 额外需要的低分辨率输入图像。
 ///
 /// forward/shading normal+roughness 复用现有 GBufferA；这里补齐 RR 专用的 diffuse albedo、specular
-/// albedo 和 specular motion vectors。specular motion vector 由 raygen 追踪反射方向上的
-/// 虚拟几何后写入，未命中时使用零向量作为保守 fallback。
+/// albedo 和 specular hit distance。raygen 沿确定性反射方向查询最近命中，miss 使用统一远距离值。
 pub struct DlssRrInputTargets {
     diffuse_albedo: PerFrameImageSet,
     specular_albedo: PerFrameImageSet,
-    specular_motion_vectors: PerFrameImageSet,
+    specular_hit_distance: PerFrameImageSet,
 }
 
 impl DlssRrInputTargets {
     pub const ALBEDO_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
-    pub const SPECULAR_MOTION_VECTOR_FORMAT: vk::Format = vk::Format::R32G32_SFLOAT;
+    pub const SPECULAR_HIT_DISTANCE_FORMAT: vk::Format = vk::Format::R32_SFLOAT;
 
     pub fn new(
         resource_ctx: GfxResourceCtx<'_>,
@@ -626,24 +627,70 @@ impl DlssRrInputTargets {
             },
             frame_id,
         );
-        let specular_motion_vectors = PerFrameImageSet::new(
+        let specular_hit_distance = PerFrameImageSet::new(
             resource_ctx,
             device_ctx,
             immediate_ctx,
             gfx_resource_registry,
             TargetImageDesc {
-                name_prefix: "dlss-rr-specular-motion-vectors",
-                format: Self::SPECULAR_MOTION_VECTOR_FORMAT,
+                name_prefix: "dlss-rr-specular-hit-distance",
+                format: Self::SPECULAR_HIT_DISTANCE_FORMAT,
                 extent: frame_state.render_extent,
-                usage,
+                usage: usage | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC,
             },
             frame_id,
+        );
+
+        // 创建/resize 时初始化所有 FIF；后续每个 RT 像素仍必须写入 hit 或 miss guide。
+        immediate_ctx.one_time_exec(
+            |cmd| {
+                for handle in specular_hit_distance.images {
+                    let image = gfx_resource_registry.get_image(handle).expect("RR hit distance image missing");
+                    cmd.image_memory_barrier(
+                        vk::DependencyFlags::empty(),
+                        &[GfxImageBarrier::default()
+                            .image(image.handle())
+                            .src_mask(vk::PipelineStageFlags2::TOP_OF_PIPE, vk::AccessFlags2::empty())
+                            .dst_mask(vk::PipelineStageFlags2::CLEAR, vk::AccessFlags2::TRANSFER_WRITE)
+                            .layout_transfer(vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                            .image_aspect_flag(vk::ImageAspectFlags::COLOR)],
+                    );
+                    // owner 保证 image 带 TRANSFER_DST、layout 已转换，immediate 完成后才交给常规帧。
+                    unsafe {
+                        device_ctx.device().cmd_clear_color_image(
+                            cmd.vk_handle(),
+                            image.handle(),
+                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            &vk::ClearColorValue {
+                                float32: [RR_FAR_HIT_DISTANCE; 4],
+                            },
+                            &[vk::ImageSubresourceRange::default()
+                                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                .level_count(1)
+                                .layer_count(1)],
+                        );
+                    }
+                    cmd.image_memory_barrier(
+                        vk::DependencyFlags::empty(),
+                        &[GfxImageBarrier::default()
+                            .image(image.handle())
+                            .src_mask(vk::PipelineStageFlags2::CLEAR, vk::AccessFlags2::TRANSFER_WRITE)
+                            .dst_mask(
+                                vk::PipelineStageFlags2::ALL_COMMANDS,
+                                vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE,
+                            )
+                            .layout_transfer(vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::GENERAL)
+                            .image_aspect_flag(vk::ImageAspectFlags::COLOR)],
+                    );
+                }
+            },
+            "initialize-rr-hit-distance",
         );
 
         Self {
             diffuse_albedo,
             specular_albedo,
-            specular_motion_vectors,
+            specular_hit_distance,
         }
     }
 
@@ -669,7 +716,7 @@ impl DlssRrInputTargets {
     ) {
         self.diffuse_albedo.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
         self.specular_albedo.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.specular_motion_vectors.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        self.specular_hit_distance.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
     }
 
     #[inline]
@@ -683,8 +730,8 @@ impl DlssRrInputTargets {
     }
 
     #[inline]
-    pub fn specular_motion_vectors(&self, frame_label: FrameLabel) -> ImageTarget {
-        self.specular_motion_vectors.target(frame_label)
+    pub fn specular_hit_distance(&self, frame_label: FrameLabel) -> ImageTarget {
+        self.specular_hit_distance.target(frame_label)
     }
 }
 
@@ -692,7 +739,7 @@ impl Drop for DlssRrInputTargets {
     fn drop(&mut self) {
         debug_assert!(self.diffuse_albedo.images.iter().all(|img| img.is_null()));
         debug_assert!(self.specular_albedo.images.iter().all(|img| img.is_null()));
-        debug_assert!(self.specular_motion_vectors.images.iter().all(|img| img.is_null()));
+        debug_assert!(self.specular_hit_distance.images.iter().all(|img| img.is_null()));
     }
 }
 

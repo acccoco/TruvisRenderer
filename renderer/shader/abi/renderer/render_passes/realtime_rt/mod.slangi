@@ -32,6 +32,8 @@ static const uint SKY_SAMPLING_MODE_UNIFORM = 0;
 /// 有限屏外回溯值；cameraMotionIncluded=true 时不依赖 SDK 将其识别为专用无效标记。
 /// 有效 MV 限制在相同幅值内，保证转换为 fp16 时也不溢出。
 static const float DLSS_MOTION_VECTOR_INVALID_VALUE = -65504.0f;
+/// RR 的远处环境/无有效反射命中距离；天空值遵循 Streamline 2.14.1 RR 指南 §3.4.9。
+static const float RR_FAR_HIT_DISTANCE = 65504.0f;
 static const uint SKY_SAMPLING_MODE_IMPORTANCE = 1;
 
 static const uint RESTIR_DI_MODE_OFF = 0;
@@ -114,9 +116,9 @@ RWTexture2D<float4> dlss_rr_diffuse_albedo;
 [[vk::binding(8, SET_NUM)]]
 RWTexture2D<float4> dlss_rr_specular_albedo;
 
-/// DLSS RR specular motion vectors 输入。写入反射虚拟几何的 pixel-space 2D motion。
+/// DLSS RR specular hit distance 输入。主表面到最近有效反射命中的世界距离，R32_SFLOAT。
 [[vk::binding(9, SET_NUM)]]
-RWTexture2D<float2> dlss_rr_specular_motion_vectors;
+RWTexture2D<float> dlss_rr_specular_hit_distance;
 
 /// ReSTIR DI initial reservoir。A/D 使用 uint4 保存身份和版本，B/C 使用 float4 保存样本参数和权重。
 /// initial 由 path phase 写入；temporal phase 和 InitialOnly final shade 读取。

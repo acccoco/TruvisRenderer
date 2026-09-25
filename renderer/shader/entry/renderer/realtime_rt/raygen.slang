@@ -74,17 +74,19 @@ void main_ray_gen()
         );
 
         RtSurfaceHit surface = payload.surface;
+        const float specular_hit_distance = depth == 0 && payload.hit
+            ? RtRaygenView::primary_specular_hit_distance(surface, ray.Direction)
+            : renderer::render_passes::realtime_rt::RR_FAR_HIT_DISTANCE;
 
         // surface-only debug 通道沿用旧语义：miss shader 填入的虚拟 surface 也参与可视化。
         float3 debug_color;
         bool surface_debug_done = RtDebugAccumulator::try_surface_channel(surface, push_const.channel, debug_color);
-        if (!surface_debug_done && push_const.channel == RT_DEBUG_SPECULAR_MOTION_MAGNITUDE)
+        if (!surface_debug_done && push_const.channel == RT_DEBUG_SPECULAR_HIT_DISTANCE)
         {
-            const float2 specular_motion = payload.hit
-                ? RtRaygenView::primary_specular_motion_vector_pixels(surface, ray.Direction)
-                : float2(0.0f);
-            // 64px 以上的虚拟 specular motion 映射为白色，方便快速定位异常拖影区域。
-            debug_color = float3(saturate(length(specular_motion) / 64.0f));
+            // sentinel 为紫色，有效距离按 d/(1+d) 映射灰度；复用本像素查询，不重复 trace。
+            debug_color = specular_hit_distance == renderer::render_passes::realtime_rt::RR_FAR_HIT_DISTANCE
+                ? float3(1.0f, 0.0f, 1.0f)
+                : float3(specular_hit_distance / (1.0f + specular_hit_distance));
             surface_debug_done = true;
         }
         if (surface_debug_done)
@@ -93,7 +95,7 @@ void main_ray_gen()
             {
                 if (payload.hit)
                 {
-                    RtRaygenView::write_primary_hit_outputs(thread_id, surface, ray.Direction);
+                    RtRaygenView::write_primary_hit_outputs(thread_id, surface, specular_hit_distance);
                     if (RtRestirDI::enabled())
                     {
                         // surface-only debug 也要写 ReSTIR surface key/empty reservoir，保证后续
@@ -144,7 +146,7 @@ void main_ray_gen()
         if (!gbuffer_written)
         {
             // 首次命中时同步写 GBuffer、DLSS depth/motion 和 RR 材质输入。
-            RtRaygenView::write_primary_hit_outputs(thread_id, surface, ray.Direction);
+            RtRaygenView::write_primary_hit_outputs(thread_id, surface, specular_hit_distance);
             if (RtRestirDI::enabled())
             {
                 RtRestirDI::store_primary_surface_key(thread_id, surface);

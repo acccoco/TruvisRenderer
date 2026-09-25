@@ -87,10 +87,10 @@ impl DlssRrPass {
                 data.normal_roughness_view,
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             ),
-            specular_motion_vectors: image_resource(
+            specular_hit_distance: image_resource(
                 resource_ctx,
-                data.specular_motion_vectors,
-                data.specular_motion_vectors_view,
+                data.specular_hit_distance,
+                data.specular_hit_distance_view,
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             ),
             use_linear_depth: false,
@@ -124,8 +124,8 @@ pub struct DlssRrPassData<'a> {
     pub specular_albedo_view: &'a GfxImageView,
     pub normal_roughness: &'a GfxImage,
     pub normal_roughness_view: &'a GfxImageView,
-    pub specular_motion_vectors: &'a GfxImage,
-    pub specular_motion_vectors_view: &'a GfxImageView,
+    pub specular_hit_distance: &'a GfxImage,
+    pub specular_hit_distance_view: &'a GfxImageView,
 }
 
 pub struct DlssRrRgPass<'a> {
@@ -141,7 +141,7 @@ pub struct DlssRrRgPass<'a> {
     pub diffuse_albedo: RgImageHandle,
     pub specular_albedo: RgImageHandle,
     pub normal_roughness: RgImageHandle,
-    pub specular_motion_vectors: RgImageHandle,
+    pub specular_hit_distance: RgImageHandle,
 }
 
 impl RgPass for DlssRrRgPass<'_> {
@@ -152,7 +152,7 @@ impl RgPass for DlssRrRgPass<'_> {
         builder.read_image(self.diffuse_albedo, SL_INPUT_READ);
         builder.read_image(self.specular_albedo, SL_INPUT_READ);
         builder.read_image(self.normal_roughness, SL_INPUT_READ);
-        builder.read_image(self.specular_motion_vectors, SL_INPUT_READ);
+        builder.read_image(self.specular_hit_distance, SL_INPUT_READ);
         builder.write_image(self.output_color, SL_WRITE);
     }
 
@@ -170,9 +170,8 @@ impl RgPass for DlssRrRgPass<'_> {
             ctx.get_image_and_view(self.specular_albedo).expect("DlssRrRgPass: specular_albedo not found");
         let (normal_roughness, normal_roughness_view) =
             ctx.get_image_and_view(self.normal_roughness).expect("DlssRrRgPass: normal_roughness not found");
-        let (specular_motion_vectors, specular_motion_vectors_view) = ctx
-            .get_image_and_view(self.specular_motion_vectors)
-            .expect("DlssRrRgPass: specular_motion_vectors not found");
+        let (specular_hit_distance, specular_hit_distance_view) =
+            ctx.get_image_and_view(self.specular_hit_distance).expect("DlssRrRgPass: specular_hit_distance not found");
 
         let evaluation = self.dlss_rr_pass.evaluate(
             ctx.cmd,
@@ -194,8 +193,8 @@ impl RgPass for DlssRrRgPass<'_> {
                 specular_albedo_view,
                 normal_roughness,
                 normal_roughness_view,
-                specular_motion_vectors,
-                specular_motion_vectors_view,
+                specular_hit_distance,
+                specular_hit_distance_view,
             },
         );
         self.evaluation.set(evaluation);

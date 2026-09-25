@@ -228,9 +228,9 @@ pub struct RealtimeRtPassData {
     /// DLSS RR specular albedo 输出。
     pub rr_specular_albedo: GfxImageHandle,
     pub rr_specular_albedo_view: GfxImageViewHandle,
-    /// DLSS RR specular motion vectors 输出。写入反射虚拟几何的 pixel-space 2D motion。
-    pub rr_specular_motion_vectors: GfxImageHandle,
-    pub rr_specular_motion_vectors_view: GfxImageViewHandle,
+    /// DLSS RR specular hit distance 输出，R32_SFLOAT 世界距离，只追踪反射。
+    pub rr_specular_hit_distance: GfxImageHandle,
+    pub rr_specular_hit_distance_view: GfxImageViewHandle,
 }
 
 #[derive(DescriptorBinding)]
@@ -298,12 +298,12 @@ struct RealtimeRtDescriptorBinding {
     #[count = 1]
     _dlss_rr_specular_albedo: (),
 
-    /// DLSS RR specular motion vectors。
+    /// DLSS RR specular hit distance。
     #[binding = 9]
     #[descriptor_type = "STORAGE_IMAGE"]
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
-    _dlss_rr_specular_motion_vectors: (),
+    _dlss_rr_specular_hit_distance: (),
 
     /// ReSTIR DI initial reservoir。
     #[binding = 10]
@@ -698,7 +698,7 @@ impl RealtimeRtPass {
         let motion_vectors_view = image_view(pass_data.motion_vectors_view);
         let rr_diffuse_albedo_view = image_view(pass_data.rr_diffuse_albedo_view);
         let rr_specular_albedo_view = image_view(pass_data.rr_specular_albedo_view);
-        let rr_specular_motion_vectors_view = image_view(pass_data.rr_specular_motion_vectors_view);
+        let rr_specular_hit_distance_view = image_view(pass_data.rr_specular_hit_distance_view);
 
         // ReSTIR DI 资源通过 pass-local push descriptor 绑定，顺序必须与
         // `renderer/shader/abi/realtime_rt/mod.slangi` 完全一致。这里显式展开 A/B/C/D，避免把
@@ -818,10 +818,10 @@ impl RealtimeRtPass {
                     0,
                     image_info!(rr_specular_albedo_view),
                 ),
-                RealtimeRtDescriptorBinding::dlss_rr_specular_motion_vectors().write_image(
+                RealtimeRtDescriptorBinding::dlss_rr_specular_hit_distance().write_image(
                     vk::DescriptorSet::null(),
                     0,
-                    image_info!(rr_specular_motion_vectors_view),
+                    image_info!(rr_specular_hit_distance_view),
                 ),
                 RealtimeRtDescriptorBinding::restir_initial_a().write_image(
                     vk::DescriptorSet::null(),
@@ -1133,7 +1133,7 @@ pub struct RealtimeRtRgPass<'a> {
     pub motion_vectors: RgImageHandle,
     pub rr_diffuse_albedo: RgImageHandle,
     pub rr_specular_albedo: RgImageHandle,
-    pub rr_specular_motion_vectors: RgImageHandle,
+    pub rr_specular_hit_distance: RgImageHandle,
 }
 impl RgPass for RealtimeRtRgPass<'_> {
     fn setup(&mut self, builder: &mut RgPassBuilder) {
@@ -1148,7 +1148,7 @@ impl RgPass for RealtimeRtRgPass<'_> {
         builder.read_write_image(self.motion_vectors, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
         builder.write_image(self.rr_diffuse_albedo, RgImageState::STORAGE_WRITE_RAY_TRACING);
         builder.write_image(self.rr_specular_albedo, RgImageState::STORAGE_WRITE_RAY_TRACING);
-        builder.write_image(self.rr_specular_motion_vectors, RgImageState::STORAGE_WRITE_RAY_TRACING);
+        builder.write_image(self.rr_specular_hit_distance, RgImageState::STORAGE_WRITE_RAY_TRACING);
 
         setup_reservoir_images(builder, self.restir_initial);
         setup_reservoir_images(builder, self.restir_temporal);
@@ -1178,9 +1178,9 @@ impl RgPass for RealtimeRtRgPass<'_> {
         let (rr_specular_albedo, rr_specular_albedo_view) = ctx
             .get_image_and_view_handle(self.rr_specular_albedo)
             .expect("RealtimeRtRgPass: rr_specular_albedo not found");
-        let (rr_specular_motion_vectors, rr_specular_motion_vectors_view) = ctx
-            .get_image_and_view_handle(self.rr_specular_motion_vectors)
-            .expect("RealtimeRtRgPass: rr_specular_motion_vectors not found");
+        let (rr_specular_hit_distance, rr_specular_hit_distance_view) = ctx
+            .get_image_and_view_handle(self.rr_specular_hit_distance)
+            .expect("RealtimeRtRgPass: rr_specular_hit_distance not found");
 
         let restir_initial = reservoir_pass_images(ctx, self.restir_initial, "restir_initial");
         let restir_temporal = reservoir_pass_images(ctx, self.restir_temporal, "restir_temporal");
@@ -1228,8 +1228,8 @@ impl RgPass for RealtimeRtRgPass<'_> {
                 rr_diffuse_albedo_view,
                 rr_specular_albedo,
                 rr_specular_albedo_view,
-                rr_specular_motion_vectors,
-                rr_specular_motion_vectors_view,
+                rr_specular_hit_distance,
+                rr_specular_hit_distance_view,
             },
         );
     }

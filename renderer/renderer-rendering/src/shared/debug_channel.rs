@@ -33,8 +33,8 @@ pub enum PathTracingDebugChannel {
     MaterialType,
     /// 显示 primary surface 是否属于 specular / transparent delta path。
     DeltaMask,
-    /// 显示 DLSS RR 使用的 primary specular motion vector 长度。
-    SpecularMotionMagnitude,
+    /// 显示 DLSS RR 使用的反射 hit distance，sentinel 用独立颜色显示。
+    SpecularHitDistance,
     /// 显示 ReSTIR DI initial reservoir 的权重强度。
     RestirInitialWeight,
     /// 显示 ReSTIR DI temporal reservoir 是否有效及 history age。
@@ -82,7 +82,7 @@ impl PathTracingDebugChannel {
         Self::NeeAnalytic,
         Self::MaterialType,
         Self::DeltaMask,
-        Self::SpecularMotionMagnitude,
+        Self::SpecularHitDistance,
         Self::RestirInitialWeight,
         Self::RestirTemporalValid,
         Self::RestirFinalContribution,
@@ -107,7 +107,7 @@ impl PathTracingDebugChannel {
             Self::NeeAnalytic => "from NEE analytic",
             Self::MaterialType => "material type",
             Self::DeltaMask => "delta mask",
-            Self::SpecularMotionMagnitude => "specular motion magnitude",
+            Self::SpecularHitDistance => "specular hit distance",
             Self::RestirInitialWeight => "ReSTIR initial weight",
             Self::RestirTemporalValid => "ReSTIR temporal valid",
             Self::RestirFinalContribution => "ReSTIR final contribution",
@@ -133,7 +133,7 @@ impl PathTracingDebugChannel {
             Self::NeeAnalytic => 12,
             Self::MaterialType => 16,
             Self::DeltaMask => 17,
-            Self::SpecularMotionMagnitude => 18,
+            Self::SpecularHitDistance => 18,
             Self::RestirInitialWeight => 13,
             Self::RestirTemporalValid => 14,
             Self::RestirFinalContribution => 15,

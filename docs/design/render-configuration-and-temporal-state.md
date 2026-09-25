@@ -88,6 +88,23 @@ Primary MV 用前后模型与无 jitter 相机矩阵投影同一个 object-space
 该值是项目的有限屏外回溯策略；`cameraMotionIncluded=true` 时不依赖 Streamline 将其识别为
 专用无效标记。输入保持 `R32G32_SFLOAT`，幅值限制也避免未来 fp16 存储溢出。
 
+## RR 反射距离 guide
+
+RR 使用 render-resolution `R32_SFLOAT` specular hit distance，不再提供 specular MV。
+沿 primary shading normal 的确定性反射方向查询最近 alpha 有效命中 Q，写入从 primary P 起算的
+`length(Q-P)`；Q 从偏移后的实际 ray origin 与命中 t 重建。只处理反射，不增加折射 guide。
+world-space normal、depth、相机矩阵与距离对应同一个 primary surface。
+
+天空、reflection miss、退化方向与异常距离使用共享 ABI `RR_FAR_HIT_DISTANCE=65504`；
+有效距离截断到该上限。创建/resize 初始化和无 TLAS 清理使用相同值，正常 RT 每像素覆盖。
+`SpecularHitDistance` debug channel 将 sentinel 显示为紫色，有效距离按 d/(1+d) 显示灰度。
+标量距离是粗糙反射的工程近似，不编码被反射物体的完整历史运动。
+
+依据为 `resources.toml` 的 Streamline v2.14.1 ZIP：本地 `DLSS-RR Integration Guide.pdf`
+§3.4.3/§3.4.9、`ProgrammingGuideDLSS_RR.md` §4.1.9 及插件 `sl.dlss_d/dlss_dEntry.cpp`。
+通过 `kBufferTypeSpecularHitDistance` 提交，配套 RR options 的 view 矩阵和 common constants 的
+projection；保留现有 row-major 转换。SDK 规定天空 sentinel；miss/异常回退与粗糙反射方向是项目策略。
+
 Realtime ReSTIR reservoir、SHARC cache、offline accumulation 属于对应 Renderer subsystem 的 temporal resources，不进入 `DlssOptions` 或 `DlssSrState`。
 
 ## Renderer 配置

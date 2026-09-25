@@ -20,6 +20,7 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
+use truvis_renderer_shader_binding::gpu::renderer::render_passes::realtime_rt::RR_FAR_HIT_DISTANCE;
 
 use crate::realtime::gbuffer::GBuffer;
 use crate::realtime::resources::{
@@ -39,7 +40,7 @@ const RT_DEBUG_IMAGE_OPTIONS: [DebugImageOption; 11] = [
     DebugImageOption::new("dlss-motion-vectors", "DLSS Motion Vectors"),
     DebugImageOption::new("dlss-rr-diffuse-albedo", "DLSS RR Diffuse Albedo"),
     DebugImageOption::new("dlss-rr-specular-albedo", "DLSS RR Specular Albedo"),
-    DebugImageOption::new("dlss-rr-specular-motion-vectors", "DLSS RR Specular Motion Vectors"),
+    DebugImageOption::new("dlss-rr-specular-hit-distance", "DLSS RR Specular Hit Distance"),
     DebugImageOption::new("gbuffer-a", "GBuffer-A"),
     DebugImageOption::new("gbuffer-b", "GBuffer-B"),
     DebugImageOption::new("gbuffer-c", "GBuffer-C"),
@@ -666,12 +667,12 @@ impl RealtimeRenderSubsystem {
             None,
         );
 
-        let rr_specular_motion_vectors_target = dlss_rr_inputs.specular_motion_vectors(frame_label);
-        let rr_specular_motion_vectors = rg_builder.import_image(
-            "dlss-rr-specular-motion-vectors",
-            rr_specular_motion_vectors_target.image,
-            Some(rr_specular_motion_vectors_target.view),
-            rr_specular_motion_vectors_target.format,
+        let rr_specular_hit_distance_target = dlss_rr_inputs.specular_hit_distance(frame_label);
+        let rr_specular_hit_distance = rg_builder.import_image(
+            "dlss-rr-specular-hit-distance",
+            rr_specular_hit_distance_target.image,
+            Some(rr_specular_hit_distance_target.view),
+            rr_specular_hit_distance_target.format,
             RgImageState::UNDEFINED_TOP,
             None,
         );
@@ -744,9 +745,15 @@ impl RealtimeRenderSubsystem {
         rg_builder.export_image(render_target, RgImageState::SHADER_READ_FRAGMENT, None);
         if !has_tlas {
             // 无有效场景时输出确定黑色，不执行 DLSS 或测光，不消费曝光历史。
-            for (image, extent, name) in [
-                (single_frame_image, single_frame_target.extent, "rt-clear-source"),
-                (render_target, record_ctx.frame_state.output_extent, "rt-clear-output"),
+            for (image, extent, name, clear_color) in [
+                (single_frame_image, single_frame_target.extent, "rt-clear-source", glam::Vec4::ZERO),
+                (render_target, record_ctx.frame_state.output_extent, "rt-clear-output", glam::Vec4::ZERO),
+                (
+                    rr_specular_hit_distance,
+                    record_ctx.frame_state.render_extent,
+                    "rt-clear-hit-distance",
+                    glam::Vec4::splat(RR_FAR_HIT_DISTANCE),
+                ),
             ] {
                 rg_builder.add_pass(
                     name,
@@ -755,7 +762,7 @@ impl RealtimeRenderSubsystem {
                         record_ctx,
                         dst_image: image,
                         image_extent: extent,
-                        clear_color: glam::Vec4::ZERO,
+                        clear_color,
                     },
                 );
             }
@@ -793,7 +800,7 @@ impl RealtimeRenderSubsystem {
                 motion_vectors,
                 rr_diffuse_albedo,
                 rr_specular_albedo,
-                rr_specular_motion_vectors,
+                rr_specular_hit_distance,
             },
         );
 
@@ -814,7 +821,7 @@ impl RealtimeRenderSubsystem {
                     diffuse_albedo: rr_diffuse_albedo,
                     specular_albedo: rr_specular_albedo,
                     normal_roughness: gbuffer_a,
-                    specular_motion_vectors: rr_specular_motion_vectors,
+                    specular_hit_distance: rr_specular_hit_distance,
                 },
             );
             (dlss_output, record_ctx.frame_state.output_extent)
@@ -869,6 +876,7 @@ impl RealtimeRenderSubsystem {
         &self,
         frame_label: FrameLabel,
         dlss_options: DlssOptions,
+        has_tlas: bool,
         id: &str,
     ) -> Option<(ImageTarget, RgImageState)> {
         let resources = self.resources();
@@ -885,16 +893,18 @@ impl RealtimeRenderSubsystem {
         let motion_vectors = dlss_sr_inputs.motion_vectors(frame_label);
         let rr_diffuse_albedo = dlss_rr_inputs.diffuse_albedo(frame_label);
         let rr_specular_albedo = dlss_rr_inputs.specular_albedo(frame_label);
-        let rr_specular_motion_vectors = dlss_rr_inputs.specular_motion_vectors(frame_label);
+        let rr_specular_hit_distance = dlss_rr_inputs.specular_hit_distance(frame_label);
         let dlss_output = dlss_outputs.color(frame_label);
         let (gbuffer_a_image, gbuffer_a_view) = gbuffer.a_handle(frame_label);
         let (gbuffer_b_image, gbuffer_b_view) = gbuffer.b_handle(frame_label);
         let (gbuffer_c_image, gbuffer_c_view) = gbuffer.c_handle(frame_label);
         // SR/RR 开启后这些输入已经在 compute graph 末尾停留在 DLSS read layout；
         // present graph 的 debug preview 必须用同一状态 import，不能再假设所有 storage image 都是 GENERAL。
-        let sl_input_state = if dlss_options.is_dlss_active() { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
-        let rr_input_state = if dlss_options.is_rr_active() { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
-        let gbuffer_a_state = if dlss_options.is_rr_active() { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
+        let sl_input_state =
+            if has_tlas && dlss_options.is_dlss_active() { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
+        let rr_input_state =
+            if has_tlas && dlss_options.is_rr_active() { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
+        let gbuffer_a_state = rr_input_state;
 
         let source = match id {
             "single-frame-rt" => (single_frame, sl_input_state),
@@ -904,7 +914,7 @@ impl RealtimeRenderSubsystem {
             "dlss-motion-vectors" => (motion_vectors, sl_input_state),
             "dlss-rr-diffuse-albedo" => (rr_diffuse_albedo, rr_input_state),
             "dlss-rr-specular-albedo" => (rr_specular_albedo, rr_input_state),
-            "dlss-rr-specular-motion-vectors" => (rr_specular_motion_vectors, rr_input_state),
+            "dlss-rr-specular-hit-distance" => (rr_specular_hit_distance, rr_input_state),
             "gbuffer-a" => (
                 ImageTarget {
                     image: gbuffer_a_image,
@@ -967,7 +977,7 @@ impl RealtimeRenderSubsystem {
         let present_image = present_target.image;
         let debug_image = selected_debug_image_id
             .and_then(|id| {
-                self.debug_image_source(frame_label, dlss_options, id)
+                self.debug_image_source(frame_label, dlss_options, ctx.render_scene.tlas_handle(frame_label).is_some(), id)
                     .map(|(source, final_state)| (id, source, final_state))
             })
             .map(|(id, source, final_state)| {

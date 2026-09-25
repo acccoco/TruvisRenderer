@@ -257,7 +257,7 @@ pub struct DlssEvaluateDesc {
 /// 一次 DLSS Ray Reconstruction evaluate 的完整描述。
 ///
 /// 当前 Truvis RR MVP 使用 packed forward/shading normal+roughness，并提供独立 diffuse/specular albedo
-/// 与 specular motion vectors。specular motion vectors 的质量由 shader 侧输入决定，本层只搬运资源。
+/// 与 specular hit distance。只提供反射距离 guide；相机矩阵通过 RR options/common constants 提交。
 pub struct DlssRrEvaluateDesc {
     pub frame_index: u32,
     pub viewport_id: u32,
@@ -270,7 +270,7 @@ pub struct DlssRrEvaluateDesc {
     pub diffuse_albedo: ImageResource,
     pub specular_albedo: ImageResource,
     pub normal_roughness: ImageResource,
-    pub specular_motion_vectors: ImageResource,
+    pub specular_hit_distance: ImageResource,
     pub use_linear_depth: bool,
 }
 
@@ -399,7 +399,7 @@ pub fn evaluate_rr(desc: DlssRrEvaluateDesc) -> Result<(), StreamlineError> {
         diffuse_albedo: desc.diffuse_albedo.to_ffi(),
         specular_albedo: desc.specular_albedo.to_ffi(),
         normal_roughness: desc.normal_roughness.to_ffi(),
-        specular_motion_vectors: desc.specular_motion_vectors.to_ffi(),
+        specular_hit_distance: desc.specular_hit_distance.to_ffi(),
         use_linear_depth: u32::from(desc.use_linear_depth),
     };
     check(unsafe { truvixx::truvixx_sl_dlss_rr_evaluate(&ffi) }, "DLSS RR evaluate")

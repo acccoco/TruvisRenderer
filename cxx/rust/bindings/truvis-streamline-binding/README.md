@@ -51,6 +51,8 @@ C++ wrapper 不静态导入 `sl.interposer.dll`。`truvixx_sl_init` 会先使用
 - 把 Rust 传入的稳定 feature flags 翻译成 Streamline SDK 的 feature id。
 - 把 DLSS SR/RR 的 C++ SDK types 包装成稳定 C ABI POD，Rust 只传 Vulkan handles 和显式资源契约。
 - SR options 由具体 Renderer 在 mode/resize 边界设置；RR options 包含相机矩阵，必须逐帧提交。
+- RR 的 `specular_hit_distance` 使用 `kBufferTypeSpecularHitDistance`，不再提交 specular MV。
+  它是 render extent 的 R32_SFLOAT 世界距离，与同帧 normal/depth 和 view/projection 矩阵配套。
 - evaluate wrapper 使用同一 frame token 提交 constants、tags 并调用 `slEvaluateFeature`。Streamline
   2.14.1 的 `slAllocateResources` 固定读取 frame 0，不用于此按帧 tagging 路径；feature 由 evaluate 创建。
 - 通过 Rust 传入的全局 `TruvixxSlLogCallback` 转发日志事件。

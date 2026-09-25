@@ -135,16 +135,16 @@ static void write_dlss_sr_hit(uint2 thread_id, float depth, float2 motion_vector
 /// 写入 DLSS RR 的 per-pixel 输入（命中情况）。
 /// @param thread_id 当前像素坐标
 /// @param data GBuffer 数据
-/// @param specular_motion_vector_pixels 反射虚拟几何的 pixel-space motion vector。
-/// @note forward/shading normal+roughness 直接复用 GBufferA；这里额外写 RR 需要的材质拆分与反射运动。
-static void write_dlss_rr_hit(uint2 thread_id, RtGBufferData data, float2 specular_motion_vector_pixels)
+/// @param specular_hit_distance 主表面到最近有效反射命中的世界距离。
+/// @note forward/shading normal+roughness 直接复用 GBufferA，距离与 depth 对应同一 primary surface。
+static void write_dlss_rr_hit(uint2 thread_id, RtGBufferData data, float specular_hit_distance)
 {
     float3 diffuse_albedo;
     float3 specular_albedo;
     compute_rr_albedo(data.albedo, data.metallic, data.material_type, diffuse_albedo, specular_albedo);
     renderer::render_passes::realtime_rt::dlss_rr_diffuse_albedo.Store(thread_id, float4(diffuse_albedo, 1.0f));
     renderer::render_passes::realtime_rt::dlss_rr_specular_albedo.Store(thread_id, float4(specular_albedo, 1.0f));
-    renderer::render_passes::realtime_rt::dlss_rr_specular_motion_vectors.Store(thread_id, specular_motion_vector_pixels);
+    renderer::render_passes::realtime_rt::dlss_rr_specular_hit_distance.Store(thread_id, specular_hit_distance);
 }
 
 /// 写入 GBuffer（miss 情况）
@@ -176,7 +176,7 @@ static void write_dlss_rr_miss(uint2 thread_id)
 {
     renderer::render_passes::realtime_rt::dlss_rr_diffuse_albedo.Store(thread_id, float4(0.0f));
     renderer::render_passes::realtime_rt::dlss_rr_specular_albedo.Store(thread_id, float4(0.0f));
-    renderer::render_passes::realtime_rt::dlss_rr_specular_motion_vectors.Store(thread_id, float2(0.0f, 0.0f));
+    renderer::render_passes::realtime_rt::dlss_rr_specular_hit_distance.Store(thread_id, renderer::render_passes::realtime_rt::RR_FAR_HIT_DISTANCE);
 }
 
 };
