@@ -2,19 +2,19 @@
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/acccoco/TruvisRenderer)
 
-TruvisRenderer 是一个基于 Rust、Vulkan 1.3 和 Slang 构建的实时光线追踪渲染器与桌面编辑器，当前面向 Windows x64 与 NVIDIA RTX 平台。
+TruvisRenderer 是一个基于 Rust、Vulkan 1.3 和 Slang 构建的实时渲染引擎与桌面编辑器，当前面向 Windows x64 与 NVIDIA RTX 平台。项目围绕实时路径追踪构建，涵盖 Vulkan RHI、RenderGraph、CPU/GPU 场景同步、异步资产加载和 Shader 工具链，通过分层架构与显式资源生命周期，将渲染算法、引擎基础设施和编辑器交互整合在一起。
 
 ![Truvis Editor](./docs/imgs/TruvisEditor.PNG)
 
-## 项目亮点
+## 引擎特色
 
-- **桌面编辑器**：使用 Tauri + React 构建编辑器界面，并嵌入原生 Vulkan viewport；支持场景对象浏览、点击选择、selection outline 与材质编辑。
-- **Realtime / Offline Path Tracing**：提供面向交互的实时路径追踪，以及独立累计状态与采样序列的离线路径追踪。
-- **统一光源采样**：对 HDRI、自发光三角形与 analytic light 执行统一 NEE，并结合 MIS 与多次反弹完成路径积分。
-- **现代实时光追算法**：支持 primary ReSTIR DI 的 temporal / spatial reuse，以及 SHARC world-space radiance cache。
-- **NVIDIA Streamline**：集成 DLSS Super Resolution、DLAA 与 DLSS Ray Reconstruction，并维护所需的 depth、motion vector 和材质输入。
-- **渲染基础设施**：包含 Rust Vulkan RHI、RenderGraph、Bindless 资源模型，以及 Slang shader 编译与 Rust binding 生成工具链。
-- **模型导入**：`.gltf` / `.glb` 由 Rust `gltf` loader 读取，其他模型格式继续通过 C++ FFI / Assimp 导入。
+- **分层架构与渲染运行时**：采用 App → Renderer → Engine 的单向依赖，使用独立 RenderThread 和阶段化接口组织更新、场景准备、渲染与销毁；桌面编辑器和 standalone 应用共用完整的 TruvisRenderer。
+- **CPU/GPU 场景分离**：GameWorld 持有 CPU 场景权威状态，RenderWorld 维护 GPU 派生表示；资产异步加载、实例变更同步与 GPU 资源延迟回收分别管理，明确区分 CPU 加载完成与 GPU 可见状态。
+- **Vulkan RHI 与 RenderGraph**：封装 Vulkan 资源、管线和同步，支持 Bindless 与 Frames in Flight；RenderGraph 按显式 pass 顺序推导 image barrier、layout transition 和提交同步信息，并输出可检查的执行计划。
+- **实时与离线路径追踪**：统一采样 HDRI、自发光三角形与 analytic light，结合 NEE/MIS 完成多次反弹；实时路径支持 primary ReSTIR DI 时空复用与 SHARC world-space radiance cache，Offline 路径使用独立的采样序列和累计状态。
+- **DLSS 与显示处理**：通过 NVIDIA Streamline 集成 DLSS Super Resolution、DLAA 与 Ray Reconstruction，维护 depth、motion vector 和材质输入；支持自动曝光、Color Grading、AgX 与 Khronos PBR Neutral 色调映射。
+- **原生视口与场景编辑**：Tauri + React 编辑器嵌入原生 Vulkan viewport，支持对象筛选与拾取、选中描边、平移 Gizmo，以及材质、灯光和 HDRI 环境编辑。
+- **Shader 与资产工具链**：提供 Slang 编译、共享 Shader ABI 与 Rust binding 生成工具链，通过 C ABI 集成 Rust/C++ 模块；`.gltf` / `.glb` 使用 Rust loader，其他模型格式通过 Assimp 导入。
 
 ## 特性展示
 
@@ -116,17 +116,14 @@ cargo run --bin truvis-app -- --scene sponza
 
 ```mermaid
 flowchart LR
-    Editor["Truvis Editor<br/>Tauri + React"] --> Renderer["TruvisRenderer"]
-    Samples["Standalone Samples"] --> Renderer
-    Renderer --> Loop["RenderLoop"]
-    Loop --> Runtime["RenderRuntime"]
-    Runtime --> Graph["RenderGraph + GameWorld"]
-    Graph --> Gfx["Vulkan Gfx + Shader / CXX Bindings"]
+    App["App<br/>Tauri Editor / Standalone Samples"] --> Renderer["Renderer<br/>TruvisRenderer / Pass / Shader"]
+    Renderer --> Engine["Engine<br/>World / Assets · RenderRuntime<br/>RenderGraph · Vulkan RHI<br/>RenderLoop / RenderThread · Platform"]
+    App -->|窗口与线程宿主| Engine
 ```
 
-主体编辑器由 Tauri / React 页面与嵌入式原生 Vulkan viewport 组成；Renderer 层决定具体渲染管线和
-RenderGraph pass 顺序，`RenderRuntime` 负责 GPU 资源、场景同步、帧生命周期与 present。详细的依赖方向、
-线程边界和资源契约请阅读 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)。
+图中箭头表示层间依赖。App 负责应用启动、编辑器集成与窗口宿主组装；Renderer 负责具体渲染算法、交互和 pass 编排；Engine 提供场景与资产、渲染运行时、RenderGraph、Vulkan RHI 和平台基础设施。
+
+CPU 场景由 `GameWorld` 权威持有，`RenderRuntime` 在 prepare 阶段同步到 GPU `RenderWorld`，渲染 pass 通过只读场景视图使用准备后的数据。详细的依赖方向、线程边界和资源契约请阅读 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)。
 
 ## 坐标系约定
 
