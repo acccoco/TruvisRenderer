@@ -140,6 +140,7 @@ CPU 场景由 `GameWorld` 权威持有，`RenderRuntime` 在 prepare 阶段同�
 
 ## 文档导航
 
+- [just 命令、选项与依赖图](./docs/just-commands.md)
 - [架构入口](./docs/ARCHITECTURE.md)
 - [Editor 子系统边界与一致性](./docs/design/editor-boundary-and-consistency.md)
 - [CPU Scene 到 GPU Scene 同步机制](./docs/design/scene-sync-and-render-world.md)
