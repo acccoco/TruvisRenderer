@@ -28,7 +28,7 @@ pub enum MeteringMode {
 }
 
 /// 曝光仅缩放显示输入，不改变路径 radiance。EV 表达增益 stops，正值提亮，并非相机 EV100。
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct ExposureSettings {
     pub mode: ExposureMode,
     pub manual_ev: f32,
@@ -89,7 +89,7 @@ impl ExposureSettings {
 }
 
 /// 曝光之后、显示映射之前的 linear Rec.709 调色；中性参数保持输入不变。
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct ColorGradingSettings {
     /// 相对冷暖偏移而非 Kelvin；正值偏暖。
     pub temperature: f32,

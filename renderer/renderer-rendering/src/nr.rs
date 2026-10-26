@@ -24,6 +24,7 @@ use truvis_render_runtime::render_runtime_ctx::{
 use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
 
 use crate::post_process::{SdrOutputEncoding, SdrPostProcessInput};
+use crate::shared::SdrPostProcessSettings;
 use crate::shared::targets::{SingleImageTarget, TargetImageDesc};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -67,6 +68,8 @@ pub struct NrSubsystem {
     submitted_frames: u64,
     resources: Option<NrResources>,
     reset_pending: bool,
+    /// 只比较已归一化的输入颜色配置，不读取 GPU 自动曝光结果；dither 位于 NR 之后。
+    display_settings: Option<SdrPostProcessSettings>,
     /// 释放失败后保留原始错误，最终清理只能报告并终止，不能重试或关闭共享 NGX。
     release_error: Option<String>,
 }
@@ -96,8 +99,18 @@ impl NrSubsystem {
         }
     }
 
-    /// 返回是否需要资源回调；强度变化只更新配置，不触发 idle 或重建。
-    pub fn update(&mut self, eligible: bool, output_extent: vk::Extent2D) -> bool {
+    /// 调用方先归一化显示配置；比较输入颜色契约，只失效 NR 历史。
+    /// 返回是否需要资源回调；颜色配置和强度变化不触发 idle 或重建。
+    pub fn update(&mut self, eligible: bool, output_extent: vk::Extent2D, display: SdrPostProcessSettings) -> bool {
+        if self.display_settings.is_some_and(|previous| {
+            previous.tone_mapping != display.tone_mapping
+                || previous.color_grading != display.color_grading
+                || previous.exposure != display.exposure
+        }) {
+            self.request_reset();
+            log::info!("NR display configuration changed; history reset requested");
+        }
+        self.display_settings = Some(display);
         self.requested.normalize();
         let previous = self.effective;
         self.effective = NrOptions {
@@ -116,7 +129,7 @@ impl NrSubsystem {
         }
     }
 
-    /// 仅本 feature 的 evaluate 成功且 queue submit 返回后才消费，不依赖其它历史的提交状态。
+    /// 只改变本 feature 的历史资格；由成功 evaluate 和整帧提交共同确认消费。
     pub fn request_reset(&mut self) {
         self.reset_pending = true;
         self.submitted_frames = 0;

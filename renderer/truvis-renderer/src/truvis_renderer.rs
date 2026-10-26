@@ -503,7 +503,7 @@ impl Renderer for TruvisRenderer {
         let nr_eligible = self.render_mode == RenderMode::Realtime
             && self.realtime.settings().debug_channel == PathTracingDebugChannel::Final
             && self.debug_image_selection.selected_id().is_none();
-        if self.nr.update(nr_eligible, ctx.swapchain_extent) {
+        if self.nr.update(nr_eligible, ctx.swapchain_extent, self.path_tracing_common_settings.post_process) {
             ctx.request_resource_reconfigure();
         }
         self.view_accum.update(self.frame_view.accum_signature());

@@ -43,6 +43,11 @@ requirements、函数入口和格式能力必须分别核对；会话不拥有 V
 [生命周期设计](../../docs/design/resource-lifecycle-and-destruction.md)；借用契约见
 [NR binding](../../cxx/rust/bindings/truvis-dlss-nr-binding/README.md)。
 
+`NrSubsystem` 保存上次归一化的显示配置，在固定 update 路径比较 Tone Mapping、Color Grading 和曝光配置。
+配置变化只请求 NR reset；GPU 自动曝光逐帧 EV、NR 强度与最终显示 dithering 不参与比较。
+该快照不拥有显示配置，不改变 SR/RR、ReSTIR、路径累积或曝光历史，也不引发资源重建或 GPU 等待。
+reset 在 NR evaluate 成功且整帧提交返回后消费；无场景、旁路、录制失败和未提交均保留。
+
 默认 Khronos PBR Neutral + Manual，手动增益 0 stops、中性 Color Grading、dithering 开启；可选择 ACES fitted、AgX、None 和 Auto。
 Manual 只使用手动增益；自动补偿仅属于 Auto，默认 0 stops。
 Auto 默认中心加权测光，Realtime 按时间适应，Offline 直接测量当前 HDR 累积均值；曝光锁定仅冻结自动增益。

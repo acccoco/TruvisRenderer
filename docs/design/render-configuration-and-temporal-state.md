@@ -233,6 +233,10 @@ UI / startup option
 
 历史 reset 只清除“不应被下一次 evaluate 使用”的资格。它不表示 CPU scene 被回滚，也不保证所有旧 image 立即物理清零。
 
+NR 独立比较归一化后的 Tone Mapping、Color Grading 和曝光配置；变化只请求 NR reset。
+自动曝光逐帧 EV、强度与 NR 后 dithering 不参与比较，显示配置不重建 feature/图像，也不失效其它历史。
+无场景或未执行时保留请求，只有 NR evaluate 成功且整帧 queue submit 返回后消费；GPU 完成另由 timeline 确认。
+
 如果一个设置同时影响 render extent 和 temporal history，先派生 frame state，再通知 Renderer resize，最后在同一生效路径请求 history reset，避免两者观察到不同配置。
 
 ## 变更检查
