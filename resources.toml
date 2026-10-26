@@ -98,6 +98,37 @@ resource_type = "zip"
 target_dir = "external"
 rename_to = "streamline-sdk"
 
+# RTX Remix 1.6.1 Runtime 参考源码，不拉取完整 Remix 构建依赖。
+[[resources]]
+name = "rtx-remix-repo"
+url = "https://github.com/NVIDIAGameWorks/dxvk-remix.git"
+resource_type = "git"
+target_dir = "external"
+rename_to = "rtx-remix"
+git_ref = "0a6cd5b1ee814ec390c358e0c9c32ece8895ddc0"
+recursive_submodules = false
+download_by_default = false
+
+# 与 Remix 1.6.1 的 submodules/dlss 固定版本一致。
+[[resources]]
+name = "nvidia-dlss-sdk"
+url = "https://github.com/NVIDIA/DLSS.git"
+resource_type = "git"
+target_dir = "external"
+rename_to = "dlss-sdk"
+git_ref = "374959484e79a640feaba44c93ac8cfb0a03f5b5"
+recursive_submodules = false
+download_by_default = false
+
+# Remix packman-external.xml 中的 ngx_sdk_dlnr，版本 2。
+[[resources]]
+name = "nvidia-dlss-nr-sdk"
+url = "https://d1oqksizpb0e3d.cloudfront.net/rtx-remix-ngx_sdk_dlnr@2.7z"
+resource_type = "7z"
+target_dir = "external"
+rename_to = "dlss-nr-sdk"
+download_by_default = false
+
 [[resources]]
 name = "nvidia-rtx-gi-repo"
 url = "https://github.com/NVIDIA-RTX/RTXGI.git"
