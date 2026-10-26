@@ -24,3 +24,8 @@ NGX 或 Vulkan。不要依赖 Rust 字段析构顺序替代上层 owner 的显�
 及唯一 public header 为准。构建先运行 `just cxx`，再使用普通 Cargo build；binding 只链接已部署的
 profile 对应 import library。阶段 2 的临时 Rust 验证入口位于 `.temp/dlss5-validation/stage2/host/`，
 通过本 crate 执行 NR，GPU fixture 只提供应用图像、command buffer、SR/RR 与同步设施。
+
+正式 Renderer 的 consumer 是 `renderer-rendering::NrSubsystem`，由 `TruvisRenderer` 持有。
+资源回调负责图像分配与 create 提交/等待；关闭效果保留会话，最终先释放所有 SR/RR/NR feature 再关闭 NR。
+当前只有状态和资源集成，没有 evaluate 或显示接线。生命周期与配置边界见
+[Renderer README](../../../../renderer/truvis-renderer/README.md)。

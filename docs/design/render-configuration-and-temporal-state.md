@@ -31,9 +31,10 @@ update 派生目标尺寸：尺寸变化只提交请求，由随后 Runtime 的 
 提交 SR options 并 reset history；尺寸不变但配置改变时才在 update 的 idle 边界完成这些操作。
 输出尺寸变化由现有 resize 回调处理，不另存一份已配置输出尺寸或 pending 状态。
 
-SR/RR options 提交失败通过 `StreamlineError` 向上传播，在 Renderer hook 边界以带阶段信息的
-`expect` 终止当前渲染执行路径，不继续 evaluate，也不增加自动回退或重试。optimal-settings 查询
-与资源释放仍沿用已有错误策略。逐帧 snapshot 保留 prepare 使用的 jitter 和 view，避免
+SR/RR options 提交失败通过 `StreamlineError` 向上传播，在 Renderer hook 边界记录阶段信息并
+终止当前渲染执行路径，不继续 evaluate，也不增加自动回退或重试。update/resize 失败直接终止进程，
+避免释放失败后展开到共享 SDK owner；成功后才清空待释放 feature。optimal-settings 查询仍沿用已有错误策略。
+逐帧 snapshot 保留 prepare 使用的 jitter 和 view，避免
 after_prepare 的 history reset 改写本帧已上传输入。
 
 binding wrapper 使用同一 frame token 提交 constants、resource tags 和 `slEvaluateFeature`。
@@ -44,6 +45,18 @@ Renderer 在 update、resize 和 shutdown 的 GPU idle 边界释放旧 feature�
 也不为 Streamline 私有资源插入应用侧 barrier。此生命周期约束不等于验证了 NGX 内部 GPU 同步。
 
 `DefaultRenderRuntimeSettings` 只描述 Runtime 初始化策略，例如默认 FPS 上限、surface/present mode 和 depth format 候选。Renderer 不应依赖设备必然选择某个格式。
+
+## NR 配置与独立历史
+
+`TruvisRenderer` 持有 `NrSubsystem`；`NrOptions` 默认关闭、强度 1.0，固定 update 归一化到 [0,1]，
+非有限值恢复 1.0。UI 只改 requested；仅 Realtime Final 且没有活动 Debug Image 时 effective 开启。
+Offline/调试保留 requested，资源回调释放 feature/图像但不关闭已初始化的会话。
+显式开启的 requirements、能力读取、初始化或创建失败均停止渲染并清理，不回退、不自动重试。
+
+输出 extent 改变或重新开启时创建资源和 feature；内部 extent、SR/RR 模式或通用 history invalidation
+只请求独立 NR reset。强度变化不等待 GPU、不重建资源，也不影响路径追踪、ReSTIR 或曝光历史。
+当前只准备资源，没有 NR evaluate pass；Ready 表示创建命令已经提交完成，画面仍走既有显示链路。
+强度尚未传给 evaluate，NR reset_pending 不被普通成功帧消费。UI 隐藏不影响固定配置生效路径。
 
 ## FrameRenderState
 

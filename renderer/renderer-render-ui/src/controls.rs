@@ -6,11 +6,25 @@ use renderer_rendering::shared::{
 };
 use renderer_rendering::DlssOptions;
 use renderer_rendering::DlssSrMode;
+use renderer_rendering::{NrOptions, NrStatus};
 
 #[derive(Default)]
 pub struct RenderControlsOverlay;
 
 impl RenderControlsOverlay {
+    /// 只编辑 requested；状态由固定生命周期计算，控件不调用 SDK。
+    pub fn build_nr_section(ui: &imgui::Ui, options: &mut NrOptions, status: NrStatus) {
+        ui.separator();
+        ui.checkbox("DLSS NR", &mut options.enabled);
+        ui.slider_config("NR Intensity", 0.0, 1.0).build(&mut options.intensity);
+        ui.text_wrapped(match status {
+            NrStatus::Off => "NR off. Image processing is not connected yet.",
+            NrStatus::Bypassed => "NR paused: requires Realtime Final with Debug Image disabled.",
+            NrStatus::Pending => "NR resource setup pending. Image processing is not connected yet.",
+            NrStatus::Ready => "NR resources ready; image processing is not connected yet.",
+        });
+    }
+
     pub fn build_render_mode_section(ui: &imgui::Ui, render_mode: &mut RenderMode, offline_sample_count: u32) {
         if let Some(_combo) = ui.begin_combo("Render Mode", render_mode.label()) {
             for mode in RenderMode::ALL {

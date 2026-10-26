@@ -9,6 +9,16 @@ use itertools::Itertools;
 
 use crate::{foundation::debug_messenger::DebugType, utilities::descriptor_cursor::GfxWriteDescriptorSet};
 
+/// 由本模块实际写入 device 创建链的跨模块 feature 契约，不是物理设备支持性查询。
+#[derive(Clone, Copy)]
+pub struct GfxEnabledFeatures {
+    pub buffer_device_address: bool,
+    pub shader_float16: bool,
+    pub storage_buffer16_bit_access: bool,
+    pub uniform_and_storage_buffer16_bit_access: bool,
+    pub synchronization2: bool,
+}
+
 /// Vulkan 逻辑设备封装
 ///
 /// 包含核心设备 API 以及各种扩展的函数指针（如动态渲染、光线追踪、调试工具等）。
@@ -21,6 +31,7 @@ use crate::{foundation::debug_messenger::DebugType, utilities::descriptor_cursor
 /// - Debug Utils (EXT)
 /// - Swapchain (KHR)
 pub struct GfxDevice {
+    enabled_features: GfxEnabledFeatures,
     /// 核心 Vulkan 设备 API
     pub(crate) device: ash::Device,
     /// 动态渲染扩展 API
@@ -60,7 +71,14 @@ impl GfxDevice {
 
         // device 所需的所有 features
         let mut all_features = vk::PhysicalDeviceFeatures2::default().features(Self::physical_device_basic_features());
-        let mut physical_device_ext_features = Self::physical_device_extra_features();
+        let enabled_features = GfxEnabledFeatures {
+            buffer_device_address: true,
+            shader_float16: true,
+            storage_buffer16_bit_access: true,
+            uniform_and_storage_buffer16_bit_access: true,
+            synchronization2: true,
+        };
+        let mut physical_device_ext_features = Self::physical_device_extra_features(enabled_features);
         unsafe {
             physical_device_ext_features.iter_mut().for_each(|f| {
                 let ptr = <*mut dyn vk::ExtendsPhysicalDeviceFeatures2>::cast::<vk::BaseOutStructure>(f.as_mut());
@@ -88,6 +106,7 @@ impl GfxDevice {
         });
 
         Self {
+            enabled_features,
             device: device.clone(),
             dynamic_rendering: vk_dynamic_render_pf,
             acceleration_structure: vk_acceleration_struct_pf,
@@ -125,10 +144,13 @@ impl GfxDevice {
     }
 
     /// 必要的 physical device extension features
-    fn physical_device_extra_features() -> Vec<Box<dyn vk::ExtendsPhysicalDeviceFeatures2>> {
+    fn physical_device_extra_features(enabled: GfxEnabledFeatures) -> Vec<Box<dyn vk::ExtendsPhysicalDeviceFeatures2>> {
         vec![
             Box::new(vk::PhysicalDeviceDynamicRenderingFeatures::default().dynamic_rendering(true)),
-            Box::new(vk::PhysicalDeviceBufferDeviceAddressFeatures::default().buffer_device_address(true)),
+            Box::new(
+                vk::PhysicalDeviceBufferDeviceAddressFeatures::default()
+                    .buffer_device_address(enabled.buffer_device_address),
+            ),
             Box::new(vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default().ray_tracing_pipeline(true)),
             Box::new(vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default().acceleration_structure(true)),
             Box::new(vk::PhysicalDeviceRayQueryFeaturesKHR::default().ray_query(true)),
@@ -136,7 +158,7 @@ impl GfxDevice {
                 vk::PhysicalDeviceRayTracingInvocationReorderFeaturesNV::default().ray_tracing_invocation_reorder(true),
             ),
             Box::new(vk::PhysicalDeviceHostQueryResetFeatures::default().host_query_reset(true)),
-            Box::new(vk::PhysicalDeviceSynchronization2Features::default().synchronization2(true)),
+            Box::new(vk::PhysicalDeviceSynchronization2Features::default().synchronization2(enabled.synchronization2)),
             Box::new(vk::PhysicalDeviceTimelineSemaphoreFeatures::default().timeline_semaphore(true)),
             Box::new(
                 vk::PhysicalDeviceDescriptorIndexingFeatures::default()
@@ -161,13 +183,13 @@ impl GfxDevice {
             // - shader_float16：resolved voxel buffer 以 fp16 存储 radiance。
             // - storage_buffer16_bit_access + uniform_and_storage_buffer16_bit_access：fp16 存进 storage buffer 时，
             //   Slang 生成的 SPIR-V 声明的是 UniformAndStorageBuffer16BitAccess capability，必须同时开启对应 feature。
-            // 这些 feature 只有 realtime RT 的 SHARC pass 使用；其它 pass 不依赖，关闭 SHARC 时也不读这些 buffer。
+            // SHARC 使用这些能力；NR 也核对 fp16/storage16 的实际启用状态。
             Box::new(vk::PhysicalDeviceShaderAtomicInt64Features::default().shader_buffer_int64_atomics(true)),
-            Box::new(vk::PhysicalDeviceShaderFloat16Int8Features::default().shader_float16(true)),
+            Box::new(vk::PhysicalDeviceShaderFloat16Int8Features::default().shader_float16(enabled.shader_float16)),
             Box::new(
                 vk::PhysicalDevice16BitStorageFeatures::default()
-                    .storage_buffer16_bit_access(true)
-                    .uniform_and_storage_buffer16_bit_access(true),
+                    .storage_buffer16_bit_access(enabled.storage_buffer16_bit_access)
+                    .uniform_and_storage_buffer16_bit_access(enabled.uniform_and_storage_buffer16_bit_access),
             ),
         ]
     }
@@ -212,6 +234,10 @@ impl GfxDevice {
 
 // 访问器
 impl GfxDevice {
+    pub fn enabled_features(&self) -> GfxEnabledFeatures {
+        self.enabled_features
+    }
+
     #[inline]
     pub fn vk_handle(&self) -> vk::Device {
         self.device.handle()

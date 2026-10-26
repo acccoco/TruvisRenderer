@@ -53,3 +53,8 @@ Project ID 和 engine version 由内部 `TruvixxUtils/ngx_identity.hpp` 与 Stre
 Rust consumer 见 [`truvis-dlss-nr-binding`](../../rust/bindings/truvis-dlss-nr-binding/README.md)。
 当前机器的合成输入、共存执行与清理证据见 [阶段 2 报告](../../../.temp/dlss5-validation/stage2/results.md)。
 该证据不涵盖真实 Renderer、SR/RR 输出串接到 NR、运动画质或性能。
+
+阶段 3 的 Renderer consumer 为 `renderer-rendering::NrSubsystem`：通过实际 interposer/device 检查固定
+requirements、已启用 features、函数入口与图像格式，在既有 graphics immediate 中提交 create 并等待。
+本模块仍只拥有 NGX 状态；图像与同步由 Renderer 拥有。阶段 3 不调用 evaluate、不改变显示链路，
+实际资源生命周期验证见 [阶段 3 报告](../../../.temp/dlss5-validation/stage3/results.md)。

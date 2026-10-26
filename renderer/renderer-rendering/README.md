@@ -10,6 +10,7 @@ shader/FFI 契约、反射距离近似与 debug 规则见
 
 - `realtime`：`RealtimeRenderSubsystem` / `RealtimeRenderSettings`，以及 GBuffer、ReSTIR reservoir/surface key、SHARC buffer、DLSS 输入输出、working target 和 main-view target。
 - `offline`：`OfflineRenderSubsystem` / `OfflineRenderSettings`，以及独立的 single-frame target、跨帧累计 image、output target、sample count 和累计签名。
+- `nr`：Renderer-owned `NrSubsystem`，集中保存 requested/effective、NGX 会话、feature、五张输出尺寸图像和独立 reset；不依赖 ImGui。
 - `post_process`：`TruvisRenderer` 唯一持有的 `SdrPostProcess`，拥有 AgX LUT、直方图、曝光历史与显示 pass；Realtime/Offline 通过 `SdrPostProcessInput` 借出 graph image，不转移 target 所有权。
 - `shared`：`RenderMode`、`PathTracingCommonSettings`、`PathTracingDebugChannel`、`SkySamplingMode`、`SdrPostProcessSettings` 和 `ImageTarget`。
 - `PathTracingDebugChannel` / `SkySamplingMode` 同时服务 realtime/offline；ReSTIR DI 和 SHARC 模式只属于 realtime 模块。
@@ -19,13 +20,23 @@ shader/FFI 契约、反射距离近似与 debug 规则见
 
 ## 生命周期与依赖
 
-- 每个 subsystem 实现 `renderer-kit::SubsystemLifecycle`，由具体 Renderer 显式调用 `init` / `on_resize` / `shutdown` 并决定 RenderGraph pass 顺序。
+- realtime/offline/post process 复用 `renderer-kit::SubsystemLifecycle`；NR 按需使用独立资源回调。具体 Renderer 显式决定生命周期和 RenderGraph pass 顺序。
 - `settings()` / `settings_mut()`、`compute_cmd()` / `present_cmd()`、`contribute_compute_passes()` / `contribute_present_passes()` 和 `debug_image_options()` 保持 subsystem 自身接口。
 - 窗口尺寸资源只保存 manager-owned handle；resize/shutdown 在 GPU safe point 通过 phase ctx 显式释放，不能长期保存 `Gfx`、allocator 或 runtime owner。
 - offline `accum_image` 不按 FIF 轮转，不复用 realtime GBuffer、DLSS 或 ReSTIR history；只有累计签名匹配且存在 TLAS 时才推进 sample。
 - 依赖 `renderer-kit`、`renderer-render-passes` 和 Engine 渲染能力，不依赖 ImGui；SDR 设置通过 shared API 暴露，避免 UI 直接依赖 pass crate。
 
 ## 显示契约
+
+NR 当前仅接入状态与资源，不添加 evaluate/pass 或修改显示链路。五张独立 `SingleImageTarget` 均按 output extent
+分配并注册：颜色/输出 RGBA16F、深度 R32F、MV RG16F、控制遮罩 RGBA8 UNORM。遮罩初始化全一；其它图像
+尚无有效渲染输入，禁止消费。创建 feature 使用既有 graphics immediate 提交并等待，Ready 不表示 NR 画面有效。
+
+关闭或不适用模式在 GPU idle 后释放 feature/图像，保留会话；重新开启或输出尺寸变化重建。
+仅强度变化无 GPU 等待/重建/其它历史 reset；内部尺寸变化仅请求 NR reset。设备 features 来自实际创建配置，
+requirements、函数入口和格式能力必须分别核对；会话不拥有 Vulkan root。失败和关闭顺序见
+[生命周期设计](../../docs/design/resource-lifecycle-and-destruction.md)；借用契约见
+[NR binding](../../cxx/rust/bindings/truvis-dlss-nr-binding/README.md)。
 
 默认 Khronos PBR Neutral + Manual，手动增益 0 stops、中性 Color Grading、dithering 开启；可选择 ACES fitted、AgX、None 和 Auto。
 Manual 只使用手动增益；自动补偿仅属于 Auto，默认 0 stops。

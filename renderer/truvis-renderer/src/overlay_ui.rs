@@ -10,7 +10,7 @@ use renderer_kit::debug_image::{DebugImageOption, DebugImageSelection};
 use renderer_render_ui::RenderControlsOverlay;
 use renderer_rendering::{OfflineRenderSettings, PathTracingCommonSettings, RealtimeRenderSettings, RenderMode};
 use truvis_render_runtime::ray_cast::RayCastResult;
-use renderer_rendering::DlssOptions;
+use renderer_rendering::{DlssOptions, NrOptions, NrStatus};
 use truvis_world::GameWorld;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
 
@@ -111,6 +111,7 @@ impl TruvisOverlayUi {
         ui.separator();
         ui.text("Reconstruction");
         RenderControlsOverlay::build_dlss_section_for_mode(ui, *controls.render_mode, controls.dlss_options);
+        RenderControlsOverlay::build_nr_section(ui, controls.nr_options, controls.nr_status);
     }
 
     fn draw_sky_tab(ui: &imgui::Ui, controls: &mut RenderControlsData<'_>) {
@@ -255,6 +256,8 @@ pub(crate) struct TruvisOverlayFrame<'a> {
 pub(crate) struct RenderControlsData<'a> {
     pub(crate) render_mode: &'a mut RenderMode,
     pub(crate) dlss_options: &'a mut DlssOptions,
+    pub(crate) nr_options: &'a mut NrOptions,
+    pub(crate) nr_status: NrStatus,
     pub(crate) common_settings: &'a mut PathTracingCommonSettings,
     pub(crate) realtime_settings: &'a mut RealtimeRenderSettings,
     pub(crate) offline_settings: &'a mut OfflineRenderSettings,

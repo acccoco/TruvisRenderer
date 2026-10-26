@@ -4,7 +4,7 @@ use ash::vk::{self, Handle};
 use renderer_rendering::{DlssEvaluation, DlssFeature, DlssFrameSnapshot, DlssOptions, DlssSrMode, DlssSrState};
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_runtime::render_runtime_ctx::{
-    RenderFrameInput, RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeUpdateCtx,
+    RenderFrameInput, RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx,
 };
 use truvis_render_runtime::state::frame_state::FrameRenderState;
 use truvis_streamline_binding::{StreamlineError, dlss};
@@ -111,11 +111,12 @@ impl TruvisDlssState {
         self.sr_state.finish_rendered_frame(scene_submitted, evaluation);
     }
 
-    pub fn shutdown(&mut self, ctx: &mut truvis_render_runtime::render_runtime_ctx::RenderRuntimeShutdownCtx<'_>) {
+    pub fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) -> Result<(), StreamlineError> {
         if self.feature_to_release.is_some() {
             ctx.device_ctx.device().wait_idle();
-            self.release_feature();
+            self.release_feature()?;
         }
+        Ok(())
     }
 
     fn read_options() -> DlssOptions {
@@ -177,7 +178,7 @@ impl TruvisDlssState {
 
     /// 仅在初始化或 GPU idle 边界调用；提交失败向上传播，禁止继续以未生效配置渲染。
     fn reconfigure(&mut self, output_extent: vk::Extent2D) -> Result<(), StreamlineError> {
-        self.release_feature();
+        self.release_feature()?;
         if self.effective.is_dlss_active() {
             dlss::set_options(0, self.streamline_sr_options(output_extent))?;
         }
@@ -206,16 +207,18 @@ impl TruvisDlssState {
         }
     }
 
-    fn release_feature(&mut self) {
-        let Some(feature) = self.feature_to_release.take() else {
-            return;
+    fn release_feature(&mut self) -> Result<(), StreamlineError> {
+        let Some(feature) = self.feature_to_release else {
+            return Ok(());
         };
         let result = match feature {
             DlssFeature::SuperResolution => dlss::free_resources(0),
             DlssFeature::RayReconstruction => dlss::free_rr_resources(0),
         };
-        if let Err(error) = result {
-            log::warn!("failed to release DLSS resources: {error}");
-        }
+        // 成功后才交回 ownership；失败不能继续关闭 NR/Streamline 共享的 NGX 状态。
+        result?;
+        self.feature_to_release = None;
+        log::info!("DLSS feature released: {feature:?}");
+        Ok(())
     }
 }

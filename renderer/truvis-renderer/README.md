@@ -14,7 +14,11 @@ realtime/offline 渲染子系统。它依赖 engine 与公共 Renderer capabilit
   由 `TruvisDlssState::frame_input` 逐帧更新，不因更新矩阵而释放 feature 或 reset history。
   尺寸改变时 update 只提交请求，释放、配置和 reset 统一在随后 resize 执行；仅配置改变时在 update
   执行。Offline 的 native 尺寸由 effective 配置统一派生，保留 requested 供返回 Realtime 恢复。
-  SR/RR options 提交错误经 `Result` 传播到 Renderer hook，以阶段明确的 `expect` 终止渲染执行路径。
+  SR/RR 配置或 release 错误经 `Result` 传播到 Renderer hook，记录原始错误并终止；失败不清空待释放状态。
+- `NrSubsystem`：Renderer 唯一持有的 NR requested/effective、会话、feature、图像和 reset owner，实现在 `renderer-rendering`。
+  默认关闭，强度 1.0；Reconstruction 区域的 NR 控件独立于 SR/RR。固定 update 归一化配置并请求资源回调，
+  仅 Realtime Final 且 Debug Image 关闭时准备资源，UI 隐藏不影响生效。当前提示资源就绪但尚未接入画面；
+  没有 NR evaluate，强度仅保存，画面仍由原显示链路产生。
 - `RendererClient`：App 提供的窄生命周期接口；Renderer 只在 init/update/after_prepare/shutdown 阶段调用它。
 - `TruvisOverlayUi`：组合 `renderer-imgui` 的诊断控件与 `renderer-render-ui` 的设置 section，提供 Render、Sky、Post、Picking、Debug 五个固定 tab 和常驻 FPS HUD。
 - `ViewportOverlaySubsystem`：统一持有灯光、transform gizmo 和坐标 gizmo 的唯一 pipeline、每 FIF vertex buffer 与最终顶点数组；`SelectionOutlineSubsystem` 独立持有网格描边资源。
@@ -46,6 +50,11 @@ Renderer 本身只消费 CPU scene 结果并负责 GPU/RenderGraph 编排。
 ## 运行与编排
 
 compute 与 present graph 分别在局部作用域完成录制；compute 的资源借用结束后才进入 present 编排。
+
+NR 重配置在 update/尺寸同步之后、prepare 之前的 GPU idle 回调中执行，不借用 World 或改变其它子系统。
+开启失败由 RenderLoop 停止出帧并显式清理。最终 GPU idle 后先释放 SR/RR 与 NR feature，再释放 NR 图像、
+关闭 NR 会话，Runtime/Gfx 随后显式关闭 Streamline 并销毁 Vulkan root。release/shutdown 失败直接终止，
+不重试、不依赖 Drop 继续清理。实际验证范围见 [阶段 3 报告](../../.temp/dlss5-validation/stage3/results.md)。
 两种模式只选择各自的输入目标和命令缓冲，共用 SDR 后处理及 present/overlay 编排；GPU owner 保持独立。
 
 `render` 返回主视图场景是否实际提交；无 TLAS 清屏返回 false。相机历史与 jitter 在提交后确认，

@@ -55,8 +55,8 @@ CPU 删除只撤销 CPU membership；GPU mirror 在下一次完整对账中退�
 ## 销毁顺序
 
 ```text
-Renderer/Subsystem shutdown
--> wait GPU idle
+wait GPU idle
+-> Renderer/Subsystem shutdown
 -> present / raycast / scene assets
 -> per-frame data / command allocator
 -> resource registry / binding system
@@ -67,6 +67,14 @@ Renderer/Subsystem shutdown
 RenderWorld 的 asset shutdown 先停止并 join CPU distribution worker，再等待 upload timeline，最后释放 active/retired/fallback GPU resources。
 
 Renderer 资源必须早于 Runtime destroy；Runtime 资源必须早于 Gfx destroy；窗口 host 必须晚于 RenderThread 退出。
+
+NR 的会话、feature 和图像属于 Renderer-owned `NrSubsystem`，并在 RenderThread 串行操作。
+关闭效果或进入 Offline/调试视图只释放 feature 和图像，保留会话。输出 extent 改变重建 NR；
+仅内部 render extent 改变保留 NR 图像。重配置在独立资源回调执行，不伪造 resize 或重建其它 owner。
+
+最终关闭必须按 GPU idle → SR/RR 与 NR feature → NR 图像 → NR 参数/会话 → Streamline → Vulkan root。
+SR/RR/NR release 失败保留待释放状态及原始错误，禁止重试或继续关闭共享 NGX。
+Gfx 显式检查 Streamline shutdown 的结果，失败不再销毁 Vulkan root；Drop 不负责补救。
 
 ## 设计不变量
 

@@ -78,11 +78,17 @@ impl<'a> GfxQueueCtx<'a> {
 /// 只读设备信息与格式查询能力。
 #[derive(Clone, Copy)]
 pub struct GfxDeviceInfoCtx<'a> {
+    entry: &'a ash::Entry,
     instance: &'a GfxInstance,
     physical_device: &'a GfxPhysicalDevice,
 }
 
 impl<'a> GfxDeviceInfoCtx<'a> {
+    /// 与当前 instance/device 同源的 loader 入口；不另行加载系统 Vulkan DLL。
+    pub fn get_instance_proc_addr(self) -> vk::PFN_vkGetInstanceProcAddr {
+        self.entry.static_fn().get_instance_proc_addr
+    }
+
     #[inline]
     pub fn instance(self) -> &'a GfxInstance {
         self.instance
@@ -417,6 +423,7 @@ impl Gfx {
     #[inline]
     pub fn device_info_ctx(&self) -> GfxDeviceInfoCtx<'_> {
         GfxDeviceInfoCtx {
+            entry: &self.gfx_core.vk_entry,
             instance: &self.gfx_core.instance,
             physical_device: &self.gfx_core.physical_device,
         }
@@ -483,6 +490,15 @@ impl GfxImmediateCtx<'_> {
     where
         F: FnOnce(&GfxCommandBuffer) -> R,
     {
+        self.try_one_time_exec(|cmd| Ok::<R, std::convert::Infallible>(func(cmd)), name).unwrap()
+    }
+
+    /// 录制失败时直接释放未提交命令，避免把 SDK 的部分失败录制送到 GPU。
+    /// 成功路径仍与 one_time_exec 共用同一 graphics queue 并等待执行完成。
+    pub fn try_one_time_exec<F, R, E>(self, func: F, name: impl AsRef<str>) -> Result<R, E>
+    where
+        F: FnOnce(&GfxCommandBuffer) -> Result<R, E>,
+    {
         let command_buffer = GfxCommandBuffer::new_with_device(
             self.device_rc(),
             self.command_pool,
@@ -491,11 +507,12 @@ impl GfxImmediateCtx<'_> {
 
         command_buffer.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, name.as_ref());
         let result = func(&command_buffer);
-        command_buffer.end();
-
-        let command_buffer_clone = command_buffer.clone();
-        self.queue.submit(vec![GfxSubmitInfo::new(&[command_buffer_clone])], None);
-        self.queue.wait_idle();
+        if result.is_ok() {
+            command_buffer.end();
+            let command_buffer_clone = command_buffer.clone();
+            self.queue.submit(vec![GfxSubmitInfo::new(&[command_buffer_clone])], None);
+            self.queue.wait_idle();
+        }
         unsafe {
             self.device.free_command_buffers(self.command_pool.handle(), &[command_buffer.vk_handle()]);
         }

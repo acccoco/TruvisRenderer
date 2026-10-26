@@ -5,6 +5,8 @@ Vulkan RHI 抽象层，封装设备、队列、资源、同步与图形/计算/�
 ## 主要内容
 
 - `Gfx` 显式 root owner 与 typed Gfx Ctx 工厂
+- `GfxDeviceInfoCtx` 暴露当前 interposer 链的 instance proc；`GfxEnabledFeatures` 记录实际写入 device 创建链的跨模块 feature 配置，不是物理支持查询。
+- `GfxImmediateCtx::try_one_time_exec` 仅在录制成功时提交并等待 graphics queue；录制错误释放未提交命令并返回调用方。
 - 命令缓冲、同步原语、屏障封装
 - 图像/缓冲等 GPU 资源对象
 - `GfxSBTBuffer` 负责 ray tracing SBT buffer、region 对齐和 shader group handle 写入
@@ -59,6 +61,7 @@ Vulkan RHI 抽象层，封装设备、队列、资源、同步与图形/计算/�
   不依赖全局 slot，但仍复用同一套 Vulkan descriptor 基础能力。
 - 长期资源对象不保存 `&Gfx`、`&GfxDevice` 或 allocator 引用，销毁依赖由 owner 在调用点传入。
 - `Drop` 只做遗漏销毁诊断，避免在不可控 drop 顺序中调用 Vulkan/VMA/WSI release API。
+- Gfx 销毁时显式检查 Streamline shutdown；失败记录原始错误并终止，禁止继续销毁 Vulkan root。上层此前必须释放全部 SDK feature 和 NR 会话。
 
 ## 依赖关系
 

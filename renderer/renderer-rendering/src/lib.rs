@@ -9,6 +9,8 @@ pub use realtime::{RealtimeRenderSettings, RealtimeRenderSubsystem};
 pub use shared::{ImageTarget, PathTracingCommonSettings, PathTracingDebugChannel, RenderMode, SkySamplingMode};
 
 pub mod post_process;
+pub mod nr;
+pub use nr::{NrOptions, NrStatus, NrSubsystem};
 pub use post_process::{SdrPostProcess, SdrPostProcessInput};
 pub use renderer_render_passes::post_process::dlss_options::{
     DlssEvaluation, DlssFeature, DlssFrameSnapshot, DlssOptions,

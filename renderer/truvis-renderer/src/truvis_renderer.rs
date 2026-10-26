@@ -8,6 +8,7 @@ use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
 use truvis_render_runtime::render_runtime::{
     RenderFrameInput, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx,
 };
+use truvis_render_runtime::render_runtime_ctx::RenderRuntimeResourceCtx;
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_world::{GameWorld, LightTarget, WorldEditError, guid_new_type::MeshInstanceHandle};
 
@@ -17,8 +18,8 @@ use renderer_kit::debug_image::DebugImageSelection;
 use renderer_kit::input_state::InputManager;
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 use renderer_rendering::{
-    DlssEvaluation, OfflineRenderSubsystem, PathTracingCommonSettings, RealtimeRenderSubsystem, RenderMode,
-    SdrPostProcess,
+    DlssEvaluation, NrOptions, NrStatus, NrSubsystem, OfflineRenderSubsystem, PathTracingCommonSettings,
+    PathTracingDebugChannel, RealtimeRenderSubsystem, RenderMode, SdrPostProcess,
 };
 
 use crate::dlss::TruvisDlssState;
@@ -58,6 +59,7 @@ pub struct TruvisRenderer {
     light_overlay: LightOverlay,
     focused: bool,
     dlss: TruvisDlssState,
+    nr: NrSubsystem,
     view_accum: ViewAccumState,
     restir_reset_pending: bool,
 
@@ -123,6 +125,7 @@ impl TruvisRenderer {
             light_overlay: Default::default(),
             focused: true,
             dlss: Default::default(),
+            nr: Default::default(),
             view_accum: Default::default(),
             restir_reset_pending: false,
             client,
@@ -225,6 +228,15 @@ impl ClickRayCastProbe {
 }
 
 impl TruvisRenderer {
+    /// 修改 requested 配置；资源操作只在下一次固定 update / 重配置边界生效。
+    pub fn nr_options_mut(&mut self) -> &mut NrOptions {
+        self.nr.options_mut()
+    }
+
+    pub fn nr_status(&self) -> NrStatus {
+        self.nr.status()
+    }
+
     pub fn overlay_options(&self) -> &TruvisOverlayOptions {
         self.overlay_ui.options()
     }
@@ -442,6 +454,8 @@ impl Renderer for TruvisRenderer {
                 render_controls: RenderControlsData {
                     render_mode: &mut self.render_mode,
                     dlss_options: self.dlss.options_mut(),
+                    nr_status: self.nr.status(),
+                    nr_options: self.nr.options_mut(),
                     common_settings: &mut self.path_tracing_common_settings,
                     realtime_settings: self.realtime.settings_mut(),
                     offline_settings: self.offline.settings_mut(),
@@ -476,9 +490,20 @@ impl Renderer for TruvisRenderer {
             RenderMode::Offline => OfflineRenderSubsystem::debug_image_options(),
         };
         self.debug_image_selection.normalize_options(debug_image_options);
-        if self.dlss.update(ctx, self.render_mode == RenderMode::Realtime).expect("DLSS update configuration failed") {
+        let dlss_changed = self.dlss.update(ctx, self.render_mode == RenderMode::Realtime).unwrap_or_else(|error| {
+            log::error!("Fatal DLSS update failure; preserving GPU owners: {error}");
+            std::process::abort();
+        });
+        if dlss_changed {
             self.view_accum.reset();
             self.restir_reset_pending = true;
+            self.nr.request_reset();
+        }
+        let nr_eligible = self.render_mode == RenderMode::Realtime
+            && self.realtime.settings().debug_channel == PathTracingDebugChannel::Final
+            && self.debug_image_selection.selected_id().is_none();
+        if self.nr.update(nr_eligible, ctx.swapchain_extent) {
+            ctx.request_resource_reconfigure();
         }
         self.view_accum.update(self.frame_view.accum_signature());
     }
@@ -488,6 +513,7 @@ impl Renderer for TruvisRenderer {
             self.restir_reset_pending = true;
             self.view_accum.reset();
             self.dlss.reset();
+            self.nr.request_reset();
         }
         if let Some(request) = self.camera_controller.take_pending_pivot_raycast() {
             let result = Self::cast_single_ray(ctx, request.ray);
@@ -522,9 +548,13 @@ impl Renderer for TruvisRenderer {
     }
 
     fn on_resize(&mut self, ctx: &mut RendererResizeCtx<'_>) {
-        self.dlss.resize(&mut ctx.runtime).expect("DLSS resize configuration failed");
+        self.dlss.resize(&mut ctx.runtime).unwrap_or_else(|error| {
+            log::error!("Fatal DLSS resize failure; preserving GPU owners: {error}");
+            std::process::abort();
+        });
         self.view_accum.reset();
         self.restir_reset_pending = true;
+        self.nr.request_reset();
         self.realtime.on_resize(&mut ctx.runtime);
         self.offline.on_resize(&mut ctx.runtime);
         self.selection_outline.on_resize(&mut ctx.runtime);
@@ -538,11 +568,19 @@ impl Renderer for TruvisRenderer {
         self.imgui.on_resize(&mut ctx.runtime);
     }
 
+    /// 先释放全部 NGX feature，再关闭 NR 会话；失败必须终止，不能展开到 root 的销毁路径。
     fn shutdown(&mut self, ctx: &mut RendererShutdownCtx<'_>) {
         self.client.shutdown();
 
-        // 与资源创建顺序相反释放，且始终早于 runtime root owner 销毁。
-        self.dlss.shutdown(&mut ctx.runtime);
+        let close_nr = (|| -> Result<(), String> {
+            self.dlss.shutdown(&mut ctx.runtime).map_err(|e| e.to_string())?;
+            self.nr.release_feature()?;
+            self.nr.shutdown(&mut ctx.runtime)
+        })();
+        if let Err(error) = close_nr {
+            log::error!("Fatal DLSS/NR shutdown failure; preserving GPU owners: {error}");
+            std::process::abort();
+        }
         self.imgui.shutdown(&mut ctx.runtime);
         self.viewport_overlay.shutdown(&mut ctx.runtime);
         self.selection_outline.shutdown(&mut ctx.runtime);
@@ -683,6 +721,10 @@ impl Renderer for TruvisRenderer {
             self.restir_reset_pending = false;
         }
         scene_submitted
+    }
+
+    fn reconfigure_resources(&mut self, ctx: &mut RenderRuntimeResourceCtx<'_>) -> Result<(), String> {
+        self.nr.reconfigure(ctx)
     }
 
     fn render_frame_input(

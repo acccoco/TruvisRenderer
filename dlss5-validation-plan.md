@@ -4,7 +4,15 @@
 
 阶段 1 已于 2026-10-26 在当前机器重新实施并通过最小运行验收：RTX 5070 Ti、驱动 621.01、NR DLL 310.9.16.0，`Available=1`、`NeedsUpdatedDriver=0`、`FeatureInitResult=Success`；requirements 查询成功。feature 创建、首帧 reset 后连续四帧 evaluate、GPU 等待、输出回读与清理均成功，Vulkan validation error/warning 均为 0。最终验收使用与固定版本 Remix 一致的 gamma 2.2 SDR 合成输入；不代表真实场景画质。证据见 [结果报告](.temp/dlss5-validation/results.md)，复现方法见 [验证说明](.temp/dlss5-validation/README.md)。临时验证源码、构建产物与逐轮证据均位于 `.temp/dlss5-validation/`，未纳入 Git。
 
-阶段 2 已于同日完成：交付 NR SHARED C ABI、单向 Rust binding 与 Debug/Release 部署。两种构建下 SR/RR 分别完成基线、NR 两轮各四帧与回读、NR feature 释放/重建、缺 DLL 失败后继续执行及约定顺序的最终关闭；Vulkan validation error/warning 均为 0。原始 NGX 重复初始化和零尺寸创建失败后的 SR/RR 恢复也已实测。证据与限制见 [阶段 2 报告](.temp/dlss5-validation/stage2/results.md)，复现见 [阶段 2 入口](.temp/dlss5-validation/stage2/README.md)。未进入阶段 3，未添加 Renderer 开关或真实场景 NR pass。
+阶段 2 已于同日完成：交付 NR SHARED C ABI、单向 Rust binding 与 Debug/Release 部署。两种构建下 SR/RR 分别完成基线、NR 两轮各四帧与回读、NR feature 释放/重建、缺 DLL 失败后继续执行及约定顺序的最终关闭；Vulkan validation error/warning 均为 0。原始 NGX 重复初始化和零尺寸创建失败后的 SR/RR 恢复也已实测。证据与限制见 [阶段 2 报告](.temp/dlss5-validation/stage2/results.md)，复现见 [阶段 2 入口](.temp/dlss5-validation/stage2/README.md)。这些是阶段 2 的历史验证记录，不包括 Renderer。
+
+阶段 3 已于同日完成 Renderer 配置、资源回调、图像/feature 生命周期与 ImGui 控件，native Debug/Release 和应用构建通过。
+正式 Renderer 已覆盖开关/重开、强度、SR/RR、窗口尺寸、最小化恢复、Realtime/Offline、Final/Debug Image 和退出；
+最终版本 Debug 连续 resize、Release RR+NR 重开及直接退出均成功，退出码为 0。
+独立缺 NR DLL 环境在 NR 关闭时继续 RR 出图，显式开启后报告 MissingDll、停止出帧并按顺序清理，退出码为 101。
+RR 私有图像的同步 validation 报错在从未初始化 NR 的基线同样复现；本轮未观察到 NR 新增报错、device lost 或 shutdown 错误，
+不能报告 validation 全零。NR 仅准备资源，尚未调用 evaluate 或改变画面；阶段 4 未开始。
+逐项证据与验证限制见 [阶段 3 报告](.temp/dlss5-validation/stage3/results.md)。
 
 历史记录：此前文档记载 RTX 4060、驱动 616.92、相同 NR DLL 的结果为明确不可用（`Available=0`、`FeatureInitResult=0xbad0000b`，日志为 `snippet is using newer GPU arch 1B0 > 190`），requirements 返回 `NotImplemented`，未执行创建/evaluate。旧报告未随当前工作区提供；本次不以该旧结论判断当前设备。
 
@@ -70,8 +78,13 @@
 
 ## 阶段 3：Renderer 状态与资源
 
-- Renderer 持有 requested/effective NR 配置、feature 状态和独立的历史失效状态，复用现有配置生效与 resize 边界。
-- 明确 NR 输入输出图像的 owner 和尺寸，复用现有资源封装。
+- `TruvisRenderer` 持有 `renderer-rendering::NrSubsystem`，统一管理 requested/effective、会话、feature、图像和独立 reset。
+- 默认关闭、强度 1.0；仅 Realtime Final 且无 Debug Image 时准备资源。强度只保存，不影响其它历史。
+- update 请求中性资源回调，在尺寸同步后、prepare 前、GPU idle 边界生效；无 present target 延后。
+- 五张独立图像按 output extent 分配：RGBA16F 颜色/输出、R32F 深度、RG16F MV、RGBA8 UNORM 全一控制遮罩。
+- 关闭/进入不适用模式释放 feature/图像并保留会话；输出 extent 改变重建，内部尺寸变化只请求 NR reset。
+- 创建命令通过既有 graphics immediate 提交并等待；不接入 evaluate，不改变显示链路。显式开启失败停止渲染并清理。
+- 最终 GPU idle → SR/RR/NR feature → NR 图像 → NR 会话 → 显式 Streamline shutdown → Vulkan root；释放/关闭失败记录并终止。
 - 初版保留开关与整体强度；模型与其他参数先固定在已验证设置。
 - 覆盖开启、关闭、resize、渲染模式切换和退出。重建与释放必须满足 GPU 完成条件。
 
