@@ -26,8 +26,8 @@ flowchart LR
     Input["drain input"] --> Begin["begin_frame"]
     Begin --> Update["update_phase + Renderer::update"]
     Update --> Resize{"resize / DLSS extent?"}
-    Resize --> Prepare["prepare(render_view)"]
-    Resize --> Prepare
+    Resize --> Resources["按需 resource reconfigure / GPU idle"]
+    Resources --> Prepare["prepare(render_view)"]
     Prepare --> Query["after_prepare / raycast"]
     Query --> Render["render + RenderGraph"]
     Render --> Present["present"]
@@ -41,6 +41,7 @@ flowchart LR
 窗口最小化、swapchain 暂不可用或尺寸为零时，Runtime 可能没有可提交的 present target。此时仍执行必要的控制状态检查和资源安全处理，但跳过 `prepare`、raycast、render 和 present，使用 timeline 补齐当前帧后进入 `end_frame`。
 
 无 present target 不代表 Runtime 已关闭，也不等价于 GPU 工作完成；它只表示本帧没有可显示的 swapchain image。
+资源重配置请求保留至有效 present target 恢复，期间不调用 Renderer 资源回调。
 
 ## 软件限帧
 
@@ -58,8 +59,9 @@ resize 只在 RenderLoop 安全点处理。Runtime 重建 swapchain/present 状�
 
 ```text
 停止接收新请求
+-> RenderRuntime::wait_idle
 -> Renderer::shutdown
--> RenderRuntime::wait_idle / destroy
+-> RenderRuntime::destroy
 -> RenderThread 完成并发布状态
 -> window host 销毁 child HWND
 -> App 停止通知 dispatcher
@@ -67,6 +69,7 @@ resize 只在 RenderLoop 安全点处理。Runtime 重建 swapchain/present 状�
 ```
 
 RenderLoop 必须先让 Renderer 释放自身资源，再让 Runtime 销毁 `Gfx` root owner。窗口 owner 只有在 RenderThread 退出后才能释放 child HWND。
+资源重配置失败同样进入上述显式关闭，再报告运行失败；释放或 SDK shutdown 失败则记录错误并终止进程，禁止继续销毁 root。
 
 ## 设计不变量
 

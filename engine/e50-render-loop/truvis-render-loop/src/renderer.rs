@@ -5,7 +5,7 @@
 
 use truvis_render_runtime::render_runtime::{
     RenderFrameInput, RenderRuntimeInitCtx, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx,
-    RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx,
+    RenderRuntimeResourceCtx, RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx,
 };
 
 use crate::input_event::InputEvent;
@@ -41,6 +41,15 @@ pub struct RendererShutdownCtx<'a> {
 /// 控制点。Renderer 负责定义输入消费策略、子系统生命周期、RenderGraph 构建顺序及
 /// 各项具体能力的调用位置；`RenderLoop` 不感知 Renderer 内部静态组合。
 pub trait Renderer {
+    /// update 请求的 GPU 资源变化，在尺寸同步后、prepare 前串行生效。
+    /// 返回错误会停止出帧并进入显式 shutdown；不能继续使用部分创建的资源。
+    fn reconfigure_resources(
+        &mut self,
+        _ctx: &mut RenderRuntimeResourceCtx<'_>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
     /// 初始化具体 Renderer 自己的状态和持有的具体子系统。
     ///
     /// 该 hook 发生在 runtime 完成窗口绑定之后。Renderer 自行决定 CPU 状态建立和

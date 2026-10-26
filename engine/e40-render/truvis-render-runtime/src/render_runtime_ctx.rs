@@ -58,9 +58,15 @@ pub struct RenderRuntimeUpdateCtx<'a> {
     pub frame_timing: &'a FrameTiming,
     /// Renderer 在 update 阶段提交的期望内部渲染尺寸。
     pub(crate) requested_render_extent: &'a mut vk::Extent2D,
+    pub(crate) resource_reconfigure_requested: &'a mut bool,
 }
 
 impl RenderRuntimeUpdateCtx<'_> {
+    /// 配置只提交请求；资源操作延后到尺寸同步之后的 GPU idle 边界。
+    pub fn request_resource_reconfigure(&mut self) {
+        *self.resource_reconfigure_requested = true;
+    }
+
     pub fn set_render_extent(&mut self, extent: vk::Extent2D) {
         *self.requested_render_extent = extent;
     }
@@ -68,6 +74,18 @@ impl RenderRuntimeUpdateCtx<'_> {
     pub fn wait_idle(&self) {
         self.device_ctx.device().wait_idle();
     }
+}
+
+/// 按需资源重配置；Runtime 已等待 GPU idle，不提供 CPU scene 或帧状态写权限。
+/// 借用只在回调期间有效，不能保存 Ctx 或借此修改渲染尺寸。
+pub struct RenderRuntimeResourceCtx<'a> {
+    pub device_ctx: GfxDeviceCtx<'a>,
+    pub device_info_ctx: GfxDeviceInfoCtx<'a>,
+    pub resource_ctx: GfxResourceCtx<'a>,
+    pub immediate_ctx: GfxImmediateCtx<'a>,
+    pub gfx_resource_registry: &'a mut GfxResourceRegistry,
+    pub frame_timing: &'a FrameTiming,
+    pub frame_state: &'a FrameRenderState,
 }
 
 /// Render 阶段上下文，对 GPU 命令录制需要的 RenderRuntime 状态进行只读共享借用。

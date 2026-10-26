@@ -24,6 +24,7 @@ Runtime 不感知 GUI、selection outline、具体 RT subsystem 或 Editor contr
 | `init_after_window` | 创建 surface、swapchain 和 present owner | `RenderRuntimeInitCtx` |
 | `begin_frame` | 时间快照、FIF 等待、命令池重置、延迟释放 | 无公开 ctx |
 | `update_phase` | 同步 frame state、获取 present image | CPU world 与配置可变借用 |
+| `resource_reconfigure_phase` | 有请求且有 present target 时等待 GPU idle | `RenderRuntimeResourceCtx`，设备、registry、immediate 与只读帧信息 |
 | `prepare` | CPU scene、asset、instance 转为 GPU 可见快照 | 不直接暴露完整 owner |
 | `ray_cast_phase` | 对 prepare 后 GPU scene 做同步查询 | `RenderRuntimeRayCastCtx` |
 | `render_phase` | 提供只读 scene、present 和 timing 视图 | `RenderRuntimeRenderCtx` |
@@ -31,7 +32,7 @@ Runtime 不感知 GUI、selection outline、具体 RT subsystem 或 Editor contr
 | `end_frame` | 推进 frame id 和 FIF label | 无公开 ctx |
 | `shutdown` | Runtime destroy 前释放上层资源 | `RenderRuntimeShutdownCtx` |
 
-`sync_dlss_options_frame_state` 是 update 后的配置收敛点；若内部尺寸变化，它返回 resize context，由 Renderer 重建窗口尺寸资源。
+`sync_render_extent` 是 update 后的尺寸收敛点；若内部尺寸变化，它返回 resize context，由 Renderer 重建内部尺寸资源。
 
 ## Renderer 阶段
 
@@ -40,6 +41,7 @@ Renderer hook 与 Runtime phase 一一对应但不等价：
 - `init` 创建 Renderer-owned 状态和子系统资源。
 - `on_input` 消费输入并决定 camera、GUI 和业务命令的优先级。
 - `update` 修改 CPU scene、camera、配置和 Editor 请求。
+- `reconfigure_resources` 处理 update 发出的中性资源请求；位于尺寸同步之后、prepare 之前，默认空实现。
 - `render_view` 提供纯数据快照，Runtime 在 `prepare` 中读取。
 - `after_prepare` 处理需要已完成 GPU scene 的即时查询，例如 picking。
 - `render` 创建 RenderGraph 并决定 pass 顺序。
@@ -68,6 +70,7 @@ after_prepare 的网格 picking 通过统一 selection 提交入口清除旧 giz
 ```mermaid
 flowchart LR
     Runtime --> Update["UpdateCtx\nCPU mutation"]
+    Runtime --> Resources["ResourceCtx\n按需 GPU idle 后重配置"]
     Runtime --> Ray["RayCastCtx\n同步查询"]
     Runtime --> Render["RenderCtx\n只读 GPU scene"]
     Runtime --> Resize["ResizeCtx\n重建窗口资源"]
@@ -75,6 +78,9 @@ flowchart LR
 ```
 
 Ctx 的生命周期限制能力可见性，也限制资源借用跨阶段保存。`RenderRuntimeRenderCtx` 不提供 CPU scene 可变访问；`RenderRuntimeRayCastCtx` 不承担一般渲染工作。
+
+UpdateCtx 只能请求重配置，不获得 registry/immediate 权限。没有 present target 时保留请求，恢复后才处理；
+普通帧不增加 idle，资源请求本身不触发 resize 或通用历史失效。具体 Renderer 决定哪些 owner 需要重建。
 
 ## Subsystem 组合
 
@@ -99,13 +105,13 @@ Ctx 的生命周期限制能力可见性，也限制资源借用跨阶段保存�
 
 ## 能力矩阵
 
-| 能力 | update | prepare | after_prepare | render | shutdown |
-|---|---:|---:|---:|---:|---:|
-| 修改 CPU scene | 是 | 否 | 否 | 否 | 仅清理 |
-| 读取 GPU scene | 间接 | 构建 | 查询 | 只读 | 释放 |
-| 同步 raycast | 否 | 否 | 是 | 否 | 否 |
-| 加入 RenderGraph | 否 | 否 | 否 | 是 | 否 |
-| 释放 Renderer 资源 | 否 | 否 | 否 | 否 | 是 |
+| 能力 | update | reconfigure_resources | prepare | after_prepare | render | shutdown |
+|---|---:|---:|---:|---:|---:|---:|
+| 修改 CPU scene | 是 | 否 | 否 | 否 | 否 | 仅清理 |
+| 读取 GPU scene | 间接 | 否 | 构建 | 查询 | 只读 | 释放 |
+| 同步 raycast | 否 | 否 | 否 | 是 | 否 | 否 |
+| 加入 RenderGraph | 否 | 否 | 否 | 否 | 是 | 否 |
+| 创建/释放 Renderer 资源 | 否 | 是 | 否 | 否 | 否 | 释放 |
 
 这张矩阵用于判断 API 应该放在哪个 Ctx，而不是用于描述具体 Renderer 的所有操作。若一个操作需要同时改变 CPU scene 和录制 GPU pass，应拆成两个明确阶段。
 
@@ -114,6 +120,9 @@ Ctx 的生命周期限制能力可见性，也限制资源借用跨阶段保存�
 phase 返回值表达当前阶段能否继续，而不是替上层猜测最终画面结果。resize 返回 `None` 只表示没有需要传播的 Runtime resize；它不表示 Renderer resource 一定已同步。
 
 Runtime 错误应在 RenderLoop 的阶段边界处理。Renderer 不应在 render hook 中补做 update 或 prepare，也不应通过 catch error 隐藏 phase 顺序错误。
+
+资源回调返回 Err 后停止出帧，RenderLoop 先执行显式 shutdown，再向线程宿主报告失败。
+若释放或关闭本身失败，owner 必须保留原始错误并终止进程，不能继续销毁可能仍被引用的 root。
 
 ## 变更检查
 

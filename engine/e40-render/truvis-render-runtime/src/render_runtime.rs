@@ -29,7 +29,7 @@ use crate::state::frame_timing::FrameTiming;
 
 pub use crate::render_runtime_ctx::{
     RenderFrameInput, RenderRuntimeInitCtx, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx,
-    RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx,
+    RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx, RenderRuntimeResourceCtx,
 };
 
 /// 渲染运行时核心。
@@ -66,6 +66,7 @@ pub struct RenderRuntime {
     per_frame_gpu_data: PerFrameGpuData,
     frame_state: FrameRenderState,
     requested_render_extent: vk::Extent2D,
+    resource_reconfigure_requested: bool,
     history_invalidated: bool,
     render_world: RenderWorld,
     ray_cast_service: RayCastService,
@@ -201,6 +202,7 @@ impl RenderRuntime {
                 per_frame_gpu_data,
                 frame_state,
                 requested_render_extent: vk::Extent2D { width: 400, height: 400 },
+                resource_reconfigure_requested: false,
                 history_invalidated: false,
             }
         }
@@ -331,7 +333,26 @@ impl RenderRuntime {
             swapchain_extent: self.frame_state.output_extent,
             frame_timing: &self.frame_timing,
             requested_render_extent: &mut self.requested_render_extent,
+            resource_reconfigure_requested: &mut self.resource_reconfigure_requested,
         }
+    }
+
+    /// 没有 present target 时保留请求，恢复出帧后再处理；普通帧不增加 GPU 等待。
+    pub fn resource_reconfigure_phase(&mut self) -> Option<RenderRuntimeResourceCtx<'_>> {
+        if !self.resource_reconfigure_requested || !self.current_frame_has_present_target() {
+            return None;
+        }
+        self.gfx.wait_idel();
+        self.resource_reconfigure_requested = false;
+        Some(RenderRuntimeResourceCtx {
+            device_ctx: self.gfx.device_ctx(),
+            device_info_ctx: self.gfx.device_info_ctx(),
+            resource_ctx: self.gfx.resource_ctx(),
+            immediate_ctx: self.gfx.immediate_ctx(),
+            gfx_resource_registry: &mut self.gfx_resource_registry,
+            frame_timing: &self.frame_timing,
+            frame_state: &self.frame_state,
+        })
     }
 
     /// 更新累积帧跟踪，并上传 GPU scene/descriptor 数据。

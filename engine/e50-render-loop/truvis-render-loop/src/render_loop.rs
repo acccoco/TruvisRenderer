@@ -103,7 +103,13 @@ impl RenderLoop {
                 }
             }
 
-            render_loop.run_frame();
+            if let Err(error) = render_loop.run_frame() {
+                log::error!("RenderThread resource reconfiguration failed: {error}; stopping rendering.");
+                control.request_exit();
+                render_loop.shutdown();
+                // 资源已按正常顺序回收，再由现有线程宿主把失败传给窗口 owner。
+                panic!("Renderer resource reconfiguration failed: {error}");
+            }
         }
 
         log::info!("RenderThread: exit flag observed, destroying resources.");
@@ -144,7 +150,7 @@ impl RenderLoop {
         self.render_runtime = Some(render_runtime);
     }
 
-    fn run_frame(&mut self) {
+    fn run_frame(&mut self) -> Result<(), String> {
         let _span = tracy_client::span!("RenderLoop::run_frame");
         let Self {
             render_runtime,
@@ -196,7 +202,11 @@ impl RenderLoop {
                 render_runtime.end_frame();
             }
             tracy_client::frame_mark();
-            return;
+            return Ok(());
+        }
+
+        if let Some(mut resources) = render_runtime.resource_reconfigure_phase() {
+            renderer.reconfigure_resources(&mut resources)?;
         }
 
         {
@@ -226,6 +236,7 @@ impl RenderLoop {
             render_runtime.end_frame();
         }
         tracy_client::frame_mark();
+        Ok(())
     }
 
     fn push_input_event(&mut self, event: InputEvent) {
