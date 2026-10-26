@@ -6393,6 +6393,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "truvis-dlss-nr-binding"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "truvis-cxx-binding-codegen",
+ "truvis-path",
+]
+
+[[package]]
 name = "truvis-editor-bridge"
 version = "0.1.0"
 dependencies = [

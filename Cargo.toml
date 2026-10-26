@@ -33,6 +33,7 @@ members = [
     # cxx 绑定相关
     "cxx/rust/bindings/truvis-assimp-binding",
     "cxx/rust/bindings/truvis-streamline-binding",
+    "cxx/rust/bindings/truvis-dlss-nr-binding",
     "cxx/rust/bindings/truvis-vk-binding",
     # renderer
     "renderer/truvis-renderer",
@@ -66,6 +67,7 @@ panic = 'abort'    # panic 时直接终止，进一步减小体积
 
 
 [workspace.dependencies]
+truvis-dlss-nr-binding = { path = "cxx/rust/bindings/truvis-dlss-nr-binding" }
 # e00-utils
 truvis-fetch-res = { path = "engine/e00-utils/truvis-fetch-res" }
 truvis-path = { path = "engine/e00-utils/truvis-path" }

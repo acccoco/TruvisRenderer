@@ -2,7 +2,11 @@
 
 记录日期：2026-10-26。本文固化验证路线；实际执行状态以运行报告为准。
 
-阶段 1 已实施并运行，交付位于 `dlss5-validation/`。当前 RTX 4060、驱动 616.92、NR DLL 310.9.16.0 的结果为**明确不可用**：`Available=0`，`FeatureInitResult=0xbad0000b`，NGX 日志报告 `snippet is using newer GPU arch 1B0 > 190`。扩展查询、NGX 初始化、参数读取与清理完成，validation error 为 0；requirements 接口单独返回 `NotImplemented`。feature 创建、四帧执行及阶段 2 均未执行。完整证据见 `dlss5-validation/results.md`，复现方法见 `dlss5-validation/README.md`。
+阶段 1 已于 2026-10-26 在当前机器重新实施并通过最小运行验收：RTX 5070 Ti、驱动 621.01、NR DLL 310.9.16.0，`Available=1`、`NeedsUpdatedDriver=0`、`FeatureInitResult=Success`；requirements 查询成功。feature 创建、首帧 reset 后连续四帧 evaluate、GPU 等待、输出回读与清理均成功，Vulkan validation error/warning 均为 0。最终验收使用与固定版本 Remix 一致的 gamma 2.2 SDR 合成输入；不代表真实场景画质。证据见 [结果报告](.temp/dlss5-validation/results.md)，复现方法见 [验证说明](.temp/dlss5-validation/README.md)。临时验证源码、构建产物与逐轮证据均位于 `.temp/dlss5-validation/`，未纳入 Git。
+
+阶段 2 已于同日完成：交付 NR SHARED C ABI、单向 Rust binding 与 Debug/Release 部署。两种构建下 SR/RR 分别完成基线、NR 两轮各四帧与回读、NR feature 释放/重建、缺 DLL 失败后继续执行及约定顺序的最终关闭；Vulkan validation error/warning 均为 0。原始 NGX 重复初始化和零尺寸创建失败后的 SR/RR 恢复也已实测。证据与限制见 [阶段 2 报告](.temp/dlss5-validation/stage2/results.md)，复现见 [阶段 2 入口](.temp/dlss5-validation/stage2/README.md)。未进入阶段 3，未添加 Renderer 开关或真实场景 NR pass。
+
+历史记录：此前文档记载 RTX 4060、驱动 616.92、相同 NR DLL 的结果为明确不可用（`Available=0`、`FeatureInitResult=0xbad0000b`，日志为 `snippet is using newer GPU arch 1B0 > 190`），requirements 返回 `NotImplemented`，未执行创建/evaluate。旧报告未随当前工作区提供；本次不以该旧结论判断当前设备。
 
 ## 目标与当前基线
 
@@ -15,9 +19,9 @@
 - 基础 DLSS SDK 配置固定为 `374959484e79a640feaba44c93ac8cfb0a03f5b5`，与 Remix 1.6.1 的 DLSS submodule 引用一致；NR 扩展包为 `rtx-remix-ngx_sdk_dlnr@2`。
 - 已检查到基础 NGX 链接库 `external/dlss-sdk/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib` 和 NR 运行库 `external/dlss-nr-sdk/lib/Windows_x86_64/rel/nvngx_dlssnr.dll`。
 - 当前项目已有 Streamline 2.14.1 SR/RR、深度、运动向量和 temporal reset 链路。
-- 最近一次设备查询为 NVIDIA GeForce RTX 4060，驱动 616.92。实际执行时重新记录设备与驱动。
+- 本次实测设备为 NVIDIA GeForce RTX 5070 Ti，驱动 621.01；后续执行仍需重新记录设备与驱动。
 
-尚未验证：feature 创建、evaluate、与 Streamline 共存、画面正确性、GPU 耗时和显存开销。NR 能力查询已执行并报告不可用，详见上述阶段 1 结果。资源存在或构建成功均不能替代执行证据。
+已验证：固定合成输入上的能力查询、feature 创建、evaluate、GPU 完成、输出基本有效性、同进程同 device 的 Streamline 共存与清理。尚未验证：SR/RR 输出串接 NR、真实场景画面正确性、动态 temporal 行为、GPU 耗时和显存开销。详见阶段 1/2 报告；资源存在或构建成功均不能替代执行证据。
 
 ## 设计边界
 
@@ -56,6 +60,14 @@
 
 验收：现有 SR/RR 可用；NR 初始化、执行和关闭正常；无新增生命周期或设备错误。
 
+当前实现与实测边界：
+
+- NR 与 Streamline 共享内部 Project ID/engine identity；NR 独占自己的参数块与 feature，不访问 Streamline 私有 NGX context。
+- NR DLL 必须在 Streamline 首次 NGX 初始化前部署至其搜索目录；仅在第二次 Init 新增路径不足以发现 NR。
+- 关闭 NR 效果只释放 feature。最终由单一 owner 协调：GPU idle → 全部 SR/RR/NR feature 释放 → NR 参数销毁及会话关闭 → Streamline shutdown → Vulkan root 销毁。
+- 设备 feature 采用明确核对的 float16/storage16/BDA/synchronization2 集合，并为 interposer 启用 privateData，未沿用阶段 1 的全部 core features 设置。
+- 正式契约见 [native README](cxx/modules/truvixx-dlss-nr/README.md) 和 [binding README](cxx/rust/bindings/truvis-dlss-nr-binding/README.md)。同一进程同时保留 SR、RR 两个活动 feature、真实场景串接及其它驱动/硬件不在本轮范围。
+
 ## 阶段 3：Renderer 状态与资源
 
 - Renderer 持有 requested/effective NR 配置、feature 状态和独立的历史失效状态，复用现有配置生效与 resize 边界。
@@ -86,7 +98,7 @@
 
 ## 阶段 5：颜色空间与 temporal 契约
 
-Remix 的 `RtxContext::dispatchDlssNR` 在 NR 前执行 tone mapping，之后逆转换接回 HDR 管线。当前项目应结合自身 SDR 后处理选择明确方案，不能直接把线性 HDR radiance 当作 NR 输入，也不能重复曝光、tone mapping 或 gamma 转换。
+Remix 的 `RtxContext::dispatchDlssNR` 在 NR 前执行 tone mapping，之后逆转换接回 HDR 管线。固定版本的 `tonemapping_fast_tonemapping.comp.slang` 还通过 `linearToGamma` 执行 gamma 2.2 编码，逆转换 shader 对应解码；NR 输入并非线性 LDR。当前项目应结合自身 SDR 后处理选择明确方案，不能直接把线性 HDR radiance 当作 NR 输入，也不能重复曝光、tone mapping 或 gamma 转换。
 
 - 明确每个颜色缓冲的数值域、传递函数、曝光处理和后续消费者。
 - 覆盖相机切换、场景/材质/光照变化、resize、重新启用 NR 的历史 reset。

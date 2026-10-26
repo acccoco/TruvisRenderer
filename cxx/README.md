@@ -17,6 +17,7 @@ Rust binding。它不镜像 `engine/`、`renderer/`、`app/` 的 Rust 分层，�
 - `truvixx-assimp`：内部 Assimp 实现；`truvixx-assimp-capi` 是 Rust 使用的 SHARED C API。
 - `truvixx-vk-capi`：使用 Vulkan C headers 的设备命令桥接，函数入口由 ash 注入，不链接 Vulkan loader。
 - `truvixx-streamline-capi`：Streamline/DLSS SHARED C API，运行时 sidecar 与 JSON 由本 module 声明。
+- `truvixx-dlss-nr-capi`：NR 最小 SHARED C API，只拥有 NGX 状态；NR runtime 由本 module 声明。
 
 ## 构建与增量
 
@@ -66,6 +67,9 @@ cmake --build --preset vs2026-build-debug
 
 Streamline Rust 生命周期细节见
 [`truvis-streamline-binding/README.md`](rust/bindings/truvis-streamline-binding/README.md)。
+
+NR 与 Streamline 共存时需要单一调用方协调会话关闭；设备、图像、GPU 同步仍由调用方拥有。
+契约见 [`truvixx-dlss-nr/README.md`](modules/truvixx-dlss-nr/README.md)。
 
 Vulkan 命令桥接和宿主 ABI 契约见
 [`truvixx-vk/README.md`](modules/truvixx-vk/README.md) 与

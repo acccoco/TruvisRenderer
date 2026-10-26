@@ -60,6 +60,20 @@ workspace 根 `cxx/` 是唯一 native integration project。CMake target 直接�
 
 生成 header、CXX module 和 Rust binding 的生命周期必须由各自 owner 管理。不要把 native 句柄、CPU 指针或工作线程隐藏在通用 binding 生成器中。
 
+### NGX 与 Streamline 共存
+
+NR native 模块只拥有自己的 NGX 参数与 feature，Rust binding 单向消费其 public C ABI。Project ID 与
+engine identity 由 native 内部共享定义维护，不能让两套 wrapper 分别演进应用身份。
+
+一个上层 owner 在同一调用线程串行协调 Streamline 与 NR 会话；不依赖不同 DLL 推断 NGX 全局状态独立。
+先初始化 Streamline，再通过同一 interposer 创建 Vulkan root，之后初始化 NR。关闭效果仅释放 NR feature，
+保留会话；最终退出必须先 GPU idle、释放全部 SR/RR/NR feature，再销毁 NR 参数并关闭 NR 会话，随后关闭
+Streamline，最后销毁 Vulkan root。Rust NR 的 Drop 不承担 shutdown；不能让两个 runtime 无协调地析构。
+
+应用持有 command buffer、输入输出图像和同步责任；native evaluate 只录制命令，不提交、不等待，
+借用资源必须存活至 GPU 完成。失败阶段、SDK 原始返回码和各能力参数读取结果跨 ABI 保留。
+当前封装和验证范围见 [NR 模块](../../cxx/modules/truvixx-dlss-nr/README.md)；Renderer 的 owner 和 pass 接入仍属后续阶段。
+
 ## 设计不变量
 
 - ABI 只在实际 owner 目录定义一次。

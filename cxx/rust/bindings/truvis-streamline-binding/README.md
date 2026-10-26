@@ -139,3 +139,8 @@ StreamlineRuntime::drop
   也不为 Streamline 私有资源构造 Vulkan barrier。
 - Streamline 初始化失败是启动失败，不做同进程 runtime retry。
 - 业务侧统一通过 `log` facade 接收日志，具体输出格式由 `truvis-logs` 维护。
+
+与 NR 共存时，调用方必须在 drop `StreamlineRuntime` 前先等待 GPU、释放全部 SR/RR/NR feature，
+显式关闭 NR 会话，随后才销毁 Vulkan root。NR DLL 必须在 Streamline 首次 NGX 初始化前部署到搜索目录。
+两套 native wrapper 共享 `TruvixxUtils/ngx_identity.hpp` 的 Project ID 和 engine version；共存约束见
+[NR 模块](../../../modules/truvixx-dlss-nr/README.md)。
