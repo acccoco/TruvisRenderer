@@ -518,8 +518,11 @@ int32_t truvixx_sl_shutdown()
     }
 
     const sl::Result shutdown_result = g_sl_api.sl_shutdown();
-    // slShutdown 之后再释放 wrapper 持有的 DLL 引用。Gfx 会在 Vulkan root 销毁前 drop
-    // StreamlineRuntime；如果 ash Entry 仍持有同一 DLL，Windows 引用计数会延后真正卸载。
+    if (shutdown_result != sl::Result::eOk)
+    {
+        return static_cast<int32_t>(shutdown_result);
+    }
+    /// 成功关闭后才释放 DLL 引用与回调；失败由 root owner 终止，禁止继续卸载或销毁 Vulkan。
     g_sl_api.reset();
     g_rust_log_callback = nullptr;
     return static_cast<int32_t>(shutdown_result);

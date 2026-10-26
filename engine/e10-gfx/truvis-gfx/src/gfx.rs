@@ -305,15 +305,19 @@ impl Gfx {
             gfx_core,
             vm_allocator,
             temp_graphics_command_pool,
-            streamline_runtime,
+            mut streamline_runtime,
         } = self;
 
         // Gfx 自己的 command pool / allocator 仍是 Vulkan device child，先释放它们；
         // Streamline SDK 要求 slShutdown 发生在 VkDevice / VkInstance 等 root 销毁前。
         temp_graphics_command_pool.destroy_internal(&gfx_core.gfx_device);
         vm_allocator.destroy();
-        if streamline_runtime.is_some() {
+        if let Some(runtime) = streamline_runtime.as_mut() {
             log::info!("Gfx shutting down Streamline before Vulkan root destruction.");
+            if let Err(error) = unsafe { runtime.shutdown() } {
+                log::error!("Fatal Streamline shutdown failure; preserving Vulkan root: {error}");
+                std::process::abort();
+            }
         }
         drop(streamline_runtime);
         gfx_core.destroy();

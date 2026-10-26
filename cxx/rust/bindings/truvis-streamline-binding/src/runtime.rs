@@ -1,6 +1,6 @@
 //! Streamline 进程级 runtime 生命周期。
 //!
-//! 本模块负责 `slInit` / `slShutdown` 的 RAII 封装、日志桥生命周期和 Vulkan
+//! 本模块负责 `slInit` / `slShutdown` 的显式封装、日志桥生命周期和 Vulkan
 //! interposer loader 路径暴露。配置输入由 `config` 模块提供。
 
 use std::{
@@ -46,13 +46,14 @@ impl std::error::Error for StreamlineError {}
 
 /// 进程级 Streamline runtime 句柄。
 ///
-/// 该类型的存在即表示 Streamline runtime 已成功初始化。创建 = init，drop = shutdown。
+/// 创建后必须由 GPU root owner 显式 shutdown；Drop 只检查遗漏，不关闭仍可能被引用的 SDK。
 /// `!Send + !Sync` 通过 `PhantomData<Rc<()>>` 保证，防止跨线程误用。
 pub struct StreamlineRuntime {
     plugin_dir: PathBuf,
     log_dir: PathBuf,
     _log_bridge: StreamlineLogBridge,
     _not_send_sync: PhantomData<Rc<()>>,
+    active: bool,
 }
 
 impl StreamlineRuntime {
@@ -123,6 +124,7 @@ impl StreamlineRuntime {
             log_dir: info.log_dir,
             _log_bridge: log_bridge,
             _not_send_sync: PhantomData,
+            active: true,
         };
         log::info!(
             "Streamline runtime initialized: plugin_dir={}, vulkan_loader={}, log_dir={}",
@@ -154,17 +156,30 @@ impl StreamlineRuntime {
     pub fn vulkan_loader_path(&self) -> PathBuf {
         self.plugin_dir.join("sl.interposer.dll")
     }
+
+    /// 失败保留活动状态，由 root owner 终止进程，禁止继续销毁或重试。
+    ///
+    /// # Safety
+    /// 调用前 GPU 必须 idle，SR/RR/NR feature 与 NR 会话均已关闭，Vulkan root 仍存活。
+    pub unsafe fn shutdown(&mut self) -> Result<(), StreamlineError> {
+        if !self.active {
+            return Ok(());
+        }
+        let result = unsafe { truvixx::truvixx_sl_shutdown() };
+        if result != 0 {
+            return Err(StreamlineError::new(result, "shutdown"));
+        }
+        self.active = false;
+        log::info!("Streamline runtime shutdown completed.");
+        Ok(())
+    }
 }
 
 impl Drop for StreamlineRuntime {
     fn drop(&mut self) {
-        let result = unsafe { truvixx::truvixx_sl_shutdown() };
-        if result == 0 {
-            log::info!("Streamline runtime shutdown completed.");
-        } else {
-            log::error!("Streamline runtime shutdown failed (sl::Result={})", result);
+        if self.active {
+            log::error!("StreamlineRuntime dropped without explicit shutdown");
+            debug_assert!(!self.active, "StreamlineRuntime requires explicit shutdown");
         }
-        // _log_bridge drop 在这之后发生（struct 字段按声明顺序 drop），
-        // 保证 shutdown 期间的最后几条日志仍然能被 drain 线程处理。
     }
 }

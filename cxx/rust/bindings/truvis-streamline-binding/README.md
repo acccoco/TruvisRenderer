@@ -17,7 +17,7 @@ Streamline runtime。
 - `src/lib.rs`：crate 入口，只声明模块并维持对外 re-export，不放具体生命周期实现。
 - `src/config.rs`：Streamline 初始化参数、默认路径推导和 feature flags。
 - `src/dlss.rs`：DLSS SR/RR support query、options、resource tags、evaluate 和 resource free 的 Rust 安全封装。
-- `src/runtime.rs`：`StreamlineRuntime`、`StreamlineError` 和 `slInit/slShutdown` RAII 生命周期。
+- `src/runtime.rs`：`StreamlineRuntime`、`StreamlineError` 和 `slInit/slShutdown` 显式生命周期。
 - `src/log_bridge.rs`：Streamline log callback 到 Rust `log` facade 的异步桥接。
 
 ## 日志链路
@@ -114,10 +114,11 @@ StreamlineRuntime::init
   -> 把 callback、plugin 目录、interposer DLL 路径传给 C++
   -> C++ 显式加载 sl.interposer.dll 并调用 slInit
 
-StreamlineRuntime::drop
-  -> 先调用 truvixx_sl_shutdown()
-  -> C++ 在 slShutdown 返回后 FreeLibrary 并清空 callback
-  -> Rust 向全局 sender 发送 Shutdown
+StreamlineRuntime::shutdown（GPU root owner 显式调用并检查结果）
+  -> truvixx_sl_shutdown()
+  -> C++ 在 slShutdown 成功后 FreeLibrary 并清空 callback
+StreamlineRuntime::drop（仅检查遗漏）
+  -> 日志桥向全局 sender 发送 Shutdown
   -> drain 线程 flush 已入队日志并退出
   -> join drain 线程
 ```
@@ -140,7 +141,10 @@ StreamlineRuntime::drop
 - Streamline 初始化失败是启动失败，不做同进程 runtime retry。
 - 业务侧统一通过 `log` facade 接收日志，具体输出格式由 `truvis-logs` 维护。
 
-与 NR 共存时，调用方必须在 drop `StreamlineRuntime` 前先等待 GPU、释放全部 SR/RR/NR feature，
+与 NR 共存时，调用方必须在显式 shutdown `StreamlineRuntime` 前先等待 GPU、释放全部 SR/RR/NR feature，
 显式关闭 NR 会话，随后才销毁 Vulkan root。NR DLL 必须在 Streamline 首次 NGX 初始化前部署到搜索目录。
 两套 native wrapper 共享 `TruvixxUtils/ngx_identity.hpp` 的 Project ID 和 engine version；共存约束见
 [NR 模块](../../../modules/truvixx-dlss-nr/README.md)。
+
+shutdown 失败保留活动状态、DLL 和回调并返回原始错误。Gfx 收到失败后终止进程，禁止继续销毁 Vulkan root；
+调用方不可重试或依赖 Drop 补救。Drop 不再调用 SDK，Debug 下检查遗漏。
