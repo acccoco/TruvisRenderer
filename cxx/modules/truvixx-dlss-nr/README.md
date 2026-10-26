@@ -62,3 +62,7 @@ requirements、已启用 features、函数入口与图像格式，在既有 grap
 
 阶段 4 通过正式 Rust → C ABI → NGX 链路执行，颜色/输出/遮罩由 NR 持有，深度/MV 同帧借用。
 当前验证范围和限制见 [阶段 4 报告](../../../.temp/dlss5-validation/stage4/results.md)。
+
+阶段 5 用正式 Renderer 的同帧颜色参考与 CPU 投影验证 gamma 2.2、内部尺寸深度/RG32F MV 和连续历史，
+未改变本模块 ABI 或模型参数。显示配置/相机切换的 reset 策略属于 Renderer，native 不检测相机变化。
+实测数值、SDK 行为与未覆盖范围见 [阶段 5 报告](../../../.temp/dlss5-validation/stage5/results.md)。

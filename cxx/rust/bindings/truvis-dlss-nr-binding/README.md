@@ -31,3 +31,7 @@ evaluate adapter 在 RenderThread 内通过局部 `RefCell` 借用会话，只�
 成功录制且 queue submit 返回后才消费 reset。`EvaluateDesc` 由 public header 生成，携带有限 [0,1] 强度；
 图像尺寸/格式契约见 native README。生命周期与配置边界见
 [Renderer README](../../../../renderer/truvis-renderer/README.md)。
+
+阶段 5 的同帧颜色、实际内部尺寸引导图与历史验证继续通过本 binding；未修改 ABI。
+强度 0 的像素行为仅按固定 SDK 实测记录，不作为 wrapper 保证；显示配置/相机切换由 Renderer 请求 reset，
+wrapper 不推进帧历史。证据和边界见 [阶段 5 报告](../../../../.temp/dlss5-validation/stage5/results.md)。

@@ -20,6 +20,12 @@ RR 私有图像的同步 validation 报错在从未初始化 NR 的基线同样�
 必要颜色编码与 reset 契约已落实；完整颜色、运动、历史稳定性、性能和显存评价仍留给后续阶段。
 证据、复现方法和限制见 [阶段 4 报告](.temp/dlss5-validation/stage4/results.md) 与 [验证入口](.temp/dlss5-validation/stage4/README.md)。
 
+阶段 5 已于 2026-10-27 完成（基线 `056df61b`）：显示配置变化仅请求 NR reset；新增视图准备前的显式相机切换。
+Debug/Release 原生、SR、RR 的同帧颜色参考、CPU 深度/MV 对照、连续运动及离散事件通过，保留 3456 帧回读。
+gamma 解码、RGBA16F 往返和深度最大误差分别为 `4.08e-7`、`1.073e-3`、`1.32e-7`；MV 最大误差为 `1.079e-4` 像素。
+缺 DLL、失败帧不提交、无场景 reset 保留及正式无采集窗口回归通过；RR 私有同步错误仍作为既有基线。
+验证范围、未覆盖项和复现见 [阶段 5 报告](.temp/dlss5-validation/stage5/results.md) 与 [入口](.temp/dlss5-validation/stage5/README.md)。
+
 历史记录：此前文档记载 RTX 4060、驱动 616.92、相同 NR DLL 的结果为明确不可用（`Available=0`、`FeatureInitResult=0xbad0000b`，日志为 `snippet is using newer GPU arch 1B0 > 190`），requirements 返回 `NotImplemented`，未执行创建/evaluate。旧报告未随当前工作区提供；本次不以该旧结论判断当前设备。
 
 ## 目标与当前基线
@@ -118,14 +124,17 @@ RR 私有图像的同步 validation 报错在从未初始化 NR 的基线同样�
 
 ## 阶段 5：颜色空间与 temporal 契约
 
-Remix 的 `RtxContext::dispatchDlssNR` 在 NR 前执行 tone mapping，之后逆转换接回 HDR 管线。固定版本的 `tonemapping_fast_tonemapping.comp.slang` 还通过 `linearToGamma` 执行 gamma 2.2 编码，逆转换 shader 对应解码；NR 输入并非线性 LDR。阶段 4 已选择在 SDR 显示链路编码/解码 gamma 2.2，不执行逆 tone mapping。阶段 5 应系统验证这一方案的颜色、运动与历史稳定性；不能直接把线性 HDR radiance 当作 NR 输入或重复显示变换。
+Remix 的 `RtxContext::dispatchDlssNR` 在 NR 前执行 tone mapping，之后逆转换接回 HDR 管线。固定版本的 `tonemapping_fast_tonemapping.comp.slang` 还通过 `linearToGamma` 执行 gamma 2.2 编码，逆转换 shader 对应解码；NR 输入并非线性 LDR。阶段 4 选择在 SDR 显示链路编码/解码 gamma 2.2，不执行逆 tone mapping。阶段 5 已验证该方案的固定场景颜色、运动与历史契约；不能直接把线性 HDR radiance 当作 NR 输入或重复显示变换。
 
 - 明确每个颜色缓冲的数值域、传递函数、曝光处理和后续消费者。
 - 覆盖相机切换、场景/材质/光照变化、resize、重新启用 NR 的历史 reset。
 - 深度、MV、颜色和 reset 必须描述同一帧；成功录制、成功提交和 GPU 完成分别记录。
 - 复用历史失效通知，但不把 NR、SR/RR 和路径追踪累积的历史状态混为同一个 owner。
 
-验收：静止与运动画面没有明显的曝光跳变、错误重投影或历史污染；UI 和辅助绘制不被 NR 修改。
+验收通过范围：每条路径预热至少 64 个资源就绪后的有效提交，四类运动各连续 64 帧，逐帧数值与接触表检查；
+没有观察到明显新增曝光跳变、错误重投影或旧画面残留。显示配置只影响 NR 历史；普通运动、自动曝光适应、
+强度与 dithering 不逐帧 reset。相机切换及场景编辑按 owner 分别失效，失败或未执行不消费 NR reset。
+三张自有图像和两张借用引导图保持不变；UI 和辅助绘制仍在 NR 之后。更广画质评价属于阶段 6。
 
 ## 阶段 6：真实场景效果、性能与 UI
 

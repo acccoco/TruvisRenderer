@@ -143,3 +143,8 @@ RgPass 仍不返回 Result。NR adapter 使用帧局部 NotRun/Succeeded/Failed 
 SR/RR 失败阻止 NR 调用，NR 失败跳过解码；TruvisRenderer 结束录制后检查结果，错误时拒绝整帧
 submit/present，交给 RenderLoop 显式 shutdown。reset 消费要求 evaluate 成功及 submit 返回，
 不能将录制成功当作 GPU 完成，也不能把无效 DLSS 输出静默回退成有效输入。
+
+颜色数值验证必须从同帧 HDR 通过正式 SDR shader 派生线性参考，与 gamma 编码/解码结果比较；
+不同随机采样帧不能作为逐像素参考。深度和 MV 使用各自实际内部 extent，按无 jitter 矩阵投影，
+MV 为 render-pixel 的 previous−current；jitter 仅作用于采样射线，NR 参数使用同帧回正偏移。
+临时 readback 按实际 format 分配，并在提交对应 timeline 完成后读取；采集等待不进入正式帧循环。
