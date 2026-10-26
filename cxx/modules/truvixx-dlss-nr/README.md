@@ -57,5 +57,8 @@ Rust consumer 见 [`truvis-dlss-nr-binding`](../../rust/bindings/truvis-dlss-nr-
 
 阶段 3 的 Renderer consumer 为 `renderer-rendering::NrSubsystem`：通过实际 interposer/device 检查固定
 requirements、已启用 features、函数入口与图像格式，在既有 graphics immediate 中提交 create 并等待。
-本模块仍只拥有 NGX 状态；图像与同步由 Renderer 拥有。阶段 3 不调用 evaluate、不改变显示链路，
+本模块仍只拥有 NGX 状态；图像与同步由 Renderer 拥有。阶段 3 当时只准备资源，
 实际资源生命周期验证见 [阶段 3 报告](../../../.temp/dlss5-validation/stage3/results.md)。
+
+阶段 4 通过正式 Rust → C ABI → NGX 链路执行，颜色/输出/遮罩由 NR 持有，深度/MV 同帧借用。
+当前验证范围和限制见 [阶段 4 报告](../../../.temp/dlss5-validation/stage4/results.md)。

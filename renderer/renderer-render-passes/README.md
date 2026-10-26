@@ -56,3 +56,10 @@ viewport overlay、selection outline 和 Phong shading。
 中创建 `RenderGraphBuilder`，再按业务顺序组合 `renderer-rendering` 中的渲染子系统、
 post-process pass 和 `renderer-imgui` 提供的 GUI pass。这样新增 demo 或渲染能力时优先复用 pass 实现，而不把
 Renderer 级编排逻辑下沉到 engine core。
+
+## NR adapter
+
+`post_process::dlss_nr` 只借用 Renderer 的会话、当前 graph 图像与局部执行结果槽。
+外部读取/读写均使用 GENERAL 和保守 stage/access，由 graph 推导 barrier。SR/RR 失败时跳过 NR；
+NR 失败时跳过解码并由 Renderer 拒绝整帧提交。adapter 不拥有长期资源、不提交、不等待。
+SDR 与 NR decode 共用 `DisplayTransfer`，避免两套显示 dithering 或颜色公式。

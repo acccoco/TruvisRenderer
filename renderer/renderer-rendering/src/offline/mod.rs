@@ -473,6 +473,8 @@ impl OfflineRenderSubsystem {
             source_extent: accum_target.extent,
             destination_extent: render_target_info.extent,
             channel: self.settings.debug_channel,
+            output_encoding: Default::default(),
+            guides: None,
         })
     }
 

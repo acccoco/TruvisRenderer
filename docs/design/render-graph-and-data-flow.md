@@ -131,3 +131,15 @@ Graph debug dump 适合检查 pass 顺序、resource state 和 barrier plan；�
 ## 非目标
 
 本文不规定 RenderGraph 的内部容器实现、transient aliasing 的未来 API，也不保存某一帧调试 dump。
+
+## NR 显示与失败边界
+
+Realtime 原生/SR/RR HDR → 原有测光、曝光、Color Grading、Tone Mapping → gamma 2.2 SDR → NR
+→ gamma 2.2 解码、显示 dithering → 原 SDR target → resolve → 描边/Gizmo/ImGui。
+NR 不读取 overlay、不参与测光、不回写渲染历史。引导图直接复用 Realtime 已导入的 graph handle。
+SDK 图像统一 GENERAL；输入保守外部读取、输出外部读写，NR 自有三图显式导出跨帧状态。
+
+RgPass 仍不返回 Result。NR adapter 使用帧局部 NotRun/Succeeded/Failed 槽，借用限制在 RenderThread。
+SR/RR 失败阻止 NR 调用，NR 失败跳过解码；TruvisRenderer 结束录制后检查结果，错误时拒绝整帧
+submit/present，交给 RenderLoop 显式 shutdown。reset 消费要求 evaluate 成功及 submit 返回，
+不能将录制成功当作 GPU 完成，也不能把无效 DLSS 输出静默回退成有效输入。

@@ -121,7 +121,9 @@ phase 返回值表达当前阶段能否继续，而不是替上层猜测最终�
 
 Runtime 错误应在 RenderLoop 的阶段边界处理。Renderer 不应在 render hook 中补做 update 或 prepare，也不应通过 catch error 隐藏 phase 顺序错误。
 
-资源回调返回 Err 后停止出帧，RenderLoop 先执行显式 shutdown，再向线程宿主报告失败。
+资源回调或 `Renderer::render -> Result<bool, String>` 返回 Err 后停止出帧，RenderLoop 先执行显式 shutdown，
+再向线程宿主报告失败。Ok(true) 只说明主视图消费场景且提交已返回，不表示 timeline 已完成。
+渲染错误在提交前汇总；失败帧不可 submit/present。
 若释放或关闭本身失败，owner 必须保留原始错误并终止进程，不能继续销毁可能仍被引用的 root。
 
 ## 变更检查

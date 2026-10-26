@@ -10,7 +10,7 @@ shader/FFI 契约、反射距离近似与 debug 规则见
 
 - `realtime`：`RealtimeRenderSubsystem` / `RealtimeRenderSettings`，以及 GBuffer、ReSTIR reservoir/surface key、SHARC buffer、DLSS 输入输出、working target 和 main-view target。
 - `offline`：`OfflineRenderSubsystem` / `OfflineRenderSettings`，以及独立的 single-frame target、跨帧累计 image、output target、sample count 和累计签名。
-- `nr`：Renderer-owned `NrSubsystem`，集中保存 requested/effective、NGX 会话、feature、五张输出尺寸图像和独立 reset；不依赖 ImGui。
+- `nr`：Renderer-owned `NrSubsystem`，集中保存 requested/effective、NGX 会话、feature、三张输出尺寸图像和独立 reset；不依赖 ImGui。
 - `post_process`：`TruvisRenderer` 唯一持有的 `SdrPostProcess`，拥有 AgX LUT、直方图、曝光历史与显示 pass；Realtime/Offline 通过 `SdrPostProcessInput` 借出 graph image，不转移 target 所有权。
 - `shared`：`RenderMode`、`PathTracingCommonSettings`、`PathTracingDebugChannel`、`SkySamplingMode`、`SdrPostProcessSettings` 和 `ImageTarget`。
 - `PathTracingDebugChannel` / `SkySamplingMode` 同时服务 realtime/offline；ReSTIR DI 和 SHARC 模式只属于 realtime 模块。
@@ -28,9 +28,14 @@ shader/FFI 契约、反射距离近似与 debug 规则见
 
 ## 显示契约
 
-NR 当前仅接入状态与资源，不添加 evaluate/pass 或修改显示链路。五张独立 `SingleImageTarget` 均按 output extent
-分配并注册：颜色/输出 RGBA16F、深度 R32F、MV RG16F、控制遮罩 RGBA8 UNORM。遮罩初始化全一；其它图像
-尚无有效渲染输入，禁止消费。创建 feature 使用既有 graphics immediate 提交并等待，Ready 不表示 NR 画面有效。
+NR 持有三张 output extent 的 `SingleImageTarget`：RGBA16F 颜色/输出、全一 RGBA8 UNORM 控制遮罩。
+Realtime 通过 `SdrPostProcessInput` 借出当前 graph 中的 R32F 深度、RG32F MV 与真实内部 extent，
+不重复导入、不重采样、不转移所有权；Offline 不提供引导图。创建 feature 仍在 graphics immediate 提交并等待。
+
+TruvisRenderer 组织 HDR → 原有曝光/调色/tone mapping → gamma 2.2 → NR → gamma 2.2 解码和原有显示 dithering
+→ SDR target → resolve/overlay。`SdrOutputEncoding` 默认线性 SDR；NR 选择 Gamma22 并禁用前置 dithering。
+曝光只读取 NR 前 HDR；不逆 tone mapping、不回写渲染历史。三张 NR 图像显式 import/export 保守 GENERAL 状态，
+覆盖单套图像跨帧读写。Ready 表示等待首次提交，Running 表示录制成功且 submit 返回，GPU 完成由 timeline 确认。
 
 关闭或不适用模式在 GPU idle 后释放 feature/图像，保留会话；重新开启或输出尺寸变化重建。
 仅强度变化无 GPU 等待/重建/其它历史 reset；内部尺寸变化仅请求 NR reset。设备 features 来自实际创建配置，

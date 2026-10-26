@@ -15,6 +15,14 @@ use crate::compute_pass::ComputePass;
 
 pub use super::settings::SdrPostProcessSettings;
 
+/// SDR 输出编码属于 Renderer 显示契约，不改变曝光或 tone mapper。
+#[derive(Clone, Copy, Default)]
+pub enum SdrOutputEncoding {
+    #[default]
+    Linear = 0,
+    Gamma22 = 1,
+}
+
 pub struct SdrPassData {
     pub src_image: GfxImageViewHandle,
     pub src_image_size: vk::Extent2D,
@@ -24,6 +32,7 @@ pub struct SdrPassData {
     /// CPU 唯一判定通道语义：radiance 使用显示映射，数据通道直接透传。
     pub radiance_channel: bool,
     pub post_process: SdrPostProcessSettings,
+    pub output_encoding: SdrOutputEncoding,
     pub exposure: GfxImageViewHandle,
     pub agx_lut: GfxImageViewHandle,
 }
@@ -133,7 +142,7 @@ impl SdrPass {
                 white_balance_g: white_balance.y_axis.extend(0.0).into(),
                 white_balance_b: white_balance.z_axis.extend(0.0).into(),
                 tonal_gains: grading.tonal_gains().into(),
-                _padding_0: 0.0,
+                output_encoding: data.output_encoding as u32,
             },
             glam::uvec3(
                 data.dst_image_size.width.div_ceil(gpu::renderer::render_passes::sdr::SHADER_X as u32),
@@ -158,6 +167,7 @@ pub struct SdrRgPass<'a> {
     pub dst_image_extent: vk::Extent2D,
     pub radiance_channel: bool,
     pub post_process: SdrPostProcessSettings,
+    pub output_encoding: SdrOutputEncoding,
 }
 impl<'a> RgPass for SdrRgPass<'a> {
     fn setup(&mut self, builder: &mut RgPassBuilder) {
@@ -189,6 +199,7 @@ impl<'a> RgPass for SdrRgPass<'a> {
                 exposure: ctx.get_image_view_handle(self.exposure).unwrap(),
                 agx_lut: ctx.get_image_view_handle(self.agx_lut).unwrap(),
                 post_process: self.post_process,
+                output_encoding: self.output_encoding,
             },
             &self.record_ctx,
         );

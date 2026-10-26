@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
@@ -330,6 +330,7 @@ impl Renderer for TruvisRenderer {
         self.realtime.init(&mut ctx.runtime);
         self.offline.init(&mut ctx.runtime);
         self.sdr_post_process.init(&mut ctx.runtime);
+        self.nr.init(&ctx.runtime);
         self.selection_outline.init(&mut ctx.runtime);
         self.viewport_overlay.init(&mut ctx.runtime);
         self.imgui.init(&mut ctx.runtime);
@@ -589,7 +590,7 @@ impl Renderer for TruvisRenderer {
         self.realtime.shutdown(&mut ctx.runtime);
     }
 
-    fn render(&mut self, ctx: &RenderRuntimeRenderCtx) -> bool {
+    fn render(&mut self, ctx: &RenderRuntimeRenderCtx) -> Result<bool, String> {
         let subsystem_ctx = SubsystemRenderCtx::from_runtime(ctx);
         let frame_label = ctx.record_ctx.frame_timing.frame_label();
         let frame_id = ctx.record_ctx.frame_timing.frame_id();
@@ -613,11 +614,12 @@ impl Renderer for TruvisRenderer {
         let selected_debug_image_id = self.debug_image_selection.selected_id();
         let dlss_snapshot = self.dlss.snapshot();
         let dlss_evaluation = Cell::new(DlssEvaluation::NotRun);
+        let nr_evaluation = RefCell::new(renderer_rendering::nr::NrEvaluation::NotRun);
 
         // compute graph 的资源借用在录制后结束；提交信息只保存 Vulkan handle，资源继续由 subsystem 持有。
         let (compute_submit, scene_submitted) = {
             let mut graph = RenderGraphBuilder::new();
-            let display = match self.render_mode {
+            let mut display = match self.render_mode {
                 RenderMode::Realtime => self.realtime.contribute_compute_passes(
                     &mut graph,
                     &subsystem_ctx,
@@ -634,6 +636,7 @@ impl Renderer for TruvisRenderer {
             };
             // 两种主视图子系统仅在加入场景 RT pass 时返回 display；无 TLAS 清屏返回 None。
             let uses_scene = display.is_some();
+            let nr_frame = display.as_mut().and_then(|display| self.nr.prepare_graph(&mut graph, display));
             self.sdr_post_process.contribute(
                 &mut graph,
                 &subsystem_ctx,
@@ -641,6 +644,17 @@ impl Renderer for TruvisRenderer {
                 self.render_mode,
                 self.path_tracing_common_settings.post_process,
             );
+            if let Some(frame) = nr_frame {
+                self.nr.contribute(
+                    &mut graph,
+                    &subsystem_ctx,
+                    frame,
+                    dlss_snapshot,
+                    &dlss_evaluation,
+                    &nr_evaluation,
+                    self.path_tracing_common_settings.post_process.dither,
+                );
+            }
             let compiled_graph = graph.compile();
             if log::log_enabled!(log::Level::Debug) {
                 static PRINT_RT_COMPUTE_DEBUG_INFO: std::sync::Once = std::sync::Once::new();
@@ -658,6 +672,8 @@ impl Renderer for TruvisRenderer {
             cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, label);
             compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
             cmd.end();
+            // 失败录制不提交，避免后续 pass 或 present 消费部分 SDK 输出。
+            nr_evaluation.borrow().check()?;
             (compiled_graph.build_submit_info(std::slice::from_ref(cmd)), uses_scene)
         };
 
@@ -717,10 +733,11 @@ impl Renderer for TruvisRenderer {
         // 因此上层 runtime 只需要等待同一个 frame_id 即可观察最终 swapchain 写入完成。
         ctx.queue_ctx.gfx_queue().submit(vec![compute_submit, present_submit], None);
         self.dlss.finish_rendered_frame(scene_submitted, dlss_evaluation.get());
+        self.nr.finish_submitted_frame(&nr_evaluation.borrow(), frame_id);
         if scene_submitted && self.render_mode == RenderMode::Realtime {
             self.restir_reset_pending = false;
         }
-        scene_submitted
+        Ok(scene_submitted)
     }
 
     fn reconfigure_resources(&mut self, ctx: &mut RenderRuntimeResourceCtx<'_>) -> Result<(), String> {

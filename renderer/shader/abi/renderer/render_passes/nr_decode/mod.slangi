@@ -1,0 +1,15 @@
+#pragma once
+#include "abi/engine/mod.slangi"
+namespace renderer { namespace render_passes { namespace nr_decode {
+static const uint SET_NUM = engine::binding::GLOBAL_SETS_COUNT;
+#ifdef __SLANG__
+[[vk::binding(0, SET_NUM)]] RWTexture2D<float4> src_image;
+[[vk::binding(1, SET_NUM)]] RWTexture2D<float4> dst_image;
+#endif
+/// uint2 从 offset 0 开始，两个 uint 补齐 16 字节；与生成 Rust binding 共用本定义。
+struct PushConstant {
+    uint2 image_size;
+    uint dither;
+    uint _padding_0;
+};
+}}}

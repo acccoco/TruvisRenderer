@@ -119,3 +119,7 @@ Gfx 显式检查 Streamline shutdown 的结果，失败不再销毁 Vulkan root�
 本文不维护完整资源名称列表，不记录某次设备驱动的 workaround，也不把构建成功当作 GPU lifetime 验证。
 
 需要临时诊断时使用 `.temp/`，不要把调试文件写入 source 或 docs 目录。
+
+NR 自有资源为三张 output extent 图像（颜色、输出、全一控制遮罩）；阶段 3 的独立深度/MV 已移除。
+深度/MV 仅借用 Realtime 当前 graph 的内部尺寸图像，不保存跨帧 Runtime 引用，不接管销毁。
+单套 NR 图像跨帧稳定状态由 graph import/export 显式维护；同队列顺序和 FIF 等待不能替代内存依赖。

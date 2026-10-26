@@ -4452,6 +4452,7 @@ dependencies = [
  "slotmap",
  "truvis-descriptor-layout-macro",
  "truvis-descriptor-layout-trait",
+ "truvis-dlss-nr-binding",
  "truvis-gfx",
  "truvis-render-foundation",
  "truvis-render-graph",

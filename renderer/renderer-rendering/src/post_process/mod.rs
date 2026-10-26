@@ -2,7 +2,9 @@ use ash::vk;
 
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 use renderer_render_passes::post_process::auto_exposure::{AutoExposurePass, AutoExposureRgPass, ExposureStage};
+pub use renderer_render_passes::post_process::dlss_nr::NrGuides;
 use renderer_render_passes::post_process::image_clear::{ImageClearPass, ImageClearRgPass};
+pub use renderer_render_passes::post_process::sdr::SdrOutputEncoding;
 use renderer_render_passes::post_process::sdr::{SdrPass, SdrRgPass};
 use truvis_gfx::commands::barrier::GfxImageBarrier;
 use truvis_gfx::resources::lifecycle::DestroyReason;
@@ -21,6 +23,9 @@ pub struct SdrPostProcessInput {
     pub source_extent: vk::Extent2D,
     pub destination_extent: vk::Extent2D,
     pub channel: PathTracingDebugChannel,
+    pub output_encoding: SdrOutputEncoding,
+    /// 同帧原始引导图只由 Realtime 提供；graph 借用不转移 owner。
+    pub guides: Option<NrGuides>,
 }
 
 /// 主视图唯一的显示后处理 owner。曝光按实际提交顺序推进，不随 FIF 轮转。
@@ -253,6 +258,7 @@ impl SdrPostProcess {
                 dst_image_extent: input.destination_extent,
                 radiance_channel: input.channel.is_radiance(),
                 post_process: settings,
+                output_encoding: input.output_encoding,
                 exposure,
                 agx_lut: lut,
             },

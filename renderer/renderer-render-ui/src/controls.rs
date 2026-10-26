@@ -18,10 +18,11 @@ impl RenderControlsOverlay {
         ui.checkbox("DLSS NR", &mut options.enabled);
         ui.slider_config("NR Intensity", 0.0, 1.0).build(&mut options.intensity);
         ui.text_wrapped(match status {
-            NrStatus::Off => "NR off. Image processing is not connected yet.",
+            NrStatus::Off => "NR off.",
             NrStatus::Bypassed => "NR paused: requires Realtime Final with Debug Image disabled.",
-            NrStatus::Pending => "NR resource setup pending. Image processing is not connected yet.",
-            NrStatus::Ready => "NR resources ready; image processing is not connected yet.",
+            NrStatus::Pending => "NR resource setup pending.",
+            NrStatus::Running => "NR running: output connected to display.",
+            NrStatus::Ready => "NR resources ready; awaiting first frame.",
         });
     }
 

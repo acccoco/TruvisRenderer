@@ -104,11 +104,11 @@ impl RenderLoop {
             }
 
             if let Err(error) = render_loop.run_frame() {
-                log::error!("RenderThread resource reconfiguration failed: {error}; stopping rendering.");
+                log::error!("RenderThread frame failed: {error}; stopping rendering.");
                 control.request_exit();
                 render_loop.shutdown();
                 // 资源已按正常顺序回收，再由现有线程宿主把失败传给窗口 owner。
-                panic!("Renderer resource reconfiguration failed: {error}");
+                panic!("Renderer frame failed: {error}");
             }
         }
 
@@ -223,7 +223,7 @@ impl RenderLoop {
         {
             let _span = tracy_client::span!("RenderLoop::render");
             let render_ctx = render_runtime.render_phase();
-            let scene_submitted = renderer.render(&render_ctx);
+            let scene_submitted = renderer.render(&render_ctx)?;
             render_runtime.finish_rendered_frame(scene_submitted);
         }
 

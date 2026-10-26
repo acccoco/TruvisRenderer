@@ -55,8 +55,13 @@ Offline/调试保留 requested，资源回调释放 feature/图像但不关闭�
 
 输出 extent 改变或重新开启时创建资源和 feature；内部 extent、SR/RR 模式或通用 history invalidation
 只请求独立 NR reset。强度变化不等待 GPU、不重建资源，也不影响路径追踪、ReSTIR 或曝光历史。
-当前只准备资源，没有 NR evaluate pass；Ready 表示创建命令已经提交完成，画面仍走既有显示链路。
-强度尚未传给 evaluate，NR reset_pending 不被普通成功帧消费。UI 隐藏不影响固定配置生效路径。
+Ready 表示创建命令已经提交完成、等待有效首帧；Running 表示 NR 录制成功且 queue submit 返回，
+不是 GPU 完成证明。reset_pending 只在本次 NR evaluate 成功且整帧提交返回后消费；无场景、未运行、
+失败或未提交均保留。强度 0 仍执行，普通强度调整不 reset。UI 隐藏不影响固定配置生效路径。
+同帧引导使用非反转 device depth（天空 1）、render-pixel previous−current 无 jitter MV，scale=(1,1)。
+NR jitter 复用 Streamline constants 的当前帧回正偏移；原生无 jitter 为零，不按输出尺寸放大。
+测光/曝光/调色/tone mapping 只执行一次，NR 输入 gamma 2.2 SDR，输出解码后才加显示 dithering。
+系统性的颜色与动态历史稳定性仍属于阶段 5。
 
 ## FrameRenderState
 

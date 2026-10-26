@@ -860,6 +860,12 @@ impl RealtimeRenderSubsystem {
             source_extent,
             destination_extent: record_ctx.frame_state.output_extent,
             channel: self.settings.debug_channel,
+            output_encoding: Default::default(),
+            guides: Some(crate::post_process::NrGuides {
+                depth,
+                motion_vectors,
+                extent: record_ctx.frame_state.render_extent,
+            }),
         })
     }
 

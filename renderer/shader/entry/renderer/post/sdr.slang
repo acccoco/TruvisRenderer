@@ -14,8 +14,9 @@ void main(uint3 id : SV_DispatchThreadID) {
             ev = renderer::render_passes::sdr::exposure[uint2(0, 0)].x + g_params.auto_compensation_ev;
         }
         uint seed = Random::tea(id.y, id.x);
-        float noise = g_params.dither != 0 ? (Random::rnd(seed) - 0.5f) / 255.0f : 0.0f;
+        float noise = g_params.dither != 0 && g_params.output_encoding == 0 ? (Random::rnd(seed) - 0.5f) / 255.0f : 0.0f;
         result = SdrToneMapper::map(hdr.rgb, g_params, ev, noise);
     }
+    if (g_params.output_encoding == 1) result = DisplayTransfer::encode_gamma22(result);
     renderer::render_passes::sdr::dst_image[id.xy] = float4(result, hdr.a);
 }

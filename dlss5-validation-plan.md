@@ -11,8 +11,14 @@
 最终版本 Debug 连续 resize、Release RR+NR 重开及直接退出均成功，退出码为 0。
 独立缺 NR DLL 环境在 NR 关闭时继续 RR 出图，显式开启后报告 MissingDll、停止出帧并按顺序清理，退出码为 101。
 RR 私有图像的同步 validation 报错在从未初始化 NR 的基线同样复现；本轮未观察到 NR 新增报错、device lost 或 shutdown 错误，
-不能报告 validation 全零。NR 仅准备资源，尚未调用 evaluate 或改变画面；阶段 4 未开始。
+不能报告 validation 全零。阶段 3 当时仅准备资源，未调用 evaluate 或改变画面。
 逐项证据与验证限制见 [阶段 3 报告](.temp/dlss5-validation/stage3/results.md)。
+
+阶段 4 已于 2026-10-27 完成执行与显示接入验收（基线 `fd039f69`）：Debug/Release 的原生、SR、RR
+均串接 NR，完成连续帧、GPU 等待和输入/输出/最终 SDR 回读；强度、切换、resize、最小化恢复及失败退出已检查。
+未观察到 NR 新增 validation error、device lost 或清理错误；RR 既有私有资源同步错误仍在，不能报告 validation 全零。
+必要颜色编码与 reset 契约已落实；完整颜色、运动、历史稳定性、性能和显存评价仍留给后续阶段。
+证据、复现方法和限制见 [阶段 4 报告](.temp/dlss5-validation/stage4/results.md) 与 [验证入口](.temp/dlss5-validation/stage4/README.md)。
 
 历史记录：此前文档记载 RTX 4060、驱动 616.92、相同 NR DLL 的结果为明确不可用（`Available=0`、`FeatureInitResult=0xbad0000b`，日志为 `snippet is using newer GPU arch 1B0 > 190`），requirements 返回 `NotImplemented`，未执行创建/evaluate。旧报告未随当前工作区提供；本次不以该旧结论判断当前设备。
 
@@ -29,7 +35,7 @@ RR 私有图像的同步 validation 报错在从未初始化 NR 的基线同样�
 - 当前项目已有 Streamline 2.14.1 SR/RR、深度、运动向量和 temporal reset 链路。
 - 本次实测设备为 NVIDIA GeForce RTX 5070 Ti，驱动 621.01；后续执行仍需重新记录设备与驱动。
 
-已验证：固定合成输入上的能力查询、feature 创建、evaluate、GPU 完成、输出基本有效性、同进程同 device 的 Streamline 共存与清理。尚未验证：SR/RR 输出串接 NR、真实场景画面正确性、动态 temporal 行为、GPU 耗时和显存开销。详见阶段 1/2 报告；资源存在或构建成功均不能替代执行证据。
+已验证：固定合成输入上的能力查询、feature 创建、evaluate、GPU 完成、输出基本有效性、同进程同 device 的 Streamline 共存与清理。阶段 4 已补充正式 Renderer 串接与颜色编解码回读。尚未完成系统性的真实场景画质、动态 temporal 稳定性、GPU 耗时和显存开销验证。详见各阶段报告；资源存在或构建成功均不能替代执行证据。
 
 ## 设计边界
 
@@ -79,9 +85,9 @@ RR 私有图像的同步 validation 报错在从未初始化 NR 的基线同样�
 ## 阶段 3：Renderer 状态与资源
 
 - `TruvisRenderer` 持有 `renderer-rendering::NrSubsystem`，统一管理 requested/effective、会话、feature、图像和独立 reset。
-- 默认关闭、强度 1.0；仅 Realtime Final 且无 Debug Image 时准备资源。强度只保存，不影响其它历史。
+- 默认关闭、强度 1.0；仅 Realtime Final 且无 Debug Image 时准备资源。阶段 3 强度只保存，阶段 4 已传给 evaluate；均不影响其它历史。
 - update 请求中性资源回调，在尺寸同步后、prepare 前、GPU idle 边界生效；无 present target 延后。
-- 五张独立图像按 output extent 分配：RGBA16F 颜色/输出、R32F 深度、RG16F MV、RGBA8 UNORM 全一控制遮罩。
+- 阶段 3 当时使用五张独立 output extent 图像；阶段 4 已调整为三张自有图像（RGBA16F 颜色/输出、RGBA8 UNORM 全一遮罩）加两张 Realtime 同帧借用图（内部尺寸 R32F 深度、RG32F MV）。
 - 关闭/进入不适用模式释放 feature/图像并保留会话；输出 extent 改变重建，内部尺寸变化只请求 NR reset。
 - 创建命令通过既有 graphics immediate 提交并等待；不接入 evaluate，不改变显示链路。显式开启失败停止渲染并清理。
 - 最终 GPU idle → SR/RR/NR feature → NR 图像 → NR 会话 → 显式 Streamline shutdown → Vulkan root；释放/关闭失败记录并终止。
@@ -92,26 +98,27 @@ RR 私有图像的同步 validation 报错在从未初始化 NR 的基线同样�
 
 ## 阶段 4：NR RenderGraph pass
 
-预期数据流（颜色转换的具体插入点在阶段 5 确定）：
+已实现的数据流：
 
 ```text
-实时渲染 → 现有 SR/RR 或原生结果 → NR 输入颜色准备
-                                      ↓
-同帧深度、运动向量、控制遮罩 ───────→ NR evaluate
-                                      ↓
-                              后续显示处理 → UI/Overlay
+原生 / SR / RR HDR → 原有测光、曝光、调色、Tone Mapping
+→ gamma 2.2 SDR → NR evaluate → gamma 2.2 解码、显示 dithering
+→ 原 SDR target → resolve → 描边 / Gizmo / ImGui
 ```
 
-- 逐项核对颜色/深度/MV/遮罩的格式、extent、subrect、坐标方向、MV scale、jitter 和深度反转约定。
-- 复用已有深度、运动向量与相机历史；不因资源名称相似就认定语义一致。
-- 初版控制遮罩使用明确的统一值，后续再扩展材质级控制。
-- 在 pass 附近声明外部 evaluate 的资源读写和前后同步；输出只在有效执行路径上被消费。
+- 深度/MV 直接借用同帧内部尺寸图，不重采样，不重复 import；MV 接受 RG16F/RG32F。
+- intensity 有限且在 [0,1]，0 仍执行；Preset B、Style 0、tone 0.3、structure 0.7、AutoMask off。
+- SDK 图像 GENERAL，三张 NR 自有图显式 import/export 稳定跨帧状态；不增加队列、线程或每帧 idle。
+- SR/RR 或 NR evaluate 失败时拒绝整帧提交/present，保留原始错误并显式清理。
+- reset 仅在 NR evaluate 成功且 queue submit 返回后消费；timeline 完成另行确认。
+- Debug/Release 三路径每档强度有连续四帧读回。解码误差最大约 4.2e-7；强度 0 在本轮样本输入/输出相等，
+  不提升为 SDK 的通用逐像素保证。系统性画质与 temporal 稳定性仍需阶段 5。
 
-验收：evaluate 成功、输出有效，RenderGraph 资源声明完整，Vulkan validation 无新增错误。
+验收通过范围：正式链路执行、有效输出、资源同步、窗口显示与失败清理；RR 历史同步报错保留为基线，详见阶段 4 报告。
 
 ## 阶段 5：颜色空间与 temporal 契约
 
-Remix 的 `RtxContext::dispatchDlssNR` 在 NR 前执行 tone mapping，之后逆转换接回 HDR 管线。固定版本的 `tonemapping_fast_tonemapping.comp.slang` 还通过 `linearToGamma` 执行 gamma 2.2 编码，逆转换 shader 对应解码；NR 输入并非线性 LDR。当前项目应结合自身 SDR 后处理选择明确方案，不能直接把线性 HDR radiance 当作 NR 输入，也不能重复曝光、tone mapping 或 gamma 转换。
+Remix 的 `RtxContext::dispatchDlssNR` 在 NR 前执行 tone mapping，之后逆转换接回 HDR 管线。固定版本的 `tonemapping_fast_tonemapping.comp.slang` 还通过 `linearToGamma` 执行 gamma 2.2 编码，逆转换 shader 对应解码；NR 输入并非线性 LDR。阶段 4 已选择在 SDR 显示链路编码/解码 gamma 2.2，不执行逆 tone mapping。阶段 5 应系统验证这一方案的颜色、运动与历史稳定性；不能直接把线性 HDR radiance 当作 NR 输入或重复显示变换。
 
 - 明确每个颜色缓冲的数值域、传递函数、曝光处理和后续消费者。
 - 覆盖相机切换、场景/材质/光照变化、resize、重新启用 NR 的历史 reset。

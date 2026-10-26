@@ -1,5 +1,6 @@
 #pragma once
 #include "lib/renderer/post/color_grader.slangi"
+#include "lib/renderer/post/display_transfer.slangi"
 
 /// Bevy 566358363126dd69f6e457e47f306c68f8041d2a / tonemapping_shared.wgsl。
 /// AgX default contrast 与 ACES fitted 均以 linear sRGB 输入/输出；矩阵按行显式 dot，避免转置歧义。
@@ -63,12 +64,6 @@ struct SdrToneMapper {
         return lerp(color, float3(new_peak), g);
     }
 
-    static float3 encode_srgb(float3 x) {
-        return select(x <= 0.0031308f, 12.92f * x, 1.055f * pow(x, 1.0f / 2.4f) - 0.055f);
-    }
-    static float3 decode_srgb(float3 x) {
-        return select(x <= 0.04045f, x / 12.92f, pow((x + 0.055f) / 1.055f, 2.4f));
-    }
     static float3 map(float3 hdr, renderer::render_passes::sdr::PushConstant params, float ev, float noise) {
         float3 color = ColorGrader::apply(ColorGrader::finite_color(hdr) * exp2(ev), params);
         uint mode = params.tone_mapping_mode;
@@ -76,6 +71,6 @@ struct SdrToneMapper {
         else if (mode == 1) color = aces(color);
         else if (mode == 3) color = pbr_neutral(color);
         /// None 也遵循 SDR 输出范围；dither 在显示编码空间而非线性空间加入。
-        return decode_srgb(saturate(encode_srgb(saturate(color)) + noise));
+        return DisplayTransfer::dither(color, noise);
     }
 };

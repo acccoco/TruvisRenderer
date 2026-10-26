@@ -73,7 +73,7 @@ Streamline，最后销毁 Vulkan root。两个 Rust runtime 的 Drop 均不承�
 应用持有 command buffer、输入输出图像和同步责任；native evaluate 只录制命令，不提交、不等待，
 借用资源必须存活至 GPU 完成。失败阶段、SDK 原始返回码和各能力参数读取结果跨 ABI 保留。
 当前封装和验证范围见 [NR 模块](../../cxx/modules/truvixx-dlss-nr/README.md)。Renderer 已由 `NrSubsystem`
-管理会话与输出尺寸资源，复用同一 interposer/device 和 graphics immediate；尚无 NR evaluate pass。
+管理会话与输出尺寸资源，复用同一 interposer/device 和 graphics immediate；evaluate 由当前 compute graph 录制。
 
 ## 设计不变量
 
@@ -125,3 +125,9 @@ CXX 目标的链接成功只能说明 native target 可链接；它不能证明 
 - 是否需要 `just shader` 和 `spirv-dis`？
 
 专项规则比本文优先；本文只保留架构层面的 owner 和边界。
+
+NR EvaluateDesc 的 intensity 为有限 [0,1] float；颜色/输出/遮罩匹配 feature 尺寸，R32F 深度与
+RG16F/RG32F MV 共用非零实际 extent，逐项设置 subrect。Rust 类型由唯一 C header 生成，不维护兼容镜像。
+Renderer Slang owner 定义 NR decode push constant：uint2 image_size@0、uint dither@8、padding@12，
+size 16、生成宿主类型 alignment 4（uint2 成员 offset 满足 8 字节对齐）；SDR push constant 复用尾部槽为 uint output_encoding@108，size 112、生成宿主类型 alignment 4。
+默认编码 0（线性 SDR），NR 编码 1（gamma 2.2）。生成绑定与 SPIR-V offset 必须同时检查。

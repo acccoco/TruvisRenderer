@@ -1,0 +1,16 @@
+#pragma once
+
+/// NR 的 gamma 2.2 与显示 attachment 的 sRGB 不同；dither 始终在最终显示编码空间加入。
+struct DisplayTransfer {
+    static float3 encode_srgb(float3 x) {
+        return select(x <= 0.0031308f, 12.92f * x, 1.055f * pow(x, 1.0f / 2.4f) - 0.055f);
+    }
+    static float3 decode_srgb(float3 x) {
+        return select(x <= 0.04045f, x / 12.92f, pow((x + 0.055f) / 1.055f, 2.4f));
+    }
+    static float3 encode_gamma22(float3 x) { return pow(saturate(x), 1.0f / 2.2f); }
+    static float3 decode_gamma22(float3 x) { return pow(saturate(x), 2.2f); }
+    static float3 dither(float3 linear, float noise) {
+        return decode_srgb(saturate(encode_srgb(saturate(linear)) + noise));
+    }
+};

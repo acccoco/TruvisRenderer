@@ -1,18 +1,29 @@
-//! NR 会话和窗口尺寸资源的唯一 owner；本阶段不录制 evaluate，不改变显示输出。
-//! requested 保留用户意图，effective 表达当前模式是否允许准备资源；二者都不代表画面已经应用 NR。
+//! NR 会话和窗口尺寸资源的唯一 owner；组织 gamma SDR evaluate 与线性 SDR 解码。
+//! requested 保留用户意图，effective 表达当前模式是否允许执行；Running 仅表示成功录制并提交。
 
-use std::os::windows::ffi::OsStrExt;
+use std::{
+    cell::{Cell, RefCell},
+    os::windows::ffi::OsStrExt,
+};
 
 use ash::vk::{self, Handle};
 
+use renderer_kit::subsystem::SubsystemRenderCtx;
+pub use renderer_render_passes::post_process::dlss_nr::NrEvaluation;
+use renderer_render_passes::post_process::dlss_nr::{NrDecodePass, NrDecodeRgPass, NrGuides, NrRgPass};
+use renderer_render_passes::post_process::dlss_options::{DlssEvaluation, DlssFrameSnapshot};
 use truvis_dlss_nr_binding::{InitDesc, NrSession};
 use truvis_gfx::commands::barrier::GfxImageBarrier;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_path::TruvisPath;
-use truvis_render_runtime::render_runtime_ctx::{RenderRuntimeResourceCtx, RenderRuntimeShutdownCtx};
+use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle};
+use truvis_render_runtime::render_runtime_ctx::{
+    RenderRuntimeInitCtx, RenderRuntimeResourceCtx, RenderRuntimeShutdownCtx,
+};
 use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
 
+use crate::post_process::{SdrOutputEncoding, SdrPostProcessInput};
 use crate::shared::targets::{SingleImageTarget, TargetImageDesc};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -43,6 +54,7 @@ pub enum NrStatus {
     Bypassed,
     Pending,
     Ready,
+    Running,
 }
 
 /// Renderer 持有本类型；NrSession 使它不能跨线程，Ctx 从不保存在成员中。
@@ -50,7 +62,9 @@ pub enum NrStatus {
 pub struct NrSubsystem {
     requested: NrOptions,
     effective: NrOptions,
-    session: Option<NrSession>,
+    session: Option<RefCell<NrSession>>,
+    decode: Option<NrDecodePass>,
+    submitted_frames: u64,
     resources: Option<NrResources>,
     reset_pending: bool,
     /// 释放失败后保留原始错误，最终清理只能报告并终止，不能重试或关闭共享 NGX。
@@ -76,7 +90,7 @@ impl NrSubsystem {
         } else if !self.effective.enabled {
             NrStatus::Bypassed
         } else if self.resources.is_some() {
-            NrStatus::Ready
+            if self.submitted_frames > 0 { NrStatus::Running } else { NrStatus::Ready }
         } else {
             NrStatus::Pending
         }
@@ -102,9 +116,10 @@ impl NrSubsystem {
         }
     }
 
-    /// 普通提交不能消费此标记；未来 evaluate 成功并提交后才允许消费。
+    /// 仅本 feature 的 evaluate 成功且 queue submit 返回后才消费，不依赖其它历史的提交状态。
     pub fn request_reset(&mut self) {
         self.reset_pending = true;
+        self.submitted_frames = 0;
     }
 
     /// Runtime 已保证 GPU idle；失败时保留会话/资源供最终 shutdown 按顺序回收。
@@ -127,7 +142,7 @@ impl NrSubsystem {
         }
         NrResources::check_formats(ctx)?;
         self.resources = Some(NrResources::new(ctx));
-        let session = self.session.as_mut().unwrap();
+        let session = self.session.as_mut().unwrap().get_mut();
         ctx.immediate_ctx
             .try_one_time_exec(
                 |cmd| unsafe { session.create_feature(cmd.vk_handle().as_raw(), extent.width, extent.height) },
@@ -135,7 +150,7 @@ impl NrSubsystem {
             )
             .map_err(|e| e.to_string())?;
         log::info!(
-            "NR resources ready: {}x{}, feature create submitted/completed; evaluate not connected",
+            "NR resources ready: {}x{}, feature create submitted/completed; awaiting evaluation",
             extent.width,
             extent.height
         );
@@ -194,8 +209,8 @@ impl NrSubsystem {
                 return Err(format!("NR required device entry unavailable: {proc:?}"));
             }
         }
-        self.session = Some(unsafe { NrSession::init(&desc) }.map_err(|e| e.to_string())?);
-        let caps = self.session.as_mut().unwrap().capabilities().map_err(|e| e.to_string())?;
+        self.session = Some(RefCell::new(unsafe { NrSession::init(&desc) }.map_err(|e| e.to_string())?));
+        let caps = self.session.as_mut().unwrap().get_mut().capabilities().map_err(|e| e.to_string())?;
         log::info!("NR capabilities: {caps:?}");
         for q in [
             caps.available,
@@ -221,7 +236,7 @@ impl NrSubsystem {
             return Err(error.clone());
         }
         if let Some(session) = self.session.as_mut() {
-            if let Err(error) = unsafe { session.release_feature() } {
+            if let Err(error) = unsafe { session.get_mut().release_feature() } {
                 let error = error.to_string();
                 self.release_error = Some(error.clone());
                 return Err(error);
@@ -253,24 +268,140 @@ impl NrSubsystem {
         }
         self.release_images(ctx.resource_ctx, ctx.device_ctx, ctx.gfx_resource_registry, DestroyReason::Shutdown);
         if let Some(session) = self.session.as_mut() {
-            unsafe { session.shutdown() }.map_err(|e| e.to_string())?;
+            unsafe { session.get_mut().shutdown() }.map_err(|e| e.to_string())?;
             self.session = None;
             log::info!("NR session shutdown completed");
+        }
+        if let Some(decode) = self.decode.take() {
+            decode.destroy(ctx.device_ctx);
         }
         Ok(())
     }
 }
 
+/// 只在当前 compute graph 中有效；原 SDR destination 仍由 Realtime 持有。
+pub struct NrGraphFrame {
+    color: RgImageHandle,
+    mask: RgImageHandle,
+    output: RgImageHandle,
+    destination: RgImageHandle,
+    guides: NrGuides,
+    extent: vk::Extent2D,
+}
+
+impl NrSubsystem {
+    /// pipeline 与其它显示 pass 一起创建；NGX 会话仍只在显式开启时初始化。
+    pub fn init(&mut self, ctx: &RenderRuntimeInitCtx<'_>) {
+        self.decode = Some(NrDecodePass::new(ctx.device_ctx, ctx.shader_binding_system.global_descriptor_sets()));
+    }
+
+    pub fn prepare_graph(
+        &self,
+        graph: &mut RenderGraphBuilder<'_>,
+        display: &mut SdrPostProcessInput,
+    ) -> Option<NrGraphFrame> {
+        if !self.effective.enabled {
+            return None;
+        }
+        let guides = display.guides?;
+        let resources = self.resources.as_ref().expect("effective NR resources missing");
+        assert_eq!(resources.extent, display.destination_extent);
+        let handles = std::array::from_fn::<_, 3, _>(|index| {
+            let image = &resources.images[index];
+            let target = image.target();
+            graph.import_image(
+                NrResources::CHANNELS[index].0, target.image, Some(target.view), target.format, NrRgPass::WRITE, None,
+            )
+        });
+        let frame = NrGraphFrame {
+            color: handles[0],
+            mask: handles[1],
+            output: handles[2],
+            destination: display.destination,
+            guides,
+            extent: resources.extent,
+        };
+        display.destination = frame.color;
+        display.output_encoding = SdrOutputEncoding::Gamma22;
+        Some(frame)
+    }
+
+    pub fn contribute<'a>(
+        &'a self,
+        graph: &mut RenderGraphBuilder<'a>,
+        ctx: &'a SubsystemRenderCtx<'a>,
+        frame: NrGraphFrame,
+        snapshot: DlssFrameSnapshot,
+        upstream: &'a Cell<DlssEvaluation>,
+        evaluation: &'a RefCell<NrEvaluation>,
+        dither: bool,
+    ) {
+        graph.add_pass(
+            "dlss-nr",
+            NrRgPass {
+                session: self.session.as_ref().expect("NR session missing"),
+                evaluation,
+                upstream,
+                upstream_required: snapshot.options.is_sr_active() || snapshot.options.is_rr_active(),
+                color: frame.color,
+                output: frame.output,
+                mask: frame.mask,
+                guides: frame.guides,
+                reset: self.reset_pending,
+                jitter: snapshot.constants.jitter_offset,
+                intensity: self.effective.intensity,
+            },
+        );
+        graph.add_pass(
+            "nr-to-linear-sdr",
+            NrDecodeRgPass {
+                pass: self.decode.as_ref().unwrap(),
+                evaluation,
+                record_ctx: ctx.record_ctx,
+                source: frame.output,
+                destination: frame.destination,
+                extent: frame.extent,
+                dither,
+            },
+        );
+        // 单套图像按提交顺序复用，导出状态覆盖本帧读/写与下一帧写入依赖。
+        for image in [frame.color, frame.mask, frame.output] {
+            graph.export_image(image, NrRgPass::WRITE, None);
+        }
+        // 引导图还可被 present graph 的 debug viewer 读取，恢复 Realtime 的既有跨图状态。
+        let guide_state = if snapshot.options.is_sr_active() || snapshot.options.is_rr_active() {
+            renderer_render_passes::post_process::dlss_sr::DLSS_SR_INPUT_READ
+        } else {
+            truvis_render_graph::render_graph::RgImageState::GENERAL
+        };
+        graph.export_image(frame.guides.depth, guide_state, None);
+        graph.export_image(frame.guides.motion_vectors, guide_state, None);
+    }
+
+    /// 仅在实际 queue submit 成功后调用；GPU 完成由 Runtime timeline 另行确认。
+    pub fn finish_submitted_frame(&mut self, evaluation: &NrEvaluation, frame_id: u64) {
+        if matches!(evaluation, NrEvaluation::Succeeded) {
+            if self.submitted_frames < 4 || self.reset_pending {
+                log::info!(
+                    "NR evaluate recorded/submitted frame={frame_id} reset={} intensity={}",
+                    self.reset_pending,
+                    self.effective.intensity
+                );
+            }
+            self.submitted_frames += 1;
+            self.reset_pending = false;
+        }
+    }
+}
+
 struct NrResources {
     extent: vk::Extent2D,
-    images: [SingleImageTarget; 5],
+    images: [SingleImageTarget; 3],
 }
 
 impl NrResources {
-    const CHANNELS: [(&'static str, vk::Format); 5] = [
+    const CHANNELS: [(&'static str, vk::Format); 3] = [
         ("nr-color", vk::Format::R16G16B16A16_SFLOAT),
-        ("nr-depth", vk::Format::R32_SFLOAT),
-        ("nr-motion", vk::Format::R16G16_SFLOAT),
         ("nr-mask", vk::Format::R8G8B8A8_UNORM),
         ("nr-output", vk::Format::R16G16B16A16_SFLOAT),
     ];
@@ -308,7 +439,7 @@ impl NrResources {
                 ctx.frame_timing.frame_id(),
             )
         });
-        let mask = ctx.gfx_resource_registry.get_image(images[3].image).unwrap().handle();
+        let mask = ctx.gfx_resource_registry.get_image(images[1].image).unwrap().handle();
         ctx.immediate_ctx.one_time_exec(
             |cmd| {
                 cmd.image_memory_barrier(

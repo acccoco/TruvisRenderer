@@ -27,7 +27,7 @@ struct PushConstant {
     float4 white_balance_g;
     float4 white_balance_b;
     float3 tonal_gains;
-    /// 补齐末尾 16 字节槽，使 push constant size 为 112 字节。
-    float _padding_0;
+    /// 0 为显示线性 SDR，1 为 NR 使用的 gamma 2.2 SDR；复用原末尾槽，size 仍为 112。
+    uint output_encoding;
 };
 }}}

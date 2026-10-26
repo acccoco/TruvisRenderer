@@ -27,5 +27,7 @@ profile 对应 import library。阶段 2 的临时 Rust 验证入口位于 `.tem
 
 正式 Renderer 的 consumer 是 `renderer-rendering::NrSubsystem`，由 `TruvisRenderer` 持有。
 资源回调负责图像分配与 create 提交/等待；关闭效果保留会话，最终先释放所有 SR/RR/NR feature 再关闭 NR。
-当前只有状态和资源集成，没有 evaluate 或显示接线。生命周期与配置边界见
+evaluate adapter 在 RenderThread 内通过局部 `RefCell` 借用会话，只录制命令；失败通过帧结果槽上传，
+成功录制且 queue submit 返回后才消费 reset。`EvaluateDesc` 由 public header 生成，携带有限 [0,1] 强度；
+图像尺寸/格式契约见 native README。生命周期与配置边界见
 [Renderer README](../../../../renderer/truvis-renderer/README.md)。
