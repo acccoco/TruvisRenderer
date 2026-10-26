@@ -16,5 +16,6 @@ chrono = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 zip = { workspace = true }
+sevenz-rust2 = { workspace = true }
 toml = { workspace = true }
 anyhow = { workspace = true }

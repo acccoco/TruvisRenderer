@@ -6,6 +6,12 @@
 - `truvis-fetch-res/`：按 `resources.toml` 下载和准备外部资源。资源名称 `name` 必须唯一；缺省只处理
   `download_by_default = true` 的资源，也可以通过 `just fetch-res <name>...` 按名称选择，或使用
   `just fetch-res --all` 处理全部资源。
+  支持 `file`、`zip`、`7z` 和 `git`；压缩包的 `rename_to` 是解压目标目录名，不剥离包内顶层目录。
+  7z 使用纯 Rust 解压，不依赖系统 7-Zip；`name` 与 `rename_to` 必须是普通单层目录名。
+  7z 先写入 `.temp/resource/<name>.7z-staging`，完整解压后才替换目标；路径校验或解压失败会清理
+  staging 并保留旧目标。发布失败会报错，不能将其视为已准备完成。缓存与 staging 由下载器独占，
+  不支持多个进程同时刷新同一资源。已有缓存和目标时跳过解压；`force_overwrite` 使用缓存重新解压，
+  `force_download` 重新下载并解压。损坏缓存需设置 `force_download = true` 刷新，成功后应恢复为 false。
 - `truvis-path/`：读取根目录 `paths.toml`，提供 workspace、shader、binding、temp 等可信物理目录；不理解
   shader package、entry 或 binding schema。
 - `truvis-shader-manifest/`：依赖 `truvis-path`，解析并校验 shader package、编译器、输出前缀与 binding

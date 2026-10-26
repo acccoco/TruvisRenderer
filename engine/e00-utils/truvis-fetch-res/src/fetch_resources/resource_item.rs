@@ -15,6 +15,9 @@ pub enum ResourceType {
     File,
     /// Zip 压缩包
     Zip,
+    /// 7z 压缩包
+    #[serde(rename = "7z")]
+    SevenZip,
     /// Git 仓库
     Git,
 }
@@ -35,7 +38,7 @@ pub struct ResourceItem {
     /// 完整的下载 URL
     pub url: String,
 
-    /// 资源类型（file、zip 或 git）
+    /// 资源类型（file、zip、7z 或 git）
     pub resource_type: ResourceType,
 
     /// 本地目标目录
@@ -43,7 +46,7 @@ pub struct ResourceItem {
 
     /// 重命名
     /// - 如果 resource_type = File，则重命名文件
-    /// - 如果 resource_type = Zip，则重命名解压后的顶级目录
+    /// - 如果 resource_type = Zip 或 SevenZip，则作为解压目标目录名，保留包内路径
     /// - 如果 resource_type = Git，则作为 checkout 目录名
     pub rename_to: String,
 

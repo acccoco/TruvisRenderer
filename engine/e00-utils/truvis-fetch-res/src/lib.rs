@@ -1,7 +1,7 @@
 //! 资源与工具下载 crate。
 //!
 //! 本 crate 读取根目录 `resources.toml`，按配置下载模型资产和外部工具资源，
-//! 并把普通文件、zip 解压产物或 Git checkout 落到 workspace 内的目标目录。
+//! 并把普通文件、zip/7z 解压产物或 Git checkout 落到 workspace 内的目标目录。
 //! 批量入口默认只处理 `download_by_default = true` 的资源，也支持按唯一 `name`
 //! 选择资源或显式处理全部配置项。
 //! Git resource 只接受 HTTP(S) URL，可按配置 checkout 指定 ref 并递归更新 submodule。
@@ -11,5 +11,7 @@
 //! 可执行入口名为 `fetch_res`，根目录 `just fetch-res` 是推荐调用方式。
 //! 入口默认把下载缓存放到 workspace 下的 `.temp/resource`，避免和日志、Streamline
 //! 等其它临时文件混在 `.temp` 根目录。
+//! 7z 使用纯 Rust 解压，先写入缓存目录下的资源 staging，完整成功后才替换目标。
+//! 解压失败保留旧资源并清理 staging；不支持多进程同时刷新同一资源。
 
 pub mod fetch_resources;

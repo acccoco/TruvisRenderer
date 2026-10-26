@@ -183,6 +183,17 @@ impl GitHubResourceFetcher {
             true
         };
 
+        // 7z 必须完成 staging 解压后才替换旧资源，不能走下面的提前删除分支。
+        if matches!(item.resource_type, ResourceType::SevenZip) {
+            if did_download || item.force_overwrite || !actual_target.exists() {
+                self.process_seven_zip(item, &temp_file_path, &target_path)?;
+            } else {
+                info!("资源已存在，跳过提取: {:?}", actual_target);
+            }
+            info!("资源 '{}' 处理完成", item.name);
+            return Ok(());
+        }
+
         // 决定是否需要提取
         let should_extract = if did_download {
             // 如果进行了下载，必须提取（先删除已存在的目标）
@@ -210,6 +221,7 @@ impl GitHubResourceFetcher {
                     self.process_zip(&temp_file_path, &target_path, &item.rename_to)?;
                 }
                 ResourceType::Git => unreachable!("git resource 已在下载分支前处理"),
+                ResourceType::SevenZip => unreachable!("7z resource 已在 staging 分支处理"),
             }
         } else {
             info!("资源已存在，跳过提取: {:?}", actual_target);
@@ -463,6 +475,89 @@ impl GitHubResourceFetcher {
 
 // 提取
 impl GitHubResourceFetcher {
+    /// 7z 只在完整解压成功后发布；失败的 staging 不得成为下次执行的已完成目标。
+    /// staging 与目标目录由下载器独占，和已有缓存一样不支持多进程同时刷新同一资源。
+    fn process_seven_zip(&self, item: &ResourceItem, archive_path: &Path, target_dir: &Path) -> anyhow::Result<()> {
+        let name = Self::archive_relative_path(&item.name)?;
+        let target_name = Self::archive_relative_path(&item.rename_to)?;
+        anyhow::ensure!(name.components().count() == 1, "7z resource name 必须是单个目录名");
+        anyhow::ensure!(target_name.components().count() == 1, "7z rename_to 必须是单个目录名");
+        let staging = self.temp_dir.join(format!("{}.7z-staging", name.display()));
+        let actual_target = target_dir.join(target_name);
+        if staging.symlink_metadata().is_ok() {
+            self.remove_resource_target(&self.temp_dir, &staging, "清理上次 7z staging")?;
+        }
+        fs::create_dir(&staging).context("创建 7z staging 失败")?;
+
+        let extraction = self.extract_seven_zip(archive_path, &staging);
+        if let Err(error) = extraction {
+            self.remove_resource_target(&self.temp_dir, &staging, "清理失败的 7z staging")?;
+            return Err(error).with_context(|| {
+                format!("解压资源 '{}' 失败；若缓存损坏，请设置 force_download = true 后重试", item.name)
+            });
+        }
+
+        fs::create_dir_all(target_dir).context("创建 7z 目标父目录失败")?;
+        // rename_to 已限制为普通单层目录名；已有目标的删除仍须通过 canonicalize 边界检查。
+        if actual_target.symlink_metadata().is_ok() {
+            self.remove_resource_target(target_dir, &actual_target, "发布完整的 7z 资源")?;
+        }
+        fs::rename(&staging, &actual_target)
+            .with_context(|| format!("发布 7z 资源失败，完整解压产物保留在 {:?}", staging))?;
+        Ok(())
+    }
+
+    /// 先核验所有条目，再从文件流解压。只创建普通文件和目录，不恢复 archive 中的链接或属性。
+    fn extract_seven_zip(&self, archive_path: &Path, staging: &Path) -> anyhow::Result<()> {
+        let mut archive = sevenz_rust2::ArchiveReader::open(archive_path, sevenz_rust2::Password::empty())?;
+        for entry in &archive.archive().files {
+            Self::archive_relative_path(&entry.name)?;
+            anyhow::ensure!(!entry.is_anti_item, "7z 不支持删除条目: {}", entry.name);
+        }
+        info!("解压 {} 个 7z 条目到 {:?}", archive.archive().files.len(), staging);
+        archive.for_each_entries(|entry, reader| {
+            let relative = Self::archive_relative_path(&entry.name)
+                .map_err(|error| sevenz_rust2::Error::Other(error.to_string().into()))?;
+            let output = staging.join(relative);
+            if entry.is_directory {
+                fs::create_dir_all(&output)?;
+            } else {
+                if let Some(parent) = output.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut file = File::create(&output)?;
+                io::copy(reader, &mut file)?;
+            }
+            Ok(true)
+        })?;
+        Ok(())
+    }
+
+    /// 按 Windows 文件名语义校验，即使在其它平台也拒绝盘符、ADS、设备名和路径归一化歧义。
+    /// 同时识别两种分隔符，防止仅依赖当前平台 Path 解析而漏掉另一平台的越界路径。
+    fn archive_relative_path(name: &str) -> anyhow::Result<PathBuf> {
+        anyhow::ensure!(!name.is_empty() && !name.starts_with(['/', '\\']), "非法 7z 路径: {name:?}");
+        let mut path = PathBuf::new();
+        for part in name.trim_end_matches(['/', '\\']).split(['/', '\\']) {
+            let stem = part.split('.').next().unwrap_or_default().to_ascii_uppercase();
+            let numbered_device = stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT")).is_some_and(|suffix| {
+                matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+            });
+            anyhow::ensure!(
+                !part.is_empty()
+                    && part != "."
+                    && part != ".."
+                    && !part.ends_with(['.', ' '])
+                    && !part.chars().any(|ch| ch.is_control() || matches!(ch, ':' | '<' | '>' | '"' | '|' | '?' | '*'))
+                    && !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+                    && !numbered_device,
+                "非法 7z 路径: {name:?}"
+            );
+            path.push(part);
+        }
+        Ok(path)
+    }
+
     /// 处理普通文件：复制到目标目录，重命名
     fn process_file(&self, temp_file: &Path, target_dir: &Path, rename_to: &str) -> anyhow::Result<()> {
         // 确保目标目录存在
@@ -477,7 +572,7 @@ impl GitHubResourceFetcher {
         Ok(())
     }
 
-    /// 处理 Zip 文件：解压到目标目录，重命名顶级目录
+    /// 处理 Zip 文件：在指定目标目录中保留完整包内路径
     fn process_zip(&self, temp_file: &Path, target_dir: &Path, rename_to: &str) -> anyhow::Result<()> {
         let zip_data = fs::read(temp_file).with_context(|| format!("读取 zip 文件失败: {:?}", temp_file))?;
 
