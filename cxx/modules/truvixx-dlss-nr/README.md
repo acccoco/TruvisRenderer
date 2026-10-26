@@ -2,7 +2,7 @@
 
 NR 最小 native 模块；`truvixx-dlss-nr-capi` 是 SHARED target。唯一 public ABI 是
 [`include/TruvixxDlssNr/c_api/module.h`](include/TruvixxDlssNr/c_api/module.h)，不暴露 NGX C++ 类型。
-当前只提供阶段 2 的会话和 feature 封装，没有 Renderer 配置、RenderGraph pass 或显示处理。
+本模块只负责会话和 feature；Renderer 配置、RenderGraph 与显示处理属于 Rust Renderer。
 
 ## 所有权与关闭顺序
 
@@ -35,9 +35,10 @@ Streamline 与直接 NGX 调用不能被视为两个独立全局生命周期。�
   `enabled_features` 是调用方对创建 device 时实际启用状态的声明，模块只能检查声明及关键函数入口。
 - create/evaluate 只录制，不 submit、wait 或创建应用图像。command buffer 必须可录制且位于 render pass 外。
   输入写入可见性、输出读取 barrier、借用资源存活直至 GPU 完成，全部由调用方保证。
-- 五张图像尺寸与 create 一致，单 mip/layer、color aspect、GENERAL layout。颜色/输出是 RGBA16F，
-  深度 R32F、MV RG16F、控制遮罩 RGBA8 UNORM。输入颜色为 gamma 2.2 SDR；首帧/重建后 reset。
-  输入与输出不得别名；MV scale/jitter 必须匹配同帧输入。Preset B、Style 0、intensity 1、tone 0.3、
+- 颜色/输出/遮罩尺寸与 create 一致；深度与 MV 使用各自实际尺寸，二者同尺寸且非零，各自设置 subrect。
+  全部单 mip/layer、color aspect、GENERAL layout。颜色/输出 RGBA16F、深度 R32F、MV RG16F 或 RG32F、
+  控制遮罩 RGBA8 UNORM。输入颜色为 gamma 2.2 SDR；首帧/重建后 reset。
+  输入与输出不得别名；MV scale/jitter 必须匹配同帧输入。intensity 必须有限且位于 [0,1]，0 仍执行；Preset B、Style 0、tone 0.3、
   structure 0.7、AutoMask off 固定。真实场景的深度、运动和颜色转换仍由后续阶段验证。
 
 能力查询返回每个参数独立的 `ngx_result/value`；总调用成功不代表 Available=1，更不能把参数读取失败

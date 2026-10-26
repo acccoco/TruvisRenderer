@@ -79,13 +79,15 @@ typedef struct
     uint64_t image, image_view;
     uint32_t format, width, height, layout;
 } TruvixxNrImage;
-/// 最小契约：五张图像与创建尺寸相同；颜色为 gamma 2.2 SDR。
-/// Preset B / Style 0 / intensity 1 / tone 0.3 / structure 0.7 / AutoMask off 固定。
+/// 颜色/输出/遮罩匹配创建尺寸；depth/MV 同尺寸、非零，允许低于输出分辨率。
+/// 颜色为 gamma 2.2 SDR；MV 为 render-pixel 单位，支持 RG16F/RG32F。
+/// intensity 有限且在 [0,1]；Preset B / Style 0 / tone 0.3 / structure 0.7 / AutoMask off 固定。
 typedef struct
 {
     TruvixxNrImage color, depth, motion_vectors, control_mask, output;
     uint32_t reset;
     float jitter_x, jitter_y, motion_scale_x, motion_scale_y;
+    float intensity;
 } TruvixxNrEvaluateDesc;
 
 /// device_extensions=0 查询 instance，=1 查询 device。*count 输入容量、输出需求数量。

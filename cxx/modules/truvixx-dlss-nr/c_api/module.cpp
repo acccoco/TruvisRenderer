@@ -158,9 +158,9 @@ struct TruvixxNrSession
         /// SDK 失败时若仍返回 feature，保留给 release，不丢失销毁责任。
         return NrApi::result(stage, r);
     }
-    bool valid_image(const TruvixxNrImage& image, VkFormat format) const
+    static bool valid_image(const TruvixxNrImage& image, VkFormat format, uint32_t expected_width, uint32_t expected_height)
     {
-        return image.image && image.image_view && image.width == width && image.height == height && image.format == uint32_t(format) && image.layout == VK_IMAGE_LAYOUT_GENERAL;
+        return image.image && image.image_view && expected_width && expected_height && image.width == expected_width && image.height == expected_height && image.format == uint32_t(format) && image.layout == VK_IMAGE_LAYOUT_GENERAL;
     }
     static NVSDK_NGX_Resource_VK resource(const TruvixxNrImage& image, bool writable)
     {
@@ -171,7 +171,13 @@ struct TruvixxNrSession
         constexpr auto stage = TruvixxNrStageEvaluate;
         if (!NrApi::success(check(stage))) return check(stage);
         if (!feature) return NrApi::error(stage, TruvixxNrErrorState);
-        if (!command || !d || d->reset > 1 || !std::isfinite(d->jitter_x) || !std::isfinite(d->jitter_y) || !std::isfinite(d->motion_scale_x) || !std::isfinite(d->motion_scale_y) || !valid_image(d->color, VK_FORMAT_R16G16B16A16_SFLOAT) || !valid_image(d->output, VK_FORMAT_R16G16B16A16_SFLOAT) || !valid_image(d->depth, VK_FORMAT_R32_SFLOAT) || !valid_image(d->motion_vectors, VK_FORMAT_R16G16_SFLOAT) || !valid_image(d->control_mask, VK_FORMAT_R8G8B8A8_UNORM) || d->color.image == d->output.image)
+        if (!command || !d || d->reset > 1 || !std::isfinite(d->intensity) || d->intensity < 0 || d->intensity > 1 || !std::isfinite(d->jitter_x) || !std::isfinite(d->jitter_y) || !std::isfinite(d->motion_scale_x) || !std::isfinite(d->motion_scale_y))
+            return NrApi::error(stage, TruvixxNrErrorArgument);
+        /// 引导图独立传递 extent，复用同帧原始 depth/MV，不要求调用方重采样。
+        const auto guide_width = d->depth.width, guide_height = d->depth.height;
+        const bool valid_motion = valid_image(d->motion_vectors, VK_FORMAT_R16G16_SFLOAT, guide_width, guide_height)
+            || valid_image(d->motion_vectors, VK_FORMAT_R32G32_SFLOAT, guide_width, guide_height);
+        if (!valid_image(d->color, VK_FORMAT_R16G16B16A16_SFLOAT, width, height) || !valid_image(d->output, VK_FORMAT_R16G16B16A16_SFLOAT, width, height) || !valid_image(d->depth, VK_FORMAT_R32_SFLOAT, guide_width, guide_height) || !valid_motion || !valid_image(d->control_mask, VK_FORMAT_R8G8B8A8_UNORM, width, height) || d->color.image == d->output.image)
             return NrApi::error(stage, TruvixxNrErrorArgument);
         auto color = resource(d->color, false), depth = resource(d->depth, false), motion = resource(d->motion_vectors, false);
         auto mask = resource(d->control_mask, false), output = resource(d->output, true);
@@ -183,12 +189,13 @@ struct TruvixxNrSession
         p.pInOutput = &output;
         p.InReset = int(d->reset);
         p.InEnabled = 1;
-        p.InIntensity = 1;
+        p.InIntensity = d->intensity;
         p.InLocalToneStrength = 0.3f;
         p.InLocalStructureStrength = 0.7f;
         p.InMVecScaleX = d->motion_scale_x;
         p.InMVecScaleY = d->motion_scale_y;
-        p.InColorSubrectSize = p.InOutputSubrectSize = p.InDepthSubrectSize = p.InMVecSubrectSize = p.InControlMaskSubrectSize = { width, height };
+        p.InColorSubrectSize = p.InOutputSubrectSize = p.InControlMaskSubrectSize = { width, height };
+        p.InDepthSubrectSize = p.InMVecSubrectSize = { guide_width, guide_height };
         parameters->Set(NVSDK_NGX_Parameter_Jitter_Offset_X, d->jitter_x);
         parameters->Set(NVSDK_NGX_Parameter_Jitter_Offset_Y, d->jitter_y);
         return NrApi::result(stage, NGX_VULKAN_EVALUATE_DLSSNR_EXT(reinterpret_cast<VkCommandBuffer>(command), feature, parameters, &p));
