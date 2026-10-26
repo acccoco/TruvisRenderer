@@ -1,6 +1,7 @@
 #include "TruvixxStreamline/c_api/module.h"
 
 #include "TruvixxUtils/string.hpp"
+#include "TruvixxUtils/ngx_identity.hpp"
 
 #include <Windows.h>
 #include <vulkan/vulkan.h>
@@ -20,12 +21,6 @@ namespace
 {
 
 using truvixx::utils::StringUtils;
-
-constexpr char kTruvisEngineVersion[] = "Truvis";
-
-// NGX custom engine 的 Project ID，必须是稳定的 GUID-like 字符串。
-// 正式发布若拿到 NVIDIA 分配的 applicationId，再统一切换身份策略。
-constexpr char kTruvisNgxProjectId[] = "e390aa77-d1d4-42c5-be02-07095506af72";
 
 // Rust 侧传入的全局日志回调地址。
 // 在 truvixx_sl_init 中写入一次，之后只读。写入发生在 slInit 之前，
@@ -499,8 +494,8 @@ int32_t truvixx_sl_init(const TruvixxSlInitDesc* desc)
     preferences.featuresToLoad = features_to_load.data();
     preferences.numFeaturesToLoad = feature_count;
     preferences.engine = sl::EngineType::eCustom;
-    preferences.engineVersion = kTruvisEngineVersion;
-    preferences.projectId = kTruvisNgxProjectId;
+    preferences.engineVersion = truvixx::utils::NgxIdentity::engine_version;
+    preferences.projectId = truvixx::utils::NgxIdentity::project_id;
     preferences.renderAPI = sl::RenderAPI::eVulkan;
 
     // PFun_slInit 没有 C++ 默认参数语义，必须显式传入当前 SDK 版本。
