@@ -237,6 +237,11 @@ NR 独立比较归一化后的 Tone Mapping、Color Grading 和曝光配置；�
 自动曝光逐帧 EV、强度与 NR 后 dithering 不参与比较，显示配置不重建 feature/图像，也不失效其它历史。
 无场景或未执行时保留请求，只有 NR evaluate 成功且整帧 queue submit 返回后消费；GPU 完成另由 timeline 确认。
 
+显式 `TruvisRenderer::set_camera` 表达离散相机切换，必须在本帧视图准备之前调用。
+Renderer 取消旧导航、拾取与 gizmo，分别请求 NR、SR/RR、ViewAccum、ReSTIR 失效，曝光仍按原规则适应。
+普通导航与非发光物体变换通过 current/previous 矩阵及 MV 表达，不按运动幅度猜测切换，也不逐帧请求 NR reset。
+previous camera/model 属于上一实际提交主视图，不能取当前 FIF 槽上次记录；无场景清屏和失败帧不推进这份历史。
+
 如果一个设置同时影响 render extent 和 temporal history，先派生 frame state，再通知 Renderer resize，最后在同一生效路径请求 history reset，避免两者观察到不同配置。
 
 ## 变更检查

@@ -13,6 +13,7 @@ use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_world::{GameWorld, LightTarget, WorldEditError, guid_new_type::MeshInstanceHandle};
 
 use renderer_imgui::{FrameStatsOverlayData, ImGuiSubsystem};
+use renderer_kit::camera::Camera;
 use renderer_kit::camera_controller::CameraController;
 use renderer_kit::debug_image::DebugImageSelection;
 use renderer_kit::input_state::InputManager;
@@ -47,6 +48,8 @@ pub struct TruvisRenderer {
     viewport_overlay: ViewportOverlaySubsystem,
     /// 与本帧 prepare 共用的相机快照；after_prepare 相机调整留待下一帧。
     frame_view: RenderView,
+    /// 从 render_frame_input 到成功提交之间禁止切换相机，避免同帧 constants 与引导图不一致。
+    frame_view_prepared: bool,
     output_extent: ash::vk::Extent2D,
     path_tracing_common_settings: PathTracingCommonSettings,
     render_mode: RenderMode,
@@ -98,6 +101,19 @@ impl GizmoTarget {
 }
 
 impl TruvisRenderer {
+    /// RenderThread 在本帧视图准备前显式切换相机；普通连续导航不走此入口。
+    /// 分别通知各历史 owner，不重建图像/feature，也不重置曝光适应。
+    pub fn set_camera(&mut self, camera: Camera) {
+        assert!(!self.frame_view_prepared, "cannot switch camera after frame view preparation");
+        self.cancel_interaction();
+        self.camera_controller.set_camera(camera);
+        self.frame_view = self.camera_controller.camera().render_view();
+        self.dlss.reset();
+        self.nr.request_reset();
+        self.view_accum.reset();
+        self.restir_reset_pending = true;
+    }
+
     /// 使用 App 注入的 Client 构造渲染侧业务状态。
     pub fn new(client: Box<dyn RendererClient>) -> Self {
         let camera_controller = CameraController::default();
@@ -113,6 +129,7 @@ impl TruvisRenderer {
             transform_gizmo: Default::default(),
             viewport_overlay: Default::default(),
             frame_view,
+            frame_view_prepared: false,
             output_extent: Default::default(),
             path_tracing_common_settings: Default::default(),
             render_mode: Default::default(),
@@ -737,6 +754,7 @@ impl Renderer for TruvisRenderer {
         if scene_submitted && self.render_mode == RenderMode::Realtime {
             self.restir_reset_pending = false;
         }
+        self.frame_view_prepared = false;
         Ok(scene_submitted)
     }
 
@@ -748,6 +766,8 @@ impl Renderer for TruvisRenderer {
         &mut self,
         frame_state: &truvis_render_runtime::state::frame_state::FrameRenderState,
     ) -> RenderFrameInput {
+        assert!(!self.frame_view_prepared, "frame view prepared twice");
+        self.frame_view_prepared = true;
         self.dlss.frame_input(self.frame_view, frame_state).expect("DLSS frame input configuration failed")
     }
 }

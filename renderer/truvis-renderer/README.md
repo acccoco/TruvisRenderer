@@ -104,6 +104,13 @@ prepare、overlay 与 Offline 累计签名共用同一视图；after_prepare 相
 Runtime/Renderer/Subsystem 的通用契约见
 [`docs/design/runtime-phase-contract.md`](../../docs/design/runtime-phase-contract.md)。
 
+## 显式相机切换
+
+`TruvisRenderer::set_camera(Camera)` 只能由 RenderThread 在本帧 `render_frame_input` 之前调用。
+视图准备到提交结束之间有断言保护，避免已准备的矩阵与相机状态不一致。
+入口取消 gizmo、输入、旧拾取以及控制器的 orbit/pan/zoom 查询，并分别请求 NR、SR/RR、ViewAccum、ReSTIR 失效；
+曝光保持既有适应规则。普通导航不使用该入口，不增加自动切换阈值或相机选择 UI。
+
 ## 场景环境编辑
 
 Sky tab 的 enabled/brightness 从 World 读取为本次 UI 临时值，修改后经 GameWorld 原子提交；

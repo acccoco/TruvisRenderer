@@ -98,6 +98,13 @@ impl CameraController {
         &mut self.camera
     }
 
+    /// 显式切换相机时废弃旧导航锚点与查询；temporal reset 由持有控制器的 Renderer 决定。
+    pub fn set_camera(&mut self, camera: Camera) {
+        self.clear_middle_button_control();
+        self.clear_wheel_zoom();
+        self.camera = camera;
+    }
+
     pub fn take_pending_pivot_raycast(&mut self) -> Option<PivotRayCastRequest> {
         self.pending_pivot_raycast.take()
     }

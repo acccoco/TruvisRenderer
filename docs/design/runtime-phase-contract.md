@@ -115,6 +115,11 @@ UpdateCtx 只能请求重配置，不获得 registry/immediate 权限。没有 p
 
 这张矩阵用于判断 API 应该放在哪个 Ctx，而不是用于描述具体 Renderer 的所有操作。若一个操作需要同时改变 CPU scene 和录制 GPU pass，应拆成两个明确阶段。
 
+具体 Renderer 的显式相机切换属于视图准备之前的 RenderThread 操作。
+`TruvisRenderer::set_camera` 在 `render_frame_input` 之前取消旧导航/拾取并通知各 temporal owner；
+从视图准备至本帧提交结束禁止调用，不能在 `after_prepare` 中替换本帧相机。
+Runtime 继续只消费已冻结的 current/previous `RenderView`，不接管相机切换策略。
+
 ## 失败语义
 
 phase 返回值表达当前阶段能否继续，而不是替上层猜测最终画面结果。resize 返回 `None` 只表示没有需要传播的 Runtime resize；它不表示 Renderer resource 一定已同步。

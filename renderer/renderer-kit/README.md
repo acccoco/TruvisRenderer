@@ -27,3 +27,7 @@ screen ray 的 TMin 也不复用 near。
 - 相机状态属于 Renderer；runtime 只消费 `RenderView`，不依赖相机控制策略。中键 pivot、Shift+中键拖拽与滚轮锚点状态留在 `CameraController`，同步 raycast 仍由具体 Renderer 在 `after_prepare` 阶段执行。
 
 跨 crate 所有权和帧阶段见 [`docs/design/runtime-phase-contract.md`](../../docs/design/runtime-phase-contract.md)。
+
+`CameraController::set_camera` 替换相机并取消旧 orbit、pan、zoom 及待处理 raycast；它不认识渲染历史。
+显式相机切换应通过 `TruvisRenderer::set_camera`，由 Renderer 同时取消交互/拾取并通知各历史 owner。
+普通导航继续使用控制器 update，不按距离或角度推断相机切换。
