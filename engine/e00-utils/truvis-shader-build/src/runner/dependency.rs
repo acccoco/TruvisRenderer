@@ -78,7 +78,9 @@ impl ShaderDependencyValidator {
                 };
 
             for source_root in &package.source_roots {
-                for entry in walkdir::WalkDir::new(&source_root.path).into_iter().filter_map(Result::ok) {
+                for entry in walkdir::WalkDir::new(&source_root.path) {
+                    let entry = entry
+                        .map_err(|err| format!("无法遍历 shader 预检目录 {}: {err}", source_root.path.display()))?;
                     if !entry.path().is_file() || !Self::is_shader_source(entry.path()) {
                         continue;
                     }

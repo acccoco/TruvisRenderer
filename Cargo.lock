@@ -6406,14 +6406,12 @@ dependencies = [
 name = "truvis-fetch-res"
 version = "0.1.0"
 dependencies = [
- "anstyle",
  "anyhow",
- "chrono",
- "env_logger",
  "log",
  "reqwest 0.11.27",
  "serde",
  "sevenz-rust2",
+ "sha2",
  "toml 0.8.2",
  "truvis-logs",
  "truvis-path",
@@ -6454,7 +6452,6 @@ dependencies = [
 name = "truvis-path"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "serde",
  "toml 0.8.2",
 ]
@@ -6613,6 +6610,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "sha2",
  "truvis-logs",
  "truvis-path",
  "truvis-shader-manifest",

@@ -80,11 +80,11 @@ _cxx-bindings:
 
 # 运行 Triangle 示例
 [group('3 运行示例')]
-triangle *run_opts: shader (_run-cargo-bin "triangle" run_opts)
+triangle *run_opts: shader cxx-debug (_run-cargo-bin "triangle" run_opts)
 
 # 运行 ShaderToy 示例
 [group('3 运行示例')]
-shader-toy *run_opts: shader (_run-cargo-bin "shader-toy" run_opts)
+shader-toy *run_opts: shader cxx-debug (_run-cargo-bin "shader-toy" run_opts)
 
 # 运行完整 TruvisRenderer 的 standalone 入口，默认 Manual；Cornell Box 使用 --scene cornell
 [group('3 运行示例')]

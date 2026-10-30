@@ -38,6 +38,7 @@ function(truvis_generate_export_header)
         PUBLIC
             "$<BUILD_INTERFACE:${TRUVIS_CXX_GENERATED_INCLUDE_DIR}>"
     )
+    set_property(GLOBAL APPEND PROPERTY TRUVIS_PUBLIC_CXX_TARGETS "${ARG_TARGET}")
 endfunction()
 
 function(_truvis_runtime_configuration_key configuration output_var)
@@ -113,10 +114,29 @@ endfunction()
 function(truvis_finalize_runtime_plans)
     set(plan_dir "${CMAKE_BINARY_DIR}/runtime")
     file(MAKE_DIRECTORY "${plan_dir}")
+    get_property(public_targets GLOBAL PROPERTY TRUVIS_PUBLIC_CXX_TARGETS)
+    if(NOT public_targets)
+        message(FATAL_ERROR "No public CXX targets registered")
+    endif()
 
     foreach(configuration IN ITEMS Debug Release)
         _truvis_runtime_configuration_key("${configuration}" configuration_key)
         get_property(items GLOBAL PROPERTY "TRUVIS_RUNTIME_ITEMS_${configuration_key}")
+        set(runtime_libraries)
+        foreach(target IN LISTS public_targets)
+            # 只部署当前 public ABI；内部 STATIC 产物继续留在 native 构建目录。
+            foreach(kind IN ITEMS FILE LINKER_FILE PDB_FILE)
+                if(kind STREQUAL "PDB_FILE")
+                    set(required false)
+                else()
+                    set(required true)
+                endif()
+                list(APPEND items
+                    "    {\"target\": \"${target}\", \"source\": \"$<TARGET_${kind}:${target}>\", \"destination\": \"$<TARGET_${kind}_NAME:${target}>\", \"required\": ${required}}"
+                )
+            endforeach()
+            list(APPEND runtime_libraries "$<TARGET_RUNTIME_DLLS:${target}>")
+        endforeach()
         if(items)
             string(JOIN ",\n" items_json ${items})
         else()
@@ -124,14 +144,18 @@ function(truvis_finalize_runtime_plans)
         endif()
 
         set(plan_path "${plan_dir}/truvis-runtime-${configuration}.json")
-        file(WRITE "${plan_path}"
-            "{\n"
-            "  \"version\": 1,\n"
-            "  \"configuration\": \"${configuration}\",\n"
-            "  \"artifacts\": [\n"
-            "${items_json}\n"
-            "  ]\n"
-            "}\n"
+        set(script_content
+            "set(configuration [==[${configuration}]==])\nset(plan_path [==[${plan_path}]==])\nset(items_json [==[${items_json}]==])\nset(runtime_libraries [==[${runtime_libraries}]==])\ninclude([==[${CMAKE_CURRENT_FUNCTION_LIST_DIR}/TruvisRuntimePlan.cmake]==])\n"
+        )
+        file(GENERATE OUTPUT "${plan_dir}/generate-${configuration}.cmake"
+            CONTENT "${script_content}" CONDITION "$<CONFIG:${configuration}>"
         )
     endforeach()
+
+    # 每次 build 都重算完整部署集合；没有重新链接也可能移除了 target 或 sidecar。
+    add_custom_target(truvis-runtime-plan ALL
+        COMMAND "${CMAKE_COMMAND}" -P "${plan_dir}/generate-$<CONFIG>.cmake"
+        DEPENDS ${public_targets}
+        VERBATIM
+    )
 endfunction()

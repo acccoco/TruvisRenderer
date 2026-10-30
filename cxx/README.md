@@ -24,9 +24,16 @@ Rust binding。它不镜像 `engine/`、`renderer/`、`app/` 的 Rust 分层，�
 重新链接，只由 CMake generator、MSBuild/Ninja 与 compiler dependency information 判断；Rust 不保存 native 输入快照。
 `--force` 映射到 CMake `--clean-first`，不会由 Rust 删除 object/cache。
 
-CMake configure 生成每个 configuration 的通用 runtime plan。具体 module 在自己的 `CMakeLists.txt` 中声明
-required/optional sidecar；Rust 部署器只解析统一 schema，并把 native/import library/runtime 部署到
-`build/{debug,release}` 与其 `examples/`。
+CMake 在每次 Debug/Release build 完成后生成完整 runtime plan：public SHARED target 的 DLL/import library
+与可选 PDB、target 声明的运行 DLL 及其递归依赖、module 声明的 required/optional sidecar。
+第三方 DLL 从声明的来源解析，不以 native 输出目录中的残留文件为依据；内部 STATIC 产物不部署到 Cargo。
+Rust 只消费这份 plan，将其部署到 `build/{debug,release}` 与其 `examples/`，不扫描 native 输出目录。
+
+部署按文件内容判断是否需要更新，不能用修改时间代替内容身份。旧部署清单只能删除 profile 根目录与
+`examples/` 的直接文件；清单路径及其实际父目录必须通过边界校验。必需源文件、目标重名、目录占用和旧清单
+在复制前统一校验；首次复制前记录旧集合与当前计划的并集，成功后才缩减为当前集合。这样 IO 失败后重跑或
+切换计划仍能清理部分部署的新文件。状态清单通过同目录临时文件替换；不支持并发部署，不保证多文件失败回滚，
+失败后必须修正原因并重新成功部署，不能继续使用混合输出。进程崩溃、断电持久化不在此保证内。
 
 常用入口：
 
@@ -38,6 +45,7 @@ just cxx-compile-commands
 ```
 
 `cxx-debug` 只构建并部署 Debug native 产物；最终的 `cargo run` 会在同一个 Cargo 构建图中编译所需 Rust binding。
+Triangle、ShaderToy 也通过 Gfx 使用 native Vulkan binding，其 `just` 入口同样先执行 `cxx-debug`。
 需要更新 clangd 数据库时单独运行 `cxx-compile-commands`，它不会构建 native target 或 Rust binding。
 
 也可以直接使用独立 CMake project：
@@ -76,7 +84,7 @@ Vulkan 命令桥接和宿主 ABI 契约见
 - CMake binary dir：`build/cxx/cmake/{vs2022,vs2026,clang-cl}`。
 - Native 输出：`build/cxx/output/{toolchain}/{Debug,Release}`。
 - export header：`build/cxx/generated/include/`。
-- runtime plan：各 CMake binary dir 的 `runtime/`。
+- runtime plan：各 CMake binary dir 的 `runtime/`；configure 只生成脚本，成功 build 才发布版本 2 清单。
 - Rust 部署所有权：`build/cxx/.state/`。
 - Rust binding：`build/bindings/{TARGET}/cxx/{crate}/`。
 - clangd database：`build/cxx/compile_commands.json` 与 `.vscode/compile_commands.json`。

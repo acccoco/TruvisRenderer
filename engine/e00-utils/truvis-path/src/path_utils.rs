@@ -48,7 +48,10 @@ impl PathUtils {
             match component {
                 Component::CurDir => {}
                 Component::ParentDir => {
-                    if !normalized.pop() {
+                    // 只有普通段能与父路径抵消；已有 `..` 必须保留，绝对根不能继续向上。
+                    if matches!(normalized.components().next_back(), Some(Component::Normal(_))) {
+                        normalized.pop();
+                    } else if !normalized.has_root() {
                         normalized.push(component.as_os_str());
                     }
                 }

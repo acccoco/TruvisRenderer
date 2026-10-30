@@ -77,7 +77,13 @@ impl ShaderCompiler for HlslCompiler {
             .arg("-fspv-debug=vulkan-with-source")
             .arg("-Zi") // 包含调试信息
             .output()
-            .expect("Failed to execute dxc");
+            .map_err(|err| {
+                format!(
+                    "无法启动 shader 编译器 {}，source={}: {err}",
+                    task.compiler_executable.display(),
+                    task.shader_path.display()
+                )
+            })?;
 
         self.process_cmd_output(task, output)
     }

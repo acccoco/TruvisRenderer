@@ -4,15 +4,25 @@
 
 ## 设计目标
 
-Shader、Rust 和 C++ 必须围绕同一份 ABI 源定义协作。宿主语言投影 ABI，不能反向成为字段列表的第二个来源。
+每份 ABI 由对应 owner 维护唯一源定义：Shader ABI 属于 Slang owner，native public C ABI 属于 CXX module。生成的宿主 binding 只投影源定义，不能成为第二份字段来源。
+
+下图箭头表示源输入到消费方；Shader 类型投影与 native C API 分别生成各自的 Rust binding。
 
 ```mermaid
 flowchart LR
-    EngineAbi["engine/shader/abi"] --> EngineBinding["engine binding crate"]
-    RendererAbi["renderer/shader/abi"] --> RendererBinding["renderer binding crate"]
-    EngineBinding --> RendererBinding
-    RendererBinding --> Rust["Rust renderer/runtime"]
-    EngineBinding --> Cxx["C ABI / C++ modules"]
+    subgraph Shader["Shader ABI 投影"]
+        EngineAbi["Engine Slang ABI"] --> EngineHeader["Engine ffi/rust_ffi.hpp"]
+        RendererAbi["Renderer Slang ABI"] --> RendererHeader["Renderer ffi/rust_ffi.hpp"]
+        EngineAbi --> RendererHeader
+        EngineHeader -->|bindgen| EngineBinding["truvis-shader-binding"]
+        RendererHeader -->|bindgen| RendererBinding["truvis-renderer-shader-binding"]
+        EngineBinding -->|类型复用| RendererBinding
+    end
+    subgraph Native["Native C ABI 消费"]
+        CHeader["CXX module public C header"] --> NativeDll["CXX module DLL"]
+        CHeader -->|bindgen| NativeBinding["cxx/rust/bindings"]
+        NativeDll -->|链接产物| NativeBinding
+    end
 ```
 
 ## Owner 与依赖
@@ -31,14 +41,13 @@ ABI 不依赖 entry；lib 不依赖 entry；entry 只组合自身可见的 ABI �
 
 ## Binding 责任
 
-每个 binding owner 决定：
+每个 Shader binding owner 决定：
 
 - allowlist 中哪些 ABI 类型进入 Rust；
 - 哪些类型通过 namespace re-export；
-- 生成 binding 的生命周期和 crate 依赖；
-- C ABI 是否需要暴露给 native module。
+- 生成 binding 的生命周期和 crate 依赖。
 
-已有生成 binding 能表达的结构不能在 Rust 中手写镜像。C++ 只能消费 `ffi/rust_ffi.hpp` 暴露的 C ABI，不链接或回调 Rust symbol。
+Shader binding 的 `ffi/rust_ffi.hpp` 聚合 owner Slang ABI 及基础类型的 C++ 投影，供 bindgen 解析。已有生成 binding 能表达的结构不能在 Rust 中手写镜像；Renderer binding 显式复用 Engine binding 的公共类型。
 
 ## 布局不变量
 
@@ -56,7 +65,10 @@ ABI 不依赖 entry；lib 不依赖 entry；entry 只组合自身可见的 ABI �
 
 workspace 根 `cxx/` 是唯一 native integration project。CMake target 直接依赖 native module，不镜像 Rust 顶层分层。
 
-对 Rust 暴露 C ABI 的 target 必须是 DLL；内部实现可以使用 STATIC 或 OBJECT。Rust binding 只消费 public C ABI，CMake 不知道 Cargo crate。
+Native 部署集合由当前 CMake target、其运行依赖和显式 sidecar 声明决定；输出目录中的残留文件不构成部署依据。
+Rust 部署前校验完整输入和删除边界，并保留失败重试所需的文件所有权；部署成功前不能把混合版本输出视为可用。
+
+对 Rust 暴露 C ABI 的 target 必须是 DLL；内部实现可以使用 STATIC 或 OBJECT。Native public C ABI 定义在 module 的 `include/.../c_api/module.h`；`cxx/rust/bindings/` 下各 crate 的 `build.rs` 从该 header 生成 Rust binding，并链接对应 native 产物。CMake 不知道 Cargo crate，native module 不链接或回调 Rust symbol。
 
 生成 header、CXX module 和 Rust binding 的生命周期必须由各自 owner 管理。不要把 native 句柄、CPU 指针或工作线程隐藏在通用 binding 生成器中。
 
@@ -80,6 +92,11 @@ workspace 根 `cxx/` 是唯一 native integration project。CMake target 直接�
 ## 编译与验证边界
 
 源码预检负责发现越界 include、package 依赖和 owner 方向问题；编译器 depfile 负责发现实际使用但未声明的 shared input。两者都不能省略。
+
+Shader 构建器先验证整批目的地与清理边界，再修改输出。保存本轮 manifest 前先移除全部待编译任务的正式 depfile。
+版本匹配但未完成的 manifest 可用于比较；每个跳过任务仍须有有效产物和通过依赖校验的正式 depfile。
+编译成功、产物存在且依赖校验通过后才发布该任务 depfile；整批任务和清理全部成功后标记 manifest 完成。
+这允许中断后复用已完成任务，不等于多个 SPIR-V 文件的事务回滚。
 
 修改共享 ABI 后至少检查生成 binding、SPIR-V member offset、结构 size/align、数组 stride 或 push constant range。只通过 Rust 编译不能证明 Slang 与 Vulkan 布局一致。
 
@@ -106,7 +123,8 @@ CXX 目标的链接成功只能说明 native target 可链接；它不能证明 
 - include 是否从固定搜索根解析？
 - Renderer 是否只依赖 Engine ABI？
 - 字段是否引入隐式 padding？
-- C++ 是否仍只消费 public C ABI？
+- Shader binding 是否仍从 owner Slang ABI 的 C++ 投影生成？
+- Native Rust binding 是否仍只消费 module public C ABI，保持对 CXX 的单向依赖？
 - 是否需要 `just shader` 和 `spirv-dis`？
 
 专项规则比本文优先；本文只保留架构层面的 owner 和边界。

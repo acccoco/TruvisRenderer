@@ -56,6 +56,8 @@ just fetch-res rtx-remix-repo nvidia-dlss-sdk nvidia-dlss-nr-sdk
 4bb8651b3ac2180f23df1f39422c489810a13d445a94dc836c876c18c93ecefe
 ```
 
-复用缓存或核对新下载时，可对 `.temp/resource/rtx-remix-ngx_sdk_dlnr@2.7z` 执行 `Get-FileHash -Algorithm SHA256`。
+复用缓存或核对新下载时，对 `.temp/resource/http/<resources.toml 中完整 URL 的 SHA-256>/payload`
+执行 `Get-FileHash -Algorithm SHA256`。fetcher 的相邻 `sha256` 文件只用于本地缓存一致性检查，不代替此验收记录。
+旧 `.temp/resource/rtx-remix-ngx_sdk_dlnr@2.7z` 不再自动复用；新布局首次执行需要重新下载。
 摘要不一致时先调查上游包变化，不直接替换验收记录。源码使用 `git -C external/rtx-remix rev-parse HEAD`
 与 `git -C external/dlss-sdk rev-parse HEAD` 核对固定 commit。

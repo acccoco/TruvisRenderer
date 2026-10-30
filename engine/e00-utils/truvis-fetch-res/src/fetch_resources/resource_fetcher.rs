@@ -1,15 +1,16 @@
 use std::collections::BTreeSet;
 use std::env;
 use std::fs::File;
-use std::io::{Cursor, Read};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 use std::thread;
 use std::time::Duration;
 use std::{fs, io};
 
 use anyhow::Context;
 use log::{debug, info, warn};
+use sha2::{Digest, Sha256};
 
 use crate::fetch_resources::resource_item::{ResourceConfig, ResourceItem, ResourceType};
 
@@ -155,77 +156,66 @@ impl GitHubResourceFetcher {
     pub fn fetch_resource(&self, item: &ResourceItem) -> anyhow::Result<()> {
         info!("=============================== 开始处理资源: {} ===============================", item.name);
 
+        for name in [&item.name, &item.rename_to] {
+            let relative = Self::archive_relative_path(name)?;
+            anyhow::ensure!(
+                relative.components().count() == 1
+                    && !name.contains(['/', '\\'])
+                    && !name.to_ascii_lowercase().starts_with(".truvis-"),
+                "资源名称必须是普通单层名称，且不能占用 .truvis- 前缀: {name:?}"
+            );
+        }
         let target_path = PathBuf::from(&item.target_dir);
+        fs::create_dir_all(&target_path)?;
+        let target_path = target_path.canonicalize()?;
         let actual_target = target_path.join(&item.rename_to);
+        self.recover_target(&target_path, &actual_target)?;
 
+        let target_key = actual_target.to_string_lossy().into_owned();
+        #[cfg(windows)]
+        let target_key = target_key.to_lowercase();
+        let receipt_dir = self.temp_dir.join("published");
+        fs::create_dir_all(&receipt_dir)?;
+        let receipt = receipt_dir.join(format!("{:x}", Sha256::digest(target_key.as_bytes())));
+        self.recover_target(&receipt_dir, &receipt)?;
         if matches!(item.resource_type, ResourceType::Git) {
+            // HTTP → Git → HTTP 切换时，不能保留旧 HTTP 完成记录。
+            if receipt.exists() {
+                self.remove_resource_target(&receipt_dir, &receipt, "撤销旧 HTTP 资源完成记录")?;
+            }
             self.process_git(item, &target_path, &actual_target)?;
             info!("资源 '{}' 处理完成", item.name);
             return Ok(());
         }
 
-        // 从 URL 提取文件名
-        let url_filename = self.extract_filename_from_url(&item.url)?;
-        let temp_file_path = self.temp_dir.join(&url_filename);
-
-        // 检查是否需要下载，并记录是否进行了下载
-        let did_download = if !item.force_download && temp_file_path.exists() {
-            info!("临时目录中已存在文件，跳过下载: {:?}", temp_file_path);
-            false
-        } else {
-            info!("从 {} 下载资源...", item.url);
-            let data = self.download_file(&item.url).with_context(|| format!("下载 {} 失败", item.name))?;
-
-            info!("下载完成，大小: {} bytes", data.len());
-
-            // 写入临时文件
-            fs::write(&temp_file_path, &data).with_context(|| format!("写入临时文件失败: {:?}", temp_file_path))?;
-            true
+        let url_key = format!("{:x}", Sha256::digest(item.url.as_bytes()));
+        let identity = format!("http-v2:{url_key}:{:?}:{target_key}", item.resource_type);
+        let target_type_matches = match item.resource_type {
+            ResourceType::File => actual_target.is_file(),
+            ResourceType::Zip | ResourceType::SevenZip => actual_target.is_dir(),
+            ResourceType::Git => unreachable!(),
         };
-
-        // 7z 必须完成 staging 解压后才替换旧资源，不能走下面的提前删除分支。
-        if matches!(item.resource_type, ResourceType::SevenZip) {
-            if did_download || item.force_overwrite || !actual_target.exists() {
-                self.process_seven_zip(item, &temp_file_path, &target_path)?;
-            } else {
-                info!("资源已存在，跳过提取: {:?}", actual_target);
-            }
-            info!("资源 '{}' 处理完成", item.name);
+        // receipt 只认证工具曾发布的来源/类型/目标；手工改动目标需要 force，不能靠缓存存在推断完成。
+        if !item.force_download && !item.force_overwrite && target_type_matches
+            && fs::read_to_string(&receipt).is_ok_and(|saved| saved.split_once('\n').is_some_and(|(source, digest)| source == identity && digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())))
+        {
+            info!("已发布相同资源，跳过缓存访问和提取: {:?}", actual_target);
             return Ok(());
         }
+        let (payload, digest) = self.cached_download(item, &url_key)?;
 
-        // 决定是否需要提取
-        let should_extract = if did_download {
-            // 如果进行了下载，必须提取（先删除已存在的目标）
-            if actual_target.exists() {
-                self.remove_resource_target(&target_path, &actual_target, "下载了新文件")?;
-            }
-            true
-        } else if item.force_overwrite {
-            // 如果强制覆盖，删除并提取
-            if actual_target.exists() {
-                self.remove_resource_target(&target_path, &actual_target, "强制覆盖")?;
-            }
-            true
-        } else {
-            // 否则检查目标是否存在
-            !actual_target.exists()
-        };
-
-        if should_extract {
-            match item.resource_type {
-                ResourceType::File => {
-                    self.process_file(&temp_file_path, &target_path, &item.rename_to)?;
-                }
-                ResourceType::Zip => {
-                    self.process_zip(&temp_file_path, &target_path, &item.rename_to)?;
-                }
-                ResourceType::Git => unreachable!("git resource 已在下载分支前处理"),
-                ResourceType::SevenZip => unreachable!("7z resource 已在 staging 分支处理"),
-            }
-        } else {
-            info!("资源已存在，跳过提取: {:?}", actual_target);
+        // 在更改目标前撤销完成记录，避免进程中止后用旧记录认证新目标。
+        if receipt.exists() {
+            self.remove_resource_target(&receipt_dir, &receipt, "撤销旧资源完成记录")?;
         }
+        if matches!(item.resource_type, ResourceType::Zip | ResourceType::SevenZip) {
+            self.process_archive(item, &payload, &target_path)?;
+        } else {
+            self.process_file(&payload, &target_path, &item.rename_to)?;
+        }
+        let staging = self.prepare_staging(&receipt_dir, &receipt)?;
+        fs::write(&staging, format!("{identity}\n{digest}"))?;
+        self.publish_prepared(&receipt_dir, &staging, &receipt)?;
 
         info!("资源 '{}' 处理完成", item.name);
         Ok(())
@@ -241,32 +231,93 @@ impl GitHubResourceFetcher {
         let git_ref =
             item.git_ref.as_deref().ok_or_else(|| anyhow::anyhow!("git resource '{}' 缺少 git_ref", item.name))?;
 
-        fs::create_dir_all(target_dir).with_context(|| format!("创建目标目录失败: {:?}", target_dir))?;
-
         let force_reclone = item.force_download || item.force_overwrite;
-        if force_reclone && actual_target.exists() {
-            self.remove_resource_target(target_dir, actual_target, "强制刷新 git resource")?;
+        let reuse_checkout = self.is_git_checkout(actual_target) && !force_reclone;
+        anyhow::ensure!(!git_ref.is_empty() && !git_ref.starts_with('-'), "非法 git_ref: {git_ref:?}");
+        anyhow::ensure!(!actual_target.exists() || reuse_checkout || force_reclone, "资源目标不是 Git checkout，拒绝覆盖: {actual_target:?}");
+        if reuse_checkout {
+            self.ensure_clean_checkout(actual_target)?;
+            let origin = self.run_git_output(actual_target, &["remote", "get-url", "origin"])?;
+            anyhow::ensure!(String::from_utf8_lossy(&origin.stdout).trim() == item.url, "Git 来源与配置不一致，拒绝复用: {actual_target:?}");
+            let fixed_commit = matches!(git_ref.len(), 40 | 64) && git_ref.bytes().all(|byte| byte.is_ascii_hexdigit());
+            let tag = if git_ref.starts_with("refs/tags/") { git_ref.to_string() } else { format!("refs/tags/{git_ref}") };
+            let local_fixed = self.resolve_git_commit(actual_target, if fixed_commit { git_ref } else { &tag });
+            let target_commit = if let Some(commit) = local_fixed {
+                commit
+            } else {
+                self.run_git_network_command(actual_target, &["fetch", "--prune", "origin", git_ref])?;
+                self.resolve_git_commit(actual_target, "FETCH_HEAD").ok_or_else(|| anyhow::anyhow!("fetched ref has no commit"))?
+            };
+            if self.resolve_git_commit(actual_target, "HEAD").as_ref() == Some(&target_commit) {
+                if !item.recursive_submodules || self.submodules_match(actual_target)? {
+                    info!("Git 资源已匹配，跳过 checkout: {}", item.name);
+                    return Ok(());
+                }
+            } else {
+                self.run_git_command(actual_target, &["checkout", "--detach", &target_commit])?;
+            }
+            self.update_submodules(item, actual_target)?;
+            return Ok(());
         }
 
-        if actual_target.exists() && !self.is_git_checkout(actual_target) {
-            // zip archive 不带 `.git`，也无法恢复 submodule 的固定提交；因此旧产物要整体替换为真正的 checkout。
-            self.remove_resource_target(target_dir, actual_target, "目标不是 git checkout")?;
-        }
+        let staging = self.prepare_staging(target_dir, actual_target)?;
+        let source = &item.url;
+        self.clone_git_checkout(item, target_dir, &staging, git_ref, source)?;
 
-        if actual_target.exists() {
-            info!("更新 Git 仓库: {:?}", actual_target);
-            self.sync_existing_git_checkout(item, actual_target, git_ref)?;
-        } else {
-            info!("克隆 Git 仓库: {} -> {:?}", item.url, actual_target);
-            self.clone_git_checkout(item, target_dir, actual_target, git_ref)?;
-        }
+        self.update_submodules(item, &staging)?;
 
+        self.publish_prepared(target_dir, &staging, actual_target)
+    }
+
+    /// 已有 checkout 原地更新前保护本地状态；gitlink 版本漂移由完整匹配检查修复。
+    fn ensure_clean_checkout(&self, checkout: &Path) -> anyhow::Result<()> {
+            let status = self.run_git_output(
+                checkout,
+                &[
+                    "status",
+                    "--porcelain",
+                    "--untracked-files=all",
+                    "--ignored",
+                    "--ignore-submodules=all",
+                ],
+            )?;
+            anyhow::ensure!(
+                status.stdout.is_empty(),
+                "Git 资源存在本地改动或额外文件，拒绝更新: {checkout:?}；确认丢弃后使用 force_overwrite"
+            );
+            let stash = self.run_git_output(checkout, &["stash", "list", "--format=%H"])?;
+            anyhow::ensure!(stash.stdout.is_empty(), "Git 资源存在 stash，拒绝更新: {checkout:?}");
+            // submodule 的 ignored 文件不会出现在父仓库 status 中，独立检查已初始化的子仓库。
+            let status = self.run_git_output(
+                checkout,
+                &[
+                    "submodule",
+                    "foreach",
+                    "--quiet",
+                    "--recursive",
+                    "git status --porcelain --untracked-files=all --ignored --ignore-submodules=none && git stash list --format=%H",
+                ],
+            )?;
+            anyhow::ensure!(status.stdout.is_empty(), "Git submodule 存在本地文件或 stash，拒绝更新: {checkout:?}");
+        Ok(())
+    }
+
+    fn resolve_git_commit(&self, checkout: &Path, reference: &str) -> Option<String> {
+        self.run_git_output(checkout, &["rev-parse", "--verify", "--quiet", "--end-of-options", &format!("{reference}^{{commit}}")])
+            .ok().map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    fn submodules_match(&self, checkout: &Path) -> anyhow::Result<bool> {
+        let result = self.run_git_output(checkout, &["submodule", "status", "--recursive"])?;
+        Ok(String::from_utf8_lossy(&result.stdout).lines().all(|line| line.starts_with(' ')))
+    }
+
+    fn update_submodules(&self, item: &ResourceItem, checkout: &Path) -> anyhow::Result<()> {
         if item.recursive_submodules {
-            info!("同步并更新 Git submodule: {:?}", actual_target);
-            self.run_git_command(actual_target, &["submodule", "sync", "--recursive"])?;
-            self.run_git_network_command(actual_target, &["submodule", "update", "--init", "--recursive", "--force"])?;
+            self.run_git_command(checkout, &["submodule", "sync", "--recursive"])?;
+            self.run_git_network_command(checkout, &["submodule", "update", "--init", "--recursive"])?;
+            anyhow::ensure!(self.submodules_match(checkout)?, "Git submodule 更新后未完整匹配: {checkout:?}");
         }
-
         Ok(())
     }
 
@@ -288,14 +339,20 @@ impl GitHubResourceFetcher {
         target_dir: &Path,
         actual_target: &Path,
         git_ref: &str,
+        source: &str,
     ) -> anyhow::Result<()> {
-        let actual_target_arg = actual_target.to_string_lossy().to_string();
+        // clone 在目标父目录执行；相对名称避免把 Windows verbatim 路径传给 Git 的参数解析器。
+        let actual_target_arg = actual_target.file_name().unwrap().to_string_lossy();
         let clone_args = [
             "clone",
+            // staging 必须拥有独立对象库，发布后删除 previous 不得使它失效。
+            "--no-hardlinks",
+            "--dissociate",
+            "--no-checkout",
             "--origin",
             "origin",
-            item.url.as_str(),
-            actual_target_arg.as_str(),
+            source,
+            &actual_target_arg,
         ];
 
         for attempt in 1..=GIT_NETWORK_MAX_ATTEMPTS {
@@ -305,6 +362,7 @@ impl GitHubResourceFetcher {
 
             match self.run_git_command_once(target_dir, &clone_args) {
                 Ok(()) => {
+                    self.run_git_command(actual_target, &["remote", "set-url", "origin", &item.url])?;
                     self.checkout_git_ref(item, actual_target, git_ref)?;
                     return Ok(());
                 }
@@ -319,22 +377,11 @@ impl GitHubResourceFetcher {
         unreachable!("git clone retry loop 应该已经返回")
     }
 
-    fn sync_existing_git_checkout(
-        &self,
-        item: &ResourceItem,
-        actual_target: &Path,
-        git_ref: &str,
-    ) -> anyhow::Result<()> {
-        if self.run_git_command(actual_target, &["remote", "set-url", "origin", item.url.as_str()]).is_err() {
-            self.run_git_command(actual_target, &["remote", "add", "origin", item.url.as_str()])?;
-        }
-        self.checkout_git_ref(item, actual_target, git_ref)
-    }
-
     fn checkout_git_ref(&self, item: &ResourceItem, actual_target: &Path, git_ref: &str) -> anyhow::Result<()> {
-        self.run_git_network_command(actual_target, &["fetch", "--tags", "--prune", "origin"])
+        // checkout 本次获取的 ref，避免同名本地 branch 停留在旧提交；tag/commit 同样使用精确结果。
+        self.run_git_network_command(actual_target, &["fetch", "--prune", "origin", git_ref])
             .with_context(|| format!("更新 git resource '{}' 的远端引用失败", item.name))?;
-        self.run_git_command(actual_target, &["checkout", "--force", git_ref])
+        self.run_git_command(actual_target, &["checkout", "--force", "--detach", "FETCH_HEAD"])
             .with_context(|| format!("checkout git resource '{}' 到 '{}' 失败", item.name, git_ref))?;
         Ok(())
     }
@@ -365,6 +412,10 @@ impl GitHubResourceFetcher {
     }
 
     fn run_git_command_once(&self, current_dir: &Path, args: &[&str]) -> anyhow::Result<()> {
+        self.run_git_output(current_dir, args).map(|_| ())
+    }
+
+    fn run_git_output(&self, current_dir: &Path, args: &[&str]) -> anyhow::Result<Output> {
         debug!("执行 git {:?}: git {}", current_dir, args.join(" "));
 
         let output = Command::new("git")
@@ -379,7 +430,7 @@ impl GitHubResourceFetcher {
             .with_context(|| format!("启动 git 命令失败: git {}", args.join(" ")))?;
 
         if output.status.success() {
-            Ok(())
+            Ok(output)
         } else {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -400,20 +451,48 @@ impl GitHubResourceFetcher {
 
 // 下载
 impl GitHubResourceFetcher {
-    /// 从 URL 提取文件名
-    fn extract_filename_from_url(&self, url: &str) -> anyhow::Result<String> {
-        url.split('/')
-            .next_back()
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow::anyhow!("无法从 URL 提取文件名: {}", url))
+    /// 缓存以完整 URL 区分来源；摘要只证明本地完整性，不认证上游内容。
+    fn cached_download(&self, item: &ResourceItem, key: &str) -> anyhow::Result<(PathBuf, String)> {
+        let root = self.temp_dir.join("http");
+        fs::create_dir_all(&root)?;
+        let cache = root.join(key);
+        self.recover_target(&root, &cache)?;
+        let payload = cache.join("payload");
+        if !item.force_download && payload.is_file() {
+            if let Ok(expected) = fs::read_to_string(cache.join("sha256")) {
+                let actual = Self::content_digest(&payload)?;
+                if actual == expected {
+                    return Ok((payload, actual));
+                }
+            }
+        }
+        let staging = self.prepare_staging(&root, &cache)?;
+        fs::create_dir(&staging)?;
+        let digest = self.download_file(&item.url, &staging.join("payload"))?;
+        fs::write(staging.join("sha256"), &digest)?;
+        self.publish_prepared(&root, &staging, &cache)?;
+        Ok((payload, digest))
     }
 
-    /// 下载文件到内存
-    fn download_file(&self, url: &str) -> anyhow::Result<Vec<u8>> {
+    fn content_digest(path: &Path) -> anyhow::Result<String> {
+        let mut input = File::open(path)?;
+        let mut hash = Sha256::new();
+        let mut buffer = [0; 64 * 1024];
+        loop {
+            let size = input.read(&mut buffer)?;
+            if size == 0 {
+                break;
+            }
+            hash.update(&buffer[..size]);
+        }
+        Ok(format!("{:x}", hash.finalize()))
+    }
+
+    /// 每次重试重建 staging payload；只有完整响应才会产生可发布的摘要。
+    fn download_file(&self, url: &str, output: &Path) -> anyhow::Result<String> {
         for attempt in 1..=HTTP_DOWNLOAD_MAX_ATTEMPTS {
-            match self.download_file_once(url) {
-                Ok(data) => return Ok(data),
+            match self.download_file_once(url, output) {
+                Ok(digest) => return Ok(digest),
                 Err(e) if attempt < HTTP_DOWNLOAD_MAX_ATTEMPTS => {
                     warn!("HTTP 下载失败，准备重试 ({}/{}): {:?}", attempt, HTTP_DOWNLOAD_MAX_ATTEMPTS, e);
                     Self::sleep_before_retry(attempt);
@@ -421,47 +500,106 @@ impl GitHubResourceFetcher {
                 Err(e) => return Err(e),
             }
         }
-
         unreachable!("HTTP retry loop 应该已经返回")
     }
 
-    fn download_file_once(&self, url: &str) -> anyhow::Result<Vec<u8>> {
-        debug!("请求 URL: {}", url);
-
-        let response = self.client.get(url).send().context("发送 HTTP 请求失败")?;
-
-        if !response.status().is_success() {
-            anyhow::bail!("HTTP 请求失败: {}", response.status());
+    fn download_file_once(&self, url: &str, output: &Path) -> anyhow::Result<String> {
+        let mut response = self.client.get(url).send().context("发送 HTTP 请求失败")?;
+        anyhow::ensure!(response.status().is_success(), "HTTP 请求失败: {}", response.status());
+        let mut file = File::create(output)?;
+        let mut hash = Sha256::new();
+        let mut buffer = [0; 64 * 1024];
+        loop {
+            let size = response.read(&mut buffer).context("读取响应数据失败")?;
+            if size == 0 {
+                break;
+            }
+            file.write_all(&buffer[..size])?;
+            hash.update(&buffer[..size]);
         }
-
-        let mut data = Vec::new();
-        let mut reader = response;
-        reader.read_to_end(&mut data).context("读取响应数据失败")?;
-
-        Ok(data)
+        file.flush()?;
+        Ok(format!("{:x}", hash.finalize()))
     }
 }
 
 // 目标删除
 impl GitHubResourceFetcher {
+    /// 发布槽与目标同父目录，保证 rename 不跨卷。调用方独占父目录中的这些保留名称。
+    fn publication_slot(target: &Path, suffix: &str) -> PathBuf {
+        target.with_file_name(format!(".truvis-{}.{suffix}", target.file_name().unwrap().to_string_lossy()))
+    }
+
+    /// 移动和删除前检查真实边界；不接管 symlink/junction，包括已断开的链接。
+    fn validate_target(target_dir: &Path, target: &Path) -> anyhow::Result<bool> {
+        let metadata = match fs::symlink_metadata(target) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        anyhow::ensure!(!metadata.file_type().is_symlink(), "资源目标不能是链接: {target:?}");
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            anyhow::ensure!(metadata.file_attributes() & 0x400 == 0, "资源目标不能是 reparse point: {target:?}");
+        }
+        let root = target_dir.canonicalize()?;
+        let actual = target.canonicalize()?;
+        anyhow::ensure!(actual.parent() == Some(root.as_path()), "资源目标必须直接位于配置父目录内: {target:?}");
+        Ok(true)
+    }
+
+    /// previous 存在但目标缺失表示发布中断，先恢复旧目标；两者并存表示新目标已发布。
+    /// 只保证进程失败后的可重试性，不保证断电持久性或多个资源的事务性。
+    fn recover_target(&self, root: &Path, target: &Path) -> anyhow::Result<()> {
+        let exists = Self::validate_target(root, target)?;
+        let previous = Self::publication_slot(target, "previous");
+        if Self::validate_target(root, &previous)? {
+            if exists {
+                self.remove_resource_target(root, &previous, "清理已发布资源的旧版本")?;
+            } else {
+                fs::rename(&previous, target).context("恢复资源旧版本失败")?;
+            }
+        }
+        Ok(())
+    }
+
+    fn prepare_staging(&self, root: &Path, target: &Path) -> anyhow::Result<PathBuf> {
+        self.recover_target(root, target)?;
+        let staging = Self::publication_slot(target, "staging");
+        if Self::validate_target(root, &staging)? {
+            self.remove_resource_target(root, &staging, "清理未完成的资源准备")?;
+        }
+        Ok(staging)
+    }
+
+    /// 仅接受已经完整准备的 staging。新目标 rename 失败时恢复旧版本；恢复失败保留 previous。
+    fn publish_prepared(&self, root: &Path, staging: &Path, target: &Path) -> anyhow::Result<()> {
+        anyhow::ensure!(Self::validate_target(root, staging)?, "资源 staging 缺失: {staging:?}");
+        let previous = Self::publication_slot(target, "previous");
+        anyhow::ensure!(!Self::validate_target(root, &previous)?, "发布前必须恢复 previous: {previous:?}");
+        let had_old = Self::validate_target(root, target)?;
+        if had_old {
+            fs::rename(target, &previous).context("暂存旧资源失败，目标未替换")?;
+        }
+        if let Err(error) = fs::rename(staging, target) {
+            if had_old {
+                fs::rename(&previous, target)
+                    .with_context(|| format!("发布失败: {error}; 恢复旧版本也失败，旧资源保留在 {previous:?}"))?;
+            }
+            return Err(error).context("发布资源失败，旧目标已恢复");
+        }
+        if had_old {
+            self.remove_resource_target(root, &previous, "清理已替换的资源")?;
+        }
+        Ok(())
+    }
+
     /// 删除配置声明的资源目标。
     ///
     /// 资源下载工具会替换旧 zip 产物或强制刷新的 checkout，因此删除前必须确认目标位于
     /// `target_dir` 之下，避免错误配置把递归删除扩散到资源目录之外。
     fn remove_resource_target(&self, target_dir: &Path, actual_target: &Path, reason: &str) -> anyhow::Result<()> {
-        let target_dir_abs =
-            target_dir.canonicalize().with_context(|| format!("解析目标目录失败: {:?}", target_dir))?;
-        let actual_target_abs =
-            actual_target.canonicalize().with_context(|| format!("解析待删除目标失败: {:?}", actual_target))?;
-
-        if actual_target_abs == target_dir_abs || !actual_target_abs.starts_with(&target_dir_abs) {
-            anyhow::bail!(
-                "拒绝删除不在目标目录内的资源路径: target_dir={:?}, actual_target={:?}",
-                target_dir_abs,
-                actual_target_abs
-            );
-        }
-
+        anyhow::ensure!(Self::validate_target(target_dir, actual_target)?, "待删除资源不存在: {actual_target:?}");
         info!("{}，删除现有目标: {:?}", reason, actual_target);
         if actual_target.is_dir() {
             fs::remove_dir_all(actual_target).with_context(|| format!("删除现有目录失败: {:?}", actual_target))?;
@@ -475,36 +613,26 @@ impl GitHubResourceFetcher {
 
 // 提取
 impl GitHubResourceFetcher {
-    /// 7z 只在完整解压成功后发布；失败的 staging 不得成为下次执行的已完成目标。
+    /// ZIP/7z 只在完整解压成功后发布；失败的 staging 不得成为下次执行的已完成目标。
     /// staging 与目标目录由下载器独占，和已有缓存一样不支持多进程同时刷新同一资源。
-    fn process_seven_zip(&self, item: &ResourceItem, archive_path: &Path, target_dir: &Path) -> anyhow::Result<()> {
-        let name = Self::archive_relative_path(&item.name)?;
-        let target_name = Self::archive_relative_path(&item.rename_to)?;
-        anyhow::ensure!(name.components().count() == 1, "7z resource name 必须是单个目录名");
-        anyhow::ensure!(target_name.components().count() == 1, "7z rename_to 必须是单个目录名");
-        let staging = self.temp_dir.join(format!("{}.7z-staging", name.display()));
-        let actual_target = target_dir.join(target_name);
-        if staging.symlink_metadata().is_ok() {
-            self.remove_resource_target(&self.temp_dir, &staging, "清理上次 7z staging")?;
-        }
-        fs::create_dir(&staging).context("创建 7z staging 失败")?;
+    fn process_archive(&self, item: &ResourceItem, archive_path: &Path, target_dir: &Path) -> anyhow::Result<()> {
+        let actual_target = target_dir.join(&item.rename_to);
+        let staging = self.prepare_staging(target_dir, &actual_target)?;
+        fs::create_dir(&staging).context("创建 archive staging 失败")?;
 
-        let extraction = self.extract_seven_zip(archive_path, &staging);
+        let extraction = match item.resource_type {
+            ResourceType::Zip => self.extract_zip(archive_path, &staging),
+            ResourceType::SevenZip => self.extract_seven_zip(archive_path, &staging),
+            _ => unreachable!("只有 ZIP/7z 进入 archive 解压流程"),
+        };
         if let Err(error) = extraction {
-            self.remove_resource_target(&self.temp_dir, &staging, "清理失败的 7z staging")?;
+            self.remove_resource_target(target_dir, &staging, "清理失败的 archive staging")?;
             return Err(error).with_context(|| {
                 format!("解压资源 '{}' 失败；若缓存损坏，请设置 force_download = true 后重试", item.name)
             });
         }
 
-        fs::create_dir_all(target_dir).context("创建 7z 目标父目录失败")?;
-        // rename_to 已限制为普通单层目录名；已有目标的删除仍须通过 canonicalize 边界检查。
-        if actual_target.symlink_metadata().is_ok() {
-            self.remove_resource_target(target_dir, &actual_target, "发布完整的 7z 资源")?;
-        }
-        fs::rename(&staging, &actual_target)
-            .with_context(|| format!("发布 7z 资源失败，完整解压产物保留在 {:?}", staging))?;
-        Ok(())
+        self.publish_prepared(target_dir, &staging, &actual_target)
     }
 
     /// 先核验所有条目，再从文件流解压。只创建普通文件和目录，不恢复 archive 中的链接或属性。
@@ -536,7 +664,7 @@ impl GitHubResourceFetcher {
     /// 按 Windows 文件名语义校验，即使在其它平台也拒绝盘符、ADS、设备名和路径归一化歧义。
     /// 同时识别两种分隔符，防止仅依赖当前平台 Path 解析而漏掉另一平台的越界路径。
     fn archive_relative_path(name: &str) -> anyhow::Result<PathBuf> {
-        anyhow::ensure!(!name.is_empty() && !name.starts_with(['/', '\\']), "非法 7z 路径: {name:?}");
+        anyhow::ensure!(!name.is_empty() && !name.starts_with(['/', '\\']), "非法 archive 路径: {name:?}");
         let mut path = PathBuf::new();
         for part in name.trim_end_matches(['/', '\\']).split(['/', '\\']) {
             let stem = part.split('.').next().unwrap_or_default().to_ascii_uppercase();
@@ -551,7 +679,7 @@ impl GitHubResourceFetcher {
                     && !part.chars().any(|ch| ch.is_control() || matches!(ch, ':' | '<' | '>' | '"' | '|' | '?' | '*'))
                     && !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
                     && !numbered_device,
-                "非法 7z 路径: {name:?}"
+                "非法 archive 路径: {name:?}"
             );
             path.push(part);
         }
@@ -560,47 +688,26 @@ impl GitHubResourceFetcher {
 
     /// 处理普通文件：复制到目标目录，重命名
     fn process_file(&self, temp_file: &Path, target_dir: &Path, rename_to: &str) -> anyhow::Result<()> {
-        // 确保目标目录存在
-        fs::create_dir_all(target_dir).with_context(|| format!("创建目标目录失败: {:?}", target_dir))?;
-
-        let target_path = target_dir.join(rename_to);
-
-        info!("复制文件: {:?} -> {:?}", temp_file, target_path);
-        fs::copy(temp_file, &target_path)
-            .with_context(|| format!("复制文件失败: {:?} -> {:?}", temp_file, target_path))?;
-
-        Ok(())
+        let target = target_dir.join(rename_to);
+        let staging = self.prepare_staging(target_dir, &target)?;
+        fs::copy(temp_file, &staging).context("准备普通文件失败，旧目标保留")?;
+        self.publish_prepared(target_dir, &staging, &target)
     }
 
-    /// 处理 Zip 文件：在指定目标目录中保留完整包内路径
-    fn process_zip(&self, temp_file: &Path, target_dir: &Path, rename_to: &str) -> anyhow::Result<()> {
-        let zip_data = fs::read(temp_file).with_context(|| format!("读取 zip 文件失败: {:?}", temp_file))?;
-
-        self.extract_zip(&zip_data, target_dir, rename_to)
-    }
-
-    /// 解压 zip 文件到目标目录
-    fn extract_zip(&self, zip_data: &[u8], target_dir: &Path, rename_to: &str) -> anyhow::Result<()> {
-        let cursor = Cursor::new(zip_data);
-        let mut archive = zip::ZipArchive::new(cursor).context("打开 zip archive 失败")?;
-
-        info!("解压 {} 个文件到 {:?}", archive.len(), target_dir);
-
-        // 创建目标目录
-        fs::create_dir_all(target_dir).with_context(|| format!("创建目标目录失败: {:?}", target_dir))?;
+    /// 先校验全部条目，再向 staging 写普通文件/目录；不恢复 archive 链接或属性。
+    fn extract_zip(&self, archive_path: &Path, staging: &Path) -> anyhow::Result<()> {
+        let file = File::open(archive_path).with_context(|| format!("读取 zip 文件失败: {:?}", archive_path))?;
+        let mut archive = zip::ZipArchive::new(file).context("打开 zip archive 失败")?;
+        for i in 0..archive.len() {
+            let entry = archive.by_index(i).with_context(|| format!("读取 zip 条目 {} 失败", i))?;
+            Self::archive_relative_path(entry.name())?;
+        }
+        info!("解压 {} 个 ZIP 条目到 {:?}", archive.len(), staging);
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i).with_context(|| format!("读取 zip 条目 {} 失败", i))?;
 
-            let file_path = file.name();
-
-            // 跳过空路径
-            if file_path.is_empty() {
-                continue;
-            }
-
-            // 处理路径
-            let out_path = target_dir.join(rename_to).join(file_path);
+            let out_path = staging.join(Self::archive_relative_path(file.name())?);
             log::debug!("解压文件到: {:?}", out_path);
 
             if file.is_dir() {

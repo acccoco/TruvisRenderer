@@ -16,3 +16,4 @@ serde_json = { workspace = true }
 
 rayon = { workspace = true }
 walkdir = { workspace = true }
+sha2 = { workspace = true }

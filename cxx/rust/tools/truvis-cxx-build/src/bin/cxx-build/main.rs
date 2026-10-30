@@ -2,6 +2,7 @@ mod visual_studio;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    io::Read,
     path::{Component, Path, PathBuf},
 };
 
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use truvis_logs::{LogFilePath, TruvisLogger};
 use truvis_path::TruvisPath;
 
-const RUNTIME_PLAN_VERSION: u32 = 1;
+const RUNTIME_PLAN_VERSION: u32 = 2;
 const DEPLOYMENT_MANIFEST_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,10 +153,6 @@ impl CxxBuildLayout {
         self.cxx_build_dir.join("cmake").join(toolchain)
     }
 
-    fn cmake_output_dir(&self, toolchain: &str, build_type: BuildType) -> PathBuf {
-        self.cxx_build_dir.join("output").join(toolchain).join(build_type.cmake_configuration())
-    }
-
     fn runtime_plan_path(&self, toolchain: &str, build_type: BuildType) -> PathBuf {
         self.cmake_binary_dir(toolchain)
             .join("runtime")
@@ -256,48 +253,6 @@ impl CxxBuildRunner {
     }
 }
 
-struct CmakeOutputScanner<'a> {
-    layout: &'a CxxBuildLayout,
-    toolchain: &'a str,
-    build_type: BuildType,
-}
-
-impl<'a> CmakeOutputScanner<'a> {
-    fn new(layout: &'a CxxBuildLayout, toolchain: &'a str, build_type: BuildType) -> Self {
-        Self {
-            layout,
-            toolchain,
-            build_type,
-        }
-    }
-
-    fn native_artifacts(&self) -> Result<Vec<PathBuf>, String> {
-        let output_dir = self.layout.cmake_output_dir(self.toolchain, self.build_type);
-        let mut source_paths = Vec::new();
-        for entry in std::fs::read_dir(&output_dir)
-            .map_err(|err| format!("无法读取 CMake 输出目录 {}: {err}", output_dir.display()))?
-        {
-            let entry = entry.map_err(|err| format!("无法读取 CMake 输出目录项 {}: {err}", output_dir.display()))?;
-            let source_path = entry.path();
-            if Self::is_native_artifact(&source_path) {
-                source_paths.push(source_path);
-            }
-        }
-        source_paths.sort();
-
-        if source_paths.is_empty() {
-            return Err(format!("CMake 输出目录中没有 native 产物: {}", output_dir.display()));
-        }
-        Ok(source_paths)
-    }
-
-    fn is_native_artifact(path: &Path) -> bool {
-        path.extension().is_some_and(|suffix| {
-            matches!(suffix.to_string_lossy().to_ascii_lowercase().as_str(), "dll" | "pdb" | "lib")
-        })
-    }
-}
-
 #[derive(Debug, Deserialize)]
 struct CxxRuntimePlan {
     version: u32,
@@ -328,6 +283,9 @@ impl CxxRuntimePlan {
                 path.display()
             ));
         }
+        if plan.artifacts.is_empty() {
+            return Err(format!("CXX runtime plan 不允许为空: {}", path.display()));
+        }
         Ok(plan)
     }
 }
@@ -351,16 +309,6 @@ impl CxxRuntimePackager {
         let mut deployment = CargoRuntimeDeployment::new(layout, build_type);
         deployment.ensure_output_dirs()?;
 
-        let native_outputs = CmakeOutputScanner::new(layout, toolchain, build_type);
-        for source_path in native_outputs.native_artifacts()? {
-            let destination = source_path
-                .file_name()
-                .ok_or_else(|| format!("无法获取 native 产物文件名: {}", source_path.display()))?
-                .to_string_lossy()
-                .to_string();
-            deployment.deploy_file(&source_path, &destination)?;
-        }
-
         for artifact in runtime_plan.artifacts {
             let source_path = PathBuf::from(&artifact.source);
             if !source_path.is_file() {
@@ -374,10 +322,22 @@ impl CxxRuntimePackager {
                 log::warn!("Skip optional CXX runtime for target '{}': {}", artifact.target, source_path.display());
                 continue;
             }
-            deployment.deploy_file(&source_path, &artifact.destination)?;
+            deployment.plan_file(&source_path, &artifact.destination)?;
         }
 
-        deployment.remove_stale_previous_outputs(previous_manifest.as_ref())?;
+        let stale_paths = deployment.stale_previous_outputs(previous_manifest.as_ref())?;
+        // 在第一次复制前保存所有权；失败重试或切换分支后仍能清理本轮写入的文件。
+        let mut pending_manifest = CxxDeploymentManifest::from_deployment(&deployment);
+        if let Some(previous) = previous_manifest {
+            pending_manifest.managed_outputs.extend(previous.managed_outputs);
+            pending_manifest.managed_outputs.sort();
+            pending_manifest.managed_outputs.dedup();
+        }
+        pending_manifest.save(&manifest_path)?;
+        deployment.copy_files()?;
+        for path in stale_paths {
+            CxxBuildFileHelper::remove_file_if_exists(&path)?;
+        }
         CxxDeploymentManifest::from_deployment(&deployment).save(&manifest_path)?;
 
         if deployment.copied_files().is_empty() {
@@ -393,7 +353,7 @@ struct CargoRuntimeDeployment<'a> {
     workspace_dir: &'a Path,
     cargo_output_dir: PathBuf,
     managed_outputs: BTreeSet<String>,
-    destinations: BTreeMap<String, PathBuf>,
+    destinations: BTreeMap<String, (PathBuf, String)>,
     copied_files: Vec<String>,
 }
 
@@ -413,6 +373,16 @@ impl<'a> CargoRuntimeDeployment<'a> {
             std::fs::create_dir_all(&output_dir)
                 .map_err(|err| format!("无法创建 Cargo 输出目录 {}: {err}", output_dir.display()))?;
         }
+        let canonical_root =
+            self.cargo_output_dir.canonicalize().map_err(|err| format!("无法解析 Cargo 输出目录: {err}"))?;
+        for output_dir in self.output_dirs() {
+            let canonical_dir = output_dir
+                .canonicalize()
+                .map_err(|err| format!("无法解析 Cargo 部署目录 {}: {err}", output_dir.display()))?;
+            if !canonical_dir.starts_with(&canonical_root) {
+                return Err(format!("Cargo 部署目录链接指向 profile 外: {}", output_dir.display()));
+            }
+        }
         Ok(())
     }
 
@@ -420,7 +390,8 @@ impl<'a> CargoRuntimeDeployment<'a> {
         [self.cargo_output_dir.clone(), self.cargo_output_dir.join("examples")]
     }
 
-    fn deploy_file(&mut self, source_path: &Path, destination: &str) -> Result<(), String> {
+    /// 完整计划只登记来源和目标，不覆盖文件；任一前置条件失败都在复制前返回。
+    fn plan_file(&mut self, source_path: &Path, destination: &str) -> Result<(), String> {
         let destination_path = Path::new(destination);
         let mut components = destination_path.components();
         let Some(Component::Normal(destination_name)) = components.next() else {
@@ -429,10 +400,13 @@ impl<'a> CargoRuntimeDeployment<'a> {
         if components.next().is_some() {
             return Err(format!("CXX runtime destination 不允许子目录: {destination}"));
         }
+        let source_path = source_path
+            .canonicalize()
+            .map_err(|err| format!("无法解析 CXX 源文件 {}: {err}", source_path.display()))?;
 
         let destination_key = destination_name.to_string_lossy().to_ascii_lowercase();
-        if let Some(existing_source) = self.destinations.get(&destination_key) {
-            if existing_source != source_path {
+        if let Some((existing_source, _)) = self.destinations.get(&destination_key) {
+            if existing_source != &source_path {
                 return Err(format!(
                     "CXX runtime destination '{}' 同时来自 {} 和 {}",
                     destination,
@@ -442,36 +416,71 @@ impl<'a> CargoRuntimeDeployment<'a> {
             }
             return Ok(());
         }
-        self.destinations.insert(destination_key, source_path.to_path_buf());
+        self.destinations.insert(destination_key, (source_path, destination.to_string()));
 
         for output_dir in self.output_dirs() {
             let deployed_path = output_dir.join(destination_name);
+            if deployed_path.is_dir() {
+                return Err(format!("CXX 目标文件被目录占用: {}", deployed_path.display()));
+            }
             let relative_path = CxxBuildFileHelper::relative_slash_path(self.workspace_dir, &deployed_path);
             self.managed_outputs.insert(relative_path);
-            if CxxBuildFileHelper::copy_if_changed_to_path(source_path, &deployed_path)? {
-                self.copied_files.push(CxxBuildFileHelper::relative_slash_path(self.workspace_dir, &deployed_path));
+        }
+        Ok(())
+    }
+
+    fn copy_files(&mut self) -> Result<(), String> {
+        for (source_path, destination) in self.destinations.values() {
+            for output_dir in self.output_dirs() {
+                let deployed_path = output_dir.join(destination);
+                if CxxBuildFileHelper::copy_if_changed_to_path(source_path, &deployed_path)? {
+                    self.copied_files.push(CxxBuildFileHelper::relative_slash_path(self.workspace_dir, &deployed_path));
+                }
             }
         }
         Ok(())
     }
 
-    fn remove_stale_previous_outputs(&self, previous_manifest: Option<&CxxDeploymentManifest>) -> Result<(), String> {
+    /// 先校验整份清单，损坏记录不能让前面的合法记录被部分删除。
+    /// 父目录解析同时阻止 examples junction 将删除重定向到 profile 外。
+    fn stale_previous_outputs(
+        &self,
+        previous_manifest: Option<&CxxDeploymentManifest>,
+    ) -> Result<Vec<PathBuf>, String> {
         let Some(previous_manifest) = previous_manifest else {
-            return Ok(());
+            return Ok(Vec::new());
         };
 
+        let canonical_output_dir = self
+            .cargo_output_dir
+            .canonicalize()
+            .map_err(|err| format!("无法解析 Cargo 输出目录 {}: {err}", self.cargo_output_dir.display()))?;
+        let mut stale_paths = Vec::new();
         for previous_output in &previous_manifest.managed_outputs {
-            if self.managed_outputs.contains(previous_output) {
+            let relative_path = PathBuf::from(previous_output);
+            if !relative_path.components().all(|component| matches!(component, Component::Normal(_))) {
+                return Err(format!("CXX 托管路径必须是无父目录跳转的相对路径: {previous_output}"));
+            }
+            let output_path = self.workspace_dir.join(relative_path);
+            let parent = output_path
+                .parent()
+                .filter(|parent| self.output_dirs().iter().any(|allowed| allowed == parent))
+                .ok_or_else(|| format!("拒绝删除 Cargo 部署位置外的 CXX 托管文件: {}", output_path.display()))?;
+            let canonical_parent = parent
+                .canonicalize()
+                .map_err(|err| format!("无法解析 CXX 托管文件父目录 {}: {err}", parent.display()))?;
+            if !canonical_parent.starts_with(&canonical_output_dir) {
+                return Err(format!("拒绝通过目录链接删除 Cargo 输出目录外的 CXX 托管文件: {}", output_path.display()));
+            }
+            // Windows 文件名不区分大小写；仅改目标大小写不能把刚部署的文件当作旧项删除。
+            let destination_key = output_path.file_name().unwrap().to_string_lossy().to_ascii_lowercase();
+            if self.destinations.contains_key(&destination_key) {
                 continue;
             }
-
-            let output_path = self.workspace_dir.join(previous_output.replace('/', "\\"));
-            if !output_path.starts_with(&self.cargo_output_dir) {
-                return Err(format!("拒绝删除 Cargo 输出目录外的 CXX 托管文件: {}", output_path.display()));
-            }
-            CxxBuildFileHelper::remove_file_if_exists(&output_path)?;
+            stale_paths.push(output_path);
         }
-        Ok(())
+
+        Ok(stale_paths)
     }
 
     fn managed_outputs(&self) -> Vec<String> {
@@ -541,6 +550,8 @@ impl CxxBuildFileHelper {
         Ok(true)
     }
 
+    /// 切换分支、工具链或恢复缓存后，源文件可能同大小且时间更早。
+    /// 用有界缓冲核对内容，时间戳不能作为 DLL 或 import library 的内容身份。
     fn needs_copy(source_path: &Path, destination_path: &Path) -> Result<bool, String> {
         if !destination_path.is_file() {
             return Ok(true);
@@ -554,13 +565,27 @@ impl CxxBuildFileHelper {
             return Ok(true);
         }
 
-        let source_modified = source_metadata
-            .modified()
-            .map_err(|err| format!("无法读取源文件修改时间 {}: {err}", source_path.display()))?;
-        let destination_modified = destination_metadata
-            .modified()
-            .map_err(|err| format!("无法读取目标文件修改时间 {}: {err}", destination_path.display()))?;
-        Ok(source_modified > destination_modified)
+        let mut source = std::fs::File::open(source_path)
+            .map_err(|err| format!("无法打开源文件 {}: {err}", source_path.display()))?;
+        let mut destination = std::fs::File::open(destination_path)
+            .map_err(|err| format!("无法打开目标文件 {}: {err}", destination_path.display()))?;
+        let mut source_buffer = [0u8; 64 * 1024];
+        let mut destination_buffer = [0u8; 64 * 1024];
+        let mut remaining = source_metadata.len();
+        while remaining > 0 {
+            let count = remaining.min(source_buffer.len() as u64) as usize;
+            source
+                .read_exact(&mut source_buffer[..count])
+                .map_err(|err| format!("无法读取源文件 {}: {err}", source_path.display()))?;
+            destination
+                .read_exact(&mut destination_buffer[..count])
+                .map_err(|err| format!("无法读取目标文件 {}: {err}", destination_path.display()))?;
+            if source_buffer[..count] != destination_buffer[..count] {
+                return Ok(true);
+            }
+            remaining -= count as u64;
+        }
+        Ok(false)
     }
 
     fn write_if_changed(path: &Path, content: &[u8]) -> Result<(), String> {
@@ -574,7 +599,9 @@ impl CxxBuildFileHelper {
 
         let parent = path.parent().ok_or_else(|| format!("无法获取目标目录: {}", path.display()))?;
         std::fs::create_dir_all(parent).map_err(|err| format!("无法创建目录 {}: {err}", parent.display()))?;
-        std::fs::write(path, content).map_err(|err| format!("无法写入文件 {}: {err}", path.display()))
+        let temporary = path.with_extension("json.tmp");
+        std::fs::write(&temporary, content).map_err(|err| format!("无法写入文件 {}: {err}", temporary.display()))?;
+        std::fs::rename(&temporary, path).map_err(|err| format!("无法发布文件 {}: {err}", path.display()))
     }
 
     fn remove_file_if_exists(path: &Path) -> Result<(), String> {

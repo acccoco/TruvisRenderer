@@ -60,7 +60,7 @@ just shader-force
 `paths.toml` 的 `dirs.shader_build`、`dirs.binding_build` 和 `dirs.temp` 是产物物理根的唯一配置源；
 `shader-packages.toml` 只声明 package/compiler/binding 及 package id 到输出前缀的逻辑映射。
 
-`build/shader/.state/shader-build.json` 使用版本 6 记录 package、compiler、输出、共享输入和任务，
+`build/shader/.state/shader-build.json` 使用版本 9 记录 package、compiler、输出、共享输入和任务，
 `build/shader/.deps/` 保存编译器 depfile。构建前检查 canonical include、唯一解析和层级方向，编译后再验证
 真实传递依赖。单个 entry 变化只重编该
 任务；Renderer shared input 只失效 Renderer；Engine shared input 会传播到声明依赖 Engine 的 Renderer 和 Hello Triangle；
@@ -84,3 +84,5 @@ bindgen 生成的 size/align/offset 静态断言。更完整规则见 `.agents/r
 
 当前 `lib/` 仍以 include 为主。稳定算法可在独立阶段逐步改成 Slang module / `.slang-module`，但这只
 优化前端编译；最终每个 SPIR-V 仍是自包含程序，不引入运行时 shader 动态链接。
+
+生成绑定的示例用 `cargo test --doc -p truvis-shader-binding -p truvis-renderer-shader-binding` 执行；`cargo check --all-targets` 不运行 doctest。

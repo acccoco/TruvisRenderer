@@ -27,13 +27,8 @@ fn main() -> Result<()> {
 
     let config_path = TruvisPath::workspace_path().join("resources.toml");
 
-    // 假设配置文件存在
-    if config_path.exists() {
-        fetcher.fetch_from_config_with_selection(config_path, options.selection)?;
-        println!("✓ 批量下载完成");
-    } else {
-        println!("⚠ 配置文件 resources.toml 不存在");
-    }
+    fetcher.fetch_from_config_with_selection(config_path, options.selection)?;
+    println!("✓ 批量下载完成");
 
     Ok(())
 }

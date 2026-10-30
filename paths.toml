@@ -1,5 +1,6 @@
 # Truvis workspace 路径映射配置
 # 所有路径均为相对于 workspace 根目录的相对路径
+# 本文件只供 Rust 路径查询；修改映射时同步核对 Cargo、CMake presets/SDK 与 scripts/nu 的固定路径。
 
 [dirs]
 engine    = "engine"
