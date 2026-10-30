@@ -43,7 +43,7 @@ pub enum PathTracingDebugChannel {
     RestirFinalContribution,
     /// 显示 SHARC hash grid 在 primary hit 处的 voxel 着色，用于观察 grid 结构与 scene scale。
     SharcHashGrid,
-    /// 显示 SHARC resolved 缓存在 primary hit 处的 radiance，用于确认 Update/Resolve 是否写入缓存。
+    /// 显示本帧维护后的 SHARC reflected radiance；Off、无表面命中和冷缓存返回黑色。
     SharcCache,
     /// SHARC query 命中深度 heatmap（绿=depth1，黄=depth2，红=3+，黑=未命中），观察缓存使用与路径成本。
     SharcQueryDepth,

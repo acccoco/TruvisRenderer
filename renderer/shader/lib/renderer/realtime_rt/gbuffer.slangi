@@ -13,6 +13,7 @@
 
 #include "abi/renderer/render_passes/realtime_rt/mod.slangi"
 #include "lib/renderer/realtime_rt/payload.slangi"
+#include "lib/renderer/realtime_rt/raygen_material.slangi"
 
 // ============================================================================
 // 常量定义
@@ -38,7 +39,6 @@ struct RtGBufferData
 
     float3 albedo;      ///< 基础颜色（漫反射颜色）
     float metallic;     ///< 金属度
-    MaterialType material_type; ///< primary surface 的粗粒度材质类型
 };
 
 // ============================================================================
@@ -74,36 +74,47 @@ static RtGBufferData make_data(
     // delta transmission 按理想折射/反射积分；RR NormalRoughness 需要看到低 roughness，避免把它当作粗糙表面历史复用。
     // rough transmission 不走这里，它保留真实 roughness 并按 non-delta fallback 积分。
     data.roughness = material_type == MaterialType::DELTA_TRANSMISSION ? min(roughness, 0.02f) : roughness;
-    data.material_type = material_type;
     return data;
 }
 
 /// 根据项目 PBR 约定计算 RR 所需的 diffuse/specular albedo。
 ///
-/// 该拆分必须和 `RtMaterialSampler` 的 F0/metallic 约定保持一致，避免 RR 看到的材质分量
-/// 与 path tracing 主颜色不一致。
-/// @param base_color 材质基础颜色
-/// @param metallic 金属度
+/// delta 使用实际观察方向的反射权重；rough surface 仍使用 F0 近似，尚未积分完整 GGX。
+/// @param surface 未压缩的 primary 命中事件，包含透射 IOR 与法线朝向
+/// @param ray_dir 指向 primary surface 的单位光线方向
 /// @param out_diffuse_albedo 输出 diffuse albedo
 /// @param out_specular_albedo 输出 specular albedo / f0
 static void compute_rr_albedo(
-    float3 base_color,
-    float metallic,
-    MaterialType material_type,
+    const RtSurfaceHit surface,
+    const float3 ray_dir,
     out float3 out_diffuse_albedo,
     out float3 out_specular_albedo
 )
 {
-    const float reflectance = 0.8f;
-    out_specular_albedo = lerp(0.16f * reflectance * reflectance, base_color, metallic);
-    if (material_type == MaterialType::DELTA_SPECULAR || material_type == MaterialType::DELTA_TRANSMISSION)
+    /// 纯发光类别没有反射 BSDF；不能因普通 Surface 带 emission 就清掉它的反射 guide。
+    if (surface.material_type == MaterialType::EMISSIVE || !surface.in_shading_hemisphere(-ray_dir))
     {
-        // delta primary 的 single_frame_rt 颜色来自后续反射/折射链路；给 RR diffuse albedo
-        // 会把它误解释成第一层表面的漫反射历史。
+        out_specular_albedo = float3(0.0f);
         out_diffuse_albedo = float3(0.0f);
         return;
     }
-    out_diffuse_albedo = (1.0f - metallic) * base_color;
+    if (surface.material_type == MaterialType::DELTA_TRANSMISSION)
+    {
+        /// 透明界面的反射不使用 metallic/base color，也不乘透射 opacity 或 eta²。
+        /// 复用路径求值，保持 IOR 匹配、出入介质与全内反射边界一致。
+        out_specular_albedo = float3(RtDielectricInterface::evaluate(surface, ray_dir).reflectance);
+        out_diffuse_albedo = float3(0.0f);
+        return;
+    }
+    if (surface.material_type == MaterialType::DELTA_SPECULAR)
+    {
+        float3 reflected_direction;
+        RtMaterialSampler::sample_perfect_reflection(surface, ray_dir, reflected_direction, out_specular_albedo);
+        out_diffuse_albedo = float3(0.0f);
+        return;
+    }
+    out_specular_albedo = RtMaterialSampler::surface_f0(surface);
+    out_diffuse_albedo = (1.0f - surface.metallic) * surface.base_color;
 }
 
 /// 写入 GBuffer（命中情况）
@@ -134,14 +145,15 @@ static void write_dlss_sr_hit(uint2 thread_id, float depth, float2 motion_vector
 
 /// 写入 DLSS RR 的 per-pixel 输入（命中情况）。
 /// @param thread_id 当前像素坐标
-/// @param data GBuffer 数据
+/// @param surface 原 primary 命中事件
+/// @param ray_dir 原 primary 光线方向，不使用后续 bounce 的方向
 /// @param specular_hit_distance 主表面到最近有效反射命中的世界距离。
 /// @note forward/shading normal+roughness 直接复用 GBufferA，距离与 depth 对应同一 primary surface。
-static void write_dlss_rr_hit(uint2 thread_id, RtGBufferData data, float specular_hit_distance)
+static void write_dlss_rr_hit(uint2 thread_id, const RtSurfaceHit surface, float3 ray_dir, float specular_hit_distance)
 {
     float3 diffuse_albedo;
     float3 specular_albedo;
-    compute_rr_albedo(data.albedo, data.metallic, data.material_type, diffuse_albedo, specular_albedo);
+    compute_rr_albedo(surface, ray_dir, diffuse_albedo, specular_albedo);
     renderer::render_passes::realtime_rt::dlss_rr_diffuse_albedo.Store(thread_id, float4(diffuse_albedo, 1.0f));
     renderer::render_passes::realtime_rt::dlss_rr_specular_albedo.Store(thread_id, float4(specular_albedo, 1.0f));
     renderer::render_passes::realtime_rt::dlss_rr_specular_hit_distance.Store(thread_id, specular_hit_distance);

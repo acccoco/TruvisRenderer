@@ -105,6 +105,11 @@ struct RtRaygenView
     static float primary_specular_hit_distance(const RtSurfaceHit primary_hit, float3 primary_ray_dir)
     {
         const float far_distance = renderer::render_passes::realtime_rt::RR_FAR_HIT_DISTANCE;
+        /// 纯发光类别没有反射事件，沿用项目无命中值，不为它制造反射距离或发出额外查询。
+        if (primary_hit.material_type == MaterialType::EMISSIVE)
+        {
+            return far_distance;
+        }
         const float normal_length = length(primary_hit.forward_normal);
         const float direction_length = length(primary_ray_dir);
         if (!all(isfinite(primary_hit.position)) || !all(isfinite(primary_hit.origin_normal)) ||
@@ -164,7 +169,7 @@ struct RtRaygenView
     }
 
     /// 写入首次命中的 GBuffer 与 DLSS 输入。
-    static void write_primary_hit_outputs(uint2 thread_id, const RtSurfaceHit surface, float specular_hit_distance)
+    static void write_primary_hit_outputs(uint2 thread_id, const RtSurfaceHit surface, float3 primary_ray_dir, float specular_hit_distance)
     {
         RtGBufferData gbuffer_data = RtGBufferWriter::make_data(
             surface.position,
@@ -178,7 +183,7 @@ struct RtRaygenView
         RtGBufferWriter::write_gbuffer_hit(thread_id, gbuffer_data);
         const float2 primary_motion_vector = instance_motion_vector_pixels(surface.instance_id, surface.object_position);
         RtGBufferWriter::write_dlss_sr_hit(thread_id, device_depth(surface.position), primary_motion_vector);
-        RtGBufferWriter::write_dlss_rr_hit(thread_id, gbuffer_data, specular_hit_distance);
+        RtGBufferWriter::write_dlss_rr_hit(thread_id, surface, primary_ray_dir, specular_hit_distance);
     }
 
     /// miss 像素也必须写入 DLSS 输入，避免 SR/RR 读取上一帧残留。

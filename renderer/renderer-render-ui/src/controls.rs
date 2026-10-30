@@ -130,7 +130,7 @@ impl RenderControlsOverlay {
                 }
             }
         }
-        // scene scale 控制 voxel 物理尺寸，需按场景单位调；第八阶段不查询，只影响缓存粒度与 debug 可视化。
+        // scene scale 控制 voxel 物理尺寸；subsystem 在下一次维护前使旧语义缓存失效。
         ui.slider_config("SHARC scene scale", 1.0_f32, 500.0_f32).display_format("%.1f").build(sharc_scene_scale);
     }
 

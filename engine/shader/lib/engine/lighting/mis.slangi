@@ -1,44 +1,23 @@
 /// @file mis.slangi
-/// @brief 多重重要性采样 (MIS) 工具函数
-///
-/// 提供 MIS 权重计算，用于结合不同采样策略。
-///
-/// 当前 RT 路径用它把 BRDF 采样和 HDRI 均匀采样组合起来。所有函数都对分母做 epsilon
-/// 保护，避免极小 PDF 在 GPU 上生成 NaN 并污染后续累积。
+/// @brief 光源与 BSDF 采样共用的 MIS 权重。
 
 #pragma once
 
 struct Mis
 {
-    /// 平衡启发式 (Balance Heuristic)
-    /// @param pdf_a 策略 A 的 PDF
-    /// @param pdf_b 策略 B 的 PDF
-    /// @return 策略 A 的权重
-    static float balance_heuristic(float pdf_a, float pdf_b)
-    {
-        return pdf_a / max(pdf_a + pdf_b, 1e-7f);
-    }
-
-    /// 幂次启发式 (Power Heuristic)，使用平方加权
-    /// @param pdf_a 策略 A 的 PDF
-    /// @param pdf_b 策略 B 的 PDF
-    /// @return 策略 A 的权重 = pdf_a^2 / (pdf_a^2 + pdf_b^2)
+    /// 一次 A 与一次 B 采样的 power heuristic；输入须为同一度量下有限、非负的完整 PDF。
+    /// 已包含策略选择概率；两者均为零时没有可贡献的策略，权重定义为零。
+    /// PBRT util/sampling.h::PowerHeuristic 的平方比值，版本与适配见 sampling 设计文档。
     static float power_heuristic(float pdf_a, float pdf_b)
     {
-        const float a2 = pdf_a * pdf_a;
-        const float b2 = pdf_b * pdf_b;
-        return a2 / max(a2 + b2, 1e-7f);
-    }
-
-    /// 幂次启发式，可指定幂次
-    /// @param pdf_a 策略 A 的 PDF
-    /// @param pdf_b 策略 B 的 PDF
-    /// @param beta 幂次参数（常用 beta=2）
-    /// @return 策略 A 的权重 = pdf_a^beta / (pdf_a^beta + pdf_b^beta)
-    static float power_heuristic_beta(float pdf_a, float pdf_b, float beta)
-    {
-        const float a_pow = pow(pdf_a, beta);
-        const float b_pow = pow(pdf_b, beta);
-        return a_pow / max(a_pow + b_pow, 1e-7f);
+        const float scale = max(pdf_a, pdf_b);
+        if (scale == 0.0f)
+        {
+            return 0.0f;
+        }
+        /// 公共尺度在比值中消去；至少一个归一化 PDF 为 1，无需用 epsilon 改变权重。
+        const float a = pdf_a / scale;
+        const float b = pdf_b / scale;
+        return (a * a) / (a * a + b * b);
     }
 };

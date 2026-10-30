@@ -2,17 +2,17 @@
 /// @brief SHARC 在 truvis realtime RT raygen 中的接入层（Update / Resolve / Query）。
 ///
 /// 职责边界：本文件把 SHARC 核心算法（`sharc_common.slangi`）接到 truvis 的 path tracing helper 上，
-/// 负责构造 `SharcParameters`、稀疏像素选择、Update / Resolve 两个 sub-pass 的循环编排，以及
-/// 主路径 Query 的守卫判断。缓存资源、descriptor 和 pass 顺序仍由 RT pass / app-owned targets 管理。
+/// 负责构造 `SharcParameters`、稀疏像素选择、Update / Snapshot / Resolve 的循环编排，以及
+/// 主路径 Query 的守卫判断。缓存资源、descriptor 和 pass 顺序仍由 RT pass / Renderer-owned targets 管理。
 ///
 /// 关键不变量：
 /// - Update path 每段独立：用统一 NEE（throughput=1）求当前顶点直接光，BSDF 续路后用
 ///   `SharcSetThroughput` 反向回填历史顶点权重；sky/emissive 续命中沿用主路径的 power-heuristic MIS，
 ///   避免与 NEE 双计能量。
 /// - Update 只写 hashEntries / accumulation（并按 cache resampling 读 resolved）；Resolve 读
-///   accumulation + 写 resolved 并清空 accumulation。两者与主渲染之间由 CPU 侧 buffer barrier 串联。
-/// - 相机位置取自 `engine::binding::per_frame_data.camera_pos`；v1 把 resolve 的 cameraPositionPrev 设为当前相机位置，
-///   等价于关闭 adjacent-level blend（避免额外跨帧相机历史）。
+///   accumulation + 只读历史快照，写 resolved 并清空 accumulation；Snapshot 固定跨槽读取来源。
+///   维护阶段与主渲染之间由 CPU 侧 buffer barrier 串联。
+/// - 相机位置取自 `engine::binding::per_frame_data.camera_pos`；不执行 adjacent-level 历史重投影。
 #pragma once
 
 #include "lib/renderer/realtime_rt/payload.slangi"
@@ -118,6 +118,9 @@ struct RtSharc
         params.enableAntiFireflyFilter = true;
         params.accumulationBuffer = renderer::render_passes::realtime_rt::sharc_accumulation;
         params.resolvedBuffer = renderer::render_passes::realtime_rt::sharc_resolved;
+        params.resolveHashMapData.capacity = push_const.sharc_capacity;
+        params.resolveHashMapData.hashEntriesBuffer = renderer::render_passes::realtime_rt::sharc_resolve_hash_entries;
+        params.resolveHistory = renderer::render_passes::realtime_rt::sharc_resolve_history;
         return params;
     }
 
@@ -133,6 +136,12 @@ struct RtSharc
     /// 用于确认 Update / Resolve 是否真的把数据写入了缓存；冷缓存 / 关闭时为黑。
     static float3 debug_cache_radiance(const RtSurfaceHit surface)
     {
+        // Off 只允许观察 hash 几何，不允许把持久 buffer 中的旧历史当作当前 cache 内容。
+        if (!maintain_enabled())
+        {
+            return float3(0.0f);
+        }
+
         SharcParameters params = make_params();
         const SharcHitData hit_data = make_hit_data(surface);
         float3 radiance = float3(0.0f);
@@ -184,11 +193,14 @@ struct RtSharc
 
         // 主路径 sky/emissive MIS 需要的上一段 BSDF 状态；camera ray 视为 delta，避免首段误用 MIS。
         float prev_brdf_pdf = 1.0f;
+        /// 与主路径保持相同的未偏移顶点连接，不能用下一跳 ray origin 代替。
+        float3 previous_position = float3(0.0f);
         bool prev_is_delta = true;
 
         const uint max_update_depth = update_max_depth();
         for (uint depth = 0; depth < max_update_depth; ++depth)
         {
+            const bool has_bsdf_continuation = depth + 1u < max_update_depth;
             TraceRay(renderer::render_passes::realtime_rt::rt_tlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
             const RtSurfaceHit surface = payload.surface;
 
@@ -212,7 +224,7 @@ struct RtSharc
                 float mis_weight = 1.0f;
                 if (!prev_is_delta && depth > 0)
                 {
-                    const float light_pdf = RtDirectLighting::unified_emissive_hit_pdf(surface, ray.Direction);
+                    const float light_pdf = RtDirectLighting::unified_emissive_hit_pdf(surface, previous_position);
                     mis_weight = Mis::power_heuristic(prev_brdf_pdf, light_pdf);
                 }
                 SharcUpdateMiss(params, state, surface.emissive * mis_weight);
@@ -222,9 +234,9 @@ struct RtSharc
                 break;
             }
 
-            // 当前顶点直接光：统一 NEE 已内含 MIS，throughput 传 1 得到该顶点的反射 radiance。
+            /// 当前顶点直接光：throughput=1；硬上限处只用 NEE，不能给缺失的 BSDF 样本分权重。
             float3 direct_lighting = float3(0.0f);
-            const RtDirectLightingSample dl = RtDirectLighting::sample_unified(payload, surface, -ray.Direction, float3(1.0f));
+            const RtDirectLightingSample dl = RtDirectLighting::sample_unified(payload, surface, -ray.Direction, float3(1.0f), has_bsdf_continuation);
             if (dl.valid)
             {
                 direct_lighting = dl.contribution;
@@ -232,7 +244,7 @@ struct RtSharc
 
             const SharcHitData hit_data = make_hit_data(surface);
             const bool continue_tracing = SharcUpdateHit(params, state, hit_data, direct_lighting, Random::rnd(payload.random_seed));
-            if (!continue_tracing)
+            if (!continue_tracing || !has_bsdf_continuation)
             {
                 break;
             }
@@ -245,11 +257,30 @@ struct RtSharc
             }
             SharcSetThroughput(state, material_sample.throughput);
             prev_brdf_pdf = material_sample.brdf_pdf;
+            previous_position = surface.position;
             prev_is_delta = surface.is_delta_path();
 
             ray.Origin = material_sample.origin;
             ray.Direction = material_sample.direction;
         }
+    }
+
+    /// Update 完成后独立复制全部槽，不能跳过空 key；旧快照内容必须被覆盖。
+    static void run_snapshot(const uint2 thread_id)
+    {
+        if (!maintain_enabled())
+        {
+            return;
+        }
+        const uint entry_index = thread_id.y * DispatchRaysDimensions().x + thread_id.x;
+        if (entry_index >= push_const.sharc_capacity)
+        {
+            return;
+        }
+        renderer::render_passes::realtime_rt::sharc_resolve_hash_entries[entry_index] =
+            renderer::render_passes::realtime_rt::sharc_hash_entries[entry_index];
+        renderer::render_passes::realtime_rt::sharc_resolve_history[entry_index] =
+            renderer::render_passes::realtime_rt::sharc_resolved[entry_index];
     }
 
     /// SHARC Resolve sub-pass：按 entry 1D/2D dispatch，合并本帧 accumulation 到 resolved 并淘汰 stale entry。
@@ -271,7 +302,6 @@ struct RtSharc
         SharcParameters params = make_params();
         SharcResolveParameters resolve_params;
         // v1：prev 相机位置取当前帧，等价关闭 adjacent-level blend（无需额外跨帧相机历史）。
-        resolve_params.cameraPositionPrev = engine::binding::per_frame_data.camera_pos;
         resolve_params.accumulationFrameNum = accumulation_frame_num();
         resolve_params.staleFrameNumMax = stale_frame_num_max();
         resolve_params.frameIndex = (uint)engine::binding::per_frame_data.frame_id;

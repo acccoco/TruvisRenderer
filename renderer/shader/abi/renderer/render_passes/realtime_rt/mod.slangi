@@ -59,6 +59,7 @@ static const uint SHARC_MODE_ON = 2;
 static const uint SHARC_PHASE_NONE = 0;
 static const uint SHARC_PHASE_UPDATE = 1;
 static const uint SHARC_PHASE_RESOLVE = 2;
+static const uint SHARC_PHASE_SNAPSHOT = 3;
 
 /// realtime RT pass-local descriptor set 编号。
 ///
@@ -69,10 +70,12 @@ static const uint SET_NUM = engine::binding::GLOBAL_SETS_COUNT;
 
 /// SHARC buffer 专用 descriptor set 编号。
 ///
-/// SHARC 的三个持久 buffer 使用独立 regular descriptor set，不占用 `SET_NUM` 的 32 个 push binding。
-/// Rust 侧 pipeline layout 按 `SET_NUM`（push）、`SHARC_SET_NUM`（regular）的顺序追加这两个 set；
+/// SHARC 的三个持久 buffer 使用独立 regular descriptor set，不占用 `SET_NUM` 的 push binding。
+/// Rust 侧 pipeline layout 按 `SET_NUM`（push）、`SHARC_SET_NUM`（regular）、`SURFACE_SET_NUM`（regular）的顺序追加三个 set；
 /// 不能把 SHARC 改成第二个 push set。资源创建时写入 regular set，dispatch 前只绑定该 set。
 static const uint SHARC_SET_NUM = engine::binding::GLOBAL_SETS_COUNT + 1;
+/// 每 FIF 一份 surface descriptor，包含 current/history A/B/C/D；避免 push set 超过 32。
+static const uint SURFACE_SET_NUM = engine::binding::GLOBAL_SETS_COUNT + 2;
 
 #ifdef __SLANG__
 
@@ -164,22 +167,26 @@ RWTexture2D<float4> restir_history_c;
 RWTexture2D<uint4> restir_history_d;
 
 /// 当前 primary surface key 与上一帧 surface key。它们属于 ReSTIR history，不复用 DLSS/RR GBuffer history。
-/// A/B/C 分别保存 position/depth、normal/roughness、base_color/metallic，供 target 与 rejection 使用。
-[[vk::binding(26, SET_NUM)]]
+/// A/B/C/D 保存 position/depth、着色法线/roughness、base_color/metallic、几何法线/0。
+[[vk::binding(0, SURFACE_SET_NUM)]]
 RWTexture2D<float4> restir_surface_a;
-[[vk::binding(27, SET_NUM)]]
+[[vk::binding(1, SURFACE_SET_NUM)]]
 RWTexture2D<float4> restir_surface_b;
-[[vk::binding(28, SET_NUM)]]
+[[vk::binding(2, SURFACE_SET_NUM)]]
 RWTexture2D<float4> restir_surface_c;
-[[vk::binding(29, SET_NUM)]]
+[[vk::binding(3, SURFACE_SET_NUM)]]
+RWTexture2D<float4> restir_surface_d;
+[[vk::binding(4, SURFACE_SET_NUM)]]
 RWTexture2D<float4> restir_history_surface_a;
-[[vk::binding(30, SET_NUM)]]
+[[vk::binding(5, SURFACE_SET_NUM)]]
 RWTexture2D<float4> restir_history_surface_b;
-[[vk::binding(31, SET_NUM)]]
+[[vk::binding(6, SURFACE_SET_NUM)]]
 RWTexture2D<float4> restir_history_surface_c;
+[[vk::binding(7, SURFACE_SET_NUM)]]
+RWTexture2D<float4> restir_history_surface_d;
 
 // ========== SHARC world-space radiance cache buffers ==========
-/// 这三个 buffer 是 Renderer 的 SHARC 持久缓存，由 `SharcTargets` 创建并清零，使用独立 regular set。
+/// 前三个 buffer 是持久缓存并在创建时清零，后两个由 Snapshot 完整覆盖；均由 SharcTargets 持有。
 /// binding 顺序是 shader ABI：Rust 侧 `SharcDescriptorBinding` 必须按同一 set / binding 绑定。
 /// 元素类型定义在本文件顶部全局作用域。
 
@@ -192,6 +199,11 @@ RWStructuredBuffer<SharcAccumulationData> sharc_accumulation;
 /// resolved buffer：跨帧累积结果，Resolve pass 读写、Query pass 只读。
 [[vk::binding(2, SHARC_SET_NUM)]]
 RWStructuredBuffer<SharcPackedData> sharc_resolved;
+/// Snapshot 写入，Resolve 期间只读；不能与当前 hash/resolved 别名。
+[[vk::binding(3, SHARC_SET_NUM)]]
+RWStructuredBuffer<uint64_t> sharc_resolve_hash_entries;
+[[vk::binding(4, SHARC_SET_NUM)]]
+RWStructuredBuffer<SharcPackedData> sharc_resolve_history;
 #endif
 
 struct PushConstants
@@ -217,17 +229,19 @@ struct PushConstants
 
     /// SHARC 模式（SHARC_MODE_*）。Off 时完全不触碰 SHARC buffer。
     uint sharc_mode;
-    /// SHARC sub-pass（SHARC_PHASE_*）。None 走正常 path/ReSTIR；Update/Resolve 维护缓存。
+    /// SHARC sub-pass（SHARC_PHASE_*）。None 走正常 path/ReSTIR；Update/Snapshot/Resolve 维护缓存。
     uint sharc_phase;
     /// SHARC hash map 容量（voxel 数）。Resolve dispatch 与 hash 取模都使用它。
     uint sharc_capacity;
     /// SHARC scene scale，控制 voxel 物理尺寸：voxel 越大缓存越粗、命中率越高但越模糊。
     float sharc_scene_scale;
 
-    /// 显式 padding 把 push constant 对齐到 16 字节边界，避免 CPU/GPU ABI 对齐差异。
+    /// 使后续 float2 从八字节边界开始；push constant 总长仍为 64 字节。
     uint _padding_0;
-    uint _padding_1;
-    uint _padding_2;
+
+    /// 当前采样 jitter 减上一实际提交帧 jitter，单位像素；历史无效时为零。
+    /// 仅用于 ReSTIR 数组重投影，共享 DLSS motion vector 仍不包含 jitter。
+    float2 restir_history_jitter_delta;
 };
 
 }

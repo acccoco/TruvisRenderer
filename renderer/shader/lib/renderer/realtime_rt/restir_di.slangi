@@ -24,6 +24,8 @@ struct RtPrimarySurfaceKey
     float3 position;
     float linear_depth;
     float3 normal;
+    /// visibility offset 必须使用几何法线，不能以 shading normal 替代。
+    float3 origin_normal;
     float roughness;
     float3 base_color;
     float metallic;
@@ -35,6 +37,7 @@ struct RtPrimarySurfaceKey
         key.position = float3(0.0f);
         key.linear_depth = 0.0f;
         key.normal = float3(0.0f, 1.0f, 0.0f);
+        key.origin_normal = key.normal;
         key.roughness = 0.0f;
         key.base_color = float3(0.0f);
         key.metallic = 0.0f;
@@ -48,27 +51,51 @@ struct RtReservoir
     // reservoir 只保存 light-side sample identity。方向、距离、PDF、radiance 和 shadow ray
     // 都必须在当前 surface 上重建，避免把旧 shading point 的几何关系跨帧/跨邻域复用。
     RtLightSampleKey sample_key;
-    // 按 RTXDI 契约，写入 storage image 的 weight_sum 是 finalized reservoir inverse PDF。
-    // 只有局部 streaming 过程中，它才临时表示尚未归一化的 RIS weight sum。
+    /// 写入 storage image 时是 finalized inverse PDF；局部 streaming 时是普通 float raw sum。
     float weight_sum;
+
+    /// 仅本轮使用的数值失败锁存；中间溢出后不能由后续候选重新激活。失败输出以 M=0 发布。
+    bool failed;
     // target 是当前 reservoir 选中样本在“当前 phase 输出 surface”上的 target PDF。
     float target;
-    // M 是有效历史 / 候选池规模。initial 输出按 RTXDI 设为 1；temporal/spatial 输出会随复用累加，
-    // 下一帧 temporal 读取时再裁剪，避免相关历史无界增长。
+
+    /// M 是候选池规模，与是否选出正贡献 winner 无关；M=0 才表示没有可复用候选池。
+    /// initial 完成采样后设为 1；temporal/spatial 累加，下一帧读取时再裁剪。
     float m;
     // source_age 表示 sample identity 从几帧前继承而来，只用于限制 stale history；
     // 它不是曝光、能量或采样 PDF 的一部分。
     float source_age;
+    // valid 只表示存在可着色 winner；零估计候选池仍可有正 M。
     bool valid;
     uint sky_version;
     uint emissive_version;
     uint analytic_version;
+
+    /// 零估计没有 sample identity，但已接受的候选池仍须参与后续 M 与校正分母。
+    [mutating]
+    void clear_sample()
+    {
+        sample_key = RtLightSampleKey::empty();
+        weight_sum = 0.0f;
+        target = 0.0f;
+        source_age = 0.0f;
+        valid = false;
+    }
+
+    [mutating]
+    void invalidate()
+    {
+        clear_sample();
+        m = 0.0f;
+        failed = true;
+    }
 
     static RtReservoir empty()
     {
         RtReservoir reservoir;
         reservoir.sample_key = RtLightSampleKey::empty();
         reservoir.weight_sum = 0.0f;
+        reservoir.failed = false;
         reservoir.target = 0.0f;
         reservoir.m = 0.0f;
         reservoir.source_age = 0.0f;
@@ -77,6 +104,82 @@ struct RtReservoir
         reservoir.emissive_version = engine::binding::gpu_scene.emissive_light_version;
         reservoir.analytic_version = engine::binding::gpu_scene.analytic_light_version;
         return reservoir;
+    }
+};
+
+/// 同一个 light-side key 从 source 到 destination 的 dω_destination/dω_source。
+/// 使用普通 float 比值；超出有限支持域由消费者丢弃该次 reservoir，不夹紧权重。
+struct RtRestirJacobian
+{
+    float value;
+
+    static RtRestirJacobian identity()
+    {
+        RtRestirJacobian result;
+        result.value = 1.0f;
+        return result;
+    }
+
+    static RtRestirJacobian between(const RtLightCandidate source, const RtLightCandidate destination)
+    {
+        RtRestirJacobian result = identity();
+        if (!source.valid || !destination.valid || source.kind != destination.kind)
+        {
+            result.value = 0.0f;
+            return result;
+        }
+        if (source.kind == RtLightCandidate::kind_hdri())
+            return result;
+        if (!isfinite(source.light_cos) || source.light_cos <= 0.0f ||
+            !isfinite(destination.light_cos) || destination.light_cos <= 0.0f ||
+            !isfinite(source.distance) || source.distance <= 0.0f ||
+            !isfinite(destination.distance) || destination.distance <= 0.0f)
+        {
+            result.value = 0.0f;
+            return result;
+        }
+        const float cosine_ratio = destination.light_cos / source.light_cos;
+        const float distance_ratio = source.distance / destination.distance;
+        result.value = cosine_ratio * distance_ratio * distance_ratio;
+        return result;
+    }
+};
+
+/// 本轮 bias correction 的分子或 piSum，不写入 reservoir storage。
+struct RtRestirNormalization
+{
+    float sum;
+    bool valid;
+
+    static RtRestirNormalization empty()
+    {
+        RtRestirNormalization normalization;
+        normalization.sum = 0.0f;
+        normalization.valid = true;
+        return normalization;
+    }
+
+    /// 一旦乘积或和越出 float 域，停止累加；调用方必须立即使输出 reservoir 失效。
+    [mutating]
+    void add(float target, float m, const RtRestirJacobian jacobian)
+    {
+        if (!isfinite(target) || target < 0.0f || !isfinite(m) || m < 0.0f)
+            valid = false;
+        if (!valid || target == 0.0f || m == 0.0f)
+            return;
+        if (!isfinite(jacobian.value) || jacobian.value <= 0.0f)
+        {
+            valid = false;
+            return;
+        }
+        const float term = target * m * jacobian.value;
+        const float next_sum = sum + term;
+        if (!isfinite(term) || !isfinite(next_sum))
+        {
+            valid = false;
+            return;
+        }
+        sum = next_sum;
     }
 };
 
@@ -130,8 +233,8 @@ struct RtRestirDI
 
     static uint4 pack_candidate_a(const RtReservoir reservoir)
     {
-        // A: identity metadata。A.w 是 reservoir valid；sample_key valid 另存在 D.w，
-        // 这样可以区分“reservoir 统计有效”与“候选身份可重建”两个契约。
+        /// A: winner identity metadata。A.w 与 D.w 均为零时仍可保存正 M 的零估计池；
+        /// 是否有候选池由 C.z 决定，不能只看 winner 标记。
         return uint4(
             reservoir.sample_key.kind,
             reservoir.sample_key.light_index,
@@ -167,23 +270,28 @@ struct RtRestirDI
 
     static RtReservoir unpack_reservoir(uint4 a, float4 b, float4 c, uint4 d)
     {
-        // unpack 不尝试修复非法状态。任何缺少 sample key、target、weight_sum 或 M 的结果
-        // 都视为 empty reservoir，后续 phase 直接丢弃，避免 NaN/负权重进入复用。
+        /// 保留正 M 的零估计池；非法统计或不一致的 winner/key 标记不能伪装成零估计。
         RtReservoir reservoir = RtReservoir::empty();
         reservoir.sample_key.kind = a.x;
         reservoir.sample_key.light_index = a.y;
         reservoir.sample_key.class_mask = a.z;
-        reservoir.sample_key.valid = d.w != 0u && reservoir.sample_key.kind != 0u;
+        reservoir.sample_key.valid = d.w != 0u;
         reservoir.sample_key.sample = b;
         reservoir.weight_sum = c.x;
         reservoir.target = c.y;
         reservoir.m = c.z;
         reservoir.source_age = c.w;
-        reservoir.valid = a.w != 0u && reservoir.sample_key.valid && reservoir.weight_sum > 0.0f &&
-            reservoir.target > 0.0f && reservoir.m > 0.0f;
+        reservoir.valid = a.w != 0u;
         reservoir.sky_version = d.x;
         reservoir.emissive_version = d.y;
         reservoir.analytic_version = d.z;
+        if (!all(isfinite(b)) || !all(isfinite(c)) || reservoir.m <= 0.0f || reservoir.source_age < 0.0f ||
+            (reservoir.valid
+                ? !reservoir.sample_key.valid || a.x == 0u || reservoir.weight_sum <= 0.0f || reservoir.target <= 0.0f
+                : reservoir.sample_key.valid || a.x != 0u || reservoir.weight_sum != 0.0f || reservoir.target != 0.0f))
+        {
+            return RtReservoir::empty();
+        }
         return reservoir;
     }
 
@@ -255,54 +363,65 @@ struct RtRestirDI
 
     static void store_surface_key(uint2 thread_id, const RtPrimarySurfaceKey key)
     {
-        // invalid key 必须把三张 surface image 全部清零。temporal/final 通过 normal 长度和 depth
-        // 判断有效性，不能留下上一帧或上一 phase 的材质签名。
+        /// invalid key 必须清空四张图像；current/history 共用解包与有效性检查，
+        /// 不能留下上一帧或上一 phase 的几何/材质签名。
         if (!key.valid)
         {
             renderer::render_passes::realtime_rt::restir_surface_a.Store(thread_id, float4(0.0f));
             renderer::render_passes::realtime_rt::restir_surface_b.Store(thread_id, float4(0.0f));
             renderer::render_passes::realtime_rt::restir_surface_c.Store(thread_id, float4(0.0f));
+            renderer::render_passes::realtime_rt::restir_surface_d.Store(thread_id, float4(0.0f));
             return;
         }
         renderer::render_passes::realtime_rt::restir_surface_a.Store(thread_id, float4(key.position, key.linear_depth));
         renderer::render_passes::realtime_rt::restir_surface_b.Store(thread_id, float4(key.normal, key.roughness));
         renderer::render_passes::realtime_rt::restir_surface_c.Store(thread_id, float4(key.base_color, key.metallic));
+        renderer::render_passes::realtime_rt::restir_surface_d.Store(thread_id, float4(key.origin_normal, 0.0f));
+    }
+
+    /// 先验证再归一化，空 key 不执行 normalize(0)，非法几何法线不能用着色法线兜底。
+    static RtPrimarySurfaceKey unpack_surface_key(float4 a, float4 b, float4 c, float4 d)
+    {
+        RtPrimarySurfaceKey key = RtPrimarySurfaceKey::empty();
+        const float normal_length_sq = dot(b.xyz, b.xyz);
+        const float origin_length_sq = dot(d.xyz, d.xyz);
+        if (!all(isfinite(a)) || !all(isfinite(b)) || !all(isfinite(c)) || !all(isfinite(d)) ||
+            a.w <= 0.0f || !isfinite(normal_length_sq) || normal_length_sq <= 1e-5f ||
+            !isfinite(origin_length_sq) || origin_length_sq <= 1e-5f)
+        {
+            return key;
+        }
+        key.position = a.xyz;
+        key.linear_depth = a.w;
+        key.normal = normalize(b.xyz);
+        // traced hit 已提供单位几何法线，保留其原始 float 分量，避免再次归一化改变 offset 的 ULP 步长。
+        key.origin_normal = d.xyz;
+        key.roughness = b.w;
+        key.base_color = c.xyz;
+        key.metallic = c.w;
+        key.valid = true;
+        return key;
     }
 
     static RtPrimarySurfaceKey load_surface_key(uint2 thread_id)
     {
-        // current surface key 由 path phase 写入，temporal/spatial/final 都以它作为当前 surface
-        // 的唯一 ReSTIR 输入，避免从压缩 GBuffer 中恢复 visibility 起点。
-        const float4 a = renderer::render_passes::realtime_rt::restir_surface_a.Load(thread_id);
-        const float4 b = renderer::render_passes::realtime_rt::restir_surface_b.Load(thread_id);
-        const float4 c = renderer::render_passes::realtime_rt::restir_surface_c.Load(thread_id);
-        RtPrimarySurfaceKey key;
-        key.position = a.xyz;
-        key.linear_depth = a.w;
-        key.normal = normalize(b.xyz);
-        key.roughness = b.w;
-        key.base_color = c.xyz;
-        key.metallic = c.w;
-        key.valid = dot(b.xyz, b.xyz) > 1e-5f && key.linear_depth > 0.0f;
-        return key;
+        return unpack_surface_key(
+            renderer::render_passes::realtime_rt::restir_surface_a.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_surface_b.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_surface_c.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_surface_d.Load(thread_id)
+        );
     }
 
     static RtPrimarySurfaceKey load_history_surface_key(uint2 thread_id)
     {
-        // history surface key 与 history reservoir 使用相同 reprojected pixel 坐标。
-        // 只有 surface signature 兼容时，上一帧 temporal reservoir 才能进入当前像素。
-        const float4 a = renderer::render_passes::realtime_rt::restir_history_surface_a.Load(thread_id);
-        const float4 b = renderer::render_passes::realtime_rt::restir_history_surface_b.Load(thread_id);
-        const float4 c = renderer::render_passes::realtime_rt::restir_history_surface_c.Load(thread_id);
-        RtPrimarySurfaceKey key;
-        key.position = a.xyz;
-        key.linear_depth = a.w;
-        key.normal = normalize(b.xyz);
-        key.roughness = b.w;
-        key.base_color = c.xyz;
-        key.metallic = c.w;
-        key.valid = dot(b.xyz, b.xyz) > 1e-5f && key.linear_depth > 0.0f;
-        return key;
+        /// 与 history reservoir 使用相同的重投影坐标和 previous frame label。
+        return unpack_surface_key(
+            renderer::render_passes::realtime_rt::restir_history_surface_a.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_history_surface_b.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_history_surface_c.Load(thread_id),
+            renderer::render_passes::realtime_rt::restir_history_surface_d.Load(thread_id)
+        );
     }
 
     static RtPrimarySurfaceKey surface_key_from_hit(const RtSurfaceHit surface)
@@ -311,6 +430,7 @@ struct RtRestirDI
         key.position = surface.position;
         key.linear_depth = surface.hit_t;
         key.normal = surface.forward_normal;
+        key.origin_normal = surface.origin_normal;
         key.roughness = surface.roughness;
         key.base_color = surface.base_color;
         key.metallic = surface.metallic;
@@ -330,7 +450,7 @@ struct RtRestirDI
         surface.geometry_id = 0;
         surface.primitive_id = 0;
         surface.forward_normal = primary_key.valid ? normalize(primary_key.normal) : float3(0.0f, 1.0f, 0.0f);
-        surface.origin_normal = surface.forward_normal;
+        surface.origin_normal = primary_key.valid ? primary_key.origin_normal : float3(0.0f, 1.0f, 0.0f);
         surface.object_normal = surface.forward_normal;
         surface.uv = float2(0.0f);
         surface.hit_t = primary_key.linear_depth;
@@ -367,23 +487,23 @@ struct RtRestirDI
         {
             return false;
         }
-        // material signature 是 reservoir target 函数的一部分。不同 albedo/metallic 的表面即使共面，
-        // 也不能共享旧 surface 的 weight_sum/target 比值，否则高饱和彩色光会在材质边界留下离群点。
+        /// 材质相似性是本实现限制复用范围的启发式；不能代替在双方 surface 上重算 target。
+        /// 跨材质复用并非天然非法，但放宽阈值需要单独验证校正支持域、方差与画面。
         const float3 base_color_delta = abs(current_key.base_color - history_key.base_color);
         if (max(base_color_delta.x, max(base_color_delta.y, base_color_delta.z)) > 0.18f)
         {
             return false;
         }
-        // linear_depth 是 primary ray 命中距离，单位为米；这里的 absolute floor 也是米制长度。
-        // 0.0003m 只防止近处表面的容差退化为零，不是 secondary ray 的 TMin 或 origin offset。
-        // 3% 是 temporal compatibility policy，用于允许相机/几何变化下的有限深度重投影误差。
+        /// linear_depth 是 primary ray 命中距离，单位为米；此阈值由 temporal/spatial 共用。
+        /// 它比较两次实际距离，没有补偿相机平移；相同静态表面也可能被保守拒绝。
+        /// absolute floor 仅防容差退化，不能当作 secondary ray 的 TMin 或 origin offset。
         const float depth_tolerance = max(0.0003f, current_key.linear_depth * 0.03f);
         if (abs(current_key.linear_depth - history_key.linear_depth) > depth_tolerance)
         {
             return false;
         }
-        // 0.0004m 同样是位置比较的米制 absolute floor；1% 是独立的 temporal 复用比例。
-        // 这些阈值不能被当作几何表面偏移，否则会把历史兼容性调参耦合到 ray 数值契约。
+        /// 0.0004m 是位置比较的米制 absolute floor；1% 是相对当前命中距离的复用阈值。
+        /// 这些阈值不能当作几何表面偏移，否则会把兼容性调参耦合到 ray 数值契约。
         const float position_tolerance = max(0.0004f, current_key.linear_depth * 0.01f);
         return length(current_key.position - history_key.position) <= position_tolerance;
     }
@@ -395,9 +515,21 @@ struct RtRestirDI
             reservoir.analytic_version == engine::binding::gpu_scene.analytic_light_version;
     }
 
+    static bool reservoir_pool_reusable(const RtReservoir reservoir)
+    {
+        return !reservoir.failed && reservoir_history_versions_match(reservoir) &&
+            isfinite(reservoir.weight_sum) && isfinite(reservoir.target) && isfinite(reservoir.m) && reservoir.m > 0.0f &&
+            isfinite(reservoir.source_age) && reservoir.source_age >= 0.0f && reservoir.source_age <= 8.0f &&
+            all(isfinite(reservoir.sample_key.sample)) &&
+            (reservoir.valid
+                ? RtDirectLighting::sample_key_matches_current_class_mask(reservoir.sample_key) &&
+                    reservoir.sample_key.kind != 0u && reservoir.weight_sum > 0.0f && reservoir.target > 0.0f
+                : !reservoir.sample_key.valid && reservoir.sample_key.kind == 0u && reservoir.weight_sum == 0.0f && reservoir.target == 0.0f);
+    }
+
     static bool reservoir_reusable(const RtReservoir reservoir)
     {
-        return reservoir.valid && reservoir.sample_key.valid && reservoir_history_versions_match(reservoir) && reservoir.source_age <= 8.0f;
+        return reservoir.valid && reservoir_pool_reusable(reservoir);
     }
 
     static float visible_candidate_target(const RtLightCandidate candidate, const RtSurfaceHit surface, const float3 view_dir)
@@ -415,6 +547,7 @@ struct RtRestirDI
     static float target_at_surface(
         const RtLightSampleKey sample_key,
         const RtSurfaceHit surface,
+        const float3 view_dir,
         out RtLightCandidate out_candidate
     )
     {
@@ -423,41 +556,30 @@ struct RtRestirDI
         {
             return 0.0f;
         }
-        const float3 view_dir = normalize(engine::binding::per_frame_data.camera_pos - surface.position);
         return visible_candidate_target(out_candidate, surface, view_dir);
     }
 
-    static bool stream_sample(
+    /// 普通 float streaming；数值失败锁存到本次输出，后续候选不得恢复它。
+    static bool stream_weight(
         inout RtReservoir reservoir,
         const RtLightSampleKey sample_key,
         const float target_pdf,
-        const float inv_source_pdf,
-        const float sample_m,
+        const float weight,
         const float source_age,
         inout uint random_seed
     )
     {
-        if (sample_m <= 0.0f)
+        if (reservoir.failed)
+            return false;
+        const float sum = reservoir.weight_sum + weight;
+        if (!isfinite(weight) || weight < 0.0f || !isfinite(sum) || !isfinite(reservoir.m))
         {
+            reservoir.invalidate();
             return false;
         }
-
-        // M 描述候选池规模；零 target proposal 也会通过调用方的 finalize denominator 表达，
-        // 这里仅在 source PDF 与 target 都有效时才让样本参与 weighted reservoir competition。
-        reservoir.m += sample_m;
-        if (!sample_key.valid || target_pdf <= 0.0f || inv_source_pdf <= 0.0f)
-        {
+        if (weight == 0.0f)
             return false;
-        }
-
-        const float ris_weight = target_pdf * inv_source_pdf;
-        if (ris_weight <= 0.0f)
-        {
-            return false;
-        }
-
-        const float new_weight_sum = reservoir.weight_sum + ris_weight;
-        const bool selected = !reservoir.valid || Random::rnd(random_seed) * new_weight_sum < ris_weight;
+        const bool selected = !reservoir.valid || Random::rnd(random_seed) * sum < weight;
         if (selected)
         {
             reservoir.sample_key = sample_key;
@@ -468,50 +590,52 @@ struct RtRestirDI
             reservoir.emissive_version = engine::binding::gpu_scene.emissive_light_version;
             reservoir.analytic_version = engine::binding::gpu_scene.analytic_light_version;
         }
-        reservoir.weight_sum = new_weight_sum;
+        reservoir.weight_sum = sum;
         return selected;
+    }
+
+    /// 初始 proposal 权重为 target/pdf；正分母与输入有效域先于除法检查。
+    static void stream_sample(
+        inout RtReservoir reservoir,
+        const RtLightSampleKey sample_key,
+        const float target_pdf,
+        const float source_pdf,
+        inout uint random_seed
+    )
+    {
+        if (reservoir.failed || !sample_key.valid || !all(isfinite(sample_key.sample)) ||
+            !isfinite(target_pdf) || target_pdf <= 0.0f || !isfinite(source_pdf) || source_pdf <= 0.0f)
+            return;
+        reservoir.m += 1.0f;
+        stream_weight(reservoir, sample_key, target_pdf, target_pdf / source_pdf, 0.0f, random_seed);
     }
 
     static bool combine_reservoirs(
         inout RtReservoir reservoir,
         const RtReservoir source,
         const float target_at_current,
+        const RtRestirJacobian jacobian,
         inout uint random_seed
     )
     {
-        if (source.m <= 0.0f)
-        {
+        if (reservoir.failed || !reservoir_pool_reusable(source))
             return false;
-        }
-
-        // RTXDI_CombineDIReservoirs 等价于把已 finalized 的 source inverse PDF 还原成本轮
-        // streaming 的 sampleNormalization：target_at_current * source.weight_sum * source.M。
+        // 零估计池参与 M，但不提供 winner，也不消耗竞争随机数。
         reservoir.m += source.m;
-        if (!reservoir_reusable(source) || target_at_current <= 0.0f || source.weight_sum <= 0.0f)
+        if (!isfinite(reservoir.m))
         {
+            reservoir.invalidate();
             return false;
         }
-
-        const float ris_weight = target_at_current * source.weight_sum * source.m;
-        if (ris_weight <= 0.0f)
+        if (!source.valid || !isfinite(target_at_current) || target_at_current <= 0.0f)
+            return false;
+        if (!isfinite(jacobian.value) || jacobian.value <= 0.0f)
         {
+            reservoir.invalidate();
             return false;
         }
-
-        const float new_weight_sum = reservoir.weight_sum + ris_weight;
-        const bool selected = !reservoir.valid || Random::rnd(random_seed) * new_weight_sum < ris_weight;
-        if (selected)
-        {
-            reservoir.sample_key = source.sample_key;
-            reservoir.target = target_at_current;
-            reservoir.source_age = source.source_age;
-            reservoir.valid = true;
-            reservoir.sky_version = engine::binding::gpu_scene.sky_distribution_version;
-            reservoir.emissive_version = engine::binding::gpu_scene.emissive_light_version;
-            reservoir.analytic_version = engine::binding::gpu_scene.analytic_light_version;
-        }
-        reservoir.weight_sum = new_weight_sum;
-        return selected;
+        const float weight = target_at_current * source.weight_sum * source.m * jacobian.value;
+        return stream_weight(reservoir, source.sample_key, target_at_current, weight, source.source_age, random_seed);
     }
 
     static void finalize_resampling(
@@ -520,32 +644,47 @@ struct RtRestirDI
         const float normalization_denominator
     )
     {
-        if (!reservoir.valid || reservoir.target <= 0.0f || normalization_numerator <= 0.0f ||
-            normalization_denominator <= 0.0f)
+        if (reservoir.failed || !isfinite(reservoir.target) || reservoir.target < 0.0f ||
+            !isfinite(reservoir.weight_sum) || reservoir.weight_sum < 0.0f ||
+            !isfinite(reservoir.m) || reservoir.m <= 0.0f ||
+            !isfinite(normalization_numerator) || normalization_numerator < 0.0f ||
+            !isfinite(normalization_denominator) || normalization_denominator < 0.0f)
         {
-            reservoir = RtReservoir::empty();
+            reservoir.invalidate();
             return;
         }
-
-        // RTXDI_FinalizeResampling: rawWeightSum * numerator / (selectedTargetPdf * denominator)。
-        // 归一化后 weight_sum 可直接作为 final shade 的 inverse PDF，也可被下一轮 combine 使用。
-        reservoir.weight_sum = reservoir.weight_sum * normalization_numerator /
-            max(reservoir.target * normalization_denominator, 1e-7f);
-        if (reservoir.weight_sum <= 0.0f)
+        if (!reservoir.valid || reservoir.target == 0.0f || reservoir.weight_sum == 0.0f ||
+            normalization_numerator == 0.0f || normalization_denominator == 0.0f)
         {
-            reservoir = RtReservoir::empty();
+            reservoir.clear_sample();
+            return;
         }
+        /// 保持 RTXDI rawSum * numerator / (selectedTarget * denominator)，不加分母 floor。
+        const float numerator = reservoir.weight_sum * normalization_numerator;
+        const float denominator = reservoir.target * normalization_denominator;
+        if (!isfinite(numerator) || !isfinite(denominator) || denominator <= 0.0f)
+        {
+            reservoir.invalidate();
+            return;
+        }
+        reservoir.weight_sum = numerator / denominator;
+        if (!isfinite(reservoir.weight_sum) || reservoir.weight_sum <= 0.0f)
+            reservoir.invalidate();
     }
 
     static void bias_correction_normalization(
         inout RtReservoir reservoir,
-        const float selected_source_target,
-        const float target_sum_over_sources
+        const RtRestirNormalization numerator,
+        const RtRestirNormalization normalization
     )
     {
-        // 该 helper 明确表达 RTXDI Basic/RayTraced bias correction 的 pi / piSum 归一化边界。
-        // target_sum_over_sources 已由调用方按参与复用的 source surface 与各自 M 累加。
-        finalize_resampling(reservoir, selected_source_target, target_sum_over_sources);
+        if (!numerator.valid || !normalization.valid)
+        {
+            reservoir.invalidate();
+            return;
+        }
+        // source target 已转到当前立体角坐标；final shade 不再额外乘 Jacobian。
+        finalize_resampling(reservoir, numerator.sum, normalization.sum);
     }
 
     static RtReservoir make_initial_reservoir(inout RtTracePayload payload, const RtSurfaceHit surface, const float3 view_dir)
@@ -572,21 +711,20 @@ struct RtRestirDI
                 reservoir,
                 candidate.sample_key,
                 target,
-                1.0f / max(candidate.solid_angle_pdf, 1e-7f),
-                1.0f,
-                0.0f,
+                candidate.solid_angle_pdf,
                 resampling_seed
             );
+            if (reservoir.failed)
+                return reservoir;
         }
         if (reservoir.valid)
         {
             // Initial denominator 使用固定 proposal 总数；finalized 后 M 按 RTXDI initial 输出契约设为 1。
             finalize_resampling(reservoir, 1.0f, (float)RESTIR_INITIAL_CANDIDATE_COUNT);
-            if (reservoir.valid)
-            {
-                reservoir.m = 1.0f;
-            }
         }
+        // 八次 proposal 即使全部为零也构成一个估计；不能条件化到“至少抽中一次”。
+        if (!reservoir.failed)
+            reservoir.m = 1.0f;
         return reservoir;
     }
 
@@ -602,16 +740,16 @@ struct RtRestirDI
     {
         RtReservoir capped = reservoir;
         // weight_sum 已是 finalized inverse PDF；裁剪 history 时只裁剪 M，不再缩放 inverse PDF。
-        capped.m = min(max(reservoir.m, 1.0f), RESTIR_TEMPORAL_HISTORY_M_CAP);
+        capped.m = min(reservoir.m, RESTIR_TEMPORAL_HISTORY_M_CAP);
         return capped;
     }
 
     static int2 reproject_history_pixel(uint2 thread_id, const int2 offset)
     {
-        // motion vector 使用项目统一的 pixel-space “当前像素 -> 上一帧像素”约定。
-        // RTXDI temporal 会在回投影中心附近做小范围搜索；几何/材质兼容性由 surface key 再严格拒绝。
+        /// MV 回溯无 jitter 投影的位置；数组索引还需扣除历史采样网格的 jitter。
+        /// 差值来自已提交 reservoir 的 CPU 快照，不改变 DLSS 共用 MV 或邻域搜索策略。
         const float2 motion_vector = renderer::render_passes::realtime_rt::dlss_motion_vectors.Load(thread_id);
-        return int2(floor(float2(thread_id) + motion_vector + float2(0.5f))) + offset;
+        return int2(floor(float2(thread_id) + motion_vector + push_const.restir_history_jitter_delta + float2(0.5f))) + offset;
     }
 
     static bool pixel_in_bounds(int2 pixel)
@@ -714,10 +852,10 @@ struct RtRestirDI
         uint random_seed = make_resampling_seed(thread_id, 19u);
         const RtReservoir initial = load_initial(thread_id);
         float initial_m = 0.0f;
-        if (reservoir_reusable(initial))
+        if (reservoir_pool_reusable(initial))
         {
-            initial_m = max(initial.m, 1.0f);
-            combine_reservoirs(result, initial, initial.target, random_seed);
+            initial_m = initial.m;
+            combine_reservoirs(result, initial, initial.target, RtRestirJacobian::identity(), random_seed);
         }
 
         bool selected_history = false;
@@ -729,33 +867,78 @@ struct RtRestirDI
             if (find_temporal_history_coord(thread_id, current_key, random_seed, history_coord, history_key))
             {
                 RtReservoir history = capped_history_reservoir(load_history(history_coord));
-                if (reservoir_reusable(history))
+                /// 接受、M 计数和校正必须使用同一个已推进年龄的 source 集合。
+                /// 否则 age=8 先进入分母，递增后又被 combine 的 age<=8 检查拒绝。
+                history.source_age = history.source_age + 1.0f;
+                if (reservoir_pool_reusable(history))
                 {
                     RtLightCandidate history_candidate;
-                    const float history_target_at_current = target_at_surface(history.sample_key, current_surface, history_candidate);
-                    history.source_age = history.source_age + 1.0f;
+                    const float history_target_at_current = history.valid
+                        ? target_at_surface(history.sample_key, current_surface,
+                            normalize(engine::binding::per_frame_data.camera_pos - current_surface.position), history_candidate) : 0.0f;
                     history_m = history.m;
-                    selected_history = combine_reservoirs(result, history, history_target_at_current, random_seed);
+                    RtRestirJacobian jacobian = RtRestirJacobian::identity();
+                    if (history_target_at_current > 0.0f)
+                    {
+                        const RtLightCandidate source_candidate = RtDirectLighting::reconstruct_candidate_from_key(
+                            history.sample_key, surface_from_key(history_key));
+                        jacobian = RtRestirJacobian::between(source_candidate, history_candidate);
+                    }
+                    selected_history = combine_reservoirs(result, history, history_target_at_current, jacobian, random_seed);
                 }
             }
         }
 
+        if (result.failed)
+            return result;
         if (result.valid)
         {
-            float numerator = result.target;
-            float denominator = result.target * initial_m;
+            const RtLightCandidate selected_at_current = RtDirectLighting::reconstruct_candidate_from_key(result.sample_key, current_surface);
+            RtRestirNormalization numerator = RtRestirNormalization::empty();
+            numerator.add(result.target, 1.0f, RtRestirJacobian::identity());
+            if (!numerator.valid)
+            {
+                result.invalidate();
+                return result;
+            }
+            RtRestirNormalization normalization = RtRestirNormalization::empty();
+            normalization.add(result.target, initial_m, RtRestirJacobian::identity());
+            if (!normalization.valid)
+            {
+                result.invalidate();
+                return result;
+            }
             if (history_m > 0.0f)
             {
                 const RtSurfaceHit history_surface = surface_from_key(history_key);
+                /// 历史 target 必须使用生成该来源的观察方向，包括 BRDF/MIS 的支持域。
+                /// 当前 Camera 的 view 是刚体变换；用 R^T 把历史 view-space 的表面到相机向量转回世界空间。
+                /// prev_view 对应上一实际提交主视图，不依赖当前相机位置，也不增加持久化字段。
+                const float3 history_position_view = mul(engine::binding::per_frame_data.prev_view, float4(history_surface.position, 1.0f)).xyz;
+                const float3 history_view_dir = normalize(mul(transpose(float3x3(engine::binding::per_frame_data.prev_view)), -history_position_view));
                 RtLightCandidate selected_at_history;
-                const float history_selected_target = target_at_surface(result.sample_key, history_surface, selected_at_history);
+                const float history_selected_target = target_at_surface(result.sample_key, history_surface, history_view_dir, selected_at_history);
+                /// 校正把 source 的 target 乘 dω_source/dω_current，方向与竞争阶段相反。
+                const RtRestirJacobian jacobian = history_selected_target > 0.0f
+                    ? RtRestirJacobian::between(selected_at_current, selected_at_history) : RtRestirJacobian::identity();
                 if (selected_history)
                 {
-                    numerator = history_selected_target;
+                    numerator = RtRestirNormalization::empty();
+                    numerator.add(history_selected_target, 1.0f, jacobian);
+                    if (!numerator.valid)
+                    {
+                        result.invalidate();
+                        return result;
+                    }
                 }
-                denominator += history_selected_target * history_m;
+                normalization.add(history_selected_target, history_m, jacobian);
+                if (!normalization.valid)
+                {
+                    result.invalidate();
+                    return result;
+                }
             }
-            bias_correction_normalization(result, numerator, denominator);
+            bias_correction_normalization(result, numerator, normalization);
         }
         return result;
     }
@@ -773,10 +956,10 @@ struct RtRestirDI
         uint random_seed = make_resampling_seed(thread_id, 37u);
         const RtReservoir center = load_temporal(thread_id);
         float center_m = 0.0f;
-        if (reservoir_reusable(center))
+        if (reservoir_pool_reusable(center))
         {
-            center_m = max(center.m, 1.0f);
-            combine_reservoirs(result, center, center.target, random_seed);
+            center_m = center.m;
+            combine_reservoirs(result, center, center.target, RtRestirJacobian::identity(), random_seed);
         }
 
         const uint spatial_sample_count = center_m < RESTIR_SPATIAL_TARGET_HISTORY_LENGTH
@@ -795,7 +978,7 @@ struct RtRestirDI
             const uint2 sample_coord = uint2(sample_pixel);
             const RtPrimarySurfaceKey sample_key = load_surface_key(sample_coord);
             const RtReservoir sample_reservoir = load_temporal(sample_coord);
-            if (!surface_compatible(current_key, sample_key) || !reservoir_reusable(sample_reservoir))
+            if (!surface_compatible(current_key, sample_key) || !reservoir_pool_reusable(sample_reservoir))
             {
                 continue;
             }
@@ -803,17 +986,43 @@ struct RtRestirDI
             // spatial reuse 只读取当前帧邻域 temporal reservoir，并按当前像素 surface 重算 target。
             // 它只用于当前帧 final reservoir，不能作为下一帧 temporal history。
             RtLightCandidate sample_candidate;
-            const float sample_target = target_at_surface(sample_reservoir.sample_key, current_surface, sample_candidate);
-            if (combine_reservoirs(result, sample_reservoir, sample_target, random_seed))
+            const float sample_target = sample_reservoir.valid
+                ? target_at_surface(sample_reservoir.sample_key, current_surface,
+                    normalize(engine::binding::per_frame_data.camera_pos - current_surface.position), sample_candidate) : 0.0f;
+            RtRestirJacobian jacobian = RtRestirJacobian::identity();
+            if (sample_target > 0.0f)
+            {
+                const RtLightCandidate source_candidate = RtDirectLighting::reconstruct_candidate_from_key(
+                    sample_reservoir.sample_key, surface_from_key(sample_key));
+                jacobian = RtRestirJacobian::between(source_candidate, sample_candidate);
+            }
+            if (combine_reservoirs(result, sample_reservoir, sample_target, jacobian, random_seed))
             {
                 selected_neighbor = int(i);
             }
+            if (result.failed)
+                return result;
         }
 
+        if (result.failed)
+            return result;
         if (result.valid)
         {
-            float numerator = result.target;
-            float denominator = result.target * center_m;
+            const RtLightCandidate selected_at_current = RtDirectLighting::reconstruct_candidate_from_key(result.sample_key, current_surface);
+            RtRestirNormalization numerator = RtRestirNormalization::empty();
+            numerator.add(result.target, 1.0f, RtRestirJacobian::identity());
+            if (!numerator.valid)
+            {
+                result.invalidate();
+                return result;
+            }
+            RtRestirNormalization normalization = RtRestirNormalization::empty();
+            normalization.add(result.target, center_m, RtRestirJacobian::identity());
+            if (!normalization.valid)
+            {
+                result.invalidate();
+                return result;
+            }
             for (uint i = 0; i < spatial_sample_count; ++i)
             {
                 const int2 sample_pixel = int2(thread_id) + spatial_neighbor_offset(start_index + i);
@@ -824,21 +1033,35 @@ struct RtRestirDI
                 const uint2 sample_coord = uint2(sample_pixel);
                 const RtPrimarySurfaceKey sample_key = load_surface_key(sample_coord);
                 const RtReservoir sample_reservoir = load_temporal(sample_coord);
-                if (!surface_compatible(current_key, sample_key) || !reservoir_reusable(sample_reservoir))
+                if (!surface_compatible(current_key, sample_key) || !reservoir_pool_reusable(sample_reservoir))
                 {
                     continue;
                 }
 
                 const RtSurfaceHit sample_surface = surface_from_key(sample_key);
                 RtLightCandidate selected_at_sample;
-                const float sample_selected_target = target_at_surface(result.sample_key, sample_surface, selected_at_sample);
+                const float sample_selected_target = target_at_surface(result.sample_key, sample_surface,
+                    normalize(engine::binding::per_frame_data.camera_pos - sample_surface.position), selected_at_sample);
+                const RtRestirJacobian jacobian = sample_selected_target > 0.0f
+                    ? RtRestirJacobian::between(selected_at_current, selected_at_sample) : RtRestirJacobian::identity();
                 if (selected_neighbor == int(i))
                 {
-                    numerator = sample_selected_target;
+                    numerator = RtRestirNormalization::empty();
+                    numerator.add(sample_selected_target, 1.0f, jacobian);
+                    if (!numerator.valid)
+                    {
+                        result.invalidate();
+                        return result;
+                    }
                 }
-                denominator += sample_selected_target * max(sample_reservoir.m, 1.0f);
+                normalization.add(sample_selected_target, sample_reservoir.m, jacobian);
+                if (!normalization.valid)
+                {
+                    result.invalidate();
+                    return result;
+                }
             }
-            bias_correction_normalization(result, numerator, denominator);
+            bias_correction_normalization(result, numerator, normalization);
         }
 
         return result;
@@ -886,11 +1109,6 @@ struct RtRestirDI
         }
 
         const float3 view_dir = normalize(engine::binding::per_frame_data.camera_pos - surface.position);
-        const float current_target = RtDirectLighting::candidate_target(candidate, surface, view_dir);
-        if (current_target <= 0.0f)
-        {
-            return RtDirectLightingSample::empty();
-        }
         return RtDirectLighting::shade_reservoir_candidate(
             candidate,
             surface,
@@ -925,35 +1143,33 @@ struct RtRestirDI
 
     static void run_final_phase(uint2 thread_id)
     {
-        const RtReservoir initial = load_initial(thread_id);
-        // InitialOnly 不执行 temporal phase；temporal target 可能仍保存旧 frame label 的内容。
-        // ReSTIR temporal debug 必须只在 temporal reuse 实际参与当前 mode 时读取 temporal target。
-        const RtReservoir temporal = temporal_enabled() ? load_temporal(thread_id) : RtReservoir::empty();
-        const RtReservoir reservoir = selected_final_reservoir(thread_id);
-        const RtDirectLightingSample final_sample = shade_final_reservoir(thread_id, reservoir);
-
         if (push_const.channel == RT_DEBUG_RESTIR_INITIAL_WEIGHT)
         {
+            const RtReservoir initial = load_initial(thread_id);
             const float value = initial.valid ? saturate(log2(1.0f + initial.weight_sum) / 8.0f) : 0.0f;
             renderer::render_passes::realtime_rt::rt_single_frame_output.Store(thread_id, float4(float3(value), 1.0f));
             return;
         }
         if (push_const.channel == RT_DEBUG_RESTIR_TEMPORAL_VALID)
         {
+            /// InitialOnly 不执行 temporal phase；不读取该 FIF 槽的旧内容。
+            const RtReservoir temporal = temporal_enabled() ? load_temporal(thread_id) : RtReservoir::empty();
             const float valid_value = temporal.valid ? 1.0f : 0.0f;
             const float age_value = temporal.valid ? saturate(temporal.source_age / 8.0f) : 0.0f;
             renderer::render_passes::realtime_rt::rt_single_frame_output.Store(thread_id, float4(valid_value, 1.0f - age_value, age_value, 1.0f));
             return;
         }
+        if (push_const.channel != 0 && push_const.channel != RT_DEBUG_RESTIR_FINAL_CONTRIBUTION)
+        {
+            /// surface/path debug 已在 path phase 写出；不覆盖图像，也不执行无人消费的 visibility/BRDF。
+            return;
+        }
+
+        const RtReservoir reservoir = selected_final_reservoir(thread_id);
+        const RtDirectLightingSample final_sample = shade_final_reservoir(thread_id, reservoir);
         if (push_const.channel == RT_DEBUG_RESTIR_FINAL_CONTRIBUTION)
         {
             renderer::render_passes::realtime_rt::rt_single_frame_output.Store(thread_id, float4(final_sample.contribution, 1.0f));
-            return;
-        }
-        if (push_const.channel != 0)
-        {
-            // 非 ReSTIR debug channel 的 surface/path debug 已在 path phase 写出。
-            // final phase 不覆盖这些图像，避免把 ReSTIR direct contribution 混入旧 debug 语义。
             return;
         }
 

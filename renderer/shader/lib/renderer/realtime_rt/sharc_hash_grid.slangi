@@ -1,8 +1,8 @@
 /// @file sharc_hash_grid.slangi
 /// @brief SHARC 世界空间哈希网格（移植自 NVIDIA RTXGI SHARC `HashGridCommon.h`，v1.6）。
 ///
-/// 仅做 Slang 适配：强制 64-bit atomics 分支（移除 lock buffer 与 GLSL 分支），其余哈希、
-/// level、voxel、insert/find 逻辑与上游保持一致。buffer 以 `RWStructuredBuffer` 成员形式由
+/// Slang 适配强制 64-bit atomics 分支（移除 lock buffer 与 GLSL 分支），并修正插入失败索引；
+/// 其余哈希、level、voxel、insert/find 逻辑沿用上游。buffer 以 `RWStructuredBuffer` 成员形式由
 /// `HashMapData` 承载，调用方从 pass-local 绑定的全局 buffer 填入。坐标系与上游一致：
 /// 世界空间位置经 `sceneScale` / `logarithmBase` 映射到对数分层 voxel。
 ///
@@ -168,6 +168,12 @@ void HashMapAtomicCompareExchange(in HashMapData hashMapData, in uint dstOffset,
 
 bool HashMapInsert(in HashMapData hashMapData, const HashGridKey hashKey, out HashGridIndex cacheIndex)
 {
+    if (hashMapData.capacity == 0)
+    {
+        cacheIndex = HASH_GRID_INVALID_CACHE_INDEX;
+        return false;
+    }
+
     const uint baseSlot = HashGridGetBaseSlot(hashKey, hashMapData.capacity);
     HASH_GRID_LOOP_ATTR
     for (uint bucketOffset = 0; bucketOffset < HASH_GRID_HASH_MAP_BUCKET_SIZE; ++bucketOffset)
@@ -183,13 +189,21 @@ bool HashMapInsert(in HashMapData hashMapData, const HashGridKey hashKey, out Ha
         }
     }
 
-    cacheIndex = 0;
+    /// 上游 v1.6.5.0 在此返回 0，但 Entry 调用方消费输出索引；失败不能误指向有效槽 0。
+    cacheIndex = HASH_GRID_INVALID_CACHE_INDEX;
 
     return false;
 }
 
 bool HashMapFind(in HashMapData hashMapData, const HashGridKey hashKey, inout HashGridIndex cacheIndex, out uint bucketOffset)
 {
+    if (hashMapData.capacity == 0)
+    {
+        cacheIndex = HASH_GRID_INVALID_CACHE_INDEX;
+        bucketOffset = 0;
+        return false;
+    }
+
     const uint baseSlot = HashGridGetBaseSlot(hashKey, hashMapData.capacity);
     HASH_GRID_LOOP_ATTR
     for (bucketOffset = 0; bucketOffset < HASH_GRID_HASH_MAP_BUCKET_SIZE; ++bucketOffset)

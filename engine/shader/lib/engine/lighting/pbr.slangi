@@ -8,6 +8,7 @@
 ///
 /// 构造时缓存 D/F/V 和常用 dot 项，避免路径采样、NEE 和 PDF 计算各自重复推导。
 /// `roughness` 期望已经是 alpha/real roughness；调用方负责把艺术粗糙度平方后传入。
+/// normal、view 和 h 必须为单位向量；delta 表面由调用方单独处理。
 struct SpecularBrdf
 {
     float3 f0;
@@ -57,13 +58,13 @@ struct SpecularBrdf
 
     /// Trowbridge-Reitz GGX normal distribution function。
     ///
-    /// 这里使用数值保护后的等价形式；roughness 接近 0 时仍可能产生很尖锐的分布，
-    /// 因此分母必须保留 epsilon。
+    /// 用 |N x H|² 保留小角度信息，避免 1-(NdotH)² 在低粗糙度高光处相消。
+    /// 工程参考：Filament v1.77.1 surface_brdf.fs::D_GGX；模型与适配边界见 sampling 设计文档。
     float ndf_ggx()
     {
-        // 注意，当粗糙度接近 0 时，可能导致除零错误
+        const float3 nxh = cross(this.normal, this.h);
         const float a = ndoth * roughness;
-        const float k = roughness / max(1.f - this.ndoth * this.ndoth + a * a, 1e-7f);
+        const float k = roughness / max(dot(nxh, nxh) + a * a, 1e-7f);
         return k * k * (1.f / M_PI);
     }
 
@@ -83,19 +84,22 @@ struct SpecularBrdf
         return 0.5f / max(ggx_v + ggx_l, 1e-7f);
     }
 
-    /// 基于 NDF 进行采样，得到的是半程向量 H
-    /// PDF 公式：D * NdotH / (4 * NdotV)
+    /// 在完整半球按 D(H) * NdotH 采样半程向量；反射方向 PDF 为 D * NdotH / (4 * VdotH)。
+    /// Random::rnd 返回 [0,1)，不能截断随机数区间，否则采样分布与 ggx_pdf 不一致。
     static float3 ggx_sample(inout uint rand_seed, const float roughness, const float3 normal)
     {
         float3 tangent, bitangent;
         Sample::create_local_coord(normal, tangent, bitangent);
 
-        const float2 rand_val = float2(clamp(Random::rnd(rand_seed), 0.001f, 0.999f), Random::rnd(rand_seed));
-        // GGX NDF 采样
+        const float2 rand_val = float2(Random::rnd(rand_seed), Random::rnd(rand_seed));
+        /// 正项相加避免 alpha² 很小时的相消；u<1 保证分母为正。
+        /// sin² 单独求值，避免从接近 1 的 cos² 相减丢失小角度信息。
         const float a2 = roughness * roughness;
-        const float denominator = (a2 - 1.f) * rand_val.x + 1.f;
-        const float cos_theta_h = saturate(sqrt(max(0.0f, (1.0 - rand_val.x) / max(1e-7f, denominator))));
-        const float sin_theta_h = sqrt(max(0.0f, 1.0f - cos_theta_h * cos_theta_h));
+        const float one_minus_u = 1.0f - rand_val.x;
+        const float a2_u = a2 * rand_val.x;
+        const float denominator = one_minus_u + a2_u;
+        const float cos_theta_h = sqrt(one_minus_u / denominator);
+        const float sin_theta_h = sqrt(a2_u / denominator);
         const float phi_h = rand_val.y * M_PI * 2.0f;
 
         // 获取 GGX NDF 样本（即半程向量）

@@ -102,8 +102,15 @@ DLSS 的唯一 pending reset 属于 `DlssSrState`。after_prepare 只合并 rese
 Streamline 成功后报告的显存预算警告仍属于 Succeeded，由 C++ evaluate 封装按 SDK 契约转换；
 警告保留日志，不因此 reset。其它失败由 adapter 直接中止录制，具体 SDK 边界见 binding 模块 README。
 
-ReSTIR 不再依赖 DLSS reset。CPU 独立检查模式、连续帧、appearance/sky 版本及自己的显式 reset；
-shader 保留资源版本、表面与遮挡检查。普通 transform 仍使其场景版本失效，Offline 累计也仍重启。
+ReSTIR 不再依赖 DLSS reset。CPU 独立检查模式、sky sampling mode、emissive/analytic NEE 开关、
+连续帧、appearance/sky 版本及自己的显式 reset；采样配置随 graph 捕获，只在该帧提交返回后确认。
+配置变化也必须拒绝没有 winner key 的零估计池；SDR 后处理不进入该签名。shader 在接受池之前
+校验资源版本与有效 winner 的 class mask，并保留表面与遮挡检查。普通 transform 仍使其场景
+版本失效，Offline 累计也仍重启。
+
+ReSTIR 的提交候选同时捕获本帧实际 sampling jitter，随 reservoir 提交确认后才推进。
+history 有效时，以当前 jitter 减上次提交 jitter 修正数组索引；失效时差值归零。
+该值通过 Realtime RT push constant 传递，不从 frame_id 推算，也不修改共享 MV 或 DLSS 序列。
 
 ## Motion vector 输入
 

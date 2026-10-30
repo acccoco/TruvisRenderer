@@ -27,7 +27,7 @@ use crate::realtime::resources::{
     DlssOutputTargets, DlssRrInputTargets, DlssSrExposureTarget, DlssSrInputTargets, MainViewTargets, RestirDiTargets,
     RestirReservoirTarget, RestirSurfaceKeyTarget, RtWorkingTargets, SharcTargets,
 };
-use crate::shared::{ImageTarget, PathTracingCommonSettings, PathTracingDebugChannel};
+use crate::shared::{ImageTarget, PathTracingCommonSettings, PathTracingDebugChannel, SkySamplingMode};
 
 mod gbuffer;
 mod resources;
@@ -54,20 +54,68 @@ pub struct RealtimeRenderSubsystem {
     /// 生命周期跟随 `RealtimeRenderSubsystem`，由 Truvis / Cornell 等 RT app 在 ImGui update 阶段修改，
     /// 再在构建 render graph 时显式传给相关 pass。
     settings: RealtimeRenderSettings,
-    /// ReSTIR DI 的最小 CPU history signature；用于 mode/reset 变化时切断上一帧 history。
-    restir_last_mode: RtRestirDiMode,
+    /// 上一实际提交帧的 ReSTIR 采样配置；zero pool 没有 winner key，也必须随策略变化失效。
+    restir_last_settings: Option<RestirDiHistorySettings>,
     /// 独立于 DLSS，保留 transform/材质和环境编辑的保守失效；shader 仍校验资源版本。
     restir_last_scene_versions: (u64, u64),
     /// ReSTIR 读取相邻 FIF，跳过主视图后不能误用旧 slot 的 reservoir。
     restir_last_frame_id: Option<u64>,
+    /// 与上一实际提交的 reservoir 同源；不从 DLSS 当前序列索引推算历史采样位置。
+    restir_last_jitter_px: [f32; 2],
+    /// 上次已提交维护的缓存语义；Off / 无 TLAS 提交后置空，建图本身不能确认 reset。
+    sharc_last_signature: Option<SharcHistorySignature>,
 }
 
 /// 本次 Realtime graph 的历史候选；不持有资源，且只能消费一次。
 #[must_use]
 pub struct RealtimeFrameCommit {
-    mode: RtRestirDiMode,
+    settings: RestirDiHistorySettings,
     scene_versions: (u64, u64),
     frame_id: Option<u64>,
+    jitter_px: [f32; 2],
+    sharc_signature: Option<SharcHistorySignature>,
+}
+
+/// 世界空间 cache 的采样配置身份；普通场景编辑允许历史逐渐收敛，不触发全量清空。
+/// 资源重建和已提交 Off/无 TLAS 仍切断历史；相机、屏幕尺寸与后处理不改变该身份。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SharcHistorySignature {
+    scene_scale_bits: u32,
+    sky_sampling_mode: SkySamplingMode,
+    emissive_nee_enabled: bool,
+    analytic_nee_enabled: bool,
+}
+
+impl SharcHistorySignature {
+    fn new(scene_scale: f32, common: &PathTracingCommonSettings) -> Self {
+        assert!(scene_scale.is_finite() && scene_scale > 0.0, "SHARC scene scale must be finite and positive");
+        Self {
+            scene_scale_bits: scene_scale.to_bits(),
+            sky_sampling_mode: common.sky_sampling_mode,
+            emissive_nee_enabled: common.emissive_nee_enabled,
+            analytic_nee_enabled: common.analytic_nee_enabled,
+        }
+    }
+}
+
+/// 只包含会改变 primary DI proposal/target 的配置；SDR 后处理不进入 reservoir 历史签名。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RestirDiHistorySettings {
+    mode: RtRestirDiMode,
+    sky_sampling_mode: SkySamplingMode,
+    emissive_nee_enabled: bool,
+    analytic_nee_enabled: bool,
+}
+
+impl RestirDiHistorySettings {
+    fn new(mode: RtRestirDiMode, common: &PathTracingCommonSettings) -> Self {
+        Self {
+            mode,
+            sky_sampling_mode: common.sky_sampling_mode,
+            emissive_nee_enabled: common.emissive_nee_enabled,
+            analytic_nee_enabled: common.analytic_nee_enabled,
+        }
+    }
 }
 
 /// Realtime 渲染子系统自有配置。
@@ -87,11 +135,11 @@ pub struct RealtimeRenderSettings {
     pub restir_di_mode: RtRestirDiMode,
     /// SHARC world-space radiance cache 模式。
     ///
-    /// 默认 Off；`Update` 只维护缓存不查询（路线图第八阶段，画面与 Off 一致）。query 接入留到第九阶段。
+    /// 默认 Off；`Update` 只维护，`On` 允许后续 bounce 命中后终止路径。
     pub sharc_mode: RtSharcMode,
     /// SHARC scene scale，控制 voxel 物理尺寸。值越大 voxel 越小、越精细但命中率越低。
     ///
-    /// 合理值取决于场景单位，需按场景调；只影响缓存粒度，不改变正常渲染（第八阶段不查询）。
+    /// 必须有限且为正；改变粒度后在下一次维护前清空旧缓存。
     pub sharc_scene_scale: f32,
 }
 
@@ -285,6 +333,8 @@ impl RealtimeRenderResources {
             sharc_targets.hash_entries_buffer(),
             sharc_targets.accumulation_buffer(),
             sharc_targets.resolved_buffer(),
+            sharc_targets.resolve_hash_entries_buffer(),
+            sharc_targets.resolve_history_buffer(),
         );
         let dlss_sr_pass = DlssSrPass::new();
         let dlss_rr_pass = DlssRrPass::new();
@@ -468,6 +518,7 @@ impl RealtimeRenderResources {
 impl SubsystemLifecycle for RealtimeRenderSubsystem {
     fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
         self.resources = Some(RealtimeRenderResources::new(ctx));
+        self.sharc_last_signature = None;
     }
 
     fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
@@ -548,9 +599,11 @@ impl SubsystemLifecycle for RealtimeRenderSubsystem {
 impl RealtimeRenderSubsystem {
     /// 只在对应 queue submit 正常返回后确认；无 TLAS 的已提交清屏切断历史连续性。
     pub fn finish_rendered_frame(&mut self, commit: RealtimeFrameCommit) {
-        self.restir_last_mode = commit.mode;
+        self.restir_last_settings = Some(commit.settings);
         self.restir_last_scene_versions = commit.scene_versions;
         self.restir_last_frame_id = commit.frame_id;
+        self.restir_last_jitter_px = commit.jitter_px;
+        self.sharc_last_signature = commit.sharc_signature;
     }
 
     pub fn settings(&self) -> &RealtimeRenderSettings {
@@ -603,15 +656,30 @@ impl RealtimeRenderSubsystem {
         let scene_signature = ctx.render_scene.accum_signature(frame_label);
         let scene_versions = (scene_signature.sky_revision, scene_signature.appearance_revision);
         let has_tlas = ctx.render_scene.tlas_handle(frame_label).is_some();
+        let sharc_signature = (has_tlas && sharc_mode != RtSharcMode::Off)
+            .then(|| SharcHistorySignature::new(sharc_scene_scale, common_settings));
+        let sharc_reset = sharc_signature.is_some() && self.sharc_last_signature != sharc_signature;
+        let history_settings = RestirDiHistorySettings::new(restir_di_mode, common_settings);
         let restir_history_valid = restir_di_mode.is_enabled()
             && self.restir_last_scene_versions == scene_versions
             && self.restir_last_frame_id.is_some_and(|previous| previous.checked_add(1) == Some(frame_id))
-            && self.restir_last_mode == restir_di_mode
+            && self.restir_last_settings == Some(history_settings)
             && !history_reset;
+        let jitter_px = dlss_snapshot.constants.sampling_jitter_offset;
+        let restir_history_jitter_delta = if restir_history_valid {
+            [
+                jitter_px[0] - self.restir_last_jitter_px[0],
+                jitter_px[1] - self.restir_last_jitter_px[1],
+            ]
+        } else {
+            [0.0; 2]
+        };
         let commit = RealtimeFrameCommit {
-            mode: restir_di_mode,
+            settings: history_settings,
             scene_versions,
             frame_id: has_tlas.then_some(frame_id),
+            jitter_px,
+            sharc_signature,
         };
 
         // compute graph 导入的是 renderer-owned 外部图像；RenderGraph 只接管本图内的状态转换，
@@ -722,7 +790,8 @@ impl RealtimeRenderSubsystem {
             rg_builder,
             "restir-di-temporal",
             restir_di_targets.temporal(frame_label),
-            RgImageState::UNDEFINED_TOP,
+            // 此槽在上一轮写入后又被下一帧读作 history；FIF 等待未单独覆盖该额外读取。
+            RgImageState::STORAGE_READ_WRITE_RAY_TRACING,
         );
         let restir_final = import_restir_reservoir(
             rg_builder,
@@ -743,7 +812,8 @@ impl RealtimeRenderSubsystem {
             rg_builder,
             "restir-di-surface",
             restir_di_targets.surface_key(frame_label),
-            RgImageState::UNDEFINED_TOP,
+            // 保持 GENERAL 并显式等待先前 RT 读取，不能用 UNDEFINED 提前丢弃 history 布局。
+            RgImageState::STORAGE_READ_WRITE_RAY_TRACING,
         );
         let restir_history_surface = import_restir_surface_key(
             rg_builder,
@@ -805,6 +875,7 @@ impl RealtimeRenderSubsystem {
             "ray-tracing",
             RealtimeRtRgPass {
                 rt_pass: &resources.realtime_rt_pass,
+                device: ctx.resource_ctx.device(),
                 record_ctx,
                 render_scene: ctx.render_scene,
                 single_frame_image,
@@ -816,9 +887,11 @@ impl RealtimeRenderSubsystem {
                 analytic_nee_enabled,
                 restir_di_mode: restir_di_mode.shader_mode(),
                 restir_history_valid,
+                restir_history_jitter_delta,
                 sharc_mode: sharc_mode.shader_mode(),
                 sharc_capacity: sharc_targets.capacity(),
                 sharc_scene_scale,
+                sharc_reset,
                 restir_initial,
                 restir_temporal,
                 restir_final,
@@ -1117,8 +1190,7 @@ fn import_restir_surface_key<'a>(
     target: RestirSurfaceKeyTarget,
     initial_state: RgImageState,
 ) -> RestirSurfaceKeyRgImages {
-    // surface key 的 A/B/C 三张 RGBA32F 图像是 ReSTIR 的高精度 primary surface history。
-    // 它和 RR/SR GBuffer 不是同一契约，不能在 helper 中合并或改用压缩 GBuffer 资源。
+    // 四张 surface key 保留位置、材质和两种法线；不能改用压缩 RR/SR GBuffer。
     RestirSurfaceKeyRgImages {
         a: rg_builder.import_image(
             format!("{name_prefix}-a"),
@@ -1141,6 +1213,14 @@ fn import_restir_surface_key<'a>(
             target.c.image,
             Some(target.c.view),
             target.c.format,
+            initial_state,
+            None,
+        ),
+        d: rg_builder.import_image(
+            format!("{name_prefix}-d"),
+            target.d.image,
+            Some(target.d.view),
+            target.d.format,
             initial_state,
             None,
         ),

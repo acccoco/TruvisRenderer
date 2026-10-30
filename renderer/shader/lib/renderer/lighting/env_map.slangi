@@ -14,38 +14,14 @@
 
 struct EnvMap
 {
-    /// 将方向向量转换为球面角度。
-    /// 坐标系约定：phi=0 指向 -Z，phi=90° 指向 -X，Y 轴向上。
-    static float2 dir_to_angle(const float3 dir)
-    {
-        const float phi = atan2(dir.x, dir.z);
-        const float theta = asin(dir.y);
-        return float2(phi, theta);
-    }
-
-    /// 将球面角度转换为等距圆柱投影 UV。
-    /// U 方向横向环绕，V=0 对应上方，匹配项目 sky texture 的采样约定。
-    static float2 angle_to_uv(const float2 angle)
-    {
-        return float2(angle.x / M_PI * 0.5 + 0.5, 0.5 - angle.y / M_PI);
-    }
-
-    /// 从方向向量直接获取环境贴图 UV。
+    /// U 横向环绕；phi=0 指向 +Z、phi=90° 指向 +X；V=0 对应北极。
+    /// 极区 y 可能已舍入到 ±1，atan2 保留水平分量中的纬度信息；直接计算
+    /// 北极夹角，避免先求 latitude 再做 0.5-latitude/π 的抵消。
     static float2 dir_to_uv(const float3 dir)
     {
-        return angle_to_uv(dir_to_angle(dir));
-    }
-
-    /// 将等距圆柱投影 UV 转回世界方向。
-    ///
-    /// 这是 `dir_to_uv` 的反向映射：phi 使用 `atan2(x, z)` 约定，V 方向按纬度从北极到南极。
-    static float3 uv_to_dir(const float2 uv)
-    {
-        const float phi = (uv.x - 0.5f) * 2.0f * M_PI;
-        const float theta = (0.5f - uv.y) * M_PI;
-        const float y = sin(theta);
-        const float horizontal = cos(theta);
-        return normalize(float3(horizontal * sin(phi), y, horizontal * cos(phi)));
+        const float phi = atan2(dir.x, dir.z);
+        const float polar_angle = atan2(length(dir.xz), dir.y);
+        return float2(phi / M_PI * 0.5f + 0.5f, polar_angle / M_PI);
     }
 
 // ============================================================================
@@ -82,14 +58,30 @@ struct EnvMap
         return y * width + x;
     }
 
-    static void row_sin_bounds(const uint row, const uint height, out float out_sin_bottom, out float out_sin_top)
+    /// 返回行内均匀 solid-angle 样本的 (水平半径, Y)，不经过 UV 的反三角往返。
+    /// 极区用 q=1-cos(alpha)=2*sin²(alpha/2) 表达距最近极点的球冠面积，避免
+    /// 先将 y 舍入到 ±1 再恢复半径。仅整行距极点不超过 45° 时使用球冠分支；
+    /// 中部直接插值 y，避免在赤道附近相减大球冠面积。
+    static float2 sample_row(const uint row, const uint height, const float random_value)
     {
-        const float v0 = (float)row / (float)height;
-        const float v1 = (float)(row + 1) / (float)height;
-        const float theta_top = (0.5f - v0) * M_PI;
-        const float theta_bottom = (0.5f - v1) * M_PI;
-        out_sin_top = sin(theta_top);
-        out_sin_bottom = sin(theta_bottom);
+        const bool north = row < height / 2;
+        const uint pole_row = min(row, height - 1 - row);
+        if ((pole_row + 1) * 4 <= height)
+        {
+            const float half_step = 0.5f * M_PI / (float)height;
+            const float near_sin = sin((float)pole_row * half_step);
+            const float far_sin = sin((float)(pole_row + 1) * half_step);
+            const float near_q = 2.0f * near_sin * near_sin;
+            const float far_q = 2.0f * far_sin * far_sin;
+            const float q = north ? lerp(far_q, near_q, random_value) : lerp(near_q, far_q, random_value);
+            return float2(sqrt(q * (2.0f - q)), (north ? 1.0f : -1.0f) * (1.0f - q));
+        }
+
+        const float half_step = 0.5f * M_PI / (float)height;
+        const float top = sin(((float)height - 2.0f * (float)row) * half_step);
+        const float bottom = sin(((float)height - 2.0f * (float)(row + 1)) * half_step);
+        const float y = lerp(bottom, top, random_value);
+        return float2(sqrt(max(0.0f, (1.0f - y) * (1.0f + y))), y);
     }
 
     static float distribution_pdf_from_index(const uint index)
@@ -141,8 +133,8 @@ struct EnvMap
 
     /// 按 runtime 生成的 alias table 采样 HDRI。
     ///
-    /// 选中 texel 后在该 texel 覆盖的 solid angle 内均匀采样，保证返回的
-    /// `solid_angle_pdf` 与 `pdf(dir)` 查询入口一致。
+    /// 选中 texel 后在该 texel 覆盖的 solid angle 内均匀采样，返回该 cell 的密度。
+    /// 连续域下它与 pdf(dir) 一致；浮点接缝/行列边界的舍入仍有误差，不能靠重查 PDF 修复分布。
     static void sample_importance(inout uint seed, out float3 out_dir, out float out_pdf)
     {
         if (!importance_enabled())
@@ -173,14 +165,9 @@ struct EnvMap
         const uint y = selected / width;
         const float u = ((float)x + Random::rnd(seed)) / (float)width;
 
-        float sin_bottom;
-        float sin_top;
-        row_sin_bounds(y, height, sin_bottom, sin_top);
-        const float sphere_y = lerp(sin_bottom, sin_top, Random::rnd(seed));
-        const float theta = asin(clamp(sphere_y, -1.0f, 1.0f));
-        const float v = 0.5f - theta / M_PI;
-
-        out_dir = uv_to_dir(float2(u, v));
+        const float2 row_sample = sample_row(y, height, Random::rnd(seed));
+        const float phi = (u - 0.5f) * 2.0f * M_PI;
+        out_dir = float3(row_sample.x * sin(phi), row_sample.y, row_sample.x * cos(phi));
         // alias 表异常或零权重 texel 会让调用方按零 PDF 丢弃候选；这里不能回退
         // uniform，否则 sample(dir) 与 pdf(dir) 会使用两套不同概率度量。
         out_pdf = selected_pdf;

@@ -10,6 +10,7 @@ use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::descriptors::descriptor::{GfxDescriptorSet, GfxDescriptorSetLayout};
 use truvis_gfx::descriptors::descriptor_pool::{GfxDescriptorPool, GfxDescriptorPoolCreateInfo};
+use truvis_gfx::foundation::device::GfxDevice;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_gfx::{
@@ -18,6 +19,7 @@ use truvis_gfx::{
     pipelines::shader::{GfxShaderGroupInfo, GfxShaderModuleCache, GfxShaderStageInfo},
     resources::special_buffers::sbt_buffer::GfxSBTBuffer,
 };
+use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_graph::render_graph::{RgImageHandle, RgImageState, RgPass, RgPassBuilder, RgPassContext};
@@ -134,6 +136,7 @@ pub struct RestirSurfaceKeyRgImages {
     pub a: RgImageHandle,
     pub b: RgImageHandle,
     pub c: RgImageHandle,
+    pub d: RgImageHandle,
 }
 
 /// ReSTIR DI reservoir pass image handles。
@@ -154,7 +157,7 @@ pub struct RestirReservoirPassImages {
 
 /// ReSTIR DI primary surface key pass image handles。
 ///
-/// 这三张图像在 pass 内按 current/history 分别绑定。它们保存 ReSTIR 自己的 primary
+/// 这四张图像在 pass 内按 current/history 分别绑定。它们保存 ReSTIR 自己的 primary
 /// surface 签名，不能被 DLSS/RR GBuffer 替代。
 #[derive(Clone, Copy)]
 pub struct RestirSurfaceKeyPassImages {
@@ -164,6 +167,8 @@ pub struct RestirSurfaceKeyPassImages {
     pub b_view: GfxImageViewHandle,
     pub c: GfxImageHandle,
     pub c_view: GfxImageViewHandle,
+    pub d: GfxImageHandle,
+    pub d_view: GfxImageViewHandle,
 }
 
 /// 传入 pass 的数据
@@ -188,6 +193,9 @@ pub struct RealtimeRtPassData {
     /// 该标志只表达 CPU 侧 frame/reset/mode 连续性；scene light 版本仍由 shader metadata 拒绝。
     pub restir_history_valid: bool,
 
+    /// 当前减上一提交帧的采样 jitter，单位像素；只修正 ReSTIR 的历史数组索引。
+    pub restir_history_jitter_delta: [f32; 2],
+
     // ========== SHARC world-space radiance cache ==========
     // buffer 句柄不在这里传：它们是持久资源，已在 pass 创建时写入 SHARC regular descriptor set。
     // 这里只传每帧可调的 push constant 参数。
@@ -197,6 +205,8 @@ pub struct RealtimeRtPassData {
     pub sharc_capacity: u32,
     /// SHARC scene scale，控制 voxel 物理尺寸。
     pub sharc_scene_scale: f32,
+    /// 本次维护前清理旧语义的 cache；只影响命令录制，不进入 shader ABI。
+    pub sharc_reset: bool,
 
     // ========== ReSTIR DI 数据 ==========
     pub restir_initial: RestirReservoirPassImages,
@@ -396,47 +406,55 @@ struct RealtimeRtDescriptorBinding {
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
     _restir_history_d: (),
+}
 
-    /// Current / previous primary surface key。
-    ///
-    /// current key 由 path phase 写入并被 temporal/spatial/final 读取；previous key
-    /// 只参与 temporal surface rejection，不参与 DLSS/RR history。
-    #[binding = 26]
+/// Surface key 单独使用 FIF regular set，保留完整几何法线且不增加 push descriptor 数量。
+#[derive(DescriptorBinding)]
+struct RestirSurfaceDescriptorBinding {
+    #[binding = 0]
     #[descriptor_type = "STORAGE_IMAGE"]
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
     _restir_surface_a: (),
-    #[binding = 27]
+    #[binding = 1]
     #[descriptor_type = "STORAGE_IMAGE"]
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
     _restir_surface_b: (),
-    #[binding = 28]
+    #[binding = 2]
     #[descriptor_type = "STORAGE_IMAGE"]
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
     _restir_surface_c: (),
-    #[binding = 29]
+    #[binding = 3]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_surface_d: (),
+    #[binding = 4]
     #[descriptor_type = "STORAGE_IMAGE"]
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
     _restir_history_surface_a: (),
-    #[binding = 30]
+    #[binding = 5]
     #[descriptor_type = "STORAGE_IMAGE"]
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
     _restir_history_surface_b: (),
-    #[binding = 31]
+    #[binding = 6]
     #[descriptor_type = "STORAGE_IMAGE"]
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
     _restir_history_surface_c: (),
+    #[binding = 7]
+    #[descriptor_type = "STORAGE_IMAGE"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _restir_history_surface_d: (),
 }
 
-/// SHARC 世界空间缓存 buffer 的独立 push descriptor set。
-///
-/// 单独成 set 而不是塞进 `RealtimeRtDescriptorBinding`：后者已有 32 个 binding，正好等于多数
-/// 设备的 `maxPushDescriptors`，再加会超限。SHARC 三个 buffer 即使 Off 也绑定（raygen 静态引用）。
+/// SHARC 世界空间缓存 buffer 的独立 regular descriptor set。
+/// 持久 buffer 与按 FIF 更新的 surface descriptor 分别管理；即使 Off 也绑定静态引用资源。
 #[derive(DescriptorBinding)]
 struct SharcDescriptorBinding {
     /// hash entry buffer（uint64 hash key）。
@@ -457,6 +475,17 @@ struct SharcDescriptorBinding {
     #[stage = "RAYGEN_KHR"]
     #[count = 1]
     _sharc_resolved: (),
+    /// Resolve 快照，在独立 dispatch 中完整覆盖。
+    #[binding = 3]
+    #[descriptor_type = "STORAGE_BUFFER"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _sharc_resolve_hash_entries: (),
+    #[binding = 4]
+    #[descriptor_type = "STORAGE_BUFFER"]
+    #[stage = "RAYGEN_KHR"]
+    #[count = 1]
+    _sharc_resolve_history: (),
 }
 
 pub struct RealtimeRtPass {
@@ -471,6 +500,13 @@ pub struct RealtimeRtPass {
     sharc_descriptor_set_layout: GfxDescriptorSetLayout<SharcDescriptorBinding>,
     sharc_descriptor_pool: GfxDescriptorPool,
     sharc_descriptor_set: GfxDescriptorSet<SharcDescriptorBinding>,
+    /// 借用与 descriptor 相同的三个 cache buffer，供 reset fill；owner 仍为 SharcTargets。
+    sharc_cache_buffers: [vk::Buffer; 3],
+
+    /// 每 FIF 槽位一份；仅在 Runtime 等待该槽位完成后更新，避免覆盖仍在 GPU 使用的 binding。
+    surface_descriptor_set_layout: GfxDescriptorSetLayout<RestirSurfaceDescriptorBinding>,
+    surface_descriptor_pool: GfxDescriptorPool,
+    surface_descriptor_sets: [GfxDescriptorSet<RestirSurfaceDescriptorBinding>; FrameLabel::COUNT],
 }
 impl RealtimeRtPass {
     pub fn new(
@@ -481,8 +517,21 @@ impl RealtimeRtPass {
         sharc_hash_entries: vk::Buffer,
         sharc_accumulation: vk::Buffer,
         sharc_resolved: vk::Buffer,
+        sharc_resolve_hash_entries: vk::Buffer,
+        sharc_resolve_history: vk::Buffer,
     ) -> Self {
-        // 未交付资源留在 catch 外；每个成功步骤立即记录 owner，失败显式回收。
+        assert!(
+            unsafe {
+                device_info_ctx
+                    .instance()
+                    .ash_instance()
+                    .get_physical_device_properties(device_info_ctx.physical_device().vk_handle())
+            }
+            .limits
+            .max_bound_descriptor_sets
+                > gpu::renderer::render_passes::realtime_rt::SURFACE_SET_NUM,
+            "Realtime RT requires global, RT, SHARC and surface descriptor sets"
+        );
         let mut shader_module_cache = GfxShaderModuleCache::new();
         let mut rt_pipeline = GfxRtPipeline {
             pipeline: vk::Pipeline::null(),
@@ -493,6 +542,9 @@ impl RealtimeRtPass {
         let sharc_descriptor_set_layout;
         let sharc_descriptor_pool;
         let sharc_descriptor_set;
+        let surface_descriptor_set_layout;
+        let surface_descriptor_pool;
+        let surface_descriptor_sets;
         let stage_infos = SHADER_STAGES
             .values()
             .map(|stage| {
@@ -503,27 +555,27 @@ impl RealtimeRtPass {
             })
             .collect_vec();
 
-        let shader_groups = SHADER_GROUPS
-            .values()
-            .map(|group| vk::RayTracingShaderGroupCreateInfoKHR {
-                ty: group.ty,
-                general_shader: group.general,
-                any_hit_shader: group.any_hit,
-                closest_hit_shader: group.closest_hit,
-                intersection_shader: group.intersection,
-                ..Default::default()
-            })
-            .collect_vec();
+            let shader_groups = SHADER_GROUPS
+                .values()
+                .map(|group| vk::RayTracingShaderGroupCreateInfoKHR {
+                    ty: group.ty,
+                    general_shader: group.general,
+                    any_hit_shader: group.any_hit,
+                    closest_hit_shader: group.closest_hit,
+                    intersection_shader: group.intersection,
+                    ..Default::default()
+                })
+                .collect_vec();
 
-        let push_constant_range = vk::PushConstantRange::default()
-            .stage_flags(
-                vk::ShaderStageFlags::RAYGEN_KHR
-                    | vk::ShaderStageFlags::MISS_KHR
-                    | vk::ShaderStageFlags::ANY_HIT_KHR
-                    | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
-            )
-            .offset(0)
-            .size(size_of::<gpu::renderer::render_passes::realtime_rt::PushConstants>() as u32);
+            let push_constant_range = vk::PushConstantRange::default()
+                .stage_flags(
+                    vk::ShaderStageFlags::RAYGEN_KHR
+                        | vk::ShaderStageFlags::MISS_KHR
+                        | vk::ShaderStageFlags::ANY_HIT_KHR
+                        | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
+                )
+                .offset(0)
+                .size(size_of::<gpu::renderer::render_passes::realtime_rt::PushConstants>() as u32);
 
         rt_descriptor_set_layout = GfxDescriptorSetLayout::<RealtimeRtDescriptorBinding>::new(
             device_ctx,
@@ -538,11 +590,18 @@ impl RealtimeRtPass {
             "sharc-descriptor-set-layout",
         );
 
+        surface_descriptor_set_layout = GfxDescriptorSetLayout::<RestirSurfaceDescriptorBinding>::new(
+            device_ctx,
+            vk::DescriptorSetLayoutCreateFlags::empty(),
+            "restir-surface-descriptor-set-layout",
+        );
+
         rt_pipeline.pipeline_layout = {
-            // set 顺序必须与 shader 一致：global sets..., REALTIME_RT_SET_NUM(push), SHARC_SET_NUM(regular)。
+            // set 顺序与 shader ABI 一致：global、RT push、SHARC regular、surface regular。
             let mut descriptor_set_layouts = render_descriptor_sets.global_set_layouts();
             descriptor_set_layouts.push(rt_descriptor_set_layout.handle());
             descriptor_set_layouts.push(sharc_descriptor_set_layout.handle());
+            descriptor_set_layouts.push(surface_descriptor_set_layout.handle());
             let pipeline_layout_ci = vk::PipelineLayoutCreateInfo::default()
                 .set_layouts(&descriptor_set_layouts)
                 .push_constant_ranges(std::slice::from_ref(&push_constant_range));
@@ -591,6 +650,27 @@ impl RealtimeRtPass {
             "simple-rt-sbt",
         );
 
+        surface_descriptor_pool = GfxDescriptorPool::new(
+            device_ctx,
+            Rc::new(GfxDescriptorPoolCreateInfo::new(
+                vk::DescriptorPoolCreateFlags::empty(),
+                FrameLabel::COUNT as u32,
+                vec![vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::STORAGE_IMAGE,
+                    descriptor_count: 8 * FrameLabel::COUNT as u32,
+                }],
+            )),
+            "restir-surface-descriptor-pool",
+        );
+        surface_descriptor_sets = std::array::from_fn(|slot| {
+            GfxDescriptorSet::<RestirSurfaceDescriptorBinding>::new(
+                device_ctx,
+                &surface_descriptor_pool,
+                &surface_descriptor_set_layout,
+                format!("restir-surface-descriptor-set-{slot}"),
+            )
+        });
+
         // SHARC regular descriptor set：分配一次并写入持久 buffer，之后每帧只 bind 不再更新。
         // SHARC buffer 由 Renderer 层 SharcTargets 拥有，不随帧/resize 变化，所以这种「一次写入」是安全的。
         sharc_descriptor_pool = GfxDescriptorPool::new(
@@ -600,7 +680,7 @@ impl RealtimeRtPass {
                 1,
                 vec![vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::STORAGE_BUFFER,
-                    descriptor_count: 3,
+                    descriptor_count: 5,
                 }],
             )),
             "sharc-descriptor-pool",
@@ -630,8 +710,19 @@ impl RealtimeRtPass {
                 0,
                 sharc_buffer_info(sharc_resolved),
             ),
+            SharcDescriptorBinding::sharc_resolve_hash_entries().write_buffer(
+                sharc_descriptor_set.handle(),
+                0,
+                sharc_buffer_info(sharc_resolve_hash_entries),
+            ),
+            SharcDescriptorBinding::sharc_resolve_history().write_buffer(
+                sharc_descriptor_set.handle(),
+                0,
+                sharc_buffer_info(sharc_resolve_history),
+            ),
         ]);
         shader_module_cache.destroy(device_ctx);
+
         Self {
             pipeline: rt_pipeline,
             sbt: sbt,
@@ -639,6 +730,10 @@ impl RealtimeRtPass {
             sharc_descriptor_set_layout: sharc_descriptor_set_layout,
             sharc_descriptor_pool: sharc_descriptor_pool,
             sharc_descriptor_set: sharc_descriptor_set,
+            sharc_cache_buffers: [sharc_hash_entries, sharc_accumulation, sharc_resolved],
+            surface_descriptor_set_layout: surface_descriptor_set_layout,
+            surface_descriptor_pool: surface_descriptor_pool,
+            surface_descriptor_sets: surface_descriptor_sets,
         }
     }
 
@@ -650,17 +745,26 @@ impl RealtimeRtPass {
             sharc_descriptor_set_layout,
             sharc_descriptor_pool,
             sharc_descriptor_set: _sharc_descriptor_set,
+            sharc_cache_buffers: _,
+            surface_descriptor_set_layout,
+            surface_descriptor_pool,
+            surface_descriptor_sets: _surface_descriptor_sets,
         } = self;
         pipeline.destroy(device_ctx);
         _rt_descriptor_set_layout.destroy(device_ctx);
         // descriptor set 跟随 pool 释放；显式释放 pool 与 layout。
+        surface_descriptor_pool.destroy(device_ctx);
+        surface_descriptor_set_layout.destroy(device_ctx);
         sharc_descriptor_pool.destroy(device_ctx);
         sharc_descriptor_set_layout.destroy(device_ctx);
         // SBT buffer 释放后的诊断日志即使失败，也不阻断其他 native 对象的回收。
         sbt.destroy(resource_ctx, DestroyReason::Shutdown);
     }
+    /// 单次调用录制本帧全部 phase；Runtime 必须已等待本 FIF 槽位完成。
+    /// surface set 在录制前更新一次；resize 后以新 view 覆盖全部 binding，再允许提交。
     pub fn ray_trace(
         &self,
+        device: &GfxDevice,
         record_ctx: &RenderPassRecordCtx<'_>,
         render_scene: &dyn RenderSceneView,
         cmd: &GfxCommandBuffer,
@@ -680,6 +784,7 @@ impl RealtimeRtPass {
         const SHARC_PHASE_NONE: u32 = 0;
         const SHARC_PHASE_UPDATE: u32 = 1;
         const SHARC_PHASE_RESOLVE: u32 = 2;
+        const SHARC_PHASE_SNAPSHOT: u32 = 3;
         // Resolve dispatch 的 2D 网格宽度；entry index = y * width + x。height 按 capacity 上取整。
         const SHARC_RESOLVE_DISPATCH_WIDTH: u32 = 2048;
 
@@ -712,9 +817,7 @@ impl RealtimeRtPass {
         let rr_specular_albedo_view = image_view(pass_data.rr_specular_albedo_view);
         let rr_specular_hit_distance_view = image_view(pass_data.rr_specular_hit_distance_view);
 
-        // ReSTIR DI 资源通过 pass-local push descriptor 绑定，顺序必须与
-        // `renderer/shader/abi/realtime_rt/mod.slangi` 完全一致。这里显式展开 A/B/C/D，避免把
-        // reservoir pack 的 uint/float 图像顺序藏进动态数组导致 ABI 难以审查。
+        // 显式展开 reservoir push / surface regular 的 A/B/C/D，与 owner shader ABI 逐项对应。
         let restir_initial_a_view = image_view(pass_data.restir_initial.a_view);
         let restir_initial_b_view = image_view(pass_data.restir_initial.b_view);
         let restir_initial_c_view = image_view(pass_data.restir_initial.c_view);
@@ -734,9 +837,11 @@ impl RealtimeRtPass {
         let restir_surface_a_view = image_view(pass_data.restir_surface.a_view);
         let restir_surface_b_view = image_view(pass_data.restir_surface.b_view);
         let restir_surface_c_view = image_view(pass_data.restir_surface.c_view);
+        let restir_surface_d_view = image_view(pass_data.restir_surface.d_view);
         let restir_history_surface_a_view = image_view(pass_data.restir_history_surface.a_view);
         let restir_history_surface_b_view = image_view(pass_data.restir_history_surface.b_view);
         let restir_history_surface_c_view = image_view(pass_data.restir_history_surface.c_view);
+        let restir_history_surface_d_view = image_view(pass_data.restir_history_surface.d_view);
 
         // 同一 command buffer 中连续执行 path/temporal/spatial/final 多个 TraceRays。
         // 这些图像可能在相邻 phase 间先写后读或读写同图，因此统一纳入 ray-tracing
@@ -766,9 +871,11 @@ impl RealtimeRtPass {
             pass_data.restir_surface.a,
             pass_data.restir_surface.b,
             pass_data.restir_surface.c,
+            pass_data.restir_surface.d,
             pass_data.restir_history_surface.a,
             pass_data.restir_history_surface.b,
             pass_data.restir_history_surface.c,
+            pass_data.restir_history_surface.d,
         ]
         .into_iter()
         .map(image)
@@ -915,37 +1022,58 @@ impl RealtimeRtPass {
                     0,
                     image_info!(restir_history_d_view),
                 ),
-                RealtimeRtDescriptorBinding::restir_surface_a().write_image(
-                    vk::DescriptorSet::null(),
-                    0,
-                    image_info!(restir_surface_a_view),
-                ),
-                RealtimeRtDescriptorBinding::restir_surface_b().write_image(
-                    vk::DescriptorSet::null(),
-                    0,
-                    image_info!(restir_surface_b_view),
-                ),
-                RealtimeRtDescriptorBinding::restir_surface_c().write_image(
-                    vk::DescriptorSet::null(),
-                    0,
-                    image_info!(restir_surface_c_view),
-                ),
-                RealtimeRtDescriptorBinding::restir_history_surface_a().write_image(
-                    vk::DescriptorSet::null(),
-                    0,
-                    image_info!(restir_history_surface_a_view),
-                ),
-                RealtimeRtDescriptorBinding::restir_history_surface_b().write_image(
-                    vk::DescriptorSet::null(),
-                    0,
-                    image_info!(restir_history_surface_b_view),
-                ),
-                RealtimeRtDescriptorBinding::restir_history_surface_c().write_image(
-                    vk::DescriptorSet::null(),
-                    0,
-                    image_info!(restir_history_surface_c_view),
-                ),
             ],
+        );
+
+        let surface_set = self.surface_descriptor_sets[*frame_label].handle();
+        device.write_descriptor_sets(&[
+            RestirSurfaceDescriptorBinding::restir_surface_a().write_image(
+                surface_set,
+                0,
+                image_info!(restir_surface_a_view),
+            ),
+            RestirSurfaceDescriptorBinding::restir_surface_b().write_image(
+                surface_set,
+                0,
+                image_info!(restir_surface_b_view),
+            ),
+            RestirSurfaceDescriptorBinding::restir_surface_c().write_image(
+                surface_set,
+                0,
+                image_info!(restir_surface_c_view),
+            ),
+            RestirSurfaceDescriptorBinding::restir_surface_d().write_image(
+                surface_set,
+                0,
+                image_info!(restir_surface_d_view),
+            ),
+            RestirSurfaceDescriptorBinding::restir_history_surface_a().write_image(
+                surface_set,
+                0,
+                image_info!(restir_history_surface_a_view),
+            ),
+            RestirSurfaceDescriptorBinding::restir_history_surface_b().write_image(
+                surface_set,
+                0,
+                image_info!(restir_history_surface_b_view),
+            ),
+            RestirSurfaceDescriptorBinding::restir_history_surface_c().write_image(
+                surface_set,
+                0,
+                image_info!(restir_history_surface_c_view),
+            ),
+            RestirSurfaceDescriptorBinding::restir_history_surface_d().write_image(
+                surface_set,
+                0,
+                image_info!(restir_history_surface_d_view),
+            ),
+        ]);
+        cmd.bind_descriptor_sets(
+            vk::PipelineBindPoint::RAY_TRACING_KHR,
+            self.pipeline.pipeline_layout,
+            gpu::renderer::render_passes::realtime_rt::SURFACE_SET_NUM,
+            &[surface_set],
+            None,
         );
 
         cmd.bind_descriptor_sets(
@@ -982,8 +1110,10 @@ impl RealtimeRtPass {
             sharc_capacity: pass_data.sharc_capacity,
             sharc_scene_scale: pass_data.sharc_scene_scale,
             _padding_0: 0,
-            _padding_1: 0,
-            _padding_2: 0,
+            restir_history_jitter_delta: gpu::Float2 {
+                x: pass_data.restir_history_jitter_delta[0],
+                y: pass_data.restir_history_jitter_delta[1],
+            },
         };
 
         let trace_extent = [
@@ -1014,13 +1144,13 @@ impl RealtimeRtPass {
             );
         };
 
-        // SHARC buffer 同步：Update 写 hash/accumulation，Resolve 读 accumulation + 读写 resolved，
-        // 两者之间用 RT shader 读写 global memory barrier 串联。跨帧的持久 buffer 复用依赖 SHARC
-        // 自身对原子竞争的容忍以及帧间提交顺序，这里只保证 pass 内 Update→Resolve 的可见性。
+        // 持久 cache 的入口等待初始化 fill 和上一帧 RT 读写；提交顺序及原子访问不能替代此依赖。
         let barrier_sharc_buffers = || {
             cmd.memory_barrier(&[vk::MemoryBarrier2::default()
-                .src_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
-                .src_access_mask(vk::AccessFlags2::SHADER_WRITE | vk::AccessFlags2::SHADER_READ)
+                .src_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR | vk::PipelineStageFlags2::CLEAR)
+                .src_access_mask(
+                    vk::AccessFlags2::SHADER_WRITE | vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::TRANSFER_WRITE,
+                )
                 .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
                 .dst_access_mask(vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE)]);
         };
@@ -1046,9 +1176,26 @@ impl RealtimeRtPass {
             cmd.image_memory_barrier(vk::DependencyFlags::empty(), &image_barriers);
         };
 
-        // SHARC 维护 sub-pass：在正常 path / ReSTIR 之前 Update→Resolve 维护世界空间缓存。
-        // stage 8b 不查询缓存，因此这一步不改变主渲染结果，只填充 / 合并 / 淘汰缓存。
+        // 统一入口承接持久 cache 的初始化与上一帧访问；Off 的 shader 不消费缓存内容。
+        barrier_sharc_buffers();
+
+        // SHARC 维护阶段：先更新并固定历史快照，再合并/淘汰，最后供主路径查询。
         if pass_data.sharc_mode != SHARC_MODE_OFF {
+            if pass_data.sharc_reset {
+                // 清理要等待上一帧查询/维护及初始化 fill；不能只复用目的阶段为 RT 的入口 barrier。
+                cmd.memory_barrier(&[vk::MemoryBarrier2::default()
+                    .src_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR | vk::PipelineStageFlags2::CLEAR)
+                    .src_access_mask(
+                        vk::AccessFlags2::SHADER_READ | vk::AccessFlags2::SHADER_WRITE | vk::AccessFlags2::TRANSFER_WRITE,
+                    )
+                    .dst_stage_mask(vk::PipelineStageFlags2::CLEAR)
+                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)]);
+                for buffer in self.sharc_cache_buffers {
+                    cmd.cmd_fill_buffer(buffer, 0, vk::WHOLE_SIZE, 0);
+                }
+                // 快照由后续 Snapshot 完整覆盖；这里只清三个 live cache，且在 Update 重采样前可见。
+                barrier_sharc_buffers();
+            }
             // Resolve 用 2D 网格覆盖 capacity：width 固定、height 上取整；多余线程在 shader 内按 entry index 越界返回。
             let resolve_width = SHARC_RESOLVE_DISPATCH_WIDTH.min(pass_data.sharc_capacity.max(1));
             let resolve_height = pass_data.sharc_capacity.div_ceil(resolve_width);
@@ -1057,6 +1204,11 @@ impl RealtimeRtPass {
             // Update：在 render extent 上稀疏选像素跑独立 path，写 hash / accumulation。
             push_constant.sharc_phase = SHARC_PHASE_UPDATE;
             push_and_trace(&push_constant, trace_extent);
+            barrier_sharc_buffers();
+
+            // Snapshot 固定所有槽的来源；Resolve 的跨槽读取不能与其它 invocation 的淘汰/合并竞争。
+            push_constant.sharc_phase = SHARC_PHASE_SNAPSHOT;
+            push_and_trace(&push_constant, sharc_resolve_extent);
             barrier_sharc_buffers();
 
             // Resolve：按 entry 合并本帧 accumulation 到 resolved，并淘汰 stale entry、清空 accumulation。
@@ -1108,6 +1260,9 @@ impl RealtimeRtPass {
 pub struct RealtimeRtRgPass<'a> {
     pub rt_pass: &'a RealtimeRtPass,
 
+    /// 借用设备仅更新本 FIF 的 surface descriptor，不在录制阶段创建或销毁资源。
+    pub device: &'a GfxDevice,
+
     pub record_ctx: RenderPassRecordCtx<'a>,
     pub render_scene: &'a dyn RenderSceneView,
 
@@ -1121,13 +1276,15 @@ pub struct RealtimeRtRgPass<'a> {
     pub analytic_nee_enabled: bool,
     pub restir_di_mode: u32,
     pub restir_history_valid: bool,
+    pub restir_history_jitter_delta: [f32; 2],
 
     // ========== SHARC world-space radiance cache ==========
     // SHARC buffer 不进入 RenderGraph（它只跟踪 image），也不在这里传句柄：buffer 是持久资源，
-    // 已在 pass 创建时写入 SHARC regular descriptor set。这里只传每帧可调的 push constant 参数。
+    // 已在 pass 创建时写入 SHARC regular descriptor set。这里只传每帧参数与 owner 决定的 reset。
     pub sharc_mode: u32,
     pub sharc_capacity: u32,
     pub sharc_scene_scale: f32,
+    pub sharc_reset: bool,
 
     // ========== ReSTIR DI 数据 ==========
     pub restir_initial: RestirReservoirRgImages,
@@ -1203,6 +1360,7 @@ impl RgPass for RealtimeRtRgPass<'_> {
             surface_key_pass_images(ctx, self.restir_history_surface, "restir_history_surface");
 
         self.rt_pass.ray_trace(
+            self.device,
             &self.record_ctx,
             self.render_scene,
             ctx.cmd,
@@ -1217,9 +1375,11 @@ impl RgPass for RealtimeRtRgPass<'_> {
                 analytic_nee_enabled: self.analytic_nee_enabled,
                 restir_di_mode: self.restir_di_mode,
                 restir_history_valid: self.restir_history_valid,
+                restir_history_jitter_delta: self.restir_history_jitter_delta,
                 sharc_mode: self.sharc_mode,
                 sharc_capacity: self.sharc_capacity,
                 sharc_scene_scale: self.sharc_scene_scale,
+                sharc_reset: self.sharc_reset,
                 restir_initial,
                 restir_temporal,
                 restir_final,
@@ -1258,6 +1418,7 @@ fn setup_surface_key_images(builder: &mut RgPassBuilder, images: RestirSurfaceKe
     builder.read_write_image(images.a, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
     builder.read_write_image(images.b, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
     builder.read_write_image(images.c, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
+    builder.read_write_image(images.d, RgImageState::STORAGE_READ_WRITE_RAY_TRACING);
 }
 
 fn reservoir_pass_images(
@@ -1298,6 +1459,9 @@ fn surface_key_pass_images(
     let (c, c_view) =
         ctx.get_image_and_view_handle(images.c).unwrap_or_else(|| panic!("RealtimeRtRgPass: {label}.c not found"));
 
+    let (d, d_view) =
+        ctx.get_image_and_view_handle(images.d).unwrap_or_else(|| panic!("RealtimeRtRgPass: {label}.d not found"));
+
     RestirSurfaceKeyPassImages {
         a,
         a_view,
@@ -1305,5 +1469,7 @@ fn surface_key_pass_images(
         b_view,
         c,
         c_view,
+        d,
+        d_view,
     }
 }

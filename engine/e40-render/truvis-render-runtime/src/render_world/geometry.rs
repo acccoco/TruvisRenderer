@@ -17,7 +17,18 @@ use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 pub(crate) struct RtTriangleMeta {
     pub(crate) positions: [glam::Vec3; 3],
     pub(crate) primitive_id: u32,
-    pub(crate) local_area: f32,
+    /// 保留局部退化判定；小三角形可能经 instance 缩放后成为可采样的世界几何。
+    pub(crate) local_area: f64,
+}
+
+impl RtTriangleMeta {
+    /// 面积向量的长度是三角形面积，方向遵循顶点绕序。
+    /// 先扩展再相减；有限 f32 顶点的叉积及长度平方可在 f64 中表示，避免 f32
+    /// 中间平方把可表示的面积误算为零或无穷大。不恢复顶点存储/变换已丢失的精度。
+    pub(crate) fn area_vector(positions: [glam::Vec3; 3]) -> glam::DVec3 {
+        let [p0, p1, p2] = positions.map(|position| position.as_dvec3());
+        0.5 * (p1 - p0).cross(p2 - p0)
+    }
 }
 
 /// render-side mesh 的 GPU 几何资源。

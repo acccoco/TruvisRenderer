@@ -14,29 +14,34 @@
 /// delta 路径的 `brdf_pdf` 固定为 1，不参与 MIS；非 delta 路径使用混合 BRDF PDF。
 struct RtMaterialSample
 {
-    /// 下一跳 ray origin，已按几何法线和 float32 ULP 规则推出表面。
+    /// done=false 时的下一跳起点，已按几何法线和 float32 ULP 规则推出表面。
     float3 origin;
     /// 下一跳 ray direction，世界空间单位向量。
     float3 direction;
     /// 路径 throughput 乘子，已包含 BSDF*cos/pdf、离散分支补偿和透射 radiance 尺度。
     float3 throughput;
-    /// 仅透射事件保存 n入射/n出射；路径用其倒数平方补偿 roulette，不改变实际 radiance。
-    float transmission_eta;
-    /// 当前表面直接产生的 emission；raygen 会乘旧 throughput 累加。
-    float3 emission;
+    /// 去掉透射 eta² 的同次采样权重，只用于 roulette；不参与 radiance 或 cache 累加。
+    float3 roulette_throughput;
     /// true 表示材质采样已经终止路径。
     bool done;
     /// 当前采样方向对应的 BRDF PDF，供后续 sky/emissive MIS 使用。
     float brdf_pdf;
+
+    /// 从同一个分支补偿后的 BSDF 权重生成两个度量，避免后续用巨大 eta 倒数抵消微小 radiance。
+    /// eta=n入射/n出射，仅透射使用；实际 radiance 保留原有 eta² 求值和数值边界。
+    [mutating]
+    void set_scattering_weight(float3 weight, float eta = 1.0f)
+    {
+        roulette_throughput = weight;
+        throughput = weight * (eta * eta);
+    }
 
     static RtMaterialSample make_default(const RtSurfaceHit surface, float3 ray_dir)
     {
         RtMaterialSample sample;
         sample.origin = surface.position;
         sample.direction = ray_dir;
-        sample.throughput = float3(1.0f);
-        sample.transmission_eta = 1.0f;
-        sample.emission = float3(0.0f);
+        sample.set_scattering_weight(float3(1.0f));
         sample.done = false;
         sample.brdf_pdf = 1.0f;
         return sample;
@@ -44,13 +49,15 @@ struct RtMaterialSample
 };
 
 /// 空气与当前材质的光滑介质界面；仅为 shader 局部结果，不属于共享 ABI。
-/// 材质采样和确定性 motion direction 共用方向、Fresnel 与全内反射判定。
+/// 材质采样与 RR guide 共用 Fresnel/全内反射判定；方向供路径采样使用。
 struct RtDielectricInterface
 {
     float eta;
     float reflectance;
     float3 refracted_direction;
     bool total_internal_reflection;
+    /// false 表示观察方向不在界面的着色正半球，不能继续使用 Snell/Fresnel 结果。
+    bool valid;
 
     static RtDielectricInterface evaluate(const RtSurfaceHit surface, const float3 ray_dir)
     {
@@ -60,14 +67,23 @@ struct RtDielectricInterface
         result.reflectance = 0.0f;
         result.refracted_direction = ray_dir;
         result.total_internal_reflection = false;
+        result.valid = true;
         // 折射率匹配时没有界面；掠射也不能进入 Fresnel 的 0/0。
         if (ior == 1.0f)
         {
             return result;
         }
+        if (!surface.in_shading_hemisphere(-ray_dir))
+        {
+            result.valid = false;
+            return result;
+        }
 
         const float cos_i = saturate(dot(-ray_dir, surface.forward_normal));
-        const float sin_t_squared = result.eta * result.eta * max(0.0f, 1.0f - cos_i * cos_i);
+        /// 叉积保留近法线的小角度；先缩放切向分量再求平方，避免 eta²*0 的 NaN 和 sin²_i 下溢。
+        const float3 ray_cross_normal = cross(ray_dir, surface.forward_normal);
+        const float3 transmitted_tangent = result.eta * cross(surface.forward_normal, ray_cross_normal);
+        const float sin_t_squared = dot(transmitted_tangent, transmitted_tangent);
         if (sin_t_squared >= 1.0f)
         {
             result.reflectance = 1.0f;
@@ -77,11 +93,16 @@ struct RtDielectricInterface
         }
 
         const float cos_t = sqrt(1.0f - sin_t_squared);
-        const float r_parallel = (cos_i - result.eta * cos_t) / (cos_i + result.eta * cos_t);
-        const float r_perpendicular = (result.eta * cos_i - cos_t) / (result.eta * cos_i + cos_t);
-        result.reflectance = saturate(0.5f * (r_parallel * r_parallel + r_perpendicular * r_perpendicular));
+        /// 用 IOR≥1 缩放比值，避免极小 1/IOR 下的比值退化。
+        /// 入射/出射只交换两偏振项的次序，非偏振均值不变。
+        const float ior_cos_i = ior * cos_i;
+        const float ior_cos_t = ior * cos_t;
+        const float r0 = (ior_cos_i - cos_t) / (ior_cos_i + cos_t);
+        const float r1 = (cos_i - ior_cos_t) / (cos_i + ior_cos_t);
+        result.reflectance = saturate(0.5f * (r0 * r0 + r1 * r1));
+        // 分离切向和法向分量，避免两个 eta 量级的向量相减丢失透射法向。
         result.refracted_direction = normalize(
-            result.eta * ray_dir + (result.eta * cos_i - cos_t) * surface.forward_normal
+            transmitted_tangent - cos_t * surface.forward_normal
         );
         return result;
     }
@@ -89,6 +110,13 @@ struct RtDielectricInterface
 
 struct RtMaterialSampler
 {
+    /// Surface 只支持默认 IOR=1.5，对应 F0=((1.5-1)/(1.5+1))²=0.04；与导入支持域一致。
+    /// 不读取非 Transmission 的 ABI ior 占位值。rough transmission 的现有反射 fallback 也沿用此模型。
+    static float3 surface_f0(const RtSurfaceHit surface)
+    {
+        return lerp(float3(0.04f), surface.base_color, surface.metallic);
+    }
+
     static void sample_perfect_reflection(
         const RtSurfaceHit surface,
         const float3 ray_dir,
@@ -98,8 +126,12 @@ struct RtMaterialSampler
     {
         // 简化 specular 路径使用 Schlick Fresnel 调制 throughput；它是 delta 事件，不参与 BRDF PDF 混合。
         out_dir = reflect(ray_dir, surface.forward_normal);
-        const float reflectance = 0.8f;
-        const float3 f0 = lerp(0.16f * reflectance * reflectance, surface.base_color, surface.metallic);
+        if (!surface.in_shading_hemisphere(-ray_dir))
+        {
+            out_throughput = float3(0.0f);
+            return;
+        }
+        const float3 f0 = surface_f0(surface);
         const float cos_theta = saturate(dot(-ray_dir, surface.forward_normal));
         const float fresnel = pow(1.0f - cos_theta, 5.0f);
         out_throughput = f0 + (1.0f - f0) * fresnel;
@@ -113,13 +145,19 @@ struct RtMaterialSampler
     {
         RtMaterialSample sample = RtMaterialSample::make_default(surface, ray_dir);
         const RtDielectricInterface boundary = RtDielectricInterface::evaluate(surface, ray_dir);
+        if (!boundary.valid)
+        {
+            sample.set_scattering_weight(float3(0.0f));
+            sample.done = true;
+            return sample;
+        }
         const float reflection = boundary.reflectance;
         // opacity 只吸收透射能量，不把损失转给反射；颜色也只在实际透射时逐界面应用。
         const float transmission = saturate(1.0f - surface.opacity) * (1.0f - reflection);
         const float scattering = reflection + transmission;
         if (scattering <= 0.0f)
         {
-            sample.throughput = float3(0.0f);
+            sample.set_scattering_weight(float3(0.0f));
             sample.done = true;
             return sample;
         }
@@ -134,13 +172,12 @@ struct RtMaterialSampler
         if (choose_refract)
         {
             sample.direction = boundary.refracted_direction;
-            sample.transmission_eta = boundary.eta;
-            sample.throughput = scattering * surface.base_color * (boundary.eta * boundary.eta);
+            sample.set_scattering_weight(scattering * surface.base_color, boundary.eta);
         }
         else
         {
             sample.direction = reflect(ray_dir, surface.forward_normal);
-            sample.throughput = float3(scattering);
+            sample.set_scattering_weight(float3(scattering));
         }
         sample.origin = offset_ray_origin(surface.position, surface.origin_normal, sample.direction);
         return sample;
@@ -149,7 +186,10 @@ struct RtMaterialSampler
     static RtMaterialSample sample_specular(const RtSurfaceHit surface, const float3 ray_dir)
     {
         RtMaterialSample sample = RtMaterialSample::make_default(surface, ray_dir);
-        sample_perfect_reflection(surface, ray_dir, sample.direction, sample.throughput);
+        float3 weight;
+        sample_perfect_reflection(surface, ray_dir, sample.direction, weight);
+        sample.set_scattering_weight(weight);
+        sample.done = !surface.in_shading_hemisphere(-ray_dir);
         sample.origin = offset_ray_origin(surface.position, surface.origin_normal, sample.direction);
         return sample;
     }
@@ -162,6 +202,13 @@ struct RtMaterialSampler
     {
         RtMaterialSample sample = RtMaterialSample::make_default(surface, ray_dir);
         const float3 view_dir = -ray_dir;
+        if (!surface.in_shading_hemisphere(view_dir))
+        {
+            sample.set_scattering_weight(float3(0.0f));
+            sample.brdf_pdf = 0.0f;
+            sample.done = true;
+            return sample;
+        }
         const float prob_diffuse = surface.roughness;
         const bool choose_diffuse = Random::rnd(payload.random_seed) < prob_diffuse;
 
@@ -176,28 +223,31 @@ struct RtMaterialSampler
         else
         {
             // glossy 分支按 GGX NDF 采样 half vector，再反射 view direction 得到出射方向。
-            const float reflectance = 0.8f;
-            const float3 f0 = lerp(0.16f * reflectance * reflectance, surface.base_color, surface.metallic);
             const float real_roughness = surface.roughness * surface.roughness;
             float3 h = SpecularBrdf::ggx_sample(payload.random_seed, real_roughness, surface.forward_normal);
             sample.direction = reflect(-view_dir, h);
         }
 
-        const float ndotl = dot(surface.forward_normal, sample.direction);
-        if (ndotl <= 0.0f)
+        if (!surface.in_shading_hemisphere(sample.direction))
         {
-            sample.throughput = float3(0.0f);
-            sample.brdf_pdf = 1.0f;
-            // 即使该无效方向最终只携带零 throughput，也保持下一跳起点契约，避免调试路径
-            // 或后续状态变化时从几何表面内部重新发 ray。
-            sample.origin = offset_ray_origin(surface.position, surface.origin_normal, sample.direction);
+            sample.set_scattering_weight(float3(0.0f));
+            sample.brdf_pdf = 0.0f;
+            /// 无效样本作为零贡献终止；不重采样或重新归一化剩余方向的密度。
+            sample.done = true;
             return sample;
         }
 
         const float3 brdf_cos = eval_brdf(surface, view_dir, sample.direction);
         sample.brdf_pdf = eval_brdf_pdf(surface, view_dir, sample.direction);
-        // throughput 使用混合 BRDF 的 full PDF，保证 diffuse/specular 随机分支仍是无偏估计。
-        sample.throughput = brdf_cos / max(sample.brdf_pdf, 1e-7f);
+        if (!isfinite(sample.brdf_pdf) || sample.brdf_pdf <= 0.0f)
+        {
+            sample.set_scattering_weight(float3(0.0f));
+            sample.brdf_pdf = 0.0f;
+            sample.done = true;
+            return sample;
+        }
+        /// 使用生成该方向的完整混合密度；固定分母下限会压低低概率方向的贡献。
+        sample.set_scattering_weight(brdf_cos / sample.brdf_pdf);
         sample.origin = offset_ray_origin(surface.position, surface.origin_normal, sample.direction);
         return sample;
     }
@@ -211,7 +261,9 @@ struct RtMaterialSampler
         RtMaterialSample sample = RtMaterialSample::make_default(surface, ray_dir);
         if (surface.material_type == MaterialType::EMISSIVE)
         {
-            sample.emission = surface.emissive;
+            /// emission 由命中阶段累加；纯发光没有散射，不能通过材质结果再次返回 emission。
+            sample.set_scattering_weight(float3(0.0f));
+            sample.brdf_pdf = 0.0f;
             sample.done = true;
             return sample;
         }
@@ -237,7 +289,9 @@ struct RtMaterialSampler
     /// 会低估或高估环境采样贡献。
     static float eval_brdf_pdf(const RtSurfaceHit surface, const float3 view_dir, const float3 light_dir)
     {
-        if (surface.is_delta_path())
+        if (surface.is_delta_path() || surface.material_type == MaterialType::EMISSIVE ||
+            !surface.in_shading_hemisphere(view_dir) ||
+            !surface.in_shading_hemisphere(light_dir))
         {
             return 0.0f;
         }
@@ -246,10 +300,9 @@ struct RtMaterialSampler
         const float diffuse_pdf = DiffuseBrdf::pdf(surface.forward_normal, light_dir);
 
         const float3 h = normalize(view_dir + light_dir);
-        const float reflectance = 0.8f;
-        const float3 f0 = lerp(0.16f * reflectance * reflectance, surface.base_color, surface.metallic);
         const float real_roughness = surface.roughness * surface.roughness;
-        SpecularBrdf specular_brdf = SpecularBrdf(f0, real_roughness, surface.forward_normal, view_dir, h);
+        // PDF 与颜色/Fresnel 无关，不重复构造材质 F0。
+        SpecularBrdf specular_brdf = SpecularBrdf(float3(0.0f), real_roughness, surface.forward_normal, view_dir, h);
         const float specular_pdf = specular_brdf.ggx_pdf();
 
         return prob_diffuse * diffuse_pdf + (1.0f - prob_diffuse) * specular_pdf;
@@ -260,18 +313,19 @@ struct RtMaterialSampler
     /// 这里不乘 path throughput，也不除以 light PDF；这些权重由 direct lighting/path state 组合。
     static float3 eval_brdf(const RtSurfaceHit surface, const float3 view_dir, const float3 light_dir)
     {
-        const float ndotl = max(dot(surface.forward_normal, light_dir), 0.0f);
-        if (ndotl <= 0.0f)
+        if (surface.is_delta_path() || surface.material_type == MaterialType::EMISSIVE ||
+            !surface.in_shading_hemisphere(view_dir) ||
+            !surface.in_shading_hemisphere(light_dir))
         {
             return float3(0.0f);
         }
+        const float ndotl = dot(surface.forward_normal, light_dir);
 
         const float3 diffuse_color = (1.0f - surface.metallic) * surface.base_color;
         const float3 diffuse = diffuse_color / M_PI;
 
         const float3 h = normalize(view_dir + light_dir);
-        const float reflectance = 0.8f;
-        const float3 f0 = lerp(0.16f * reflectance * reflectance, surface.base_color, surface.metallic);
+        const float3 f0 = surface_f0(surface);
         const float real_roughness = surface.roughness * surface.roughness;
         SpecularBrdf specular_brdf = SpecularBrdf(f0, real_roughness, surface.forward_normal, view_dir, h);
         const float3 specular = specular_brdf.brdf();

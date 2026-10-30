@@ -73,6 +73,9 @@ Phong 的 push constants 为 16 字节，字段 offset 为 0/4/8/12；frame/scen
 `spirv-val --uniform-buffer-standard-layout`。新增/调整字段仍需重新生成和检查。
 
 realtime/offline 的 closest-hit 入口共用 `lib/renderer/realtime_rt/surface_hit.slangi`；
+两者的 `MaterialType`、`RtSurfaceHit`、`RtTracePayload` 与 `ShadowMissPayload` 只定义在
+`lib/renderer/ray_payload.slangi`，不携带 pass-local 资源或配置。各自 payload 入口仍拥有
+push constants、深度上限与 ABI 选择；Offline 必须先包含自己的入口契约，再复用共享 helper。
 raster 顶点侧按四槽分别选择 UV，片元侧与 RT 共用 Engine `MaterialAccess` 的变换、切线重建和法线解码。
 各路径的光照和 LOD 边界见 [RT 流程](../../docs/design/realtime-raytracing-sampling.md)。
 

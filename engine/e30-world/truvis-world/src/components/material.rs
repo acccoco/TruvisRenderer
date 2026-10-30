@@ -15,7 +15,9 @@ pub use truvis_asset::material_texture::{TextureChannel, TextureSlot};
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaterialData {
     pub base_color: glam::Vec4,
+    /// 金属混合权重，注册/编辑时必须在 [0,1] 内。
     pub metallic: f32,
+    /// 艺术粗糙度，注册/编辑时必须在 [0,1] 内；shader 也用它选择采样分支。
     pub roughness: f32,
     pub class: MaterialClass,
     pub coverage: CoverageMode,
@@ -45,9 +47,15 @@ impl Default for MaterialData {
 impl MaterialData {
     /// 在任何 CPU edit 提交前校验，防止 NaN 破坏相等比较与跨帧版本对账。
     pub fn validate(&self) -> Result<(), String> {
-        if !self.base_color.is_finite() || !self.metallic.is_finite() || !self.roughness.is_finite()
+        // 公共 world 入口拒绝非法 BSDF 权重/概率；RGB 保留既有 HDR 范围，不依赖导入器或 UI 校验。
+        if !self.base_color.is_finite()
+            || self.base_color.truncate().min_element() < 0.0
+            || !(0.0..=1.0).contains(&self.base_color.w)
+            || !(0.0..=1.0).contains(&self.metallic)
+            || !(0.0..=1.0).contains(&self.roughness)
             || !self.normal_scale.is_finite()
-            || !self.emissive_factor.is_finite() || self.emissive_factor.min_element() < 0.0
+            || !self.emissive_factor.is_finite()
+            || self.emissive_factor.min_element() < 0.0
         {
             return Err(format!("material '{}' has invalid factors", self.name));
         }

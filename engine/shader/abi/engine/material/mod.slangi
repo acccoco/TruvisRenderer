@@ -39,12 +39,12 @@ struct PbrMaterial
 {
     /// 常量基础色；与 base-color 槽采样值相乘。
     float3 base_color;
-    /// 金属度，范围按资产导入结果传入，shader 侧不做额外 clamp。
+    /// CPU 已校验为 [0,1]；shader 将 MR 贴图与该因子组合后的金属度限制到 [0,1]。
     float metallic;
 
     /// base color alpha factor。AlphaMask 中会与 diffuse texture alpha 相乘后参与 alpha test。
     float alpha_factor;
-    /// 粗糙度；RT 采样中会平方为 GGX alpha。
+    /// CPU 已校验为 [0,1]；组合 MR 贴图后再次限制范围，RT 再平方为 GGX alpha。
     float roughness;
     /// `MaterialClass` 的 GPU ABI 值；CPU class 是该字段的唯一来源。
     uint material_class;

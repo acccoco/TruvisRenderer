@@ -118,8 +118,9 @@ struct MaterialAccess
         surface.base_color = base_color_rgba(mat, source_uv(mat, engine::material::TEXTURE_BASE_COLOR, geom, tri, bary));
         const float4 mr = sample(mat.textures[engine::material::TEXTURE_METALLIC_ROUGHNESS],
             source_uv(mat, engine::material::TEXTURE_METALLIC_ROUGHNESS, geom, tri, bary), float4(1));
-        surface.metallic = mat.metallic * mr.b;
-        surface.roughness = mat.roughness * mr.g;
+        /// HDR 纹理可以大于 1；在材质语义层限制组合后的权重/概率，不截断通用纹理或发光数据。
+        surface.metallic = saturate(mat.metallic * mr.b);
+        surface.roughness = saturate(mat.roughness * mr.g);
         surface.emissive = emission(mat, source_uv(mat, engine::material::TEXTURE_EMISSIVE, geom, tri, bary));
         surface.normal = mapped_normal(mat, geom, instance, tri, bary);
         return surface;

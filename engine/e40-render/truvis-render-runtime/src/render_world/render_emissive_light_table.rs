@@ -386,10 +386,11 @@ impl RenderEmissiveLightTable {
                 "emissive triangle metadata must preserve primitive order"
             );
             let world_positions = triangle.positions.map(|position| instance.transform.transform_point3(position));
-            let normal_unnormalized =
-                (world_positions[1] - world_positions[0]).cross(world_positions[2] - world_positions[0]);
-            let world_area = if triangle.local_area > 0.0 { 0.5 * normal_unnormalized.length() } else { 0.0 };
-            let normal = if world_area > 0.0 { normal_unnormalized.normalize() } else { glam::Vec3::Y };
+            let area_vector = RtTriangleMeta::area_vector(world_positions);
+            let area = area_vector.length();
+            // GPU 面积仍为 f32；不可表示的面积保留零权重 record，局部退化也不能因变换舍入变成光源。
+            let world_area = if triangle.local_area > 0.0 && area <= f64::from(f32::MAX) { area as f32 } else { 0.0 };
+            let normal = if world_area > 0.0 { (area_vector / area).as_vec3() } else { glam::Vec3::Y };
 
             let light_index = self.triangle_lights.len();
             self.triangle_lights.push(gpu::engine::light::EmissiveTriangleLight {

@@ -420,7 +420,7 @@ impl MeshUploadQueue {
                 let p0 = data.positions[i0];
                 let p1 = data.positions[i1];
                 let p2 = data.positions[i2];
-                let local_area = 0.5 * (p1 - p0).cross(p2 - p0).length();
+                let local_area = RtTriangleMeta::area_vector([p0, p1, p2]).length();
                 RtTriangleMeta {
                     positions: [p0, p1, p2],
                     primitive_id: primitive_id as u32,

@@ -17,7 +17,6 @@ static const float RT_ENVIRONMENT_T_MAX = 1000.0f;
 
 // 仅用于除零和退化几何判断，不承担 ray origin offset 职责。
 static const float RT_DISTANCE_GUARD = 1e-6f;
-static const float RT_INTERSECTION_GUARD = 1e-5f;
 
 /// 按几何法线将 ray origin 推出当前表面，避免固定米制 epsilon 在大坐标处被 float32 吞掉。
 ///

@@ -1,5 +1,10 @@
 # renderer-render-passes
 
+Realtime RT 的 reservoir 使用 push descriptor；surface current/history A/B/C/D 使用按 FIF
+分配的普通 descriptor set，独立于持久 SHARC buffer set。RT pass 拥有 layout/pool/sets，
+在槽位完成等待后、录制本帧各 phase 前一次性更新八个 image binding；图像仍由 rendering
+subsystem 拥有。构造失败回收已创建的 pool/layout，正常销毁要求 GPU safe point。
+
 `renderer-render-passes` 存放 TruvisRenderer 与 sample Renderer 共享的具体 render pass 实现，
 例如 real-time / offline ray tracing、accumulation、SDR、image clear、resolve、
 viewport overlay、selection outline 和 Phong shading。

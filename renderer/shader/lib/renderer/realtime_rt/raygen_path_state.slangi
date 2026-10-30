@@ -10,32 +10,18 @@
 #include "lib/renderer/realtime_rt/raygen_direct_lighting.slangi"
 #include "lib/renderer/realtime_rt/raygen_material.slangi"
 
-struct RtRussianRouletteResult
-{
-    /// false 表示路径终止，raygen 不再发出下一跳光线。
-    bool survived;
-    /// survivor 的 throughput 补偿系数，供调用方保持路径概率与能量一致。
-    float throughput_scale;
-
-    static RtRussianRouletteResult keep()
-    {
-        RtRussianRouletteResult result;
-        result.survived = true;
-        result.throughput_scale = 1.0f;
-        return result;
-    }
-};
-
 struct RtPathState
 {
     /// 当前路径累计 radiance。
     float3 radiance;
     /// 下一次命中或 miss 的路径 throughput。
     float3 throughput;
-    /// 累计透射 eta 的倒数平方，只供 roulette 消除 radiance 的介质尺度，不抵消吸收。
-    float roulette_eta_scale;
+    /// 独立累计不含透射 eta² 的路径权重；保留吸收、颜色和存活补偿，不用于 radiance。
+    float3 roulette_throughput;
     /// 上一次非 delta BRDF 采样的 PDF，用于 sky miss 的 MIS 权重。
     float prev_brdf_pdf;
+    /// 上一次散射的未偏移表面位置，用于查询同一 NEE 几何连接的 emissive PDF。
+    float3 previous_position;
     /// 上一次事件是否为 delta 路径；delta 路径不与环境采样做 MIS。
     bool prev_is_delta;
 
@@ -44,8 +30,9 @@ struct RtPathState
         RtPathState state;
         state.radiance = float3(0.0f);
         state.throughput = float3(1.0f);
-        state.roulette_eta_scale = 1.0f;
+        state.roulette_throughput = float3(1.0f);
         state.prev_brdf_pdf = 1.0f;
+        state.previous_position = float3(0.0f);
         state.prev_is_delta = true;
         return state;
     }
@@ -76,7 +63,7 @@ struct RtPathState
     }
 
     [mutating]
-    float3 add_emissive(uint depth, const RtSurfaceHit surface, const float3 light_dir)
+    float3 add_emissive(uint depth, const RtSurfaceHit surface)
     {
         float mis_weight = 1.0f;
         // camera ray 或 delta 链路直接看到自发光面时保留旧的完整累加语义。只有非 delta
@@ -84,7 +71,7 @@ struct RtPathState
         // 避免 BRDF 命中与 emissive NEE 重复计算同一份直接光贡献。
         if (!prev_is_delta && depth > 0)
         {
-            const float light_pdf = RtDirectLighting::unified_emissive_hit_pdf(surface, light_dir);
+            const float light_pdf = RtDirectLighting::unified_emissive_hit_pdf(surface, previous_position);
             mis_weight = Mis::power_heuristic(prev_brdf_pdf, light_pdf);
         }
         const float3 contribution = surface.emissive * throughput * mis_weight;
@@ -95,46 +82,43 @@ struct RtPathState
     [mutating]
     void apply_material_sample(const RtSurfaceHit surface, const RtMaterialSample sample)
     {
-        // emission 在材质采样阶段乘当前 throughput；后续 throughput 只影响下一跳。
-        radiance += sample.emission * throughput;
+        /// 命中阶段已处理 emission；材质结果只更新下一跳的散射状态。
         throughput *= sample.throughput;
-        roulette_eta_scale /= sample.transmission_eta * sample.transmission_eta;
+        roulette_throughput *= sample.roulette_throughput;
         prev_brdf_pdf = sample.brdf_pdf;
+        previous_position = surface.position;
         prev_is_delta = surface.is_delta_path();
     }
 
+    /// 返回是否继续；存活补偿在本状态内完成，调用方不能再次缩放 throughput。
     [mutating]
-    RtRussianRouletteResult apply_russian_roulette(inout RtTracePayload payload, uint depth)
+    bool apply_russian_roulette(inout RtTracePayload payload, uint depth)
     {
         // 连续 delta 链路没有 NEE 可提前补足直接光；在镜面/透明链路仍未落到
         // non-delta surface 前执行 Russian roulette 会把 RR 输入区域放大成高方差黑样本。
         // 硬上限仍由 raygen 的 max_depth 负责，避免镜面/玻璃循环无限追踪。
         if (prev_is_delta)
         {
-            return RtRussianRouletteResult::keep();
+            return true;
         }
 
         // 前几跳保留完整路径，避免近处直接/一次反弹贡献被 Russian roulette 引入高方差。
         if (depth < 3)
         {
-            return RtRussianRouletteResult::keep();
+            return true;
         }
 
-        RtRussianRouletteResult result;
         // 用最大通道作为存活概率，既保守保留高能量路径，也避免 RGB throughput 改变色相。
-        const float3 roulette_throughput = throughput * roulette_eta_scale;
         float p = max(roulette_throughput.x, max(roulette_throughput.y, roulette_throughput.z));
         p = clamp(p, 0.05f, 0.95f);
-        if (Random::rnd(payload.random_seed) > p)
+        /// rnd 是 [0,1) 的离散值；存活区间须为 [0,p)，等于 p 也应终止。
+        if (Random::rnd(payload.random_seed) >= p)
         {
-            result.survived = false;
-            result.throughput_scale = 1.0f;
-            return result;
+            return false;
         }
 
         throughput /= p;
-        result.survived = true;
-        result.throughput_scale = 1.0f / p;
-        return result;
+        roulette_throughput /= p;
+        return true;
     }
 };

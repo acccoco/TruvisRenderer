@@ -48,6 +48,10 @@ struct RtLightCandidate
     float3 direction;
     /// 有限光源使用实际距离；HDRI 作为无限远环境光使用较大的 ray TMax。
     float distance;
+
+    /// 有限 emitter 的正 light-side cosine；与未偏移的 distance 一起定义 dω/dA。
+    /// 只用于同一 light-side key 的 ReSTIR 重连，HDRI 方向映射的 Jacobian 为 1。
+    float light_cos;
     /// light 侧 radiance，不包含 BRDF、cos、MIS 或 path throughput。
     float3 radiance;
     /// light sample 的 solid-angle PDF。直接光、BRDF miss 和后续 reservoir 都必须使用同一度量。
@@ -95,6 +99,7 @@ struct RtLightCandidate
         candidate.kind = 0;
         candidate.direction = float3(0.0f);
         candidate.distance = 0.0f;
+        candidate.light_cos = 0.0f;
         candidate.radiance = float3(0.0f);
         candidate.solid_angle_pdf = 0.0f;
         candidate.shadow_ray.Origin = float3(0.0f);
@@ -178,18 +183,54 @@ struct RtDirectLighting
     static RayDesc make_visibility_ray(const RtSurfaceHit surface, const float3 light_dir, const float distance, const bool finite_light)
     {
         RayDesc ray;
-        const float t_min = RT_PRIMARY_T_MIN;
-        // visibility ray 的 origin 必须按当前表面法线推出，而不是按 light_dir 推出。
-        // 后者在掠射角或重建 surface 上容易仍停留在几何内部，Temporal/Spatial ReSTIR 会把这种
-        // 偶发自遮挡放大成黑色离群点；统一 helper 保证采样与重建候选使用同一可见性契约。
+        /// 按几何法线推出起点；沿 light_dir 推出不能可靠消除掠射角的自遮挡。
+        /// 新采样和重建共用连接，避免 ReSTIR 放大两条路径的可见性差异。
         ray.Origin = offset_ray_origin(surface.position, surface.origin_normal, light_dir);
         ray.Direction = light_dir;
-        ray.TMin = t_min;
-        const float origin_advance = max(dot(ray.Origin - surface.position, light_dir), 0.0f);
-        // finite light 的 distance 仍以未偏移的 shading point 为起点。
-        // 由于 origin 按 normal 推出而不是沿 light_dir 推出，TMax 必须扣掉该偏移在 light_dir
-        // 上的投影；否则 ray 可能越过 light sample，再命中被采样的 emissive triangle 自身。
-        ray.TMax = finite_light ? max(distance - origin_advance, 0.0f) : distance;
+        ray.TMin = RT_PRIMARY_T_MIN;
+        ray.TMax = distance;
+        if (finite_light)
+        {
+            /// analytic emitter 不在 TLAS 中，不需要目标表面偏移；从偏移起点重新连到原目标。
+            /// 相对向量避免先叠加大世界坐标；PDF/BSDF 仍使用未偏移的原连接。
+            const float3 segment = light_dir * distance - (ray.Origin - surface.position);
+            const float segment_length = length(segment);
+            ray.TMax = 0.0f;
+            /// 起点已越过目标、区间过短或不可表示时，调用方丢弃候选，不反向追踪。
+            if (isfinite(segment_length) && segment_length > RT_DISTANCE_GUARD && dot(segment, light_dir) > 0.0f)
+            {
+                ray.Direction = segment / segment_length;
+                ray.TMax = segment_length;
+            }
+        }
+        return ray;
+    }
+
+    /// 发光几何的 visibility 连接两端偏移后的点；仅扣起点偏移的方向投影既不能修复
+    /// 横向错位，也不能防止目标三角形在区间末端自遮挡。PDF/BSDF 仍使用原始顶点连接。
+    /// 参考 PBRT ray.h::SpawnRayTo 的双表面连接，复用本项目的 origin offset 与单位方向契约。
+    static RayDesc make_emissive_visibility_ray(
+        const RtSurfaceHit surface,
+        const float3 light_position,
+        const float3 light_normal
+    )
+    {
+        const float3 to_light = light_position - surface.position;
+        RayDesc ray;
+        ray.Origin = offset_ray_origin(surface.position, surface.origin_normal, to_light);
+        const float3 target = offset_ray_origin(light_position, light_normal, ray.Origin - light_position);
+        const float3 segment = target - ray.Origin;
+        const float distance = length(segment);
+        ray.TMin = RT_PRIMARY_T_MIN;
+        ray.TMax = 0.0f;
+        ray.Direction = float3(0.0f);
+        /// 两侧偏移已相交/交错时不存在可信的正向区间；调用方按空候选丢弃，不反向追踪。
+        if (distance > RT_DISTANCE_GUARD && dot(light_position - ray.Origin, to_light) > 0.0f &&
+            dot(segment, to_light) > 0.0f)
+        {
+            ray.Direction = segment / distance;
+            ray.TMax = distance;
+        }
         return ray;
     }
 
@@ -250,30 +291,35 @@ struct RtDirectLighting
             engine::binding::gpu_scene.emissive_light_count > 0;
     }
 
-    /// 自发光三角形第一版沿用当前 hit emission 的双面语义。
-    ///
-    /// light record 的 `select_pdf` 是离散选中三角形的概率；这里乘以面积均匀采样 PDF，
-    /// 再通过 `distance^2 / abs(dot(n, -wi))` 转换为 solid-angle PDF。这个函数同时服务
-    /// NEE candidate 和 BRDF 命中 emissive surface 的 MIS 查询，保证两条路径使用同一度量。
+    /// 面积均匀采样到 solid-angle 的共同换算；调用方决定单面余弦或双面绝对余弦。
+    static float area_solid_angle_pdf(const float select_pdf, const float area, const float light_cos, const float distance)
+    {
+        if (!isfinite(select_pdf) || !isfinite(area) || !isfinite(distance) ||
+            select_pdf <= 0.0f || area <= 0.0f || distance <= 0.0f)
+        {
+            return 0.0f;
+        }
+
+        if (!isfinite(light_cos) || light_cos <= 1e-6f)
+        {
+            return 0.0f;
+        }
+
+        /// 先构造无量纲距离，避免 select_pdf/area 中间溢出或下溢后再乘 distance²。
+        /// 同一函数也服务 hit PDF；不可表示的最终密度两侧均视为不可采样，不把 Inf 送入 MIS。
+        const float scaled_distance = (distance * sqrt(select_pdf)) / sqrt(area);
+        const float pdf = scaled_distance * (scaled_distance / light_cos);
+        return isfinite(pdf) ? pdf : 0.0f;
+    }
+
+    /// Emissive triangle 的命中和 NEE 使用同一双面概率度量。
     static float emissive_solid_angle_pdf(
         const engine::light::EmissiveTriangleLight light,
         const float3 light_dir,
         const float distance
     )
     {
-        if (light.select_pdf <= 0.0f || light.area <= 0.0f || distance <= 0.0f)
-        {
-            return 0.0f;
-        }
-
-        const float light_cos = abs(dot(light.normal, -light_dir));
-        if (light_cos <= 1e-6f)
-        {
-            return 0.0f;
-        }
-
-        const float area_pdf = light.select_pdf / light.area;
-        return area_pdf * distance * distance / light_cos;
+        return area_solid_angle_pdf(light.select_pdf, light.area, abs(dot(light.normal, -light_dir)), distance);
     }
 
     static float3 evaluate_emissive(engine::material::PbrMaterial* mat, const engine::light::EmissiveTriangleLight light, float3 bary)
@@ -342,9 +388,10 @@ struct RtDirectLighting
         candidate.direction = light_dir;
         candidate.distance = distance;
         candidate.radiance = emission;
+        candidate.light_cos = abs(dot(light.normal, -light_dir));
         candidate.solid_angle_pdf = solid_angle_pdf;
 
-        candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
+        candidate.shadow_ray = make_emissive_visibility_ray(surface, light_position, light.normal);
         if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
         {
             return RtLightCandidate::empty();
@@ -397,32 +444,13 @@ struct RtDirectLighting
         return 0.005f;
     }
 
-    static bool ray_sphere_nearest_hit(
-        const float3 origin,
-        const float3 direction,
-        const float3 center,
-        const float radius,
-        out float distance
-    )
+    /// 返回 (sin(theta_max), 1-cos(theta_max))；有理化消去远处小球的 1-cos 消减。
+    /// 调用方保证视点位于球外，并用最终 PDF 的可表示性判断退化，不设置任意 sr 下限。
+    static float2 sphere_cone_parameters(const float center_distance)
     {
-        const float3 oc = origin - center;
-        const float b = dot(oc, direction);
-        const float c = dot(oc, oc) - radius * radius;
-        const float discriminant = b * b - c;
-        distance = 0.0f;
-        if (discriminant <= 0.0f)
-        {
-            return false;
-        }
-
-        const float t = -b - sqrt(discriminant);
-        if (t <= RT_INTERSECTION_GUARD)
-        {
-            return false;
-        }
-
-        distance = t;
-        return true;
+        const float sin_max = analytic_sphere_radius() / center_distance;
+        const float sin_max2 = sin_max * sin_max;
+        return float2(sin_max, sin_max2 / (1.0f + sqrt(max(1.0f - sin_max2, 0.0f))));
     }
 
     /// 从 shading point 对半径 0.005 m 的 analytic sphere emitter 做可见 solid-angle cone 采样。
@@ -444,44 +472,46 @@ struct RtDirectLighting
         const float radius = analytic_sphere_radius();
         const float3 to_center = center - surface.position;
         const float center_distance = length(to_center);
-        if (select_pdf <= 0.0f || center_distance <= radius + RT_DISTANCE_GUARD)
+        if (!isfinite(select_pdf) || !isfinite(center_distance) ||
+            select_pdf <= 0.0f || center_distance <= radius + RT_DISTANCE_GUARD)
         {
             return candidate;
         }
 
         const float3 center_dir = to_center / center_distance;
-        const float sin_theta_max2 = min(radius * radius / max(center_distance * center_distance, 1e-11f), 1.0f);
-        const float cos_theta_max = sqrt(max(1.0f - sin_theta_max2, 0.0f));
-        const float solid_angle = 2.0f * M_PI * (1.0f - cos_theta_max);
-        // solid_angle 是 sr；1e-7 只拒绝退化的 analytic sphere 采样锥，不是 ray offset。
-        if (solid_angle <= 1e-7f)
+        const float2 cone = sphere_cone_parameters(center_distance);
+        const float solid_angle = 2.0f * M_PI * cone.y;
+        const float pdf = select_pdf / solid_angle;
+        if (!isfinite(pdf) || pdf <= 0.0f)
         {
             return candidate;
         }
 
         const float u0 = Random::rnd(payload.random_seed);
         const float u1 = Random::rnd(payload.random_seed);
-        const float cos_theta = 1.0f - u0 * (1.0f - cos_theta_max);
-        const float sin_theta = sqrt(max(1.0f - cos_theta * cos_theta, 0.0f));
+        const float cone_height = u0 * cone.y;
+        const float cos_theta = 1.0f - cone_height;
+        const float sin_theta2 = cone_height * (2.0f - cone_height);
+        const float relative_sin2 = sin_theta2 / (cone.x * cone.x);
+        const float root = sqrt(max(1.0f - relative_sin2, 0.0f));
+        /// 由可见锥直接求球心到样本的夹角，不用两个大数相减的射线判别式。
+        /// PBRT Sphere::Sample 的球面几何关系；sin(alpha) 也从锥参数构造，避免再次消减。
+        const float cos_alpha = sin_theta2 / cone.x + cos_theta * root;
+        const float sin_alpha = sqrt(relative_sin2) * (cos_theta - cone.x * root);
         const float phi = 2.0f * M_PI * u1;
-
         float3 tangent;
         float3 bitangent;
         Sample::create_local_coord(center_dir, tangent, bitangent);
-        const float3 light_dir = normalize(
-            tangent * (cos(phi) * sin_theta) +
-            bitangent * (sin(phi) * sin_theta) +
-            center_dir * cos_theta
+        const float3 sample_normal = normalize(
+            tangent * (cos(phi) * sin_alpha) + bitangent * (sin(phi) * sin_alpha) - center_dir * cos_alpha
         );
-
-        float distance;
-        if (!ray_sphere_nearest_hit(surface.position, light_dir, center, radius, distance))
-        {
-            return candidate;
-        }
+        /// key 直接保存球面法线；相对中心连接避免先加大世界坐标、再减回视点丢失球半径。
+        const float3 to_light = to_center + radius * sample_normal;
+        const float distance = length(to_light);
+        const float3 light_dir = to_light / distance;
 
         const float ndotl = dot(surface.forward_normal, light_dir);
-        if (ndotl <= 0.0f)
+        if (ndotl <= 0.0f || dot(sample_normal, -light_dir) <= 0.0f)
         {
             return candidate;
         }
@@ -490,15 +520,14 @@ struct RtDirectLighting
         candidate.direction = light_dir;
         candidate.distance = distance;
         candidate.radiance = radiance;
-        candidate.solid_angle_pdf = select_pdf / solid_angle;
+        candidate.light_cos = dot(sample_normal, -light_dir);
+        candidate.solid_angle_pdf = pdf;
 
         candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
         if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
         {
             return RtLightCandidate::empty();
         }
-        const float3 light_position = surface.position + light_dir * distance;
-        const float3 sample_normal = normalize(light_position - center);
         candidate.sample_key.kind = kind;
         candidate.sample_key.light_index = light_index;
         candidate.sample_key.class_mask = current_light_class_mask();
@@ -511,19 +540,27 @@ struct RtDirectLighting
 
     static float spot_cone_falloff(const engine::light::SpotLight spot, const float3 light_to_surface_dir)
     {
-        const float dir_len = length(spot.dir);
-        if (dir_len <= 1e-6f)
+        /// CPU 保证角度有序、方向可归一化；这里也拒绝不可用的 record，不能靠交换角度修复输入。
+        if (!all(isfinite(spot.dir)) || !all(isfinite(light_to_surface_dir)) ||
+            !isfinite(spot.inner_angle) || !isfinite(spot.outer_angle) ||
+            spot.inner_angle < 0.0f || spot.inner_angle > spot.outer_angle || spot.outer_angle > M_PI)
         {
             return 0.0f;
         }
-
-        const float inner_angle = min(spot.inner_angle, spot.outer_angle);
-        const float outer_angle = max(spot.inner_angle, spot.outer_angle);
-        const float cos_inner = cos(inner_angle);
-        const float cos_outer = cos(outer_angle);
-        const float denom = max(cos_inner - cos_outer, 1e-5f);
-        const float cos_theta = dot(normalize(spot.dir), light_to_surface_dir);
-        return clamp((cos_theta - cos_outer) / denom, 0.0f, 1.0f);
+        const float dir_len = length(spot.dir);
+        if (!isfinite(dir_len) || dir_len <= 1e-6f || dot(light_to_surface_dir, light_to_surface_dir) <= 0.0f)
+        {
+            return 0.0f;
+        }
+        const float cos_theta = dot(spot.dir, light_to_surface_dir);
+        const float cos_inner = cos(spot.inner_angle);
+        const float cos_outer = cos(spot.outer_angle);
+        if (!isfinite(cos_theta) || !isfinite(cos_inner) || !isfinite(cos_outer))
+            return 0.0f;
+        /// 等角或余弦量化重合时使用包含边界的硬锥，不能除以零或用 epsilon 改写亮度。
+        if (spot.inner_angle == spot.outer_angle || cos_inner == cos_outer)
+            return cos_theta >= cos_outer ? 1.0f : 0.0f;
+        return clamp((cos_theta - cos_outer) / (cos_inner - cos_outer), 0.0f, 1.0f);
     }
 
     static RtLightCandidate sample_spot_candidate(
@@ -558,38 +595,50 @@ struct RtDirectLighting
         return candidate;
     }
 
-    static RtLightCandidate sample_area_candidate(
-        inout RtTracePayload payload,
+    /// 新采样与 key 重建共用同一矩形几何、单面域、条件 PDF 与 visibility 契约。
+    static RtLightCandidate make_area_candidate(
         const RtSurfaceHit surface,
         const engine::light::AreaLight area_light,
         const float select_pdf,
-        const uint light_index
+        const uint light_index,
+        const float2 uv
     )
     {
         RtLightCandidate candidate = RtLightCandidate::empty();
-        const float3 normal_unnormalized = cross(area_light.half_u, area_light.half_v);
-        const float half_area = length(normal_unnormalized);
-        const float area = 4.0f * half_area;
-        // area 是 m²；1e-11m² 只拒绝退化矩形，不承担表面偏移或 traversal epsilon。
-        if (select_pdf <= 0.0f || area <= 1e-11f)
+        if (!all(isfinite(uv)) || any(abs(uv) > 1.0f) ||
+            !all(isfinite(area_light.half_u)) || !all(isfinite(area_light.half_v)))
         {
             return candidate;
         }
-
-        const float3 area_normal = normal_unnormalized / half_area;
-        const float u = Random::rnd(payload.random_seed) * 2.0f - 1.0f;
-        const float v = Random::rnd(payload.random_seed) * 2.0f - 1.0f;
-        const float3 light_position = area_light.center + area_light.half_u * u + area_light.half_v * v;
-        const float3 to_light = light_position - surface.position;
+        /// 先消去半轴尺度再求法线，避免叉积长度的中间平方溢出/下溢。
+        const float3 abs_u = abs(area_light.half_u);
+        const float3 abs_v = abs(area_light.half_v);
+        const float u_scale = max(abs_u.x, max(abs_u.y, abs_u.z));
+        const float v_scale = max(abs_v.x, max(abs_v.y, abs_v.z));
+        if (u_scale <= 0.0f || v_scale <= 0.0f)
+        {
+            return candidate;
+        }
+        const float3 normal_unnormalized = cross(area_light.half_u / u_scale, area_light.half_v / v_scale);
+        const float normal_length = length(normal_unnormalized);
+        if (normal_length <= 0.0f)
+        {
+            return candidate;
+        }
+        const float area = (u_scale * v_scale) * (4.0f * normal_length);
+        const float3 area_normal = normal_unnormalized / normal_length;
+        /// 以相对中心连接，避免先叠加大世界坐标再减回 shading point。
+        const float3 to_light = (area_light.center - surface.position) + area_light.half_u * uv.x + area_light.half_v * uv.y;
         const float distance = length(to_light);
-        if (distance <= RT_DISTANCE_GUARD)
+        if (!isfinite(distance) || distance <= RT_DISTANCE_GUARD)
         {
             return candidate;
         }
 
         const float3 light_dir = to_light / distance;
         const float light_cos = dot(area_normal, -light_dir);
-        if (light_cos <= 1e-6f)
+        const float pdf = area_solid_angle_pdf(select_pdf, area, light_cos, distance);
+        if (pdf <= 0.0f)
         {
             return candidate;
         }
@@ -604,9 +653,10 @@ struct RtDirectLighting
         candidate.direction = light_dir;
         candidate.distance = distance;
         candidate.radiance = area_light.radiance;
+        candidate.light_cos = light_cos;
         // area light 是单面 emitter。这里把面积均匀采样转换到 solid-angle PDF，
         // 与 HDRI / emissive / BRDF PDF 处在同一度量后再进入统一候选系统。
-        candidate.solid_angle_pdf = select_pdf * distance * distance / (area * light_cos);
+        candidate.solid_angle_pdf = pdf;
 
         candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
         if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
@@ -616,11 +666,24 @@ struct RtDirectLighting
         candidate.sample_key.kind = RtLightCandidate::kind_analytic_area();
         candidate.sample_key.light_index = light_index;
         candidate.sample_key.class_mask = current_light_class_mask();
-        candidate.sample_key.sample = float4(u, v, 0.0f, 0.0f);
+        candidate.sample_key.sample = float4(uv.x, uv.y, 0.0f, 0.0f);
         candidate.sample_key.valid = true;
 
         candidate.valid = true;
         return candidate;
+    }
+
+    static RtLightCandidate sample_area_candidate(
+        inout RtTracePayload payload,
+        const RtSurfaceHit surface,
+        const engine::light::AreaLight area_light,
+        const float select_pdf,
+        const uint light_index
+    )
+    {
+        const float u = Random::rnd(payload.random_seed) * 2.0f - 1.0f;
+        const float v = Random::rnd(payload.random_seed) * 2.0f - 1.0f;
+        return make_area_candidate(surface, area_light, select_pdf, light_index, float2(u, v));
     }
 
     static RtLightCandidate sample_analytic_candidate(
@@ -750,8 +813,9 @@ struct RtDirectLighting
         candidate.direction = light_dir;
         candidate.distance = distance;
         candidate.radiance = emission;
+        candidate.light_cos = abs(dot(light.normal, -light_dir));
         candidate.solid_angle_pdf = solid_angle_pdf;
-        candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
+        candidate.shadow_ray = make_emissive_visibility_ray(surface, light_position, light.normal);
         if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
         {
             return RtLightCandidate::empty();
@@ -770,12 +834,11 @@ struct RtDirectLighting
         const uint kind
     )
     {
-        // analytic sphere key 保存 light-local sample normal。复用时必须确认该点仍是当前 surface
-        // 沿 light_dir 看到的最近 sphere 命中，避免从球体背面或内部样本重建出错误 PDF。
+        /// key 是球面法线；球外视点只允许朝向自己的可见半球，不用随距离放大的命中容差。
         RtLightCandidate candidate = RtLightCandidate::empty();
         const float radius = analytic_sphere_radius();
         const float sample_normal_len2 = dot(key.sample.xyz, key.sample.xyz);
-        if (select_pdf <= 0.0f || sample_normal_len2 <= 1e-6f)
+        if (!isfinite(select_pdf) || !isfinite(sample_normal_len2) || select_pdf <= 0.0f || sample_normal_len2 <= 1e-6f)
         {
             return candidate;
         }
@@ -783,21 +846,19 @@ struct RtDirectLighting
 
         const float3 to_center = center - surface.position;
         const float center_distance = length(to_center);
-        if (center_distance <= radius + RT_DISTANCE_GUARD)
+        if (!isfinite(center_distance) || center_distance <= radius + RT_DISTANCE_GUARD)
         {
             return candidate;
         }
-        const float sin_theta_max2 = min(radius * radius / max(center_distance * center_distance, 1e-11f), 1.0f);
-        const float cos_theta_max = sqrt(max(1.0f - sin_theta_max2, 0.0f));
-        const float solid_angle = 2.0f * M_PI * (1.0f - cos_theta_max);
-        // solid_angle 是 sr；该 floor 只用于避免 PDF 除零和退化候选。
-        if (solid_angle <= 1e-7f)
+        const float2 cone = sphere_cone_parameters(center_distance);
+        const float solid_angle = 2.0f * M_PI * cone.y;
+        const float pdf = select_pdf / solid_angle * unified_light_class_pdf();
+        if (!isfinite(pdf) || pdf <= 0.0f)
         {
             return candidate;
         }
 
-        const float3 light_position = center + radius * sample_normal;
-        const float3 to_light = light_position - surface.position;
+        const float3 to_light = to_center + radius * sample_normal;
         const float distance = length(to_light);
         if (distance <= RT_DISTANCE_GUARD)
         {
@@ -805,16 +866,7 @@ struct RtDirectLighting
         }
         const float3 light_dir = to_light / distance;
 
-        float nearest_distance;
-        if (!ray_sphere_nearest_hit(surface.position, light_dir, center, radius, nearest_distance))
-        {
-            return candidate;
-        }
-        if (abs(nearest_distance - distance) > max(1e-5f, distance * 1e-3f))
-        {
-            return candidate;
-        }
-        if (dot(surface.forward_normal, light_dir) <= 0.0f)
+        if (dot(sample_normal, -light_dir) <= 0.0f || dot(surface.forward_normal, light_dir) <= 0.0f)
         {
             return candidate;
         }
@@ -823,7 +875,8 @@ struct RtDirectLighting
         candidate.direction = light_dir;
         candidate.distance = distance;
         candidate.radiance = radiance;
-        candidate.solid_angle_pdf = select_pdf / solid_angle * unified_light_class_pdf();
+        candidate.light_cos = dot(sample_normal, -light_dir);
+        candidate.solid_angle_pdf = pdf;
         candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
         if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
         {
@@ -891,45 +944,9 @@ struct RtDirectLighting
             return candidate;
         }
         const engine::light::AreaLight area_light = engine::binding::gpu_scene.area_lights[key.light_index];
-        const float3 normal_unnormalized = cross(area_light.half_u, area_light.half_v);
-        const float half_area = length(normal_unnormalized);
-        const float area = 4.0f * half_area;
-        // area 是 m²；该 floor 只用于退化 area light 判断，不是 geometry offset。
-        if (area <= 1e-11f || key.sample.x < -1.0f || key.sample.x > 1.0f || key.sample.y < -1.0f || key.sample.y > 1.0f)
-        {
-            return candidate;
-        }
-
-        const float3 area_normal = normal_unnormalized / half_area;
-        const float3 light_position = area_light.center + area_light.half_u * key.sample.x + area_light.half_v * key.sample.y;
-        const float3 to_light = light_position - surface.position;
-        const float distance = length(to_light);
-        if (distance <= RT_DISTANCE_GUARD)
-        {
-            return candidate;
-        }
-
-        const float3 light_dir = to_light / distance;
-        const float light_cos = dot(area_normal, -light_dir);
-        if (light_cos <= 1e-6f || dot(surface.forward_normal, light_dir) <= 0.0f)
-        {
-            return candidate;
-        }
-
         const float select_pdf = 1.0f / (float)analytic_light_count();
-        candidate.kind = RtLightCandidate::kind_analytic_area();
-        candidate.direction = light_dir;
-        candidate.distance = distance;
-        candidate.radiance = area_light.radiance;
-        candidate.solid_angle_pdf = select_pdf * distance * distance / (area * light_cos) * unified_light_class_pdf();
-        candidate.shadow_ray = make_visibility_ray(surface, light_dir, distance, true);
-        if (candidate.shadow_ray.TMax <= candidate.shadow_ray.TMin)
-        {
-            return RtLightCandidate::empty();
-        }
-        candidate.sample_key = key;
-        candidate.valid = true;
-        return candidate;
+        candidate = make_area_candidate(surface, area_light, select_pdf, key.light_index, key.sample.xy);
+        return apply_light_class_pdf(candidate, unified_light_class_pdf());
     }
 
     static RtLightCandidate reconstruct_candidate_from_key(const RtLightSampleKey key, const RtSurfaceHit surface)
@@ -1057,9 +1074,10 @@ struct RtDirectLighting
     /// 这里不做 lookup table：`GeometryIndex()` 是 instance-local submesh，`PrimitiveIndex()`
     /// 是 submesh-local triangle，因此直接用 base map 加 primitive id 定位 record。这个契约
     /// 与 `instance_geometry_map` / `instance_material_map` 的索引形状保持一致。
-    static float emissive_hit_pdf(const RtSurfaceHit surface, const float3 light_dir)
+    static float emissive_hit_pdf(const RtSurfaceHit surface, const float3 previous_position)
     {
-        if (surface.material_type != MaterialType::EMISSIVE)
+        /// 普通 Surface/Transmission 也可带 emission；NEE 的竞争域由光源表决定，不由 BSDF 类别决定。
+        if (!surface.is_surface())
         {
             return 0.0f;
         }
@@ -1085,10 +1103,18 @@ struct RtDirectLighting
             return 0.0f;
         }
 
-        return emissive_solid_angle_pdf(light, light_dir, surface.hit_t);
+        /// NEE 的密度定义在未偏移的表面连接线上；traversal hit_t 从偏移后的 ray origin 起算，
+        /// 不能替代两个表面顶点间的距离，也不能沿用偏移射线的方向计算光源余弦。
+        const float3 to_light = surface.position - previous_position;
+        const float distance = length(to_light);
+        if (distance <= RT_DISTANCE_GUARD)
+        {
+            return 0.0f;
+        }
+        return emissive_solid_angle_pdf(light, to_light / distance, distance);
     }
 
-    static float unified_emissive_hit_pdf(const RtSurfaceHit surface, const float3 light_dir)
+    static float unified_emissive_hit_pdf(const RtSurfaceHit surface, const float3 previous_position)
     {
         if (!emissive_nee_enabled())
         {
@@ -1097,7 +1123,7 @@ struct RtDirectLighting
 
         // BRDF 命中 emissive surface 时，需要和统一 light strategy 竞争，而不是只和
         // emissive class 内部采样器竞争；因此这里把 class 选择概率一并乘入。
-        return emissive_hit_pdf(surface, light_dir) * unified_light_class_pdf();
+        return emissive_hit_pdf(surface, previous_position) * unified_light_class_pdf();
     }
 
     static bool is_candidate_visible(RaytracingAccelerationStructure tlas, const RtLightCandidate candidate)
@@ -1129,7 +1155,7 @@ struct RtDirectLighting
     )
     {
         RtDirectLightingSample result = RtDirectLightingSample::empty();
-        if (!candidate.valid || candidate.solid_angle_pdf <= 0.0f)
+        if (!candidate.valid || !isfinite(candidate.solid_angle_pdf) || candidate.solid_angle_pdf <= 0.0f)
         {
             return result;
         }
@@ -1149,6 +1175,10 @@ struct RtDirectLighting
         }
 
         result.contribution = candidate.radiance * brdf_cos * mis_weight;
+        if (!all(isfinite(result.contribution)) || any(result.contribution < float3(0.0f)))
+        {
+            return RtDirectLightingSample::empty();
+        }
         result.light_kind = candidate.kind;
         result.valid = true;
         return result;
@@ -1177,20 +1207,25 @@ struct RtDirectLighting
         const float reservoir_weight
     )
     {
-        // reservoir_weight 是 ReSTIR phase 写出的 finalized inverse PDF。
-        // 这里复用 target contribution 的同源 BRDF/MIS 计算，只把最终 reservoir 权重乘回贡献。
-        if (reservoir_weight <= 0.0f)
+        /// reservoir_weight 是 ReSTIR phase 写出的 finalized inverse PDF。
+        /// 一次 BRDF/MIS 求值同时提供当前 target 判零和 RGB，不在 final 调用方重复计算。
+        if (!isfinite(reservoir_weight) || reservoir_weight <= 0.0f)
         {
             return RtDirectLightingSample::empty();
         }
         const RtDirectLightingSample sample = eval_candidate_target_contribution(candidate, surface, view_dir);
-        if (!sample.valid)
+        if (!sample.valid || reservoir_rgb_importance(sample.contribution) <= 0.0f)
         {
-            return sample;
+            return RtDirectLightingSample::empty();
         }
 
+        /// 判零使用未加权贡献；正贡献乘极小权重后下溢为零时，仍保留有效样本语义。
         RtDirectLightingSample weighted_sample = sample;
         weighted_sample.contribution *= reservoir_weight;
+        if (!all(isfinite(weighted_sample.contribution)))
+        {
+            return RtDirectLightingSample::empty();
+        }
         return weighted_sample;
     }
     /// 将一个已通过 visibility 的 light candidate 评估为当前 path 的直接光贡献。
@@ -1205,7 +1240,7 @@ struct RtDirectLighting
     )
     {
         RtDirectLightingSample result = RtDirectLightingSample::empty();
-        if (!candidate.valid || candidate.solid_angle_pdf <= 0.0f)
+        if (!candidate.valid || !isfinite(candidate.solid_angle_pdf) || candidate.solid_angle_pdf <= 0.0f)
         {
             return result;
         }
@@ -1217,8 +1252,9 @@ struct RtDirectLighting
         }
 
         const float3 brdf_cos = RtMaterialSampler::eval_brdf(surface, view_dir, candidate.direction);
+        /// 完整 proposal 密度同时用于 MIS 与贡献，不能只在除法时抬高低概率样本的密度。
         result.contribution = throughput * candidate.radiance * brdf_cos /
-            max(candidate.solid_angle_pdf, 1e-7f) * mis_weight;
+            candidate.solid_angle_pdf * mis_weight;
         result.light_kind = candidate.kind;
         result.valid = true;
         return result;
@@ -1232,7 +1268,7 @@ struct RtDirectLighting
         const float3 throughput
     )
     {
-        if (!candidate.valid || candidate.solid_angle_pdf <= 0.0f)
+        if (!candidate.valid || !isfinite(candidate.solid_angle_pdf) || candidate.solid_angle_pdf <= 0.0f)
         {
             return RtDirectLightingSample::empty();
         }
@@ -1248,41 +1284,30 @@ struct RtDirectLighting
         return shade_candidate_with_mis_weight(candidate, surface, view_dir, throughput, mis_weight);
     }
 
-    /// analytic light v1 不创建 TLAS 可命中的发光几何，BRDF path 不会直接 hit 到这些 light。
-    /// 因此不存在与 light-side NEE 竞争的 BRDF-hit 估计器，MIS 权重固定为 1。
-    static RtDirectLightingSample shade_analytic_candidate(
-        const RtLightCandidate candidate,
-        const RtSurfaceHit surface,
-        const float3 view_dir,
-        const float3 throughput
-    )
-    {
-        return shade_candidate_with_mis_weight(candidate, surface, view_dir, throughput, 1.0f);
-    }
-
+    /// 硬深度上限处没有 BSDF 竞争样本，NEE 独立估计；随机 roulette 有存活补偿，不属于此分支。
+    /// analytic light 无可命中的发光几何，始终没有 BRDF-hit 竞争。
     static RtDirectLightingSample shade_unified_candidate(
         const RtLightCandidate candidate,
         const RtSurfaceHit surface,
         const float3 view_dir,
-        const float3 throughput
+        const float3 throughput,
+        const bool has_bsdf_continuation
     )
     {
-        if (RtLightCandidate::is_analytic_kind(candidate.kind))
+        if (!has_bsdf_continuation || RtLightCandidate::is_analytic_kind(candidate.kind))
         {
-            return shade_analytic_candidate(candidate, surface, view_dir, throughput);
+            return shade_candidate_with_mis_weight(candidate, surface, view_dir, throughput, 1.0f);
         }
         return shade_candidate(candidate, surface, view_dir, throughput);
     }
 
-    /// 统一直接光 NEE 入口：raygen 每个 surface 只生成一个 light candidate。
-    ///
-    /// 旧的 HDRI/emissive/analytic 单独入口保留为调试和回退基础；默认路径使用本函数，
-    /// 后续 ReSTIR DI 可以复用同一候选生成与 shade 契约，而不扩大 raygen 主循环职责。
+    /// 每个 surface 只生成一个 light candidate；调用方明确本顶点之后是否还有 BSDF trace。
     static RtDirectLightingSample sample_unified(
         inout RtTracePayload payload,
         const RtSurfaceHit surface,
         const float3 view_dir,
-        const float3 throughput
+        const float3 throughput,
+        const bool has_bsdf_continuation
     )
     {
         const RtLightCandidate candidate = sample_unified_candidate(payload, surface);
@@ -1290,55 +1315,7 @@ struct RtDirectLighting
         {
             return RtDirectLightingSample::empty();
         }
-        return shade_unified_candidate(candidate, surface, view_dir, throughput);
+        return shade_unified_candidate(candidate, surface, view_dir, throughput, has_bsdf_continuation);
     }
 
-    /// 对 HDRI 做一次采样并返回 NEE 贡献。
-    ///
-    /// `sample_hdri` 保留为 raygen 的稳定入口；内部已经拆成 candidate、visibility 和 shade
-    /// 三段，后续新增 light type 或 reservoir 时不需要扩大 raygen 主循环的职责。
-    static RtDirectLightingSample sample_hdri(
-        inout RtTracePayload payload,
-        const RtSurfaceHit surface,
-        const float3 view_dir,
-        const float3 throughput
-    )
-    {
-        const RtLightCandidate candidate = sample_hdri_candidate(payload, surface);
-        if (!is_candidate_visible(renderer::render_passes::realtime_rt::rt_tlas, candidate))
-        {
-            return RtDirectLightingSample::empty();
-        }
-        return shade_candidate(candidate, surface, view_dir, throughput);
-    }
-
-    static RtDirectLightingSample sample_emissive(
-        inout RtTracePayload payload,
-        const RtSurfaceHit surface,
-        const float3 view_dir,
-        const float3 throughput
-    )
-    {
-        const RtLightCandidate candidate = sample_emissive_candidate(payload, surface);
-        if (!is_candidate_visible(renderer::render_passes::realtime_rt::rt_tlas, candidate))
-        {
-            return RtDirectLightingSample::empty();
-        }
-        return shade_candidate(candidate, surface, view_dir, throughput);
-    }
-
-    static RtDirectLightingSample sample_analytic(
-        inout RtTracePayload payload,
-        const RtSurfaceHit surface,
-        const float3 view_dir,
-        const float3 throughput
-    )
-    {
-        const RtLightCandidate candidate = sample_analytic_candidate(payload, surface);
-        if (!is_candidate_visible(renderer::render_passes::realtime_rt::rt_tlas, candidate))
-        {
-            return RtDirectLightingSample::empty();
-        }
-        return shade_analytic_candidate(candidate, surface, view_dir, throughput);
-    }
 };

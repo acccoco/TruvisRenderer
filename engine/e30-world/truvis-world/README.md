@@ -45,6 +45,9 @@ scene import 完成不会自动修改 `SceneStore`。外部可以过滤、复制
 `SceneData.objects`。`SceneImportHandle` 的 `LoadStatus::Ready` 只表示 scene 结构和资源身份
 已经写入 CPU owner；纹理解码、GPU 上传和最终画面仍是独立阶段。
 
+`scene_import_status` 返回 `Option<LoadStatus>`：`None` 表示 handle 不存在或 generation 不匹配，
+不能当作真实任务的 `Failed`。失败任务仍保留可查询的错误；调用方应区分身份错误和加载失败。
+
 scene ingest 先校验全部 mesh、材质参数、引用/材质数量与所需 UV，并解析全部外部纹理
 路径，再登记资源身份。输入预检失败时不登记任何 mesh/material/texture，也不重试共享
 Failed 纹理。embedded 的身份沿用请求入口的 canonical scene path；已拥有的 bytes
@@ -91,6 +94,9 @@ revision 前返回错误。成功的相同值编辑不推进版本，也不新�
 ## 材质编辑
 
 `MaterialData::validate` 在注册和更新前检查普通因子、光学类别、coverage 和 UV transform。
+metallic/roughness 与 base color alpha 必须在 [0,1]，base RGB 非负且保留大于 1 的既有 HDR 范围；
+非法参数在修改记录、依赖和 revision 前返回错误。shader 将 MR 贴图与因子组合后的值限定到
+[0,1]，保证 HDR 纹理不会重新产生非法采样概率；不修改通用纹理数据或 HDR 发光通道。
 光学类别沿用现有可表示范围：opacity 为 [0,1]，IOR 至少 1，radiance 非负；数值及两路
 emission 的和必须有限。alpha cutoff 允许大于 1，只拒绝负值和非有限值。校验不截断输入。
 共享材质的 UV 集合需求必须满足每个 live instance 的对应 submesh；失败保持材质、纹理

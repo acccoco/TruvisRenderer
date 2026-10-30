@@ -25,11 +25,15 @@ void main_ray_gen()
 {
     const uint2 thread_id = DispatchRaysIndex().xy;
 
-    // SHARC 维护 sub-pass：在正常 path / ReSTIR 之前，用同一条 RT pipeline 维护世界空间 radiance cache。
-    // stage 8b 只做 Update / Resolve，不查询缓存，因此主 path loop 行为保持不变，画面应与 SHARC Off 一致。
+    /// SHARC 维护阶段复用同一 RT pipeline，在主路径前依次 Update / Snapshot / Resolve。
     if (push_const.sharc_phase == renderer::render_passes::realtime_rt::SHARC_PHASE_UPDATE)
     {
         RtSharc::run_update(thread_id);
+        return;
+    }
+    if (push_const.sharc_phase == renderer::render_passes::realtime_rt::SHARC_PHASE_SNAPSHOT)
+    {
+        RtSharc::run_snapshot(thread_id);
         return;
     }
     if (push_const.sharc_phase == renderer::render_passes::realtime_rt::SHARC_PHASE_RESOLVE)
@@ -61,6 +65,7 @@ void main_ray_gen()
 
     for (uint depth = 0; depth < max_depth; ++depth)
     {
+        const bool has_bsdf_continuation = depth + 1u < max_depth;
         // 每次 TraceRay 只返回一个 surface/miss 事件；path 积分和 debug 状态都在 raygen 侧推进。
         TraceRay(
             renderer::render_passes::realtime_rt::rt_tlas,
@@ -95,7 +100,7 @@ void main_ray_gen()
             {
                 if (payload.hit)
                 {
-                    RtRaygenView::write_primary_hit_outputs(thread_id, surface, specular_hit_distance);
+                    RtRaygenView::write_primary_hit_outputs(thread_id, surface, ray.Direction, specular_hit_distance);
                     if (RtRestirDI::enabled())
                     {
                         // surface-only debug 也要写 ReSTIR surface key/empty reservoir，保证后续
@@ -137,6 +142,13 @@ void main_ray_gen()
                 gbuffer_written = true;
             }
 
+            /// 两个表面 cache 通道在 primary miss 时没有观测对象，不能把 sky radiance 冒充缓存。
+            /// 上方仍刷新 GBuffer / DLSS / ReSTIR 输入，只有可视化结果提前结束。
+            if (depth == 0 && (push_const.channel == RT_DEBUG_SHARC_HASH_GRID || push_const.channel == RT_DEBUG_SHARC_CACHE))
+            {
+                break;
+            }
+
             const float3 sky_color = payload.surface.emissive;
             const float3 sky_contribution = path.add_sky_miss(depth, sky_color, ray.Direction);
             debug_state.record_hdri(sky_contribution);
@@ -146,7 +158,7 @@ void main_ray_gen()
         if (!gbuffer_written)
         {
             // 首次命中时同步写 GBuffer、DLSS depth/motion 和 RR 材质输入。
-            RtRaygenView::write_primary_hit_outputs(thread_id, surface, specular_hit_distance);
+            RtRaygenView::write_primary_hit_outputs(thread_id, surface, ray.Direction, specular_hit_distance);
             if (RtRestirDI::enabled())
             {
                 RtRestirDI::store_primary_surface_key(thread_id, surface);
@@ -154,25 +166,23 @@ void main_ray_gen()
             gbuffer_written = true;
         }
 
-        // SHARC 调试通道：在 primary hit 处可视化 hash grid 结构或 resolved 缓存 radiance，然后早退。
-        // 这是只读观测，不影响正常渲染路径，也不属于路径查询（query 在第九阶段接入）。
-        if (depth == 0)
+        /// SHARC debug 在 primary hit 提前退出，不生成本帧候选。
+        /// surface 已刷新，initial 也必须清空，不能把本 FIF 槽的旧候选配到当前表面。
+        if (depth == 0 && (push_const.channel == RT_DEBUG_SHARC_HASH_GRID || push_const.channel == RT_DEBUG_SHARC_CACHE))
         {
-            if (push_const.channel == RT_DEBUG_SHARC_HASH_GRID)
+            if (RtRestirDI::enabled())
             {
-                path.radiance = RtSharc::debug_hash_grid_color(surface);
-                break;
+                RtRestirDI::store_initial(thread_id, RtReservoir::empty());
             }
-            if (push_const.channel == RT_DEBUG_SHARC_CACHE)
-            {
-                path.radiance = RtSharc::debug_cache_radiance(surface);
-                break;
-            }
+            path.radiance = push_const.channel == RT_DEBUG_SHARC_HASH_GRID
+                ? RtSharc::debug_hash_grid_color(surface)
+                : RtSharc::debug_cache_radiance(surface);
+            break;
         }
 
         if (any(surface.emissive > 0.0))
         {
-            const float3 emission = path.add_emissive(depth, surface, ray.Direction);
+            const float3 emission = path.add_emissive(depth, surface);
             debug_state.record_emissive(emission);
         }
 
@@ -225,7 +235,8 @@ void main_ray_gen()
                 payload,
                 surface,
                 -ray.Direction,
-                path.throughput
+                path.throughput,
+                has_bsdf_continuation
             );
             if (direct_lighting.valid)
             {
@@ -245,6 +256,12 @@ void main_ray_gen()
             }
         }
 
+        /// 末顶点已完成 emission/NEE，没有下一次 trace，不消耗材质或 roulette 随机槽。
+        if (!has_bsdf_continuation)
+        {
+            break;
+        }
+
         const RtMaterialSample material_sample = RtMaterialSampler::sample_next(payload, surface, ray.Direction);
         path.apply_material_sample(surface, material_sample);
         if (material_sample.done)
@@ -252,8 +269,7 @@ void main_ray_gen()
             break;
         }
 
-        RtRussianRouletteResult rr_result = path.apply_russian_roulette(payload, depth);
-        if (!rr_result.survived)
+        if (!path.apply_russian_roulette(payload, depth))
         {
             break;
         }

@@ -50,6 +50,7 @@ void main_ray_gen()
 
     for (uint depth = 0; depth < max_depth; ++depth)
     {
+        const bool has_bsdf_continuation = depth + 1u < max_depth;
         TraceRay(
             renderer::render_passes::offline_rt::rt_tlas,
             RAY_FLAG_NONE,
@@ -80,7 +81,7 @@ void main_ray_gen()
 
         if (any(surface.emissive > 0.0))
         {
-            const float3 emission = path.add_emissive(depth, surface, ray.Direction);
+            const float3 emission = path.add_emissive(depth, surface);
             debug_state.record_emissive(emission);
         }
 
@@ -94,7 +95,8 @@ void main_ray_gen()
             payload,
             surface,
             -ray.Direction,
-            path.throughput
+            path.throughput,
+            has_bsdf_continuation
         );
         if (direct_lighting.valid)
         {
@@ -113,6 +115,12 @@ void main_ray_gen()
             }
         }
 
+        /// 末顶点已完成 emission/NEE，没有下一次 trace，不消耗材质或 roulette 随机槽。
+        if (!has_bsdf_continuation)
+        {
+            break;
+        }
+
         const RtMaterialSample material_sample = RtMaterialSampler::sample_next(payload, surface, ray.Direction);
         path.apply_material_sample(surface, material_sample);
         if (material_sample.done)
@@ -120,8 +128,7 @@ void main_ray_gen()
             break;
         }
 
-        RtRussianRouletteResult rr_result = path.apply_russian_roulette(payload, depth);
-        if (!rr_result.survived)
+        if (!path.apply_russian_roulette(payload, depth))
         {
             break;
         }

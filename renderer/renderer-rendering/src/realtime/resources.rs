@@ -101,15 +101,16 @@ pub struct RestirReservoirTarget {
     pub d: ImageTarget,
 }
 
-/// ReSTIR DI primary surface key 的三图像打包视图。
+/// ReSTIR DI primary surface key 的四图像打包视图。
 ///
-/// 该 history 只服务 realtime 渲染子系统的 temporal rejection，不进入 DLSS state，
-/// 因此随 ReSTIR targets 一起按 render extent 轮转。
+/// current/history 仅服务 ReSTIR 的重建与复用，不进入 DLSS state，
+/// 随 ReSTIR targets 一起按 render extent 与 FIF label 轮转。
 #[derive(Clone, Copy)]
 pub struct RestirSurfaceKeyTarget {
     pub a: ImageTarget,
     pub b: ImageTarget,
     pub c: ImageTarget,
+    pub d: ImageTarget,
 }
 
 /// Primary ReSTIR DI 的 temporal 资源。
@@ -133,6 +134,7 @@ pub struct RestirDiTargets {
     surface_a: PerFrameImageSet,
     surface_b: PerFrameImageSet,
     surface_c: PerFrameImageSet,
+    surface_d: PerFrameImageSet,
 }
 
 impl RestirDiTargets {
@@ -144,7 +146,7 @@ impl RestirDiTargets {
     pub const STATS_FORMAT: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
     /// reservoir D：sky / emissive / analytic light 版本和 sample-key valid bit。
     pub const VERSION_FORMAT: vk::Format = vk::Format::R32G32B32A32_UINT;
-    /// surface key A/B/C：position/depth、normal/roughness、base_color/metallic。
+    /// surface key A/B/C/D：position/depth、着色法线/roughness、base_color/metallic、几何法线/0。
     pub const SURFACE_FORMAT: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
 
     pub fn new(
@@ -156,7 +158,25 @@ impl RestirDiTargets {
         frame_id: u64,
     ) -> Self {
         let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC;
-        let mut make_set = |name_prefix: &'static str, format: vk::Format| {
+        let descriptions: [(&str, vk::Format); 16] = [
+            ("restir-di-initial-a", Self::ID_FORMAT),
+            ("restir-di-initial-b", Self::PARAM_FORMAT),
+            ("restir-di-initial-c", Self::STATS_FORMAT),
+            ("restir-di-initial-d", Self::VERSION_FORMAT),
+            ("restir-di-temporal-a", Self::ID_FORMAT),
+            ("restir-di-temporal-b", Self::PARAM_FORMAT),
+            ("restir-di-temporal-c", Self::STATS_FORMAT),
+            ("restir-di-temporal-d", Self::VERSION_FORMAT),
+            ("restir-di-final-a", Self::ID_FORMAT),
+            ("restir-di-final-b", Self::PARAM_FORMAT),
+            ("restir-di-final-c", Self::STATS_FORMAT),
+            ("restir-di-final-d", Self::VERSION_FORMAT),
+            ("restir-di-surface-a", Self::SURFACE_FORMAT),
+            ("restir-di-surface-b", Self::SURFACE_FORMAT),
+            ("restir-di-surface-c", Self::SURFACE_FORMAT),
+            ("restir-di-surface-d", Self::SURFACE_FORMAT),
+        ];
+        let sets = descriptions.map(|(name_prefix, format)| {
             PerFrameImageSet::new(
                 resource_ctx,
                 device_ctx,
@@ -170,28 +190,43 @@ impl RestirDiTargets {
                 },
                 frame_id,
             )
-        };
-
-        let targets = Self {
-            initial_a: make_set("restir-di-initial-a", Self::ID_FORMAT),
-            initial_b: make_set("restir-di-initial-b", Self::PARAM_FORMAT),
-            initial_c: make_set("restir-di-initial-c", Self::STATS_FORMAT),
-            initial_d: make_set("restir-di-initial-d", Self::VERSION_FORMAT),
-            temporal_a: make_set("restir-di-temporal-a", Self::ID_FORMAT),
-            temporal_b: make_set("restir-di-temporal-b", Self::PARAM_FORMAT),
-            temporal_c: make_set("restir-di-temporal-c", Self::STATS_FORMAT),
-            temporal_d: make_set("restir-di-temporal-d", Self::VERSION_FORMAT),
-            final_a: make_set("restir-di-final-a", Self::ID_FORMAT),
-            final_b: make_set("restir-di-final-b", Self::PARAM_FORMAT),
-            final_c: make_set("restir-di-final-c", Self::STATS_FORMAT),
-            final_d: make_set("restir-di-final-d", Self::VERSION_FORMAT),
-            surface_a: make_set("restir-di-surface-a", Self::SURFACE_FORMAT),
-            surface_b: make_set("restir-di-surface-b", Self::SURFACE_FORMAT),
-            surface_c: make_set("restir-di-surface-c", Self::SURFACE_FORMAT),
-        };
-        // ReSTIR targets 只通过 RT pass-local push descriptor 绑定。不要注册到全局 bindless，
-        // 否则每个在飞帧的 reservoir pack 都会占用 SRV/UAV slot。
-        targets
+        });
+        let [
+            initial_a,
+            initial_b,
+            initial_c,
+            initial_d,
+            temporal_a,
+            temporal_b,
+            temporal_c,
+            temporal_d,
+            final_a,
+            final_b,
+            final_c,
+            final_d,
+            surface_a,
+            surface_b,
+            surface_c,
+            surface_d,
+        ] = sets;
+        Self {
+            initial_a,
+            initial_b,
+            initial_c,
+            initial_d,
+            temporal_a,
+            temporal_b,
+            temporal_c,
+            temporal_d,
+            final_a,
+            final_b,
+            final_c,
+            final_d,
+            surface_a,
+            surface_b,
+            surface_c,
+            surface_d,
+        }
     }
 
     pub fn rebuild(
@@ -231,6 +266,7 @@ impl RestirDiTargets {
                 &mut self.surface_a,
                 &mut self.surface_b,
                 &mut self.surface_c,
+                &mut self.surface_d,
             ],
             resource_ctx,
             device_ctx,
@@ -281,6 +317,7 @@ impl RestirDiTargets {
             a: self.surface_a.target(frame_label),
             b: self.surface_b.target(frame_label),
             c: self.surface_c.target(frame_label),
+            d: self.surface_d.target(frame_label),
         }
     }
 
@@ -300,6 +337,7 @@ impl RestirDiTargets {
         visit(&self.surface_a);
         visit(&self.surface_b);
         visit(&self.surface_c);
+        visit(&self.surface_d);
     }
 }
 
@@ -311,9 +349,9 @@ impl Drop for RestirDiTargets {
 
 /// SHARC world-space radiance cache 的持久 GPU buffer 集合。
 ///
-/// SHARC 缓存是世界空间持久结构，**不随 FIF frame label 或 render extent 轮转**：三个 buffer 单实例存在、
+/// SHARC 缓存是世界空间持久结构，**不随 FIF frame label 或 render extent 轮转**：buffer 单实例存在、
 /// 跨帧累积，时间稳定性与淘汰由 SHARC 内部的 `accumulatedFrameNum` / `staleFrameNum` 控制。owner 只负责
-/// 创建、整表清零（初始化 / 场景重载 reset）与销毁；Update→Resolve→Query 之间的 buffer 同步由 RT pass 用
+/// 创建、整表清零（初始化 / 场景重载 reset）与销毁；Update→Snapshot→Resolve→Query 的 buffer 同步由 RT pass 用
 /// buffer barrier 显式保证，不进入只跟踪 image 的 RenderGraph。
 ///
 /// 这些 buffer 的元素布局（uint64 hash key、fp16 voxel radiance）只在 shader 侧有意义，CPU 不读写单个元素，
@@ -325,6 +363,9 @@ pub struct SharcTargets {
     accumulation: GfxBuffer,
     /// resolved buffer：每 entry 一个 `SharcPackedData`(16B)，存跨帧累积 radiance(fp16) + 帧/stale 元数据。
     resolved: GfxBuffer,
+    /// Resolve 的只读来源；每次 Update 后完整覆盖，避免跨槽读取与淘汰竞争。
+    resolve_hash_entries: GfxBuffer,
+    resolve_history: GfxBuffer,
     /// voxel 数量（hash map 容量）。push constant 会把它传给 shader 做取模与 resolve 边界判断。
     capacity: u32,
     destroyed: bool,
@@ -343,25 +384,41 @@ impl SharcTargets {
     pub fn new(resource_ctx: GfxResourceCtx<'_>, immediate_ctx: GfxImmediateCtx<'_>) -> Self {
         let capacity = Self::CAPACITY;
         let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
-        let make = |size: vk::DeviceSize, name: &str| GfxBuffer::new(resource_ctx, size, usage, None, false, name);
-        let hash_entries = make(capacity as vk::DeviceSize * Self::HASH_ENTRY_SIZE, "sharc-hash-entries");
-        let accumulation = make(capacity as vk::DeviceSize * Self::VOXEL_DATA_SIZE, "sharc-accumulation");
-        let resolved = make(capacity as vk::DeviceSize * Self::VOXEL_DATA_SIZE, "sharc-resolved");
+        let descriptions = [
+            (Self::HASH_ENTRY_SIZE, "sharc-hash-entries"),
+            (Self::VOXEL_DATA_SIZE, "sharc-accumulation"),
+            (Self::VOXEL_DATA_SIZE, "sharc-resolved"),
+            (Self::HASH_ENTRY_SIZE, "sharc-resolve-hash-entries"),
+            (Self::VOXEL_DATA_SIZE, "sharc-resolve-history"),
+        ];
+        let buffers = descriptions.map(|(element_size, name)| {
+            GfxBuffer::new(resource_ctx, capacity as vk::DeviceSize * element_size, usage, None, false, name)
+        });
+        let [
+            hash_entries,
+            accumulation,
+            resolved,
+            resolve_hash_entries,
+            resolve_history,
+        ] = buffers;
 
         let mut targets = Self {
             hash_entries,
             accumulation,
             resolved,
+            resolve_hash_entries,
+            resolve_history,
             capacity,
             destroyed: false,
         };
-        // SHARC 要求三个 buffer 初始全部清 0：hash key 0 表示空槽，voxel 数据 0 表示无样本。
         targets.clear_all(immediate_ctx);
         targets
     }
 
-    /// 整表清零。用于初始化以及未来的场景重载 / 缓存 reset；不在 resize 时调用，
-    /// 因为缓存是世界空间结构，与 render extent 无关。
+    /// 初始化时整表清零；后续语义 reset 由 RT pass 在本帧命令中录制 fill 与依赖。
+    /// resize 不清理世界空间 cache，因为它与 render extent 无关。
+    /// 三个 cache buffer 必须全部清 0：hash key 0 表示空槽，voxel 数据 0 表示无样本。
+    /// 两个快照 buffer 不必清零；每次 Resolve 前由 Snapshot 全量覆盖，包括空槽。
     pub fn clear_all(&mut self, immediate_ctx: GfxImmediateCtx<'_>) {
         immediate_ctx.one_time_exec(
             |cmd| {
@@ -383,6 +440,8 @@ impl SharcTargets {
             &mut self.hash_entries,
             &mut self.accumulation,
             &mut self.resolved,
+            &mut self.resolve_hash_entries,
+            &mut self.resolve_history,
         ] {
             buffer.destroy_mut(resource_ctx, reason);
         }
@@ -407,6 +466,14 @@ impl SharcTargets {
     #[inline]
     pub fn resolved_buffer(&self) -> vk::Buffer {
         self.resolved.vk_buffer()
+    }
+
+    pub fn resolve_hash_entries_buffer(&self) -> vk::Buffer {
+        self.resolve_hash_entries.vk_buffer()
+    }
+
+    pub fn resolve_history_buffer(&self) -> vk::Buffer {
+        self.resolve_history.vk_buffer()
     }
 }
 

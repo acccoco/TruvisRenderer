@@ -62,6 +62,19 @@ struct GeometryEval
         return normalize((*normal(geom, tri.x)) * a + (*normal(geom, tri.y)) * b + (*normal(geom, tri.z)) * c);
     }
 
+    /// 按 object-space 三角形绕序求几何法线，不使用可平滑或被贴图扰动的顶点法线。
+    /// 调用方须提供非退化三角形及有限、非零的边；逐级缩放避免法线方向随三角形尺寸溢出/下溢。
+    static float3 geometric_normal(engine::geometry::Geometry* geom, uint3 tri)
+    {
+        const float3 p0 = *position(geom, tri.x);
+        float3 e1 = *position(geom, tri.y) - p0;
+        float3 e2 = *position(geom, tri.z) - p0;
+        e1 /= max(abs(e1.x), max(abs(e1.y), abs(e1.z)));
+        e2 /= max(abs(e2.x), max(abs(e2.y), abs(e2.z)));
+        const float3 n = cross(e1, e2);
+        return normalize(n / max(abs(n.x), max(abs(n.y), abs(n.z))));
+    }
+
     static float2 interp_uv(engine::geometry::Geometry* geom, uint3 tri, float2 barycentrics, uint set = 0)
     {
         const float a = 1.f - barycentrics.x - barycentrics.y;

@@ -35,7 +35,6 @@
 #define SHARC_STALE_FRAME_NUM_BIT_MASK          ((1 << SHARC_STALE_FRAME_NUM_BIT_NUM) - 1)
 #define SHARC_SAMPLE_NUM_BIT_NUM                18
 #define SHARC_GRID_LOGARITHM_BASE               2.0f
-#define SHARC_BLEND_ADJACENT_LEVELS             1       // 相机移动时合并相邻 level 数据
 #define SHARC_NORMALIZED_SAMPLE_NUM             (1u << (SHARC_SAMPLE_NUM_BIT_NUM - 1))
 #define SHARC_ACCUMULATED_FRAME_NUM_MIN         1
 #define SHARC_ACCUMULATED_FRAME_NUM_MAX         1024
@@ -107,6 +106,9 @@ struct SharcParameters
 
     RWStructuredBuffer<renderer::render_passes::realtime_rt::SharcAccumulationData> accumulationBuffer;
     RWStructuredBuffer<renderer::render_passes::realtime_rt::SharcPackedData> resolvedBuffer;
+    /// Snapshot dispatch 产生，整个 Resolve 期间不可修改。
+    HashMapData resolveHashMapData;
+    RWStructuredBuffer<renderer::render_passes::realtime_rt::SharcPackedData> resolveHistory;
 };
 
 struct SharcState
@@ -142,7 +144,6 @@ struct SharcVoxelData
 
 struct SharcResolveParameters
 {
-    float3 cameraPositionPrev;
     uint accumulationFrameNum;
     uint staleFrameNumMax;
     uint frameIndex;
@@ -340,71 +341,17 @@ bool SharcGetCachedRadiance(in SharcParameters sharcParameters, in SharcHitData 
     return false;
 }
 
-int SharcGetGridDistance2(int3 position)
-{
-    return position.x * position.x + position.y * position.y + position.z * position.z;
-}
-
-HashGridKey SharcGetAdjacentLevelHashKey(HashGridKey hashKey, HashGridParameters gridParameters, float3 cameraPositionPrev)
-{
-    const int signBit      = 1 << (HASH_GRID_POSITION_BIT_NUM - 1);
-    const int signMask     = ~((1 << HASH_GRID_POSITION_BIT_NUM) - 1);
-
-    int3 gridPosition;
-    gridPosition.x = int((hashKey >> HASH_GRID_POSITION_BIT_NUM * 0) & HASH_GRID_POSITION_BIT_MASK);
-    gridPosition.y = int((hashKey >> HASH_GRID_POSITION_BIT_NUM * 1) & HASH_GRID_POSITION_BIT_MASK);
-    gridPosition.z = int((hashKey >> HASH_GRID_POSITION_BIT_NUM * 2) & HASH_GRID_POSITION_BIT_MASK);
-
-    // Fix negative coordinates
-    gridPosition.x = ((gridPosition.x & signBit) != 0) ? gridPosition.x | signMask : gridPosition.x;
-    gridPosition.y = ((gridPosition.y & signBit) != 0) ? gridPosition.y | signMask : gridPosition.y;
-    gridPosition.z = ((gridPosition.z & signBit) != 0) ? gridPosition.z | signMask : gridPosition.z;
-
-    int level = int((hashKey >> (HASH_GRID_POSITION_BIT_NUM * 3)) & HASH_GRID_LEVEL_BIT_MASK);
-
-    float voxelSize = HashGridGetVoxelSize(level, gridParameters);
-    int3 cameraGridPosition = int3(floor((gridParameters.cameraPosition + HASH_GRID_POSITION_OFFSET) / voxelSize));
-    int3 cameraVector = cameraGridPosition - gridPosition;
-    int cameraDistance = SharcGetGridDistance2(cameraVector);
-
-    int3 cameraGridPositionPrev = int3(floor((cameraPositionPrev + HASH_GRID_POSITION_OFFSET) / voxelSize));
-    int3 cameraVectorPrev = cameraGridPositionPrev - gridPosition;
-    int cameraDistancePrev = SharcGetGridDistance2(cameraVectorPrev);
-
-    if (cameraDistance < cameraDistancePrev)
-    {
-        gridPosition = int3(floor(gridPosition / gridParameters.logarithmBase));
-        level = min(level + 1, int(HASH_GRID_LEVEL_BIT_MASK));
-    }
-    else // this may be inaccurate
-    {
-        gridPosition = int3(floor(gridPosition * gridParameters.logarithmBase));
-        level = max(level - 1, 1);
-    }
-
-    HashGridKey modifiedHashGridKey = ((uint64_t(gridPosition.x) & HASH_GRID_POSITION_BIT_MASK) << (HASH_GRID_POSITION_BIT_NUM * 0))
-        | ((uint64_t(gridPosition.y) & HASH_GRID_POSITION_BIT_MASK) << (HASH_GRID_POSITION_BIT_NUM * 1))
-        | ((uint64_t(gridPosition.z) & HASH_GRID_POSITION_BIT_MASK) << (HASH_GRID_POSITION_BIT_NUM * 2))
-        | ((uint64_t(level) & HASH_GRID_LEVEL_BIT_MASK) << (HASH_GRID_POSITION_BIT_NUM * 3));
-
-#if HASH_GRID_USE_NORMALS
-    modifiedHashGridKey |= hashKey & (uint64_t(HASH_GRID_NORMAL_BIT_MASK) << (HASH_GRID_POSITION_BIT_NUM * 3 + HASH_GRID_LEVEL_BIT_NUM));
-#endif // HASH_GRID_USE_NORMALS
-
-    return modifiedHashGridKey;
-}
-
 void SharcResolveEntry(uint entryIndex, SharcParameters sharcParameters, SharcResolveParameters resolveParameters)
 {
     if (entryIndex >= sharcParameters.hashMapData.capacity)
         return;
 
-    HashGridKey hashKey = sharcParameters.hashMapData.hashEntriesBuffer[entryIndex];
+    HashGridKey hashKey = sharcParameters.resolveHashMapData.hashEntriesBuffer[entryIndex];
     if (hashKey == HASH_GRID_INVALID_HASH_KEY)
         return;
 
     renderer::render_passes::realtime_rt::SharcAccumulationData accumulatedData = sharcParameters.accumulationBuffer[entryIndex];
-    renderer::render_passes::realtime_rt::SharcPackedData resolvedData = sharcParameters.resolvedBuffer[entryIndex];
+    renderer::render_passes::realtime_rt::SharcPackedData resolvedData = sharcParameters.resolveHistory[entryIndex];
     SharcVoxelData sharcVoxelData = SharcUnpackVoxelData(resolvedData);
 
     float sampleNum = float(accumulatedData.data.w);
@@ -450,10 +397,10 @@ void SharcResolveEntry(uint entryIndex, SharcParameters sharcParameters, SharcRe
         for (uint i = entryIndex + 1; i < entryIndex + 1 + SHARC_LINEAR_PROBE_WINDOW_SIZE; ++i)
         {
             uint slotIndex = i % sharcParameters.hashMapData.capacity;
-            HashGridKey hashKeyOld = sharcParameters.hashMapData.hashEntriesBuffer[slotIndex];
+            HashGridKey hashKeyOld = sharcParameters.resolveHashMapData.hashEntriesBuffer[slotIndex];
             if (hashKeyOld == hashKey)
             {
-                resolvedData = sharcParameters.resolvedBuffer[slotIndex];
+                resolvedData = sharcParameters.resolveHistory[slotIndex];
                 sharcVoxelData = SharcUnpackVoxelData(resolvedData);
                 sampleNumPrev = sharcVoxelData.accumulatedSampleNum;
                 accumulatedFrameNum = sharcVoxelData.accumulatedFrameNum + 1;
@@ -495,30 +442,6 @@ void SharcResolveEntry(uint entryIndex, SharcParameters sharcParameters, SharcRe
     float sampleTotalInv = rcp(sampleNumPrev + sampleNum);
     accumulatedRadiance = sampleNumPrev * sampleTotalInv * accumulatedRadiancePrev + sampleNum * sampleTotalInv * accumulatedRadiance;
     float accumulatedSampleNum = sampleNumPrev + sampleNum;
-
-#if SHARC_BLEND_ADJACENT_LEVELS
-    // Reproject sample from adjacent level
-    float3 cameraOffset = sharcParameters.gridParameters.cameraPosition.xyz - resolveParameters.cameraPositionPrev.xyz;
-    if ((dot(cameraOffset, cameraOffset) > 1e-6f) && (accumulatedFrameNum <= 2))
-    {
-        HashGridKey adjacentLevelHashKey = SharcGetAdjacentLevelHashKey(hashKey, sharcParameters.gridParameters, resolveParameters.cameraPositionPrev);
-
-        HashGridIndex cacheIndex = HASH_GRID_INVALID_CACHE_INDEX;
-        uint hashCollisionsNum;
-        if (HashMapFind(sharcParameters.hashMapData, adjacentLevelHashKey, cacheIndex, hashCollisionsNum))
-        {
-            renderer::render_passes::realtime_rt::SharcPackedData adjacentPackedDataPrev = sharcParameters.resolvedBuffer[cacheIndex];
-            SharcVoxelData adjacentVoxelDataPrev = SharcUnpackVoxelData(adjacentPackedDataPrev);
-            float adjacentSampleNum = adjacentVoxelDataPrev.accumulatedSampleNum;
-            if (adjacentSampleNum > SHARC_SAMPLE_NUM_THRESHOLD)
-            {
-                float blendWeight = rcp(adjacentSampleNum + accumulatedSampleNum);
-                accumulatedRadiance = adjacentSampleNum * blendWeight * adjacentVoxelDataPrev.accumulatedRadiance + accumulatedSampleNum * blendWeight * accumulatedRadiance.xyz;
-                accumulatedSampleNum += adjacentSampleNum;
-            }
-        }
-    }
-#endif // SHARC_BLEND_ADJACENT_LEVELS
 
     sharcParameters.resolvedBuffer[entryIndex] = SharcPackVoxelData(accumulatedRadiance, accumulatedSampleNum, accumulatedFrameNum, staleFrameNum, sharcVoxelData.sampleDataExt);
 
