@@ -9,13 +9,9 @@ use truvis_render_foundation::frame_label::FrameLabel;
 
 /// 命令缓冲分配器
 ///
-/// 为每帧管理独立的命令池和命令缓冲，支持帧内批量分配和帧间自动回收。
-/// 采用 TRANSIENT 标志优化临时命令的分配性能。
-///
-/// # Frames in Flight（帧并行）
-/// - 每帧独立的 CommandPool（避免同步冲突）
-/// - 帧结束时统一释放命令缓冲
-/// - 命令缓冲自动添加帧标签：`[F42A]my-pass`
+/// 每个 FIF slot 持有独立的 TRANSIENT pool；Runtime 等待该 slot 的 timeline 完成后
+/// reset pool，保留已分配的 command handles 供重新录制。显式 free 或 destroy 才释放它们。
+/// 返回的 command clone 只是同一 native 对象的别名，调用方不能绕过该 owner 单独释放。
 pub struct CmdAllocator {
     /// 为每个 frame 分配一个 command pool
     graphics_command_pools: [GfxCommandPool; FrameLabel::COUNT],
@@ -27,32 +23,22 @@ pub struct CmdAllocator {
     destroyed: bool,
 }
 
-// 创建与初始化
-impl Default for CmdAllocator {
-    fn default() -> Self {
-        panic!("CmdAllocator::default requires explicit Gfx Ctx; use CmdAllocator::new")
-    }
-}
-
 impl CmdAllocator {
     pub fn new(device_ctx: GfxDeviceCtx<'_>, device_info_ctx: GfxDeviceInfoCtx<'_>) -> Self {
         let _span = tracy_client::span!("CmdAllocator::new");
 
         let graphics_command_pools = {
             let _span = tracy_client::span!("CmdAllocator::new/graphics_command_pools");
-            FrameLabel::ALL.map(|i| {
+            FrameLabel::ALL.map(|label| {
                 GfxCommandPool::new(
                     device_ctx,
                     device_info_ctx.gfx_queue_family(),
                     vk::CommandPoolCreateFlags::TRANSIENT,
-                    &format!("render_context_graphics_command_pool_{}", i),
+                    &format!("render_context_graphics_command_pool_{}", label),
                 )
             })
         };
-        let allocated_command_buffers = {
-            let _span = tracy_client::span!("CmdAllocator::new/allocated_command_buffers");
-            FrameLabel::ALL.map(|_| Vec::new())
-        };
+        let allocated_command_buffers = FrameLabel::ALL.map(|_| Vec::new());
 
         Self {
             graphics_command_pools,
@@ -90,7 +76,7 @@ impl CmdAllocator {
 }
 // 工具函数
 impl CmdAllocator {
-    /// 分配 command buffer，在当前 frame 使用
+    /// 分配属于指定 FIF slot 的 command 别名；可在该 slot 后续安全复用时重新录制。
     pub fn alloc_command_buffer(
         &mut self,
         ctx: GfxDeviceCtx<'_>,
@@ -104,14 +90,15 @@ impl CmdAllocator {
         cmd
     }
 
-    /// 重置当前 frame 的 command buffers，这些 command buffers 可以重新录制
+    /// 调用前必须等待该 FIF slot 的 GPU 使用完成；保留 handle，只重置录制状态。
     pub fn reset_frame_commands(&mut self, ctx: GfxDeviceCtx<'_>, frame_label: FrameLabel) {
         let _span = tracy_client::span!("reset_frame_commands");
 
         self.graphics_command_pools[*frame_label].reset_command_pool(ctx);
     }
 
-    /// 释放当前 frame 的 command buffers，这些 commands 无法再使用
+    /// 调用前必须等待该 FIF slot 的 GPU 使用完成，并撤销所有外部 command clone。
+    /// 释放后旧 handle 无法再使用；Runtime 日常帧复用使用 reset，不调用此入口。
     pub fn free_frame_commands(&mut self, ctx: GfxDeviceCtx<'_>, frame_label: FrameLabel) {
         let _span = tracy_client::span!("free_frame_commands");
 

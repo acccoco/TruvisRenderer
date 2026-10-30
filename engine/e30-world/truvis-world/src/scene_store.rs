@@ -280,9 +280,8 @@ impl SceneStore {
 }
 // 访问器
 impl SceneStore {
+    /// 0 区分默认空状态；饱和后不回退，但容量耗尽时无法继续区分编辑。
     fn bump_light_revision(&mut self) {
-        // 0 表示“尚未有 analytic light 语义版本”。第一次变化从 1 开始，便于 shader
-        // reservoir metadata 把默认空状态和真实 scene 版本区分开；饱和后保持最大值即可触发不匹配。
         self.light_revision = self.light_revision.saturating_add(1).max(1);
     }
 
@@ -337,6 +336,7 @@ impl SceneStore {
     /// bridge 在同步时检查。
     pub fn register_instance(&mut self, resources: &AssetStore, instance: Instance) -> Result<MeshInstanceHandle, SceneEditError> {
         self.validate_instance_dependencies(resources, &instance)?;
+        Instance::validate_transform(instance.transform).map_err(|reason| SceneEditError::InvalidInstanceData { reason })?;
         let handle = self.all_instances.insert(instance);
         self.instance_revisions.insert(handle, 1);
         self.changed_instances.insert(handle);
@@ -365,8 +365,8 @@ impl SceneStore {
 
     /// 更新 live instance 的 CPU world transform。
     ///
-    /// 返回 `false` 表示 handle 已失效或不属于当前 scene。GPU scene 数据不会在这里直接写入，
-    /// 而是在下一次 render runtime 同步时更新。
+    /// 失效 handle 或非法矩阵返回错误，失败与 no-op 不推进版本或记录变更身份。
+    /// GPU scene 数据由下一次 render runtime 同步更新。
     pub fn update_instance_transform(
         &mut self,
         handle: MeshInstanceHandle,
@@ -377,6 +377,7 @@ impl SceneStore {
                 kind: SceneHandleKind::Instance,
             });
         };
+        Instance::validate_transform(transform).map_err(|reason| SceneEditError::InvalidInstanceData { reason })?;
         if instance.transform == transform {
             return Ok(());
         }
@@ -449,26 +450,10 @@ impl SceneStore {
                 let position = patch.position.unwrap_or(light.pos.into());
                 let radiance = patch.radiance.unwrap_or(light.color.into());
                 LightPatch::validate_common(position, radiance)?;
-                let direction = match patch.direction {
-                    Some(value) if value == glam::Vec3::from(light.dir) => value,
-                    Some(value) => value
-                        .try_normalize()
-                        .filter(|v| v.is_finite())
-                        .ok_or_else(|| LightPatch::invalid("direction must be finite and nonzero"))?,
-                    None => light.dir.into(),
-                };
+                let direction = patch.direction.unwrap_or(light.dir.into());
                 let inner = patch.inner_angle.unwrap_or(light.inner_angle);
                 let outer = patch.outer_angle.unwrap_or(light.outer_angle);
-                if !direction.is_finite() ||
-                    direction.length_squared() <= 0.0 ||
-                    !inner.is_finite() ||
-                    !outer.is_finite() ||
-                    inner < 0.0 ||
-                    inner > outer ||
-                    outer > std::f32::consts::PI
-                {
-                    return Err(LightPatch::invalid("require 0 <= inner <= outer <= pi and valid direction"));
-                }
+                let direction = LightPatch::validate_spot(direction, inner, outer)?;
                 let changed = position != light.pos.into() ||
                     radiance != light.color.into() ||
                     direction != light.dir.into() ||
@@ -524,33 +509,39 @@ impl SceneStore {
     ///
     /// 光源使用 shader binding 中的共享布局类型，但这里仍只负责 CPU 侧生命周期；GPU buffer
     /// 更新由 render runtime 的 scene 同步流程处理。
-    pub fn register_point_light(&mut self, light: gpu::engine::light::PointLight) -> LightHandle {
+    pub fn register_point_light(&mut self, light: gpu::engine::light::PointLight) -> Result<LightHandle, SceneEditError> {
+        LightPatch::validate_common(light.pos.into(), light.color.into())?;
         let handle = self.all_point_lights.insert(light);
         self.bump_light_revision();
         self.bump_scene_version();
-        handle
+        Ok(handle)
     }
 
     /// 向 CPU scene 添加一个 live spot light。
     ///
     /// spot light 在 realtime RT 中表示半径固定为 0.005 m 的 sphere emitter，并额外带 cone
-    /// falloff；这里不做角度或方向归一化，调用方和 shader ABI 注释共同约束输入单位。
-    pub fn register_spot_light(&mut self, light: gpu::engine::light::SpotLight) -> LightHandle {
+    /// falloff；角度单位为 radians，注册与编辑共用方向归一化和锥角校验。
+    pub fn register_spot_light(&mut self, mut light: gpu::engine::light::SpotLight) -> Result<LightHandle, SceneEditError> {
+        LightPatch::validate_common(light.pos.into(), light.color.into())?;
+        light.dir = LightPatch::validate_spot(light.dir.into(), light.inner_angle, light.outer_angle)?.into();
         let handle = self.all_spot_lights.insert(light);
         self.bump_light_revision();
         self.bump_scene_version();
-        handle
+        Ok(handle)
     }
 
     /// 向 CPU scene 添加一个 live area light。
     ///
-    /// area light 使用 world-space `center + half_u + half_v` 描述矩形；本 manager 不计算
-    /// 法线或面积，避免 CPU scene 与 shader 采样路径维护两套几何派生规则。
-    pub fn register_area_light(&mut self, light: gpu::engine::light::AreaLight) -> LightHandle {
+    /// area light 使用 world-space 半轴描述矩形；复用编辑投影检查其可表示性，保留原轴。
+    /// 这里不缓存法线或面积，几何派生仍归 render-side/shader 所有。
+    pub fn register_area_light(&mut self, light: gpu::engine::light::AreaLight) -> Result<LightHandle, SceneEditError> {
+        LightPatch::validate_common(light.center.into(), light.radiance.into())?;
+        AreaLightShape::from_axes(light.half_u.into(), light.half_v.into())
+            .ok_or_else(|| LightPatch::invalid("area axes must describe a finite nondegenerate rectangle"))?;
         let handle = self.all_area_lights.insert(light);
         self.bump_light_revision();
         self.bump_scene_version();
-        handle
+        Ok(handle)
     }
 }
 

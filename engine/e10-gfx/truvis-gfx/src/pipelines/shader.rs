@@ -20,6 +20,7 @@ impl GfxShaderModule {
     /// # 参数
     /// * path - spv shader 文件路径
     pub fn new(ctx: GfxDeviceCtx<'_>, path: &std::path::Path) -> Self {
+        let debug_name = path.to_str().expect("shader path must be UTF-8").to_owned();
         let gfx_device = ctx.device();
         let mut file = std::fs::File::open(path).unwrap();
         let shader_code = ash::util::read_spv(&mut file).unwrap();
@@ -30,12 +31,12 @@ impl GfxShaderModule {
             let shader_module = gfx_device.create_shader_module(&shader_module_info, None).unwrap();
             let shader_module = Self {
                 handle: shader_module,
-                debug_name: path.to_string_lossy().to_string(),
+                debug_name,
 
                 #[cfg(debug_assertions)]
                 destroyed: false,
             };
-            gfx_device.set_debug_name(&shader_module, path.to_str().unwrap());
+            gfx_device.set_debug_name(&shader_module, &shader_module.debug_name);
             shader_module
         }
     }

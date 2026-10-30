@@ -1,5 +1,6 @@
-use ash::vk;
 use std::ptr;
+
+use ash::vk;
 
 use crate::gfx::{GfxImmediateCtx, GfxResourceCtx};
 use crate::resources::layout::GfxVertexLayout;
@@ -71,7 +72,12 @@ impl GfxVertexLayout for VertexLayoutSoA3D {
     }
 
     fn buffer_size(vertex_cnt: usize) -> usize {
-        Self::uv_offset(vertex_cnt) as usize + vertex_cnt * size_of::<glam::Vec2>()
+        let size = usize::try_from(Self::uv_offset(vertex_cnt))
+            .expect("SoA UV offset exceeds host range")
+            .checked_add(vertex_cnt.checked_mul(size_of::<glam::Vec2>()).expect("SoA UV size overflow"))
+            .expect("SoA buffer size overflow");
+        assert!(size <= isize::MAX as usize, "SoA buffer exceeds host addressable range");
+        size
     }
     fn pos_stride() -> u32 {
         size_of::<glam::Vec3>() as u32
@@ -80,17 +86,34 @@ impl GfxVertexLayout for VertexLayoutSoA3D {
         0
     }
     fn normal_offset(vertex_cnt: usize) -> vk::DeviceSize {
-        (vertex_cnt * size_of::<glam::Vec3>()) as vk::DeviceSize
+        vertex_cnt.checked_mul(size_of::<glam::Vec3>()).expect("SoA normal offset overflow") as vk::DeviceSize
     }
     fn tangent_offset(vertex_cnt: usize) -> vk::DeviceSize {
-        (vertex_cnt * size_of::<glam::Vec3>() * 2).next_multiple_of(16) as vk::DeviceSize
+        vertex_cnt
+            .checked_mul(size_of::<glam::Vec3>() * 2)
+            .and_then(|size| size.checked_next_multiple_of(16))
+            .expect("SoA tangent offset overflow") as vk::DeviceSize
     }
     fn uv_offset(vertex_cnt: usize) -> vk::DeviceSize {
-        Self::tangent_offset(vertex_cnt) + (vertex_cnt * size_of::<glam::Vec4>()) as vk::DeviceSize
+        Self::tangent_offset(vertex_cnt)
+            .checked_add(vertex_cnt.checked_mul(size_of::<glam::Vec4>()).expect("SoA tangent size overflow") as u64)
+            .expect("SoA UV offset overflow")
     }
 }
 
 impl VertexLayoutSoA3D {
+    /// 固定布局已包含一个 UV 槽；额外集合连续追加，device/staging 分配复用同一尺寸契约。
+    pub fn extra_uv_bytes(vertex_cnt: usize, uv_set_count: usize) -> usize {
+        let extra = uv_set_count
+            .saturating_sub(1)
+            .checked_mul(vertex_cnt)
+            .and_then(|count| count.checked_mul(size_of::<glam::Vec2>()))
+            .expect("SoA extra UV size overflow");
+        let total = Self::buffer_size(vertex_cnt).checked_add(extra).expect("SoA total size overflow");
+        assert!(total <= isize::MAX as usize, "SoA buffer exceeds host addressable range");
+        extra
+    }
+
     pub fn create_vertex_buffer(
         resource_ctx: GfxResourceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
@@ -103,7 +126,7 @@ impl VertexLayoutSoA3D {
         let vertex_cnt = positions.len();
         assert!(vertex_cnt == normals.len() && vertex_cnt == tangents.len() && vertex_cnt == uvs.len());
 
-        let vertex_buffer = GfxVertexBuffer::new_device_local(resource_ctx, vertex_cnt, name.as_ref());
+        let mut vertex_buffer = GfxVertexBuffer::new_device_local(resource_ctx, vertex_cnt, name.as_ref());
         vertex_buffer.transfer_data_sync2(
             resource_ctx,
             immediate_ctx,

@@ -20,9 +20,9 @@ use truvis_gfx::resources::special_buffers::acceleration_buffer::GfxAcceleration
 use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
-use truvis_world::guid_new_type::MeshAssetHandle;
-use truvis_world::SceneReadView;
 use truvis_render_foundation::frame_label::FrameLabel;
+use truvis_world::SceneReadView;
+use truvis_world::guid_new_type::MeshAssetHandle;
 
 use crate::render_world::geometry::{RtGeometry, RtTriangleMeta};
 use crate::render_world::render_data::MeshRenderData;
@@ -80,18 +80,20 @@ impl MeshUploadQueue {
             vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
             "AssetMeshUploadPool",
         );
-        let timeline_semaphore = GfxSemaphore::new_timeline(device_ctx, 0, "AssetMeshUploadTimeline");
+        let timeline_semaphore = { GfxSemaphore::new_timeline(device_ctx, 0, "AssetMeshUploadTimeline") };
 
         Self {
             command_pool: Some(command_pool),
             timeline_semaphore: Some(timeline_semaphore),
             next_timeline_value: 1,
             pending_uploads: VecDeque::new(),
+
             destroyed: false,
         }
     }
 
     /// 沿用底层资源创建与队列提交的 fail-fast 契约；正常返回只表示已入队，不表示 GPU-ready。
+    /// 输入来自已验证的 CPU mesh registry；准备异常撤销本次资源，提交异常保留 pending owner。
     fn submit_mesh_upload(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -101,11 +103,18 @@ impl MeshUploadQueue {
         data: &MeshData,
     ) {
         let _span = tracy_client::span!("MeshUploadQueue::submit_mesh_upload");
-        let name = data.name.clone();
-        let mut geometries = Vec::with_capacity(data.submeshes.len());
-        let mut triangle_metadata = Vec::with_capacity(data.submeshes.len());
-        let mut staging_buffers = Vec::with_capacity(data.submeshes.len() * 2);
+        assert!(!self.destroyed, "MeshUploadQueue used after shutdown");
 
+        let next_value = self.next_timeline_value.checked_add(1).expect("mesh upload timeline exhausted");
+        self.pending_uploads.try_reserve(1).expect("mesh upload pending capacity exhausted");
+        let stage_count = data.submeshes.len().checked_mul(2).expect("mesh staging count overflow");
+        let name = data.name.clone();
+        let mut triangle_metadata = Vec::with_capacity(data.submeshes.len());
+        let mut geometries = Vec::with_capacity(data.submeshes.len());
+        let mut staging_buffers = Vec::with_capacity(stage_count);
+        let command_pool = self.command_pool.as_ref().expect("MeshUploadQueue used after shutdown");
+        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("MeshUploadQueue used after shutdown");
+        let target_value = self.next_timeline_value;
         for (submesh_index, submesh) in data.submeshes.iter().enumerate() {
             // CPU submesh 数据在这里被转换为 render-side SoA 顶点布局与 index buffer。
             // 一个 submesh 对应 BLAS 内一条 geometry，多个 geometry 共享 mesh 级 BLAS 生命周期。
@@ -118,29 +127,30 @@ impl MeshUploadQueue {
                 resource_ctx,
                 vertex_count,
                 false,
-                submesh.tex_coords.len().saturating_sub(1) * vertex_count * size_of::<glam::Vec2>(),
+                VertexLayoutSoA3D::extra_uv_bytes(vertex_count, submesh.tex_coords.len()),
                 format!("{submesh_name}-vertex"),
             );
             let index_buffer =
                 GfxIndex32Buffer::new_device_local(resource_ctx, index_count, format!("{submesh_name}-index"));
-            let vertex_stage_buffer = Self::create_vertex_stage_buffer(
+            staging_buffers.push(Self::create_vertex_stage_buffer(
                 resource_ctx,
                 vertex_count,
                 submesh,
                 format!("{submesh_name}-vertex-stage"),
-            );
-            let index_stage_buffer =
-                Self::create_index_stage_buffer(resource_ctx, &submesh.indices, format!("{submesh_name}-index-stage"));
+            ));
+            staging_buffers.push(Self::create_index_stage_buffer(
+                resource_ctx,
+                &submesh.indices,
+                format!("{submesh_name}-index-stage"),
+            ));
 
             geometries.push(RtGeometry {
-                vertex_buffer,
-                index_buffer,
+                vertex_buffer: vertex_buffer,
+                index_buffer: index_buffer,
                 uv_set_count: submesh.tex_coords.len() as u32,
                 tangent_tex_coord: submesh.tangent_tex_coord,
             });
             triangle_metadata.push(Self::build_triangle_metadata(submesh));
-            staging_buffers.push(vertex_stage_buffer);
-            staging_buffers.push(index_stage_buffer);
         }
 
         // BLAS 输入直接引用刚创建的 device-local vertex/index buffer。后续 command buffer
@@ -154,8 +164,6 @@ impl MeshUploadQueue {
             &name,
         );
 
-        let command_pool = self.command_pool.as_ref().expect("MeshUploadQueue used after shutdown");
-        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("MeshUploadQueue used after shutdown");
         let command_buffer = GfxCommandBuffer::new(device_ctx, command_pool, "AssetMeshUploadCmd");
 
         command_buffer.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, "AssetMeshUpload");
@@ -180,24 +188,24 @@ impl MeshUploadQueue {
             );
         }
 
-        // vertex/index copy 与 BLAS build 在同一个 graphics command buffer 中录制。
-        // Vulkan 验证层会把 BLAS 的 device-address 输入视为 shader read，因此 barrier 同时覆盖
-        // ACCELERATION_STRUCTURE_READ 和 SHADER_READ，防止 copy 后立即 build 的同步漏洞。
-        let transfer_to_blas_mask = GfxBarrierMask {
+        // geometry 同时供 BLAS 输入、光栅 vertex/index fetch 和 shader device-address 读取。
+        let transfer_to_read_mask = GfxBarrierMask {
             src_stage: vk::PipelineStageFlags2::TRANSFER,
             src_access: vk::AccessFlags2::TRANSFER_WRITE,
-            dst_stage: vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR,
-            // BLAS build 通过 device address 读取 vertex/index 输入，验证层按 shader read 归类。
-            dst_access: vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR | vk::AccessFlags2::SHADER_READ,
+            dst_stage: vk::PipelineStageFlags2::ALL_COMMANDS,
+            dst_access: vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR
+                | vk::AccessFlags2::SHADER_READ
+                | vk::AccessFlags2::VERTEX_ATTRIBUTE_READ
+                | vk::AccessFlags2::INDEX_READ,
         };
-        let mut barriers = Vec::with_capacity(geometries.len() * 2);
+        let mut barriers = Vec::with_capacity(stage_count);
         for geometry in &geometries {
-            barriers.push(GfxBufferBarrier::default().mask(transfer_to_blas_mask).buffer(
+            barriers.push(GfxBufferBarrier::default().mask(transfer_to_read_mask).buffer(
                 geometry.vertex_buffer.vk_buffer(),
                 0,
                 vk::WHOLE_SIZE,
             ));
-            barriers.push(GfxBufferBarrier::default().mask(transfer_to_blas_mask).buffer(
+            barriers.push(GfxBufferBarrier::default().mask(transfer_to_read_mask).buffer(
                 geometry.index_buffer.vk_buffer(),
                 0,
                 vk::WHOLE_SIZE,
@@ -228,110 +236,106 @@ impl MeshUploadQueue {
             ..Default::default()
         }]);
         command_buffer.end();
-
-        let target_value = self.next_timeline_value;
-        self.next_timeline_value += 1;
-        // 每个 mesh upload 对应一个 timeline value；完成前 geometry/BLAS 都保留在 pending 队列，
-        // 只有完成后才进入 resolver 可见的 `meshes` map。
         let submit_info = GfxSubmitInfo::new(std::slice::from_ref(&command_buffer)).signal(
             timeline_semaphore,
             vk::PipelineStageFlags2::ALL_COMMANDS,
             Some(target_value),
         );
-        queue_ctx.gfx_queue().submit(vec![submit_info], None);
-
+        // 提交前完成诊断，native submit 前由 pending 接管资源。
         log::trace!(
-            "GpuMeshStore: submitted mesh {:?} '{}' submeshes={} timeline={}",
+            "GpuMeshStore: prepared mesh {:?} '{}' submeshes={} timeline={}",
             handle,
             name,
             geometries.len(),
             target_value
         );
+        let batches = vec![submit_info];
+
+        // 从进入 submit 起不能假设提交失败意味着 GPU 未使用；pending 必须先接管完整 owner。
         self.pending_uploads.push_back(SubmittedMeshUpload {
             semaphore_value: target_value,
             handle,
-            command_buffer,
-            staging_buffers,
-            scratch_buffer,
-            geometries,
+            command_buffer: command_buffer,
+            staging_buffers: staging_buffers,
+            scratch_buffer: scratch_buffer,
+            geometries: geometries,
             triangle_metadata,
-            blas,
+            blas: blas,
             name,
         });
+        self.next_timeline_value = next_value;
+
+        queue_ctx.gfx_queue().submit(batches, None);
     }
 
-    /// 非阻塞推进上传队列，并返回已经 GPU-ready 的 mesh。
-    ///
-    /// 队列按提交顺序 signal 单调递增 timeline value，因此只要队首未完成，后续任务也一定
-    /// 还不能对 resolver 可见。
+    /// 非阻塞推进上传队列，并将已完成资源交给 consumer。
     fn update(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) -> Vec<FinishedMeshUpload> {
         let _span = tracy_client::span!("MeshUploadQueue::update");
+
         let device = device_ctx.device();
         let timeline_semaphore = self.timeline_semaphore.as_ref().expect("MeshUploadQueue used after shutdown");
-        let command_pool = self.command_pool.as_ref().expect("MeshUploadQueue used after shutdown");
-        let current_value = unsafe { device.get_semaphore_counter_value(timeline_semaphore.handle()).unwrap_or(0) };
+        // 查询失败不能伪装成尚未完成，否则设备错误会使 mesh 永久停在 pending。
+        let current_value = unsafe { device.get_semaphore_counter_value(timeline_semaphore.handle()) }
+            .expect("failed to query mesh upload timeline");
+        self.collect_completed(resource_ctx, device_ctx, current_value, DestroyReason::DeferredCleanup)
+    }
 
-        let mut finished_uploads = Vec::new();
-        while let Some(upload) = self.pending_uploads.front() {
-            if current_value < upload.semaphore_value {
-                break;
-            }
-
-            // staging 和 scratch 只服务本次上传/build，timeline 到达后即可释放；
-            // geometry 与 BLAS 则转交给 GpuMeshStore，成为 render pass 可解析的数据。
+    /// 仅消费已确认完成的任务；先保留目标，再回收本次 command/staging/scratch。
+    /// 仅释放 timeline 已完成任务的临时资源，将结果交给调用方安装。
+    fn collect_completed(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        current_value: u64,
+        reason: DestroyReason,
+    ) -> Vec<FinishedMeshUpload> {
+        let mut completed = Vec::new();
+        let command_pool = self.command_pool.as_ref().expect("MeshUploadQueue command pool missing");
+        while self.pending_uploads.front().is_some_and(|upload| current_value >= upload.semaphore_value) {
             let upload = self.pending_uploads.pop_front().unwrap();
             command_pool.free_command_buffers(device_ctx, vec![upload.command_buffer]);
-            for staging_buffer in upload.staging_buffers {
-                staging_buffer.destroy(resource_ctx, DestroyReason::DeferredCleanup);
-            }
-            upload.scratch_buffer.destroy(resource_ctx, DestroyReason::DeferredCleanup);
-            finished_uploads.push(FinishedMeshUpload {
+            completed.push(FinishedMeshUpload {
                 handle: upload.handle,
                 geometries: upload.geometries,
                 triangle_metadata: upload.triangle_metadata,
                 blas: upload.blas,
                 name: upload.name,
             });
+            for staging_buffer in upload.staging_buffers {
+                staging_buffer.destroy(resource_ctx, reason);
+            }
+            upload.scratch_buffer.destroy(resource_ctx, reason);
         }
 
-        finished_uploads
+        completed
     }
 
-    /// 关闭上传队列并释放仍未交给 `GpuMeshStore` 的 pending 资源。
-    ///
-    /// shutdown 路径允许等待 timeline，因为此时帧循环已经停止；等待完成后才能销毁
-    /// command buffer、staging、scratch、geometry 和 BLAS。
+    /// 关闭上传队列并释放仍未交给 GpuMeshStore 的资源。
+    /// 超时或设备错误时保留完整 pending 与同步资源并传播失败，不承诺设备恢复。
     fn shutdown(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
         if self.destroyed {
             return;
         }
-
-        let Some(timeline_semaphore) = self.timeline_semaphore.take() else {
-            self.destroyed = true;
-            return;
-        };
-        let mut command_pool = self.command_pool.take().expect("MeshUploadQueue command pool missing");
-
-        if let Some(last_upload) = self.pending_uploads.back() {
+        let timeline_semaphore = self.timeline_semaphore.as_ref().expect("MeshUploadQueue timeline missing");
+        let last_value = self.pending_uploads.back().map_or(0, |upload| upload.semaphore_value);
+        if last_value != 0 {
             const WAIT_SEMAPHORE_TIMEOUT_NS: u64 = 30 * 1000 * 1000 * 1000;
-            timeline_semaphore.wait_timeline(device_ctx, last_upload.semaphore_value, WAIT_SEMAPHORE_TIMEOUT_NS);
+            timeline_semaphore.wait_timeline(device_ctx, last_value, WAIT_SEMAPHORE_TIMEOUT_NS);
         }
-
-        // shutdown 时 pending 队列中的 geometry/BLAS 尚未进入 uploaded cache，
-        // 因此必须在等待 timeline 后由 upload queue 自己销毁。
-        while let Some(upload) = self.pending_uploads.pop_front() {
-            command_pool.free_command_buffers(device_ctx, vec![upload.command_buffer]);
-            for staging_buffer in upload.staging_buffers {
-                staging_buffer.destroy(resource_ctx, DestroyReason::Shutdown);
-            }
-            upload.scratch_buffer.destroy(resource_ctx, DestroyReason::Shutdown);
-            for geometry in upload.geometries {
-                geometry.destroy(resource_ctx, DestroyReason::Shutdown);
-            }
-            upload.blas.destroy(resource_ctx, device_ctx, DestroyReason::Shutdown);
+        let completed = self.collect_completed(resource_ctx, device_ctx, last_value, DestroyReason::Shutdown);
+        let timeline_semaphore = self.timeline_semaphore.take().expect("MeshUploadQueue timeline missing");
+        let mut command_pool = self.command_pool.take().expect("MeshUploadQueue command pool missing");
+        for upload in completed {
+            UploadedMesh::destroy_resources(
+                upload.geometries,
+                upload.blas,
+                resource_ctx,
+                device_ctx,
+                DestroyReason::Shutdown,
+            );
         }
-
         timeline_semaphore.destroy(device_ctx);
+
         command_pool.destroy(device_ctx);
         self.destroyed = true;
     }
@@ -342,11 +346,11 @@ impl MeshUploadQueue {
         data: &SubmeshData,
         debug_name: impl AsRef<str>,
     ) -> GfxBuffer {
-        let total_size = (VertexLayoutSoA3D::buffer_size(vertex_count)
-            + data.tex_coords.len().saturating_sub(1) * vertex_count * size_of::<glam::Vec2>()) as vk::DeviceSize;
+        let total_size = VertexLayoutSoA3D::buffer_size(vertex_count)
+            .checked_add(VertexLayoutSoA3D::extra_uv_bytes(vertex_count, data.tex_coords.len()))
+            .expect("vertex stage buffer size overflow") as vk::DeviceSize;
         let stage_buffer = GfxBuffer::new_stage_buffer(resource_ctx, total_size, debug_name);
-        // `VertexLayoutSoA3D` 要求 positions/normals/tangents/uvs 以 SoA 方式连续摆放。
-        // 上面的 validate 已保证所有属性长度一致，因此这里可以按布局 offset 直接拷贝。
+        // CPU registry 已校验属性长度；按 SoA 布局复制 positions/normals/tangents/uvs。
         unsafe {
             ptr::copy_nonoverlapping(
                 data.positions.as_ptr() as *const u8,
@@ -367,17 +371,23 @@ impl MeshUploadQueue {
             for (set, coords) in data.tex_coords.iter().enumerate() {
                 ptr::copy_nonoverlapping(
                     coords.as_ptr() as *const u8,
-                    stage_buffer.mapped_ptr().add(VertexLayoutSoA3D::uv_offset(vertex_count) as usize
-                        + set * vertex_count * size_of::<glam::Vec2>()),
+                    stage_buffer.mapped_ptr().add(
+                        VertexLayoutSoA3D::uv_offset(vertex_count) as usize
+                            + set * vertex_count * size_of::<glam::Vec2>(),
+                    ),
                     size_of_val(coords.as_slice()),
                 );
             }
             if data.tex_coords.is_empty() {
-                ptr::write_bytes(stage_buffer.mapped_ptr().add(VertexLayoutSoA3D::uv_offset(vertex_count) as usize),
-                    0, vertex_count * size_of::<glam::Vec2>());
+                ptr::write_bytes(
+                    stage_buffer.mapped_ptr().add(VertexLayoutSoA3D::uv_offset(vertex_count) as usize),
+                    0,
+                    vertex_count * size_of::<glam::Vec2>(),
+                );
             }
         }
         stage_buffer.flush(resource_ctx, 0, total_size);
+
         stage_buffer
     }
 
@@ -387,9 +397,10 @@ impl MeshUploadQueue {
         debug_name: impl AsRef<str>,
     ) -> GfxBuffer {
         // index buffer 不需要额外重排，直接写入 staging 后由上传命令复制到 device-local buffer。
-        let stage_buffer =
+        let mut stage_buffer =
             GfxBuffer::new_stage_buffer(resource_ctx, size_of_val(indices) as vk::DeviceSize, debug_name);
         stage_buffer.transfer_data_by_mmap(resource_ctx, indices);
+
         stage_buffer
     }
 
@@ -444,11 +455,22 @@ struct RetiredMesh {
 }
 
 impl UploadedMesh {
-    fn destroy(self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>, reason: DestroyReason) {
-        for geometry in self.geometries {
+    /// 已完成或已跨过退役安全点的 mesh 资源共用此回收边界。
+    fn destroy_resources(
+        geometries: Vec<RtGeometry>,
+        blas: GfxAcceleration,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        reason: DestroyReason,
+    ) {
+        for geometry in geometries {
             geometry.destroy(resource_ctx, reason);
         }
-        self.blas.destroy(resource_ctx, device_ctx, reason);
+        blas.destroy(resource_ctx, device_ctx, reason);
+    }
+
+    fn destroy(self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>, reason: DestroyReason) {
+        Self::destroy_resources(self.geometries, self.blas, resource_ctx, device_ctx, reason);
     }
 }
 
@@ -494,7 +516,6 @@ impl GpuMeshStore {
         queue_ctx: GfxQueueCtx<'_>,
     ) -> Vec<MeshAssetHandle> {
         let _span = tracy_client::span!("GpuMeshStore::sync_scene");
-        let mut published = Vec::new();
         self.reclaim_retired_resources(resource_ctx, device_ctx);
 
         for handle in scene.mesh_handles() {
@@ -508,37 +529,37 @@ impl GpuMeshStore {
             self.pending_meshes.insert(handle);
         }
 
+        let mut published_meshes = Vec::new();
         for finished in self.upload_queue.update(resource_ctx, device_ctx) {
-            self.pending_meshes.remove(&finished.handle);
-            if !scene.contains_mesh(finished.handle) {
-                for geometry in finished.geometries {
-                    geometry.destroy(resource_ctx, DestroyReason::DeferredCleanup);
+            let handle = finished.handle;
+            let duplicate = self.meshes.contains_key(handle);
+            if !scene.contains_mesh(handle) || duplicate {
+                if duplicate {
+                    // 日志异常时仍由 completed 队列持有；下一次同步可重新处理。
+                    log::error!("GpuMeshStore: reject duplicate upload for immutable mesh {:?}", handle);
                 }
-                finished.blas.destroy(resource_ctx, device_ctx, DestroyReason::DeferredCleanup);
+                self.pending_meshes.remove(&handle);
+                UploadedMesh::destroy_resources(
+                    finished.geometries,
+                    finished.blas,
+                    resource_ctx,
+                    device_ctx,
+                    DestroyReason::DeferredCleanup,
+                );
                 continue;
             }
-            if self.meshes.contains_key(finished.handle) {
-                log::error!("GpuMeshStore: reject duplicate upload for immutable mesh {:?}", finished.handle);
-                for geometry in finished.geometries {
-                    geometry.destroy(resource_ctx, DestroyReason::DeferredCleanup);
-                }
-                finished.blas.destroy(resource_ctx, device_ctx, DestroyReason::DeferredCleanup);
-                continue;
-            }
-            published.push(finished.handle);
             self.install_uploaded_mesh(device_ctx, finished);
+            self.pending_meshes.remove(&handle);
+            published_meshes.push(handle);
         }
-        published
+        published_meshes
     }
 
     /// 移除 scene mesh 对应的 GPU-ready cache。
     ///
     /// 已提交的上传/BLAS build 只能等待 timeline 自然完成；completion 会再次检查 CPU registry
     /// 中的 generational handle，不会把已删除 mesh 重新发布。
-    pub fn remove_meshes(
-        &mut self,
-        handles: &[MeshAssetHandle],
-    ) {
+    pub fn remove_meshes(&mut self, handles: &[MeshAssetHandle]) {
         for &handle in handles {
             let Some(mesh) = self.meshes.remove(handle) else {
                 continue;
@@ -558,10 +579,7 @@ impl GpuMeshStore {
     /// 按 CPU registry 的完整 membership 清理已经删除的 render-side mesh。
     ///
     /// 首期 mesh 内容不可变；这里仅处理资源生命周期，不支持同 handle 的内容替换。
-    pub fn remove_stale_meshes(
-        &mut self,
-        scene: SceneReadView<'_>,
-    ) -> bool {
+    pub fn remove_stale_meshes(&mut self, scene: SceneReadView<'_>) -> bool {
         let live_handles = scene.mesh_handles().collect::<HashSet<_>>();
         let stale_handles = self
             .meshes
@@ -576,11 +594,7 @@ impl GpuMeshStore {
         true
     }
 
-    fn install_uploaded_mesh(
-        &mut self,
-        device_ctx: GfxDeviceCtx<'_>,
-        finished: FinishedMeshUpload,
-    ) {
+    fn install_uploaded_mesh(&mut self, device_ctx: GfxDeviceCtx<'_>, finished: FinishedMeshUpload) {
         let blas_device_address = finished.blas.device_address(device_ctx);
         // 缓存 BLAS device address，后续构建 TLAS 时无需重新查询 Vulkan handle。
         log::trace!(
@@ -589,6 +603,7 @@ impl GpuMeshStore {
             finished.name,
             blas_device_address
         );
+
         self.meshes.insert(
             finished.handle,
             UploadedMesh {
@@ -603,21 +618,26 @@ impl GpuMeshStore {
     fn reclaim_retired_resources(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
         let current_frame_id = self.current_frame_id;
         let fif_count = FrameLabel::COUNT as u64;
-        let mut retained = Vec::new();
-        for retired in self.retired_resources.drain(..) {
-            if current_frame_id.saturating_sub(retired.retired_frame_id) >= fif_count {
-                log::debug!("GpuMeshStore: reclaimed mesh {:?} after FIF window", retired.handle);
-                retired.mesh.destroy(resource_ctx, device_ctx, DestroyReason::DeferredCleanup);
-            } else {
-                retained.push(retired);
+        let mut index = 0;
+        while index < self.retired_resources.len() {
+            if current_frame_id.saturating_sub(self.retired_resources[index].retired_frame_id) < fif_count {
+                index += 1;
+                continue;
             }
+            // 仅取走已跨过安全窗口的对象。
+            let retired = self.retired_resources.swap_remove(index);
+            {
+                retired.mesh.destroy(resource_ctx, device_ctx, DestroyReason::DeferredCleanup)
+            };
+
+            {
+                log::debug!("GpuMeshStore: reclaimed mesh {:?} after FIF window", retired.handle);
+            };
         }
-        self.retired_resources = retained;
     }
 
-    /// 关闭上传队列并释放所有 mesh GPU 资源。
-    ///
-    /// pending 队列会先等待对应 timeline value，确保 staging/scratch/geometry/BLAS 不再被 graphics queue 引用。
+    /// 关闭上传队列并释放所有 mesh GPU 资源；调用方必须已停止消费者并等待其 GPU 使用完成。
+    /// 上传 timeline 只证明上传/build 完成，不能替代已发布 mesh 的 frame 使用安全点。
     pub fn destroy(mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
         self.upload_queue.shutdown(resource_ctx, device_ctx);
 

@@ -16,20 +16,11 @@ pub struct GfxStageBuffer<T: bytemuck::Pod> {
 impl_derive_buffer!(GfxStageBuffer<T: bytemuck::Pod>, GfxBuffer, inner);
 impl<T: bytemuck::Pod> GfxStageBuffer<T> {
     pub fn new(ctx: GfxResourceCtx<'_>, debug_name: impl AsRef<str>) -> Self {
-        let inner = GfxBuffer::new(
-            ctx,
-            size_of::<T>() as vk::DeviceSize,
-            vk::BufferUsageFlags::TRANSFER_SRC,
-            None,
-            true,
-            debug_name.as_ref(),
-        );
-        let buffer = Self {
+        let inner = GfxBuffer::new_stage_buffer(ctx, size_of::<T>() as vk::DeviceSize, debug_name);
+        Self {
             inner,
             _phantom: PhantomData,
-        };
-        ctx.device().set_debug_name(&buffer, debug_name);
-        buffer
+        }
     }
 }
 impl<T: bytemuck::Pod> DebugType for GfxStageBuffer<T> {

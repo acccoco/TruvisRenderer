@@ -55,19 +55,6 @@ typedef struct
     uint32_t render_height_max;
 } TruvixxSlDlssOptimalSettings;
 
-// 非 Vulkan proxy 路径需要的 root object/queue 信息。当前主路径走 sl.interposer.dll，
-// 因此这个 ABI 保留但 runtime 不主动调用。
-typedef struct
-{
-    uint64_t instance;
-    uint64_t physical_device;
-    uint64_t device;
-    uint32_t graphics_queue_family;
-    uint32_t graphics_queue_index;
-    uint32_t compute_queue_family;
-    uint32_t compute_queue_index;
-} TruvixxSlVulkanInfo;
-
 // Streamline resource tag 的 Vulkan image 描述。
 // layout/format/usage 必须与当前 command buffer 中的真实状态一致。
 typedef struct
@@ -162,8 +149,6 @@ typedef struct
     uint32_t use_linear_depth;
 } TruvixxSlDlssRrEvaluateDesc;
 
-// 手动 Vulkan hook 路径使用；proxy/interposer 路径不需要额外调用。
-TRUVIXX_STREAMLINE_API int32_t truvixx_sl_set_vulkan_info(const TruvixxSlVulkanInfo* info);
 // 查询 kFeatureDLSS support / requirements，不分配 feature resource。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_query_support(uint64_t physical_device, TruvixxSlFeatureSupport* out_support);
 // 查询 kFeatureDLSS_RR support / requirements，不分配 feature resource。

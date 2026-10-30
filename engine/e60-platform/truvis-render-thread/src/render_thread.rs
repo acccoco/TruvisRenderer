@@ -20,7 +20,7 @@ type RenderThreadResult = Result<(), Box<dyn Any + Send>>;
 pub struct RenderThread {
     control: Arc<RenderThreadControl>,
 
-    /// 必须在线程发送完成通知前发布，避免 EventLoop 收到通知时线程尚未返回。
+    /// 主执行已结束、窗口可以进入 join；在通知前发布，不代表通知或 OS thread 已返回。
     finished: Arc<AtomicBool>,
 
     /// 内层 Result 保存 RenderLoop/Renderer panic，外层 JoinHandle::join 处理线程自身 panic。
@@ -89,12 +89,12 @@ impl RenderThread {
         self.control.send_input(event);
     }
 
-    /// 读取先于窗口 EventLoop 完成通知发布的线程执行完成标记。
+    /// 读取主执行结束标记；通知可能仍在运行，窗口仍须 join 后才能结束线程所有权。
     pub fn is_finished(&self) -> bool {
         self.finished.load(Ordering::Acquire)
     }
 
-    /// 等待 Vulkan owner 完整退出，并把渲染线程 panic 交给窗口 owner 处理。
+    /// 等待 OS thread 退出并返回渲染线程 panic；错误返回不证明 Vulkan owner 已完整回收。
     pub fn join(mut self) -> Option<Box<dyn Any + Send>> {
         self.join_inner()
     }
@@ -111,7 +111,7 @@ impl RenderThread {
 impl Drop for RenderThread {
     fn drop(&mut self) {
         if self.join_handle.is_some() && self.join_inner().is_some() {
-            // Drop 只能覆盖窗口宿主异常退出的兜底路径，显式 join 才能把 payload 继续交给调用方。
+            // Drop 只覆盖窗口宿主异常退出的兜底路径，显式 join 才能把 payload 继续交给调用方。
             log::error!("RenderThread panicked while being joined from its Drop fallback.");
         }
     }

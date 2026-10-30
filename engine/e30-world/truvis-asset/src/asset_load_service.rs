@@ -100,7 +100,6 @@ impl AssetLoadService {
     pub fn request_texture(&mut self, desc: TextureLoadDesc) -> TextureLoadHandle {
         let _span = tracy_client::span!("AssetLoadService::request_texture");
         log::info!("Request load texture: {}", desc.source_label());
-        // 诊断可能 panic；成功返回后才登记请求，避免留下没有后台任务的记录。
         let handle = self.textures.insert(TextureLoadRecord { desc: desc.clone() });
         self.loader.request_load_texture(TextureLoadRequest { desc, handle });
 
@@ -145,7 +144,6 @@ impl AssetLoadService {
     pub fn request_scene(&mut self, desc: SceneLoadDesc) -> SceneLoadHandle {
         let _span = tracy_client::span!("AssetLoadService::request_scene");
         log::info!("Request load scene: {:?}", desc.path);
-        // 与 texture 请求一致：诊断先于短期身份发布。
         let handle = self.scenes.insert(SceneLoadRecord { desc: desc.clone() });
         self.loader.request_load_scene(SceneLoadRequest { desc, handle });
 

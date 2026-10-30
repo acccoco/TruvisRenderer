@@ -6,6 +6,9 @@ use crate::{foundation::debug_messenger::DebugType, gfx::GfxDeviceCtx, resources
 pub struct GfxImageView {
     handle: vk::ImageView,
 
+    /// 借用的来源 image 身份；view 不拥有或销毁 image。
+    image: vk::Image,
+
     desc: GfxImageViewDesc,
 
     name: String,
@@ -22,7 +25,9 @@ impl DebugType for GfxImageView {
 // 创建与初始化
 impl GfxImageView {
     pub fn new(ctx: GfxDeviceCtx<'_>, image: vk::Image, view_desc: GfxImageViewDesc, name: impl AsRef<str>) -> Self {
+        assert!(view_desc.mip.1 > 0 && view_desc.layer.1 > 0, "image view mip/layer count must be nonzero");
         let gfx_device = ctx.device();
+        let name = name.as_ref().to_owned();
 
         let info = vk::ImageViewCreateInfo {
             image,
@@ -32,8 +37,8 @@ impl GfxImageView {
                 aspect_mask: view_desc.aspect_mask,
                 base_mip_level: view_desc.mip.0 as u32,
                 level_count: view_desc.mip.1 as u32,
-                base_array_layer: 0,
-                layer_count: 1,
+                base_array_layer: view_desc.layer.0 as u32,
+                layer_count: view_desc.layer.1 as u32,
             },
             ..Default::default()
         };
@@ -41,27 +46,25 @@ impl GfxImageView {
         let handle = unsafe { gfx_device.create_image_view(&info, None).expect("Failed to create GfxImageView") };
         let image_view = Self {
             handle,
+            image,
 
             desc: view_desc,
 
-            name: name.as_ref().to_string(),
+            name,
         };
-        gfx_device.set_debug_name(&image_view, &name);
+        gfx_device.set_debug_name(&image_view, &image_view.name);
         image_view
     }
 }
 // 销毁
 impl GfxImageView {
     pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>, reason: DestroyReason) {
-        self.release(ctx, reason);
-    }
-
-    fn release(&mut self, ctx: GfxDeviceCtx<'_>, reason: DestroyReason) {
         if self.handle.is_null() {
             return;
         }
 
         log::trace!("Destroying GfxImageView name={} raw={:#x} reason={}", self.name, self.handle.as_raw(), reason);
+
         unsafe {
             ctx.device().destroy_image_view(self.handle, None);
         }
@@ -79,6 +82,10 @@ impl GfxImageView {
     #[inline]
     pub fn handle(&self) -> vk::ImageView {
         self.handle
+    }
+    #[inline]
+    pub fn image_handle(&self) -> vk::Image {
+        self.image
     }
     #[inline]
     pub fn desc(&self) -> &GfxImageViewDesc {

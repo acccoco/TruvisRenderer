@@ -1,9 +1,10 @@
-use ash::vk;
-use enum_map::{Enum, EnumMap, enum_map};
-use itertools::Itertools;
+use std::rc::Rc;
 use std::sync::LazyLock;
 
-use std::rc::Rc;
+use ash::vk;
+use ash::vk::Handle;
+use enum_map::{Enum, EnumMap, enum_map};
+use itertools::Itertools;
 
 use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
@@ -481,7 +482,17 @@ impl RealtimeRtPass {
         sharc_accumulation: vk::Buffer,
         sharc_resolved: vk::Buffer,
     ) -> Self {
+        // 未交付资源留在 catch 外；每个成功步骤立即记录 owner，失败显式回收。
         let mut shader_module_cache = GfxShaderModuleCache::new();
+        let mut rt_pipeline = GfxRtPipeline {
+            pipeline: vk::Pipeline::null(),
+            pipeline_layout: vk::PipelineLayout::null(),
+        };
+        let rt_descriptor_set_layout;
+        let sbt;
+        let sharc_descriptor_set_layout;
+        let sharc_descriptor_pool;
+        let sharc_descriptor_set;
         let stage_infos = SHADER_STAGES
             .values()
             .map(|stage| {
@@ -514,20 +525,20 @@ impl RealtimeRtPass {
             .offset(0)
             .size(size_of::<gpu::renderer::render_passes::realtime_rt::PushConstants>() as u32);
 
-        let rt_descriptor_set_layout = GfxDescriptorSetLayout::<RealtimeRtDescriptorBinding>::new(
+        rt_descriptor_set_layout = GfxDescriptorSetLayout::<RealtimeRtDescriptorBinding>::new(
             device_ctx,
             vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR,
             "simple-rt-descriptor-set-layout",
         );
         // SHARC buffer 独立成 set：避免 realtime push set 超过 maxPushDescriptors，也避免一个 pipeline layout
         // 出现两个 push set（Vulkan 不允许）。因此这里用 **regular** set（无 PUSH_DESCRIPTOR flag）。
-        let sharc_descriptor_set_layout = GfxDescriptorSetLayout::<SharcDescriptorBinding>::new(
+        sharc_descriptor_set_layout = GfxDescriptorSetLayout::<SharcDescriptorBinding>::new(
             device_ctx,
             vk::DescriptorSetLayoutCreateFlags::empty(),
             "sharc-descriptor-set-layout",
         );
 
-        let pipeline_layout = {
+        rt_pipeline.pipeline_layout = {
             // set 顺序必须与 shader 一致：global sets..., REALTIME_RT_SET_NUM(push), SHARC_SET_NUM(regular)。
             let mut descriptor_set_layouts = render_descriptor_sets.global_set_layouts();
             descriptor_set_layouts.push(rt_descriptor_set_layout.handle());
@@ -538,36 +549,36 @@ impl RealtimeRtPass {
 
             unsafe { device_ctx.device().create_pipeline_layout(&pipeline_layout_ci, None).unwrap() }
         };
-        device_ctx.device().set_object_debug_name(pipeline_layout, "simple-rt-pipeline-layout");
+        device_ctx.device().set_object_debug_name(rt_pipeline.pipeline_layout, "simple-rt-pipeline-layout");
         let pipeline_ci = vk::RayTracingPipelineCreateInfoKHR::default()
             .stages(&stage_infos)
             .groups(&shader_groups)
-            .layout(pipeline_layout)
+            .layout(rt_pipeline.pipeline_layout)
             // 这个仅仅是用来分配栈内存的，并不会在超过递归深度后让调用被丢弃
             // 需要手动跟踪递归深度
             .max_pipeline_ray_recursion_depth(2);
 
-        let pipeline = unsafe {
-            device_ctx
-                .device()
-                .ray_tracing_pipeline()
-                .create_ray_tracing_pipelines(
-                    vk::DeferredOperationKHR::null(),
-                    vk::PipelineCache::null(),
-                    std::slice::from_ref(&pipeline_ci),
-                    None,
-                )
-                .unwrap()[0]
+        rt_pipeline.pipeline = match unsafe {
+            device_ctx.device().ray_tracing_pipeline().create_ray_tracing_pipelines(
+                vk::DeferredOperationKHR::null(),
+                vk::PipelineCache::null(),
+                std::slice::from_ref(&pipeline_ci),
+                None,
+            )
+        } {
+            Ok(pipelines) => pipelines[0],
+            Err((pipelines, error)) => {
+                for pipeline in pipelines.into_iter().filter(|pipeline| !pipeline.is_null()) {
+                    unsafe {
+                        device_ctx.device().destroy_pipeline(pipeline, None);
+                    }
+                }
+                panic!("failed to create ray tracing pipeline: {error:?}");
+            }
         };
-        device_ctx.device().set_object_debug_name(pipeline, "simple-rt-pipeline");
+        device_ctx.device().set_object_debug_name(rt_pipeline.pipeline, "simple-rt-pipeline");
 
-        shader_module_cache.destroy(device_ctx);
-
-        let rt_pipeline = GfxRtPipeline {
-            pipeline,
-            pipeline_layout,
-        };
-        let sbt = GfxSBTBuffer::from_shader_groups(
+        sbt = GfxSBTBuffer::from_shader_groups(
             resource_ctx,
             device_ctx,
             device_info_ctx,
@@ -582,7 +593,7 @@ impl RealtimeRtPass {
 
         // SHARC regular descriptor set：分配一次并写入持久 buffer，之后每帧只 bind 不再更新。
         // SHARC buffer 由 Renderer 层 SharcTargets 拥有，不随帧/resize 变化，所以这种「一次写入」是安全的。
-        let sharc_descriptor_pool = GfxDescriptorPool::new(
+        sharc_descriptor_pool = GfxDescriptorPool::new(
             device_ctx,
             Rc::new(GfxDescriptorPoolCreateInfo::new(
                 vk::DescriptorPoolCreateFlags::empty(),
@@ -594,7 +605,7 @@ impl RealtimeRtPass {
             )),
             "sharc-descriptor-pool",
         );
-        let sharc_descriptor_set = GfxDescriptorSet::<SharcDescriptorBinding>::new(
+        sharc_descriptor_set = GfxDescriptorSet::<SharcDescriptorBinding>::new(
             device_ctx,
             &sharc_descriptor_pool,
             &sharc_descriptor_set_layout,
@@ -620,14 +631,14 @@ impl RealtimeRtPass {
                 sharc_buffer_info(sharc_resolved),
             ),
         ]);
-
+        shader_module_cache.destroy(device_ctx);
         Self {
             pipeline: rt_pipeline,
-            sbt,
+            sbt: sbt,
             _rt_descriptor_set_layout: rt_descriptor_set_layout,
-            sharc_descriptor_set_layout,
-            sharc_descriptor_pool,
-            sharc_descriptor_set,
+            sharc_descriptor_set_layout: sharc_descriptor_set_layout,
+            sharc_descriptor_pool: sharc_descriptor_pool,
+            sharc_descriptor_set: sharc_descriptor_set,
         }
     }
 
@@ -641,11 +652,12 @@ impl RealtimeRtPass {
             sharc_descriptor_set: _sharc_descriptor_set,
         } = self;
         pipeline.destroy(device_ctx);
-        sbt.destroy(resource_ctx, DestroyReason::Shutdown);
         _rt_descriptor_set_layout.destroy(device_ctx);
         // descriptor set 跟随 pool 释放；显式释放 pool 与 layout。
         sharc_descriptor_pool.destroy(device_ctx);
         sharc_descriptor_set_layout.destroy(device_ctx);
+        // SBT buffer 释放后的诊断日志即使失败，也不阻断其他 native 对象的回收。
+        sbt.destroy(resource_ctx, DestroyReason::Shutdown);
     }
     pub fn ray_trace(
         &self,

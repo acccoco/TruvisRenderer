@@ -24,21 +24,28 @@ Runtime 无窗口地创建 root state；`init_after_window` 才创建 surface、
 ```mermaid
 flowchart LR
     Input["drain input"] --> Begin["begin_frame"]
-    Begin --> Update["update_phase + Renderer::update"]
-    Update --> Resize{"resize / DLSS extent?"}
-    Resize --> Prepare["prepare(render_view)"]
-    Resize --> Prepare
+    Begin --> Consume["Renderer::on_input"]
+    Consume --> Update["update_phase + Renderer::update"]
+    Update --> Resize["sync_render_extent / on_resize"]
+    Resize --> Target{"acquired present target?"}
+    Target -->|是| Prepare["prepare / 确认上传版本"]
+    Target -->|否| Signal["空 timeline signal submit"]
     Prepare --> Query["after_prepare / raycast"]
     Query --> Render["render + RenderGraph"]
-    Render --> Present["present"]
+    Render --> History["finish_rendered_frame / 确认主视图历史"]
+    History --> Present["present"]
     Present --> End["end_frame"]
+    Signal --> End
 ```
 
 `RenderLoop` 在每帧开始先合并输入和最新窗口尺寸，再进入 Runtime 阶段。输入和 resize 的安全点位于限帧等待之前，确保窗口关闭或尺寸变化不会被 spin/park 阻塞。
 
 ### 无 present target
 
-窗口最小化、swapchain 暂不可用或尺寸为零时，Runtime 可能没有可提交的 present target。此时仍执行必要的控制状态检查和资源安全处理，但跳过 `prepare`、raycast、render 和 present，使用 timeline 补齐当前帧后进入 `end_frame`。
+两条路径须区分：外层发现窗口尺寸为零或仍在 resize debounce 时暂停，尚未进入
+`begin_frame`，不提交空 signal，也不推进帧号。已经进入帧、但 acquire 未取得 image 时，
+仍执行 input/update 与内部 extent 同步；跳过 prepare、raycast、render、history 确认和
+present，空 timeline signal 的 submit 正常返回后才进入 `end_frame`。
 
 无 present target 不代表 Runtime 已关闭，也不等价于 GPU 工作完成；它只表示本帧没有可显示的 swapchain image。
 
@@ -58,15 +65,22 @@ resize 只在 RenderLoop 安全点处理。Runtime 重建 swapchain/present 状�
 
 ```text
 停止接收新请求
+-> RenderRuntime::wait_idle
 -> Renderer::shutdown
--> RenderRuntime::wait_idle / destroy
+-> RenderRuntime::destroy（含自身 idle 前置）
 -> RenderThread 完成并发布状态
 -> window host 销毁 child HWND
 -> App 停止通知 dispatcher
 -> parent/WebView 退出
 ```
 
-RenderLoop 必须先让 Renderer 释放自身资源，再让 Runtime 销毁 `Gfx` root owner。窗口 owner 只有在 RenderThread 退出后才能释放 child HWND。
+RenderLoop 必须先建立 GPU 安全点，让 Renderer 释放自身资源，再让 Runtime 销毁 `Gfx`
+root owner。正常退出入口直接进入关闭序列。窗口 owner 必须确认 Vulkan/surface 已完成
+回收后才能释放 child HWND；线程退出是必要条件，不单独证明回收完成。
+
+当前偏差：init/frame/shutdown 中途 panic 会越过后续显式关闭，外层 RenderThread 的
+catch/finished 只表达线程退场；不能据此认定上述顺序已完成。未知提交、等待失败和部分
+owner 释放需要各自完成凭据，不能统一 catch 后继续销毁。跨层异常退场与 WSI presentation 完成证明仍是未解决的实现缺口。
 
 ## 设计不变量
 

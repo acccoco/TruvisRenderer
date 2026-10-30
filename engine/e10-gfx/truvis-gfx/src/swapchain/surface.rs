@@ -41,6 +41,19 @@ impl GfxSurface {
 
 // 访问器
 impl GfxSurface {
+    /// 当前 swapchain 固定在 graphics family 使用，必须在窗口 surface 创建后验证 present 支持。
+    pub(crate) fn supports_graphics_queue(&self, ctx: GfxSurfaceCtx<'_>) -> bool {
+        unsafe {
+            self.pf
+                .get_physical_device_surface_support(
+                    ctx.physical_device().vk_handle,
+                    ctx.physical_device().gfx_queue_family.queue_family_index,
+                    self.handle,
+                )
+                .unwrap()
+        }
+    }
+
     /// 实时获取 surface 的能力信息
     pub fn get_capabilities(&self, ctx: GfxSurfaceCtx<'_>) -> vk::SurfaceCapabilitiesKHR {
         unsafe {

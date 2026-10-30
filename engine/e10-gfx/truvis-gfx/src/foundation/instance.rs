@@ -10,9 +10,8 @@ use itertools::Itertools;
 use crate::foundation::debug_messenger::GfxDebugMsger;
 
 pub struct GfxInstance {
-    /// 仅仅是函数指针，以及一个裸的 handle，可以随意 clone
-    ///
-    /// 不需要考虑生命周期的问题，生命周期现在是由手动控制的
+    /// Rc 共享 ash dispatch wrapper，不延长 native instance 或 loader 的生命周期。
+    /// 显式 destroy 前必须保证所有 device/surface 等子对象已经回收。
     pub(crate) ash_instance: Rc<ash::Instance>,
 }
 
@@ -67,7 +66,6 @@ impl GfxInstance {
     }
 
     pub fn destroy(self) {
-        log::info!("Destroying GfxInstance");
         unsafe {
             self.ash_instance.destroy_instance(None);
         }

@@ -21,6 +21,7 @@ impl GfxPipelineLayout {
         push_constant_ranges: &[vk::PushConstantRange],
         debug_name: impl AsRef<str>,
     ) -> Self {
+        let debug_name = debug_name.as_ref();
         let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(descriptor_set_layouts)
             .push_constant_ranges(push_constant_ranges);
@@ -67,7 +68,8 @@ impl DebugType for GfxPipelineLayout {
 pub struct GfxGraphicsPipeline {
     pipeline: vk::Pipeline,
 
-    /// 因为多个 pipeline 可以使用同一个 pipeline layout，所以这里使用 Rc
+    /// 多个 pipeline 共享 layout；最后一个显式销毁的 owner 负责释放 native layout。
+    /// Rc 本身不延长已显式销毁的 native 对象生命周期，外部 owner 仍须遵守 GPU 完成条件。
     pipeline_layout: Rc<GfxPipelineLayout>,
 }
 impl GfxGraphicsPipeline {

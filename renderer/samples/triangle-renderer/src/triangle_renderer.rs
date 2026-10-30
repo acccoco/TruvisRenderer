@@ -4,7 +4,7 @@ use itertools::Itertools;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
-use truvis_render_loop::input_event::InputEvent;
+use truvis_render_loop::input_event::{ElementState, InputEvent};
 use truvis_render_loop::renderer::{Renderer, RendererInitCtx, RendererResizeCtx, RendererShutdownCtx};
 use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
 
@@ -43,7 +43,21 @@ impl Renderer for TriangleRenderer {
     fn on_input(&mut self, events: &[InputEvent]) {
         self.input.begin_frame();
         for event in events {
-            if !self.imgui.on_input(event) {
+            let captured = self.imgui.on_input(event);
+            // UI 可消费按下意图，但坐标与松键仍需更新，避免相机保留旧位置或按下状态。
+            let state_event = matches!(
+                event,
+                InputEvent::MouseMoved { .. }
+                    | InputEvent::MouseButtonInput {
+                        state: ElementState::Released,
+                        ..
+                    }
+                    | InputEvent::KeyboardInput {
+                        state: ElementState::Released,
+                        ..
+                    }
+            );
+            if !captured || state_event {
                 self.input.process_event(event);
             }
         }

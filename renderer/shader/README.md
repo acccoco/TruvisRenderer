@@ -33,6 +33,9 @@ renderer/shader/
 - `truvis-renderer-shader-binding/` 是全部 Renderer ABI 的唯一 Rust binding owner，正向依赖
   `truvis-shader-binding`。
 
+生成 record 的 `Copy/Clone/Zeroable/Pod` 由公共生成器统一派生，字段与隐式 padding 由 rustc
+检查；跨 owner 数值类型复用 Engine binding，不再为单个 vertex 手写 Copy/Clone。
+
 ## 四个 package
 
 | package | entry root | 可见 include roots | 依赖 |

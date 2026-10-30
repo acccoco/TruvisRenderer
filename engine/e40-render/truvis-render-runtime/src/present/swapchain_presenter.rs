@@ -1,8 +1,6 @@
 use ash::vk;
-use itertools::Itertools;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::resources::image::GfxImage;
@@ -14,6 +12,7 @@ use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState, RgSemaphoreInfo};
 
+use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 use crate::runtime_defaults::DefaultRenderRuntimeSettings;
 /// 已导入 RenderGraph 的当前窗口 present target。
 ///
@@ -91,10 +90,11 @@ pub(crate) struct SwapchainPresenter {
     swapchain_images: Vec<GfxImageHandle>,
     swapchain_image_views: Vec<GfxImageViewHandle>,
 
-    /// 数量和 FIF 数相同；acquire 当前 frame label 的 image 时 signal。
-    present_complete_semaphores: [GfxSemaphore; FrameLabel::COUNT],
+    /// 交付时数量和 FIF 数相同；Vec 让构造中的 owner 也能逐项持有并回收已创建部分。
+    /// acquire 当前 frame label 的 image 时 signal。
+    present_complete_semaphores: Vec<GfxSemaphore>,
 
-    /// 数量和 swapchain image 数相同；render graph 提交完成后 signal，present 当前 image 时 wait。
+    /// 数量至少覆盖 swapchain image 数，只增长不缩减；render graph 提交完成后 signal，present 当前 image 时 wait。
     render_complete_semaphores: Vec<GfxSemaphore>,
 
     /// 当前帧是否成功 acquire 到 swapchain image。
@@ -128,38 +128,46 @@ impl SwapchainPresenter {
         // surface/swapchain 必须在平台层提供 raw window/display handle 后创建，
         // 因此 RenderRuntime::new 阶段不会碰窗口系统资源。
         let surface = GfxSurface::new(surface_ctx, raw_display_handle, raw_window_handle);
-        let swapchain = GfxSwapchain::new(
-            surface_ctx,
-            &surface,
-            DefaultRenderRuntimeSettings::DEFAULT_PRESENT_MODE,
-            DefaultRenderRuntimeSettings::DEFAULT_SURFACE_FORMAT,
-            window_physical_extent,
-            None,
-        );
-        let (swapchain_image_handles, swapchain_image_view_handles) =
-            Self::create_swapchain_images_and_views(resource_ctx, device_ctx, &swapchain, gfx_resource_registry);
-
-        let swapchain_image_infos = swapchain.image_infos();
-
-        let present_complete_semaphores = FrameLabel::ALL
-            .map(|frame_label| GfxSemaphore::new(device_ctx, &format!("window-present-complete-{}", frame_label)));
-        let render_complete_semaphores = (0..swapchain_image_infos.image_cnt)
-            .map(|i| GfxSemaphore::new(device_ctx, &format!("window-render-complete-{}", i)))
-            .collect_vec();
-
-        Self {
+        let mut presenter = Self {
             surface,
-            swapchain: Some(swapchain),
-            swapchain_images: swapchain_image_handles,
-            swapchain_image_views: swapchain_image_view_handles,
-
-            present_complete_semaphores,
-            render_complete_semaphores,
+            swapchain: None,
+            swapchain_images: Vec::new(),
+            swapchain_image_views: Vec::new(),
+            present_complete_semaphores: Vec::new(),
+            render_complete_semaphores: Vec::new(),
 
             current_image_acquired: false,
             window_physical_extent,
             need_resize: false,
             force_resize: false,
+        };
+        // 这里尚未 acquire 或提交 GPU 工作；每一步成功后立即交给同一个 owner，失败可直接释放。
+        presenter.swapchain = Some(GfxSwapchain::new(
+            surface_ctx,
+            &presenter.surface,
+            DefaultRenderRuntimeSettings::DEFAULT_PRESENT_MODE,
+            DefaultRenderRuntimeSettings::DEFAULT_SURFACE_FORMAT,
+            window_physical_extent,
+            None,
+        ));
+        let swapchain = presenter.swapchain.as_ref().unwrap();
+        (presenter.swapchain_images, presenter.swapchain_image_views) =
+            Self::create_swapchain_images_and_views(resource_ctx, device_ctx, swapchain, gfx_resource_registry);
+        for frame_label in FrameLabel::ALL {
+            presenter
+                .present_complete_semaphores
+                .push(GfxSemaphore::new(device_ctx, &format!("window-present-complete-{}", frame_label)));
+        }
+        presenter.ensure_render_complete_capacity(device_ctx);
+
+        presenter
+    }
+
+    /// image count 可能随重建增长；只补齐索引容量，不提供跨代 presentation 完成证明。
+    fn ensure_render_complete_capacity(&mut self, device_ctx: GfxDeviceCtx<'_>) {
+        let image_count = self.swapchain.as_ref().unwrap().image_infos().image_cnt as usize;
+        for index in self.render_complete_semaphores.len()..image_count {
+            self.render_complete_semaphores.push(GfxSemaphore::new(device_ctx, &format!("window-render-complete-{index}")));
         }
     }
 
@@ -185,18 +193,21 @@ impl SwapchainPresenter {
                 *vk_image,
                 swapchain_image_info.image_extent.into(),
                 swapchain_image_info.image_format,
+                swapchain_image_info.image_usage,
+                swapchain_image_info.image_flags,
                 format!("swapchain-image-{}", image_idx),
             );
             let image_handle = gfx_resource_registry.register_image(image);
-
-            let image_view_handle = gfx_resource_registry.get_or_create_image_view(
-                device_ctx,
-                image_handle,
-                GfxImageViewDesc::new_2d(swapchain_image_info.image_format, vk::ImageAspectFlags::COLOR),
-                format!("swapchain-{}", image_idx),
-            );
-
+            // 先记录 registry 所有权；下一步 view 创建失败时也必须撤销当前 image。
             image_handles.push(image_handle);
+
+                let image_view_handle = gfx_resource_registry.get_or_create_image_view(
+                    device_ctx,
+                    image_handle,
+                    GfxImageViewDesc::new_2d(swapchain_image_info.image_format, vk::ImageAspectFlags::COLOR),
+                    format!("swapchain-{}", image_idx),
+                );
+
             image_view_handles.push(image_view_handle);
         }
 
@@ -318,6 +329,7 @@ impl SwapchainPresenter {
     ///
     /// 旧 swapchain 会作为 old_swapchain 传给 Vulkan，旧 image wrapper/view 先从资源系统释放；
     /// 调用者随后会拿到 resize ctx 重建上层窗口尺寸相关资源。
+    /// 重建失败继续传播错误，不能继续读取旧 target 或恢复旧 acquisition。
     pub fn rebuild_after_resized(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -325,12 +337,20 @@ impl SwapchainPresenter {
         surface_ctx: GfxSurfaceCtx<'_>,
         gfx_resource_registry: &mut GfxResourceRegistry,
     ) {
+        assert!(!self.current_image_acquired, "present the acquired image before rebuilding the swapchain");
         device_ctx.device().wait_idle();
 
-        // 重建前先释放旧 image wrapper/view，再把旧 swapchain 交给 Vulkan 创建新 swapchain。
-        // 这里 wait idle 是 resize 路径的保守同步点，防止窗口尺寸资源仍被在飞命令使用。
-        for image_handle in std::mem::take(&mut self.swapchain_images) {
-            gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image_handle, DestroyReason::Resize);
+        // wait idle 覆盖在飞 GPU 命令；旧代 presentation 完成仍需额外证明，不能据此复用旧 semaphore。
+        self.swapchain_image_views.clear();
+        self.need_resize = true;
+        self.force_resize = true;
+        while let Some(image_handle) = self.swapchain_images.pop() {
+            gfx_resource_registry.release_image_immediate(
+                resource_ctx,
+                device_ctx,
+                image_handle,
+                DestroyReason::Resize,
+            );
         }
         let old_swapchain = self.swapchain.take();
         self.swapchain = Some(GfxSwapchain::new(
@@ -348,6 +368,7 @@ impl SwapchainPresenter {
             gfx_resource_registry,
         );
 
+        self.ensure_render_complete_capacity(device_ctx);
         self.current_image_acquired = false;
         self.need_resize = false;
         self.force_resize = false;
@@ -393,7 +414,7 @@ impl SwapchainPresenter {
             return;
         }
 
-        let swapchain = self.swapchain.as_ref().unwrap();
+        let swapchain = self.swapchain.as_mut().unwrap();
         // present 等待当前 swapchain image 对应的 render-complete semaphore；
         // semaphore 数量跟 image 数一致，避免同一帧中不同 image 的完成信号互相覆盖。
         // 返回值同样只更新 latest-size 标记，让实际重建保持在单一 resize 安全点。
@@ -423,6 +444,18 @@ impl SwapchainPresenter {
         surface_ctx: GfxSurfaceCtx<'_>,
         gfx_resource_registry: &mut GfxResourceRegistry,
     ) {
+        self.release(resource_ctx, device_ctx, surface_ctx, gfx_resource_registry, DestroyReason::Shutdown);
+    }
+
+    /// 构造失败只含未提交资源；正常销毁的 GPU/WSI 完成前置仍由调用方满足。
+    fn release(
+        self,
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        surface_ctx: GfxSurfaceCtx<'_>,
+        gfx_resource_registry: &mut GfxResourceRegistry,
+        reason: DestroyReason,
+    ) {
         // swapchain image wrapper 必须在 swapchain 销毁前释放；surface 最后销毁。
         for semaphore in self.present_complete_semaphores {
             semaphore.destroy(device_ctx);
@@ -431,12 +464,7 @@ impl SwapchainPresenter {
             semaphore.destroy(device_ctx);
         }
         for image_handle in self.swapchain_images {
-            gfx_resource_registry.release_image_immediate(
-                resource_ctx,
-                device_ctx,
-                image_handle,
-                DestroyReason::Shutdown,
-            )
+            gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image_handle, reason)
         }
         if let Some(swapchain) = self.swapchain {
             swapchain.destroy(surface_ctx);

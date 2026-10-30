@@ -9,7 +9,8 @@ flowchart LR
     Config["Renderer / UI configuration"] --> Derive["Renderer derive"]
     Derive --> Frame["FrameRenderState"]
     Frame --> Targets["render/output targets"]
-    View["camera / scene / settings signature"] --> History["ViewAccumState / DlssSrState"]
+    View["camera / scene / settings signature"] --> History["DlssSrState / OfflineAccumState"]
+    View --> Diagnostic["ViewAccumState / UI stable updates"]
     History --> Temporal["temporal resources"]
 ```
 
@@ -33,7 +34,7 @@ update 派生目标尺寸：尺寸变化只提交请求，由随后 Runtime 的 
 
 SR/RR options 提交失败通过 `StreamlineError` 向上传播，在 Renderer hook 边界以带阶段信息的
 `expect` 终止当前渲染执行路径，不继续 evaluate，也不增加自动回退或重试。optimal-settings 查询
-与资源释放仍沿用已有错误策略。逐帧 snapshot 保留 prepare 使用的 jitter 和 view，避免
+仍沿用查询失败时保留 native extent 的策略。逐帧 snapshot 保留 prepare 使用的 jitter 和 view，避免
 after_prepare 的 history reset 改写本帧已上传输入。
 
 binding wrapper 使用同一 frame token 提交 constants、resource tags 和 `slEvaluateFeature`。
@@ -42,6 +43,13 @@ binding wrapper 使用同一 frame token 提交 constants、resource tags 和 `s
 `source/plugins/sl.dlss/dlssEntry.cpp` 与 `source/plugins/sl.dlss_d/dlss_dEntry.cpp`。
 Renderer 在 update、resize 和 shutdown 的 GPU idle 边界释放旧 feature，Runtime 不理解 DLSS API，
 也不为 Streamline 私有资源插入应用侧 barrier。此生命周期约束不等于验证了 NGX 内部 GPU 同步。
+
+snapshot 只读取状态；含场景的 Realtime graph 开始录制前登记可能存在的 feature，
+无 TLAS 清屏和 Offline 不登记。登记早于 execute/submit，覆盖 evaluate 或提交失败的半成品；
+它不是实际分配成功的证明，graph 在 SDK 调用前失败也可能留下保守记录。
+释放只有返回成功才清空归属；返回错误时保存 feature 归属并传播原始错误，阻止新的录制、options 提交
+和 history 重配置，也不自动再次调用 free。shutdown 将错误向 Renderer hook 传播，停止后续
+target 销毁；这不构成全局安全退出协议，SDK shutdown/Runtime/线程异常退场仍须整体复核。
 
 `DefaultRenderRuntimeSettings` 只描述 Runtime 初始化策略，例如默认 FPS 上限、surface/present mode 和 depth format 候选。Renderer 不应依赖设备必然选择某个格式。
 
@@ -53,28 +61,46 @@ Renderer 在 update、resize 和 shutdown 的 GPU idle 边界释放旧 feature�
 - `output_extent`：swapchain、GUI、present 和 DLSS output 的尺寸。
 - HDR color 与 depth format：窗口 target 和 attachment 的格式契约。
 
-Renderer/subsystem 只读取该 state，并在 init/resize 时提交自身 target 所需的 render extent。
+约定 Renderer/subsystem 通过阶段 Ctx 的 `set_render_extent` 提交内部尺寸：update 只写
+请求，由 Runtime 在 idle 后应用并通知 resize；init/resize 已处于资源创建/重建边界，
+setter 同时更新请求和 frame state。输出尺寸由 swapchain 决定，Offline 可复制 state
+并将副本设为 native，不能反向改写 Runtime 的输出尺寸。
+
+当前类型偏差：init/resize Ctx 仍直接暴露可变 state，setter 也没有完整的尺寸能力校验。
+当前 DLSS 调用点过滤零 optimal extent，底层 image 创建另有非零检查；这些不等同于
+所有未来 Renderer 请求都已在发布前验证。后续职责收窄必须补齐调用方能力与尺寸验证。
 
 ## Temporal state
 
-`DlssSrState` 保存 DLSS evaluate 所需的 jitter、previous view、common constants 和 reset 标记。`ViewAccumState` 保存 main view 的历史签名和稳定帧计数。两者都由 `TruvisRenderer` 管理。
+`DlssSrState` 保存 DLSS evaluate 所需的 jitter、previous view、common constants 和 reset 标记。
+`ViewAccumState` 仅供 UI 诊断：相机签名连续相同的 update 递增，首次、变化或 reset 为零；
+无 acquired image 仍可能推进，不表达主视图提交数、Offline 样本数或历史有效性。
+它们各有 owner 和更新条件，不能合并成统一的累计状态；Offline 的样本/签名归其子系统。
 
 相机 previous 对齐上一实际提交的主视图，prepare 只生成本帧 view/constants 与候选 jitter。
 主视图 submit 正常返回后才推进相机和 jitter；无主视图提交释放本帧准备数据并保留历史。
 普通 DLSS reset 请求不清空相机/实例运动历史或修改已上传 jitter；初始化、模式/尺寸重配置
 在 prepare 前重启 jitter，但仍保留上一提交相机。
 
+clip→previous clip 与反向关系分别用当前/上一视图的 projection、view 及已保存逆矩阵组合，
+避免对病态投影组合再次求逆放大误差；按 row-major 上传，不把任意 f32 正反串联当作精确单位变换。
+
 Runtime 在尺寸、实例集合、材质外观和 lighting 语义变化时发出通用 history invalidation。
 普通 transform 不触发该通知，但继续更新 TLAS、appearance/emissive 与 Offline 签名。
 `TruvisRenderer` 分别通知 DLSS、ViewAccum 和 ReSTIR；各消费者保留自己的有效性策略。
 
+Runtime 的提示是帧内通知，不是可跨跳帧消费的持久 reset：begin_frame 会清除它。
+外层 swapchain resize 早于 begin_frame，当前 Renderer 必须在 on_resize 直接处理
+自身历史与资源；update 后的内部尺寸变化则也会通过同帧 after_prepare 通知。
+
 DLSS 的唯一 pending reset 属于 `DlssSrState`。after_prepare 只合并 reset 原因，不改本帧已上传
 输入；snapshot 是录制参数，不另存跨帧 reset。SR/RR pass 通过当前 render 作用域的 `Cell`
-报告 `NotRun / Succeeded / Failed`，不扩展 RenderGraph 通用接口。submit 正常返回后，Succeeded
-消费 reset，Failed 请求 reset，NotRun 保留 reset 并在主视图推进时请求 reset。
-DLSS 错误不回滚相机/实例历史，不在录制中切换 fallback。
+报告 `NotRun / Succeeded`，不扩展 RenderGraph 通用接口。已调度的 SR/RR adapter
+在 SDK evaluate 错误处记录 SDK 错误并 panic，中止整个 graph，不执行后续曝光/SDR，也不提交。
+成功 submit 后 Succeeded 消费 reset；没有调度 DLSS 的 NotRun 保留 reset，并在主视图推进时请求 reset。
+失败 render 不进入任何提交确认，不在录制中切换 fallback，也不承诺下一帧自动恢复。
 Streamline 成功后报告的显存预算警告仍属于 Succeeded，由 C++ evaluate 封装按 SDK 契约转换；
-警告保留日志，不因此 reset。其它失败继续按 Failed 处理，具体 SDK 边界见 binding 模块 README。
+警告保留日志，不因此 reset。其它失败由 adapter 直接中止录制，具体 SDK 边界见 binding 模块 README。
 
 ReSTIR 不再依赖 DLSS reset。CPU 独立检查模式、连续帧、appearance/sky 版本及自己的显式 reset；
 shader 保留资源版本、表面与遮挡检查。普通 transform 仍使其场景版本失效，Offline 累计也仍重启。
@@ -109,6 +135,11 @@ projection；保留现有 row-major 转换。SDK 规定天空 sentinel；miss/�
 
 Realtime ReSTIR reservoir、SHARC cache、offline accumulation 属于对应 Renderer subsystem 的 temporal resources，不进入 `DlssOptions` 或 `DlssSrState`。
 
+Realtime 的最近已提交模式/场景版本/帧号和 Offline 已提交样本数在 graph 构造时只生成
+各自的候选值，由 Renderer 在对应 compute/present batch 的 submit 正常返回后消费。
+建图或录制失败丢弃候选；无 TLAS 清屏的计数清零/连续性断开也在此确认。CPU 签名变化
+仍可提前使历史失效。这不表示 GPU 已执行完成，也不为未知 submit 结果提供重试或回滚。
+
 ## Renderer 配置
 
 `PathTracingCommonSettings` 保存 realtime/offline 共享的 sky sampling、NEE 和 post process 参数；Realtime 和 Offline 各自保存 debug channel、ReSTIR/SHARC mode 或 ray dispatch count。
@@ -137,6 +168,9 @@ Realtime 在 stops 空间以 `1-exp(-dt/tau)` 适应，dt 限制为 [0,0.25] 秒
 曝光历史只存在于 Renderer-owned 1×1 RGBA32F image：x=当前自动增益，y=目标增益，z=有效标记，
 w=等待下一次有效测光直接采用目标的标记。w 保证空直方图不会提前消耗 mode 切换的首次测光语义。
 直方图使用单份 256×1 R32_UINT image；二者不按 FIF 独立轮转，通过同队列跨帧 image barrier 同步。
+
+SDR 建图只生成初始化、模式与首次测光标记的提交候选；Renderer 在对应 queue submit
+正常返回后确认。丢弃或提交失败的 graph 不消耗这些标记，确认也不代表 GPU 已完成。
 
 - 首次有效测光、重新进入 Auto、Realtime/Offline 切换后的首次有效测光直接采用目标。
 - 锁定只冻结自动测光结果，用户补偿和显示曲线仍可调整；锁定期间不执行直方图计算。

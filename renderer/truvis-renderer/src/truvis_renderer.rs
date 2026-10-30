@@ -65,6 +65,12 @@ pub struct TruvisRenderer {
     client: Box<dyn RendererClient>,
 }
 
+/// 当前 render 调用的主视图候选；对应 batch 提交返回前不改变子系统历史。
+enum MainViewCommit {
+    Realtime(renderer_rendering::realtime::RealtimeFrameCommit),
+    Offline(renderer_rendering::offline::OfflineFrameCommit),
+}
+
 /// 拖动期间锁定 CPU 对象；gizmo 自身不认识 scene handle。
 #[derive(Clone, Copy)]
 enum GizmoTarget {
@@ -276,6 +282,7 @@ impl TruvisRenderer {
         self.active_gizmo_target = None;
         self.transform_gizmo.cancel_drag();
         self.input.reset();
+        self.camera_controller.cancel_interaction();
         self.click_ray_cast_probe.clear_pending();
     }
 
@@ -541,8 +548,8 @@ impl Renderer for TruvisRenderer {
     fn shutdown(&mut self, ctx: &mut RendererShutdownCtx<'_>) {
         self.client.shutdown();
 
-        // 与资源创建顺序相反释放，且始终早于 runtime root owner 销毁。
-        self.dlss.shutdown(&mut ctx.runtime);
+        // 先释放可能引用渲染图像的 SDK feature，再逆序关闭 GPU 子系统；Runtime 仍存活。
+        self.dlss.shutdown(&mut ctx.runtime).expect("DLSS shutdown resource release failed");
         self.imgui.shutdown(&mut ctx.runtime);
         self.viewport_overlay.shutdown(&mut ctx.runtime);
         self.selection_outline.shutdown(&mut ctx.runtime);
@@ -577,26 +584,32 @@ impl Renderer for TruvisRenderer {
         let dlss_evaluation = Cell::new(DlssEvaluation::NotRun);
 
         // compute graph 的资源借用在录制后结束；提交信息只保存 Vulkan handle，资源继续由 subsystem 持有。
-        let (compute_submit, scene_submitted) = {
+        let (compute_submit, scene_submitted, frame_commit, sdr_commit) = {
             let mut graph = RenderGraphBuilder::new();
-            let display = match self.render_mode {
-                RenderMode::Realtime => self.realtime.contribute_compute_passes(
-                    &mut graph,
-                    &subsystem_ctx,
-                    &self.path_tracing_common_settings,
-                    dlss_snapshot,
-                    &dlss_evaluation,
-                    self.restir_reset_pending,
-                ),
-                RenderMode::Offline => self.offline.contribute_compute_passes(
-                    &mut graph,
-                    &subsystem_ctx,
-                    &self.path_tracing_common_settings,
-                ),
+            let (display, frame_commit) = match self.render_mode {
+                RenderMode::Realtime => {
+                    let (display, commit) = self.realtime.contribute_compute_passes(
+                        &mut graph,
+                        &subsystem_ctx,
+                        &self.path_tracing_common_settings,
+                        dlss_snapshot,
+                        &dlss_evaluation,
+                        self.restir_reset_pending,
+                    );
+                    (display, MainViewCommit::Realtime(commit))
+                }
+                RenderMode::Offline => {
+                    let (display, commit) = self.offline.contribute_compute_passes(
+                        &mut graph,
+                        &subsystem_ctx,
+                        &self.path_tracing_common_settings,
+                    );
+                    (display, MainViewCommit::Offline(commit))
+                }
             };
             // 两种主视图子系统仅在加入场景 RT pass 时返回 display；无 TLAS 清屏返回 None。
             let uses_scene = display.is_some();
-            self.sdr_post_process.contribute(
+            let sdr_commit = self.sdr_post_process.contribute(
                 &mut graph,
                 &subsystem_ctx,
                 display,
@@ -618,9 +631,13 @@ impl Renderer for TruvisRenderer {
                 RenderMode::Offline => (self.offline.compute_cmd(frame_label), "offline-compute-graph"),
             };
             cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, label);
+            // snapshot/空场景不创建 feature；只有即将录制场景 DLSS 的 graph 才登记释放责任。
+            if uses_scene && self.render_mode == RenderMode::Realtime {
+                self.dlss.begin_recording(dlss_snapshot);
+            }
             compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
             cmd.end();
-            (compiled_graph.build_submit_info(std::slice::from_ref(cmd)), uses_scene)
+            (compiled_graph.build_submit_info(std::slice::from_ref(cmd)), uses_scene, frame_commit, sdr_commit)
         };
 
         // 两种模式共用 present 编排，只选择各自的目标和命令缓冲，不重复 overlay 顺序。
@@ -640,6 +657,7 @@ impl Renderer for TruvisRenderer {
                             &self.path_tracing_common_settings,
                             selected_debug_image_id,
                             dlss_snapshot.options,
+                            dlss_evaluation.get(),
                         )
                         .present_image
                 }
@@ -678,6 +696,12 @@ impl Renderer for TruvisRenderer {
         // 两种模式都保持 compute -> present 的提交顺序。timeline signal 放在 present graph，
         // 因此上层 runtime 只需要等待同一个 frame_id 即可观察最终 swapchain 写入完成。
         ctx.queue_ctx.gfx_queue().submit(vec![compute_submit, present_submit], None);
+        self.sdr_post_process.finish_rendered_frame(sdr_commit);
+        // 候选只随本次提交确认；录制/提交失败会丢弃它，不把未提交工作记作历史。
+        match frame_commit {
+            MainViewCommit::Realtime(commit) => self.realtime.finish_rendered_frame(commit),
+            MainViewCommit::Offline(commit) => self.offline.finish_rendered_frame(commit),
+        }
         self.dlss.finish_rendered_frame(scene_submitted, dlss_evaluation.get());
         if scene_submitted && self.render_mode == RenderMode::Realtime {
             self.restir_reset_pending = false;

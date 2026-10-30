@@ -28,6 +28,8 @@ pub(super) struct SceneBuffers {
     /// 当前 FIF 的 scene 语义版本快照，供离线累计判断历史图像是否仍可复用。
     pub(super) accum_signature: RenderSceneAccumSignature,
     pub(super) sky_brightness: f32,
+    /// 扩容已更换 device 地址但尚未确认完整上传；prepare 中断时也必须保留。
+    needs_full_upload: bool,
 }
 
 impl SceneBuffers {
@@ -38,136 +40,160 @@ impl SceneBuffers {
         let max_geometry_cnt = 1024 * 8;
         let max_instance_cnt = 1024;
 
-        SceneBuffers {
-            scene_buffer: GfxStructuredBuffer::new_ubo(ctx, 1, format!("scene buffer-{}", frame_label)),
-            geometry_buffer: GfxStructuredBuffer::new_ssbo(
-                ctx,
-                max_geometry_cnt,
-                format!("geometry buffer-{}", frame_label),
-            ),
-            geometry_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
-                ctx,
-                max_geometry_cnt,
-                format!("geometry stage buffer-{}", frame_label),
-            ),
-            instance_buffer: GfxStructuredBuffer::new_ssbo(
-                ctx,
-                max_instance_cnt,
-                format!("instance buffer-{}", frame_label),
-            ),
-            instance_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
-                ctx,
-                max_instance_cnt,
-                format!("instance stage buffer-{}", frame_label),
-            ),
-            material_indirect_buffer: GfxStructuredBuffer::new_ssbo(
-                ctx,
-                max_instance_cnt * 8,
-                format!("instance material buffer-{}", frame_label),
-            ),
-            material_indirect_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
-                ctx,
-                max_instance_cnt * 8,
-                format!("instance material stage buffer-{}", frame_label),
-            ),
-            geometry_indirect_buffer: GfxStructuredBuffer::new_ssbo(
-                ctx,
-                max_instance_cnt * 8,
-                format!("instance geometry buffer-{}", frame_label),
-            ),
-            geometry_indirect_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
-                ctx,
-                max_instance_cnt * 8,
-                format!("instance geometry stage buffer-{}", frame_label),
-            ),
+        let scene;
+        let geometry;
+        let instance;
+        let material_indirect;
+        let geometry_indirect;
+        scene = GfxStructuredBuffer::new_ubo(ctx, 1, format!("scene buffer-{frame_label}"));
+        geometry = Self::new_pair(ctx, max_geometry_cnt, &format!("geometry-{frame_label}"));
+        instance = Self::new_pair(ctx, max_instance_cnt, &format!("instance-{frame_label}"));
+        material_indirect = Self::new_pair(ctx, max_instance_cnt * 8, &format!("material-indirect-{frame_label}"));
+        geometry_indirect = Self::new_pair(ctx, max_instance_cnt * 8, &format!("geometry-indirect-{frame_label}"));
+
+        let (geometry_buffer, geometry_stage_buffer) = geometry;
+        let (instance_buffer, instance_stage_buffer) = instance;
+        let (material_indirect_buffer, material_indirect_stage_buffer) = material_indirect;
+        let (geometry_indirect_buffer, geometry_indirect_stage_buffer) = geometry_indirect;
+        Self {
+            scene_buffer: scene,
+            geometry_buffer,
+            geometry_stage_buffer,
+            instance_buffer,
+            instance_stage_buffer,
+            material_indirect_buffer,
+            material_indirect_stage_buffer,
+            geometry_indirect_buffer,
+            geometry_indirect_stage_buffer,
             accum_signature: RenderSceneAccumSignature::default(),
             sky_brightness: 1.0,
+            needs_full_upload: false,
         }
+    }
+
+    /// device 与 stage 必须成对交付，第二个创建失败时撤销第一个。
+    fn new_pair<T>(
+        ctx: GfxResourceCtx<'_>,
+        capacity: usize,
+        name: &str,
+    ) -> (GfxStructuredBuffer<T>, GfxStructuredBuffer<T>) {
+        let device = GfxStructuredBuffer::new_ssbo(ctx, capacity, name);
+        let stage = { GfxStructuredBuffer::new_stage_buffer(ctx, capacity, format!("{name}-stage")) };
+        (device, stage)
+    }
+
+    /// 调用方必须先确认 GPU 对两个 buffer 的使用均已结束。
+    fn destroy_pair<T>(
+        device: &mut GfxStructuredBuffer<T>,
+        stage: &mut GfxStructuredBuffer<T>,
+        ctx: GfxResourceCtx<'_>,
+        reason: DestroyReason,
+    ) {
+        device.destroy_mut(ctx, reason);
+        stage.destroy_mut(ctx, reason);
     }
 
     /// 当前 FIF 的上次提交已经由 Runtime 等待完成，才允许替换这些 buffer。
     ///
     /// instance 容量按最高稳定 slot 计算，indirect 容量按 active submesh 数计算；两者不能
     /// 混用。扩容保留 slot 身份，随后整表上传并更新 scene root，不影响其它在飞帧。
+    /// 返回值包含先前中断留下的扩容标记，直到 commit_full_upload 确认才清除。
     pub(super) fn ensure_capacity(
         &mut self,
         ctx: GfxResourceCtx<'_>,
         frame_label: FrameLabel,
         data: &super::render_data::RenderData<'_>,
     ) -> bool {
-        let geometry_count = data.all_meshes.iter().map(|mesh| mesh.geometries.len()).sum();
-        let instance_count = data
-            .all_instances
-            .iter()
-            .map(|instance| instance.instance_slot.as_usize() + 1)
-            .max()
-            .unwrap_or(0);
-        let indirect_count = data.all_instances.iter().map(|instance| instance.material_slots.len()).sum();
+        let (geometry_count, instance_count, indirect_count) = data.buffer_counts();
         let frame = frame_label;
 
-        let mut resized = false;
-        resized |= Self::grow_pair(
+        Self::grow_pair(
             &mut self.geometry_buffer,
             &mut self.geometry_stage_buffer,
             geometry_count,
             &format!("geometry-{frame}"),
             ctx,
+            &mut self.needs_full_upload,
         );
-        resized |= Self::grow_pair(
+        Self::grow_pair(
             &mut self.instance_buffer,
             &mut self.instance_stage_buffer,
             instance_count,
             &format!("instance-{frame}"),
             ctx,
+            &mut self.needs_full_upload,
         );
-        resized |= Self::grow_pair(
+        Self::grow_pair(
             &mut self.material_indirect_buffer,
             &mut self.material_indirect_stage_buffer,
             indirect_count,
             &format!("material-indirect-{frame}"),
             ctx,
+            &mut self.needs_full_upload,
         );
-        resized |= Self::grow_pair(
+        Self::grow_pair(
             &mut self.geometry_indirect_buffer,
             &mut self.geometry_indirect_stage_buffer,
             indirect_count,
             &format!("geometry-indirect-{frame}"),
             ctx,
+            &mut self.needs_full_upload,
         );
-        resized
+        self.needs_full_upload
     }
 
-    fn grow_pair<T>(
+    /// 仅在当前 FIF 的完整结构上传已成功提交后调用；清除标记不等于 GPU 执行结束。
+    pub(super) fn commit_full_upload(&mut self) {
+        self.needs_full_upload = false;
+    }
+
+    fn grow_pair<T: bytemuck::Pod>(
         device: &mut GfxStructuredBuffer<T>,
         stage: &mut GfxStructuredBuffer<T>,
         required: usize,
         name: &str,
         ctx: GfxResourceCtx<'_>,
-    ) -> bool {
+        needs_full_upload: &mut bool,
+    ) {
         if required <= stage.mapped_slice_ref().len() {
-            return false;
+            return;
         }
-        let capacity = required.next_power_of_two();
-        let next_device = GfxStructuredBuffer::new_ssbo(ctx, capacity, name);
-        let next_stage = GfxStructuredBuffer::new_stage_buffer(ctx, capacity, format!("{name}-stage"));
-        device.destroy_mut(ctx, DestroyReason::ImmediateRelease);
-        stage.destroy_mut(ctx, DestroyReason::ImmediateRelease);
-        *device = next_device;
-        *stage = next_stage;
-        log::info!("Scene buffer {name} grew to {capacity} elements");
-        true
+        let capacity = required.checked_next_power_of_two().expect("scene buffer capacity overflow");
+        log::info!("Scene buffer {name} growing to {capacity} elements");
+        let (next_device, next_stage) = Self::new_pair(ctx, capacity, name);
+        // 当前 FIF 已等待完成；先让字段接管完整候选，再回收旧 pair，诊断失败不留下悬空字段。
+        let mut old_device = std::mem::replace(device, next_device);
+        let mut old_stage = std::mem::replace(stage, next_stage);
+        *needs_full_upload = true;
+        Self::destroy_pair(&mut old_device, &mut old_stage, ctx, DestroyReason::ImmediateRelease);
     }
 
     /// 销毁该 FIF 的全部 scene buffer。
     pub(super) fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, _device_ctx: GfxDeviceCtx<'_>) {
         self.scene_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.geometry_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.geometry_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.instance_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.instance_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.material_indirect_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.material_indirect_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.geometry_indirect_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.geometry_indirect_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+        Self::destroy_pair(
+            &mut self.geometry_buffer,
+            &mut self.geometry_stage_buffer,
+            resource_ctx,
+            DestroyReason::Shutdown,
+        );
+        Self::destroy_pair(
+            &mut self.instance_buffer,
+            &mut self.instance_stage_buffer,
+            resource_ctx,
+            DestroyReason::Shutdown,
+        );
+        Self::destroy_pair(
+            &mut self.material_indirect_buffer,
+            &mut self.material_indirect_stage_buffer,
+            resource_ctx,
+            DestroyReason::Shutdown,
+        );
+        Self::destroy_pair(
+            &mut self.geometry_indirect_buffer,
+            &mut self.geometry_indirect_stage_buffer,
+            resource_ctx,
+            DestroyReason::Shutdown,
+        );
     }
 }

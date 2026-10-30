@@ -39,6 +39,7 @@ static SHADER_STAGES: LazyLock<EnumMap<ShaderStage, GfxShaderStageInfo>> = LazyL
 });
 
 pub struct TrianglePass {
+    color_format: vk::Format,
     pipeline: GfxGraphicsPipeline,
     pipeline_layout: Rc<GfxPipelineLayout>,
 }
@@ -61,6 +62,7 @@ impl TrianglePass {
         let pipeline = GfxGraphicsPipeline::new(ctx, &pipeline_ci, pipeline_layout.clone(), "hello-triangle-pipeline");
 
         Self {
+            color_format,
             pipeline_layout,
             pipeline,
         }
@@ -69,6 +71,16 @@ impl TrianglePass {
     pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
         self.pipeline.destroy(ctx);
         self.pipeline_layout.destroy(ctx);
+    }
+
+    /// 仅在 GPU idle 后调用；普通尺寸变化复用 pipeline，格式改变才替换。
+    pub fn rebuild_for_format(&mut self, ctx: GfxDeviceCtx<'_>, color_format: vk::Format) {
+        if self.color_format == color_format {
+            return;
+        }
+        let replacement = Self::new(ctx, color_format);
+        let old = std::mem::replace(self, replacement);
+        old.destroy(ctx);
     }
 
     pub fn draw(&self, cmd: &GfxCommandBuffer, canvas_view: &GfxImageView, canvas_extent: vk::Extent2D) {

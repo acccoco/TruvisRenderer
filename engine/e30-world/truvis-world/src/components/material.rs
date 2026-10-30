@@ -51,6 +51,21 @@ impl MaterialData {
         {
             return Err(format!("material '{}' has invalid factors", self.name));
         }
+        let opacity = self.class.opacity();
+        let ior = self.class.ior();
+        // 两路 emission 各自有限仍可能在 GPU 投影相加时溢出，需同时校验总和。
+        let radiance = self.class.emissive_radiance();
+        if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) || !ior.is_finite() || ior < 1.0
+            || !radiance.is_finite() || radiance.min_element() < 0.0
+            || !(self.emissive_factor + radiance).is_finite()
+        {
+            return Err(format!("material '{}' has invalid optical parameters", self.name));
+        }
+        // 枚举可直接构造，不能依赖便捷构造器的 clamp；cutoff > 1 合法且必须原样保留。
+        let alpha_cutoff = self.coverage.alpha_cutoff();
+        if !alpha_cutoff.is_finite() || alpha_cutoff < 0.0 {
+            return Err(format!("material '{}' has invalid alpha cutoff", self.name));
+        }
         for (channel, slot) in TextureChannel::ALL.into_iter().zip(&self.textures) {
             if slot.as_ref().is_some_and(|slot| !slot.transform.is_finite()) {
                 return Err(format!("material '{}' {} has non-finite transform", self.name, channel.name()));

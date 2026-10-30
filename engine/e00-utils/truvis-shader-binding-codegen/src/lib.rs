@@ -55,11 +55,13 @@ impl<'a> BindingGenerator<'a> {
             // Shader header 只投影数据；用于解析 Slang 表达式的 C++ 构造声明没有可链接实现。
             .with_codegen_config(bindgen::CodegenConfig::TYPES | bindgen::CodegenConfig::VARS)
             .derive_default(false)
+            // 跨 owner 的类型由 rustc 检查 Copy，避免 bindgen 因 blocklist 引用漏推导。
+            .derive_copy(false)
             .raw_line("#[allow(clippy::all)]")
             .raw_line("#[allow(warnings)]")
             .enable_cxx_namespaces()
             .allowlist_recursively(false)
-            .parse_callbacks(Box::new(SlangTypeRenamer))
+            .parse_callbacks(Box::new(SlangBindingCallbacks))
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
         for include_dir in &self.spec.binding.include_roots {
@@ -130,9 +132,19 @@ impl<'a> BindingGenerator<'a> {
 }
 
 #[derive(Debug)]
-struct SlangTypeRenamer;
+struct SlangBindingCallbacks;
 
-impl bindgen::callbacks::ParseCallbacks for SlangTypeRenamer {
+impl bindgen::callbacks::ParseCallbacks for SlangBindingCallbacks {
+    fn add_derives(&self, _info: &bindgen::callbacks::DeriveInfo<'_>) -> Vec<String> {
+        // shader record 用于宿主映射与字节上传；让 derive 拒绝无效字段或隐式 padding。
+        vec![
+            "Copy".into(),
+            "Clone".into(),
+            "bytemuck::Zeroable".into(),
+            "bytemuck::Pod".into(),
+        ]
+    }
+
     fn item_name(&self, item: ItemInfo) -> Option<String> {
         match item.name {
             "uint" => Some("Uint".to_string()),

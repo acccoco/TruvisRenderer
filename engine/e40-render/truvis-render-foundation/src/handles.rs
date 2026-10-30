@@ -1,6 +1,6 @@
 use slotmap::new_key_type;
 
-// 内部 Key (不直接暴露，或者作为底层 API)
+// key 只标识创建它的 registry 内的 slot/generation；不能跨 registry/device 使用或延长 native 生命周期。
 new_key_type! {
     pub struct GfxImageHandle;
     pub struct GfxBufferHandle;

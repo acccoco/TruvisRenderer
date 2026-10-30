@@ -6,12 +6,12 @@ use itertools::Itertools;
 use truvis_gfx::descriptors::descriptor::{GfxDescriptorSet, GfxDescriptorSetLayout};
 use truvis_gfx::descriptors::descriptor_pool::{GfxDescriptorPool, GfxDescriptorPoolCreateInfo};
 use truvis_gfx::gfx::GfxDeviceCtx;
+use truvis_render_foundation::frame_label::FrameLabel;
 
 pub use crate::bindings::descriptor_bindings::{
     BindlessDescriptorBinding, BindlessDescriptorTarget, PerFrameDescriptorBinding, StaticDescriptorBinding,
     StaticSamplerDescriptorTarget,
 };
-use truvis_render_foundation::frame_label::FrameLabel;
 
 pub struct GlobalDescriptorSets {
     layout_0_static: GfxDescriptorSetLayout<StaticDescriptorBinding>,
@@ -36,64 +36,72 @@ impl GlobalDescriptorSets {
             Self::init_descriptor_pool(ctx)
         };
 
-        let (layout_0_static, set_0_static) = {
-            let _span = tracy_client::span!("GlobalDescriptorSets::new/static_set");
-            let layout_0_static = GfxDescriptorSetLayout::<StaticDescriptorBinding>::new(
-                ctx,
-                vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL,
-                "global-layout",
-            );
-            let set_0_static = GfxDescriptorSet::<StaticDescriptorBinding>::new(
-                ctx,
-                &descriptor_pool,
-                &layout_0_static,
-                "global-descriptor-set",
-            );
-            (layout_0_static, set_0_static)
-        };
-
-        let (layout_1_bindless, set_1_bindless) = {
-            let _span = tracy_client::span!("GlobalDescriptorSets::new/bindless_set");
-            let layout_1_bindless = GfxDescriptorSetLayout::<BindlessDescriptorBinding>::new(
-                ctx,
-                vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL,
-                "bindless-layout",
-            );
-            let set_1_bindless = GfxDescriptorSet::<BindlessDescriptorBinding>::new(
-                ctx,
-                &descriptor_pool,
-                &layout_1_bindless,
-                "bindless-descriptor-set",
-            );
-            (layout_1_bindless, set_1_bindless)
-        };
-
-        let (layout_2_perframe, set_2_perframe) = {
-            let _span = tracy_client::span!("GlobalDescriptorSets::new/per_frame_sets");
-            let layout_2_perframe = GfxDescriptorSetLayout::<PerFrameDescriptorBinding>::new(
-                ctx,
-                vk::DescriptorSetLayoutCreateFlags::empty(),
-                "perframe-layout",
-            );
-            let set_2_perframe = FrameLabel::ALL.map(|frame_label| {
-                GfxDescriptorSet::<PerFrameDescriptorBinding>::new(
+        let layout_0_static;
+        let layout_1_bindless;
+        let layout_2_perframe;
+        // set 跟随 pool 回收；layout 在分配 set 前记录，避免下游失败遗失独立的 native owner。
+        let initialized = {
+            let set_0_static = {
+                let _span = tracy_client::span!("GlobalDescriptorSets::new/static_set");
+                layout_0_static = GfxDescriptorSetLayout::<StaticDescriptorBinding>::new(
+                    ctx,
+                    vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL,
+                    "global-layout",
+                );
+                let set_0_static = GfxDescriptorSet::<StaticDescriptorBinding>::new(
                     ctx,
                     &descriptor_pool,
-                    &layout_2_perframe,
-                    format!("perframe-descriptor-set-{frame_label}"),
-                )
-            });
-            (layout_2_perframe, set_2_perframe)
+                    &layout_0_static,
+                    "global-descriptor-set",
+                );
+                set_0_static
+            };
+
+            let set_1_bindless = {
+                let _span = tracy_client::span!("GlobalDescriptorSets::new/bindless_set");
+                layout_1_bindless = GfxDescriptorSetLayout::<BindlessDescriptorBinding>::new(
+                    ctx,
+                    vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL,
+                    "bindless-layout",
+                );
+                let set_1_bindless = GfxDescriptorSet::<BindlessDescriptorBinding>::new(
+                    ctx,
+                    &descriptor_pool,
+                    &layout_1_bindless,
+                    "bindless-descriptor-set",
+                );
+                set_1_bindless
+            };
+
+            let set_2_perframe = {
+                let _span = tracy_client::span!("GlobalDescriptorSets::new/per_frame_sets");
+                layout_2_perframe = GfxDescriptorSetLayout::<PerFrameDescriptorBinding>::new(
+                    ctx,
+                    vk::DescriptorSetLayoutCreateFlags::empty(),
+                    "perframe-layout",
+                );
+                let set_2_perframe = FrameLabel::ALL.map(|frame_label| {
+                    GfxDescriptorSet::<PerFrameDescriptorBinding>::new(
+                        ctx,
+                        &descriptor_pool,
+                        &layout_2_perframe,
+                        format!("perframe-descriptor-set-{frame_label}"),
+                    )
+                });
+                set_2_perframe
+            };
+            (set_0_static, set_1_bindless, set_2_perframe)
         };
+        let (set_0_static, set_1_bindless, set_2_perframe) = initialized;
 
         Self {
-            layout_0_static,
+            layout_0_static: layout_0_static,
             set_0_static,
 
-            layout_1_bindless,
+            layout_1_bindless: layout_1_bindless,
             set_1_bindless,
 
-            layout_2_perframe,
+            layout_2_perframe: layout_2_perframe,
             set_2_perframe,
 
             _descriptor_pool: descriptor_pool,
@@ -120,11 +128,6 @@ impl GlobalDescriptorSets {
         ));
 
         GfxDescriptorPool::new(ctx, pool_ci, "render-backend")
-    }
-}
-impl Default for GlobalDescriptorSets {
-    fn default() -> Self {
-        panic!("GlobalDescriptorSets::default requires explicit Gfx Ctx; use GlobalDescriptorSets::new")
     }
 }
 // 销毁

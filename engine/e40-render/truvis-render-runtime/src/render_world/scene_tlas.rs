@@ -38,10 +38,13 @@ impl SceneTlas {
         self.scene_revision = self.scene_revision.saturating_add(1).max(1);
     }
 
+    /// 调用方已保证所有 FIF idle，按帧依次释放 TLAS。
     pub(crate) fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>) {
         for frame in &mut self.frames {
             if let Some(tlas) = frame.tlas.take() {
-                tlas.destroy(resource_ctx, device_ctx, DestroyReason::Shutdown);
+                {
+                    tlas.destroy(resource_ctx, device_ctx, DestroyReason::Shutdown);
+                };
             }
         }
     }
@@ -62,7 +65,7 @@ impl SceneTlas {
     /// 构建或复用当前 FIF 的 TLAS。
     ///
     /// `scene_revision` 由 RenderWorld 对账结果推进；当 mesh BLAS ready、instance 增删、
-    /// 激活状态或 transform 改变时才重建，避免每帧无意义重建 TLAS。
+    /// 激活状态、transform 或 any-hit 要求改变时才重建，避免每帧无意义重建 TLAS。
     pub(crate) fn build_or_update(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,

@@ -45,7 +45,7 @@ impl RtGeometry {
     /// index 数量，供 raster draw 和 BLAS primitive_count 计算使用。
     #[inline]
     pub fn index_cnt(&self) -> u32 {
-        self.index_buffer.index_cnt() as u32
+        u32::try_from(self.index_buffer.index_cnt()).expect("geometry index count exceeds u32")
     }
 }
 
@@ -56,17 +56,37 @@ impl RtGeometry {
     /// 输入 buffer 已经由 mesh 上传路径写入 device-local 内存；调用者需要在 copy 后建立
     /// `TRANSFER_WRITE -> ACCELERATION_STRUCTURE_BUILD` 的同步，再执行 BLAS build。
     pub fn get_blas_geometry_info(&self) -> GfxBlasInputInfo<'_> {
+        let vertex_count = self.vertex_buffer.vertex_cnt();
+        let max_vertex = u32::try_from(vertex_count.checked_sub(1).expect("BLAS geometry requires vertices"))
+            .expect("BLAS maxVertex exceeds u32");
+        let index_count = self.index_cnt();
+        assert!(index_count > 0 && index_count % 3 == 0, "BLAS geometry requires complete triangles");
+        // wrapper 可访问底层 buffer；投影前重新核对当前容量，不能只相信缓存 count。
+        assert!(
+            VertexLayoutSoA3D::buffer_size(vertex_count) as u64 <= self.vertex_buffer.size(),
+            "BLAS vertex buffer is smaller than its layout"
+        );
+        let index_bytes = u64::from(index_count) * size_of::<u32>() as u64;
+        assert!(index_bytes <= self.index_buffer.size(), "BLAS index buffer is smaller than its count");
+        let vertex_address = self.vertex_buffer.pos_address();
+        let index_address = self.index_buffer.device_address();
+        assert!(vertex_address != 0 && vertex_address % 4 == 0, "BLAS vertex address must be nonzero and aligned");
+        assert!(index_address != 0 && index_address % 4 == 0, "BLAS index address must be nonzero and aligned");
+        vertex_address
+            .checked_add((vertex_count as u64) * u64::from(VertexLayoutSoA3D::pos_stride()) - 1)
+            .expect("BLAS vertex address range overflow");
+        index_address.checked_add(index_bytes - 1).expect("BLAS index address range overflow");
         let geometry_triangle = vk::AccelerationStructureGeometryTrianglesDataKHR {
             vertex_format: vk::Format::R32G32B32_SFLOAT,
             vertex_data: vk::DeviceOrHostAddressConstKHR {
-                device_address: self.vertex_buffer.pos_address(),
+                device_address: vertex_address,
             },
             vertex_stride: VertexLayoutSoA3D::pos_stride() as vk::DeviceSize,
-            // spec 上说应该是 vertex cnt - 1，应该是用作 index
-            max_vertex: self.vertex_buffer.vertex_cnt() as u32 - 1,
+            // Vulkan maxVertex 是可访问顶点数量减一；先减再转换，保留完整 u32 索引范围。
+            max_vertex,
             index_type: Self::index_type(),
             index_data: vk::DeviceOrHostAddressConstKHR {
-                device_address: self.index_buffer.device_address(),
+                device_address: index_address,
             },
 
             // 并不需要为每个 geometry 设置变换数据
@@ -85,7 +105,7 @@ impl RtGeometry {
                     triangles: geometry_triangle,
                 }),
             range: vk::AccelerationStructureBuildRangeInfoKHR {
-                primitive_count: self.index_cnt() / 3,
+                primitive_count: index_count / 3,
                 primitive_offset: 0,
                 first_vertex: 0,
                 // 如果上方的 geometry data 中 的 transform_data 有数据，则该 offset 用于指定
@@ -98,6 +118,7 @@ impl RtGeometry {
 
 impl RtGeometry {
     /// 显式销毁几何资源；调用者负责确保没有在飞命令继续读取这些 buffer。
+    /// 按 vertex/index owner 顺序释放；不捕获 panic 继续处理剩余资源。
     pub fn destroy_mut(&mut self, ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
         self.vertex_buffer.destroy_mut(ctx, reason);
         self.index_buffer.destroy_mut(ctx, reason);

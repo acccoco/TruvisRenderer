@@ -1,6 +1,9 @@
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    sync::mpsc::{self, Receiver, Sender, TryRecvError},
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
+};
 
 use truvis_asset::handle::TextureBytes;
 use truvis_shader_binding::gpu;
@@ -13,14 +16,16 @@ const MAX_DISTRIBUTION_HEIGHT: u32 = 2048;
 ///
 /// `request_id` 由 render thread 单调递增；worker 不解释 scene 状态，只把 id 与
 /// texture handle 原样带回，使 CPU/GPU completion 都能在发布前做 generation 校验。
-pub(crate) struct SkyDistributionBuildRequest {
+pub(crate) struct SkyDistributionBuildRequest
+{
     pub(crate) request_id: u64,
     pub(crate) texture: TextureAssetHandle,
     pub(crate) texture_bytes: TextureBytes,
 }
 
 /// 可提交到共享 transfer queue 的 Alias distribution。
-pub(crate) struct SkyDistributionBuild {
+pub(crate) struct SkyDistributionBuild
+{
     pub(crate) request_id: u64,
     pub(crate) texture: TextureAssetHandle,
     pub(crate) source_width: u32,
@@ -35,9 +40,17 @@ pub(crate) struct SkyDistributionBuild {
 ///
 /// 零能量纹理显式返回 `UniformFallback`，render thread 因而不会创建空 Alias buffer，
 /// 但仍可记录本次 request 已完成并继续使用 1x1 uniform sphere distribution。
-pub(crate) enum SkyDistributionBuildResult {
+pub(crate) enum SkyDistributionBuildResult
+{
     Ready(SkyDistributionBuild),
-    UniformFallback {
+    Failed
+    {
+        request_id: u64,
+        texture: TextureAssetHandle,
+        diagnostic: String,
+    },
+    UniformFallback
+    {
         request_id: u64,
         texture: TextureAssetHandle,
         source_width: u32,
@@ -46,7 +59,8 @@ pub(crate) enum SkyDistributionBuildResult {
     },
 }
 
-enum SkyDistributionWorkerCommand {
+enum SkyDistributionWorkerCommand
+{
     Build(SkyDistributionBuildRequest),
     Shutdown,
 }
@@ -54,18 +68,26 @@ enum SkyDistributionWorkerCommand {
 /// 单线程 sky distribution CPU builder。
 ///
 /// render thread 同时只派发一个 in-flight build；如果用户连续切换天空，manager 只保留
-/// 最新 pending request。该节流规则把 4K Alias 构建的内存峰值限制为单份工作集。
-pub(crate) struct SkyDistributionBuilder {
+/// 最新 pending request。该节流规则只允许一份正在计算的工作集；已完成结果另由 builder
+/// 持有到 consumer 取走。worker 断连显式失败，不将其解释为仍在等待或自动重启。
+pub(crate) struct SkyDistributionBuilder
+{
     request_sender: Sender<SkyDistributionWorkerCommand>,
     result_receiver: Receiver<SkyDistributionBuildResult>,
     worker: Option<JoinHandle<()>>,
-    in_flight: bool,
+    in_flight: Option<(u64, TextureAssetHandle)>,
+    /// 通道断连或派发失败后永久不可用；新请求直接返回失败，不自动重启。
+    available: bool,
     latest_pending: Option<SkyDistributionBuildRequest>,
+    /// 派发失败也通过正常 poll 交付，避免 consumer 永久等待。
+    completed: VecDeque<SkyDistributionBuildResult>,
     destroyed: bool,
 }
 
-impl SkyDistributionBuilder {
-    pub(crate) fn new() -> Self {
+impl SkyDistributionBuilder
+{
+    pub(crate) fn new() -> Self
+    {
         let (request_sender, request_receiver) = mpsc::channel();
         let (result_sender, result_receiver) = mpsc::channel();
         let worker = thread::Builder::new()
@@ -74,7 +96,21 @@ impl SkyDistributionBuilder {
                 while let Ok(command) = request_receiver.recv() {
                     match command {
                         SkyDistributionWorkerCommand::Build(request) => {
+                            let request_id = request.request_id;
+                            let texture = request.texture;
+                            // 仅补充 unwind 构建的 worker 边界；Release abort 不会走此路径。
+                            #[cfg(panic = "unwind")]
+                            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                Self::build_distribution(request)
+                            }))
+                            .unwrap_or_else(|_| Err("sky distribution worker panicked".to_string()));
+                            #[cfg(not(panic = "unwind"))]
                             let result = Self::build_distribution(request);
+                            let result = result.unwrap_or_else(|diagnostic| SkyDistributionBuildResult::Failed {
+                                request_id,
+                                texture,
+                                diagnostic,
+                            });
                             if result_sender.send(result).is_err() {
                                 break;
                             }
@@ -83,21 +119,35 @@ impl SkyDistributionBuilder {
                     }
                 }
             })
-            .expect("failed to spawn SkyDistributionBuilder worker");
+            .map_err(|error| log::error!("SkyDistributionBuilder unavailable: failed to spawn worker: {error}"))
+            .ok();
+        let available = worker.is_some();
 
         Self {
             request_sender,
             result_receiver,
-            worker: Some(worker),
-            in_flight: false,
+            worker,
+            in_flight: None,
+            available,
             latest_pending: None,
+            completed: VecDeque::new(),
             destroyed: false,
         }
     }
 
     /// 请求构建；已有 build 运行时只覆盖 pending，不并行分配第二份大型工作集。
-    pub(crate) fn request(&mut self, request: SkyDistributionBuildRequest) {
-        if self.in_flight {
+    pub(crate) fn request(&mut self, request: SkyDistributionBuildRequest)
+    {
+        assert!(!self.destroyed, "SkyDistributionBuilder used after shutdown");
+        if !self.available {
+            self.completed.push_back(SkyDistributionBuildResult::Failed {
+                request_id: request.request_id,
+                texture: request.texture,
+                diagnostic: "sky distribution worker is unavailable".to_string(),
+            });
+            return;
+        }
+        if self.in_flight.is_some() {
             self.latest_pending = Some(request);
             return;
         }
@@ -105,75 +155,104 @@ impl SkyDistributionBuilder {
     }
 
     /// 非阻塞收集完成结果，并在 worker 空闲后立即派发最新 pending request。
-    pub(crate) fn poll(&mut self) -> Vec<SkyDistributionBuildResult> {
-        let mut completed = Vec::new();
-        loop {
+    pub(crate) fn poll(&mut self) -> VecDeque<SkyDistributionBuildResult>
+    {
+        assert!(!self.destroyed, "SkyDistributionBuilder used after shutdown");
+        while self.available {
             match self.result_receiver.try_recv() {
                 Ok(result) => {
-                    self.in_flight = false;
-                    completed.push(result);
+                    self.in_flight = None;
+                    self.completed.push_back(result);
                     if let Some(request) = self.latest_pending.take() {
                         self.dispatch(request);
                     }
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
-                    self.in_flight = false;
-                    break;
+                    self.fail_worker("result channel disconnected");
                 }
             }
         }
-        completed
+        std::mem::take(&mut self.completed)
     }
 
     /// 停止 CPU producer 并 join worker。
     ///
     /// 已经运行的单个 build 会先自然完成；未派发的 latest pending 直接丢弃。调用者应在
     /// 此后再关闭 GPU transfer queue，保证不会与 producer 竞态产生新 submission。
-    pub(crate) fn shutdown(&mut self) {
+    /// join 异常在 worker owner 内记录，不向上构造逐层清理结果。
+    pub(crate) fn shutdown(&mut self)
+    {
         if self.destroyed {
             return;
         }
         self.latest_pending = None;
         let _ = self.request_sender.send(SkyDistributionWorkerCommand::Shutdown);
-        if let Some(worker) = self.worker.take() {
-            if worker.join().is_err() {
-                log::error!("SkyDistributionBuilder worker panicked during shutdown");
-            }
-        }
-        self.in_flight = false;
+        let worker_result = self.worker.take().map_or(Ok(()), JoinHandle::join);
+        self.in_flight = None;
+        self.completed.clear();
+        // join 后不再产生新结果，显式丢弃尚留在 channel 中的大型 CPU payload。
+        while self.result_receiver.try_recv().is_ok() {}
         self.destroyed = true;
+        if worker_result.is_err() {
+            log::error!("SkyDistributionBuilder worker panicked during shutdown");
+        }
     }
 
-    fn dispatch(&mut self, request: SkyDistributionBuildRequest) {
-        match self.request_sender.send(SkyDistributionWorkerCommand::Build(request)) {
-            Ok(()) => self.in_flight = true,
-            Err(error) => {
-                self.in_flight = false;
-                log::error!("SkyDistributionBuilder request channel disconnected: {error}");
-            }
+    fn dispatch(&mut self, request: SkyDistributionBuildRequest)
+    {
+        self.in_flight = Some((request.request_id, request.texture));
+        if self.request_sender.send(SkyDistributionWorkerCommand::Build(request)).is_err() {
+            self.fail_worker("request channel disconnected");
+        }
+    }
+
+    /// 永久不可用只记录一次；所有未完成请求均获得终态，旧 generation 由 consumer 丢弃。
+    fn fail_worker(&mut self, diagnostic: &str)
+    {
+        if !self.available {
+            return;
+        }
+        self.available = false;
+        log::error!("SkyDistributionBuilder unavailable: {diagnostic}");
+        let pending = self.latest_pending.take().map(|request| (request.request_id, request.texture));
+        for (request_id, texture) in self.in_flight.take().into_iter().chain(pending) {
+            self.completed.push_back(SkyDistributionBuildResult::Failed {
+                request_id,
+                texture,
+                diagnostic: diagnostic.to_string(),
+            });
         }
     }
 }
 
-impl Drop for SkyDistributionBuilder {
-    fn drop(&mut self) {
+impl Drop for SkyDistributionBuilder
+{
+    fn drop(&mut self)
+    {
         debug_assert!(self.destroyed, "SkyDistributionBuilder dropped without explicit shutdown");
     }
 }
 
-impl SkyDistributionBuilder {
+impl SkyDistributionBuilder
+{
     /// 预过滤只用于采样 proposal，不修改 HDRI radiance。核是线性重建在 texel 区间内的
     /// 平均权重；仍以源 texel 立体角近似球面积分，不承诺精确积分双线性天空。
     /// 三行横向过滤缓存随扫描滚动，额外内存只与源宽度有关。
-    fn accumulate_filtered_weights(texture: &TextureBytes, width: u32, height: u32, weights: &mut [f64]) {
+    fn accumulate_filtered_weights(
+        texture: &TextureBytes,
+        width: u32,
+        height: u32,
+        weights: &mut [f64],
+    ) -> Result<(), String>
+    {
         let extent = texture.extent();
         let source_width = extent.width as usize;
         let source_height = extent.height;
         let mut rows = [
-            vec![0.0; source_width],
-            vec![0.0; source_width],
-            vec![0.0; source_width],
+            Self::zero_weights(source_width)?,
+            Self::zero_weights(source_width)?,
+            Self::zero_weights(source_width)?,
         ];
         Self::filter_luminance_row(texture, 0, &mut rows[1]);
         let [previous, current, _] = &mut rows;
@@ -195,11 +274,13 @@ impl SkyDistributionBuilder {
             }
             rows.rotate_left(1);
         }
+        Ok(())
     }
 
     /// U 环绕与 GPU LinearRepeatClamp 相同；V 钳制由调用方复用首末行实现。
     /// 滑动三个亮度值，避免对每个输出 texel 重复解码三个 RGB。
-    fn filter_luminance_row(texture: &TextureBytes, row: u32, output: &mut [f64]) {
+    fn filter_luminance_row(texture: &TextureBytes, row: u32, output: &mut [f64])
+    {
         let width = output.len();
         let base = row as usize * width;
         let first = Self::luminance(texture, base);
@@ -213,13 +294,15 @@ impl SkyDistributionBuilder {
         }
     }
 
-    fn luminance(texture: &TextureBytes, index: usize) -> f64 {
+    fn luminance(texture: &TextureBytes, index: usize) -> f64
+    {
         let [r, g, b] = texture.linear_rgb(index);
         let luminance = 0.2126_f64 * r as f64 + 0.7152_f64 * g as f64 + 0.0722_f64 * b as f64;
         if luminance.is_finite() && luminance > 0.0 { luminance } else { 0.0 }
     }
 
-    fn build_distribution(request: SkyDistributionBuildRequest) -> SkyDistributionBuildResult {
+    fn build_distribution(request: SkyDistributionBuildRequest) -> Result<SkyDistributionBuildResult, String>
+    {
         let started_at = Instant::now();
         let extent = request.texture_bytes.extent();
         let source_width = extent.width;
@@ -234,33 +317,33 @@ impl SkyDistributionBuilder {
         }
 
         let Some((width, height)) = Self::distribution_extent(source_width, source_height) else {
-            return SkyDistributionBuildResult::UniformFallback {
+            return Ok(SkyDistributionBuildResult::UniformFallback {
                 request_id: request.request_id,
                 texture: request.texture,
                 source_width,
                 source_height,
                 cpu_build_elapsed: started_at.elapsed(),
-            };
+            });
         };
         let entry_count = width as usize * height as usize;
-        let mut scaled_weights = vec![0.0_f64; entry_count];
+        let mut scaled_weights = Self::zero_weights(entry_count)?;
 
-        Self::accumulate_filtered_weights(&request.texture_bytes, width, height, &mut scaled_weights);
+        Self::accumulate_filtered_weights(&request.texture_bytes, width, height, &mut scaled_weights)?;
 
         let total_weight: f64 = scaled_weights.iter().sum();
         if !total_weight.is_finite() || total_weight <= 0.0 {
-            return SkyDistributionBuildResult::UniformFallback {
+            return Ok(SkyDistributionBuildResult::UniformFallback {
                 request_id: request.request_id,
                 texture: request.texture,
                 source_width,
                 source_height,
                 cpu_build_elapsed: started_at.elapsed(),
-            };
+            });
         }
 
         // entries 先直接写入最终 solid-angle PDF，随后复用唯一的 f64 Vec 原地保存
         // Alias scaled probability；不保留 solid_angles/probability/index 的平行大数组。
-        let mut entries = Vec::with_capacity(entry_count);
+        let mut entries = Self::working_vec(entry_count)?;
         for (index, weight) in scaled_weights.iter().copied().enumerate() {
             let row = index as u32 / width;
             let cell_solid_angle = Self::lat_long_texel_solid_angle(row, width, height);
@@ -278,8 +361,8 @@ impl SkyDistributionBuilder {
         for weight in &mut scaled_weights {
             *weight = *weight * entry_count_f64 / total_weight;
         }
-        let mut small: Vec<u32> = Vec::new();
-        let mut large: Vec<u32> = Vec::new();
+        let mut small: Vec<u32> = Self::working_vec(entry_count)?;
+        let mut large: Vec<u32> = Self::working_vec(entry_count)?;
         for (index, probability) in scaled_weights.iter().copied().enumerate() {
             if probability < 1.0 {
                 small.push(index as u32);
@@ -307,7 +390,7 @@ impl SkyDistributionBuilder {
             entries[index as usize].alias_index = index;
         }
 
-        SkyDistributionBuildResult::Ready(SkyDistributionBuild {
+        Ok(SkyDistributionBuildResult::Ready(SkyDistributionBuild {
             request_id: request.request_id,
             texture: request.texture,
             source_width,
@@ -316,10 +399,26 @@ impl SkyDistributionBuilder {
             height,
             entries,
             cpu_build_elapsed: started_at.elapsed(),
-        })
+        }))
     }
 
-    fn distribution_extent(source_width: u32, source_height: u32) -> Option<(u32, u32)> {
+    /// 大型工作集显式预留；容量失败交付给 consumer，不依赖 panic/OOM 恢复。
+    fn working_vec<T>(count: usize) -> Result<Vec<T>, String>
+    {
+        let mut values = Vec::new();
+        values.try_reserve_exact(count).map_err(|error| format!("sky working set allocation failed: {error}"))?;
+        Ok(values)
+    }
+
+    fn zero_weights(count: usize) -> Result<Vec<f64>, String>
+    {
+        let mut values = Self::working_vec(count)?;
+        values.resize(count, 0.0);
+        Ok(values)
+    }
+
+    fn distribution_extent(source_width: u32, source_height: u32) -> Option<(u32, u32)>
+    {
         if source_width == 0 || source_height == 0 {
             return None;
         }
@@ -334,7 +433,8 @@ impl SkyDistributionBuilder {
         Some((width, height))
     }
 
-    fn lat_long_texel_solid_angle(row: u32, width: u32, height: u32) -> f64 {
+    fn lat_long_texel_solid_angle(row: u32, width: u32, height: u32) -> f64
+    {
         let dphi = 2.0 * std::f64::consts::PI / f64::from(width);
         let v0 = f64::from(row) / f64::from(height);
         let v1 = f64::from(row + 1) / f64::from(height);

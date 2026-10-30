@@ -1,3 +1,4 @@
+use std::ffi::{CStr, CString};
 use std::rc::Rc;
 
 use ash::vk;
@@ -22,7 +23,8 @@ use crate::{
 
 /// 命令缓冲封装
 ///
-/// 封装 Vulkan CommandBuffer，提供类型安全的命令录制接口。
+/// wrapper 可 clone 以供 FIF owner 集中回收；clone 不延长 native command/pool/device 的生命周期。
+/// owner 必须在 free/reset 前等待 GPU 完成，free 后不得再使用任何 alias。
 /// 支持图形、计算、光线追踪、屏障、调试标签等功能。
 ///
 /// # 使用示例
@@ -36,7 +38,7 @@ use crate::{
 #[derive(Clone)]
 pub struct GfxCommandBuffer {
     vk_handle: vk::CommandBuffer,
-    _command_pool_handle: vk::CommandPool,
+    command_pool_handle: vk::CommandPool,
     gfx_device: Rc<GfxDevice>,
 
     _name: String,
@@ -48,6 +50,7 @@ impl GfxCommandBuffer {
     }
 
     pub(crate) fn new_with_device(gfx_device: Rc<GfxDevice>, command_pool: &GfxCommandPool, debug_name: &str) -> Self {
+        let debug_name = debug_name.to_owned();
         let info = vk::CommandBufferAllocateInfo::default()
             .command_pool(command_pool.handle())
             .level(vk::CommandBufferLevel::PRIMARY)
@@ -56,12 +59,12 @@ impl GfxCommandBuffer {
         let command_buffer = unsafe { gfx_device.allocate_command_buffers(&info).unwrap()[0] };
         let cmd_buffer = GfxCommandBuffer {
             vk_handle: command_buffer,
-            _command_pool_handle: command_pool.handle(),
+            command_pool_handle: command_pool.handle(),
             gfx_device: gfx_device.clone(),
 
-            _name: debug_name.to_string(),
+            _name: debug_name,
         };
-        gfx_device.set_debug_name(&cmd_buffer, debug_name);
+        gfx_device.set_debug_name(&cmd_buffer, &cmd_buffer._name);
         cmd_buffer
     }
 }
@@ -72,12 +75,14 @@ impl GfxCommandBuffer {
     /// 自动设置 debug label
     #[inline]
     pub fn begin(&self, usage_flag: vk::CommandBufferUsageFlags, debug_label_name: &str) {
+        // 先验证 label，避免输入错误发生在 command 已进入 recording 状态之后。
+        let label = CString::new(debug_label_name).unwrap();
         unsafe {
             self.gfx_device
                 .begin_command_buffer(self.vk_handle, &vk::CommandBufferBeginInfo::default().flags(usage_flag))
                 .unwrap();
         }
-        self.begin_label(debug_label_name, LabelColor::COLOR_CMD);
+        self.begin_label_cstr(&label, LabelColor::COLOR_CMD);
     }
 
     /// 结束录制 command
@@ -91,6 +96,11 @@ impl GfxCommandBuffer {
 }
 // 访问器
 impl GfxCommandBuffer {
+    pub(crate) fn validate_pool(&self, pool: vk::CommandPool, device: &GfxDevice) {
+        assert_eq!(self.command_pool_handle, pool, "command buffer belongs to another pool");
+        assert!(std::ptr::eq(self.gfx_device.as_ref(), device), "command buffer belongs to another device owner");
+    }
+
     /// 访问器
     #[inline]
     pub fn vk_handle(&self) -> vk::CommandBuffer {
@@ -332,6 +342,8 @@ impl GfxCommandBuffer {
         geometry: &vk::AccelerationStructureBuildGeometryInfoKHR,
         ranges: &[vk::AccelerationStructureBuildRangeInfoKHR],
     ) {
+        // Vulkan 按 geometryCount 读取 range 数组；ash 只核对外层 build 数量。
+        assert_eq!(ranges.len(), geometry.geometry_count as usize, "AS range count must match geometry count");
         unsafe {
             // 该函数可以一次构建多个 AccelerationStructure，这里只构建了 1 个
             self.gfx_device.acceleration_structure.cmd_build_acceleration_structures(
@@ -352,6 +364,11 @@ impl GfxCommandBuffer {
         first_query: u32,
         acceleration_structures: &[vk::AccelerationStructureKHR],
     ) {
+        let count = u32::try_from(acceleration_structures.len()).expect("too many acceleration structure queries");
+        query_pool.validate_acceleration_write_range(first_query, count);
+        if count == 0 {
+            return;
+        }
         unsafe {
             self.gfx_device.acceleration_structure.cmd_write_acceleration_structures_properties(
                 self.vk_handle,
@@ -440,11 +457,15 @@ impl GfxCommandBuffer {
     /// - 支持的 queue 类型：graphics, compute
     #[inline]
     pub fn begin_label(&self, label_name: &str, label_color: glam::Vec4) {
-        let name = std::ffi::CString::new(label_name).unwrap();
+        let name = CString::new(label_name).unwrap();
+        self.begin_label_cstr(&name, label_color);
+    }
+
+    fn begin_label_cstr(&self, name: &CStr, label_color: glam::Vec4) {
         unsafe {
             self.gfx_device.debug_utils.cmd_begin_debug_utils_label(
                 self.vk_handle,
-                &vk::DebugUtilsLabelEXT::default().label_name(name.as_c_str()).color(label_color.into()),
+                &vk::DebugUtilsLabelEXT::default().label_name(name).color(label_color.into()),
             );
         }
     }

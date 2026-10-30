@@ -1,8 +1,9 @@
+use std::sync::LazyLock;
+
 use ash::vk;
 use ash::vk::Handle;
 use enum_map::{Enum, EnumMap, enum_map};
 use itertools::Itertools;
-use std::sync::LazyLock;
 
 use crate::bindings::global_descriptor_sets::GlobalDescriptorSets;
 use crate::bindings::shader_binding_system::ShaderBindingView;
@@ -163,6 +164,12 @@ impl RayCastPass {
         global_descriptor_sets: &GlobalDescriptorSets,
     ) -> Self {
         let mut shader_module_cache = GfxShaderModuleCache::new();
+        let mut rt_pipeline = RayCastRtPipeline {
+            pipeline: vk::Pipeline::null(),
+            pipeline_layout: vk::PipelineLayout::null(),
+        };
+        let descriptor_set_layout;
+        let sbt;
         let stage_infos = RAYCAST_SHADER_STAGES
             .values()
             .map(|stage| {
@@ -173,75 +180,76 @@ impl RayCastPass {
             })
             .collect_vec();
 
-        let shader_groups = RAYCAST_SHADER_GROUPS
-            .values()
-            .map(|group| vk::RayTracingShaderGroupCreateInfoKHR {
-                ty: group.ty,
-                general_shader: group.general,
-                any_hit_shader: group.any_hit,
-                closest_hit_shader: group.closest_hit,
-                intersection_shader: group.intersection,
-                ..Default::default()
-            })
-            .collect_vec();
+            let shader_groups = RAYCAST_SHADER_GROUPS
+                .values()
+                .map(|group| vk::RayTracingShaderGroupCreateInfoKHR {
+                    ty: group.ty,
+                    general_shader: group.general,
+                    any_hit_shader: group.any_hit,
+                    closest_hit_shader: group.closest_hit,
+                    intersection_shader: group.intersection,
+                    ..Default::default()
+                })
+                .collect_vec();
 
-        let push_constant_range = vk::PushConstantRange::default()
-            .stage_flags(
-                vk::ShaderStageFlags::RAYGEN_KHR
-                    | vk::ShaderStageFlags::MISS_KHR
-                    | vk::ShaderStageFlags::ANY_HIT_KHR
-                    | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
-            )
-            .offset(0)
-            .size(size_of::<gpu::engine::raycast::PushConstants>() as u32);
+            let push_constant_range = vk::PushConstantRange::default()
+                .stage_flags(
+                    vk::ShaderStageFlags::RAYGEN_KHR
+                        | vk::ShaderStageFlags::MISS_KHR
+                        | vk::ShaderStageFlags::ANY_HIT_KHR
+                        | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
+                )
+                .offset(0)
+                .size(size_of::<gpu::engine::raycast::PushConstants>() as u32);
 
-        let descriptor_set_layout = GfxDescriptorSetLayout::<RayCastDescriptorBinding>::new(
+        descriptor_set_layout = GfxDescriptorSetLayout::<RayCastDescriptorBinding>::new(
             device_ctx,
             vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR,
             "raycast-descriptor-set-layout",
         );
 
-        let pipeline_layout = {
+        rt_pipeline.pipeline_layout = {
             let mut descriptor_set_layouts = global_descriptor_sets.global_set_layouts();
             descriptor_set_layouts.push(descriptor_set_layout.handle());
             let pipeline_layout_ci = vk::PipelineLayoutCreateInfo::default()
                 .set_layouts(&descriptor_set_layouts)
                 .push_constant_ranges(std::slice::from_ref(&push_constant_range));
 
-            unsafe { device_ctx.device().create_pipeline_layout(&pipeline_layout_ci, None).unwrap() }
-        };
-        device_ctx.device().set_object_debug_name(pipeline_layout, "raycast-pipeline-layout");
+                unsafe { device_ctx.device().create_pipeline_layout(&pipeline_layout_ci, None).unwrap() }
+            };
+            device_ctx.device().set_object_debug_name(rt_pipeline.pipeline_layout, "raycast-pipeline-layout");
 
-        let pipeline_ci = vk::RayTracingPipelineCreateInfoKHR::default()
-            .stages(&stage_infos)
-            .groups(&shader_groups)
-            .layout(pipeline_layout)
-            .max_pipeline_ray_recursion_depth(1);
+            let pipeline_ci = vk::RayTracingPipelineCreateInfoKHR::default()
+                .stages(&stage_infos)
+                .groups(&shader_groups)
+                .layout(rt_pipeline.pipeline_layout)
+                .max_pipeline_ray_recursion_depth(1);
 
-        let pipeline = unsafe {
-            device_ctx
-                .device()
-                .ray_tracing_pipeline()
-                .create_ray_tracing_pipelines(
-                    vk::DeferredOperationKHR::null(),
-                    vk::PipelineCache::null(),
-                    std::slice::from_ref(&pipeline_ci),
-                    None,
-                )
-                .unwrap()[0]
+        rt_pipeline.pipeline = match unsafe {
+            device_ctx.device().ray_tracing_pipeline().create_ray_tracing_pipelines(
+                vk::DeferredOperationKHR::null(),
+                vk::PipelineCache::null(),
+                std::slice::from_ref(&pipeline_ci),
+                None,
+            )
+        } {
+            Ok(pipelines) => pipelines[0],
+            Err((pipelines, error)) => {
+                for pipeline in pipelines.into_iter().filter(|pipeline| !pipeline.is_null()) {
+                    unsafe {
+                        device_ctx.device().destroy_pipeline(pipeline, None);
+                    }
+                }
+                panic!("failed to create ray tracing pipeline: {error:?}");
+            }
         };
-        device_ctx.device().set_object_debug_name(pipeline, "raycast-pipeline");
-        shader_module_cache.destroy(device_ctx);
+        device_ctx.device().set_object_debug_name(rt_pipeline.pipeline, "raycast-pipeline");
 
-        let pipeline = RayCastRtPipeline {
-            pipeline,
-            pipeline_layout,
-        };
-        let sbt = GfxSBTBuffer::from_shader_groups(
+        sbt = GfxSBTBuffer::from_shader_groups(
             resource_ctx,
             device_ctx,
             device_info_ctx,
-            pipeline.pipeline,
+            rt_pipeline.pipeline,
             RayCastShaderGroups::COUNT as u32,
             RayCastShaderGroups::RayGen.index(),
             &[RayCastShaderGroups::Miss.index()],
@@ -249,11 +257,12 @@ impl RayCastPass {
             &[],
             "raycast-sbt",
         );
+        shader_module_cache.destroy(device_ctx);
 
         Self {
-            pipeline,
-            sbt,
-            descriptor_set_layout,
+            pipeline: rt_pipeline,
+            sbt: sbt,
+            descriptor_set_layout: descriptor_set_layout,
         }
     }
 
@@ -264,8 +273,9 @@ impl RayCastPass {
             descriptor_set_layout,
         } = self;
         pipeline.destroy(device_ctx);
-        sbt.destroy(resource_ctx, DestroyReason::Shutdown);
         descriptor_set_layout.destroy(device_ctx);
+        // SBT buffer 释放后的诊断日志即使失败，也不阻断其他 native 对象的回收。
+        sbt.destroy(resource_ctx, DestroyReason::Shutdown);
     }
 
     pub fn trace(

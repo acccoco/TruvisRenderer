@@ -7,14 +7,15 @@ realtime/offline 渲染子系统。它依赖 engine 与公共 Renderer capabilit
 
 - `TruvisRenderer`：RenderThread 上的具体 `Renderer`，持有 camera/input、GUI、overlay、selection、注入的 RendererClient
   和 realtime/offline 渲染子系统，并显式决定 update 与 RenderGraph pass 顺序。
-- `TruvisDlssState` 与 `ViewAccumState`：集中持有 Truvis 的 DLSS requested/effective 配置、NVIDIA capability、
-  SR/RR resource lifecycle、Streamline options、temporal snapshot 和主视图累计状态；Streamline 初始化仍由
+- `TruvisDlssState`：集中持有 Truvis 的 DLSS requested/effective 配置、NVIDIA capability、
+  SR/RR resource lifecycle、Streamline options 和 temporal snapshot；Streamline 初始化仍由
   Engine/Gfx 负责。DLSS feature 在 update/resize/shutdown 的 idle 边界释放，下一次 DLSS pass 在完成
   resource tags 后通过当前帧 evaluate 创建 feature。SR options 在配置边界设置，RR options 的相机矩阵
   由 `TruvisDlssState::frame_input` 逐帧更新，不因更新矩阵而释放 feature 或 reset history。
   尺寸改变时 update 只提交请求，释放、配置和 reset 统一在随后 resize 执行；仅配置改变时在 update
   执行。Offline 的 native 尺寸由 effective 配置统一派生，保留 requested 供返回 Realtime 恢复。
   SR/RR options 提交错误经 `Result` 传播到 Renderer hook，以阶段明确的 `expect` 终止渲染执行路径。
+- `ViewAccumState`：仅供 UI 的相机签名稳定 update 计数；跳过主视图提交也可递增，不代表 Offline 样本或 DLSS 历史有效。UI 在本次推进/reset 之前读取前次结果。
 - `RendererClient`：App 提供的窄生命周期接口；Renderer 只在 init/update/after_prepare/shutdown 阶段调用它。
 - `TruvisOverlayUi`：组合 `renderer-imgui` 的诊断控件与 `renderer-render-ui` 的设置 section，提供 Render、Sky、Post、Picking、Debug 五个固定 tab 和常驻 FPS HUD。
 - `ViewportOverlaySubsystem`：统一持有灯光、transform gizmo 和坐标 gizmo 的唯一 pipeline、每 FIF vertex buffer 与最终顶点数组；`SelectionOutlineSubsystem` 独立持有网格描边资源。
@@ -50,8 +51,13 @@ compute 与 present graph 分别在局部作用域完成录制；compute 的资�
 
 `render` 返回主视图场景是否实际提交；无 TLAS 清屏返回 false。相机历史与 jitter 在提交后确认，
 Loop 用同一结果确认 Runtime instance 历史，避免 prepare 或仅 present 推进运动历史。
-DLSS pass 的帧内 evaluate 结果在 submit 返回后交回 `DlssSrState`：成功消费唯一 reset pending，
-失败请求 reset，未执行不消费；普通 transform 不请求 DLSS reset。ReSTIR 保留独立场景版本和 reset。
+DLSS pass 只允许 evaluate 成功后继续录制；失败中止整个 graph，不消费失效输出或提交部分命令。
+submit 返回后成功结果交回 `DlssSrState` 并消费唯一 reset pending，未调度 DLSS 则不消费；
+失败 render 不确认历史。普通 transform 不请求 DLSS reset，ReSTIR 保留独立场景版本和 reset。
+DLSS snapshot 只读取配置；只有含场景的 Realtime graph 开始录制前登记待释放 feature，
+无 TLAS 的清屏与 Offline 不登记。记录表示可能存在 SDK 资源，并不证明 evaluate/submit 成功。
+feature 释放失败只保存归属，原始错误向上传播，后续调用不自动重试 free，也不继续配置或录制。
+shutdown 失败通过 hook 的阶段错误退出，后续 Renderer target 不继续销毁；完整异常退场仍有跨层边界。
 
 `TruvisRenderer::render` 根据当前 `RenderMode` 选择 realtime 或 offline 渲染子系统，并显式组织主图 resolve、
 selection outline、viewport overlay 与 ImGui 的顺序。具体 pass 位于 `renderer-render-passes`，渲染 owner 位于
@@ -65,6 +71,7 @@ selection outline、viewport overlay 与 ImGui 的顺序。具体 pass 位于 `r
 轴命中即消费点击，即使不能建立拖动；hover 只显示最高优先级目标。
 图标命中不提交 GPU 查询；新选择同帧刷新 gizmo 展示，但不重复消费按下事件。
 输入保留按下时的物理像素位置，松开帧提交最终拖动位置；失焦、resize 或目标失效会取消拖动并清理按键。
+同一取消入口也撤销相机导航查询、锚点和中键模式，保留相机位置与朝向，防止旧查询在 after_prepare 继续生效。
 
 图标与选中灯光线框使用无深度 alpha overlay，不进入光照、降噪或累计。
 Point 的 0.25 m 球形标记、Spot 的 1 m 辅助射线长度不代表有限照射范围；

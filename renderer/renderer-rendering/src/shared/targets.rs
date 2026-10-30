@@ -2,7 +2,7 @@
 //!
 //! 这些资源描述具体渲染子系统需要的中间图像，而不是 engine 的帧调度基础设施。
 //! owner 只保存 `GfxResourceRegistry` handle；创建、resize 和 shutdown 时由
-//! `RealtimeRenderSubsystem` 通过生命周期 ctx 显式传入 manager 与 typed Gfx ctx。
+//! Realtime/Offline subsystem 通过生命周期 ctx 显式传入 manager 与 typed Gfx ctx。
 //!
 //! 设计边界：
 //! - `FrameLabel` 仍来自 engine，用来表达当前使用哪个在飞帧槽位。
@@ -12,6 +12,7 @@
 use ash::vk;
 use itertools::Itertools;
 use slotmap::Key;
+
 use truvis_gfx::commands::barrier::GfxImageBarrier;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
@@ -59,9 +60,7 @@ impl PerFrameImageSet {
         desc: TargetImageDesc<'_>,
         frame_id: u64,
     ) -> Self {
-        // image 先创建为未注册的 Vulkan wrapper，方便在同一批 immediate 命令中做初始 layout 转换；
-        // 转换完成后再注册到 manager，后续只通过 handle 暴露给 RenderGraph 和具体 pass。
-        let create_one_image = |frame_label: FrameLabel| {
+        let images = FrameLabel::ALL.map(|frame_label| {
             create_image(
                 resource_ctx,
                 desc.extent,
@@ -69,29 +68,28 @@ impl PerFrameImageSet {
                 desc.usage,
                 format!("{}-{}-{}", desc.name_prefix, frame_label, frame_id),
             )
-        };
-        let images = FrameLabel::ALL.map(create_one_image);
+        });
 
+        // 不捕获 transition：submit/wait 异常不能证明这组 image 已不再被 GPU 使用。
         transition_images_to_general(immediate_ctx, &images, &format!("transfer-{}-layout", desc.name_prefix));
 
         // view 生命周期由 `GfxResourceRegistry` 跟随 image 释放。owner 只保存 view handle；
         // pass-local descriptor 在 command recording 时按值写入，不形成额外的长期资源 owner。
-        let image_handles = images.map(|image| gfx_resource_registry.register_image(image));
-        let image_view_handles = FrameLabel::ALL.map(|frame_label| {
-            gfx_resource_registry.get_or_create_image_view(
-                device_ctx,
-                image_handles[*frame_label],
-                GfxImageViewDesc::new_2d(desc.format, vk::ImageAspectFlags::COLOR),
-                format!("{}-{}-{}", desc.name_prefix, frame_label, frame_id),
-            )
-        });
-
-        Self {
-            images: image_handles,
-            views: image_view_handles,
+        let mut target = Self {
+            images: images.map(|image| gfx_resource_registry.register_image(image)),
+            views: Default::default(),
             format: desc.format,
             extent: desc.extent,
+        };
+        for frame_label in FrameLabel::ALL {
+            target.views[*frame_label] = gfx_resource_registry.get_or_create_image_view(
+                device_ctx,
+                target.images[*frame_label],
+                GfxImageViewDesc::new_2d(desc.format, vk::ImageAspectFlags::COLOR),
+                format!("{}-{}-{}", desc.name_prefix, frame_label, frame_id),
+            );
         }
+        target
     }
 
     pub(crate) fn target(&self, frame_label: FrameLabel) -> ImageTarget {
@@ -110,12 +108,23 @@ impl PerFrameImageSet {
         gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        // view 会由 manager 在释放 image 时按 image-view-before-image 顺序处理。调用方仍必须遵守
-        // resize/shutdown 的 GPU safe point；pass-local descriptor 不改变底层 image 的在飞生命周期。
-        for image in std::mem::take(&mut self.images) {
-            gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image, reason);
+        Self::destroy_all(&mut [self], resource_ctx, device_ctx, gfx_resource_registry, reason);
+    }
+
+    /// 调用方已满足 resize/shutdown 的 GPU safe point；registry 保证 view-before-image。
+    pub(crate) fn destroy_all(
+        targets: &mut [&mut Self],
+        resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        gfx_resource_registry: &mut GfxResourceRegistry,
+        reason: DestroyReason,
+    ) {
+        for target in targets {
+            target.views = Default::default();
+            for image in std::mem::take(&mut target.images) {
+                gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image, reason);
+            }
         }
-        self.views = Default::default();
     }
 }
 
@@ -159,19 +168,20 @@ impl SingleImageTarget {
         );
 
         let image_handle = gfx_resource_registry.register_image(image);
-        let view_handle = gfx_resource_registry.get_or_create_image_view(
+        let mut target = Self {
+            image: image_handle,
+            view: GfxImageViewHandle::default(),
+            format: desc.format,
+            extent: desc.extent,
+        };
+        target.view = gfx_resource_registry.get_or_create_image_view(
             device_ctx,
             image_handle,
             GfxImageViewDesc::new_2d(desc.format, vk::ImageAspectFlags::COLOR),
             format!("{}-{}", desc.name_prefix, frame_id),
         );
 
-        Self {
-            image: image_handle,
-            view: view_handle,
-            format: desc.format,
-            extent: desc.extent,
-        }
+        target
     }
 
     pub(crate) fn target(&self) -> ImageTarget {
@@ -190,9 +200,10 @@ impl SingleImageTarget {
         gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, self.image, reason);
-        self.image = GfxImageHandle::default();
+        // registry 在传播释放诊断前已撤销资源索引，owner 不能保留过期 handle。
+        let image = std::mem::take(&mut self.image);
         self.view = GfxImageViewHandle::default();
+        gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image, reason);
     }
 }
 

@@ -214,21 +214,29 @@ impl RestirDiTargets {
         gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        self.initial_a.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.initial_b.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.initial_c.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.initial_d.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.temporal_a.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.temporal_b.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.temporal_c.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.temporal_d.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.final_a.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.final_b.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.final_c.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.final_d.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.surface_a.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.surface_b.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.surface_c.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        PerFrameImageSet::destroy_all(
+            &mut [
+                &mut self.initial_a,
+                &mut self.initial_b,
+                &mut self.initial_c,
+                &mut self.initial_d,
+                &mut self.temporal_a,
+                &mut self.temporal_b,
+                &mut self.temporal_c,
+                &mut self.temporal_d,
+                &mut self.final_a,
+                &mut self.final_b,
+                &mut self.final_c,
+                &mut self.final_d,
+                &mut self.surface_a,
+                &mut self.surface_b,
+                &mut self.surface_c,
+            ],
+            resource_ctx,
+            device_ctx,
+            gfx_resource_registry,
+            reason,
+        );
     }
 
     #[inline]
@@ -369,9 +377,15 @@ impl SharcTargets {
         if self.destroyed {
             return;
         }
-        self.hash_entries.destroy_mut(resource_ctx, reason);
-        self.accumulation.destroy_mut(resource_ctx, reason);
-        self.resolved.destroy_mut(resource_ctx, reason);
+        // 仅在调用方已等待 GPU 后进入；叶子先释放再记录日志，不能因日志跳过后续 buffer。
+
+        for buffer in [
+            &mut self.hash_entries,
+            &mut self.accumulation,
+            &mut self.resolved,
+        ] {
+            buffer.destroy_mut(resource_ctx, reason);
+        }
         self.destroyed = true;
     }
 
@@ -476,8 +490,13 @@ impl DlssSrInputTargets {
         gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        self.depth.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.motion_vectors.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        PerFrameImageSet::destroy_all(
+            &mut [&mut self.depth, &mut self.motion_vectors],
+            resource_ctx,
+            device_ctx,
+            gfx_resource_registry,
+            reason,
+        );
     }
 
     #[inline]
@@ -537,21 +556,22 @@ impl DlssSrExposureTarget {
         stage_buffer.destroy(resource_ctx, DestroyReason::ScopeDrop);
 
         let image_handle = gfx_resource_registry.register_image(image);
-        let view_handle = gfx_resource_registry.get_or_create_image_view(
+        let mut target = Self {
+            exposure: ImageTarget {
+                image: image_handle,
+                view: Default::default(),
+                format: Self::FORMAT,
+                extent: Self::EXTENT,
+            },
+        };
+        target.exposure.view = gfx_resource_registry.get_or_create_image_view(
             device_ctx,
             image_handle,
             GfxImageViewDesc::new_2d(Self::FORMAT, vk::ImageAspectFlags::COLOR),
             name,
         );
 
-        Self {
-            exposure: ImageTarget {
-                image: image_handle,
-                view: view_handle,
-                format: Self::FORMAT,
-                extent: Self::EXTENT,
-            },
-        }
+        target
     }
 
     pub fn destroy(
@@ -561,8 +581,9 @@ impl DlssSrExposureTarget {
         gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, self.exposure.image, reason);
-        self.exposure = ImageTarget::default();
+        // registry 完成释放后仍可能传播日志异常，先撤销 owner 的 image/view 快照。
+        let exposure = std::mem::take(&mut self.exposure);
+        gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, exposure.image, reason);
     }
 
     #[inline]
@@ -714,9 +735,17 @@ impl DlssRrInputTargets {
         gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        self.diffuse_albedo.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.specular_albedo.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        self.specular_hit_distance.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
+        PerFrameImageSet::destroy_all(
+            &mut [
+                &mut self.diffuse_albedo,
+                &mut self.specular_albedo,
+                &mut self.specular_hit_distance,
+            ],
+            resource_ctx,
+            device_ctx,
+            gfx_resource_registry,
+            reason,
+        );
     }
 
     #[inline]
@@ -818,14 +847,12 @@ impl Drop for DlssOutputTargets {
     }
 }
 
-/// 主视图离屏目标：最终 color target 和 raster depth target。
+/// 主视图离屏 color 输出。
 ///
-/// color target 是 per-frame 的，因为 compute graph 与 present graph 会围绕当前 frame label
-/// 读写它；depth target 目前是单张窗口尺寸资源，作为 raster pass 的 depth attachment。
-/// 它们属于 Renderer 的主视图策略，不进入 engine runtime-owned render state。
+/// compute graph 写入当前 FIF 的 color，present graph 采样同一输出。
+/// 本 owner 不分配 raster depth；DLSS depth 由独立输入 target 提供。
 pub struct MainViewTargets {
     color: PerFrameImageSet,
-    depth: ImageTarget,
 }
 
 impl MainViewTargets {
@@ -848,14 +875,12 @@ impl MainViewTargets {
                 extent: frame_state.output_extent,
                 usage: vk::ImageUsageFlags::STORAGE
                     | vk::ImageUsageFlags::TRANSFER_SRC
-                    | vk::ImageUsageFlags::SAMPLED
-                    | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                    | vk::ImageUsageFlags::SAMPLED,
             },
             frame_id,
         );
-        let depth = create_depth_target(resource_ctx, device_ctx, gfx_resource_registry, frame_state, frame_id);
 
-        Self { color, depth }
+        Self { color }
     }
 
     pub fn rebuild(
@@ -879,49 +904,10 @@ impl MainViewTargets {
         reason: DestroyReason,
     ) {
         self.color.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-        gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, self.depth.image, reason);
-        self.depth = ImageTarget::default();
     }
 
     #[inline]
     pub fn color(&self, frame_label: FrameLabel) -> ImageTarget {
         self.color.target(frame_label)
-    }
-}
-
-impl Drop for MainViewTargets {
-    fn drop(&mut self) {
-        debug_assert!(self.depth.image.is_null());
-        debug_assert!(self.depth.view.is_null());
-    }
-}
-
-fn create_depth_target(
-    resource_ctx: GfxResourceCtx<'_>,
-    device_ctx: GfxDeviceCtx<'_>,
-    gfx_resource_registry: &mut GfxResourceRegistry,
-    frame_state: &FrameRenderState,
-    frame_id: u64,
-) -> ImageTarget {
-    let image = create_image(
-        resource_ctx,
-        frame_state.output_extent,
-        frame_state.depth_format,
-        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-        format!("main-view-depth-{}", frame_id),
-    );
-    let image_handle = gfx_resource_registry.register_image(image);
-    let view_handle = gfx_resource_registry.get_or_create_image_view(
-        device_ctx,
-        image_handle,
-        GfxImageViewDesc::new_2d(frame_state.depth_format, vk::ImageAspectFlags::DEPTH),
-        format!("main-view-depth-{}", frame_id),
-    );
-
-    ImageTarget {
-        image: image_handle,
-        view: view_handle,
-        format: frame_state.depth_format,
-        extent: frame_state.output_extent,
     }
 }

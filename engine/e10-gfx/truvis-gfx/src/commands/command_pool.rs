@@ -1,4 +1,5 @@
 use ash::vk;
+use ash::vk::Handle;
 
 use crate::commands::command_buffer::GfxCommandBuffer;
 use crate::{commands::command_queue::GfxQueueFamily, foundation::debug_messenger::DebugType, gfx::GfxDeviceCtx};
@@ -8,12 +9,10 @@ pub struct GfxCommandPool {
     handle: vk::CommandPool,
     _queue_family: GfxQueueFamily,
 
-    _debug_name: String,
-    valid: bool,
+    debug_name: String,
 }
 // 创建与初始化
 impl GfxCommandPool {
-    // TODO 使用 new_internal 简化
     #[inline]
     pub fn new(
         ctx: GfxDeviceCtx<'_>,
@@ -47,8 +46,7 @@ impl GfxCommandPool {
         let command_pool = Self {
             handle: pool,
             _queue_family: queue_family,
-            _debug_name: debug_name.to_string(),
-            valid: true,
+            debug_name: debug_name.to_string(),
         };
         gfx_device.set_debug_name(&command_pool, debug_name);
         command_pool
@@ -57,18 +55,21 @@ impl GfxCommandPool {
 // 销毁
 impl GfxCommandPool {
     pub fn destroy(&mut self, ctx: GfxDeviceCtx<'_>) {
-        let gfx_device = ctx.device();
-        unsafe {
-            gfx_device.destroy_command_pool(self.handle, None);
-        }
-        self.valid = false;
+        self.release(ctx.device());
     }
 
     pub fn destroy_internal(mut self, gfx_device: &crate::foundation::device::GfxDevice) {
+        self.release(gfx_device);
+    }
+
+    fn release(&mut self, gfx_device: &crate::foundation::device::GfxDevice) {
+        if self.handle.is_null() {
+            return;
+        }
         unsafe {
             gfx_device.destroy_command_pool(self.handle, None);
         }
-        self.valid = false;
+        self.handle = vk::CommandPool::null();
     }
 }
 // 访问器
@@ -76,6 +77,7 @@ impl GfxCommandPool {
     /// 访问器
     #[inline]
     pub fn handle(&self) -> vk::CommandPool {
+        assert!(!self.handle.is_null(), "command pool has been destroyed");
         self.handle
     }
 }
@@ -87,18 +89,28 @@ impl GfxCommandPool {
     pub fn reset_command_pool(&self, ctx: GfxDeviceCtx<'_>) {
         let gfx_device = ctx.device();
         unsafe {
-            gfx_device.reset_command_pool(self.handle, vk::CommandPoolResetFlags::RELEASE_RESOURCES).unwrap();
+            gfx_device.reset_command_pool(self.handle(), vk::CommandPoolResetFlags::RELEASE_RESOURCES).unwrap();
         }
     }
 
     /// 释放 command buffer
     ///
-    /// 释放之后，command buffer 不能再被使用
+    /// owner 必须先确认 GPU 完成，并撤销全部外部 clone；检查来源不能撤销已经复制的 handle。
     pub fn free_command_buffers(&self, ctx: GfxDeviceCtx<'_>, command_buffers: Vec<GfxCommandBuffer>) {
-        let command_buffer_handles: Vec<vk::CommandBuffer> =
-            command_buffers.iter().map(|cmd| cmd.vk_handle()).collect();
+        let pool = self.handle();
+        let mut command_buffer_handles = Vec::with_capacity(command_buffers.len());
+        let mut unique = std::collections::HashSet::with_capacity(command_buffers.len());
+        for command in &command_buffers {
+            command.validate_pool(pool, ctx.device());
+            let handle = command.vk_handle();
+            assert!(unique.insert(handle), "duplicate command buffer in free batch");
+            command_buffer_handles.push(handle);
+        }
+        if command_buffer_handles.is_empty() {
+            return;
+        }
         unsafe {
-            ctx.device().free_command_buffers(self.handle, &command_buffer_handles);
+            ctx.device().free_command_buffers(pool, &command_buffer_handles);
         }
     }
 }
@@ -108,12 +120,12 @@ impl DebugType for GfxCommandPool {
     }
 
     fn vk_handle(&self) -> impl vk::Handle {
-        self.handle
+        self.handle()
     }
 }
 impl Drop for GfxCommandPool {
     fn drop(&mut self) {
-        assert!(!self.valid, "CommandPool must be destroyed manually.");
-        log::info!("Dropping CommandPool: {}", self._debug_name);
+        debug_assert!(self.handle.is_null(), "CommandPool must be destroyed manually.");
+        log::info!("Dropping CommandPool: {}", self.debug_name);
     }
 }

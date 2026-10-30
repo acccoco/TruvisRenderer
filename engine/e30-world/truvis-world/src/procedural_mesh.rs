@@ -3,7 +3,7 @@ use truvis_asset::handle::{MeshData, SubmeshData};
 /// 内置程序化 mesh 类型。
 ///
 /// 这些数据只描述 CPU 侧顶点属性和索引，不创建 GPU buffer 或 BLAS。调用方应通过
-/// `GameWorld::register_mesh` 注册后进入标准 `GpuMeshStore` 路径。
+/// `GameWorld::import_mesh` 注册后进入标准 `GpuMeshStore` 路径。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProceduralMeshKind {
     Triangle,
@@ -144,7 +144,8 @@ pub fn rect() -> MeshData {
             glam::vec2(0.0, 0.0),
         ]],
         tangent_tex_coord: 0,
-        indices: vec![0, 1, 2, 0, 2, 3],
+        // 从 +Z 看为逆时针，与顶点法线及正面判定保持一致。
+        indices: vec![0, 2, 1, 0, 3, 2],
         name: ProceduralMeshKind::Rect.name().to_string(),
     })
 }

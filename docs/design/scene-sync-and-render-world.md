@@ -39,6 +39,12 @@ mesh 发布与 material 渲染投影变化通过现有 CPU 反向引用找到受
 
 CPU 变更集合只表示需要读取最终状态的身份，不是 changelog 或操作重放；它在同步对账完成后即释放，不等待 GPU。GPU 副本追平由 render-side bookkeeping 独立维护。
 
+instance table 接管候选后，对账中断须保留身份，重入时读取 CPU 最终状态；已改变镜像
+对应的下游变化标记须保留到快照成功交付，不能因重入成为 no-op 而消失。此局部契约
+不等于整帧事务。资源 owner 成功返回的通知先由 RenderWorld 持有，CPU 变更在 bindless
+准备成功后移交 table；table 返回的变化先转成 scene/TLAS/emissive 失效状态，再做后续
+上传。历史失效保留到 prepare 提交确认；未提交 command 的重录与设备错误退场仍是独立契约。
+
 ## prepare 顺序
 
 1. `GameWorld::poll_asset_loads()` 消费 loader 完成事件并写回 CPU final state。
@@ -53,6 +59,19 @@ CPU 变更集合只表示需要读取最终状态的身份，不是 changelog �
 ## 异步与删除
 
 loader 完成、GPU copy 入队、timeline completion、shader-visible publish 和最终 render 结果是不同阶段。任一日志成功不能替代后续阶段证据。
+
+纹理 CPU 加载失败不作永久负缓存。调用方显式重复导入相同来源/颜色空间时，Failed 可在
+原长期 handle 上重试，保留 material/sky 引用；Loading/Ready 继续去重，已发布内容保持
+不可变。成功派发任务后才发布 Loading 状态或清除旧失败信息；此约束不表示整个 scene
+ingest 或 GPU 上传是事务，也不引入后台自动重试。
+
+scene ingest 的输入预检先于资源身份发布：全部 mesh、材质、引用、所需 UV 和外部纹理
+路径通过后才登记资源。正常输入错误只使该 import Failed，不留下部分资源，也不触发
+共享 Failed 纹理重试。纹理解码仍可在 scene 结构 Ready 之后独立失败。
+
+AssetSystem 按完成结果更新 CPU 状态；worker 负责将加载失败交付为 Failed。宿主 panic 不提供 scene/texture 派发回滚，Release abort 不执行 unwind。
+
+
 
 Mesh GPU 资源创建和队列提交沿用底层 fail-fast 行为，不提供上传失败后的自动重试。
 提交正常返回后才标记 Pending upload；timeline 完成并安装到 resolver 后报告实际发布的 mesh handle，
@@ -76,11 +95,18 @@ light revision 和 scene version。prepare 使用既有 AnalyticLightTable 完�
 结构 revision 仅控制集合、绑定布局与容量变化的完整上传；transform 仍更新 TLAS、emissive 和累计签名。
 
 上传 submit 返回只确认 GPU 副本版本；主视图 render submit 返回才推进上一渲染帧 transform。
+矩阵准备结果先由调用者持有，copy/barrier 完整录制后才移交 table；提交确认必须匹配
+同一 FIF 和冻结的身份/版本。历史与副本确认均先整批校验，不允许后项违约留下部分推进。
+已录制但未确认时拒绝再次 prepare，不能通过丢弃记录绕过 command/提交结果的处置。
 相机历史使用同一提交边界。无主视图提交保留历史；present 失败不回滚已提交历史。
 物体停止后继续保持 dirty，直到全部 FIF 都为 `(current, current)` 且渲染历史已追平。
 新增/重新激活令 previous=current；buffer 重建只重写当前副本，保留 CPU 运动历史。
 
 动态容量扩展必须同时更新 CPU mirror、GPU buffer、descriptor count 和当前 FIF 的上传路径。扩展不能改变已有 handle 语义，也不能在 GPU 仍使用旧 buffer 时直接销毁旧资源。
+
+SceneBuffers 的 device/stage 成对交付；当前 FIF 安全点之后才替换旧 pair。替换产生的
+完整上传需求必须保留到提交确认，不能只依赖一次 ensure_capacity 的临时返回值或 CPU
+scene revision。后续准备中断时新 pair 仍有 owner，成功确认只清除当前 FIF 的需求。
 
 ## 设计不变量
 

@@ -10,7 +10,7 @@ use crate::{
     resources::buffer::GfxBuffer,
 };
 
-/// 顶点类型是 u32
+/// 索引类型决定 Vulkan index type、分配容量和上传元素宽度。
 pub struct GfxIndexBuffer<T: GfxIndexType> {
     inner: GfxBuffer,
 
@@ -27,7 +27,7 @@ impl<T: GfxIndexType> GfxIndexBuffer<T> {
     }
 
     pub fn new(ctx: GfxResourceCtx<'_>, index_cnt: usize, mmap: bool, debug_name: impl AsRef<str>) -> Self {
-        let size = index_cnt * T::byte_size();
+        let size = index_cnt.checked_mul(T::byte_size()).expect("index buffer size overflow");
         let buffer = GfxBuffer::new(
             ctx,
             size as vk::DeviceSize,
@@ -40,13 +40,11 @@ impl<T: GfxIndexType> GfxIndexBuffer<T> {
             debug_name.as_ref(),
         );
 
-        let buffer = Self {
+        Self {
             inner: buffer,
             index_cnt,
             _phantom: std::marker::PhantomData,
-        };
-        ctx.device().set_debug_name(&buffer, debug_name);
-        buffer
+        }
     }
 
     /// 创建 index buffer，并向其内写入数据
@@ -54,10 +52,13 @@ impl<T: GfxIndexType> GfxIndexBuffer<T> {
     pub fn new_with_data(
         resource_ctx: GfxResourceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        data: &[u32],
+        data: &[T],
         debug_name: impl AsRef<str>,
-    ) -> Self {
-        let index_buffer = Self::new_device_local(resource_ctx, data.len(), debug_name);
+    ) -> Self
+    where
+        T: bytemuck::NoUninit,
+    {
+        let mut index_buffer = Self::new_device_local(resource_ctx, data.len(), debug_name);
         index_buffer.transfer_data_sync(resource_ctx, immediate_ctx, data);
         index_buffer
     }

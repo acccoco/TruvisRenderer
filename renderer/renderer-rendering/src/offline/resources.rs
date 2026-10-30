@@ -30,12 +30,9 @@ impl OfflineTargets {
         frame_state: &FrameRenderState,
         frame_id: u64,
     ) -> Self {
-        // 三张离线图像都必须可被 compute/RT 作为 storage image 写入，并可作为 SRV
-        // 暴露给 debug viewer / present path。render_target 额外带 COLOR_ATTACHMENT，是为了兼容
-        // 后续可能复用的色彩/resolve 路径；当前 ownership 仍由 RenderGraph import/export 表达。
+        // 中间图像由 RT/Accum/SDR 通过 storage 访问、由 Resolve/debug viewer 采样；attachment 位于 swapchain。
         let storage_usage =
             vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::SAMPLED;
-        let present_usage = storage_usage | vk::ImageUsageFlags::COLOR_ATTACHMENT;
 
         let single_frame_image = PerFrameImageSet::new(
             resource_ctx,
@@ -72,7 +69,7 @@ impl OfflineTargets {
                 name_prefix: "offline-render-target",
                 format: frame_state.hdr_color_format,
                 extent: frame_state.output_extent,
-                usage: present_usage,
+                usage: storage_usage,
             },
             frame_id,
         );
@@ -104,6 +101,7 @@ impl OfflineTargets {
         gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
+        // 三组都已越过 GPU safe point；完成本 owner 的清理后再传播首个释放诊断。
         self.single_frame_image.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
         self.accum_image.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
         self.render_target.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);

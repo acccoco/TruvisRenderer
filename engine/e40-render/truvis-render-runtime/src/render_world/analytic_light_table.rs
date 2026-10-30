@@ -3,14 +3,13 @@ use ash::vk;
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
 use truvis_gfx::gfx::GfxResourceCtx;
-use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
 
-const MAX_ANALYTIC_LIGHT_COUNT: usize = 512;
+const INITIAL_ANALYTIC_LIGHT_CAPACITY: usize = 512;
 
 /// 写入 scene root 的 analytic light buffer 绑定快照。
 #[derive(Clone, Copy, Default)]
@@ -24,58 +23,86 @@ pub(crate) struct AnalyticLightBinding {
     pub(crate) version: u32,
 }
 
+/// 同类灯光的 device/stage 共同创建和回收，避免候选只完成一半就丢失 owner。
+struct AnalyticLightBuffers<T> {
+    device: GfxStructuredBuffer<T>,
+    stage: GfxStructuredBuffer<T>,
+}
+
+impl<T> AnalyticLightBuffers<T> {
+    fn new(ctx: GfxResourceCtx<'_>, capacity: usize, name: &str) -> Self {
+        Self {
+            device: GfxStructuredBuffer::new_ssbo(ctx, capacity, name),
+            stage: GfxStructuredBuffer::new_stage_buffer(ctx, capacity, format!("{name}-stage")),
+        }
+    }
+
+    /// 调用方必须先确认两个 buffer 都已不再被 GPU 使用。
+    fn destroy_mut(&mut self, ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
+        self.device.destroy_mut(ctx, reason);
+        self.stage.destroy_mut(ctx, reason);
+    }
+}
+
+impl<T: bytemuck::Pod> AnalyticLightBuffers<T> {
+    /// 当前 FIF 已等待完成；完整候选先接管字段，再回收旧 pair。
+    /// 调用方的 dirty 在整组上传提交确认前始终保留，因此中断后仍会重传新地址的内容。
+    fn ensure_capacity(&mut self, ctx: GfxResourceCtx<'_>, required: usize, name: &str) {
+        if required <= self.stage.mapped_slice_ref().len() {
+            return;
+        }
+        let capacity = required.checked_next_power_of_two().expect("analytic light capacity overflow");
+        let next = Self::new(ctx, capacity, name);
+        let mut old = std::mem::replace(self, next);
+        old.destroy_mut(ctx, DestroyReason::ImmediateRelease);
+    }
+
+    /// 只上传本快照的有效前缀；空类别由 binding 的 count 表达，不访问预分配尾部。
+    fn upload(&mut self, ctx: GfxResourceCtx<'_>, cmd: &GfxCommandBuffer, barrier_mask: GfxBarrierMask, data: &[T]) {
+        if data.is_empty() {
+            return;
+        }
+        self.stage.mapped_slice()[..data.len()].copy_from_slice(data);
+        let copy_size = u64::try_from(std::mem::size_of_val(data)).expect("analytic upload size exceeds u64");
+        self.stage.flush(ctx, 0, copy_size);
+        cmd.cmd_copy_buffer(
+            &self.stage,
+            &self.device,
+            &[vk::BufferCopy {
+                size: copy_size,
+                ..Default::default()
+            }],
+        );
+        cmd.buffer_memory_barrier(
+            vk::DependencyFlags::empty(),
+            &[GfxBufferBarrier::default().mask(barrier_mask).buffer(self.device.vk_buffer(), 0, vk::WHOLE_SIZE)],
+        );
+    }
+}
+
 struct AnalyticLightFrameBuffers {
-    point_light_buffer: GfxStructuredBuffer<gpu::engine::light::PointLight>,
-    point_light_stage_buffer: GfxStructuredBuffer<gpu::engine::light::PointLight>,
-    spot_light_buffer: GfxStructuredBuffer<gpu::engine::light::SpotLight>,
-    spot_light_stage_buffer: GfxStructuredBuffer<gpu::engine::light::SpotLight>,
-    area_light_buffer: GfxStructuredBuffer<gpu::engine::light::AreaLight>,
-    area_light_stage_buffer: GfxStructuredBuffer<gpu::engine::light::AreaLight>,
+    point: AnalyticLightBuffers<gpu::engine::light::PointLight>,
+    spot: AnalyticLightBuffers<gpu::engine::light::SpotLight>,
+    area: AnalyticLightBuffers<gpu::engine::light::AreaLight>,
 }
 
 impl AnalyticLightFrameBuffers {
     fn new(ctx: GfxResourceCtx<'_>, frame_label: FrameLabel) -> Self {
         Self {
-            point_light_buffer: GfxStructuredBuffer::new_ssbo(
+            point: AnalyticLightBuffers::new(
                 ctx,
-                MAX_ANALYTIC_LIGHT_COUNT,
-                format!("point light buffer-{}", frame_label),
+                INITIAL_ANALYTIC_LIGHT_CAPACITY,
+                &format!("point light-{frame_label}"),
             ),
-            point_light_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
-                ctx,
-                MAX_ANALYTIC_LIGHT_COUNT,
-                format!("point light stage buffer-{}", frame_label),
-            ),
-            spot_light_buffer: GfxStructuredBuffer::new_ssbo(
-                ctx,
-                MAX_ANALYTIC_LIGHT_COUNT,
-                format!("spot light buffer-{}", frame_label),
-            ),
-            spot_light_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
-                ctx,
-                MAX_ANALYTIC_LIGHT_COUNT,
-                format!("spot light stage buffer-{}", frame_label),
-            ),
-            area_light_buffer: GfxStructuredBuffer::new_ssbo(
-                ctx,
-                MAX_ANALYTIC_LIGHT_COUNT,
-                format!("area light buffer-{}", frame_label),
-            ),
-            area_light_stage_buffer: GfxStructuredBuffer::new_stage_buffer(
-                ctx,
-                MAX_ANALYTIC_LIGHT_COUNT,
-                format!("area light stage buffer-{}", frame_label),
-            ),
+            spot: AnalyticLightBuffers::new(ctx, INITIAL_ANALYTIC_LIGHT_CAPACITY, &format!("spot light-{frame_label}")),
+            area: AnalyticLightBuffers::new(ctx, INITIAL_ANALYTIC_LIGHT_CAPACITY, &format!("area light-{frame_label}")),
         }
     }
 
-    fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>) {
-        self.point_light_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.point_light_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.spot_light_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.spot_light_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.area_light_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
-        self.area_light_stage_buffer.destroy_mut(resource_ctx, DestroyReason::Shutdown);
+    fn destroy_mut(&mut self, ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
+        self.point.destroy_mut(ctx, reason);
+        self.spot.destroy_mut(ctx, reason);
+        self.area.destroy_mut(ctx, reason);
     }
 
     fn binding(
@@ -86,20 +113,15 @@ impl AnalyticLightFrameBuffers {
         version: u32,
     ) -> AnalyticLightBinding {
         AnalyticLightBinding {
-            point_lights: self.point_light_buffer.device_address(),
-            spot_lights: self.spot_light_buffer.device_address(),
-            area_lights: self.area_light_buffer.device_address(),
+            point_lights: self.point.device.device_address(),
+            spot_lights: self.spot.device.device_address(),
+            area_lights: self.area.device.device_address(),
             point_light_count,
             spot_light_count,
             area_light_count,
             version,
         }
     }
-}
-
-/// analytic light 阶段对外返回的结构化结果。
-pub(crate) struct RenderAnalyticLightUpdateResult {
-    pub(crate) binding: AnalyticLightBinding,
 }
 
 /// runtime 私有的 analytic light GPU buffer owner。
@@ -124,7 +146,7 @@ pub(crate) struct AnalyticLightTable {
 impl AnalyticLightTable {
     pub(crate) fn new(resource_ctx: GfxResourceCtx<'_>) -> Self {
         Self {
-            frames: FrameLabel::ALL.map(|frame_label| AnalyticLightFrameBuffers::new(resource_ctx, frame_label)),
+            frames: FrameLabel::ALL.map(|label| AnalyticLightFrameBuffers::new(resource_ctx, label)),
             fif_dirty: [false; FrameLabel::COUNT],
             pending_commits: [false; FrameLabel::COUNT],
             point_light_count: 0,
@@ -194,7 +216,7 @@ impl AnalyticLightTable {
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
         frame_label: FrameLabel,
-    ) -> RenderAnalyticLightUpdateResult {
+    ) -> AnalyticLightBinding {
         let frame_index = *frame_label;
         let changed = self.fif_dirty[frame_index];
         if changed {
@@ -202,14 +224,12 @@ impl AnalyticLightTable {
             self.pending_commits[frame_index] = true;
         }
 
-        RenderAnalyticLightUpdateResult {
-            binding: self.frames[frame_index].binding(
-                self.point_light_count,
-                self.spot_light_count,
-                self.area_light_count,
-                self.version,
-            ),
-        }
+        self.frames[frame_index].binding(
+            self.point_light_count,
+            self.spot_light_count,
+            self.area_light_count,
+            self.version,
+        )
     }
 
     pub(crate) fn commit_submitted_frame(&mut self, frame_label: FrameLabel) {
@@ -222,7 +242,7 @@ impl AnalyticLightTable {
 
     pub(crate) fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>) {
         for frame in &mut self.frames {
-            frame.destroy_mut(resource_ctx);
+            frame.destroy_mut(resource_ctx, DestroyReason::Shutdown);
         }
     }
 
@@ -234,82 +254,13 @@ impl AnalyticLightTable {
         frame_index: usize,
     ) {
         let frame = &mut self.frames[frame_index];
-        let point_light_count = self.point_lights.len();
-        let spot_light_count = self.spot_lights.len();
-        let area_light_count = self.area_lights.len();
+        let label = FrameLabel::ALL[frame_index];
+        frame.point.ensure_capacity(resource_ctx, self.point_lights.len(), &format!("point light-{label}"));
+        frame.spot.ensure_capacity(resource_ctx, self.spot_lights.len(), &format!("spot light-{label}"));
+        frame.area.ensure_capacity(resource_ctx, self.area_lights.len(), &format!("area light-{label}"));
 
-        if point_light_count > MAX_ANALYTIC_LIGHT_COUNT
-            || spot_light_count > MAX_ANALYTIC_LIGHT_COUNT
-            || area_light_count > MAX_ANALYTIC_LIGHT_COUNT
-        {
-            panic!("analytic light cnt can not be larger than buffer");
-        }
-
-        {
-            let point_light_buffer_slices = frame.point_light_stage_buffer.mapped_slice();
-            let spot_light_buffer_slices = frame.spot_light_stage_buffer.mapped_slice();
-            let area_light_buffer_slices = frame.area_light_stage_buffer.mapped_slice();
-
-            for (light_idx, point_light) in self.point_lights.iter().enumerate() {
-                point_light_buffer_slices[light_idx] = *point_light;
-            }
-
-            for (light_idx, spot_light) in self.spot_lights.iter().enumerate() {
-                spot_light_buffer_slices[light_idx] = *spot_light;
-            }
-
-            for (light_idx, area_light) in self.area_lights.iter().enumerate() {
-                area_light_buffer_slices[light_idx] = *area_light;
-            }
-        }
-
-        Self::flush_copy_and_barrier(
-            resource_ctx,
-            cmd,
-            &mut frame.point_light_stage_buffer,
-            &mut frame.point_light_buffer,
-            barrier_mask,
-        );
-        Self::flush_copy_and_barrier(
-            resource_ctx,
-            cmd,
-            &mut frame.spot_light_stage_buffer,
-            &mut frame.spot_light_buffer,
-            barrier_mask,
-        );
-        Self::flush_copy_and_barrier(
-            resource_ctx,
-            cmd,
-            &mut frame.area_light_stage_buffer,
-            &mut frame.area_light_buffer,
-            barrier_mask,
-        );
-
-        debug_assert_eq!(point_light_count, self.point_light_count as usize);
-        debug_assert_eq!(spot_light_count, self.spot_light_count as usize);
-        debug_assert_eq!(area_light_count, self.area_light_count as usize);
-    }
-
-    fn flush_copy_and_barrier(
-        resource_ctx: GfxResourceCtx<'_>,
-        cmd: &GfxCommandBuffer,
-        stage_buffer: &mut GfxBuffer,
-        dst: &mut GfxBuffer,
-        barrier_mask: GfxBarrierMask,
-    ) {
-        let buffer_size = stage_buffer.size();
-        stage_buffer.flush(resource_ctx, 0, buffer_size);
-        cmd.cmd_copy_buffer(
-            stage_buffer,
-            dst,
-            &[vk::BufferCopy {
-                size: buffer_size,
-                ..Default::default()
-            }],
-        );
-        cmd.buffer_memory_barrier(
-            vk::DependencyFlags::empty(),
-            &[GfxBufferBarrier::default().mask(barrier_mask).buffer(dst.vk_buffer(), 0, vk::WHOLE_SIZE)],
-        );
+        frame.point.upload(resource_ctx, cmd, barrier_mask, &self.point_lights);
+        frame.spot.upload(resource_ctx, cmd, barrier_mask, &self.spot_lights);
+        frame.area.upload(resource_ctx, cmd, barrier_mask, &self.area_lights);
     }
 }

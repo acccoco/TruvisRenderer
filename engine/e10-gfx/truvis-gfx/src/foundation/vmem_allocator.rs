@@ -1,16 +1,15 @@
-use std::ops::Deref;
+use std::{mem::ManuallyDrop, ops::Deref};
 
 use ash::vk;
 
 pub struct VMemAllocator {
-    inner: Option<vk_mem::Allocator>,
+    /// vk_mem 的 Drop 会调用 vmaDestroyAllocator；仅允许显式 destroy 在 root 存活期触发它。
+    inner: Option<ManuallyDrop<vk_mem::Allocator>>,
 }
 
 impl VMemAllocator {
-    /// 由于 vma 的生命周期设定：需要引用 Instance 以及
-    /// Device，并确保在其声明周期之内这两个的引用是有效的.
-    /// 因此需要在 Gfx 的其他部分都初始化完成后再初始化 vma，并确保 Instance 和
-    /// Device 是 Pin 的
+    /// allocator 借用 native Instance/Device 及 loader，必须在这些 root 之前显式销毁。
+    /// 移动 Rust 的 ash wrapper 不会移动 native 对象，不需要为 wrapper 引入 Pin。
     pub fn new(instance: &ash::Instance, pdevice: vk::PhysicalDevice, device: &ash::Device) -> Self {
         let mut vma_ci = vk_mem::AllocatorCreateInfo::new(instance, device, pdevice);
         vma_ci.vulkan_api_version = vk::API_VERSION_1_3;
@@ -18,12 +17,17 @@ impl VMemAllocator {
 
         let vma = unsafe { vk_mem::Allocator::new(vma_ci).unwrap() };
 
-        Self { inner: Some(vma) }
+        Self {
+            inner: Some(ManuallyDrop::new(vma)),
+        }
     }
 
     /// 显式释放 VMA allocator，必须在所有 VMA allocation 销毁后调用。
     pub fn destroy(mut self) {
-        let _ = self.inner.take();
+        if let Some(mut allocator) = self.inner.take() {
+            // 先撤销 owner，再执行唯一的 native 释放；后续 wrapper Drop 只检查遗漏。
+            unsafe { ManuallyDrop::drop(&mut allocator) };
+        }
     }
 }
 

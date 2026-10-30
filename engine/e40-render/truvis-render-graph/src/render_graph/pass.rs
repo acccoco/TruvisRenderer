@@ -18,15 +18,16 @@ pub struct RgPassContext<'a> {
     /// 资源查询契约（用于获取物理资源）
     pub resource_manager: &'a dyn GfxResourceAccess,
 
-    /// 物理资源查询表（编译后填充）
-    pub(crate) image_handles: &'a SecondaryMap<RgImageHandle, (GfxImageHandle, GfxImageViewHandle)>,
+    /// 录制前核验后的物理查询表；无 view 的导入保留 None。
+    pub(crate) image_handles: &'a SecondaryMap<RgImageHandle, (GfxImageHandle, Option<GfxImageViewHandle>)>,
 }
 
 impl<'a> RgPassContext<'a> {
-    /// 获取图像的物理句柄
+    /// 获取 image/view 配对；导入未提供 view 时返回 None。
     #[inline]
     pub fn get_image_and_view_handle(&self, handle: RgImageHandle) -> Option<(GfxImageHandle, GfxImageViewHandle)> {
-        self.image_handles.get(handle).copied()
+        let (image, view) = self.image_handles.get(handle)?;
+        Some((*image, (*view)?))
     }
 
     /// 获取图像的 handle
@@ -38,29 +39,26 @@ impl<'a> RgPassContext<'a> {
     /// 获取图像的 view handle
     #[inline]
     pub fn get_image_view_handle(&self, handle: RgImageHandle) -> Option<GfxImageViewHandle> {
-        self.image_handles.get(handle).map(|(_, v)| *v)
+        self.image_handles.get(handle).and_then(|(_, view)| *view)
     }
 
     #[inline]
     pub fn get_image_view(&self, handle: RgImageHandle) -> Option<&GfxImageView> {
-        self.image_handles
-            .get(handle)
-            .map(|(_, view_handle)| self.resource_manager.get_image_view(*view_handle).unwrap())
+        self.resource_manager.get_image_view(self.get_image_view_handle(handle)?)
     }
 
     #[inline]
     pub fn get_image_and_view(&self, handle: RgImageHandle) -> Option<(&GfxImage, &GfxImageView)> {
-        self.image_handles.get(handle).map(|(image_handle, view_handle)| {
-            let image = self.resource_manager.get_image(*image_handle).unwrap();
-            let view = self.resource_manager.get_image_view(*view_handle).unwrap();
-            (image, view)
-        })
+        let (image_handle, view_handle) = self.get_image_and_view_handle(handle)?;
+        Some((self.resource_manager.get_image(image_handle)?, self.resource_manager.get_image_view(view_handle)?))
     }
 }
 
 /// Pass 构建器
 ///
 /// 在 Pass 的 Setup 阶段使用，声明 Pass 的资源依赖。
+/// 同一 image 的多次声明必须使用同一 layout，compile 合并全部 stage/access；
+/// pass 内部的命令顺序和写读屏障仍由 pass 自己保证。
 pub struct RgPassBuilder {
     /// Pass 名称
     #[allow(dead_code)]

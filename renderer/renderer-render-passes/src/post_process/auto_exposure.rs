@@ -44,12 +44,12 @@ pub struct AutoExposurePass {
 
 impl AutoExposurePass {
     pub fn new(ctx: GfxDeviceCtx<'_>, descriptors: &GlobalDescriptorSets) -> Self {
-        let kernels = [
+        let paths = [
             "post/exposure_clear.slang",
             "post/exposure_histogram.slang",
             "post/exposure_reduce.slang",
-        ]
-        .map(|path| {
+        ];
+        let kernels = paths.map(|path| {
             ComputePass::new(
                 ctx,
                 descriptors,

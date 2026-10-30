@@ -2,7 +2,7 @@ use ash::vk;
 
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
-use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeShutdownCtx};
+use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
 
 use crate::shader_toy_pass::ShaderToyPass;
 
@@ -14,6 +14,12 @@ pub struct ShaderToySubsystem {
 impl SubsystemLifecycle for ShaderToySubsystem {
     fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
         self.shader_toy_pass = Some(ShaderToyPass::new(ctx.device_ctx, ctx.swapchain_image_info.image_format));
+    }
+
+    fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
+        if let Some(pass) = self.shader_toy_pass.as_mut() {
+            pass.rebuild_for_format(ctx.device_ctx, ctx.present.swapchain_image_info().image_format);
+        }
     }
 
     fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {

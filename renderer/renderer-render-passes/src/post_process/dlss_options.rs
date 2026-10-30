@@ -7,7 +7,6 @@ pub enum DlssEvaluation {
     #[default]
     NotRun,
     Succeeded,
-    Failed,
 }
 
 #[derive(Clone, Copy, Debug)]

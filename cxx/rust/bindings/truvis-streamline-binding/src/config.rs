@@ -165,10 +165,3 @@ impl StreamlineInitInfo {
         Ok(PathUtils::current_exe_dir()?.join("sl.interposer.dll"))
     }
 }
-
-impl Default for StreamlineInitInfo {
-    /// 无法定位 executable 目录时 panic；需要可诊断错误时使用 StreamlineRuntime::init_default。
-    fn default() -> Self {
-        Self::from_current_exe().expect("failed to resolve Streamline executable directory")
-    }
-}

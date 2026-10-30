@@ -68,8 +68,11 @@ impl RenderThreadControl {
         self.resize_generation.load(Ordering::Acquire)
     }
 
-    /// 保持现有 best-effort 输入投递语义；渲染线程退出后的断开事件直接忽略。
+    /// 已观察到退出请求后不再排入输入；control 自身持有 receiver，不能依赖线程退出使通道断开。
     pub fn send_input(&self, event: InputEvent) {
+        if self.exit_requested() {
+            return;
+        }
         let _ = self.event_sender.send(event);
     }
 

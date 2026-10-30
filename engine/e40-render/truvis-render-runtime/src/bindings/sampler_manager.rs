@@ -19,7 +19,12 @@ impl RenderSamplerManager {
 
         let samplers = {
             let _span = tracy_client::span!("RenderSamplerManager::new/sampler_creation");
-            Self::create_sampler(ctx)
+            let descs = Self::sampler_descs();
+            assert!(
+                descs.iter().all(|(name, _)| !name.is_empty()),
+                "static sampler table contains an unassigned entry"
+            );
+            descs.map(|(name, desc)| GfxSampler::new(ctx, &desc, format!("bindless-sampler-{}", name)))
         };
 
         // sampler 写入 descriptor set
@@ -63,18 +68,22 @@ impl RenderSamplerManager {
         }
     }
 
-    fn create_sampler(ctx: GfxDeviceCtx<'_>) -> [GfxSampler; gpu::engine::bindless::ESamplerType__Count_ as usize] {
+    fn sampler_descs() -> [(String, GfxSamplerDesc); gpu::engine::bindless::ESamplerType__Count_ as usize] {
         let mut sampler_descs = [0; gpu::engine::bindless::ESamplerType__Count_ as usize]
             .map(|_| (String::new(), GfxSamplerDesc::default()));
 
         sampler_descs[gpu::engine::bindless::ESamplerType_PointRepeat as usize] =
             ("PointRepeat".to_string(), Self::create_sampler_desc(vk::Filter::NEAREST, vk::SamplerAddressMode::REPEAT));
-        sampler_descs[gpu::engine::bindless::ESamplerType_PointClamp as usize] =
-            ("PointClamp".to_string(), Self::create_sampler_desc(vk::Filter::NEAREST, vk::SamplerAddressMode::CLAMP_TO_EDGE));
+        sampler_descs[gpu::engine::bindless::ESamplerType_PointClamp as usize] = (
+            "PointClamp".to_string(),
+            Self::create_sampler_desc(vk::Filter::NEAREST, vk::SamplerAddressMode::CLAMP_TO_EDGE),
+        );
         sampler_descs[gpu::engine::bindless::ESamplerType_LinearRepeat as usize] =
             ("LinearRepeat".to_string(), Self::create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::REPEAT));
-        sampler_descs[gpu::engine::bindless::ESamplerType_LinearClamp as usize] =
-            ("LinearClamp".to_string(), Self::create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::CLAMP_TO_EDGE));
+        sampler_descs[gpu::engine::bindless::ESamplerType_LinearClamp as usize] = (
+            "LinearClamp".to_string(),
+            Self::create_sampler_desc(vk::Filter::LINEAR, vk::SamplerAddressMode::CLAMP_TO_EDGE),
+        );
         sampler_descs[gpu::engine::bindless::ESamplerType_AnisoRepeat as usize] = (
             "AnisoRepeat".to_string(),
             GfxSamplerDesc {
@@ -97,18 +106,24 @@ impl RenderSamplerManager {
             let filter = if code % 2 == 0 { vk::Filter::NEAREST } else { vk::Filter::LINEAR };
             let wrap_t = (code / 2) % 3;
             let wrap_s = code / 6;
-            let wraps = [vk::SamplerAddressMode::REPEAT, vk::SamplerAddressMode::CLAMP_TO_EDGE, vk::SamplerAddressMode::MIRRORED_REPEAT];
+            let wraps = [
+                vk::SamplerAddressMode::REPEAT,
+                vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                vk::SamplerAddressMode::MIRRORED_REPEAT,
+            ];
             sampler_descs[gpu::engine::bindless::ESamplerType_MaterialBase as usize + code] = (
-                format!("Material-{code}"), GfxSamplerDesc {
+                format!("Material-{code}"),
+                GfxSamplerDesc {
                     mag_filter: filter,
                     min_filter: filter,
-                    address_mode_u: wraps[wrap_s], address_mode_v: wraps[wrap_t],
+                    address_mode_u: wraps[wrap_s],
+                    address_mode_v: wraps[wrap_t],
                     ..Default::default()
                 },
             );
         }
 
-        sampler_descs.map(|(name, desc)| GfxSampler::new(ctx, &desc, format!("bindless-sampler-{}", name)))
+        sampler_descs
     }
 }
 

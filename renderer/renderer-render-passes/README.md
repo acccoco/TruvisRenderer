@@ -21,6 +21,8 @@ viewport overlay、selection outline 和 Phong shading。
 - `post_process`：accum、image clear、resolve、SDR 和 DLSS SR/RR RenderGraph adapter。DLSS options、
   feature 释放和 temporal reset 属于 `TruvisDlssState`；这里的 pass 只构造当前帧 tags、
   constants 并调用 binding evaluate，feature 创建随同一 frame token 的 evaluate 完成。
+  SR/RR adapter 要求 evaluate 成功才继续；失败或意外 NotRun 中止整个 graph，部分录制命令不得提交。
+  DLSS clip 前后变换分别复用 RenderView 的逆矩阵构造，避免再次求逆组合投影；不改变无 jitter 矩阵契约。
 - `effects`：viewport overlay、selection outline 与 Phong 等产品效果。
 - 提供具体 GPU pass 的 pipeline、descriptor、dispatch/draw 逻辑。
 - 提供可接入 `truvis-render-graph` 的 pass adapter。
@@ -40,6 +42,11 @@ viewport overlay、selection outline 和 Phong shading。
   sampled image 固定使用 `SHADER_READ_ONLY_OPTIMAL`；descriptor 中的 layout 必须与该 pass 的 RenderGraph 声明一致。
 
 ## 边界约束
+
+- `ComputePass` 的 push constant 要求 `NoUninit`，构造前检查 set 编号及非零、四字节对齐大小；这些检查不替代生成 ABI、设备 limits 或 GPU 完成条件。
+- `AutoExposurePass` 拥有三个 kernel；图像和跨帧曝光历史由 `SdrPostProcess` 管理。
+- realtime/offline RT pass 拥有 pipeline/layout、SBT 与 descriptor，shader cache 仅用于创建阶段。
+  正常销毁要求所有引用该 pass 的 GPU work 已完成；构造与释放不提供 panic 回滚。
 
 - 本 crate 不负责 Renderer 级 pass 顺序、GUI overlay 顺序或 demo pipeline 编排。
 - 本 crate 不持有 `RenderRuntime`，也不依赖 frame runtime 或 Renderer hooks。

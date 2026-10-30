@@ -6565,6 +6565,7 @@ dependencies = [
 name = "truvis-renderer-shader-binding"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "truvis-shader-binding",
  "truvis-shader-binding-codegen",
  "truvis-shader-manifest",

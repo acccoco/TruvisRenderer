@@ -44,6 +44,10 @@ DLSS mode 或 render extent 变化可能同时触发 Renderer target 重建和 S
 
 重建路径必须先让旧 target 脱离新的 graph，再按 owner 的创建顺序重新建立 view、descriptor 和 pipeline 依赖。
 
+WSI present 使用的 semaphore/swapchain 必须满足 presentation 侧的释放条件；GPU submission
+完成或 device idle 不能单独作为该条件。当前 Presenter 尚缺跨代 present 完成凭据；
+这是实现偏差，不能通过降低上述生命周期约束解释为安全。
+
 ## 退役与 FIF
 
 CPU 删除只撤销 CPU membership；GPU mirror 在下一次完整对账中退役。已提交但尚未完成的 upload 只销毁完成结果，不得重新 publish stale handle。
@@ -95,7 +99,10 @@ Renderer 资源必须早于 Runtime destroy；Runtime 资源必须早于 Gfx des
 
 创建失败不应留下半发布的 shader-visible handle。重建失败时保留旧资源还是进入 fallback，必须由该资源 owner 定义；不能由 Drop 顺序隐式决定。
 
-延迟释放队列的清理只说明 GPU 已越过安全 frame boundary，不说明 CPU scene 仍然引用该资源。反向索引和 generation 检查仍由 scene/resource owner 负责。
+当前全局退出存在偏差：RenderLoop 的异常并不保证进入正常 shutdown，SDK shutdown 错误也没有
+阻止 Gfx 后续 root 销毁的完整协议。线程完成、DLL 保留或错误日志均不能充当 GPU/SDK 回收证明。
+构造和销毁不捕获 panic 做逐层回滚。Release 的 panic=abort 不执行 unwind；Debug 的线程完成或 join 成功也不能证明 GPU/SDK 已回收。
+可恢复错误必须由明确的 Result 和资源 owner 定义；未知 submit/wait 与部分 SDK 关闭不允许假定完成。
 
 ## 变更检查
 
@@ -111,3 +118,7 @@ Renderer 资源必须早于 Runtime destroy；Runtime 资源必须早于 Gfx des
 本文不维护完整资源名称列表，不记录某次设备驱动的 workaround，也不把构建成功当作 GPU lifetime 验证。
 
 需要临时诊断时使用 `.temp/`，不要把调试文件写入 source 或 docs 目录。
+
+Swapchain 重建后，render-complete semaphore 容量补齐至新 image count；数量下降时不缩减。
+该约束只消除 image index 越界。当前仍跨代复用旧 semaphore，旧 presentation 完成条件尚未闭合；
+device idle、容量足够及本次重建成功均不能作为跨代 WSI 同步完整的证明。

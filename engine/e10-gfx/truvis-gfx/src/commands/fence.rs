@@ -1,12 +1,11 @@
-use ash::vk;
+use ash::{vk, vk::Handle};
 
 use crate::{foundation::debug_messenger::DebugType, gfx::GfxDeviceCtx};
 
-/// # 销毁
-/// 不应该实现 Fence，因为可以 Clone，需要手动 destroy
-#[derive(Clone)]
+/// Fence 的唯一 owner；提交只借用，调用方等待 GPU 完成后显式销毁。
 pub struct GfxFence {
     fence: vk::Fence,
+    debug_name: String,
 }
 
 impl DebugType for GfxFence {
@@ -25,20 +24,28 @@ impl GfxFence {
     /// * signaled - 是否创建时就 signaled
     pub fn new(ctx: GfxDeviceCtx<'_>, signaled: bool, debug_name: &str) -> Self {
         let gfx_device = ctx.device();
+        let debug_name = debug_name.to_owned();
         let fence_flags = if signaled { vk::FenceCreateFlags::SIGNALED } else { vk::FenceCreateFlags::empty() };
         let fence =
             unsafe { gfx_device.create_fence(&vk::FenceCreateInfo::default().flags(fence_flags), None).unwrap() };
 
-        let fence = Self { fence };
-        gfx_device.set_debug_name(&fence, debug_name);
+        let fence = Self { fence, debug_name };
+        gfx_device.set_debug_name(&fence, &fence.debug_name);
         fence
     }
     #[inline]
-    pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
+    pub fn destroy(mut self, ctx: GfxDeviceCtx<'_>) {
         let gfx_device = ctx.device();
         unsafe {
             gfx_device.destroy_fence(self.fence, None);
         }
+        self.fence = vk::Fence::null();
+    }
+}
+
+impl Drop for GfxFence {
+    fn drop(&mut self) {
+        debug_assert!(self.fence.is_null(), "GfxFence '{}' dropped without explicit destroy", self.debug_name);
     }
 }
 

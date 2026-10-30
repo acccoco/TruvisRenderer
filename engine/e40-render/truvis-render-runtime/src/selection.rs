@@ -22,6 +22,7 @@ pub struct WorldSubmeshSelection {
 /// 选中 submesh 的只读光栅化录制接口。
 ///
 /// 该 trait 由 runtime 私有 `RenderWorld` 实现，Renderer/pass 只能提交 `WorldSubmeshSelection`。
+/// frame_label 必须来自本次 prepare 对应的当前帧上下文；此接口不查询旧 FIF 的历史快照。
 /// pending、已删除、未 GPU-ready、slot 快照过期或 submesh 越界都会返回 `false` 并跳过绘制，
 /// 调用方不得把 `false` 当作错误处理。
 pub trait WorldSubmeshRasterView {

@@ -4,8 +4,7 @@
 //! `RenderLoop` 批量调度。该 trait 只约束需要显式管理 GPU 资源的生命周期；
 //! 输入处理、UI 构建和 RenderGraph pass 贡献等具体能力继续留在各自类型上。
 
-use truvis_gfx::commands::semaphore::GfxSemaphore;
-use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxQueueCtx, GfxResourceCtx};
+use truvis_gfx::gfx::{GfxQueueCtx, GfxResourceCtx};
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_runtime::present::swapchain_presenter::PresentView;
 use truvis_render_runtime::render_runtime::{
@@ -28,33 +27,27 @@ pub trait SubsystemLifecycle {
     fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>);
 }
 
-/// Renderer 传给具体渲染子系统的只读录制上下文。
+/// Renderer 传给具体渲染子系统的录制上下文；CPU scene 只读，GPU 资源能力并非只读。
 ///
 /// 该上下文刻意不包含 `world_submesh_raster` 等 Renderer 专属能力；需要这些能力的
 /// 业务渲染器应由 Renderer 单独显式传入，避免把完整 runtime 权限扩散给所有子系统。
 pub struct SubsystemRenderCtx<'a> {
-    pub device_ctx: GfxDeviceCtx<'a>,
     pub resource_ctx: GfxResourceCtx<'a>,
     pub queue_ctx: GfxQueueCtx<'a>,
-    pub device_info_ctx: GfxDeviceInfoCtx<'a>,
     pub record_ctx: RenderPassRecordCtx<'a>,
     pub render_scene: &'a dyn RenderSceneView,
     pub present: PresentView<'a>,
-    pub timeline: &'a GfxSemaphore,
 }
 
 impl<'a> SubsystemRenderCtx<'a> {
-    /// 从 Renderer 的 render 阶段上下文裁剪出子系统实际需要的只读能力。
+    /// 只转发子系统的实际消费者所需能力；队列提交与 timeline 信号编排仍由 Renderer 持有。
     pub fn from_runtime(ctx: &RenderRuntimeRenderCtx<'a>) -> Self {
         Self {
-            device_ctx: ctx.device_ctx,
             resource_ctx: ctx.resource_ctx,
             queue_ctx: ctx.queue_ctx,
-            device_info_ctx: ctx.device_info_ctx,
             record_ctx: ctx.record_ctx,
             render_scene: ctx.render_scene,
             present: ctx.present,
-            timeline: ctx.timeline,
         }
     }
 }

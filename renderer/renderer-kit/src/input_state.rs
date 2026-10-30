@@ -128,13 +128,14 @@ impl InputManager {
                 match button {
                     MouseButton::Left => {
                         if pressed {
-                            self.state.left_button_just_pressed = !self.state.left_button_pressed;
-                            if self.state.left_button_just_pressed {
+                            // 边沿保留到下一帧或显式 reset，重复状态不能擦除已有边沿或按下坐标。
+                            if !self.state.left_button_pressed {
+                                self.state.left_button_just_pressed = true;
                                 self.state.left_button_press_position = self.state.crt_mouse_pos;
                             }
                             self.state.left_button_pressed = true;
                         } else {
-                            self.state.left_button_just_released = self.state.left_button_pressed;
+                            self.state.left_button_just_released |= self.state.left_button_pressed;
                             self.state.left_button_pressed = false;
                         }
                     }
@@ -143,10 +144,10 @@ impl InputManager {
                     }
                     MouseButton::Middle => {
                         if pressed {
-                            self.state.middle_button_just_pressed = !self.state.middle_button_pressed;
+                            self.state.middle_button_just_pressed |= !self.state.middle_button_pressed;
                             self.state.middle_button_pressed = true;
                         } else {
-                            self.state.middle_button_just_released = self.state.middle_button_pressed;
+                            self.state.middle_button_just_released |= self.state.middle_button_pressed;
                             self.state.middle_button_pressed = false;
                         }
                     }

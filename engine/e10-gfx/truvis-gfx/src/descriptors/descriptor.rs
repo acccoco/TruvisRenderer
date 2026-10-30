@@ -34,13 +34,13 @@ impl<T: DescriptorBindingLayout> GfxDescriptorSetLayout<T> {
     /// # 返回值
     /// 新的描述符集布局实例
     pub fn new(ctx: GfxDeviceCtx<'_>, flags: vk::DescriptorSetLayoutCreateFlags, debug_name: impl AsRef<str>) -> Self {
+        let debug_name = debug_name.as_ref();
         // 从类型 T 获取绑定信息
         let (bindings, binding_flags) = T::get_vk_bindings();
         let mut bind_flags_ci = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&binding_flags);
 
         let create_info =
             vk::DescriptorSetLayoutCreateInfo::default().flags(flags).bindings(&bindings).push_next(&mut bind_flags_ci);
-        vk::DescriptorBindingFlags::empty();
 
         let gfx_device = ctx.device();
         // 创建 Vulkan 描述符集布局
@@ -119,6 +119,7 @@ impl<T: DescriptorBindingLayout> GfxDescriptorSet<T> {
         layout: &GfxDescriptorSetLayout<T>,
         debug_name: impl AsRef<str>,
     ) -> Self {
+        let debug_name = debug_name.as_ref();
         // 分配描述符集
         let alloc_info = vk::DescriptorSetAllocateInfo::default()
             .descriptor_pool(descriptor_pool.handle())

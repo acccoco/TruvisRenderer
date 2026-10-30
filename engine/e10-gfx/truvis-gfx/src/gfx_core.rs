@@ -44,29 +44,21 @@ impl VulkanEntrySource {
 /// 包含 Entry、Instance、PhysicalDevice、Device、Queue 等 Vulkan 基础对象。
 /// 不包含内存分配器等高层抽象，仅提供 Vulkan 原生功能。
 pub struct GfxCore {
-    /// Vulkan 库入口。
-    ///
-    /// 普通路径加载系统 Vulkan loader；DLSS 路径加载 Streamline interposer。
-    /// 该字段必须比 Instance / Device 更晚 drop，因为 ash 的函数指针由 Entry 持有的 DLL 提供。
-    ///
-    /// Rust 结构体按声明顺序 drop，所以该字段放在最前面，实际销毁时最后 drop。
-    pub(crate) vk_entry: ash::Entry,
-
     pub(crate) instance: GfxInstance,
     pub(crate) physical_device: GfxPhysicalDevice,
 
-    /// Vulkan 设备函数指针集合（Rc 共享）
-    ///
-    /// 使用 `Rc` 的原因：
-    /// 1. 多个组件需要共享相同的设备函数指针（Queue、CommandBuffer 等）
-    /// 2. 函数指针本身轻量，共享比传递更高效
-    /// 3. 设备生命周期需要精确控制，`Rc` 确保在所有引用者销毁前设备不被销毁
+    /// Rc 仅共享 Rust dispatch wrapper，不延长 native device 的显式生命周期。
+    /// root 销毁前仍须由调用方回收所有 child；Rc 不能证明 GPU 已完成。
     pub(crate) gfx_device: Rc<GfxDevice>,
 
     pub(crate) debug_utils: GfxDebugMsger,
 
     pub(crate) gfx_queue: GfxCommandQueue,
     pub(crate) transfer_queue: GfxCommandQueue,
+
+    /// 函数地址由 loader 提供；显式 native 销毁期间保留 Entry，Rust 字段按声明顺序 drop。
+    /// 放在最后只保证本结构的 wrapper drop 顺序，不替代整个 Gfx 的显式销毁契约。
+    pub(crate) vk_entry: ash::Entry,
 }
 
 // 创建与销毁
@@ -75,6 +67,7 @@ impl GfxCore {
         Self::new_with_entry_source(app_name, engine_name, instance_extra_exts, VulkanEntrySource::System)
     }
 
+    /// 独立 Vulkan core 的创建入口，不协调外部 SDK；Streamline 生产路径由 Gfx 统一构造。
     pub fn new_with_entry_source(
         app_name: String,
         engine_name: String,
@@ -139,13 +132,13 @@ impl GfxCore {
         }
 
         Self {
-            vk_entry: vk_pf,
             instance,
             physical_device,
             gfx_device: device,
             debug_utils,
             gfx_queue,
             transfer_queue,
+            vk_entry: vk_pf,
         }
     }
 

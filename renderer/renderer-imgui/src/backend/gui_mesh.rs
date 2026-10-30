@@ -70,7 +70,16 @@ impl GuiMesh {
         for draw_list in draw_data.draw_lists() {
             vertices.extend_from_slice(draw_list.vtx_buffer());
         }
-        self.vertex_buffer.transfer_data_by_mmap(ctx, &vertices);
+        // 第三方 DrawVert 没有 NoUninit；锁定其无 padding 的四个 f32 + 四个 u8 布局后借用字节。
+        const {
+            assert!(size_of::<imgui::DrawVert>() == 20);
+            assert!(std::mem::offset_of!(imgui::DrawVert, pos) == 0);
+            assert!(std::mem::offset_of!(imgui::DrawVert, uv) == 8);
+            assert!(std::mem::offset_of!(imgui::DrawVert, col) == 16);
+        }
+        let bytes =
+            unsafe { std::slice::from_raw_parts(vertices.as_ptr().cast::<u8>(), size_of_val(vertices.as_slice())) };
+        self.vertex_buffer.transfer_data_by_mmap(ctx, bytes);
     }
 
     /// 从 draw data 中提取出 index 数据，更新到 index buffer

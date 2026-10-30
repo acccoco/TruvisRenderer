@@ -31,7 +31,8 @@ Runtime 不感知 GUI、selection outline、具体 RT subsystem 或 Editor contr
 | `end_frame` | 推进 frame id 和 FIF label | 无公开 ctx |
 | `shutdown` | Runtime destroy 前释放上层资源 | `RenderRuntimeShutdownCtx` |
 
-`sync_dlss_options_frame_state` 是 update 后的配置收敛点；若内部尺寸变化，它返回 resize context，由 Renderer 重建窗口尺寸资源。
+`sync_render_extent` 是 update 后的内部尺寸收敛点；若尺寸变化，它先等待 GPU idle，
+再返回 resize context，由 Renderer 重建相关资源。DLSS 配置与 optimal extent 属于 Renderer。
 
 ## Renderer 阶段
 
@@ -40,8 +41,9 @@ Renderer hook 与 Runtime phase 一一对应但不等价：
 - `init` 创建 Renderer-owned 状态和子系统资源。
 - `on_input` 消费输入并决定 camera、GUI 和业务命令的优先级。
 - `update` 修改 CPU scene、camera、配置和 Editor 请求。
-- `render_view` 提供纯数据快照，Runtime 在 `prepare` 中读取。
-- `after_prepare` 处理需要已完成 GPU scene 的即时查询，例如 picking。
+- `render_frame_input` 提供当前/上一主视图与 jitter 快照，Runtime 在 `prepare` 中读取。
+- `after_prepare` 在 GPU scene 更新提交后处理即时查询，例如 picking；同步 raycast
+  依赖同 graphics queue 顺序并等待自己的 fence，不把 prepare 返回当成 GPU 完成。
 - `render` 创建 RenderGraph 并决定 pass 顺序。
 - `render` 返回本帧主视图是否已使用 prepare 场景快照并完成 submit；Loop 随即调用
   `RenderRuntime::finish_rendered_frame` 确认实例历史，然后进入 present。
@@ -51,7 +53,7 @@ Renderer hook 与 Runtime phase 一一对应但不等价：
 ## 主体 Renderer 的帧快照
 
 `TruvisRenderer::update` 完成交互和 World mutation 后，保存本帧 `RenderView` 及 CPU overlay 展示快照。
-`render_view()`、主图 prepare、overlay 和 Offline 累计签名使用该视图；after_prepare 相机查询引起的变化下一帧才进入快照。
+`render_frame_input`、主图 prepare、overlay 和 Offline 累计签名使用该视图；after_prepare 相机查询引起的变化下一帧才进入快照。
 after_prepare 的网格 picking 通过统一 selection 提交入口清除旧 gizmo，render 依据最终 selection 生成顶点，不访问 World。
 每帧输入只消费一次，展示可在 mutation 后刷新；上传不修改展示语义。
 
@@ -75,6 +77,13 @@ flowchart LR
 ```
 
 Ctx 的生命周期限制能力可见性，也限制资源借用跨阶段保存。`RenderRuntimeRenderCtx` 不提供 CPU scene 可变访问；`RenderRuntimeRayCastCtx` 不承担一般渲染工作。
+
+这里的只读约束针对 CPU scene 与私有 GPU scene owner，不是完整的 Vulkan 权限沙箱。
+Runtime render Ctx 仍提供 device/resource/queue；SubsystemRenderCtx 不转发未使用的
+device/device-info/timeline，但保留资源和队列能力，例如 ImGui 在 prepare_render_data 中扩容并
+写入当前 FIF mesh。init/resize 仍暴露可变 FrameRenderState，能绕过尺寸请求入口；
+保持尺寸收敛顺序目前部分依赖调用契约。进一步裁剪须结合 Renderer 资源使用者复核，
+不能直接删字段或把所有 GPU 分配能力改成不可变就声称安全。
 
 ## Subsystem 组合
 
@@ -114,6 +123,11 @@ Ctx 的生命周期限制能力可见性，也限制资源借用跨阶段保存�
 phase 返回值表达当前阶段能否继续，而不是替上层猜测最终画面结果。resize 返回 `None` 只表示没有需要传播的 Runtime resize；它不表示 Renderer resource 一定已同步。
 
 Runtime 错误应在 RenderLoop 的阶段边界处理。Renderer 不应在 render hook 中补做 update 或 prepare，也不应通过 catch error 隐藏 phase 顺序错误。
+
+当前实现偏差：Loop 不在每个阶段捕获 panic；失败直接退到线程外层，未必执行完整
+shutdown。提交成功前不确认上传/历史，signal 或 present 未正常返回时不推进帧号；
+已经确认的上传或主视图历史不因后续 present 失败回滚。这里的确认表示提交事实，
+不表示 GPU 完成或图像已经显示。完整错误退场需补齐 owner 完成信息后再设计。
 
 ## 变更检查
 

@@ -191,19 +191,19 @@ impl ManualScene {
             _half_u_padding: Default::default(),
             _half_v_padding: Default::default(),
             _radiance_padding: Default::default(),
-        });
+        }).expect("invalid built-in area light");
 
         world.register_point_light(gpu::engine::light::PointLight {
             pos: glam::vec3(-4.0, 3.0, 2.0).into(),
             color: (glam::vec3(1.0, 0.45, 0.25) * 150.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
-        });
+        }).expect("invalid built-in point light");
         world.register_point_light(gpu::engine::light::PointLight {
             pos: glam::vec3(4.0, 3.0, 2.0).into(),
             color: (glam::vec3(0.25, 0.45, 1.0) * 150.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
-        });
+        }).expect("invalid built-in point light");
     }
 }

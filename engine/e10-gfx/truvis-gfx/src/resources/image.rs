@@ -33,20 +33,28 @@ impl VulkanFormatUtils {
 
         let is_in_format_region = |format: vk::Format, regions: &[(vk::Format, vk::Format)]| {
             let n = format.as_raw();
-            regions.iter().any(|(begin, end)| begin.as_raw() <= n && n < end.as_raw())
+            regions.iter().any(|(begin, end)| begin.as_raw() <= n && n <= end.as_raw())
         };
 
         match format {
             vk::Format::R32_SFLOAT => 4,
-            // 上面的 region helper 使用半开区间；RGBA16F 恰好是该范围终点，
-            // 因此必须显式列出，保证 HDR staging copy 按 8 bytes/texel 校验。
-            vk::Format::R16G16B16A16_SFLOAT => 8,
             f if is_in_format_region(f, &BYTE_3_FORMAT) => 3,
             f if is_in_format_region(f, &BYTE_4_FORMAT) => 4,
             f if is_in_format_region(f, &BYTE_6_FORMAT) => 6,
             f if is_in_format_region(f, &BYTE_8_FORMAT) => 8,
             _ => panic!("unsupported format: {:?}", format),
         }
+    }
+
+    /// 仅供紧密排列的 2D 上传使用；先在宿主字节范围内求积，避免 u32 像素数回绕。
+    fn image_2d_byte_size(format: vk::Format, width: u32, height: u32) -> usize {
+        assert!(width > 0 && height > 0, "image upload extent must be nonzero");
+        let pixel_size = Self::pixel_size_in_bytes(format);
+        (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(pixel_size))
+            .filter(|bytes| *bytes <= isize::MAX as usize)
+            .expect("image upload exceeds host addressable range")
     }
 }
 
@@ -137,6 +145,7 @@ impl GfxImage {
     ) -> Self {
         let allocator = ctx.allocator();
         let gfx_device = ctx.device();
+        let name = debug_name.to_owned();
         let (image, alloc) = with_vma_debug_name(alloc_info, debug_name, |alloc_info| unsafe {
             allocator.create_image(&image_info.as_info(), alloc_info).unwrap()
         });
@@ -148,31 +157,35 @@ impl GfxImage {
             usage: image_info.inner.usage,
             flags: image_info.inner.flags,
 
-            name: debug_name.to_string(),
+            name,
         };
-        gfx_device.set_debug_name(&image, debug_name);
+        gfx_device.set_debug_name(&image, &image.name);
         image
     }
 
+    /// 外部 native owner 提供真实创建参数；此 wrapper 只跟踪元数据，不销毁 image 本体。
     pub fn from_external(
         ctx: GfxResourceCtx<'_>,
         image: vk::Image,
         extent: vk::Extent3D,
         format: vk::Format,
+        usage: vk::ImageUsageFlags,
+        flags: vk::ImageCreateFlags,
         name: impl AsRef<str>,
     ) -> Self {
         let gfx_device = ctx.device();
+        let name = name.as_ref().to_owned();
         let image = Self {
             handle: image,
             source: ImageSource::External,
             extent,
             format,
-            usage: vk::ImageUsageFlags::empty(),
-            flags: vk::ImageCreateFlags::empty(),
+            usage,
+            flags,
 
-            name: name.as_ref().to_string(),
+            name,
         };
-        gfx_device.set_debug_name(&image, name.as_ref());
+        gfx_device.set_debug_name(&image, &image.name);
         image
     }
 
@@ -186,6 +199,8 @@ impl GfxImage {
         data: &[u8],
         name: impl AsRef<str>,
     ) -> Self {
+        let name = name.as_ref();
+        assert_eq!(data.len(), VulkanFormatUtils::image_2d_byte_size(vk::Format::R8G8B8A8_UNORM, width, height));
         let image_create_info = GfxImageCreateInfo::new_image_2d_info(
             vk::Extent2D { width, height },
             vk::Format::R8G8B8A8_UNORM,
@@ -198,11 +213,10 @@ impl GfxImage {
                 usage: vk_mem::MemoryUsage::AutoPreferDevice,
                 ..Default::default()
             },
-            name.as_ref(),
+            name,
         );
 
-        let stage_buffer =
-            immediate_ctx.one_time_exec(|cmd| image.transfer_data(resource_ctx, cmd, data), name.as_ref());
+        let stage_buffer = immediate_ctx.one_time_exec(|cmd| image.transfer_data(resource_ctx, cmd, data), name);
         stage_buffer.destroy(resource_ctx, DestroyReason::ScopeDrop);
 
         image
@@ -221,10 +235,6 @@ impl DebugType for GfxImage {
 // 销毁
 impl GfxImage {
     pub fn destroy(mut self, ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
-        self.release(ctx, reason);
-    }
-
-    fn release(&mut self, ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
         if self.handle.is_null() {
             return;
         }
@@ -236,6 +246,7 @@ impl GfxImage {
             ImageSource::Allocated(allocation) => unsafe { ctx.allocator().destroy_image(self.handle, allocation) },
         }
         self.handle = vk::Image::null();
+        self.source = ImageSource::External;
     }
 }
 impl Drop for GfxImage {
@@ -256,59 +267,63 @@ impl GfxImage {
     /// 3. 进行图像布局转换
     /// 4. 将 staging buffer 的数据复制到图像
     /// 5. 进行图像布局转换
+    ///
+    /// 只写 mip 0/layer 0，丢弃旧内容；owner 保证 TRANSFER_DST usage、GPU 安全点和 graphics queue。
+    /// 返回的 staging buffer 须等命令执行完成后释放；结束屏障覆盖同一 queue 上所有 shader 读取。
+    /// 不同 queue 的消费者还需 semaphore wait，不能仅依赖此屏障或 CPU 完成查询。
     pub fn transfer_data(
         &self,
         resource_ctx: GfxResourceCtx<'_>,
         command_buffer: &GfxCommandBuffer,
         data: &[u8],
     ) -> GfxBuffer {
-        let pixels_cnt = self.width() * self.height();
-        assert_eq!(data.len(), VulkanFormatUtils::pixel_size_in_bytes(self.format()) * pixels_cnt as usize);
+        assert_eq!(self.extent.depth, 1, "image upload only supports depth 1");
+        assert_eq!(data.len(), VulkanFormatUtils::image_2d_byte_size(self.format(), self.width(), self.height()));
 
-        let stage_buffer =
+        let mut stage_buffer =
             GfxBuffer::new_stage_buffer(resource_ctx, size_of_val(data) as vk::DeviceSize, "image-stage-buffer");
         stage_buffer.transfer_data_by_mmap(resource_ctx, data);
 
-        // 1. 转换 image layout
-        // 2. 将 buffer 复制到 image
-        // 3. 再次转换 layout，让 fragment shader 可读
-        {
-            let image_barrier = GfxImageBarrier::new()
-                .image(self.handle)
-                .src_mask(vk::PipelineStageFlags2::TOP_OF_PIPE, vk::AccessFlags2::empty())
-                .dst_mask(vk::PipelineStageFlags2::TRANSFER, vk::AccessFlags2::TRANSFER_WRITE)
-                .layout_transfer(vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                .image_aspect_flag(vk::ImageAspectFlags::COLOR);
-            command_buffer.image_memory_barrier(vk::DependencyFlags::empty(), std::slice::from_ref(&image_barrier));
+            // 1. 转换 image layout
+            // 2. 将 buffer 复制到 image
+            // 3. 再次转换 layout，让同一 queue 上的 shader 消费者可读
+            {
+                let image_barrier = GfxImageBarrier::new()
+                    .image(self.handle)
+                    .src_mask(vk::PipelineStageFlags2::TOP_OF_PIPE, vk::AccessFlags2::empty())
+                    .dst_mask(vk::PipelineStageFlags2::TRANSFER, vk::AccessFlags2::TRANSFER_WRITE)
+                    .layout_transfer(vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .image_aspect_flag(vk::ImageAspectFlags::COLOR);
+                command_buffer.image_memory_barrier(vk::DependencyFlags::empty(), std::slice::from_ref(&image_barrier));
 
-            let buffer_image_copy = vk::BufferImageCopy2::default()
-                .buffer_offset(0)
-                .buffer_row_length(0)
-                .buffer_image_height(0)
-                .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
-                .image_extent(vk::Extent3D {
-                    width: self.width(),
-                    height: self.height(),
-                    depth: 1,
-                })
-                .image_subresource(vk::ImageSubresourceLayers {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    mip_level: 0,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                });
-            command_buffer.cmd_copy_buffer_to_image(
-                &vk::CopyBufferToImageInfo2::default()
-                    .src_buffer(stage_buffer.vk_buffer())
-                    .dst_image(self.handle)
-                    .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .regions(std::slice::from_ref(&buffer_image_copy)),
-            );
+                let buffer_image_copy = vk::BufferImageCopy2::default()
+                    .buffer_offset(0)
+                    .buffer_row_length(0)
+                    .buffer_image_height(0)
+                    .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+                    .image_extent(vk::Extent3D {
+                        width: self.width(),
+                        height: self.height(),
+                        depth: 1,
+                    })
+                    .image_subresource(vk::ImageSubresourceLayers {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        mip_level: 0,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    });
+                command_buffer.cmd_copy_buffer_to_image(
+                    &vk::CopyBufferToImageInfo2::default()
+                        .src_buffer(stage_buffer.vk_buffer())
+                        .dst_image(self.handle)
+                        .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                        .regions(std::slice::from_ref(&buffer_image_copy)),
+                );
 
             let image_barrier = GfxImageBarrier::new()
                 .image(self.handle)
                 .src_mask(vk::PipelineStageFlags2::TRANSFER, vk::AccessFlags2::TRANSFER_WRITE)
-                .dst_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER, vk::AccessFlags2::SHADER_READ)
+                .dst_mask(vk::PipelineStageFlags2::ALL_COMMANDS, vk::AccessFlags2::SHADER_READ)
                 .layout_transfer(vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .image_aspect_flag(vk::ImageAspectFlags::COLOR);
             command_buffer.image_memory_barrier(vk::DependencyFlags::empty(), std::slice::from_ref(&image_barrier));
@@ -326,6 +341,7 @@ pub struct GfxImageCreateInfo {
 impl GfxImageCreateInfo {
     #[inline]
     pub fn new_image_2d_info(extent: vk::Extent2D, format: vk::Format, usage: vk::ImageUsageFlags) -> Self {
+        assert!(extent.width > 0 && extent.height > 0, "image extent must be nonzero");
         Self {
             inner: vk::ImageCreateInfo {
                 image_type: vk::ImageType::TYPE_2D,
@@ -359,11 +375,13 @@ impl GfxImageCreateInfo {
     // 构建器
     #[inline]
     pub fn queue_family_indices(mut self, queue_family_indices: &[u32]) -> Self {
+        assert!(queue_family_indices.len() >= 2, "concurrent image requires at least two queue families");
+        for (index, family) in queue_family_indices.iter().enumerate() {
+            assert!(!queue_family_indices[..index].contains(family), "concurrent image queue families must be unique");
+        }
         self.inner.sharing_mode = vk::SharingMode::CONCURRENT;
         self.queue_family_indices = queue_family_indices.into();
-
-        self.inner.queue_family_index_count = self.queue_family_indices.len() as u32;
-        self.inner.p_queue_family_indices = self.queue_family_indices.as_ptr();
+        // native 指针只在 as_info 的借用投影中设置，持久状态只保留拥有的 Vec。
         self
     }
 }

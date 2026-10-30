@@ -153,9 +153,11 @@ impl RgImageState {
     /// 写操作的 access flags
     const WRITE_ACCESS: vk::AccessFlags2 = vk::AccessFlags2::from_raw(
         vk::AccessFlags2::SHADER_STORAGE_WRITE.as_raw()
+            | vk::AccessFlags2::SHADER_WRITE.as_raw()
             | vk::AccessFlags2::COLOR_ATTACHMENT_WRITE.as_raw()
             | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE.as_raw()
             | vk::AccessFlags2::TRANSFER_WRITE.as_raw()
+            | vk::AccessFlags2::HOST_WRITE.as_raw()
             | vk::AccessFlags2::MEMORY_WRITE.as_raw(),
     );
 

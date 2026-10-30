@@ -30,7 +30,20 @@ standalone 的日志初始化、图标资源路径和窗口外观由具体 app �
 - viewport 几何只属于窗口层；输入通过 `InputEvent` 进入 `RenderLoop`，resize 继续使用 latest-size、generation 和 debounce。
 - render child 收到鼠标按下后由窗口线程执行 `SetFocus`；点击 WebView 后焦点按 Windows 默认行为返回，不复制键盘事件。
 - 窗口 owner 正常路径先等待 `RenderThread::join` 完成，再销毁 `Window`；字段 drop 顺序与 RenderThread fallback
-  同时覆盖异常展开，embedded 入口随后 join `RenderWindowThread`，保证 parent HWND 最后释放。
+  同时保持异常展开时的线程/窗口先后，embedded 入口随后 join `RenderWindowThread`。调用方须保持 parent HWND
+  存活；join 的错误返回不证明 Runtime 的 Vulkan/WSI 已完整释放，不能把字段顺序当作 GPU 回收凭据。
+
+## 错误交接
+
+embedded spawn 成功仅表示 EventLoopProxy 已交付，child 创建/首个非零 rect 的应用仍是
+异步操作；set_viewport_rect 返回成功也只代表事件已投递。Handler 保留首个创建/几何
+应用错误，窗口线程在 render join 和 window drop 后返回它，显式 shutdown 再交给调用方。
+非零 event-loop 退出码同样返回错误，渲染线程 panic 优先于宿主错误和退出码。
+
+standalone 先显式关闭再检查退出码。两种路径不在关闭与结果交接之间插入日志；embedded
+Drop 仅等待退出而不报告错误，正常调用方须使用 shutdown。窗口线程中其它 panic 仍可能
+走字段 Drop，不构成完整 native 失败恢复。当前 App 在 shutdown 收到宿主错误后记录日志，
+没有新增运行期间的错误通知协议。
 
 ## 依赖边界
 

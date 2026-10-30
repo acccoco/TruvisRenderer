@@ -187,10 +187,8 @@ impl DlssJitterSequence {
             return [0.0, 0.0];
         }
 
-        let next_index = self.index.wrapping_add(1);
-        let index = if next_index == 0 { 1 } else { next_index };
-        self.index = index;
-        [Self::halton(index, 2) - 0.5, Self::halton(index, 3) - 0.5]
+        self.index = self.index.wrapping_add(1).max(1);
+        [Self::halton(self.index, 2) - 0.5, Self::halton(self.index, 3) - 0.5]
     }
 
     fn halton(mut index: u32, base: u32) -> f32 {
@@ -242,8 +240,11 @@ impl<'a> DlssCommonConstantsBuilder<'a> {
         let previous_clip_from_world = self.previous_view.projection * self.previous_view.view;
         // Streamline 仍需要 current clip <-> previous clip 的关系；shader 写入的 2D
         // motion vector 已包含 camera motion，因此这里不再让 Streamline 补相机运动。
-        let clip_to_prev_clip = previous_clip_from_world * current_clip_from_world.inverse();
-        let prev_clip_to_clip = clip_to_prev_clip.inverse();
+
+        // 复用 RenderView 已有的逆矩阵，分别构造两个方向；再次求逆组合矩阵会放大投影的数值误差。
+        let clip_to_prev_clip = previous_clip_from_world * self.render_view.inv_view * self.render_view.inv_projection;
+        let prev_clip_to_clip =
+            current_clip_from_world * self.previous_view.inv_view * self.previous_view.inv_projection;
 
         DlssSrFrameConstants {
             camera_view_to_clip: DlssSrFrameConstants::row_major(self.render_view.projection),
@@ -380,7 +381,6 @@ impl DlssSrState {
         }
         match evaluation {
             DlssEvaluation::Succeeded => self.reset_pending = false,
-            DlssEvaluation::Failed => self.reset_pending = true,
             DlssEvaluation::NotRun => self.reset_pending |= scene_submitted,
         }
     }

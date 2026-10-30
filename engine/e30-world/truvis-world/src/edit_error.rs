@@ -31,6 +31,7 @@ pub enum SceneEditError {
     },
     /// mesh payload 不满足 scene store 的长期语义约束。
     InvalidMeshData { reason: String },
+    InvalidInstanceData { reason: String },
     InvalidMaterialData { reason: String },
     InvalidLightData { reason: String },
     InvalidSkyData {
@@ -49,6 +50,7 @@ impl fmt::Display for SceneEditError {
                 write!(f, "scene {kind:?} is still referenced by {dependent_count} object(s)")
             }
             Self::InvalidMeshData { reason } => write!(f, "invalid mesh data: {reason}"),
+            Self::InvalidInstanceData { reason } => write!(f, "invalid instance data: {reason}"),
             Self::InvalidMaterialData { reason } => write!(f, "invalid material data: {reason}"),
             Self::InvalidSkyData { reason } => write!(f, "invalid sky data: {reason}"),
             Self::InvalidLightData { reason } => write!(f, "invalid light data: {reason}"),

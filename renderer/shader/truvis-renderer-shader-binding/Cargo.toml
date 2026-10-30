@@ -5,6 +5,7 @@ edition = "2024"
 description = "Renderer-owned shader ABI Rust binding"
 
 [dependencies]
+bytemuck = { workspace = true }
 truvis-shader-binding = { workspace = true }
 
 [build-dependencies]

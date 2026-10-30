@@ -102,7 +102,7 @@ impl DlssRrPass {
             Ok(()) => DlssEvaluation::Succeeded,
             Err(err) => {
                 log::error!("DLSS RR evaluate failed: {}", err);
-                DlssEvaluation::Failed
+                panic!("DLSS RR evaluate failed: {err}");
             }
         };
         cmd.end_label();

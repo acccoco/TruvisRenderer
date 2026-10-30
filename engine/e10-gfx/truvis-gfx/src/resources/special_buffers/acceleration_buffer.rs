@@ -17,7 +17,7 @@ impl GfxAccelerationScratchBuffer {
             ctx,
             size,
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-            Some(ctx.acceleration_scratch_alignment),
+            Some(u64::from(ctx.acceleration_structure_props.min_acceleration_structure_scratch_offset_alignment)),
             false,
             name,
         );
@@ -57,7 +57,8 @@ impl GfxAccelerationInstanceBuffer {
             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            None,
+            // arrayOfPointers=false 的连续 instance record 要求 device address 按 16 字节对齐。
+            Some(16),
             false,
             name,
         );

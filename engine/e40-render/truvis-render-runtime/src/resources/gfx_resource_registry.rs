@@ -32,8 +32,7 @@ pub struct GfxResourceRegistry {
     /// 用于缓存：ImageHandle -> 所有关联的 ImageViewHandle
     image_to_views: SecondaryMap<GfxImageHandle, Vec<GfxImageViewHandle>>,
 
-    // 待销毁队列 (用于延迟销毁，例如在帧结束时)
-    // (handle, frame_index)
+    /// 每个 handle 只保留最新退役帧；调用方须先停止发布/使用，cleanup 前须完成对应 FIF 等待。
     pending_destroy_buffers: Vec<(GfxBufferHandle, u64, DestroyReason)>,
     pending_destroy_images: Vec<(GfxImageHandle, u64, DestroyReason)>,
 
@@ -138,7 +137,7 @@ impl Drop for GfxResourceRegistry {
 impl GfxResourceRegistry {
     /// 清理已过期的资源
     ///
-    /// 检查待销毁队列，销毁那些已经不再被 GPU 使用的资源（即提交销毁时的帧索引 <= completed_frame_index）。
+    /// 调用前必须确认 current_frame_id - FIF 已完成；这里按退役帧计算年龄，不自行等待 GPU。
     pub fn cleanup(&mut self, resource_ctx: GfxResourceCtx<'_>, device_ctx: GfxDeviceCtx<'_>, current_frame_id: u64) {
         let _span = tracy_client::span!("ResourceManager::cleanup");
 
@@ -147,7 +146,7 @@ impl GfxResourceRegistry {
         // 清理 buffers
         let mut buffers_to_destroy = Vec::new();
         self.pending_destroy_buffers.retain(|(buffer_handle, frame_index, reason)| {
-            if *frame_index + FIF <= current_frame_id {
+            if current_frame_id.checked_sub(*frame_index).is_some_and(|age| age >= FIF) {
                 buffers_to_destroy.push((*buffer_handle, *reason));
                 false
             } else {
@@ -170,7 +169,7 @@ impl GfxResourceRegistry {
         // 清理 images
         let mut images_to_destroy = Vec::new();
         self.pending_destroy_images.retain(|(image_handle, frame_index, reason)| {
-            if *frame_index + FIF <= current_frame_id {
+            if current_frame_id.checked_sub(*frame_index).is_some_and(|age| age >= FIF) {
                 images_to_destroy.push((*image_handle, *reason));
                 false
             } else {
@@ -185,6 +184,7 @@ impl GfxResourceRegistry {
 // Buffer 资源 API
 impl GfxResourceRegistry {
     pub fn register_buffer(&mut self, buffer: GfxBuffer) -> GfxBufferHandle {
+        self.destroyed = false;
         self.buffer_pool.insert(buffer)
     }
 
@@ -213,8 +213,16 @@ impl GfxResourceRegistry {
 
     /// 销毁 Buffer（指定帧索引）
     ///
-    /// 将 Buffer 加入待销毁队列，在 `current_frame_index` 对应的帧完成后销毁。
+    /// 停止后续使用后登记退役帧；重复登记只延后回收，不得让较早请求提前释放资源。
     pub fn release_buffer_deferred(&mut self, handle: GfxBufferHandle, current_frame_index: u64) {
+        if !self.buffer_pool.contains_key(handle) {
+            return;
+        }
+        if let Some((_, frame, _)) = self.pending_destroy_buffers.iter_mut().find(|(pending, _, _)| *pending == handle)
+        {
+            *frame = (*frame).max(current_frame_index);
+            return;
+        }
         self.pending_destroy_buffers.push((handle, current_frame_index, DestroyReason::DeferredCleanup));
     }
 
@@ -247,6 +255,7 @@ impl GfxResourceRegistry {
 // 图像 API
 impl GfxResourceRegistry {
     pub fn register_image(&mut self, image: GfxImage) -> GfxImageHandle {
+        self.destroyed = false;
         self.image_pool.insert(image)
     }
 
@@ -268,8 +277,15 @@ impl GfxResourceRegistry {
 
     /// 销毁 Image（指定帧索引）
     ///
-    /// 同时会销毁默认的 ImageView。
+    /// 停止后续使用后登记退役帧；到期后同时释放全部关联 ImageView，重复登记只延后回收。
     pub fn release_image_deferred(&mut self, handle: GfxImageHandle, current_frame_index: u64) {
+        if !self.image_pool.contains_key(handle) {
+            return;
+        }
+        if let Some((_, frame, _)) = self.pending_destroy_images.iter_mut().find(|(pending, _, _)| *pending == handle) {
+            *frame = (*frame).max(current_frame_index);
+            return;
+        }
         self.pending_destroy_images.push((handle, current_frame_index, DestroyReason::DeferredCleanup));
     }
 
@@ -286,6 +302,7 @@ impl GfxResourceRegistry {
         self.release_image_now(resource_ctx, device_ctx, handle, reason);
     }
 
+    /// 先移除索引并释放全部关联 views，再释放 image 本身。
     fn release_image_now(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,

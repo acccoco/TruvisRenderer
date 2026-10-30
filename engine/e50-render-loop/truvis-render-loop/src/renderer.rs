@@ -61,9 +61,9 @@ pub trait Renderer {
 
     /// 在 runtime prepare 完成后、render graph 组图前执行 Renderer 同步查询。
     ///
-    /// 该阶段 GPU scene/TLAS 已按当前 CPU world 与 camera 快照完成同步，适合调用
-    /// `RenderRuntimeRayCastCtx::cast_sync` 做即时拾取。默认实现为空，避免未使用 raycast
-    /// 的 Renderer 需要额外接入。
+    /// 该阶段 GPU scene/TLAS 更新已按当前 CPU world 与 camera 快照提交到 graphics queue，
+    /// 不代表 CPU 已观察到 GPU 完成。`RenderRuntimeRayCastCtx::cast_sync` 依赖同队列顺序，
+    /// 并等待自己的 fence 后返回拾取结果。默认实现为空。
     fn after_prepare(&mut self, _ctx: &mut RenderRuntimeRayCastCtx<'_>) {}
 
     /// 构建并录制本帧 Renderer 语义下的渲染工作。

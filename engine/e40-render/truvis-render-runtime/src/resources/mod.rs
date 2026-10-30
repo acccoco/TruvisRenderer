@@ -1,5 +1,4 @@
-//! manager-owned GPU 资源、命令与 staging buffer 生命周期 owner。
+//! manager-owned GPU 资源与命令生命周期 owner。
 
 pub mod cmd_allocator;
 pub mod gfx_resource_registry;
-pub mod stage_buffer_manager;

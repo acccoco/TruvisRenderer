@@ -5,6 +5,7 @@ use renderer_kit::camera::Camera;
 pub struct FrameStatsOverlayData<'a> {
     pub camera: &'a Camera,
     pub swapchain_extent: vk::Extent2D,
+    /// Renderer 提供的相机签名稳定 update 次数，不是 GPU 累计样本数。
     pub accum_frames_num: usize,
 }
 
@@ -88,7 +89,7 @@ impl DebugInfoOverlay {
         ));
         ui.text(format!("CameraAspect: {:.2}", camera.asp));
         ui.text(format!("CameraFov(Vertical): {:.2}\u{00b0}", camera.fov_deg_vertical));
-        ui.text(format!("Accum Frames: {}", stats.accum_frames_num));
+        ui.text(format!("Stable View Updates: {}", stats.accum_frames_num));
         ui.new_line();
     }
 }

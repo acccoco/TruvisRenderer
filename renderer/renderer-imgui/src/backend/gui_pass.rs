@@ -64,6 +64,7 @@ struct GuiDescriptorBinding {
 }
 
 pub struct GuiPass {
+    color_format: vk::Format,
     pipeline: GfxGraphicsPipeline,
     pipeline_layout: Rc<GfxPipelineLayout>,
     descriptor_set_layout: GfxDescriptorSetLayout<GuiDescriptorBinding>,
@@ -121,6 +122,7 @@ impl GuiPass {
         let pipeline = GfxGraphicsPipeline::new(ctx, &create_info, pipeline_layout.clone(), "uipass");
 
         Self {
+            color_format,
             pipeline,
             pipeline_layout,
             descriptor_set_layout,
@@ -131,6 +133,21 @@ impl GuiPass {
         self.pipeline.destroy(ctx);
         self.pipeline_layout.destroy(ctx);
         self.descriptor_set_layout.destroy(ctx);
+    }
+
+    /// 仅在 GPU idle 后调用；格式变化时替换 pipeline，不改变 ImGui context、字体或 mesh。
+    pub fn rebuild_for_format(
+        &mut self,
+        ctx: GfxDeviceCtx<'_>,
+        global_descriptor_sets: &GlobalDescriptorSets,
+        color_format: vk::Format,
+    ) {
+        if self.color_format == color_format {
+            return;
+        }
+        let replacement = Self::new(ctx, global_descriptor_sets, color_format);
+        let old = std::mem::replace(self, replacement);
+        old.destroy(ctx);
     }
 }
 // 绘制

@@ -255,8 +255,16 @@ impl SubsystemLifecycle for ImGuiSubsystem {
     }
 
     fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
-        let extent = ctx.present.swapchain_image_info().image_extent;
+        let image_info = ctx.present.swapchain_image_info();
+        let extent = image_info.image_extent;
         self.set_display_size([extent.width, extent.height]);
+        if let Some(pass) = self.gui_pass.as_mut() {
+            pass.rebuild_for_format(
+                ctx.device_ctx,
+                ctx.shader_binding_system.global_descriptor_sets(),
+                image_info.image_format,
+            );
+        }
     }
 
     fn shutdown(&mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {

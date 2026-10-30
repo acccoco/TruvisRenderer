@@ -132,21 +132,6 @@ pub struct DlssSupport {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-/// 非 proxy 集成方式使用的 Vulkan root 信息。
-///
-/// 当前 Truvis 生产路径通过 `sl.interposer.dll` 创建 Vulkan entry，因此 runtime 不主动调用
-/// `set_vulkan_info`。保留该结构是为了未来切换到手动 hook/非 proxy 路径时不用改 ABI。
-pub struct VulkanInfo {
-    pub instance: u64,
-    pub physical_device: u64,
-    pub device: u64,
-    pub graphics_queue_family: u32,
-    pub graphics_queue_index: u32,
-    pub compute_queue_family: u32,
-    pub compute_queue_index: u32,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
 /// Streamline resource tag 所需的 Vulkan 图像快照。
 ///
 /// 所有 handle 都是 raw Vulkan handle，layout/format/usage 必须反映录制该帧 command buffer 时的
@@ -278,22 +263,6 @@ pub struct DlssRrEvaluateDesc {
 
 fn check(result: i32, context: &'static str) -> Result<(), StreamlineError> {
     if result == 0 { Ok(()) } else { Err(StreamlineError::new(result, context)) }
-}
-
-///
-/// # Safety
-/// 调用须满足模块级串行与 runtime 存活契约。instance/physical_device/device 必须有效且属于同一 Vulkan root；queue family/index 必须来自该 device，根对象须覆盖 SDK 使用期。仅供手动 hook 路径使用。
-pub unsafe fn set_vulkan_info(info: VulkanInfo) -> Result<(), StreamlineError> {
-    let ffi = truvixx::TruvixxSlVulkanInfo {
-        instance: info.instance,
-        physical_device: info.physical_device,
-        device: info.device,
-        graphics_queue_family: info.graphics_queue_family,
-        graphics_queue_index: info.graphics_queue_index,
-        compute_queue_family: info.compute_queue_family,
-        compute_queue_index: info.compute_queue_index,
-    };
-    check(unsafe { truvixx::truvixx_sl_set_vulkan_info(&ffi) }, "slSetVulkanInfo")
 }
 
 /// 查询当前物理设备是否支持 DLSS SR。

@@ -4,19 +4,21 @@ use ash::vk;
 use slotmap::{Key, SecondaryMap};
 
 use truvis_gfx::{gfx::GfxDeviceCtx, utilities::descriptor_cursor::GfxDescriptorCursor};
+use truvis_render_foundation::frame_label::FrameLabel;
+use truvis_render_foundation::handles::GfxImageViewHandle;
 use truvis_shader_binding::gpu;
 
 use crate::bindings::descriptor_bindings::{BindlessDescriptorBinding, BindlessDescriptorTarget};
 use crate::resources::gfx_resource_registry::GfxResourceRegistry;
-use truvis_render_foundation::frame_label::FrameLabel;
-use truvis_render_foundation::handles::GfxImageViewHandle;
 
 #[derive(Copy, Clone)]
 pub struct BindlessSrvHandle(pub gpu::engine::bindless::SrvHandle);
 impl BindlessSrvHandle {
     #[inline]
     pub fn new(index: usize) -> Self {
-        Self(gpu::engine::bindless::SrvHandle { index: index as i32 })
+        Self(gpu::engine::bindless::SrvHandle {
+            index: i32::try_from(index).expect("bindless SRV index exceeds shader integer range"),
+        })
     }
     #[inline]
     pub fn null() -> Self {
@@ -26,7 +28,7 @@ impl BindlessSrvHandle {
     }
     #[inline]
     pub fn index(&self) -> usize {
-        self.0.index as usize
+        usize::try_from(self.0.index).expect("null bindless SRV has no slot index")
     }
 }
 impl Default for BindlessSrvHandle {
@@ -44,7 +46,7 @@ impl Default for BindlessSrvHandle {
 /// - 使用单套 descriptor set（配合 `UPDATE_UNUSED_WHILE_PENDING_BIT`），slot 是稳定的：
 ///
 /// # 更新与回收
-/// - `dirty` map 的 value 记录最后写入时的 `frame_id`，用于延迟回收 slot
+/// - `dirty` map 的 value 记录最后修改时的 `frame_id`，用于延迟回收 slot
 /// - add 可以立即写入 descriptor，因为可以确保这个 slot 不会被 GPU 同时访问
 ///
 /// # 安全性
@@ -62,8 +64,7 @@ pub struct BindlessManager {
     // 逆向映射：handle → slot（辅助查询）
     srvs_handle_to_slot: SecondaryMap<GfxImageViewHandle, usize>,
 
-    // TODO 新增专门的 pending remove 和 pending write 字段，而不是使用复杂的方法判断是 add 还是 remove
-    /// dirty 列表：key=slot，value=最后修改时的 frame_id
+    /// Some slot 等待写入，None slot 等待退役；共用修改帧号，避免维护平行身份表。
     dirty_srvs: HashMap<usize, u64>,
 
     /// 当前帧的 token，用于计算 dirty 条目的 age
@@ -90,23 +91,28 @@ impl BindlessManager {
     }
 }
 
-impl Drop for BindlessManager {
-    fn drop(&mut self) {
-        log::info!("Dropping BindlessManager");
-    }
-}
-
 // 更新
 impl BindlessManager {
+    /// 调用前须完成 current_frame_id-FIF 的 timeline 等待；先归还到期 slot，再允许本帧注册。
     pub fn begin_frame(&mut self, current_frame_id: u64) {
         self.current_frame_id = current_frame_id;
+        self.dirty_srvs.retain(|&slot, dirty_frame_id| {
+            if self.srvs_slots[slot].is_none()
+                && current_frame_id.checked_sub(*dirty_frame_id).is_some_and(|age| age >= FrameLabel::COUNT as u64)
+            {
+                self.srvs_free_slots.push(slot);
+                false
+            } else {
+                true
+            }
+        });
     }
 
     /// # 阶段：Before Render
     ///
     /// 增量更新 bindless descriptor set：
     /// - 对新注册的 slot（`slots[slot] = Some`），写入 descriptor 后立即从 dirty 移除
-    /// - 对已注销的 slot（`slots[slot] = None`），等 age >= FIF_COUNT 后归还 free_list
+    /// - 已注销 slot 的到期回收由 begin_frame 完成，不能延迟到本帧注册之后
     pub fn prepare_render_data(
         &mut self,
         ctx: GfxDeviceCtx<'_>,
@@ -116,13 +122,11 @@ impl BindlessManager {
         let _span = tracy_client::span!("BindlessManager::prepare_render_data");
 
         let bindless_set = bindless_target.set;
-        let fif = FrameLabel::COUNT as u64;
         let mut writes = Vec::new();
 
         // 处理 SRV dirty 条目
         let mut srvs_to_remove: Vec<usize> = Vec::new();
-        let mut srvs_to_reclaim: Vec<usize> = Vec::new();
-        for (&slot, &dirty_frame_id) in &self.dirty_srvs {
+        for &slot in self.dirty_srvs.keys() {
             match self.srvs_slots[slot] {
                 Some(view_handle) => {
                     // 新注册的 slot：写入 descriptor，立即从 dirty 移除
@@ -137,14 +141,7 @@ impl BindlessManager {
                     ));
                     srvs_to_remove.push(slot);
                 }
-                None => {
-                    // 已注销的 slot：等 GPU 不再访问后归还
-                    let age = self.current_frame_id.saturating_sub(dirty_frame_id);
-                    if age >= fif {
-                        srvs_to_remove.push(slot);
-                        srvs_to_reclaim.push(slot);
-                    }
-                }
+                None => (),
             }
         }
 
@@ -153,12 +150,9 @@ impl BindlessManager {
             ctx.device().write_descriptor_sets(&writes);
         }
 
-        // 清除已处理的 dirty 条目，归还已回收的 slot
+        // 只有写入完成才撤销 dirty；失败时保留原条目，不提前交付。
         for slot in srvs_to_remove {
             self.dirty_srvs.remove(&slot);
-        }
-        for slot in srvs_to_reclaim {
-            self.srvs_free_slots.push(slot);
         }
     }
 }
@@ -166,7 +160,7 @@ impl BindlessManager {
 // SRV 资源
 impl BindlessManager {
     pub fn register_srv(&mut self, image_view_handle: GfxImageViewHandle) {
-        debug_assert!(!image_view_handle.is_null());
+        assert!(!image_view_handle.is_null(), "cannot register a null image view");
         if self.srvs_handle_to_slot.contains_key(image_view_handle) {
             log::error!("SRV handle {:?} is already registered", image_view_handle);
             return;
@@ -178,7 +172,7 @@ impl BindlessManager {
     }
 
     pub fn unregister_srv(&mut self, image_view_handle: GfxImageViewHandle) {
-        debug_assert!(!image_view_handle.is_null());
+        assert!(!image_view_handle.is_null(), "cannot unregister a null image view");
         let slot = self.srvs_handle_to_slot.remove(image_view_handle).unwrap();
         self.srvs_slots[slot] = None;
         // 不立即归还 free_list，等 dirty 清除（age >= FIF_COUNT）后再归还
@@ -187,7 +181,7 @@ impl BindlessManager {
 
     #[inline]
     pub fn get_shader_srv_handle(&self, image_view_handle: GfxImageViewHandle) -> BindlessSrvHandle {
-        debug_assert!(!image_view_handle.is_null());
+        assert!(!image_view_handle.is_null(), "cannot query a null image view");
         let slot = *self.srvs_handle_to_slot.get(image_view_handle).unwrap();
         BindlessSrvHandle::new(slot)
     }

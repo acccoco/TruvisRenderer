@@ -18,7 +18,7 @@ pub struct GfxQueueFamily {
 
 /// # 销毁
 ///
-/// GfxQueueFamily 在 GfxDevice 销毁时会被销毁
+/// native queue 由 device 拥有；Rc 不延长显式 native device 的生命周期。
 pub struct GfxCommandQueue {
     pub(crate) vk_queue: vk::Queue,
     pub(crate) queue_family: GfxQueueFamily,
@@ -48,7 +48,8 @@ impl GfxCommandQueue {
 
 // 工具函数
 impl GfxCommandQueue {
-    pub fn submit(&self, batches: Vec<GfxSubmitInfo>, fence: Option<GfxFence>) {
+    /// fence 的 owner 必须保持其存活直到提交完成；submit 不转移销毁责任。
+    pub fn submit(&self, batches: Vec<GfxSubmitInfo>, fence: Option<&GfxFence>) {
         unsafe {
             // batches 的存在是有必要的，submit_infos 引用的 batches 的内存
             let batches = batches.iter().map(|b| b.submit_info()).collect_vec();

@@ -25,6 +25,19 @@ pub struct Instance {
 }
 
 impl Instance {
+    /// World 接受可逆的 affine 矩阵，包括 shear 和负缩放，不要求能分解成编辑器 TRS。
+    /// 在 CPU 发布前同时检查 inverse，避免有限输入在后续 GPU 投影时产生非有限值。
+    pub(crate) fn validate_transform(transform: glam::Mat4) -> Result<(), String> {
+        if !transform.is_finite() || transform.row(3) != glam::Vec4::W {
+            return Err("world transform must be finite and affine".into());
+        }
+        let determinant = transform.determinant();
+        if !determinant.is_finite() || determinant == 0.0 || !transform.inverse().is_finite() {
+            return Err("world transform must have a finite inverse".into());
+        }
+        Ok(())
+    }
+
     /// 按需分解 CPU world transform，不保存派生缓存，也不推进 scene version。
     pub fn transform_trs(&self) -> Result<TransformTrs, TransformDecompositionError> {
         TransformTrs::try_from_matrix(self.transform)

@@ -89,16 +89,12 @@ impl RenderRuntime {
     /// `init_after_window` 收到平台层 raw handle 后再创建。
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
         let _span = tracy_client::span!("RenderRuntime::new");
-
         let gfx = {
             let _span = tracy_client::span!("RenderRuntime::new/Gfx");
             Gfx::new("Truvis".to_string(), extra_instance_ext)
         };
         let frame_state = {
             let _span = tracy_client::span!("RenderRuntime::new/frame_state");
-            // runtime 创建时还没有 surface/swapchain，只能先保存格式和一个占位 extent。
-            // 真实窗口尺寸会在 `init_after_window` 创建 present 后同步，并交给 Renderer/子系统
-            // 初始化自己的 window-sized render targets。
             FrameRenderState {
                 hdr_color_format: vk::Format::R32G32B32A32_SFLOAT,
                 depth_format: Self::get_depth_format(gfx.device_info_ctx()),
@@ -112,39 +108,38 @@ impl RenderRuntime {
                 },
             }
         };
-
         let fif_timeline_semaphore = {
             let _span = tracy_client::span!("RenderRuntime::new/sync");
             GfxSemaphore::new_timeline(gfx.device_ctx(), 0, "render-timeline")
         };
-
-        let (mut gfx_resource_registry, mut cmd_allocator, frame_timing, mut shader_binding_system) = {
-            let _span = tracy_client::span!("RenderRuntime::new/managers");
-            let gfx_resource_registry = GfxResourceRegistry::new();
-            let cmd_allocator = CmdAllocator::new(gfx.device_ctx(), gfx.device_info_ctx());
-
-            // 初始值应该是 1，因为 timeline semaphore 初始值是 0
-            let init_frame_id = 1;
-            let frame_rate_limit_fps = NonZeroU32::new(DefaultRenderRuntimeSettings::DEFAULT_FRAME_RATE_LIMIT_FPS)
-                .expect("default frame rate limit must be non-zero");
-            let min_frame_interval = Duration::from_secs_f64(1.0 / f64::from(frame_rate_limit_fps.get()));
-            let frame_timing = FrameTiming::new(init_frame_id, Some(min_frame_interval));
-            let shader_binding_system = ShaderBindingSystem::new(gfx.device_ctx(), frame_timing.frame_id());
-
-            (gfx_resource_registry, cmd_allocator, frame_timing, shader_binding_system)
+        let mut gfx_resource_registry = {
+            let _span = tracy_client::span!("RenderRuntime::new/resource_registry");
+            GfxResourceRegistry::new()
         };
-
+        let mut cmd_allocator = {
+            let _span = tracy_client::span!("RenderRuntime::new/command_allocator");
+            CmdAllocator::new(gfx.device_ctx(), gfx.device_info_ctx())
+        };
+        let frame_rate_limit_fps = NonZeroU32::new(DefaultRenderRuntimeSettings::DEFAULT_FRAME_RATE_LIMIT_FPS)
+            .expect("default frame rate limit must be non-zero");
+        let min_frame_interval = Duration::from_secs_f64(1.0 / f64::from(frame_rate_limit_fps.get()));
+        // timeline 初值为 0，第一帧从 1 开始。
+        let frame_timing = FrameTiming::new(1, Some(min_frame_interval));
+        let mut shader_binding_system = {
+            let _span = tracy_client::span!("RenderRuntime::new/bindings");
+            ShaderBindingSystem::new(gfx.device_ctx(), frame_timing.frame_id())
+        };
         let mut world = {
             let _span = tracy_client::span!("RenderRuntime::new/world");
             GameWorld::new()
         };
-        let default_sky_texture = {
+        {
             let _span = tracy_client::span!("RenderRuntime::new/default_sky_texture");
-            world
+            let texture = world
                 .import_texture(TruvisPath::resources_path("sky.jpg"), truvis_asset::handle::TextureColorSpace::Linear)
-                .expect("failed to register default sky texture")
-        };
-        world.update_sky_texture(Some(default_sky_texture)).expect("failed to assign default sky texture");
+                .expect("failed to register default sky texture");
+            world.update_sky_texture(Some(texture)).expect("failed to assign default sky texture");
+        }
         let render_world = {
             let _span = tracy_client::span!("RenderRuntime::new/render_world");
             RenderWorld::new(
@@ -157,7 +152,6 @@ impl RenderRuntime {
                 frame_timing.frame_id(),
             )
         };
-
         let ray_cast_service = {
             let _span = tracy_client::span!("RenderRuntime::new/ray_cast_service");
             RayCastService::new(
@@ -168,41 +162,36 @@ impl RenderRuntime {
                 shader_binding_system.global_descriptor_sets(),
             )
         };
-
         let per_frame_gpu_data = {
             let _span = tracy_client::span!("RenderRuntime::new/per_frame_gpu_data");
             PerFrameGpuData::new(gfx.resource_ctx())
         };
-
-        let cmds = {
+        let render_world_update_cmds = {
             let _span = tracy_client::span!("RenderRuntime::new/render_world_update_cmds");
             FrameLabel::ALL
                 .into_iter()
-                .map(|frame_label| {
-                    cmd_allocator.alloc_command_buffer(gfx.device_ctx(), frame_label, "render-world-update")
-                })
+                .map(|label| cmd_allocator.alloc_command_buffer(gfx.device_ctx(), label, "render-world-update"))
                 .collect()
         };
-
-        {
-            let _span = tracy_client::span!("RenderRuntime::new/assemble_state");
-            Self {
-                gfx,
-                cmd_allocator,
-                fif_timeline_semaphore,
-                render_world_update_cmds: cmds,
-                swapchain_presenter: None,
-                world,
-                ray_cast_service,
-                render_world,
-                gfx_resource_registry,
-                shader_binding_system,
-                frame_timing,
-                per_frame_gpu_data,
-                frame_state,
-                requested_render_extent: vk::Extent2D { width: 400, height: 400 },
-                history_invalidated: false,
-            }
+        Self {
+            gfx,
+            world,
+            gfx_resource_registry,
+            shader_binding_system,
+            frame_timing,
+            per_frame_gpu_data,
+            frame_state,
+            render_world,
+            ray_cast_service,
+            cmd_allocator,
+            fif_timeline_semaphore,
+            render_world_update_cmds,
+            swapchain_presenter: None,
+            requested_render_extent: vk::Extent2D {
+                width: 400,
+                height: 400,
+            },
+            history_invalidated: false,
         }
     }
 
@@ -237,21 +226,16 @@ impl RenderRuntime {
     /// 这样所有 Vulkan wrapper 都能通过有效的 typed Ctx 显式释放。
     pub fn destroy(mut self) {
         self.gfx.wait_idel();
-
-        // present 持有 surface/swapchain 与 WSI image wrapper，必须先释放；后续 scene
-        // 资源销毁不再需要访问当前窗口 target。
-        if let Some(swapchain_presenter) = self.swapchain_presenter.take() {
-            swapchain_presenter.destroy(
+        if let Some(presenter) = self.swapchain_presenter.take() {
+            presenter.destroy(
                 self.gfx.resource_ctx(),
                 self.gfx.device_ctx(),
                 self.gfx.surface_ctx(),
                 &mut self.gfx_resource_registry,
             );
         }
-
         self.ray_cast_service.destroy_mut(self.gfx.resource_ctx(), self.gfx.device_ctx());
-        // CPU scene/asset 与 render-side bridge 按依赖方向释放：先停止 scene runtime，
-        // 再由 RenderWorld 释放场景缓存和其内部的 GPU asset resources。
+        // CPU producer 先停止，GPU scene 再按完成凭据释放。
         self.world.destroy_scene_mut();
         self.world.destroy();
         self.render_world.destroy(
@@ -260,13 +244,11 @@ impl RenderRuntime {
             &mut self.shader_binding_system,
             &mut self.gfx_resource_registry,
         );
-        // per-frame UBO 与 command allocator 在所有使用它们的 scene/present 资源之后释放。
         self.per_frame_gpu_data.destroy(self.gfx.resource_ctx());
         self.render_world_update_cmds.clear();
         self.cmd_allocator.destroy(self.gfx.device_ctx());
         self.gfx_resource_registry.destroy(self.gfx.resource_ctx(), self.gfx.device_ctx());
         self.fif_timeline_semaphore.destroy(self.gfx.device_ctx());
-        // descriptor/sampler 依赖 device 但不依赖业务资源，放在资源管理器之后、Gfx 之前销毁。
         self.shader_binding_system.destroy(self.gfx.device_ctx());
         self.gfx.destroy();
     }
@@ -334,7 +316,7 @@ impl RenderRuntime {
         }
     }
 
-    /// 更新累积帧跟踪，并上传 GPU scene/descriptor 数据。
+    /// 上传 GPU scene 数据，并更新当前 FIF descriptor。
     ///
     /// 这是 update 与 render 之间的语义翻译边界：Renderer 仍拥有 camera/input state，
     /// runtime 只读取 render view 快照，并把 `GameWorld`、asset/material/instance bridge 的状态整理成
@@ -552,6 +534,7 @@ impl RenderRuntime {
         raw_window_handle: RawWindowHandle,
         window_physical_size: [u32; 2],
     ) -> RenderRuntimeInitCtx<'_> {
+        assert!(self.swapchain_presenter.is_none(), "window presenter is already initialized");
         self.swapchain_presenter = Some(SwapchainPresenter::new(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -592,10 +575,7 @@ impl RenderRuntime {
 // Prepare 数据上传
 // ---------------------------------------------------------------------------
 impl RenderRuntime {
-    /// 根据 app render view 快照更新 main view 累积帧计数。
-    ///
-    /// 累积渲染关心最终视图/投影是否变化；后续 pass 根据这里的计数决定是否复用上一帧结果。
-    /// 准备 render pass 可见的 GPU scene 与 per-frame uniform。
+    /// 根据 Renderer 视图快照录制并提交 GPU scene 与逐帧数据；累积策略由 Renderer 持有。
     ///
     /// 该函数把所有 staging copy 录到同一个 command buffer，最后一次提交到 graphics queue；
     /// render graph 在后续命令提交中通过常规 queue 顺序看到这些写入。
@@ -609,10 +589,8 @@ impl RenderRuntime {
         // loader completion 先收敛到 CPU registry；RenderWorld 随后通过内部
         // RenderAssetSystem 从最终资源表对账并提交尚未安装的 texture/mesh，再由 bindless prepare 写入本帧 descriptor。
         self.world.poll_asset_loads();
-        let instance_changes = self.world.take_instance_changes();
-        let scene_view = self.world.scene_view();
-        let resource_sync_result = self.render_world.sync_assets(
-            scene_view,
+        let asset_upload_wait = self.render_world.sync_assets(
+            self.world.scene_view(),
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.queue_ctx(),
@@ -637,6 +615,8 @@ impl RenderRuntime {
         // bindless 表先更新，因为 material upload 和环境绑定都可能立即解析 texture SRV handle；
         // 后续 scene root buffer 会写入这些 shader-visible handle。
         self.shader_binding_system.prepare_render_data(self.gfx.device_ctx(), &self.gfx_resource_registry);
+        // bindless 准备成功后才取走 CPU 通知，RenderWorld 入口立即将其交给 instance table。
+        let instance_changes = self.world.take_instance_changes();
         let render_world_result = self.render_world.prepare_render_data(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -645,8 +625,7 @@ impl RenderRuntime {
             transfer_barrier_mask,
             self.frame_timing.frame_id(),
             self.frame_timing.frame_label(),
-            scene_view,
-            resource_sync_result,
+            self.world.scene_view(),
             instance_changes,
         );
         if render_world_result.history_invalidated {
@@ -692,7 +671,12 @@ impl RenderRuntime {
                 .mask(transfer_barrier_mask)],
         );
         cmd.end();
-        self.gfx.queue_ctx().gfx_queue().submit(vec![GfxSubmitInfo::new(std::slice::from_ref(&cmd))], None);
+        let mut submit_info = GfxSubmitInfo::new(std::slice::from_ref(&cmd));
+        // 同一 graphics queue 上，wait 也覆盖后续提交的 raycast/RenderGraph；CPU poll 不提供该内存依赖。
+        if let Some((semaphore, value)) = asset_upload_wait {
+            submit_info = submit_info.wait_raw(semaphore, vk::PipelineStageFlags2::ALL_COMMANDS, Some(value));
+        }
+        self.gfx.queue_ctx().gfx_queue().submit(vec![submit_info], None);
         self.render_world.commit_uploaded_frame(frame_label);
     }
 }

@@ -20,7 +20,7 @@ pub struct Camera {
 
 // 一些常量
 impl Camera {
-    /// 世界空间的上方向，也是 look_to_rh 的 up 参考。
+    /// 未旋转相机的上方向，也用于沿世界 Y 轴移动。
     const CAMERA_UP: glam::Vec3 = glam::Vec3::new(0.0, 1.0, 0.0);
 
     /// YXZ 表示 Y(yaw)-X(pitch)-Z(roll) 的旋转顺序，匹配第一人称相机的控制语义。
@@ -54,17 +54,40 @@ impl Camera {
     }
 
     pub fn get_view_matrix(&self) -> glam::Mat4 {
+        // Camera 由程序直接配置；非法姿态是调用契约错误，不能发布给 Runtime。
+        assert!(
+            self.position.is_finite()
+                && self.euler_yaw_deg.is_finite()
+                && self.euler_pitch_deg.is_finite()
+                && self.euler_roll_deg.is_finite(),
+            "camera pose must be finite"
+        );
         let transform = glam::Mat4::from_euler(Self::CAMERA_EULER, self.yaw_rad(), self.pitch_rad(), self.roll_rad());
         let dir = transform.transform_vector3(Self::CAMERA_FORWAED);
-
-        glam::Mat4::look_to_rh(self.position, dir, Self::CAMERA_UP)
+        // 视图与导航基向量必须使用同一姿态，不能用世界 up 丢弃 roll。
+        let up = transform.transform_vector3(Self::CAMERA_UP);
+        let view = glam::Mat4::look_to_rh(self.position, dir, up);
+        assert!(view.is_finite(), "camera view matrix must be finite");
+        view
     }
 
     /// 生成右手系、Y-Up 的无限远透视投影矩阵。
     ///
     /// 调用侧应把这里当作 app 默认相机的统一投影入口，避免在 shader/pass 中重复引入坐标修正。
     pub fn get_projection_matrix(&self) -> glam::Mat4 {
-        glam::Mat4::perspective_infinite_rh(self.fov_deg_vertical.to_radians(), self.asp, self.near)
+        assert!(
+            self.asp.is_finite()
+                && self.asp > 0.0
+                && self.near.is_finite()
+                && self.near > 0.0
+                && self.fov_deg_vertical.is_finite()
+                && self.fov_deg_vertical > 0.0
+                && self.fov_deg_vertical < 180.0,
+            "camera projection requires positive finite aspect/near and FOV in (0, 180) degrees"
+        );
+        let projection = glam::Mat4::perspective_infinite_rh(self.fov_deg_vertical.to_radians(), self.asp, self.near);
+        assert!(projection.is_finite(), "camera projection matrix must be finite");
+        projection
     }
 
     /// 原生 viewport 物理像素投影，供 overlay 绘制与 CPU 命中共用；不含 temporal jitter。
@@ -142,7 +165,14 @@ impl Camera {
     }
 
     pub fn render_view(&self) -> RenderView {
-        RenderView::new(self.get_view_matrix(), self.get_projection_matrix(), self.position, self.camera_forward())
+        let view =
+            RenderView::new(self.get_view_matrix(), self.get_projection_matrix(), self.position, self.camera_forward());
+        // 正数但极端的投影参数也可能使 f32 求逆溢出；在快照离开 Camera 前拒绝。
+        assert!(
+            view.inv_view.is_finite() && view.inv_projection.is_finite(),
+            "camera inverse matrices must be finite"
+        );
+        view
     }
 
     pub fn camera_forward(&self) -> glam::Vec3 {

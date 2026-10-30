@@ -13,17 +13,14 @@
 //! engine 层不再持有 GBuffer 资源。
 
 use ash::vk;
-use itertools::Itertools;
-use slotmap::Key;
 
-use truvis_gfx::commands::barrier::GfxImageBarrier;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
-use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
-use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
+
+use crate::shared::targets::{PerFrameImageSet, TargetImageDesc};
 
 /// Realtime 渲染子系统使用的 GBuffer 资源集合。
 ///
@@ -33,14 +30,11 @@ use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry
 /// 格式和通道语义是渲染策略决策，由 Renderer 决定，不属于 engine 基础设施。
 pub struct GBuffer {
     /// GBufferA：world-space forward/shading normal.xyz + 粗糙度 roughness (R16G16B16A16_SFLOAT)
-    a_images: [GfxImageHandle; FrameLabel::COUNT],
-    a_views: [GfxImageViewHandle; FrameLabel::COUNT],
+    a: PerFrameImageSet,
     /// GBufferB：世界位置 world_position.xyz + 线性深度 linear_depth (R16G16B16A16_SFLOAT)
-    b_images: [GfxImageHandle; FrameLabel::COUNT],
-    b_views: [GfxImageViewHandle; FrameLabel::COUNT],
+    b: PerFrameImageSet,
     /// GBufferC：反照率 albedo.rgb + 金属度 metallic (R8G8B8A8_UNORM)
-    c_images: [GfxImageHandle; FrameLabel::COUNT],
-    c_views: [GfxImageViewHandle; FrameLabel::COUNT],
+    c: PerFrameImageSet,
     extent: vk::Extent2D,
 }
 
@@ -53,44 +47,50 @@ impl GBuffer {
         extent: vk::Extent2D,
         frame_id: u64,
     ) -> Self {
-        let (a_images, a_views) = Self::create_channel_images(
+        let a = PerFrameImageSet::new(
             resource_ctx,
             device_ctx,
             immediate_ctx,
             gfx_resource_registry,
-            Self::A_FORMAT,
-            extent,
+            TargetImageDesc {
+                name_prefix: "gbuffer-a",
+                format: Self::A_FORMAT,
+                extent,
+                usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+            },
             frame_id,
-            "gbuffer-a",
         );
-        let (b_images, b_views) = Self::create_channel_images(
+        let b = PerFrameImageSet::new(
             resource_ctx,
             device_ctx,
             immediate_ctx,
             gfx_resource_registry,
-            Self::B_FORMAT,
-            extent,
+            TargetImageDesc {
+                name_prefix: "gbuffer-b",
+                format: Self::B_FORMAT,
+                extent,
+                usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+            },
             frame_id,
-            "gbuffer-b",
         );
-        let (c_images, c_views) = Self::create_channel_images(
+        let c = PerFrameImageSet::new(
             resource_ctx,
             device_ctx,
             immediate_ctx,
             gfx_resource_registry,
-            Self::C_FORMAT,
-            extent,
+            TargetImageDesc {
+                name_prefix: "gbuffer-c",
+                format: Self::C_FORMAT,
+                extent,
+                usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+            },
             frame_id,
-            "gbuffer-c",
         );
 
         Self {
-            a_images,
-            a_views,
-            b_images,
-            b_views,
-            c_images,
-            c_views,
+            a,
+            b,
+            c,
             extent,
         }
     }
@@ -117,19 +117,13 @@ impl GBuffer {
         gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
     ) {
-        for image in std::mem::take(&mut self.a_images) {
-            gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image, reason);
-        }
-        for image in std::mem::take(&mut self.b_images) {
-            gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image, reason);
-        }
-        for image in std::mem::take(&mut self.c_images) {
-            gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, image, reason);
-        }
-
-        self.a_views = Default::default();
-        self.b_views = Default::default();
-        self.c_views = Default::default();
+        PerFrameImageSet::destroy_all(
+            &mut [&mut self.a, &mut self.b, &mut self.c],
+            resource_ctx,
+            device_ctx,
+            gfx_resource_registry,
+            reason,
+        );
     }
 }
 
@@ -142,95 +136,26 @@ impl GBuffer {
     /// GBufferA（forward/shading 法线 + 粗糙度）的当前帧 image 和 view handle。
     #[inline]
     pub fn a_handle(&self, frame_label: FrameLabel) -> (GfxImageHandle, GfxImageViewHandle) {
-        (self.a_images[*frame_label], self.a_views[*frame_label])
+        let target = self.a.target(frame_label);
+        (target.image, target.view)
     }
 
     /// GBufferB（世界位置 + 线性深度）的当前帧 image 和 view handle。
     #[inline]
     pub fn b_handle(&self, frame_label: FrameLabel) -> (GfxImageHandle, GfxImageViewHandle) {
-        (self.b_images[*frame_label], self.b_views[*frame_label])
+        let target = self.b.target(frame_label);
+        (target.image, target.view)
     }
 
     /// GBufferC（反照率 + 金属度）的当前帧 image 和 view handle。
     #[inline]
     pub fn c_handle(&self, frame_label: FrameLabel) -> (GfxImageHandle, GfxImageViewHandle) {
-        (self.c_images[*frame_label], self.c_views[*frame_label])
+        let target = self.c.target(frame_label);
+        (target.image, target.view)
     }
 
     #[inline]
     pub fn extent(&self) -> vk::Extent2D {
         self.extent
-    }
-}
-
-// 纹理创建
-impl GBuffer {
-    /// 创建单个 GBuffer 通道的 per-FIF storage image 并将 layout 转为 GENERAL。
-    fn create_channel_images(
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_registry: &mut GfxResourceRegistry,
-        format: vk::Format,
-        extent: vk::Extent2D,
-        frame_id: u64,
-        name_prefix: &str,
-    ) -> ([GfxImageHandle; FrameLabel::COUNT], [GfxImageViewHandle; FrameLabel::COUNT]) {
-        let create_one_image = |frame_label: FrameLabel| {
-            let name = format!("{}-{}-{}", name_prefix, frame_label, frame_id);
-            let image_create_info = GfxImageCreateInfo::new_image_2d_info(
-                extent,
-                format,
-                vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
-            );
-            GfxImage::new(
-                resource_ctx,
-                &image_create_info,
-                &vk_mem::AllocationCreateInfo {
-                    usage: vk_mem::MemoryUsage::AutoPreferDevice,
-                    ..Default::default()
-                },
-                &name,
-            )
-        };
-        let images = FrameLabel::ALL.map(create_one_image);
-
-        immediate_ctx.one_time_exec(
-            |cmd| {
-                let image_barriers = images
-                    .iter()
-                    .map(|image| {
-                        GfxImageBarrier::default()
-                            .image(image.handle())
-                            .src_mask(vk::PipelineStageFlags2::TOP_OF_PIPE, vk::AccessFlags2::empty())
-                            .dst_mask(vk::PipelineStageFlags2::BOTTOM_OF_PIPE, vk::AccessFlags2::empty())
-                            .layout_transfer(vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL)
-                            .image_aspect_flag(vk::ImageAspectFlags::COLOR)
-                    })
-                    .collect_vec();
-                cmd.image_memory_barrier(vk::DependencyFlags::empty(), &image_barriers);
-            },
-            &format!("transfer-{}-layout", name_prefix),
-        );
-
-        let image_handles = images.map(|image| gfx_resource_registry.register_image(image));
-        let image_view_handles = FrameLabel::ALL.map(|frame_label| {
-            gfx_resource_registry.get_or_create_image_view(
-                device_ctx,
-                image_handles[*frame_label],
-                GfxImageViewDesc::new_2d(format, vk::ImageAspectFlags::COLOR),
-                format!("{}-{}-{}", name_prefix, frame_label, frame_id),
-            )
-        });
-
-        (image_handles, image_view_handles)
-    }
-}
-
-impl Drop for GBuffer {
-    fn drop(&mut self) {
-        debug_assert!(self.a_images.iter().all(|img| img.is_null()));
-        debug_assert!(self.b_images.iter().all(|img| img.is_null()));
-        debug_assert!(self.c_images.iter().all(|img| img.is_null()));
     }
 }

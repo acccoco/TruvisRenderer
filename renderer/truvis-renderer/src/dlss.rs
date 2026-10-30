@@ -10,13 +10,20 @@ use truvis_render_runtime::state::frame_state::FrameRenderState;
 use truvis_streamline_binding::{StreamlineError, dlss};
 use truvis_utils::ConfigUtils;
 
+/// release 错误可能发生在部分释放后；保留 feature 归属，禁止把再次调用当成恢复措施。
+enum DlssFeatureState {
+    Unused,
+    Recorded(DlssFeature),
+    ReleaseFailed(DlssFeature),
+}
+
 pub(crate) struct TruvisDlssState {
     requested: DlssOptions,
     effective: DlssOptions,
     sr_supported: bool,
     rr_supported: bool,
-    /// 记录可能由 evaluate 创建的 feature；无 TLAS 时可能跳过 pass，不代表已经实际分配。
-    feature_to_release: Option<DlssFeature>,
+    /// 记录已开始录制的 DLSS graph 可能创建的 feature，不代表 SDK 已成功分配。
+    feature_state: DlssFeatureState,
     sr_state: DlssSrState,
 }
 
@@ -27,7 +34,7 @@ impl Default for TruvisDlssState {
             effective: DlssOptions::NATIVE,
             sr_supported: false,
             rr_supported: false,
-            feature_to_release: None,
+            feature_state: DlssFeatureState::Unused,
             sr_state: DlssSrState::default(),
         }
     }
@@ -97,14 +104,31 @@ impl TruvisDlssState {
         })
     }
 
-    /// evaluate 可能创建 feature；记录其归属，供下一次 mode/resize/shutdown 在 GPU idle 边界释放。
-    pub fn snapshot(&mut self) -> DlssFrameSnapshot {
-        let snapshot = DlssFrameSnapshot {
+    /// 只读取本帧配置；取得快照不意味着本帧会录制 DLSS。
+    pub fn snapshot(&self) -> DlssFrameSnapshot {
+        DlssFrameSnapshot {
             options: self.effective,
             constants: self.sr_state.constants(),
+        }
+    }
+
+    /// 仅在含场景的 Realtime graph 开始录制前调用；错误录制也可能留下 SDK 半成品。
+    pub fn begin_recording(&mut self, snapshot: DlssFrameSnapshot) {
+        match &self.feature_state {
+            DlssFeatureState::Unused => {}
+            DlssFeatureState::Recorded(feature) => assert_eq!(
+                Some(*feature),
+                snapshot.options.active_feature(),
+                "DLSS feature must be released before recording a different feature"
+            ),
+            DlssFeatureState::ReleaseFailed(feature) => {
+                panic!("cannot record DLSS {feature:?} after release failed");
+            }
+        }
+        self.feature_state = match snapshot.options.active_feature() {
+            Some(feature) => DlssFeatureState::Recorded(feature),
+            None => DlssFeatureState::Unused,
         };
-        self.feature_to_release = snapshot.options.active_feature();
-        snapshot
     }
 
     pub fn reset(&mut self) {
@@ -115,11 +139,14 @@ impl TruvisDlssState {
         self.sr_state.finish_rendered_frame(scene_submitted, evaluation);
     }
 
-    pub fn shutdown(&mut self, ctx: &mut truvis_render_runtime::render_runtime_ctx::RenderRuntimeShutdownCtx<'_>) {
-        if self.feature_to_release.is_some() {
+    pub fn shutdown(
+        &mut self,
+        ctx: &mut truvis_render_runtime::render_runtime_ctx::RenderRuntimeShutdownCtx<'_>,
+    ) -> Result<(), StreamlineError> {
+        if !matches!(self.feature_state, DlssFeatureState::Unused) {
             ctx.device_ctx.device().wait_idle();
-            self.release_feature();
         }
+        self.release_feature()
     }
 
     fn read_options() -> DlssOptions {
@@ -184,7 +211,7 @@ impl TruvisDlssState {
 
     /// 仅在初始化或 GPU idle 边界调用；提交失败向上传播，禁止继续以未生效配置渲染。
     fn reconfigure(&mut self, output_extent: vk::Extent2D) -> Result<(), StreamlineError> {
-        self.release_feature();
+        self.release_feature()?;
         if self.effective.is_dlss_active() {
             // SAFETY: 仅从 init/idle 后的 update/resize 调用；GPU 已完成，新 extent 用于随后构建的图像。
             unsafe { dlss::set_options(0, self.streamline_sr_options(output_extent))? };
@@ -214,9 +241,11 @@ impl TruvisDlssState {
         }
     }
 
-    fn release_feature(&mut self) {
-        let Some(feature) = self.feature_to_release.take() else {
-            return;
+    fn release_feature(&mut self) -> Result<(), StreamlineError> {
+        let feature = match &self.feature_state {
+            DlssFeatureState::Unused => return Ok(()),
+            DlssFeatureState::Recorded(feature) => *feature,
+            DlssFeatureState::ReleaseFailed(feature) => panic!("cannot retry failed DLSS {feature:?} release"),
         };
         // SAFETY: reconfigure/shutdown 在 RenderThread 的 GPU idle 边界调用，旧 graph 不再提交，Gfx 仍存活。
         let result = unsafe {
@@ -225,8 +254,15 @@ impl TruvisDlssState {
                 DlssFeature::RayReconstruction => dlss::free_rr_resources(0),
             }
         };
-        if let Err(error) = result {
-            log::warn!("failed to release DLSS resources: {error}");
+        match result {
+            Ok(()) => {
+                self.feature_state = DlssFeatureState::Unused;
+                Ok(())
+            }
+            Err(error) => {
+                self.feature_state = DlssFeatureState::ReleaseFailed(feature);
+                Err(error)
+            }
         }
     }
 }

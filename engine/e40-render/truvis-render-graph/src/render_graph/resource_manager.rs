@@ -1,4 +1,4 @@
-use slotmap::SlotMap;
+use slotmap::{Key, SlotMap};
 
 use super::resource_handle::RgImageHandle;
 use crate::render_graph::image_resource::RgImageResource;
@@ -24,6 +24,18 @@ impl RgResourceManager {
 // 注册
 impl RgResourceManager {
     pub fn register_image(&mut self, rg_image_resource: RgImageResource) -> RgImageHandle {
+        let image = rg_image_resource.physical_handle().expect("graph only supports imported images");
+        assert!(!image.is_null(), "cannot import a null image");
+        assert!(
+            rg_image_resource.physical_view_handle().is_none_or(|view| !view.is_null()),
+            "use None instead of importing a null image view"
+        );
+        // 当前按 image 跟踪状态，不支持用不同 view 将同一物理图像拆成独立同步域。
+        assert!(
+            self.images.values().all(|existing| existing.physical_handle() != Some(image)),
+            "image {:?} already imported; reuse its graph handle",
+            image
+        );
         self.images.insert(rg_image_resource)
     }
 }

@@ -40,7 +40,8 @@ impl RgImageBarrierDesc {
 
     /// 检查是否需要 barrier
     ///
-    /// 如果 layout 相同且 access 兼容，可能不需要 barrier
+    /// 同 layout 的连续只读访问，仅在来源范围包含目标 stage/access 时可跳过。
+    /// 新读取范围需要继续建立依赖链，CPU 合并状态不能代替 GPU 可见性操作。
     pub fn needs_barrier(&self) -> bool {
         // Layout 不同一定需要 barrier
         if self.src_state.layout != self.dst_state.layout {
@@ -52,8 +53,7 @@ impl RgImageBarrierDesc {
             return true;
         }
 
-        // 只读到只读可以跳过 barrier
-        false
+        !self.src_state.stage.contains(self.dst_state.stage) || !self.src_state.access.contains(self.dst_state.access)
     }
 
     /// 转换为 GfxImageBarrier
@@ -66,6 +66,7 @@ impl RgImageBarrierDesc {
             .src_mask(self.src_state.stage, self.src_state.src_access())
             .dst_mask(self.dst_state.stage, self.dst_state.access)
             .image_aspect_flag(self.aspect)
+            .whole_image()
     }
 }
 

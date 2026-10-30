@@ -86,6 +86,51 @@ pub(crate) struct RenderData<'a> {
     pub(crate) mesh_geometry_start_indices: Vec<usize>,
 }
 impl<'a> RenderData<'a> {
+    /// 验证紧凑表与稳定 slot 的 GPU 索引契约，同时计算 geometry/instance/indirect 容量。
+    /// end 是宿主侧排他上界，允许最后一个有效索引等于 u32::MAX，不把 end 截断写给 shader。
+    pub(crate) fn buffer_counts(&self) -> (usize, usize, usize) {
+        assert_eq!(
+            self.mesh_geometry_start_indices.len(),
+            self.all_meshes.len(),
+            "mesh geometry offsets are incomplete"
+        );
+        let mut geometry_count = 0;
+        for (mesh, &start) in self.all_meshes.iter().zip(&self.mesh_geometry_start_indices) {
+            assert_eq!(start, geometry_count, "mesh geometry offsets must form a contiguous prefix");
+            geometry_count = Self::checked_index_end(start, mesh.geometries.len());
+        }
+        let mut instance_count = 0;
+        let mut indirect_count = 0;
+        let mut previous_slot = None;
+        for instance in &self.all_instances {
+            instance.instance_slot.validate_tlas_custom_index();
+            let slot = instance.instance_slot.as_usize();
+            assert!(previous_slot.is_none_or(|previous| previous < slot), "instance slots must be unique and sorted");
+            previous_slot = Some(slot);
+            instance_count = slot.checked_add(1).expect("instance capacity overflow");
+            let mesh = self.all_meshes.get(instance.mesh_index).expect("instance mesh index is invalid");
+            assert_eq!(instance.material_slots.len(), mesh.geometries.len(), "instance materials must match mesh geometries");
+            assert_eq!(
+                instance.material_handles.len(),
+                instance.material_slots.len(),
+                "instance material identities are incomplete"
+            );
+            u32::try_from(indirect_count).expect("instance indirect offset exceeds u32");
+            indirect_count = Self::checked_index_end(indirect_count, instance.material_slots.len());
+        }
+        (geometry_count, instance_count, indirect_count)
+    }
+
+    /// count 与每个实际索引都必须能写入 GPU uint；空范围不产生索引。
+    fn checked_index_end(start: usize, count: usize) -> usize {
+        u32::try_from(count).expect("scene submesh count exceeds u32");
+        let end = start.checked_add(count).expect("scene index range overflow");
+        if count != 0 {
+            u32::try_from(end - 1).expect("scene index exceeds u32");
+        }
+        end
+    }
+
     /// 创建一个不包含实例、mesh 或光源的空场景快照。
     pub(crate) fn empty() -> Self {
         Self {

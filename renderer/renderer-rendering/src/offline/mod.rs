@@ -1,7 +1,5 @@
 //! Offline reference 渲染子系统及其独立累计状态。
 
-use std::cell::Cell;
-
 use slotmap::Key;
 
 use crate::post_process::SdrPostProcessInput;
@@ -137,13 +135,20 @@ struct OfflineSampleState {
 
 /// 离线累计状态。
 ///
-/// `sample_count` 是 `accum_image` 中已经融合的样本数量；它不复用 runtime 的
-/// `ViewAccumState`，避免实时 DLSS/temporal reset 语义污染离线 reference 结果。
+/// `sample_count` 是已提交给 `accum_image` 的样本数量，不代表 GPU 已执行完成；
+/// 它不复用 UI 的 ViewAccumState，也不由 realtime/DLSS reset 推进。
 /// primary ray jitter 也由本类型按 sample index 生成，不能读取 realtime/DLSS jitter。
 #[derive(Default)]
 pub struct OfflineAccumState {
-    sample_count: Cell<u32>,
+    sample_count: u32,
     signature: Option<OfflineAccumSignature>,
+}
+
+/// 本次 Offline graph 的计数候选；仅在对应 queue submit 正常返回后交回 owner。
+#[must_use]
+pub struct OfflineFrameCommit {
+    previous_sample_count: u32,
+    sample_count: u32,
 }
 
 impl OfflineAccumState {
@@ -154,36 +159,47 @@ impl OfflineAccumState {
         }
     }
 
-    pub fn reset(&self) {
-        self.sample_count.set(0);
+    pub fn reset(&mut self) {
+        self.sample_count = 0;
     }
 
-    fn take_next_sample_batch(&self, dispatch_count: u32) -> Vec<OfflineSampleState> {
+    fn prepare_sample_batch(&self, dispatch_count: u32) -> (Vec<OfflineSampleState>, OfflineFrameCommit) {
         let dispatch_count = OfflineRenderSettings::clamp_ray_dispatch_count(dispatch_count);
-        // 只有确定本帧会提交 RT + accum pass 后才调用本函数。sample_count 在这里按 batch 推进，
-        // 能避免 TLAS 暂不可用或 graph 被清理分支截断时把跳过帧计入离线累计。
-        let accum_frames = self.sample_count.get();
-        let next_sample_count = accum_frames.saturating_add(dispatch_count);
+        // 建图只生成候选；compile、record 或 submit 失败时不得推进已提交计数。
+        let accum_frames = self.sample_count;
+        // 整个 batch 必须可表示；不能饱和后重复 sample index，或给 shader 传入 MAX+1 分母。
+        let next_sample_count = accum_frames.checked_add(dispatch_count).expect("offline sample count exhausted");
         let sample_states = (0..dispatch_count)
             .map(|dispatch_idx| {
-                let sample_index = accum_frames.saturating_add(dispatch_idx);
+                let sample_index = accum_frames + dispatch_idx;
                 OfflineSampleState {
                     spp_idx: sample_index,
                     accum_frames: sample_index,
-                    sample_jitter_px: Self::sample_jitter_px(sample_index.saturating_add(1)),
+                    sample_jitter_px: Self::sample_jitter_px(sample_index + 1),
                 }
             })
             .collect();
-        self.sample_count.set(next_sample_count);
+        (
+            sample_states,
+            OfflineFrameCommit {
+                previous_sample_count: accum_frames,
+                sample_count: next_sample_count,
+            },
+        )
+    }
+
+    fn finish_sample_batch(&mut self, commit: OfflineFrameCommit) {
+        assert_eq!(self.sample_count, commit.previous_sample_count, "offline sample candidate is stale");
+        self.sample_count = commit.sample_count;
+        let next_sample_count = self.sample_count;
         // 低频记录离线累计推进，便于没有 GUI 自动化时从运行日志确认 `accum_image` 持续融合新样本。
         if next_sample_count >= 16 && next_sample_count.is_power_of_two() {
             log::info!("Offline accumulation sample_count={next_sample_count}");
         }
-        sample_states
     }
 
     pub fn sample_count(&self) -> u32 {
-        self.sample_count.get()
+        self.sample_count
     }
 
     fn sample_jitter_px(sample_index: u32) -> glam::Vec2 {
@@ -265,10 +281,16 @@ impl OfflineRenderResources {
     }
 
     fn destroy(mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
+        // 调用方已越过 GPU idle；pass/target 的释放诊断不能跳过本 owner 的后续成员。
+
         self.offline_rt_pass.destroy(ctx.resource_ctx, ctx.device_ctx);
+
         self.image_clear_pass.destroy(ctx.device_ctx);
+
         self.accum_pass.destroy(ctx.device_ctx);
+
         self.resolve_pass.destroy(ctx.device_ctx);
+
         self.targets.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
@@ -285,6 +307,11 @@ impl SubsystemLifecycle for OfflineRenderSubsystem {
 
     fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
         if let Some(resources) = self.resources.as_mut() {
+            resources.resolve_pass.rebuild_for_format(
+                ctx.device_ctx,
+                ctx.shader_binding_system.global_descriptor_sets(),
+                ctx.present.swapchain_image_info().image_format,
+            );
             let mut target_frame_state = *ctx.frame_state;
             target_frame_state.set_native_extent(ctx.present.swapchain_image_info().image_extent);
             resources.targets.rebuild(
@@ -307,6 +334,11 @@ impl SubsystemLifecycle for OfflineRenderSubsystem {
 }
 
 impl OfflineRenderSubsystem {
+    /// 调用者已提交本次 compute/present batch；失败路径必须丢弃候选，不能调用本方法。
+    pub fn finish_rendered_frame(&mut self, commit: OfflineFrameCommit) {
+        self.accum_state.finish_sample_batch(commit);
+    }
+
     pub fn settings(&self) -> &OfflineRenderSettings {
         &self.settings
     }
@@ -347,7 +379,7 @@ impl OfflineRenderSubsystem {
         rg_builder: &mut RenderGraphBuilder<'a>,
         ctx: &'a SubsystemRenderCtx<'a>,
         common_settings: &PathTracingCommonSettings,
-    ) -> Option<SdrPostProcessInput> {
+    ) -> (Option<SdrPostProcessInput>, OfflineFrameCommit) {
         let resources = self.resources();
         let record_ctx = ctx.record_ctx;
         let frame_label = record_ctx.frame_timing.frame_label();
@@ -396,7 +428,6 @@ impl OfflineRenderSubsystem {
         if !has_tlas {
             // 无 TLAS 是合法的“当前没有可追踪场景”状态。这里输出确定黑色并重置离线历史，
             // 避免 GUI/present target 继续展示上一帧场景或未定义 image 内容。
-            self.accum_state.reset();
             let clear_color = glam::Vec4::ZERO;
             rg_builder
                 .add_pass(
@@ -429,10 +460,17 @@ impl OfflineRenderSubsystem {
                         clear_color,
                     },
                 );
-            return None;
+            return (
+                None,
+                OfflineFrameCommit {
+                    previous_sample_count: self.accum_state.sample_count(),
+                    sample_count: 0,
+                },
+            );
         }
 
-        let sample_states = self.accum_state.take_next_sample_batch(self.settings.effective_ray_dispatch_count());
+        let (sample_states, commit) =
+            self.accum_state.prepare_sample_batch(self.settings.effective_ray_dispatch_count());
         // 每个 dispatch 都覆盖同一张 single_frame_image，并立即累入同一张 accum_image。
         // RenderGraph 的线性 pass 顺序负责在相邻 RT/accum pair 之间插入必要的 image 状态转换。
         for (dispatch_idx, sample_state) in sample_states.into_iter().enumerate() {
@@ -467,13 +505,16 @@ impl OfflineRenderSubsystem {
                     },
                 );
         }
-        Some(SdrPostProcessInput {
-            source: accum_image,
-            destination: render_target,
-            source_extent: accum_target.extent,
-            destination_extent: render_target_info.extent,
-            channel: self.settings.debug_channel,
-        })
+        (
+            Some(SdrPostProcessInput {
+                source: accum_image,
+                destination: render_target,
+                source_extent: accum_target.extent,
+                destination_extent: render_target_info.extent,
+                channel: self.settings.debug_channel,
+            }),
+            commit,
+        )
     }
 
     pub fn contribute_present_passes<'a>(

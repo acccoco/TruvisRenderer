@@ -21,6 +21,10 @@ Renderer 侧的 ABI、Slang-only 算法、entry 与统一 Rust binding 结构见
 
 ## Namespace 与 binding owner
 
+公共生成器为数据 record 派生 `Copy`、`Clone`、`Zeroable` 和 `Pod`，由 rustc 检查字段类型与
+隐式 padding；跨 owner 字段直接复用 canonical 类型。该检查服务宿主映射/上传，不能替代
+Slang/SPIR-V 的 layout 对照，也不改变 shader 字段或布局。
+
 - Engine ABI：`engine::*`，Rust owner 为 `truvis-shader-binding`。
 - Renderer ABI：`renderer::render_passes::*` 与 `renderer::kit::*`，Rust owner 为
   `truvis-renderer-shader-binding`。

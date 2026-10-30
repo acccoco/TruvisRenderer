@@ -55,11 +55,19 @@ pub struct RealtimeRenderSubsystem {
     /// 再在构建 render graph 时显式传给相关 pass。
     settings: RealtimeRenderSettings,
     /// ReSTIR DI 的最小 CPU history signature；用于 mode/reset 变化时切断上一帧 history。
-    restir_last_mode: Cell<RtRestirDiMode>,
+    restir_last_mode: RtRestirDiMode,
     /// 独立于 DLSS，保留 transform/材质和环境编辑的保守失效；shader 仍校验资源版本。
-    restir_last_scene_versions: Cell<(u64, u64)>,
+    restir_last_scene_versions: (u64, u64),
     /// ReSTIR 读取相邻 FIF，跳过主视图后不能误用旧 slot 的 reservoir。
-    restir_last_frame_id: Cell<Option<u64>>,
+    restir_last_frame_id: Option<u64>,
+}
+
+/// 本次 Realtime graph 的历史候选；不持有资源，且只能消费一次。
+#[must_use]
+pub struct RealtimeFrameCommit {
+    mode: RtRestirDiMode,
+    scene_versions: (u64, u64),
+    frame_id: Option<u64>,
 }
 
 /// Realtime 渲染子系统自有配置。
@@ -385,57 +393,69 @@ impl RealtimeRenderResources {
     }
 
     fn destroy(mut self, ctx: &mut RenderRuntimeShutdownCtx<'_>) {
+        // 调用方已越过 GPU idle；pass/target 的释放诊断不能跳过本 owner 的后续成员。
+
         self.image_clear_pass.destroy(ctx.device_ctx);
-        // pass pipeline 本身只依赖 device；target image/view 依赖 resource manager。
-        // shutdown 阶段 runtime 已经 wait idle，先销毁 pipeline 再释放 target 不会影响 GPU 引用安全，
-        // 但 target 仍必须在 runtime `GfxResourceRegistry` 销毁前显式释放。
+
         self.realtime_rt_pass.destroy(ctx.resource_ctx, ctx.device_ctx);
+
         self.dlss_sr_pass.destroy();
+
         self.dlss_rr_pass.destroy();
+
         self.resolve_pass.destroy(ctx.device_ctx);
+
         self.gbuffer.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
             &mut *ctx.gfx_resource_registry,
             DestroyReason::Shutdown,
         );
+
         self.rt_targets.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
             &mut *ctx.gfx_resource_registry,
             DestroyReason::Shutdown,
         );
+
         self.restir_di_targets.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
             &mut *ctx.gfx_resource_registry,
             DestroyReason::Shutdown,
         );
+
         self.sharc_targets.destroy(ctx.resource_ctx, DestroyReason::Shutdown);
+
         self.dlss_sr_inputs.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
             &mut *ctx.gfx_resource_registry,
             DestroyReason::Shutdown,
         );
+
         self.dlss_sr_exposure.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
             &mut *ctx.gfx_resource_registry,
             DestroyReason::Shutdown,
         );
+
         self.dlss_rr_inputs.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
             &mut *ctx.gfx_resource_registry,
             DestroyReason::Shutdown,
         );
+
         self.dlss_outputs.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
             &mut *ctx.gfx_resource_registry,
             DestroyReason::Shutdown,
         );
+
         self.main_view_targets.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
@@ -452,9 +472,12 @@ impl SubsystemLifecycle for RealtimeRenderSubsystem {
 
     fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {
         if let Some(resources) = self.resources.as_mut() {
-            // resize ctx 来自 present 层实际重建后的安全点；旧 target 不会再被在飞命令引用。
-            // 这里用 `PresentView` 再读一次 swapchain extent，避免 renderer-owned target 和
-            // swapchain 在平台裁剪尺寸时出现细微不一致。
+            resources.resolve_pass.rebuild_for_format(
+                ctx.device_ctx,
+                ctx.shader_binding_system.global_descriptor_sets(),
+                ctx.present.swapchain_image_info().image_format,
+            );
+            // resize ctx 已越过 GPU idle；内部/输出尺寸均以 Runtime 当前 frame state 为准。
             let target_frame_state = *ctx.frame_state;
             resources.rt_targets.rebuild(
                 ctx.resource_ctx,
@@ -523,6 +546,13 @@ impl SubsystemLifecycle for RealtimeRenderSubsystem {
 }
 
 impl RealtimeRenderSubsystem {
+    /// 只在对应 queue submit 正常返回后确认；无 TLAS 的已提交清屏切断历史连续性。
+    pub fn finish_rendered_frame(&mut self, commit: RealtimeFrameCommit) {
+        self.restir_last_mode = commit.mode;
+        self.restir_last_scene_versions = commit.scene_versions;
+        self.restir_last_frame_id = commit.frame_id;
+    }
+
     pub fn settings(&self) -> &RealtimeRenderSettings {
         &self.settings
     }
@@ -547,7 +577,7 @@ impl RealtimeRenderSubsystem {
         dlss_snapshot: DlssFrameSnapshot,
         dlss_evaluation: &'a Cell<DlssEvaluation>,
         history_reset: bool,
-    ) -> Option<SdrPostProcessInput> {
+    ) -> (Option<SdrPostProcessInput>, RealtimeFrameCommit) {
         let resources = self.resources();
         let record_ctx = ctx.record_ctx;
         let frame_label = record_ctx.frame_timing.frame_label();
@@ -567,20 +597,22 @@ impl RealtimeRenderSubsystem {
         let sharc_mode = self.settings.sharc_mode;
         let sharc_scene_scale = self.settings.sharc_scene_scale;
         let frame_id = record_ctx.frame_timing.frame_id();
-        let previous_frame_label =
-            FrameLabel::from_usize((frame_id as usize + FrameLabel::COUNT - 1) % FrameLabel::COUNT);
+        // 从有界 FIF slot 求前一槽，避免完整 frame_id 在取模前加法溢出。
+        let previous_frame_label = FrameLabel::from_usize((*frame_label + FrameLabel::COUNT - 1) % FrameLabel::COUNT);
         // ReSTIR 保留自身的场景编辑与连续帧判定；DLSS reset 不再驱动 reservoir 生命周期。
         let scene_signature = ctx.render_scene.accum_signature(frame_label);
         let scene_versions = (scene_signature.sky_revision, scene_signature.appearance_revision);
         let has_tlas = ctx.render_scene.tlas_handle(frame_label).is_some();
         let restir_history_valid = restir_di_mode.is_enabled()
-            && self.restir_last_scene_versions.get() == scene_versions
-            && self.restir_last_frame_id.get().is_some_and(|previous| previous.checked_add(1) == Some(frame_id))
-            && self.restir_last_mode.get() == restir_di_mode
+            && self.restir_last_scene_versions == scene_versions
+            && self.restir_last_frame_id.is_some_and(|previous| previous.checked_add(1) == Some(frame_id))
+            && self.restir_last_mode == restir_di_mode
             && !history_reset;
-        self.restir_last_mode.set(restir_di_mode);
-        self.restir_last_scene_versions.set(scene_versions);
-        self.restir_last_frame_id.set(has_tlas.then_some(frame_id));
+        let commit = RealtimeFrameCommit {
+            mode: restir_di_mode,
+            scene_versions,
+            frame_id: has_tlas.then_some(frame_id),
+        };
 
         // compute graph 导入的是 renderer-owned 外部图像；RenderGraph 只接管本图内的状态转换，
         // 不拥有图像生命周期。owner 必须活到 graph 录制与提交完成之后。
@@ -766,7 +798,7 @@ impl RealtimeRenderSubsystem {
                     },
                 );
             }
-            return None;
+            return (None, commit);
         }
 
         rg_builder.add_pass(
@@ -854,13 +886,16 @@ impl RealtimeRenderSubsystem {
         } else {
             (single_frame_image, record_ctx.frame_state.render_extent)
         };
-        Some(SdrPostProcessInput {
-            source,
-            destination: render_target,
-            source_extent,
-            destination_extent: record_ctx.frame_state.output_extent,
-            channel: self.settings.debug_channel,
-        })
+        (
+            Some(SdrPostProcessInput {
+                source,
+                destination: render_target,
+                source_extent,
+                destination_extent: record_ctx.frame_state.output_extent,
+                channel: self.settings.debug_channel,
+            }),
+            commit,
+        )
     }
 
     /// 返回 ImGui 选择器可见的稳定元数据，不暴露当前 FIF 的 GPU handle。
@@ -876,9 +911,20 @@ impl RealtimeRenderSubsystem {
         &self,
         frame_label: FrameLabel,
         dlss_options: DlssOptions,
+        dlss_evaluation: DlssEvaluation,
         has_tlas: bool,
         id: &str,
     ) -> Option<(ImageTarget, RgImageState)> {
+        // 无 TLAS 的 compute 路径仅清理这三张图；非空 handle 不代表其余图像已有本帧内容。
+        if !has_tlas && !matches!(id, "single-frame-rt" | "main-view-color" | "dlss-rr-specular-hit-distance") {
+            return None;
+        }
+        // present graph 在 compute 录制后构建；只借出本帧成功 evaluate 的 output。
+        if id == "dlss-output"
+            && (!dlss_options.is_dlss_active() || !matches!(dlss_evaluation, DlssEvaluation::Succeeded))
+        {
+            return None;
+        }
         let resources = self.resources();
         let rt_targets = &resources.rt_targets;
         let main_view_targets = &resources.main_view_targets;
@@ -955,6 +1001,7 @@ impl RealtimeRenderSubsystem {
         _common_settings: &PathTracingCommonSettings,
         selected_debug_image_id: Option<&str>,
         dlss_options: DlssOptions,
+        dlss_evaluation: DlssEvaluation,
     ) -> RtPresentGraphTargets {
         let resources = self.resources();
         let record_ctx = ctx.record_ctx;
@@ -977,8 +1024,14 @@ impl RealtimeRenderSubsystem {
         let present_image = present_target.image;
         let debug_image = selected_debug_image_id
             .and_then(|id| {
-                self.debug_image_source(frame_label, dlss_options, ctx.render_scene.tlas_handle(frame_label).is_some(), id)
-                    .map(|(source, final_state)| (id, source, final_state))
+                self.debug_image_source(
+                    frame_label,
+                    dlss_options,
+                    dlss_evaluation,
+                    ctx.render_scene.tlas_handle(frame_label).is_some(),
+                    id,
+                )
+                .map(|(source, final_state)| (id, source, final_state))
             })
             .map(|(id, source, final_state)| {
                 // main view 已作为本 graph 的 resolve 输入导入；其它中间图像才创建新的 graph handle。

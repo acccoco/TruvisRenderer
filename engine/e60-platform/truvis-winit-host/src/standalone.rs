@@ -29,7 +29,8 @@ pub struct StandaloneWindowOptions {
 
 /// standalone main thread 上的 winit 窗口 owner 和事件循环宿主。
 ///
-/// 本类型始终先等待 RenderThread 完整销毁 Vulkan surface，再允许对应 Window drop。
+/// 本类型先 join RenderThread 再 drop Window；正常路径在 join 前完成 Vulkan surface 回收，
+/// 异常路径的资源完成分类仍由 Runtime/线程退出契约负责。
 pub struct StandaloneWinitHost {
     options: StandaloneWindowOptions,
     renderer_factory: Option<RendererFactory>,
@@ -58,18 +59,17 @@ impl StandaloneWinitHost {
             event_proxy,
         };
 
-        loop {
+        let exit_code = loop {
             match event_loop.pump_app_events(Some(Duration::from_millis(8)), &mut host) {
                 PumpStatus::Continue => {}
-                PumpStatus::Exit(exit_code) => {
-                    assert_eq!(exit_code, 0, "standalone winit event loop exited with a non-zero code");
-                    break;
-                }
+                PumpStatus::Exit(exit_code) => break exit_code,
             }
-        }
+        };
         drop(event_loop);
         log::info!("standalone winit event loop finished");
+        // 先通过显式 join 交付渲染异常，再检查 event-loop 退出码。
         host.destroy();
+        assert_eq!(exit_code, 0, "standalone winit event loop exited with a non-zero code");
     }
 
     fn create_window(&self, event_loop: &ActiveEventLoop) -> Window {

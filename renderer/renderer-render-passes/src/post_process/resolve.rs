@@ -69,6 +69,7 @@ struct ResolveDescriptorBinding {
 }
 
 pub struct ResolvePass {
+    color_format: vk::Format,
     pipeline: GfxGraphicsPipeline,
     pipeline_layout: Rc<GfxPipelineLayout>,
     descriptor_set_layout: GfxDescriptorSetLayout<ResolveDescriptorBinding>,
@@ -131,6 +132,7 @@ impl ResolvePass {
         let pipeline = GfxGraphicsPipeline::new(ctx, &pipeline_ci, pipeline_layout.clone(), "resolve-pipeline");
 
         Self {
+            color_format,
             pipeline,
             pipeline_layout,
             descriptor_set_layout,
@@ -141,6 +143,21 @@ impl ResolvePass {
         self.pipeline.destroy(ctx);
         self.pipeline_layout.destroy(ctx);
         self.descriptor_set_layout.destroy(ctx);
+    }
+
+    /// 仅在 GPU idle 后调用；尺寸变化不影响 pipeline，attachment 格式变化才替换。
+    pub fn rebuild_for_format(
+        &mut self,
+        ctx: GfxDeviceCtx<'_>,
+        global_descriptor_sets: &GlobalDescriptorSets,
+        color_format: vk::Format,
+    ) {
+        if self.color_format == color_format {
+            return;
+        }
+        let replacement = Self::new(ctx, global_descriptor_sets, color_format);
+        let old = std::mem::replace(self, replacement);
+        old.destroy(ctx);
     }
 
     /// 在一次 dynamic rendering 中绘制主图和可选 debug image。

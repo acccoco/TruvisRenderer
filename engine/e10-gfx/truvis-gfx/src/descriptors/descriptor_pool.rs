@@ -9,7 +9,7 @@ use crate::gfx::GfxDeviceCtx;
 /// 描述符池
 ///
 /// 描述符池用于分配描述符集。
-/// 一个描述符池可以分配多个描述符集，但所有描述符集必须使用相同的布局。
+/// 一个 pool 可分配不同布局的 set；类型容量、set 数量和 GPU 使用期由 pool owner 保证。
 pub struct GfxDescriptorPool {
     /// Vulkan 描述符池句柄
     handle: vk::DescriptorPool,
@@ -30,14 +30,15 @@ impl GfxDescriptorPool {
     /// 新的描述符池实例
     #[inline]
     pub fn new(ctx: GfxDeviceCtx<'_>, ci: Rc<GfxDescriptorPoolCreateInfo>, name: &str) -> Self {
+        let name = name.to_owned();
         let gfx_device = ctx.device();
         let pool = unsafe { gfx_device.create_descriptor_pool(&ci.inner, None).unwrap() };
         let pool = Self {
             handle: pool,
             _info: ci,
-            _name: name.to_string(),
+            _name: name,
         };
-        gfx_device.set_debug_name(&pool, name);
+        gfx_device.set_debug_name(&pool, &pool._name);
         pool
     }
 
@@ -60,7 +61,7 @@ impl GfxDescriptorPool {
     }
 }
 impl Drop for GfxDescriptorPool {
-    /// 释放 Vulkan 描述符池
+    /// 仅诊断遗漏的显式释放，不在 Drop 调用 Vulkan。
     fn drop(&mut self) {
         debug_assert!(self.handle.is_null(), "GfxDescriptorPool '{}' dropped without explicit destroy", self._name);
     }

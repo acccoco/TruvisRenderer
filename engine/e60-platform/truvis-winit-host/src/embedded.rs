@@ -59,14 +59,14 @@ enum EmbeddedUserEvent {
 /// Tauri 等外层桌面壳持有的嵌入窗口控制句柄。
 ///
 /// child HWND 和 winit `EventLoop` 位于 `RenderWindowThread`；本句柄只通过
-/// `EventLoopProxy` 投递 latest viewport rect 或关闭请求。`shutdown` 会等待
-/// RenderThread 先销毁全部 Vulkan/WSI 资源，再等待 child HWND 所在线程退出。
+/// `EventLoopProxy` 投递 viewport rect 或关闭请求。`shutdown` 等待 RenderThread join
+/// 与 child HWND 所在线程退出；错误返回不能证明异常路径已完整释放 Vulkan/WSI 资源。
 /// `spawn` 只同步等待 EventLoop 与 proxy 就绪；child HWND 必须在 Tauri setup
 /// 返回、main thread 开始处理消息后异步创建。窗口创建前收到的 rect 会缓存并在
 /// child ready 后应用。
 pub struct EmbeddedWinitHost {
     event_proxy: EventLoopProxy<EmbeddedUserEvent>,
-    window_thread: Option<JoinHandle<()>>,
+    window_thread: Option<JoinHandle<Result<(), String>>>,
 }
 
 impl EmbeddedWinitHost {
@@ -78,9 +78,7 @@ impl EmbeddedWinitHost {
         let (startup_sender, startup_receiver) = mpsc::sync_channel(1);
         let window_thread = thread::Builder::new()
             .name("RenderWindowThread".to_string())
-            .spawn(move || {
-                EmbeddedWinitHandler::run(parent_window, Box::new(renderer_factory), startup_sender);
-            })
+            .spawn(move || EmbeddedWinitHandler::run(parent_window, Box::new(renderer_factory), startup_sender))
             .map_err(|error| format!("failed to spawn RenderWindowThread: {error}"))?;
 
         match startup_receiver.recv() {
@@ -106,6 +104,7 @@ impl EmbeddedWinitHost {
             .map_err(|_| "RenderWindowThread is no longer available".to_string())
     }
 
+    /// 等待窗口线程退出，传播首个宿主错误或线程 panic；成功投递 proxy 不等于 child 创建成功。
     pub fn shutdown(mut self) -> Result<(), String> {
         self.shutdown_inner()
     }
@@ -116,16 +115,15 @@ impl EmbeddedWinitHost {
         }
         let _ = self.event_proxy.send_event(EmbeddedUserEvent::Shutdown);
         if let Some(window_thread) = self.window_thread.take() {
-            window_thread.join().map_err(|payload| format!("RenderWindowThread panicked: {payload:?}"))?;
+            window_thread.join().map_err(|payload| format!("RenderWindowThread panicked: {payload:?}"))??;
         }
         Ok(())
     }
 }
 
 impl Drop for EmbeddedWinitHost {
+    /// 显式 shutdown 才向调用方交付错误；Drop 只是兜底，等待窗口线程退出并记录错误。
     fn drop(&mut self) {
-        // 主窗口 CloseRequested 是正常关闭路径；此处覆盖 app.exit、setup 后异常等
-        // 兜底路径，仍保持 Vulkan surface → child HWND → parent HWND 的销毁顺序。
         if let Err(error) = self.shutdown_inner() {
             log::error!("failed to shut down embedded winit host during drop: {error}");
         }
@@ -147,6 +145,9 @@ struct EmbeddedWinitHandler {
     window: Option<Window>,
     event_proxy: EventLoopProxy<EmbeddedUserEvent>,
     pending_viewport_rect: EmbeddedViewportRect,
+
+    /// 首个创建/几何应用错误留到线程结束后交付，避免 event-loop exit 被误认为成功。
+    failure: Option<String>,
 }
 
 impl EmbeddedWinitHandler {
@@ -154,7 +155,7 @@ impl EmbeddedWinitHandler {
         parent_window: Win32WindowHandle,
         renderer_factory: RendererFactory,
         startup_sender: mpsc::SyncSender<Result<EventLoopProxy<EmbeddedUserEvent>, String>>,
-    ) {
+    ) -> Result<(), String> {
         let mut event_loop_builder = winit::event_loop::EventLoop::<EmbeddedUserEvent>::with_user_event();
         // Tauri/Tao 已经拥有进程级 DPI 策略；embedded winit 只消费窗口 DPI 事件，
         // 避免两个 UI runtime 重复修改 process-wide DPI awareness。
@@ -162,8 +163,9 @@ impl EmbeddedWinitHandler {
         let mut event_loop = match event_loop_builder.build() {
             Ok(event_loop) => event_loop,
             Err(error) => {
-                let _ = startup_sender.send(Err(format!("failed to create embedded winit EventLoop: {error}")));
-                return;
+                let error = format!("failed to create embedded winit EventLoop: {error}");
+                let _ = startup_sender.send(Err(error.clone()));
+                return Err(error);
             }
         };
         let event_proxy = event_loop.create_proxy();
@@ -171,7 +173,7 @@ impl EmbeddedWinitHandler {
         // 窗口消息。这里必须先把 proxy 交还 Tauri setup，让 main thread 离开同步等待
         // 并进入 Tao 消息泵，再由 pump_app_events/resumed 创建 child，否则会形成跨线程死锁。
         if startup_sender.send(Ok(event_proxy.clone())).is_err() {
-            return;
+            return Ok(());
         }
         let mut handler = Self {
             parent_window: RawWindowHandle::Win32(parent_window),
@@ -180,24 +182,28 @@ impl EmbeddedWinitHandler {
             window: None,
             event_proxy,
             pending_viewport_rect: EmbeddedViewportRect::default(),
+            failure: None,
         };
 
-        loop {
+        let exit_code = loop {
             match event_loop.pump_app_events(Some(Duration::from_millis(8)), &mut handler) {
                 PumpStatus::Continue => {}
-                PumpStatus::Exit(exit_code) => {
-                    if exit_code != 0 {
-                        log::error!("embedded winit event loop exited with a non-zero code: {exit_code}");
-                    }
-                    break;
-                }
+                PumpStatus::Exit(exit_code) => break exit_code,
             }
-        }
+        };
         drop(event_loop);
         let panic_payload = handler.destroy();
         if let Some(payload) = panic_payload {
             panic::resume_unwind(payload);
         }
+        // 完成显式关闭后再报告宿主错误；渲染线程异常优先，不用退出码覆盖其 payload。
+        if let Some(error) = handler.failure.take() {
+            return Err(error);
+        }
+        if exit_code != 0 {
+            return Err(format!("embedded winit event loop exited with a non-zero code: {exit_code}"));
+        }
+        Ok(())
     }
 
     fn init_after_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
@@ -314,7 +320,11 @@ impl EmbeddedWinitHandler {
     }
 
     fn fail_startup(&mut self, event_loop: &ActiveEventLoop, error: String) {
+        // 立即记录，避免用户只看到空白 viewport 直到退出；首个错误另行保存，由 shutdown 交付调用方。
         log::error!("failed to initialize embedded render child: {error}");
+        if self.failure.is_none() {
+            self.failure = Some(error);
+        }
         event_loop.exit();
     }
 }

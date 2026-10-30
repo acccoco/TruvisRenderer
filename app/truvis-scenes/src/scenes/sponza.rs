@@ -126,19 +126,19 @@ impl SponzaScene {
             color: (glam::vec3(1.0, 0.0, 0.0) * 5000.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
-        });
+        }).expect("invalid built-in point light");
         world.register_point_light(gpu::engine::light::PointLight {
             pos: glam::vec3(-1.0, 0.5, 4.0).into(),
             color: (glam::vec3(0.0, 1.0, 0.0) * 5000.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
-        });
+        }).expect("invalid built-in point light");
         world.register_point_light(gpu::engine::light::PointLight {
             pos: glam::vec3(6.0, 0.5, 4.0).into(),
             color: (glam::vec3(0.0, 0.0, 1.0) * 5000.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
-        });
+        }).expect("invalid built-in point light");
         world.register_spot_light(gpu::engine::light::SpotLight {
             pos: glam::vec3(-4.5, 1.0, 4.0).into(),
             inner_angle: 30.0_f32.to_radians(),
@@ -146,7 +146,7 @@ impl SponzaScene {
             outer_angle: 60.0_f32.to_radians(),
             dir: glam::vec3(0.0, -1.0, 0.0).into(),
             _dir_padding: Default::default(),
-        });
+        }).expect("invalid built-in spot light");
         world.register_spot_light(gpu::engine::light::SpotLight {
             pos: glam::vec3(2.5, 1.0, 4.0).into(),
             inner_angle: 30.0_f32.to_radians(),
@@ -154,7 +154,7 @@ impl SponzaScene {
             outer_angle: 60.0_f32.to_radians(),
             dir: glam::vec3(0.0, -1.0, 0.0).into(),
             _dir_padding: Default::default(),
-        });
+        }).expect("invalid built-in spot light");
         world.register_area_light(gpu::engine::light::AreaLight {
             center: glam::vec3(-1.0, 2.0, 4.0).into(),
             half_u: glam::vec3(0.7, 0.0, 0.0).into(),
@@ -164,7 +164,7 @@ impl SponzaScene {
             _half_u_padding: Default::default(),
             _half_v_padding: Default::default(),
             _radiance_padding: Default::default(),
-        });
+        }).expect("invalid built-in area light");
         world.register_area_light(gpu::engine::light::AreaLight {
             center: glam::vec3(6.0, 2.0, 4.0).into(),
             half_u: glam::vec3(0.26, 0.0, 0.0).into(),
@@ -174,6 +174,6 @@ impl SponzaScene {
             _half_u_padding: Default::default(),
             _half_v_padding: Default::default(),
             _radiance_padding: Default::default(),
-        });
+        }).expect("invalid built-in area light");
     }
 }

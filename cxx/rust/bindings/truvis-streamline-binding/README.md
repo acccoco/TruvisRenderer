@@ -92,7 +92,7 @@ warning 后忽略。C++ wrapper 不根据构建类型做策略判断。
 `init` 在目录创建和安装一次性日志桥前拒绝空路径/内嵌 NUL，并将 plugin/log 目录固定为绝对路径。
 native init 与后续 `vulkan_loader_path()` 使用同一路径，不再随 cwd 变化重新解释相对值；这里不做
 canonicalize，也不提前替代 DLL 缺失诊断。`init_default` 将 executable 查询失败作为错误返回；
-直接调用配置的 `Default` 则在该错误时 panic，不静默退到 `.`。
+配置不提供会 panic 的 `Default`；显式使用 `from_current_exe` 或传入路径。
 
 ## drain 线程
 
@@ -154,6 +154,7 @@ OnceLock state 持续有效；receiver 退出后投递失败会丢弃日志。�
   进程级函数表，不能由 `StreamlineRuntime: !Send + !Sync` 推导自由入口线程安全。
 - Vulkan root、command buffer 和图像 handle 仍由调用方验证。图像须活到 GPU 使用完成，
   `eValidUntilEvaluate` 描述 tag 的内容有效期，不允许在 CPU evaluate 返回后立即销毁 Vulkan 对象。
+- 当前只支持通过 Gfx/Streamline interposer 创建 Vulkan root；不提供预留的手动 hook/root 注册 API。
 - RR evaluate 当前只有 packed normal/roughness guide；配套 options 必须保持 packed，
   不把 options 中可表达 unpacked 视为已具备独立 roughness 图像通道。
 - Rust callback 不能 panic 跨 FFI。

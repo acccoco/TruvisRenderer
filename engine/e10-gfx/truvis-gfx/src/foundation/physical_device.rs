@@ -35,6 +35,8 @@ impl GfxPhysicalDevice {
     /// 创建一个新的物理显卡实例
     ///
     /// 优先选择独立显卡，如果没有则选择第一个可用的显卡
+    /// 主队列家族须同时支持 graphics/compute，并提供 GfxCore 需要的两个 queue。
+    /// Vulkan 允许 graphics/compute 家族省略 TRANSFER bit，筛选时不要求它显式出现。
     pub fn new_descrete_physical_device(instance: &ash::Instance) -> Self {
         unsafe {
             instance
@@ -97,42 +99,43 @@ impl GfxPhysicalDevice {
             log::debug!("physical device: queue family props:\n{:#?}", queue_familiy_props);
 
             // 找到符合条的 queue family
-            let find_queue_family = |name: String, include_flags: vk::QueueFlags, exclude_flags: vk::QueueFlags| {
-                queue_familiy_props
-                    .iter()
-                    .enumerate()
-                    .find(|(_, props)| {
-                        !(props.queue_family_properties.queue_flags & include_flags).is_empty()
-                            && (props.queue_family_properties.queue_flags & exclude_flags).is_empty()
-                    })
-                    .map(|(family_idx, props)| GfxQueueFamily {
-                        name,
-                        queue_family_index: family_idx as u32,
-                        queue_flags: props.queue_family_properties.queue_flags,
-                        queue_count: props.queue_family_properties.queue_count,
-                    })
-            };
+            let find_queue_family =
+                |name: String, include_flags: vk::QueueFlags, exclude_flags: vk::QueueFlags, min_queue_count: u32| {
+                    queue_familiy_props
+                        .iter()
+                        .enumerate()
+                        .find(|(_, props)| {
+                            props.queue_family_properties.queue_flags.contains(include_flags)
+                                && (props.queue_family_properties.queue_flags & exclude_flags).is_empty()
+                                && props.queue_family_properties.queue_count >= min_queue_count
+                        })
+                        .map(|(family_idx, props)| GfxQueueFamily {
+                            name,
+                            queue_family_index: family_idx as u32,
+                            queue_flags: props.queue_family_properties.queue_flags,
+                            queue_count: props.queue_family_properties.queue_count,
+                        })
+                };
 
-            // 全能的 Queue：graphics, compute, transfer
+            // 同时满足全部必需能力；不能让 transfer-only 家族成为主队列。
             let gfx_queue_family = find_queue_family(
                 "gfx".to_string(),
-                vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE | vk::QueueFlags::TRANSFER,
+                vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE,
                 vk::QueueFlags::empty(),
+                2,
             )
-            .unwrap();
+            .expect("Required queue family with graphics + compute and at least 2 queues is missing");
 
             // 仅 Compute
-            let compute_queue_family = find_queue_family(
-                "compute-only".to_string(),
-                vk::QueueFlags::COMPUTE | vk::QueueFlags::TRANSFER,
-                vk::QueueFlags::GRAPHICS,
-            );
+            let compute_queue_family =
+                find_queue_family("compute-only".to_string(), vk::QueueFlags::COMPUTE, vk::QueueFlags::GRAPHICS, 1);
 
             // 仅 Transfer
             let transfer_queue_family = find_queue_family(
                 "transfer-only".to_string(),
                 vk::QueueFlags::TRANSFER,
                 vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE,
+                1,
             );
 
             Self {

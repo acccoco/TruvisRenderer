@@ -5,10 +5,10 @@ use slotmap::SlotMap;
 
 use truvis_asset::asset_load_service::{AssetLoadEvent, AssetLoadService};
 use truvis_asset::handle::{
-    EmbeddedTextureId, LoadStatus, RawSceneData, RawTextureSource, SceneLoadDesc, SceneLoadHandle, TextureBytes,
+    EmbeddedTextureId, LoadStatus, RawMaterialData, RawSceneData, RawTextureSource, SceneLoadDesc, SceneLoadHandle, TextureBytes,
     TextureColorSpace, TextureLoadDesc, TextureLoadHandle,
 };
-use truvis_asset::material_texture::{TextureChannel, TextureSlot};
+use truvis_asset::material_texture::TextureChannel;
 
 use crate::components::material::MaterialData;
 use crate::edit_error::{SceneEditError, SceneHandleKind};
@@ -105,6 +105,12 @@ impl SceneMeshRecord {
 struct SceneMaterialRecord {
     data: MaterialData,
     revision: u64,
+}
+
+/// 仅在 scene 预检阶段存在；data 中的 texture handle 是未发布占位，提交时按请求逐一替换。
+struct PreparedSceneMaterial {
+    data: MaterialData,
+    textures: [Option<(AssetSource, TextureLoadDesc)>; TextureChannel::COUNT],
 }
 
 impl AssetStore {
@@ -381,40 +387,56 @@ impl AssetSystem {
         Ok(self.register_texture_source(
             AssetSource::File { path: path.clone() },
             color_space,
-            Some(TextureLoadDesc::File { path, color_space }),
+            TextureLoadDesc::File { path, color_space },
         ))
     }
 
+    /// 显式请求重试 Failed，Loading/Ready 继续复用；不热重载已成功的不可变内容。
+    /// 返回的 bool 表示本次开始加载（含重试），而不只是新建资源身份。
     fn register_texture_source(
         &mut self,
         source: AssetSource,
         color_space: TextureColorSpace,
-        desc: Option<TextureLoadDesc>,
+        desc: TextureLoadDesc,
     ) -> (TextureAssetHandle, bool) {
-        let (handle, is_new) = self.store.find_or_insert_texture(source, color_space);
-        if is_new {
-            if let Some(desc) = desc {
-                let load = self.load_service.request_texture(desc);
-                self.texture_loads.insert(load, handle);
+        let key = TextureKey {
+            source: source.clone(),
+            color_space,
+        };
+        if let Some(&handle) = self.store.texture_by_key.get(&key) {
+            if self.store.texture_record(handle).is_some_and(|record| record.state != TextureState::Failed) {
+                return (handle, false);
             }
         }
-        (handle, is_new)
+
+        let load = self.load_service.request_texture(desc);
+        let (handle, _) = self.store.find_or_insert_texture(source, color_space);
+        let record = self.store.all_textures.get_mut(handle).expect("AssetSystem: texture disappeared after registration");
+        record.state = TextureState::Loading;
+        record.data = None;
+        record.error = None;
+        self.texture_loads.insert(load, handle);
+        (handle, true)
     }
 
     pub(crate) fn import_scene(&mut self, path: PathBuf) -> SceneImportHandle {
+        let path = match std::fs::canonicalize(&path) {
+            Ok(path) => path,
+            Err(err) => {
+                // 错误通过返回的 handle 查询。
+                return self.scene_imports.insert(SceneImportRecord {
+                    status: LoadStatus::Failed,
+                    error: Some(format!("failed to canonicalize scene path '{}': {err}", path.display())),
+                    data: None,
+                });
+            }
+        };
+        let scene_load = self.load_service.request_scene(SceneLoadDesc { path });
         let scene_import = self.scene_imports.insert(SceneImportRecord {
             status: LoadStatus::Loading,
             error: None,
             data: None,
         });
-        let path = match std::fs::canonicalize(&path) {
-            Ok(path) => path,
-            Err(err) => {
-                self.fail_scene_import(scene_import, format!("failed to canonicalize scene path: {err}"));
-                return scene_import;
-            }
-        };
-        let scene_load = self.load_service.request_scene(SceneLoadDesc { path });
         self.scene_loads.insert(scene_load, scene_import);
         scene_import
     }
@@ -479,8 +501,8 @@ impl AssetSystem {
                     return;
                 };
                 if self.store.contains_texture(texture) {
-                    log::debug!("Texture ready {:?}: {}", texture, desc.source_label());
                     self.store.mark_texture_loaded(texture, data);
+                    log::debug!("Texture ready {:?}: {}", texture, desc.source_label());
                 }
             }
             AssetLoadEvent::TextureFailed { handle, desc, error } => {
@@ -489,8 +511,8 @@ impl AssetSystem {
                     return;
                 };
                 if self.store.contains_texture(texture) {
+                    self.store.mark_texture_failed(texture, error.clone());
                     log::error!("Texture load failed {:?} ({}): {}", texture, desc.source_label(), error);
-                    self.store.mark_texture_failed(texture, error);
                 }
             }
             AssetLoadEvent::SceneLoaded { handle, desc, data } => self.ingest_scene_loaded(handle, desc.path, data),
@@ -503,57 +525,46 @@ impl AssetSystem {
 
     fn ingest_scene_loaded(&mut self, scene_load: SceneLoadHandle, scene_path: PathBuf, raw: RawSceneData) {
         let scene_import = self.take_scene_import_for_load(scene_load);
-        if let Err(error) = Self::validate_scene_payload(&raw) {
-            self.fail_scene_import(scene_import, error);
-            return;
-        }
-        let source_path = scene_path;
-        let mut meshes = Vec::with_capacity(raw.meshes.len());
-        for mesh in raw.meshes {
-            match self.register_mesh(mesh) {
-                Ok(handle) => meshes.push(handle),
-                Err(error) => {
-                    self.fail_scene_import(scene_import, error.to_string());
-                    return;
+        // 所有可返回错误的校验与路径解析先完成，失败不能登记资源或重试共享纹理。
+        let prepared = (|| {
+            Self::validate_scene_payload(&raw)?;
+            let meshes = raw.meshes.into_iter()
+                .map(|mesh| SceneMeshRecord::from_mesh_data(mesh).map_err(|error| error.to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+            let materials = raw.materials.into_iter()
+                .map(|material| Self::prepare_scene_material(&scene_path, material))
+                .collect::<Result<Vec<_>, _>>()?;
+            for instance in &raw.instances {
+                for (submesh, &material) in meshes[instance.mesh_index as usize].data.submeshes.iter()
+                    .zip(&instance.material_indices)
+                {
+                    materials[material as usize].data.validate_uv_sets(submesh)?;
                 }
             }
-        }
-        let mut materials = Vec::with_capacity(raw.materials.len());
-        for material in raw.materials {
-            let mut textures: [Option<TextureSlot<TextureAssetHandle>>; TextureChannel::COUNT] = Default::default();
-            for (channel, slot) in TextureChannel::ALL.into_iter().zip(material.textures) {
-                let Some(slot) = slot else {
+            Ok::<_, String>((meshes, materials, raw.instances))
+        })();
+        let (prepared_meshes, prepared_materials, instances) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.fail_scene_import(scene_import, error);
+                return;
+            }
+        };
+
+        let meshes: Vec<_> = prepared_meshes.into_iter().map(|mesh| self.store.all_meshes.insert(mesh)).collect();
+        let mut materials = Vec::with_capacity(prepared_materials.len());
+        for mut material in prepared_materials {
+            for (channel, request) in TextureChannel::ALL.into_iter().zip(material.textures) {
+                let Some((source, desc)) = request else {
                     continue;
                 };
-                match self.register_scene_texture(&source_path, slot.texture.clone(), channel) {
-                    Ok(texture) => textures[channel as usize] = Some(slot.with_texture(texture)),
-                    Err(error) => {
-                        self.fail_scene_import(scene_import, error);
-                        return;
-                    }
-                }
+                let texture = self.register_texture_source(source, channel.color_space(), desc).0;
+                material.data.textures[channel as usize].as_mut().expect("prepared texture slot missing").texture =
+                    texture;
             }
-            let data = MaterialData {
-                base_color: material.base_color,
-                metallic: material.metallic,
-                roughness: material.roughness,
-                class: material.class,
-                coverage: material.coverage,
-                textures,
-                normal_scale: material.normal_scale,
-                emissive_factor: material.emissive_factor,
-                name: material.name,
-            };
-            match self.register_material(data) {
-                Ok(handle) => materials.push(handle),
-                Err(error) => {
-                    self.fail_scene_import(scene_import, error.to_string());
-                    return;
-                }
-            }
+            materials.push(self.register_material(material.data).expect("validated scene material dependencies missing"));
         }
-        let objects = raw
-            .instances
+        let objects = instances
             .into_iter()
             .map(|instance| SceneObjectData {
                 name: instance.name,
@@ -566,18 +577,10 @@ impl AssetSystem {
             self.scene_imports.get_mut(scene_import).expect("AssetSystem: scene import disappeared during ingest");
         record.status = LoadStatus::Ready;
         record.error = None;
-        record.data = Some(SceneData {
-            scene_path: source_path,
-            objects,
-        });
+        record.data = Some(SceneData { scene_path, objects });
     }
 
     fn validate_scene_payload(raw: &RawSceneData) -> Result<(), String> {
-        for mesh in &raw.meshes {
-            if mesh.submeshes.is_empty() {
-                return Err(format!("scene mesh '{}' has no submeshes", mesh.name));
-            }
-        }
         for instance in &raw.instances {
             if instance.mesh_index as usize >= raw.meshes.len() {
                 return Err(format!(
@@ -606,12 +609,36 @@ impl AssetSystem {
         Ok(())
     }
 
-    fn register_scene_texture(
-        &mut self,
+    fn prepare_scene_material(scene_path: &Path, material: RawMaterialData) -> Result<PreparedSceneMaterial, String> {
+        let mut prepared = PreparedSceneMaterial {
+            data: MaterialData {
+                base_color: material.base_color,
+                metallic: material.metallic,
+                roughness: material.roughness,
+                class: material.class,
+                coverage: material.coverage,
+                textures: Default::default(),
+                normal_scale: material.normal_scale,
+                emissive_factor: material.emissive_factor,
+                name: material.name,
+            },
+            textures: Default::default(),
+        };
+        for (channel, slot) in TextureChannel::ALL.into_iter().zip(material.textures) {
+            if let Some(slot) = slot {
+                prepared.textures[channel as usize] = Some(Self::resolve_scene_texture(scene_path, slot.texture.clone(), channel)?);
+                prepared.data.textures[channel as usize] = Some(slot.with_texture(TextureAssetHandle::default()));
+            }
+        }
+        prepared.data.validate()?;
+        Ok(prepared)
+    }
+
+    fn resolve_scene_texture(
         scene_path: &Path,
         source: RawTextureSource,
         channel: TextureChannel,
-    ) -> Result<TextureAssetHandle, String> {
+    ) -> Result<(AssetSource, TextureLoadDesc), String> {
         let color_space = channel.color_space();
         match source {
             RawTextureSource::ExternalPath(path) => {
@@ -623,42 +650,31 @@ impl AssetSystem {
                 let canonical = std::fs::canonicalize(&resolved).map_err(|err| {
                     format!("failed to canonicalize {} texture path '{}': {err}", channel.name(), resolved.display())
                 })?;
-                Ok(self
-                    .register_texture_source(
-                        AssetSource::File {
-                            path: canonical.clone(),
-                        },
+                Ok((
+                    AssetSource::File {
+                        path: canonical.clone(),
+                    },
+                    TextureLoadDesc::File {
+                        path: canonical,
                         color_space,
-                        Some(TextureLoadDesc::File {
-                            path: canonical,
-                            color_space,
-                        }),
-                    )
-                    .0)
+                    },
+                ))
             }
             RawTextureSource::Embedded {
                 identity: EmbeddedTextureId { image_index },
                 bytes,
                 mime_type,
             } => {
-                let scene_path = std::fs::canonicalize(scene_path).map_err(|err| {
-                    format!("failed to canonicalize embedded scene path '{}': {err}", scene_path.display())
-                })?;
-                Ok(self
-                    .register_texture_source(
-                        AssetSource::Embedded {
-                            scene_path,
-                            image_index,
-                        },
-                        color_space,
-                        Some(TextureLoadDesc::Embedded {
-                            identity: EmbeddedTextureId { image_index },
-                            bytes,
-                            mime_type,
-                            color_space,
-                        }),
-                    )
-                    .0)
+                // scene_path 已在请求入口 canonicalize；owned bytes 不依赖源 scene 文件继续存在。
+                Ok((
+                    AssetSource::Embedded {
+                        scene_path: scene_path.to_path_buf(),
+                        image_index,
+                    },
+                    TextureLoadDesc::Embedded {
+                        identity: EmbeddedTextureId { image_index }, bytes, mime_type, color_space,
+                    },
+                ))
             }
         }
     }
@@ -685,7 +701,7 @@ impl Default for AssetSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::material::{CoverageMode, MaterialClass};
+    use crate::components::material::{CoverageMode, MaterialClass, TextureSlot};
 
     #[test]
     fn texture_reverse_reference_controls_orphan_removal() {

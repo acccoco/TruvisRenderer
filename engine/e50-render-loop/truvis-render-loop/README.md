@@ -23,14 +23,27 @@
 - GUI frame 构建、pass 贡献、overlay 和输入消费均通过具体类型由 Renderer 显式调用，不进入 `RenderLoop`。
 - winit backend 只负责窗口、事件循环和事件适配；本 crate 不依赖 `winit`，也不反向依赖线程宿主。
 
+上传确认、主视图历史确认与帧号推进是不同边界：prepare submit 返回后确认 GPU 数据
+版本，render 返回后按其 bool 确认实例历史，present 或无 image 的空 signal submit
+正常返回后推进帧号。零尺寸暂停发生在 begin_frame 之前，不进入上述确认。
+
+正常退出直接 wait_idle → Renderer shutdown → Runtime destroy，不插入额外日志调用。
+阶段内 panic 仍可能跳过后续关闭；RenderThread finished 不能证明 surface/root 已回收。
+详见[帧执行与关闭约束](../../../docs/design/frame-execution-and-window-lifecycle.md)。
+
 原生窗口通过 `RenderThreadControl::publish_resize` 同时发布尺寸 generation 和 `InputEvent::Resized`。
 即使窗口恢复原尺寸，也会在下一次 update 前清理旧交互；DLSS 内部 resize 不走该窗口通道。
+
+退出标记同时限制输入生产和排空：send_input 观察到退出后不再入队，Loop 在 drain
+期间检查退出，并在 drain 后重查，避免积压拖延关闭或再开始 resize/frame。与退出
+并发且已越过检查的投递仍可能入队；这是停止接收的观察边界，不是事务式关闭通道。
+正常暂停/零尺寸期间仍使用无界 FIFO，不合并或丢弃松键/焦点等状态事件。
 
 ## Ctx 边界
 
 - `RendererInitCtx` 包装 `RenderRuntimeInitCtx` 并附带窗口 size / scale factor；Renderer 直接用 `&mut ctx.runtime`
   初始化自己持有的长期资源。
-- `RenderRuntimeUpdateCtx` 面向 CPU 更新，提供 `GameWorld`、帧设置和 `DlssOptions`，不承担 command recording。
+- `RenderRuntimeUpdateCtx` 面向 CPU 更新，提供 `GameWorld`、只读帧状态/计时与内部尺寸请求入口；DLSS 配置由 Renderer 持有。
 - `RenderRuntimeRayCastCtx` 只在 Renderer `after_prepare` hook 中出现。
 - `RenderRuntimeRenderCtx` 面向渲染录制；具体 Renderer 可在 `renderer-kit` 内进一步裁剪为 `SubsystemRenderCtx`，该类型不属于 render-loop 层。
 - `RendererResizeCtx` 和 `RendererShutdownCtx` 分别包装对应 runtime ctx；Renderer 直接用它们重建或释放自有子系统资源。

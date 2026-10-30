@@ -69,13 +69,27 @@ pub struct RenderInstanceTable {
     bindings: SecondaryMap<MeshInstanceHandle, InstanceBinding>,
     /// 镜像首次建立时读取完整 membership，后续只处理编辑/资源发布候选。
     initialized: bool,
+    /// 已接管的最终状态候选；整批对账成功后清空，异常时保留以便重新读取 CPU 最终状态。
+    pending_candidates: IndexSet<MeshInstanceHandle>,
+    /// 状态已经改变但尚未成功打包交付的通知，不能因下一次对账成为 no-op 而丢失。
+    pending_update: RenderInstanceUpdateResult,
     free_slots: Vec<GpuInstanceSlot>,
     retired_slots: Vec<RetiredSlot>,
     current_frame_id: u64,
     ray_cast_records: Vec<Option<RayCastInstanceRecord>>,
     dirty_instances: IndexSet<MeshInstanceHandle>,
-    pending_uploads: Vec<(MeshInstanceHandle, (u64, u64))>,
+    /// 只有 copy/barrier 完整录制后才接管；未确认时不能开始下一次 prepare。
+    pending_upload: Option<PreparedInstanceUpload>,
     pending_history: Vec<(MeshInstanceHandle, u64)>,
+}
+
+/// 本次矩阵写入的准备结果；CPU 打包成功不等于 command 已录制或 queue 已提交。
+/// regions 由调用者录制，成功后整份结果移交回 table，避免失败时提前确认副本或运动历史。
+pub(crate) struct PreparedInstanceUpload {
+    pub(crate) regions: Vec<vk::BufferCopy>,
+    frame_label: FrameLabel,
+    versions: Vec<(MeshInstanceHandle, (u64, u64))>,
+    history: Vec<(MeshInstanceHandle, u64)>,
 }
 
 /// instance 阶段对 RenderWorld 对账暴露的结构化结果。
@@ -93,12 +107,14 @@ impl RenderInstanceTable {
         Self {
             bindings: SecondaryMap::new(),
             initialized: false,
+            pending_candidates: IndexSet::new(),
+            pending_update: RenderInstanceUpdateResult::default(),
             free_slots: Vec::new(),
             retired_slots: Vec::new(),
             current_frame_id,
             ray_cast_records: Vec::new(),
             dirty_instances: IndexSet::new(),
-            pending_uploads: Vec::new(),
+            pending_upload: None,
             pending_history: Vec::new(),
         }
     }
@@ -110,27 +126,52 @@ impl RenderInstanceTable {
         self.reclaim_retired_slots();
     }
 
+    /// 调用方已完整录制本次 copy/barrier；此后提交失败时保留记录，不能隐式清空重试。
+    pub(crate) fn record_transform_uploads(&mut self, upload: PreparedInstanceUpload) {
+        assert!(self.pending_upload.is_none() && self.pending_history.is_empty(), "previous frame was not finished");
+        for &(handle, _) in &upload.versions {
+            self.dirty_instances.insert(handle);
+        }
+        self.pending_upload = Some(upload);
+    }
+
     /// 上传 submit 正常返回后确认当前 FIF 的写入；不推进主视图运动历史。
     pub(crate) fn commit_uploaded_frame(&mut self, frame_label: FrameLabel) {
-        for (handle, versions) in self.pending_uploads.drain(..) {
-            let binding = self.bindings.get_mut(handle).expect("uploaded instance disappeared within frame");
-            binding.uploaded_versions[*frame_label] = Some(versions);
+        let upload = self.pending_upload.as_ref().expect("instance upload was not recorded");
+        assert_eq!(*upload.frame_label, *frame_label, "instance upload confirmed for another FIF");
+        for &(handle, (current, previous)) in &upload.versions {
+            let binding = self.bindings.get(handle).expect("uploaded instance disappeared within frame");
+            assert_eq!(binding.current_version, current, "instance changed after recording");
+            assert_eq!(binding.last_submitted_version.unwrap_or(current), previous, "instance history changed after recording");
         }
+        for &(handle, version) in &upload.history {
+            let binding = self.bindings.get(handle).expect("recorded instance history disappeared within frame");
+            assert_eq!(binding.current_version, version, "instance changed after recording");
+        }
+        for &(handle, versions) in &upload.versions {
+            self.bindings.get_mut(handle).unwrap().uploaded_versions[*frame_label] = Some(versions);
+        }
+        self.pending_history = self.pending_upload.take().unwrap().history;
     }
 
     /// Loop 在主视图 render 返回后调用；source 从 prepare 到此处保持冻结。
     /// 未提交主视图时仅释放帧内记录，下帧仍从上一实际提交的 transform 回溯。
     pub(crate) fn finish_rendered_frame(&mut self, scene_submitted: bool) {
-        assert!(self.pending_uploads.is_empty(), "instance upload was not confirmed before render");
-        for (handle, version) in self.pending_history.drain(..) {
-            if scene_submitted {
-                let binding = self.bindings.get_mut(handle).expect("rendered instance disappeared within frame");
+        assert!(self.pending_upload.is_none(), "instance upload was not confirmed before render");
+        if scene_submitted {
+            // 全部身份与版本先通过检查，再推进任何实例历史，避免后项失效留下部分确认。
+            for &(handle, version) in &self.pending_history {
+                let binding = self.bindings.get(handle).expect("rendered instance disappeared within frame");
                 assert_eq!(binding.current_version, version, "instance changed after prepare");
+            }
+            for &handle in &self.dirty_instances {
+                assert!(self.bindings.contains_key(handle), "dirty instance disappeared within frame");
+            }
+            for &(handle, version) in &self.pending_history {
+                let binding = self.bindings.get_mut(handle).unwrap();
                 binding.last_submitted_transform = binding.source.transform;
                 binding.last_submitted_version = Some(version);
             }
-        }
-        if scene_submitted {
             self.dirty_instances.retain(|handle| {
                 let binding = &self.bindings[*handle];
                 let version = binding.current_version;
@@ -138,34 +179,34 @@ impl RenderInstanceTable {
                     || binding.uploaded_versions.iter().any(|pair| *pair != Some((version, version)))
             });
         }
+        self.pending_history.clear();
     }
 
-    /// 结构上传会覆盖所有 Active record；失效当前副本后也走同一矩阵写入路径。
-    /// buffer 重建只丢弃 GPU 副本版本，保留 CPU 的上一渲染帧历史。
+    /// 结构上传强制重写所有 Active record；确认版本与 CPU 运动历史在此阶段均不改变。
+    /// 部分 stage 内容在失败后不可提交，调用者必须放弃对应 command；准备结果不隐式提交。
     pub(crate) fn prepare_transform_uploads(
-        &mut self,
+        &self,
         frame_label: FrameLabel,
         full_records: bool,
         stage: &mut [gpu::engine::scene::Instance],
-    ) -> Vec<vk::BufferCopy> {
-        assert!(self.pending_uploads.is_empty());
-        assert!(self.pending_history.is_empty());
-        if full_records {
-            for (handle, binding) in &mut self.bindings {
-                if binding.state == InstanceState::Active {
-                    binding.uploaded_versions[*frame_label] = None;
-                    self.dirty_instances.insert(handle);
-                }
-            }
-        }
-        let mut regions = Vec::new();
-        for &handle in &self.dirty_instances {
+    ) -> PreparedInstanceUpload {
+        assert!(self.pending_upload.is_none() && self.pending_history.is_empty(), "previous frame was not finished");
+        let handles = if full_records {
+            self.bindings.iter().filter(|(_, binding)| binding.state == InstanceState::Active)
+                .map(|(handle, _)| handle).collect::<Vec<_>>()
+        } else {
+            self.dirty_instances.iter().copied().collect::<Vec<_>>()
+        };
+        let mut upload = PreparedInstanceUpload {
+            regions: Vec::new(), frame_label, versions: Vec::new(), history: Vec::new(),
+        };
+        for handle in handles {
             let binding = &self.bindings[handle];
             let current = binding.current_version;
             let previous = binding.last_submitted_version.unwrap_or(current);
             let uploaded = binding.uploaded_versions[*frame_label];
-            let write_current = uploaded.is_none_or(|pair| pair.0 != current);
-            let write_previous = uploaded.is_none_or(|pair| pair.1 != previous);
+            let write_current = full_records || uploaded.is_none_or(|pair| pair.0 != current);
+            let write_previous = full_records || uploaded.is_none_or(|pair| pair.1 != previous);
             let slot = binding.slot.as_usize();
             let record = &mut stage[slot];
             if write_current {
@@ -181,22 +222,22 @@ impl RenderInstanceTable {
                 .into();
             }
             if full_records {
-                regions.push(Self::instance_region(slot, 0, size_of::<gpu::engine::scene::Instance>()));
+                upload.regions.push(Self::instance_region(slot, 0, size_of::<gpu::engine::scene::Instance>()));
             } else {
                 if write_current {
-                    regions.push(Self::instance_region(
+                    upload.regions.push(Self::instance_region(
                         slot,
                         offset_of!(gpu::engine::scene::Instance, model),
                         size_of_val(&record.model),
                     ));
-                    regions.push(Self::instance_region(
+                    upload.regions.push(Self::instance_region(
                         slot,
                         offset_of!(gpu::engine::scene::Instance, inv_model),
                         size_of_val(&record.inv_model),
                     ));
                 }
                 if write_previous {
-                    regions.push(Self::instance_region(
+                    upload.regions.push(Self::instance_region(
                         slot,
                         offset_of!(gpu::engine::scene::Instance, prev_model),
                         size_of_val(&record.prev_model),
@@ -204,23 +245,23 @@ impl RenderInstanceTable {
                 }
             }
             if write_current || write_previous {
-                self.pending_uploads.push((handle, (current, previous)));
+                upload.versions.push((handle, (current, previous)));
             }
             if binding.last_submitted_version != Some(current) {
-                self.pending_history.push((handle, current));
+                upload.history.push((handle, current));
             }
         }
-        if !regions.is_empty() {
+        if !upload.regions.is_empty() {
             log::debug!(
                 "Instance upload: FIF={:?}, dirty={}, regions={}, bytes={}, full={}",
                 frame_label,
                 self.dirty_instances.len(),
-                regions.len(),
-                regions.iter().map(|r| r.size).sum::<u64>(),
+                upload.regions.len(),
+                upload.regions.iter().map(|r| r.size).sum::<u64>(),
                 full_records
             );
         }
-        regions
+        upload
     }
 
     fn instance_region(slot: usize, field_offset: usize, size: usize) -> vk::BufferCopy {
@@ -261,6 +302,11 @@ impl RenderInstanceTable {
         Some((slot, submesh_index))
     }
 
+    /// 在任何可能失败的 prepare 工作之前接管身份；对账继续读取 CPU 最终状态。
+    pub(crate) fn queue_changes(&mut self, candidates: IndexSet<MeshInstanceHandle>) {
+        self.pending_candidates.extend(candidates);
+    }
+
     /// 从 CPU scene read view 构建本帧可渲染的 `RenderData` 快照。
     ///
     /// 该阶段会先同步 instance 生命周期与依赖 ready 状态；只有 mesh/material 都能被 resolver
@@ -269,23 +315,22 @@ impl RenderInstanceTable {
     pub fn prepare_render_data<'a>(
         &mut self,
         scene: SceneReadView<'_>,
-        mut candidates: IndexSet<MeshInstanceHandle>,
         material_slot_resolver: &dyn MaterialSlotResolver,
         mesh_resolver: &'a dyn MeshRenderResolver,
     ) -> (RenderData<'a>, RenderInstanceUpdateResult) {
-        assert!(self.pending_uploads.is_empty() && self.pending_history.is_empty(), "previous frame was not finished");
+        assert!(self.pending_upload.is_none() && self.pending_history.is_empty(), "previous frame was not finished");
         if !self.initialized {
-            candidates.extend(scene.instance_map().keys());
+            self.pending_candidates.extend(scene.instance_map().keys());
             self.initialized = true;
         }
-        let update_result = self.sync_scene_instances(scene, candidates, material_slot_resolver, mesh_resolver);
+        self.sync_scene_instances(scene, material_slot_resolver, mesh_resolver);
 
         // RenderData 是提交给 RenderWorld 的只读快照。这里按稳定 slot 排序，保证 raster draw、
         // TLAS custom index 和 GPU instance buffer 使用同一套 instance slot 语义。
         let mut mesh_handle_to_index = HashMap::new();
         let mut all_meshes: Vec<MeshRenderData<'a>> = Vec::new();
         let mut mesh_geometry_start_indices: Vec<usize> = Vec::new();
-        let mut total_geometry_count = 0;
+        let mut total_geometry_count = 0usize;
         let mut all_instances: Vec<InstanceRenderData> = Vec::new();
         self.ray_cast_records.fill(None);
 
@@ -307,7 +352,9 @@ impl RenderInstanceTable {
                 let index = all_meshes.len();
                 mesh_handle_to_index.insert(instance.mesh, index);
                 mesh_geometry_start_indices.push(total_geometry_count);
-                total_geometry_count += mesh_render_data.geometries.len();
+                total_geometry_count = total_geometry_count
+                    .checked_add(mesh_render_data.geometries.len())
+                    .expect("render geometry count overflow");
                 all_meshes.push(mesh_render_data);
                 index
             };
@@ -356,28 +403,32 @@ impl RenderInstanceTable {
             all_meshes,
             mesh_geometry_start_indices,
         };
-        (render_data, update_result)
+        (render_data, std::mem::take(&mut self.pending_update))
     }
 
     fn sync_scene_instances(
         &mut self,
         scene: SceneReadView<'_>,
-        candidates: IndexSet<MeshInstanceHandle>,
         material_slot_resolver: &dyn MaterialSlotResolver,
         mesh_resolver: &dyn MeshRenderResolver,
-    ) -> RenderInstanceUpdateResult {
-        let mut result = RenderInstanceUpdateResult::default();
-        if !candidates.is_empty() {
-            log::debug!("RenderInstanceTable: reconcile {} candidate instances", candidates.len());
+    ) {
+        if !self.pending_candidates.is_empty() {
+            log::debug!("RenderInstanceTable: reconcile {} candidate instances", self.pending_candidates.len());
         }
-        // handle 只限定对账范围；删除、新增和字段变化都由最终状态决定。
-        for handle in candidates {
+        // 整批完成前保留候选及顺序；失败重入对账是幂等的，已产生的通知单独保留。
+        for index in 0..self.pending_candidates.len() {
+            let handle = self.pending_candidates[index];
             let Some(instance) = scene.get_instance(handle) else {
-                result.active_set_changed |= self.retire_instance_binding(handle);
+                self.pending_update.active_set_changed |= self.retire_instance_binding(handle);
                 continue;
             };
             let source_revision =
                 scene.instance_revision(handle).expect("RenderInstanceTable: live instance revision missing");
+            // resolver 与版本预检先完成，不能先推进 source revision 再丢失派生变化。
+            let requires_any_hit = instance.materials.iter().any(|&material| {
+                material_slot_resolver.material_data(material).is_some_and(|data| data.coverage.requires_any_hit())
+            });
+            let ready = Self::dependencies_ready(instance, material_slot_resolver, mesh_resolver);
             if !self.bindings.contains_key(handle) {
                 self.register_instance(handle, instance, source_revision);
             }
@@ -385,95 +436,78 @@ impl RenderInstanceTable {
             let source_changed = binding.source_revision_seen != source_revision;
             let transform_changed = source_changed && binding.source.transform != instance.transform;
             let material_binding_changed = source_changed && binding.source.materials != instance.materials;
-            if source_changed {
-                binding.source.clone_from(instance);
+            let current_version = if transform_changed {
+                binding.current_version.checked_add(1).expect("instance transform version overflow")
+            } else {
+                binding.current_version
+            };
+            let source = source_changed.then(|| instance.clone());
+            let was_active = binding.state == InstanceState::Active;
+            if transform_changed && was_active {
+                log::debug!(
+                    "RenderInstanceTable: transform dirty handle={:?} stable_slot={}", handle, binding.slot.as_u32()
+                );
+            }
+            if was_active != ready {
+                log::trace!(
+                    "RenderInstanceTable: {} handle={:?} stable_slot={}",
+                    if ready { "activate" } else { "deactivate" }, handle, binding.slot.as_u32()
+                );
+            }
+
+            // 本身份的查询、诊断与可失败预检均成功后，再一起提交镜像及下游变更标记。
+            if let Some(source) = source {
+                binding.source = source;
                 binding.source_revision_seen = source_revision;
             }
-
-            if transform_changed {
-                binding.current_version =
-                    binding.current_version.checked_add(1).expect("instance transform version overflow");
-            }
-
-            if transform_changed && binding.state == InstanceState::Active {
+            binding.current_version = current_version;
+            if transform_changed && was_active {
                 self.dirty_instances.insert(handle);
-                log::debug!(
-                    "RenderInstanceTable: transform dirty handle={:?} stable_slot={}",
-                    handle,
-                    binding.slot.as_u32()
-                );
-                result.transform_changed = true;
+                self.pending_update.transform_changed = true;
             }
-
-            if material_binding_changed && binding.state == InstanceState::Active {
-                // material list 变化会改变 indirect 与 emissive base map；TLAS 是否变化由
-                // requires_any_hit 的实际结果单独判断。
-                result.material_binding_changed = true;
-            }
-
-            let requires_any_hit = instance.materials.iter().any(|&material| {
-                material_slot_resolver.material_data(material).is_some_and(|data| data.coverage.requires_any_hit())
-            });
-            if binding.state == InstanceState::Active && binding.requires_any_hit != requires_any_hit {
-                binding.requires_any_hit = requires_any_hit;
-                result.requires_any_hit_changed = true;
-            } else {
-                binding.requires_any_hit = requires_any_hit;
-            }
-
-            // ready gate 由 material/mesh resolver 共同决定。instance manager 不直接访问 material/mesh manager
-            // 内部缓存，只依赖窄接口判断这个实例是否可以进入本帧 render data。
-            let ready = Self::dependencies_ready(instance, material_slot_resolver, mesh_resolver);
+            self.pending_update.material_binding_changed |= material_binding_changed && was_active;
+            self.pending_update.requires_any_hit_changed |= was_active && binding.requires_any_hit != requires_any_hit;
+            binding.requires_any_hit = requires_any_hit;
             match (binding.state, ready) {
                 (InstanceState::Pending, true) => {
-                    // mesh/material 都 ready 后才激活，避免 draw/TLAS 使用空 BLAS 或无效 material slot。
                     binding.state = InstanceState::Active;
                     binding.last_submitted_version = None;
                     binding.uploaded_versions.fill(None);
                     self.dirty_instances.insert(handle);
-                    result.active_set_changed = true;
-                    log::trace!(
-                        "RenderInstanceTable: activate handle={:?} stable_slot={}",
-                        handle,
-                        binding.slot.as_u32()
-                    );
+                    self.pending_update.active_set_changed = true;
                 }
                 (InstanceState::Active, false) => {
-                    // asset 重新加载或材质被移除时，已激活实例会退回 pending，
-                    // 直到 resolver 再次提供完整 GPU 数据。
                     binding.state = InstanceState::Pending;
                     binding.last_submitted_version = None;
                     self.dirty_instances.swap_remove(&handle);
-                    result.active_set_changed = true;
-                    log::trace!(
-                        "RenderInstanceTable: deactivate handle={:?} stable_slot={}",
-                        handle,
-                        binding.slot.as_u32()
-                    );
+                    self.pending_update.active_set_changed = true;
                 }
                 _ => {}
             }
         }
-
-        result
+        self.pending_candidates.clear();
     }
 
     fn register_instance(&mut self, handle: MeshInstanceHandle, instance: &Instance, source_revision: u64) {
         // 新实例先拿到稳定 slot，但初始状态保持 pending；ready gate 由 resolver 决定。
-        let slot = self.free_slots.pop().unwrap_or_else(|| {
+        let slot = self.free_slots.last().copied().unwrap_or_else(|| {
             let index = u32::try_from(self.ray_cast_records.len())
                 .expect("RenderInstanceTable: GPU instance slot index exceeds u32");
             let slot = GpuInstanceSlot::new(index);
             slot.validate_tlas_custom_index();
-            self.ray_cast_records.push(None);
             slot
         });
+        let source = instance.clone();
+        log::trace!("RenderInstanceTable: register handle={:?} stable_slot={}", handle, slot.as_u32());
+        if self.free_slots.pop().is_none() {
+            self.ray_cast_records.push(None);
+        }
         self.bindings.insert(
             handle,
             InstanceBinding {
                 slot,
                 state: InstanceState::Pending,
-                source: instance.clone(),
+                source,
                 source_revision_seen: source_revision,
                 requires_any_hit: false,
                 current_version: 1,
@@ -482,22 +516,21 @@ impl RenderInstanceTable {
                 uploaded_versions: [None; FrameLabel::COUNT],
             },
         );
-        log::trace!("RenderInstanceTable: register handle={:?} stable_slot={}", handle, slot.as_u32());
     }
 
     fn retire_instance_binding(&mut self, handle: MeshInstanceHandle) -> bool {
-        if let Some(binding) = self.bindings.remove(handle) {
+        if let Some(binding) = self.bindings.get(handle) {
+            log::debug!(
+                "RenderInstanceTable: retire handle={:?} stable_slot={}; reclaim delayed by FIF",
+                handle, binding.slot.as_u32()
+            );
+            let binding = self.bindings.remove(handle).expect("retired instance binding disappeared");
             self.dirty_instances.swap_remove(&handle);
             let was_active = binding.state == InstanceState::Active;
             self.retired_slots.push(RetiredSlot {
                 slot: binding.slot,
                 retired_frame_id: self.current_frame_id,
             });
-            log::debug!(
-                "RenderInstanceTable: retire handle={:?} stable_slot={}; reclaim delayed by FIF",
-                handle,
-                binding.slot.as_u32()
-            );
             return was_active;
         }
         false
@@ -506,20 +539,20 @@ impl RenderInstanceTable {
     fn reclaim_retired_slots(&mut self) {
         let current_frame_id = self.current_frame_id;
         let fif_count = FrameLabel::COUNT as u64;
-        let mut retained = Vec::new();
-
-        for retired in self.retired_slots.drain(..) {
+        // 记录到期 slot 后转入 free list；尚未跨过 FIF 窗口的 slot 继续保留。
+        for retired in &self.retired_slots {
             if current_frame_id.saturating_sub(retired.retired_frame_id) >= fif_count {
-                // 延迟到 FIF 窗口之后再复用 slot，保证旧 command buffer 中的 instance index
-                // 不会突然指向新实例。
                 log::debug!("RenderInstanceTable: reclaimed stable_slot={}", retired.slot.as_u32());
-                self.free_slots.push(retired.slot);
-            } else {
-                retained.push(retired);
             }
         }
-
-        self.retired_slots = retained;
+        self.retired_slots.retain(|retired| {
+            if current_frame_id.saturating_sub(retired.retired_frame_id) >= fif_count {
+                self.free_slots.push(retired.slot);
+                false
+            } else {
+                true
+            }
+        });
     }
 
     fn dependencies_ready(

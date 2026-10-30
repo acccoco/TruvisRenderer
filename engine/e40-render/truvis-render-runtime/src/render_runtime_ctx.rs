@@ -178,9 +178,9 @@ impl RenderRuntimeInitCtx<'_> {
     }
 }
 
-/// Swapchain resize 上下文，仅在 swapchain 实际重建时产生。
+/// 窗口输出或 Renderer 内部渲染尺寸变化时的资源重建上下文。
 ///
-/// 上层只在收到 `Some(ctx)` 时重建窗口尺寸相关资源；连续 resize 事件会在 present 层合并。
+/// Runtime 在 GPU idle 后交付；内部尺寸变化不要求重建 swapchain，present view 仍指向当前链。
 pub struct RenderRuntimeResizeCtx<'a> {
     /// resize 后重建上层 GPU 资源需要的 device 上下文。
     pub device_ctx: GfxDeviceCtx<'a>,
@@ -198,7 +198,7 @@ pub struct RenderRuntimeResizeCtx<'a> {
     pub frame_timing: &'a FrameTiming,
     /// resize 后的 main view / frame 渲染目标状态。
     pub frame_state: &'a mut FrameRenderState,
-    /// 已重建完成的 present 边界只读引用。
+    /// 当前 present 边界只读引用；内部尺寸变化时 swapchain 可以保持不变。
     pub present: PresentView<'a>,
     pub(crate) requested_render_extent: &'a mut vk::Extent2D,
 }

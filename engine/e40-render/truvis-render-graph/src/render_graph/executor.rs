@@ -3,7 +3,10 @@
 //! 提供 `RenderGraphBuilder` 用于构建渲染图，
 //! `CompiledGraph` 用于缓存编译结果并执行渲染。
 
-use std::{collections::HashMap, fmt::Write as _};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Write as _,
+};
 
 use ash::vk;
 use itertools::Itertools;
@@ -122,6 +125,7 @@ impl<'a> RenderGraphBuilder<'a> {
         final_state: RgImageState,
         signal_semaphore: Option<RgSemaphoreInfo>,
     ) -> &mut Self {
+        assert!(self.resources.get_image(handle).is_some(), "cannot export unregistered graph image {:?}", handle);
         self.export_images.insert(
             handle,
             RgExportInfo {
@@ -147,6 +151,8 @@ impl<'a> RenderGraphBuilder<'a> {
     /// 返回 `&mut Self` 以支持链式调用
     pub fn add_pass<P: RgPass + 'a>(&mut self, name: impl Into<String>, mut pass: P) -> &mut Self {
         let name = name.into();
+        // 名称会作为 Vulkan debug label；在 setup 和任何 command 录制前拒绝确定无效的输入。
+        assert!(!name.as_bytes().contains(&0), "graph pass name must not contain NUL");
 
         // 创建 PassBuilder 供 Pass 声明依赖
         let mut builder = RgPassBuilder {
@@ -157,6 +163,16 @@ impl<'a> RenderGraphBuilder<'a> {
 
         // 调用 Pass 的 setup 方法
         pass.setup(&mut builder);
+
+        // setup 的全部声明校验通过后才发布节点，避免 compile 静默跳过不存在的资源。
+        for (handle, _) in builder.image_reads.iter().chain(&builder.image_writes) {
+            assert!(
+                self.resources.get_image(*handle).is_some(),
+                "pass '{}' references unregistered graph image {:?}",
+                name,
+                handle
+            );
+        }
 
         // 创建 PassNode
         let node = RgPassNode {
@@ -187,9 +203,9 @@ impl<'a> RenderGraphBuilder<'a> {
     /// 固定 pass 插入顺序并计算每个 pass 前需要的 barrier。
     ///
     /// # 返回
-    /// 编译后的 `CompiledGraph`，可以多次执行
+    /// 编译后的 `CompiledGraph`；再次执行前必须重新满足导入状态与 semaphore 前置。
     ///
-    pub fn compile(mut self) -> CompiledGraph<'a> {
+    pub fn compile(self) -> CompiledGraph<'a> {
         let _span = tracy_client::span!("RenderGraphBuilder::compile");
 
         let pass_count = self.passes.len();
@@ -198,12 +214,7 @@ impl<'a> RenderGraphBuilder<'a> {
         // 计算每个 Pass 的 barriers（同时返回最终的资源状态用于计算 epilogue barriers）
         let (barriers, final_image_states) = self.compute_barriers(&execution_order);
 
-        // 收集外部 wait semaphores（来自导入资源）
-        let wait_semaphores = self.resources.iter_images().filter_map(|(_, res)| res.wait_semaphore()).collect_vec();
-
-        // 收集外部 signal semaphores（来自导出资源）
-        let mut signal_semaphores = self.export_images.values().filter_map(|info| info.signal_semaphore).collect_vec();
-        signal_semaphores.append(&mut self.signal_semaphores);
+        let (wait_semaphores, signal_semaphores) = self.collect_semaphores();
 
         // 计算 epilogue barriers：将导出资源从最后使用状态转换到 final_state
         let epilogue_barriers = self.compute_epilogue_barriers(&final_image_states);
@@ -219,6 +230,45 @@ impl<'a> RenderGraphBuilder<'a> {
         }
     }
 
+    /// 图只生成一次 batch；共享完成事件的多个资源合并为一次 wait/signal。
+    fn collect_semaphores(&self) -> (Vec<RgSemaphoreInfo>, Vec<RgSemaphoreInfo>) {
+        let mut waits: Vec<RgSemaphoreInfo> = Vec::new();
+        for wait in self.resources.iter_images().filter_map(|(_, res)| res.wait_semaphore()) {
+            assert_ne!(wait.semaphore, vk::Semaphore::null(), "graph wait semaphore must be non-null");
+            if let Some(existing) = waits.iter_mut().find(|existing| existing.semaphore == wait.semaphore) {
+                existing.merge_wait(wait);
+            } else {
+                waits.push(wait);
+            }
+        }
+
+        let mut signals: Vec<RgSemaphoreInfo> = Vec::new();
+        for signal in self
+            .export_images
+            .values()
+            .filter_map(|info| info.signal_semaphore)
+            .chain(self.signal_semaphores.iter().copied())
+        {
+            assert_ne!(signal.semaphore, vk::Semaphore::null(), "graph signal semaphore must be non-null");
+            assert_ne!(signal.value, Some(0), "timeline signal must increase the nonnegative counter");
+            if let Some(existing) = signals.iter_mut().find(|existing| existing.semaphore == signal.semaphore) {
+                existing.merge_signal(signal);
+            } else {
+                signals.push(signal);
+            }
+        }
+
+        for wait in &waits {
+            if let Some(signal) = signals.iter().find(|signal| signal.semaphore == wait.semaphore) {
+                assert_eq!(wait.value.is_some(), signal.value.is_some(), "conflicting wait/signal semaphore types");
+                if let (Some(wait_value), Some(signal_value)) = (wait.value, signal.value) {
+                    assert!(signal_value > wait_value, "timeline signal must be greater than this batch's wait");
+                }
+            }
+        }
+        (waits, signals)
+    }
+
     /// 计算 epilogue barriers
     ///
     /// 将导出资源从最后使用状态转换到声明的 final_state
@@ -229,19 +279,12 @@ impl<'a> RenderGraphBuilder<'a> {
         let mut epilogue = PassBarriers::new();
 
         for (&handle, export_info) in &self.export_images {
-            if let Some(&current_state) = final_image_states.get(handle) {
-                let final_state = export_info.final_state;
-
-                // 只有状态不同时才需要 barrier
-                if current_state != final_state
-                    && let Some(res) = self.resources.get_image(handle)
-                {
-                    let aspect = res.infer_aspect();
-                    epilogue.add_image_barrier(
-                        RgImageBarrierDesc::new(handle, current_state, final_state).with_aspect(aspect),
-                    );
-                }
-            }
+            let current_state = *final_image_states.get(handle).expect("exported image must have a tracked state");
+            let res = self.resources.get_image(handle).expect("exported image must be registered");
+            // 相同 layout/access 的写后依赖仍需屏障，统一交给 needs_barrier 判定。
+            epilogue.add_image_barrier(
+                RgImageBarrierDesc::new(handle, current_state, export_info.final_state).with_aspect(res.infer_aspect()),
+            );
         }
 
         epilogue
@@ -277,22 +320,20 @@ impl<'a> RenderGraphBuilder<'a> {
             let pass = &self.passes[pass_idx];
             let pass_barriers = &mut barriers[pass_idx];
 
-            // 收集此 Pass 中每个图像的所有使用
-            // Key: handle，Value: (是否写入, 期望状态)
-            let mut image_usage: HashMap<RgImageHandle, (bool, RgImageState)> = HashMap::new();
-
-            // 处理读取声明
-            for (handle, state) in &pass.image_reads {
-                image_usage.entry(*handle).or_insert((false, *state));
-            }
-
-            // 处理写入声明（写入会覆盖读取的目标状态）
-            for (handle, state) in &pass.image_writes {
-                image_usage.insert(*handle, (true, *state));
+            // 同一 pass 的依赖覆盖全部声明；graph 不推断 pass 内部的 layout 转换。
+            let mut image_usage: HashMap<RgImageHandle, RgImageState> = HashMap::new();
+            for (handle, state) in pass.image_reads.iter().chain(&pass.image_writes) {
+                let usage = image_usage.entry(*handle).or_insert(*state);
+                assert_eq!(
+                    usage.layout, state.layout,
+                    "pass '{}' declares incompatible layouts for graph image {:?}",
+                    pass.name, handle
+                );
+                *usage = Self::merge_states(*usage, *state);
             }
 
             // 为每个使用的图像生成 barrier
-            for (handle, (is_write, required_state)) in image_usage {
+            for (handle, required_state) in image_usage {
                 if let Some(&crt_state) = image_states.get(handle) {
                     let aspect = get_image_aspect(handle);
 
@@ -300,12 +341,11 @@ impl<'a> RenderGraphBuilder<'a> {
                         RgImageBarrierDesc::new(handle, crt_state, required_state).with_aspect(aspect),
                     );
 
-                    let next_state = if !is_write
-                        && crt_state.layout == required_state.layout
+                    let next_state = if crt_state.layout == required_state.layout
                         && crt_state.is_read_only()
                         && required_state.is_read_only()
                     {
-                        Self::merge_read_states(crt_state, required_state)
+                        Self::merge_states(crt_state, required_state)
                     } else {
                         required_state
                     };
@@ -317,15 +357,16 @@ impl<'a> RenderGraphBuilder<'a> {
         (barriers, image_states)
     }
 
-    /// 合并连续只读访问，保留后续写入所需等待的完整 stage/access 范围。
-    fn merge_read_states(current: RgImageState, required: RgImageState) -> RgImageState {
+    /// 合并同 layout 的访问范围；用于同 pass 声明，以及跨 pass 连续只读访问。
+    fn merge_states(current: RgImageState, required: RgImageState) -> RgImageState {
         RgImageState::new(current.stage | required.stage, current.access | required.access, current.layout)
     }
 }
 
 /// 编译后的渲染图
 ///
-/// 包含执行顺序、预计算的 barriers，可以多次执行。
+/// 包含固定的执行顺序、barriers 与 semaphore 声明，不回写长期 image 状态。
+/// 重复录制必须由调用方恢复导入前置；尤其不能重复使用已消费的 binary 信号或旧 timeline signal 值。
 ///
 /// # 生命周期
 ///
@@ -366,21 +407,17 @@ impl CompiledGraph<'_> {
 
     /// 执行渲染图
     ///
+    /// pass 或录制过程 panic 时可能已有部分命令写入；调用方必须丢弃该录制结果，不能提交。
+    /// graph 不重置 command，也不捕获异常后继续执行。再次录制须重新满足所有 import 前置。
+    ///
     /// # 参数
     /// - `cmd`: 命令缓冲区（已经 begin）
     /// - `resource_manager`: 资源只读查询契约（用于获取物理资源）
     pub fn execute(&self, cmd: &GfxCommandBuffer, resource_manager: &dyn GfxResourceAccess) {
         let _span = tracy_client::span!("CompiledGraph::execute");
 
-        // 构建物理资源查询表（使用 SecondaryMap）
-        let mut image_handles: SecondaryMap<RgImageHandle, (GfxImageHandle, GfxImageViewHandle)> = SecondaryMap::new();
-
-        for (image_handle, image_resource) in self.resources.iter_images() {
-            if let Some(img) = image_resource.physical_handle() {
-                let view = image_resource.physical_view_handle().unwrap_or_default();
-                image_handles.insert(image_handle, (img, view));
-            }
-        }
+        // 在任何 graph 命令录制前核验全部导入，避免前面的 pass 已执行才发现后面的资源失效。
+        let image_handles = self.resolve_images(resource_manager);
 
         // 按顺序执行 Pass
         for &pass_idx in &self.execution_order {
@@ -415,10 +452,49 @@ impl CompiledGraph<'_> {
         }
     }
 
+    /// 只读核验 native 身份；查询方必须在整个 execute 期间保持资源及映射稳定。
+    fn resolve_images(
+        &self,
+        resource_manager: &dyn GfxResourceAccess,
+    ) -> SecondaryMap<RgImageHandle, (GfxImageHandle, Option<GfxImageViewHandle>)> {
+        let mut image_handles = SecondaryMap::new();
+        let mut native_images = HashSet::new();
+        for (handle, resource) in self.resources.iter_images() {
+            let physical = resource.physical_handle().expect("graph image must be imported");
+            let image = resource_manager.get_image(physical).expect("imported graph image is missing");
+            assert!(image.handle() != vk::Image::null(), "imported graph image '{}' has been destroyed", resource.name);
+            assert_eq!(resource.format, image.format(), "imported image '{}' format mismatch", resource.name);
+            assert!(
+                native_images.insert(image.handle()),
+                "native image '{}' imported through multiple handles",
+                resource.name
+            );
+            let view_handle = resource.physical_view_handle();
+            if let Some(view_handle) = view_handle {
+                let view = resource_manager.get_image_view(view_handle).expect("imported graph image view is missing");
+                assert!(
+                    view.handle() != vk::ImageView::null(),
+                    "imported image view '{}' has been destroyed",
+                    resource.name
+                );
+                assert_eq!(
+                    view.image_handle(),
+                    image.handle(),
+                    "imported view '{}' belongs to another image",
+                    resource.name
+                );
+            }
+            image_handles.insert(handle, (physical, view_handle));
+        }
+        image_handles
+    }
+
     /// 构建包含外部同步信息的 SubmitInfo
     ///
     /// 返回的 `GfxSubmitInfo` 包含了从导入资源收集的 wait semaphores
     /// 和从导出资源收集的 signal semaphores。
+    /// 此方法只投影声明，不证明 commands 已完整录制并 end，也不延长任何 native owner 的生命周期。
+    /// 调用方必须提交对应 graph 的完整命令，并保持 image/view/semaphore 存活到 GPU 使用完成。
     ///
     /// # 参数
     /// - `commands`: 要提交的命令缓冲区列表
@@ -471,17 +547,11 @@ impl CompiledGraph<'_> {
         let image_barriers: Vec<GfxImageBarrier> = pass_barriers
             .image_barriers
             .iter()
-            .filter_map(|desc| {
-                // 跳过不需要的 barrier
-                if !desc.needs_barrier() {
-                    return None;
-                }
-
-                let res = self.resources.get_image(desc.handle)?;
-                let phys_handle = res.physical_handle()?;
-                let image = resource_manager.get_image(phys_handle)?;
-
-                Some(desc.to_gfx_barrier(image.handle()))
+            .map(|desc| {
+                let res = self.resources.get_image(desc.handle).expect("barrier image must be registered");
+                let phys_handle = res.physical_handle().expect("barrier image must be imported");
+                let image = resource_manager.get_image(phys_handle).expect("barrier image disappeared during execute");
+                desc.to_gfx_barrier(image.handle())
             })
             .collect();
 
@@ -665,12 +735,14 @@ impl CompiledGraph<'_> {
             SHADER_SAMPLED_READ => "SAMPLED_READ",
             SHADER_STORAGE_READ => "STORAGE_READ",
             SHADER_STORAGE_WRITE => "STORAGE_WRITE",
+            SHADER_WRITE => "SHADER_WRITE",
             COLOR_ATTACHMENT_READ => "COLOR_READ",
             COLOR_ATTACHMENT_WRITE => "COLOR_WRITE",
             DEPTH_STENCIL_ATTACHMENT_READ => "DEPTH_READ",
             DEPTH_STENCIL_ATTACHMENT_WRITE => "DEPTH_WRITE",
             TRANSFER_READ => "TRANSFER_READ",
             TRANSFER_WRITE => "TRANSFER_WRITE",
+            HOST_WRITE => "HOST_WRITE",
             MEMORY_READ => "MEM_READ",
             MEMORY_WRITE => "MEM_WRITE",
             ACCELERATION_STRUCTURE_READ_KHR => "ACCEL_READ",

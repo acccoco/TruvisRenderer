@@ -41,6 +41,8 @@ struct EmissiveLightFrameBuffers {
     alias_capacity: usize,
     base_map_capacity: usize,
     frame_label: FrameLabel,
+    /// 新地址尚未完成上传提交确认；旧 frame 回收异常不能丢失此需求。
+    needs_full_upload: bool,
 }
 
 impl EmissiveLightFrameBuffers {
@@ -58,42 +60,56 @@ impl EmissiveLightFrameBuffers {
         let triangle_capacity = triangle_capacity.max(1);
         let alias_capacity = alias_capacity.max(1);
         let base_map_capacity = base_map_capacity.max(1);
+        let triangles;
+        let aliases;
+        let bases;
+        triangles = Self::new_pair(resource_ctx, triangle_capacity, &format!("emissive-triangle-lights-{frame_label}"));
+        aliases =
+            Some(Self::new_pair(resource_ctx, alias_capacity, &format!("emissive-light-alias-table-{frame_label}")));
+        bases = Self::new_pair(
+            resource_ctx,
+            base_map_capacity,
+            &format!("instance-emissive-triangle-base-map-{frame_label}"),
+        );
+
+        let (triangle_lights, triangle_lights_stage) = triangles;
+        let (alias_table, alias_table_stage) = aliases.unwrap();
+        let (base_map, base_map_stage) = bases;
         Self {
-            triangle_lights: GfxStructuredBuffer::new_ssbo(
-                resource_ctx,
-                triangle_capacity,
-                format!("emissive-triangle-lights-{}", frame_label),
-            ),
-            triangle_lights_stage: GfxStructuredBuffer::new_stage_buffer(
-                resource_ctx,
-                triangle_capacity,
-                format!("emissive-triangle-lights-stage-{}", frame_label),
-            ),
-            alias_table: GfxStructuredBuffer::new_ssbo(
-                resource_ctx,
-                alias_capacity,
-                format!("emissive-light-alias-table-{}", frame_label),
-            ),
-            alias_table_stage: GfxStructuredBuffer::new_stage_buffer(
-                resource_ctx,
-                alias_capacity,
-                format!("emissive-light-alias-table-stage-{}", frame_label),
-            ),
-            base_map: GfxStructuredBuffer::new_ssbo(
-                resource_ctx,
-                base_map_capacity,
-                format!("instance-emissive-triangle-base-map-{}", frame_label),
-            ),
-            base_map_stage: GfxStructuredBuffer::new_stage_buffer(
-                resource_ctx,
-                base_map_capacity,
-                format!("instance-emissive-triangle-base-map-stage-{}", frame_label),
-            ),
+            triangle_lights,
+            triangle_lights_stage,
+            alias_table,
+            alias_table_stage,
+            base_map,
+            base_map_stage,
             triangle_capacity,
             alias_capacity,
             base_map_capacity,
             frame_label,
+            needs_full_upload: true,
         }
+    }
+
+    /// device 与 stage 必须成对交付，第二个创建失败时撤销第一个。
+    fn new_pair<T>(
+        ctx: GfxResourceCtx<'_>,
+        capacity: usize,
+        name: &str,
+    ) -> (GfxStructuredBuffer<T>, GfxStructuredBuffer<T>) {
+        let device = GfxStructuredBuffer::new_ssbo(ctx, capacity, name);
+        let stage = { GfxStructuredBuffer::new_stage_buffer(ctx, capacity, format!("{name}-stage")) };
+        (device, stage)
+    }
+
+    /// 调用方必须先确认 GPU 对两个 buffer 的使用均已结束。
+    fn destroy_pair<T>(
+        device: &mut GfxStructuredBuffer<T>,
+        stage: &mut GfxStructuredBuffer<T>,
+        ctx: GfxResourceCtx<'_>,
+        reason: DestroyReason,
+    ) {
+        device.destroy_mut(ctx, reason);
+        stage.destroy_mut(ctx, reason);
     }
 
     fn ensure_capacity(
@@ -102,22 +118,27 @@ impl EmissiveLightFrameBuffers {
         required_triangles: usize,
         required_aliases: usize,
         required_base_map: usize,
-    ) -> bool {
+    ) {
         if required_triangles <= self.triangle_capacity
             && required_aliases <= self.alias_capacity
             && required_base_map <= self.base_map_capacity
         {
-            return false;
+            return;
         }
 
         let frame_label = self.frame_label;
-        let triangle_capacity = next_capacity(required_triangles.max(self.triangle_capacity));
-        let alias_capacity = next_capacity(required_aliases.max(self.alias_capacity));
-        let base_map_capacity = next_capacity(required_base_map.max(self.base_map_capacity));
+        let triangle_capacity = Self::next_capacity(required_triangles.max(self.triangle_capacity));
+        let alias_capacity = Self::next_capacity(required_aliases.max(self.alias_capacity));
+        let base_map_capacity = Self::next_capacity(required_base_map.max(self.base_map_capacity));
 
-        self.destroy_mut(resource_ctx, DestroyReason::ImmediateRelease);
-        *self = Self::with_capacity(resource_ctx, frame_label, triangle_capacity, alias_capacity, base_map_capacity);
-        true
+        let next = Self::with_capacity(resource_ctx, frame_label, triangle_capacity, alias_capacity, base_map_capacity);
+        // 当前 FIF 已完成等待；先让字段接管完整候选及上传需求，再回收旧资源。
+        let mut old = std::mem::replace(self, next);
+        old.destroy_mut(resource_ctx, DestroyReason::ImmediateRelease);
+    }
+
+    fn next_capacity(required: usize) -> usize {
+        required.max(1).checked_next_power_of_two().expect("emissive buffer capacity overflow")
     }
 
     fn upload(
@@ -167,7 +188,7 @@ impl EmissiveLightFrameBuffers {
         }
     }
 
-    fn upload_structured_slice<T: Copy>(
+    fn upload_structured_slice<T: bytemuck::Pod>(
         resource_ctx: GfxResourceCtx<'_>,
         cmd: &GfxCommandBuffer,
         barrier_mask: GfxBarrierMask,
@@ -196,13 +217,10 @@ impl EmissiveLightFrameBuffers {
         );
     }
 
-    fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
-        self.triangle_lights.destroy_mut(resource_ctx, reason);
-        self.triangle_lights_stage.destroy_mut(resource_ctx, reason);
-        self.alias_table.destroy_mut(resource_ctx, reason);
-        self.alias_table_stage.destroy_mut(resource_ctx, reason);
-        self.base_map.destroy_mut(resource_ctx, reason);
-        self.base_map_stage.destroy_mut(resource_ctx, reason);
+    fn destroy_mut(&mut self, ctx: GfxResourceCtx<'_>, reason: DestroyReason) {
+        Self::destroy_pair(&mut self.triangle_lights, &mut self.triangle_lights_stage, ctx, reason);
+        Self::destroy_pair(&mut self.alias_table, &mut self.alias_table_stage, ctx, reason);
+        Self::destroy_pair(&mut self.base_map, &mut self.base_map_stage, ctx, reason);
     }
 }
 
@@ -225,7 +243,7 @@ pub(crate) struct RenderEmissiveLightTable {
 impl RenderEmissiveLightTable {
     pub(crate) fn new(resource_ctx: GfxResourceCtx<'_>) -> Self {
         Self {
-            frames: FrameLabel::ALL.map(|frame_label| EmissiveLightFrameBuffers::new(resource_ctx, frame_label)),
+            frames: FrameLabel::ALL.map(|label| EmissiveLightFrameBuffers::new(resource_ctx, label)),
             triangle_lights: Vec::new(),
             alias_table: Vec::new(),
             base_map: Vec::new(),
@@ -256,10 +274,8 @@ impl RenderEmissiveLightTable {
         }
 
         let frame = &mut self.frames[*frame_label];
-        if frame.ensure_capacity(resource_ctx, self.triangle_lights.len(), self.alias_table.len(), self.base_map.len()) {
-            self.uploaded_versions[*frame_label] = 0;
-        }
-        if self.uploaded_versions[*frame_label] != self.version {
+        frame.ensure_capacity(resource_ctx, self.triangle_lights.len(), self.alias_table.len(), self.base_map.len());
+        if frame.needs_full_upload || self.uploaded_versions[*frame_label] != self.version {
             frame.upload(resource_ctx, cmd, barrier_mask, &self.triangle_lights, &self.alias_table, &self.base_map);
             self.pending_versions[*frame_label] = Some(self.version);
         }
@@ -273,6 +289,7 @@ impl RenderEmissiveLightTable {
     }
 
     pub(crate) fn destroy_mut(&mut self, resource_ctx: GfxResourceCtx<'_>) {
+        // 所有 FIF 已停止 GPU 使用，依次销毁各帧资源。
         for frame in &mut self.frames {
             frame.destroy_mut(resource_ctx, DestroyReason::Shutdown);
         }
@@ -282,10 +299,18 @@ impl RenderEmissiveLightTable {
         let index = *frame_label;
         if let Some(version) = self.pending_versions[index].take() {
             self.uploaded_versions[index] = version;
+            self.frames[index].needs_full_upload = false;
         }
     }
 
     fn rebuild(&mut self, render_data: &RenderData<'_>, material_resolver: &dyn MaterialSlotResolver) {
+        // base map 必须与 geometry indirect 使用同一紧凑顺序，不能用 zip 截短来容忍坏快照。
+        let (_, _, base_count) = render_data.buffer_counts();
+        for mesh in &render_data.all_meshes {
+            assert_eq!(
+                mesh.triangle_metadata.len(), mesh.geometries.len(), "triangle metadata must match geometries"
+            );
+        }
         self.triangle_lights.clear();
         self.alias_table.clear();
         self.base_map.clear();
@@ -296,6 +321,7 @@ impl RenderEmissiveLightTable {
         for instance in &render_data.all_instances {
             self.append_instance(render_data, material_resolver, instance, &mut weighted_records);
         }
+        assert_eq!(self.base_map.len(), base_count, "emissive base map must match geometry indirect count");
 
         let total_weight = weighted_records.iter().map(|(_, weight)| *weight).sum::<f64>();
         if total_weight <= 0.0 || !total_weight.is_finite() {
@@ -318,38 +344,25 @@ impl RenderEmissiveLightTable {
         weighted_records: &mut Vec<(usize, f64)>,
     ) {
         let mesh = &render_data.all_meshes[instance.mesh_index];
-        debug_assert_eq!(
-            instance.material_slots.len(),
-            instance.material_handles.len(),
-            "material slots and scene material handles must stay aligned"
-        );
         for (submesh_idx, (&material_slot, &material_handle)) in
             instance.material_slots.iter().zip(instance.material_handles.iter()).enumerate()
         {
-            let Some(material) = material_resolver.material_data(material_handle) else {
-                self.base_map.push(INVALID_EMISSIVE_TRIANGLE_BASE);
-                continue;
-            };
-            let Some(triangles) = mesh.triangle_metadata.get(submesh_idx).map(Vec::as_slice) else {
-                self.base_map.push(INVALID_EMISSIVE_TRIANGLE_BASE);
-                continue;
-            };
+            let material = material_resolver.material_data(material_handle).expect("active instance material is missing");
+            let triangles = mesh.triangle_metadata[submesh_idx].as_slice();
             if triangles.is_empty() || !Self::is_emissive_material(material) {
                 self.base_map.push(INVALID_EMISSIVE_TRIANGLE_BASE);
                 continue;
             }
 
+            // record_count 是 uint，且 u32::MAX 已保留为无发光 submesh 的 sentinel。
+            let record_count = self.triangle_lights.len()
+                .checked_add(triangles.len())
+                .expect("emissive triangle record count overflow");
+            u32::try_from(record_count).expect("emissive triangle record count exceeds u32 range");
             let base_index =
                 u32::try_from(self.triangle_lights.len()).expect("emissive triangle record count exceeds u32 range");
             self.base_map.push(base_index);
-            self.append_submesh_triangles(
-                instance,
-                submesh_idx,
-                material_slot,
-                material,
-                triangles,
-                weighted_records,
-            );
+            self.append_submesh_triangles(instance, submesh_idx, material_slot, material, triangles, weighted_records);
         }
     }
 
@@ -365,7 +378,13 @@ impl RenderEmissiveLightTable {
         let estimated_radiance = material.emissive_factor + material.class.emissive_radiance();
         let luminance = Self::luminance(estimated_radiance).max(0.0);
 
-        for triangle in triangles {
+        for (primitive_index, triangle) in triangles.iter().enumerate() {
+            // hit path 按 base + primitive_id 直接寻址，退化三角形也必须保留原索引位置。
+            assert_eq!(
+                triangle.primitive_id,
+                u32::try_from(primitive_index).expect("emissive primitive index exceeds u32 range"),
+                "emissive triangle metadata must preserve primitive order"
+            );
             let world_positions = triangle.positions.map(|position| instance.transform.transform_point3(position));
             let normal_unnormalized =
                 (world_positions[1] - world_positions[0]).cross(world_positions[2] - world_positions[0]);
@@ -383,7 +402,7 @@ impl RenderEmissiveLightTable {
                 normal: normal.into(),
                 instance_id: instance.instance_slot.as_u32(),
                 _padding_0: glam::UVec2::ZERO.into(),
-                geometry_id: submesh_idx as u32,
+                geometry_id: u32::try_from(submesh_idx).expect("emissive geometry index exceeds u32 range"),
                 primitive_id: triangle.primitive_id,
             });
 
@@ -460,8 +479,4 @@ impl RenderEmissiveLightTable {
             })
             .collect()
     }
-}
-
-fn next_capacity(required: usize) -> usize {
-    required.max(1).next_power_of_two()
 }

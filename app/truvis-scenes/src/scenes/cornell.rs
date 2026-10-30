@@ -19,19 +19,19 @@ impl CornellScene {
             color: (glam::vec3(5.0, 6.0, 1.0) * 2.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
-        });
+        }).expect("invalid built-in point light");
         world.register_point_light(gpu::engine::light::PointLight {
             pos: glam::vec3(0.4, 0.4, -0.3).into(),
             color: (glam::vec3(1.0, 6.0, 7.0) * 3.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
-        });
+        }).expect("invalid built-in point light");
         world.register_point_light(gpu::engine::light::PointLight {
             pos: glam::vec3(0.4, 0.4, 0.3).into(),
             color: (glam::vec3(5.0, 1.0, 8.0) * 3.0).into(),
             _pos_padding: Default::default(),
             _color_padding: Default::default(),
-        });
+        }).expect("invalid built-in point light");
         world.register_spot_light(gpu::engine::light::SpotLight {
             pos: glam::vec3(0.0, 3.2, 1.8).into(),
             inner_angle: 12.0_f32.to_radians(),
@@ -39,7 +39,7 @@ impl CornellScene {
             outer_angle: 28.0_f32.to_radians(),
             dir: glam::vec3(0.0, -0.85, -0.35).normalize().into(),
             _dir_padding: Default::default(),
-        });
+        }).expect("invalid built-in spot light");
         world.register_area_light(gpu::engine::light::AreaLight {
             center: glam::vec3(0.0, 3.8, 0.0).into(),
             half_u: glam::vec3(0.8, 0.0, 0.0).into(),
@@ -49,7 +49,7 @@ impl CornellScene {
             _half_u_padding: Default::default(),
             _half_v_padding: Default::default(),
             _radiance_padding: Default::default(),
-        });
+        }).expect("invalid built-in area light");
 
         log::info!("Loading model...");
         world.import_scene(TruvisPath::assets_path(Self::IMPORT_PATH))

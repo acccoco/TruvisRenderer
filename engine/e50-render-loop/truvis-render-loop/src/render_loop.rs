@@ -49,8 +49,15 @@ impl RenderLoop {
         const FRAME_LIMIT_SPIN_THRESHOLD: Duration = Duration::from_millis(1);
 
         while !control.exit_requested() {
-            while let Some(event) = control.try_receive_input() {
+            while !control.exit_requested() {
+                let Some(event) = control.try_receive_input() else {
+                    break;
+                };
                 render_loop.push_input_event(event);
+            }
+            // 输入可能持续到达；退出不应等待队列清空，也不再开始新的 resize/frame。
+            if control.exit_requested() {
+                break;
             }
 
             let resize_generation = control.resize_generation();

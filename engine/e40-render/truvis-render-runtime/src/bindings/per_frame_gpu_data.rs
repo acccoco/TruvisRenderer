@@ -16,16 +16,13 @@ pub struct PerFrameGpuData {
 
 impl PerFrameGpuData {
     pub fn new(ctx: GfxResourceCtx<'_>) -> Self {
-        let buffers = FrameLabel::ALL.map(|frame_label| {
-            GfxStructuredBuffer::<gpu::engine::frame::PerFrameData>::new_ubo(
-                ctx,
-                1,
-                format!("per-frame-data-buffer-{frame_label}"),
-            )
-        });
-        Self { buffers }
+        Self {
+            buffers: FrameLabel::ALL
+                .map(|label| GfxStructuredBuffer::new_ubo(ctx, 1, format!("per-frame-data-buffer-{label}"))),
+        }
     }
 
+    /// 调用方确认全部 FIF 不再被 GPU 引用后显式销毁。
     pub fn destroy(mut self, ctx: GfxResourceCtx<'_>) {
         for buffer in &mut self.buffers {
             buffer.destroy_mut(ctx, DestroyReason::Shutdown);
@@ -38,6 +35,7 @@ impl PerFrameGpuData {
     }
 
     #[inline]
+    /// 仅录制更新；调用方保证 FIF 已可复用，并在 shader 消费前建立 transfer-to-uniform 屏障。
     pub fn write(&self, frame_label: FrameLabel, cmd: &GfxCommandBuffer, data: gpu::engine::frame::PerFrameData) {
         cmd.cmd_update_buffer(self.buffer(frame_label).vk_buffer(), 0, BytesConvert::bytes_of(&data));
     }

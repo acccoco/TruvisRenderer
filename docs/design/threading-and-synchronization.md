@@ -41,6 +41,11 @@ RenderGraph 表达同一帧内 image/buffer 的读写和 barrier；timeline 表�
 
 asset loader 和 Alias table worker 只做 CPU 读取或构建，不创建、提交或销毁 Vulkan 资源。GPU upload 和 shader-visible publish 仍在 RenderThread 的 runtime 路径完成。
 
+CPU 查询上传 timeline 已完成，不替代跨 queue 的 GPU 内存依赖。当前 transfer 与 graphics
+是同 family 的不同 queue：共享上传队列保留已完成 signal，prepare submit 显式 wait，
+再由同一 graphics queue 的后续提交消费资源。迁移消费者到其他 queue 时必须重新建立依赖。
+关闭上传 semaphore 前，生产提交和引用它的 graphics wait batches 都必须结束。
+
 Asset loader 的完整任务入口将可展开的 Rust panic 转为失败 completion，状态只由 service
 轮询线程更新。关闭等待已排队任务退出；未轮询结果可随 owner 丢弃，不能把等待结束理解为
 资产已发布。当前没有取消或 IO 超时，阻塞文件操作仍可能延长关闭。
@@ -54,6 +59,16 @@ Asset loader 的完整任务入口将可展开的 Rust panic 转为失败 comple
 ## 关闭同步
 
 关闭时先停止新请求，再等待 Renderer/runtime 的 GPU 释放完成。RenderThread 先发布完成标志，再唤醒窗口 event loop；窗口 owner 不能在 RenderThread join 前销毁 child HWND。
+
+完成标志表示线程主执行（init/factory/Loop）已结束，通知 callback 可能仍在运行。
+执行错误与通知错误分别捕获，join 优先返回执行错误；完成发布与 Drop 不调用日志
+后端。通知为 best-effort，窗口 about_to_wait 也读取完成标志，仍须 join 结束 OS thread。
+这些 CPU 握手不补足异常路径缺失的 Vulkan 回收；join 的错误返回不证明 surface 已销毁。
+
+embedded 的 proxy 启动握手早于 child 创建，不能把 spawn 返回当成渲染就绪。窗口
+owner 保存异步创建/几何应用的首个错误，完成 render join 与 child drop 后通过窗口
+线程 Result 交给显式 shutdown；非零事件循环退出码也必须报告。渲染异常优先传播，
+不被窗口退出码覆盖。运行期间即时通知 App 的策略属于 App 集成，不由投递 ACK 代替。
 
 producer、consumer 和 owner 的销毁顺序必须覆盖：CPU worker 停止、GPU queue 完成、shader-visible 资源撤销、Vulkan wrapper 显式 destroy。
 
@@ -102,4 +117,5 @@ Raycast fence 是当前明确的同步例外；它的使用点必须限定在 `a
 
 静态 channel 调用链只能证明可能的等待关系；线程调度、窗口消息和 GPU fence 的实时行为需要单独运行时观测，不能由文档替代。
 
-RenderThread 的持续运行依赖窗口 owner 保持有效句柄；窗口线程退出前必须完成 RenderThread join 或得到明确的完成状态。
+RenderThread 的持续运行依赖窗口 owner 保持有效句柄；窗口线程退出前必须完成
+RenderThread join，不能仅凭 finished 跳过 join。native 资源是否已完整回收是另一项条件。

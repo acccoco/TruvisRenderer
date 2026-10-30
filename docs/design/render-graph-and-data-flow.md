@@ -27,6 +27,14 @@ Runtime 提供当前 frame label、scene view、present image 和同步上下文
 
 导入同一资源时必须保持唯一 owner 和明确的初始 state；graph adapter 不应复制 image/view 或延长 wrapper 生命周期。
 
+当前以完整 image handle 为状态跟踪单位，同一 graph 不得重复 import 同一物理 handle，
+即使使用不同 view；pass/export 必须引用已登记资源。跨 graph 的 handle 身份与 native owner
+存活仍是调用方契约，不能由 SlotMap membership 校验替代。
+
+execute 在开始 graph 命令录制前解析全部导入，拒绝失效 image/view、错误来源配对、原始
+image format 不符和不同逻辑 handle 指向同一 native image。查询集合在录制期间必须稳定；
+检查当时的 CPU/native 身份不等于证明 GPU 使用已经完成，也不转移 native 生命周期责任。
+
 ## Pass 顺序
 
 Renderer 负责显式决定顺序。典型路径是：
@@ -70,7 +78,20 @@ GPU 上传只消费最终 CPU 顶点，不再修补选中颜色或追加语义�
 
 Graph compile 根据资源访问声明推导 image layout、access mask、stage 和 barrier。pass 不应手写依赖上一 pass 的偶然 layout；需要跨 graph 或跨帧的同步由 Runtime timeline、present semaphore 或资源 registry 负责。
 
+同一 pass 对同一 image 的多次声明使用一个共同 layout，stage/access 取并集；不允许用
+声明先后顺序表示 pass 内的 layout 转换。pass 内部多次 draw/dispatch 的依赖由 pass 录制者
+保证；graph 的 pass 前 barrier 不提供 pass 内部同步。
+
+连续只读访问增加 stage/access 时仍需依赖链；只读状态的 CPU 并集不代表新增消费者已经
+获得可见性。导出和普通 pass 使用相同的屏障判定，等状态写入仍需依赖。当前 graph 统一
+跟踪并转换全部 mip/layer，导入者必须保证其初始 layout 一致；不同子资源的独立 layout
+不在本模型能力内。
+
 present image 在 graph 中完成最终写入后交给 present queue。present queue 的等待关系由 Runtime/Presenter 设置，不能由 GUI pass 私自提交。
+
+一个 graph 的 semaphore 声明属于一个提交 batch。同 handle 的 wait 合并作用域，timeline
+取最大等待下限；同值 signal 合并，不同 signal 值或 binary/timeline 声明冲突拒绝编译。
+这不验证 native 类型、当前计数或 queue 能力，也不能表达 batch 内部多个完成里程碑。
 
 ## 数据流边界
 
@@ -89,6 +110,13 @@ prepare 生成 GPU scene 快照；render 阶段不再修改 CPU scene。需要�
 ## 失败与当前边界
 
 窗口尺寸为零或没有 acquired image 时跳过依赖 present 的 graph。资源未 ready 时由 RenderWorld 提供 fallback 或跳过对应 draw；graph 不负责 asset decode 和 readiness policy。
+
+录制失败可能留下部分 command；调用方必须丢弃失败结果，不得继续提交。Graph 不负责
+捕获异常、重置 command 或恢复 Runtime 状态。提交信息只投影同步声明，不能证明 command
+已完整录制并 end；native 资源由原 owner 保持存活，直至 GPU 使用完成。
+
+编译计划固定了 import 初始状态和 semaphore 声明，不回写长期资源状态。重复使用前必须
+重新满足这些前置，不能直接复用已消费的 binary 信号或已提交的 timeline signal 值。
 
 transient image/buffer aliasing 不是当前架构的默认资源类别。新增 transient owner 时必须补充生命周期、alias barrier 和 shutdown 契约，而不能只扩展 graph API。
 

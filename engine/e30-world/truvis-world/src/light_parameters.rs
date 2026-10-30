@@ -31,6 +31,20 @@ impl LightPatch {
         self.direction.is_some() || self.inner_angle.is_some() || self.outer_angle.is_some()
     }
 
+    /// 注册与编辑共用方向和锥角约束；已归一化的方向保持原值，避免 no-op 累积舍入差异。
+    pub(crate) fn validate_spot(direction: Vec3, inner: f32, outer: f32) -> Result<Vec3, SceneEditError> {
+        if !direction.is_finite() || !inner.is_finite() || !outer.is_finite()
+            || inner < 0.0 || inner > outer || outer > std::f32::consts::PI
+        {
+            return Err(Self::invalid("require 0 <= inner <= outer <= pi and valid direction"));
+        }
+        if direction.is_normalized() {
+            return Ok(direction);
+        }
+        direction.try_normalize().filter(|v| v.is_finite())
+            .ok_or_else(|| Self::invalid("direction must be finite, nonzero and normalizable"))
+    }
+
     pub(crate) fn has_area_fields(&self) -> bool {
         self.rotation_degrees.is_some() || self.width.is_some() || self.height.is_some()
     }

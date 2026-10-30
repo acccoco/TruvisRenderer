@@ -61,7 +61,6 @@ enum MiddleButtonMode {
 struct WheelZoomState {
     anchor_ws: glam::Vec3,
     anchor_screen_pos: glam::Vec2,
-    distance: f32,
     idle_time_s: f32,
 }
 
@@ -96,6 +95,12 @@ impl CameraController {
 
     pub fn camera_mut(&mut self) -> &mut Camera {
         &mut self.camera
+    }
+
+    /// 失焦、窗口 resize 或交互取消时撤销全部导航请求与锚点，不改写相机位置和朝向。
+    pub fn cancel_interaction(&mut self) {
+        self.clear_middle_button_control();
+        self.clear_wheel_zoom();
     }
 
     pub fn take_pending_pivot_raycast(&mut self) -> Option<PivotRayCastRequest> {
@@ -180,7 +185,6 @@ impl CameraController {
         self.active_wheel_zoom = Some(WheelZoomState {
             anchor_ws,
             anchor_screen_pos: request.anchor_screen_pos,
-            distance,
             idle_time_s: 0.0,
         });
         self.apply_wheel_zoom_delta(request.pending_wheel_delta, request.viewport_size);
@@ -198,13 +202,14 @@ impl CameraController {
         })
     }
 
+    /// 仅更新键盘与右键控制，不创建或保留需要 after_prepare 消费的导航查询与锚点。
     pub fn update(&mut self, input_state: &InputState, viewport_size: glam::Vec2, delta_time: std::time::Duration) {
         self.update_impl(input_state, viewport_size, delta_time, false);
     }
 
-    /// 更新相机控制，并允许 Shift+中键拖拽和滚轮通过 after_prepare 阶段的 raycast 建立屏幕锚点。
+    /// 更新相机控制，并允许中键旋转、Shift+中键拖拽和滚轮通过 after_prepare 的 raycast 建立锚点。
     ///
-    /// 未接入拖拽/滚轮 pending raycast 的 Renderer 应继续调用 [`CameraController::update`]，
+    /// 未接入导航 pending raycast 的 Renderer 应继续调用 [`CameraController::update`]，
     /// 避免产生无人消费的同步查询请求。
     pub fn update_with_wheel_zoom(
         &mut self,
@@ -222,14 +227,27 @@ impl CameraController {
         delta_time: std::time::Duration,
         raycast_camera_controls_enabled: bool,
     ) {
+        let aspect_ratio = viewport_size.x / viewport_size.y;
+        let mouse_position = input_state.mouse_position();
+        let mouse_delta = input_state.get_mouse_delta();
+        // 外部输入不可污染持久相机；拒绝整次更新并撤销旧锚点，后续有效输入可重新开始。
+        if !viewport_size.is_finite()
+            || viewport_size.min_element() <= 0.0
+            || !aspect_ratio.is_finite()
+            || aspect_ratio <= 0.0
+            || !mouse_position.into_iter().chain(mouse_delta).all(|value| (value as f32).is_finite())
+        {
+            self.cancel_interaction();
+            return;
+        }
         let delta_time_s = delta_time.as_secs_f32();
 
-        self.camera.set_aspect_ratio(viewport_size.x / viewport_size.y);
+        self.camera.set_aspect_ratio(aspect_ratio);
 
-        if !input_state.is_middle_button_pressed() {
+        if !raycast_camera_controls_enabled || !input_state.is_middle_button_pressed() {
             self.clear_middle_button_control();
         } else {
-            self.update_middle_button_control(input_state, viewport_size, raycast_camera_controls_enabled);
+            self.update_middle_button_control(input_state, viewport_size);
             self.clear_wheel_zoom();
             return;
         }
@@ -327,9 +345,8 @@ impl CameraController {
         &mut self,
         input_state: &InputState,
         viewport_size: glam::Vec2,
-        drag_pan_enabled: bool,
     ) {
-        let desired_mode = if drag_pan_enabled && input_state.is_shift_pressed() {
+        let desired_mode = if input_state.is_shift_pressed() {
             MiddleButtonMode::DragPan
         } else {
             MiddleButtonMode::PivotOrbit
@@ -444,6 +461,7 @@ impl CameraController {
         };
         let anchor_ws = zoom.anchor_ws;
         let anchor_screen_pos = zoom.anchor_screen_pos;
+        // 滚轮距离由当前相机与锚点派生，不保存可能在相机移动后失效的副本。
         let current_distance = (anchor_ws - self.camera.position).length();
         if !current_distance.is_finite() || current_distance <= self.min_camera_distance() {
             self.active_wheel_zoom = None;
@@ -462,7 +480,6 @@ impl CameraController {
         self.camera.position = anchor_ws - direction_ws * new_distance;
 
         if let Some(zoom) = self.active_wheel_zoom.as_mut() {
-            zoom.distance = new_distance;
             zoom.idle_time_s = 0.0;
         }
         true

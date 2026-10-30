@@ -4,7 +4,6 @@ use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 use renderer_render_passes::post_process::auto_exposure::{AutoExposurePass, AutoExposureRgPass, ExposureStage};
 use renderer_render_passes::post_process::image_clear::{ImageClearPass, ImageClearRgPass};
 use renderer_render_passes::post_process::sdr::{SdrPass, SdrRgPass};
-use truvis_gfx::commands::barrier::GfxImageBarrier;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
@@ -29,6 +28,14 @@ pub struct SdrPostProcess {
     resources: Option<SdrResources>,
     initialized: bool,
     last_mode: Option<(RenderMode, ExposureMode)>,
+    pending_snap: bool,
+}
+
+/// 本次 graph 的显示状态候选；只在对应 queue submit 正常返回后交回原 owner。
+#[must_use]
+pub struct SdrFrameCommit {
+    initialized: bool,
+    mode: (RenderMode, ExposureMode),
     pending_snap: bool,
 }
 
@@ -92,19 +99,8 @@ impl SdrResources {
         let image = ctx.gfx_resource_registry.get_image(lut.image).unwrap();
         let staging = ctx.immediate_ctx.one_time_exec(
             |cmd| {
-                let staging = image.transfer_data(ctx.resource_ctx, cmd, include_bytes!("../../resources/agx-default.rgba16f"));
-                // 通用上传 helper 的读取终点是 fragment；LUT 实际由 compute 读取，显式补全可见性。
-                let barrier = GfxImageBarrier::new()
-                    .image(image.handle())
-                    .src_mask(vk::PipelineStageFlags2::TRANSFER, vk::AccessFlags2::TRANSFER_WRITE)
-                    .dst_mask(vk::PipelineStageFlags2::COMPUTE_SHADER, vk::AccessFlags2::SHADER_SAMPLED_READ)
-                    .layout_transfer(
-                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                    )
-                    .image_aspect_flag(vk::ImageAspectFlags::COLOR);
-                cmd.image_memory_barrier(vk::DependencyFlags::empty(), std::slice::from_ref(&barrier));
-                staging
+                // transfer_data 的同队列 shader 读取可见性已覆盖 compute，保持其只读 layout。
+                image.transfer_data(ctx.resource_ctx, cmd, include_bytes!("../../resources/agx-default.rgba16f"))
             },
             "upload-agx-lut",
         );
@@ -123,6 +119,8 @@ impl SdrResources {
         self.sdr.destroy(ctx.device_ctx);
         self.meter.destroy(ctx.device_ctx);
         self.clear.destroy(ctx.device_ctx);
+        // GPU safe point 已由调用方保证；释放诊断不能跳过本 owner 的后续图像。
+
         for target in [&mut self.histogram, &mut self.exposure, &mut self.lut] {
             target.destroy(ctx.resource_ctx, ctx.device_ctx, &mut *ctx.gfx_resource_registry, DestroyReason::Shutdown);
         }
@@ -147,21 +145,29 @@ impl SubsystemLifecycle for SdrPostProcess {
 }
 
 impl SdrPostProcess {
+    /// 确认已提交的初始化/测光状态；丢弃或提交失败的 graph 不能调用此方法。
+    pub fn finish_rendered_frame(&mut self, commit: SdrFrameCommit) {
+        self.initialized = commit.initialized;
+        self.last_mode = Some(commit.mode);
+        self.pending_snap = commit.pending_snap;
+    }
+
     pub fn contribute<'a>(
-        &'a mut self,
+        &'a self,
         graph: &mut RenderGraphBuilder<'a>,
         ctx: &'a SubsystemRenderCtx<'a>,
         input: Option<SdrPostProcessInput>,
         mode: RenderMode,
         settings: SdrPostProcessSettings,
-    ) {
+    ) -> SdrFrameCommit {
         let mode_key = (mode, settings.exposure.mode);
-        if self.last_mode != Some(mode_key) {
-            self.pending_snap = true;
-            self.last_mode = Some(mode_key);
-        }
+        let mut commit = SdrFrameCommit {
+            initialized: self.initialized,
+            mode: mode_key,
+            pending_snap: self.pending_snap || self.last_mode != Some(mode_key),
+        };
         let Some(input) = input else {
-            return;
+            return commit;
         };
         let resources = self.resources.as_ref().expect("SDR resources initialized");
         let exposure_target = resources.exposure.target();
@@ -184,7 +190,7 @@ impl SdrPostProcess {
                     clear_color: glam::Vec4::ZERO,
                 },
             );
-            self.initialized = true;
+            commit.initialized = true;
         }
         let metering = settings.exposure.mode == ExposureMode::Auto
             && !settings.exposure.locked
@@ -208,7 +214,7 @@ impl SdrPostProcess {
                 let params = gpu::renderer::render_passes::auto_exposure::PushConstant {
                     image_size: glam::uvec2(input.source_extent.width, input.source_extent.height).into(),
                     metering_mode: settings.exposure.metering as u32,
-                    instant: (self.pending_snap || mode == RenderMode::Offline) as u32,
+                    instant: (commit.pending_snap || mode == RenderMode::Offline) as u32,
                     low_percentile: settings.exposure.low_percentile,
                     high_percentile: settings.exposure.high_percentile,
                     min_ev: settings.exposure.min_ev,
@@ -231,7 +237,7 @@ impl SdrPostProcess {
                     },
                 );
             }
-            self.pending_snap = false;
+            commit.pending_snap = false;
         }
         let lut_target = resources.lut.target();
         let lut = graph.import_image(
@@ -259,5 +265,6 @@ impl SdrPostProcess {
         );
         // 跨帧导入/导出保持相同状态，覆盖上一帧 reduce 写和 SDR 读，不依赖 FIF slot 等待。
         graph.export_image(exposure, RgImageState::STORAGE_READ_WRITE_COMPUTE, None);
+        commit
     }
 }

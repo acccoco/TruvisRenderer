@@ -41,13 +41,11 @@ impl<L: GfxVertexLayout> GfxVertexBuffer<L> {
             debug_name.as_ref(),
         );
 
-        let buffer = Self {
+        Self {
             inner: buffer,
             vertex_cnt,
             _phantom: PhantomData,
-        };
-        ctx.device().set_debug_name(&buffer, debug_name);
-        buffer
+        }
     }
 
     #[inline]

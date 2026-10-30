@@ -38,7 +38,7 @@ impl DlssSrPass {
     /// - viewport 当前固定为 0，mode/resize 时由 runtime 负责 reset/free resources；
     /// - 输入 color/depth/mvec 已由 RenderGraph 转到 `SHADER_READ_ONLY_OPTIMAL`；
     /// - output color 已由 RenderGraph 转到 `GENERAL`；
-    /// - 失败记录日志并返回结果，由 Renderer 保留 reset，不在录制中的 graph 切换 fallback。
+    /// - 失败记录日志并返回结果；graph adapter 必须中止录制，不能提交可能只录制了一部分的命令。
     pub fn evaluate(
         &self,
         cmd: &GfxCommandBuffer,
@@ -99,7 +99,7 @@ impl DlssSrPass {
             Ok(()) => DlssEvaluation::Succeeded,
             Err(err) => {
                 log::error!("DLSS SR evaluate failed: {}", err);
-                DlssEvaluation::Failed
+                panic!("DLSS SR evaluate failed: {err}");
             }
         };
         cmd.end_label();

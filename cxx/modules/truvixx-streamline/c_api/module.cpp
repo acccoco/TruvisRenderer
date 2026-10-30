@@ -56,7 +56,6 @@ struct SlApi
     PFun_slSetTagForFrame* sl_set_tag_for_frame = nullptr;
     PFun_slEvaluateFeature* sl_evaluate_feature = nullptr;
     PFun_slFreeResources* sl_free_resources = nullptr;
-    PFun_slSetVulkanInfo* sl_set_vulkan_info = nullptr;
 
     PFun_slDLSSGetOptimalSettings* sl_dlss_get_optimal_settings = nullptr;
     PFun_slDLSSSetOptions* sl_dlss_set_options = nullptr;
@@ -91,7 +90,6 @@ struct SlApi
         sl_set_tag_for_frame = nullptr;
         sl_evaluate_feature = nullptr;
         sl_free_resources = nullptr;
-        sl_set_vulkan_info = nullptr;
         sl_dlss_get_optimal_settings = nullptr;
         sl_dlss_set_options = nullptr;
         sl_dlssd_get_optimal_settings = nullptr;
@@ -205,10 +203,9 @@ try
     auto* sl_set_tag_for_frame = resolve_required_export<PFun_slSetTagForFrame>(module.get(), "slSetTagForFrame");
     auto* sl_evaluate_feature = resolve_required_export<PFun_slEvaluateFeature>(module.get(), "slEvaluateFeature");
     auto* sl_free_resources = resolve_required_export<PFun_slFreeResources>(module.get(), "slFreeResources");
-    auto* sl_set_vulkan_info = resolve_required_export<PFun_slSetVulkanInfo>(module.get(), "slSetVulkanInfo");
     if (!sl_init || !sl_shutdown || !sl_is_feature_supported || !sl_get_feature_requirements ||
         !sl_get_feature_function || !sl_get_new_frame_token || !sl_set_constants || !sl_set_tag_for_frame ||
-        !sl_evaluate_feature || !sl_free_resources || !sl_set_vulkan_info)
+        !sl_evaluate_feature || !sl_free_resources)
     {
         return sl::Result::eErrorMissingOrInvalidAPI;
     }
@@ -224,7 +221,6 @@ try
     g_sl_api.sl_set_tag_for_frame = sl_set_tag_for_frame;
     g_sl_api.sl_evaluate_feature = sl_evaluate_feature;
     g_sl_api.sl_free_resources = sl_free_resources;
-    g_sl_api.sl_set_vulkan_info = sl_set_vulkan_info;
     return sl::Result::eOk;
 }
 catch (...)
@@ -570,31 +566,6 @@ int32_t truvixx_sl_shutdown()
 }
 
 /// feature 导出统一隔离 C++ 异常；错误只表示调用失败，不保证 SDK/GPU 状态回滚。
-int32_t truvixx_sl_set_vulkan_info(const TruvixxSlVulkanInfo* info)
-try
-{
-    if (!g_sl_api.is_initialized() || !g_sl_api.sl_set_vulkan_info || !info)
-    {
-        return static_cast<int32_t>(sl::Result::eErrorInvalidParameter);
-    }
-
-    sl::VulkanInfo vulkan_info{};
-    vulkan_info.instance = to_vk_handle<VkInstance>(info->instance);
-    vulkan_info.physicalDevice = to_vk_handle<VkPhysicalDevice>(info->physical_device);
-    vulkan_info.device = to_vk_handle<VkDevice>(info->device);
-    vulkan_info.graphicsQueueFamily = info->graphics_queue_family;
-    vulkan_info.graphicsQueueIndex = info->graphics_queue_index;
-    vulkan_info.computeQueueFamily = info->compute_queue_family;
-    vulkan_info.computeQueueIndex = info->compute_queue_index;
-
-    const sl::Result result = g_sl_api.sl_set_vulkan_info(vulkan_info);
-    return static_cast<int32_t>(result);
-}
-catch (...)
-{
-    return static_cast<int32_t>(sl::Result::eErrorExceptionHandler);
-}
-
 int32_t truvixx_sl_dlss_query_support(uint64_t physical_device, TruvixxSlFeatureSupport* out_support)
 try
 {

@@ -14,7 +14,7 @@ shader/FFI 契约、反射距离近似与 debug 规则见
 - `shared`：`RenderMode`、`PathTracingCommonSettings`、`PathTracingDebugChannel`、`SkySamplingMode`、`SdrPostProcessSettings` 和 `ImageTarget`。
 - `PathTracingDebugChannel` / `SkySamplingMode` 同时服务 realtime/offline；ReSTIR DI 和 SHARC 模式只属于 realtime 模块。
 - DLSS 的 pass adapter、options、SR frame constants 和 snapshot 位于 `renderer-render-passes`；具体 requested/effective 配置、能力与资源生命周期由 `TruvisRenderer` 持有。
-- `PathTracingCommonSettings::sky_brightness` 默认 1.0，保持源 HDRI 的 radiance 倍率；Realtime/Offline 共用该设置。
+- 环境倍率由 World 持有，Realtime/Offline 从同帧 RenderSceneView 读取；不在 common settings 保存副本。
 - `OfflineRenderSettings::supports_debug_channel` 是离线 debug 候选的唯一判定入口；`normalize` 将非法候选恢复为 Final 并约束 dispatch 数，由 Renderer 固定 update 路径调用，不依赖 UI。
 
 ## 生命周期与依赖
@@ -22,7 +22,16 @@ shader/FFI 契约、反射距离近似与 debug 规则见
 - 每个 subsystem 实现 `renderer-kit::SubsystemLifecycle`，由具体 Renderer 显式调用 `init` / `on_resize` / `shutdown` 并决定 RenderGraph pass 顺序。
 - `settings()` / `settings_mut()`、`compute_cmd()` / `present_cmd()`、`contribute_compute_passes()` / `contribute_present_passes()` 和 `debug_image_options()` 保持 subsystem 自身接口。
 - 窗口尺寸资源只保存 manager-owned handle；resize/shutdown 在 GPU safe point 通过 phase ctx 显式释放，不能长期保存 `Gfx`、allocator 或 runtime owner。
-- offline `accum_image` 不按 FIF 轮转，不复用 realtime GBuffer、DLSS 或 ReSTIR history；只有累计签名匹配且存在 TLAS 时才推进 sample。
+- Realtime/Offline 的 resolve pipeline 在 resize 时核对当前 present format；仅格式变化才创建替代并释放旧 pipeline，普通尺寸变化继续复用。
+- offline `accum_image` 不按 FIF 轮转，不复用 realtime GBuffer、DLSS 或 ReSTIR history；签名变化可立即失效，样本计数仅在相应 batch 提交返回后推进。
+- Realtime/Offline 建图返回各自的提交候选，由 Renderer 在 queue submit 正常返回后消费；丢弃图或提交失败不推进计数/历史。无 TLAS 的清屏也须提交后才确认清零/断开连续帧；这不是 GPU 完成凭据。
+- Offline 在整个采样 batch 的样本数超出 u32 前明确停止；不饱和重复索引，也不自动清空历史。传入 accum shader 的历史数始终小于 u32::MAX，保证分母加一可表示。
+- GBuffer 三通道复用 shared `PerFrameImageSet` 的 image/view 生命周期；通道格式、usage 和几何/材质含义仍由 GBuffer 定义。
+- 主视图与 Offline 中间输出只保留 storage、采样和传输用途；Resolve 的 color attachment 位于 swapchain。主视图不分配未被 pass 消费的 raster depth，DLSS depth 仍由自己的 input target 提供。
+- Target 与 Realtime/Offline RenderResources 由 owner 在 GPU safe point 显式销毁；不做逐层 unwind 回滚。
+- SDR 的初始化、模式与 pending snap 同样通过同次 render 的提交候选确认；建图不消耗状态，无输入/锁定/非 Final 不会提前消费首次有效测光。
+- LUT 上传复用 `GfxImage::transfer_data` 的同队列 shader 读取可见性；同步上传完成后释放 staging，不重复追加 compute 屏障。
+- Realtime debug preview 只借出当前生产路径有效的 source：无 TLAS 时仅提供已清理的 source/main color/hit-distance，DLSS output 须本帧 evaluate 成功返回；非空 handle 本身不是内容有效凭据。
 - 依赖 `renderer-kit`、`renderer-render-passes` 和 Engine 渲染能力，不依赖 ImGui；SDR 设置通过 shared API 暴露，避免 UI 直接依赖 pass crate。
 
 ## 显示契约

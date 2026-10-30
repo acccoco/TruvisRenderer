@@ -37,6 +37,7 @@ pub struct GfxSampler {
 // 创建与初始化
 impl GfxSampler {
     pub fn new(ctx: GfxDeviceCtx<'_>, desc: &GfxSamplerDesc, name: impl AsRef<str>) -> Self {
+        let debug_name = name.as_ref().to_owned();
         let mut create_info = vk::SamplerCreateInfo::default()
             .mag_filter(desc.mag_filter)
             .min_filter(desc.min_filter)
@@ -62,13 +63,9 @@ impl GfxSampler {
         }
 
         let gfx_device = ctx.device();
-        let sampler = unsafe { gfx_device.create_sampler(&create_info, None).expect("Failed to create sampler") };
-        gfx_device.set_object_debug_name(sampler, name.as_ref());
-
-        Self {
-            handle: sampler,
-            debug_name: name.as_ref().to_string(),
-        }
+        let handle = unsafe { gfx_device.create_sampler(&create_info, None).expect("Failed to create sampler") };
+        gfx_device.set_object_debug_name(handle, &debug_name);
+        Self { handle, debug_name }
     }
 }
 // 访问器

@@ -1,8 +1,9 @@
 ﻿use truvis_render_foundation::render_view::RenderViewAccumSignature;
 
-/// Truvis 主视图的连续帧计数。
+/// Truvis 主视图相机签名未变的连续 update 计数，仅供 UI 诊断。
 ///
-/// 这是 Renderer-owned UI/temporal 状态；Runtime 只提供通用 history invalidation 事件。
+/// 首次、相机变化或显式 reset 后从零开始；不表示 GPU 提交、Offline 样本或 temporal 历史有效。
+/// 没有 acquired image 时也可能 update，Runtime invalidation 只触发显式 reset。
 #[derive(Copy, Clone, Default)]
 pub struct ViewAccumState {
     last_signature: Option<RenderViewAccumSignature>,

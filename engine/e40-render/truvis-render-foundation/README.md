@@ -14,8 +14,12 @@
 
 - `FrameLabel` 只表达 A/B/C 三个 FIF slot 及其固定数量和轮转映射；帧序号、时间快照和延迟回收使用的当前 frame id 由 `truvis-render-runtime::FrameTiming` 持有。
 - `RenderView` 是 app 相机状态到 runtime prepare 阶段的纯数据快照；runtime 不依赖 app camera 的具体存储和输入控制方式。
+  调用方负责矩阵可逆、数值有效以及 position/forward 与 view 一致；当前公开字段不阻止手工修改后遗留旧 inverse。
 - `RenderSceneView` 是 render pass 访问 runtime 私有 GPU scene 的窄只读契约；concrete `RenderWorld`、`RenderData`、稳定 instance slot 与 raster draw cache 属于 `truvis-render-runtime`。
+  调用方须选择已 prepare 的 FIF slot；“只读”限定 scene 状态，draw_raster 仍向传入 command 录制命令。
 - `GfxResourceAccess` 是 RenderGraph 解析 imported image/image view 句柄的只读查询契约；具体 `GfxResourceRegistry` 实现在 `truvis-render-runtime`。
+- 资源 handle 的 generation 只在创建它的 registry 内识别陈旧 slot；不同 registry 的 key 可能相同，
+  不能把 handle 当作全局/device 身份，也不能靠保存 handle 延长 native 资源生命周期。
 
 ## 非职责
 

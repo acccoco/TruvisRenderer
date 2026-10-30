@@ -19,7 +19,7 @@ pub struct AccumPassData {
     pub accum_image: GfxImageViewHandle,
     pub image_size: vk::Extent2D,
     /// 调用方维护的离线历史样本数。pass 只按这个数做 running average，
-    /// 不能回读 runtime `ViewAccumState`，否则会把 realtime temporal reset 语义混入离线 reference。
+    /// 必须小于 u32::MAX，保证 shader 的样本分母可表示；不读取 UI 的 ViewAccumState。
     pub accum_frames: u32,
 }
 

@@ -40,8 +40,8 @@ impl<'a> GfxDeviceCtx<'a> {
 pub struct GfxResourceCtx<'a> {
     device: &'a Rc<GfxDevice>,
     allocator: &'a VMemAllocator,
-    /// AS scratch 地址的设备要求，资源封装不能依赖普通 buffer 分配碰巧满足对齐。
-    pub(crate) acceleration_scratch_alignment: vk::DeviceSize,
+    /// 借用 root 已查询的 AS limits，供资源构造检查数量与 scratch 对齐。
+    pub(crate) acceleration_structure_props: &'a vk::PhysicalDeviceAccelerationStructurePropertiesKHR<'static>,
 }
 
 impl<'a> GfxResourceCtx<'a> {
@@ -116,6 +116,15 @@ impl<'a> GfxDeviceInfoCtx<'a> {
     #[inline]
     pub fn rt_pipeline_props(self) -> &'a vk::PhysicalDeviceRayTracingPipelinePropertiesKHR<'static> {
         &self.physical_device.rt_pipeline_props
+    }
+
+    /// [width, 1, 1] 光追派发的宽度上限，同时约束 X 维度和总 invocation 数。
+    /// 使用 u64 计算两个 u32 限制的乘积，最后由 u32 invocation 上限约束转换。
+    pub fn max_ray_dispatch_width(self) -> u32 {
+        let limits = self.physical_device().basic_props.limits;
+        let width_limit = u64::from(limits.max_compute_work_group_count[0])
+            * u64::from(limits.max_compute_work_group_size[0]);
+        u64::from(self.rt_pipeline_props().max_ray_dispatch_invocation_count).min(width_limit) as u32
     }
 
     /// 根据给定的格式，返回支持的格式。
@@ -397,8 +406,7 @@ impl Gfx {
         GfxResourceCtx {
             device: &self.gfx_core.gfx_device,
             allocator: &self.vm_allocator,
-            acceleration_scratch_alignment: self.gfx_core.physical_device._acc_struct_props
-                .min_acceleration_structure_scratch_offset_alignment as vk::DeviceSize,
+            acceleration_structure_props: &self.gfx_core.physical_device._acc_struct_props,
         }
     }
 
@@ -475,25 +483,24 @@ impl Gfx {
 
 impl GfxImmediateCtx<'_> {
     /// 立即执行某个 command，并同步等待执行结果。
+    ///
+    /// 闭包只录制：不能自行提交、释放 command，或让其 alias 逃逸。
     pub fn one_time_exec<F, R>(self, func: F, name: impl AsRef<str>) -> R
     where
         F: FnOnce(&GfxCommandBuffer) -> R,
     {
-        let command_buffer = GfxCommandBuffer::new_with_device(
-            self.device_rc(),
-            self.command_pool,
-            &format!("one-time-{}", name.as_ref()),
-        );
+        let name = name.as_ref();
+        let command =
+            GfxCommandBuffer::new_with_device(self.device_rc(), self.command_pool, &format!("one-time-{name}"));
 
-        command_buffer.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, name.as_ref());
-        let result = func(&command_buffer);
-        command_buffer.end();
+        command.begin(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, name);
+        let result = func(&command);
+        command.end();
 
-        let command_buffer_clone = command_buffer.clone();
-        self.queue.submit(vec![GfxSubmitInfo::new(&[command_buffer_clone])], None);
+        self.queue.submit(vec![GfxSubmitInfo::new(std::slice::from_ref(&command))], None);
         self.queue.wait_idle();
         unsafe {
-            self.device.free_command_buffers(self.command_pool.handle(), &[command_buffer.vk_handle()]);
+            self.device.free_command_buffers(self.command_pool.handle(), &[command.vk_handle()]);
         }
 
         result

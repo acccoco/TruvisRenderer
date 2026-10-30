@@ -107,20 +107,20 @@ impl GameWorld {
         self.resources.import_scene(path)
     }
 
-    /// 注册一个 file texture 并返回 CPU world texture handle。
+    /// 注册 file texture；显式重复请求会重试 Failed，Loading/Ready 继续复用原 handle。
     pub fn import_texture(
         &mut self,
         path: PathBuf,
         color_space: TextureColorSpace,
     ) -> Result<TextureAssetHandle, WorldEditError> {
         let original_path = path.clone();
-        let (texture, is_new) = self.resources.import_texture_file(path, color_space).map_err(|error| {
+        let (texture, started_load) = self.resources.import_texture_file(path, color_space).map_err(|error| {
             WorldEditError::FilesystemCanonicalizeFailed {
                 path: original_path,
                 error,
             }
         })?;
-        if is_new {
+        if started_load {
             self.scene.mark_resource_changed();
         }
         Ok(texture)
@@ -297,17 +297,17 @@ impl GameWorld {
     }
 
     /// 注册 point light。
-    pub fn register_point_light(&mut self, light: gpu::engine::light::PointLight) -> LightHandle {
-        self.scene.register_point_light(light)
+    pub fn register_point_light(&mut self, light: gpu::engine::light::PointLight) -> Result<LightHandle, WorldEditError> {
+        self.scene.register_point_light(light).map_err(Into::into)
     }
 
     /// 注册 spot light。
-    pub fn register_spot_light(&mut self, light: gpu::engine::light::SpotLight) -> LightHandle {
-        self.scene.register_spot_light(light)
+    pub fn register_spot_light(&mut self, light: gpu::engine::light::SpotLight) -> Result<LightHandle, WorldEditError> {
+        self.scene.register_spot_light(light).map_err(Into::into)
     }
 
     /// 注册 area light。
-    pub fn register_area_light(&mut self, light: gpu::engine::light::AreaLight) -> LightHandle {
-        self.scene.register_area_light(light)
+    pub fn register_area_light(&mut self, light: gpu::engine::light::AreaLight) -> Result<LightHandle, WorldEditError> {
+        self.scene.register_area_light(light).map_err(Into::into)
     }
 }

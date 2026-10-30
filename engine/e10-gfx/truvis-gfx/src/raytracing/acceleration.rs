@@ -36,6 +36,8 @@ impl GfxAcceleration {
         build_flags: vk::BuildAccelerationStructureFlagsKHR,
         debug_name: impl AsRef<str>,
     ) -> (Self, GfxAccelerationScratchBuffer) {
+        let debug_name = debug_name.as_ref();
+        Self::validate_blas_counts(resource_ctx, blas_inputs);
         let geometries = blas_inputs.iter().map(|blas_input| blas_input.geometry).collect_vec();
         let max_primitives = blas_inputs.iter().map(|blas_input| blas_input.range.primitive_count).collect_vec();
 
@@ -61,12 +63,12 @@ impl GfxAcceleration {
             device_ctx,
             size_info.acceleration_structure_size,
             vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-            format!("{}-blas", debug_name.as_ref()),
+            format!("{debug_name}-blas"),
         );
         let scratch_buffer = GfxAccelerationScratchBuffer::new(
             resource_ctx,
             size_info.build_scratch_size,
-            format!("{}-blas-scratch-buffer", debug_name.as_ref()),
+            format!("{debug_name}-blas-scratch-buffer"),
         );
 
         (acceleration, scratch_buffer)
@@ -96,9 +98,10 @@ impl GfxAcceleration {
     ) -> Self {
         let _span = tracy_client::span!("GfxAcceleration::build_blas_sync");
 
+        let debug_name = debug_name.as_ref();
+
         let geometries = blas_inputs.iter().map(|blas_input| blas_input.geometry).collect_vec();
         let range_infos = blas_inputs.iter().map(|blas_input| blas_input.range).collect_vec();
-        let max_primitives = blas_inputs.iter().map(|blas_input| blas_input.range.primitive_count).collect_vec();
 
         // 使用部分完整的 AccelerationStructureBuildGeometryInfo 来查询所需的资源大小
         let mut build_geometry_info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
@@ -111,30 +114,13 @@ impl GfxAcceleration {
             .geometries(&geometries)
             .mode(vk::BuildAccelerationStructureModeKHR::BUILD);
 
-        // blas 所需的尺寸信息
-        let size_info = unsafe {
-            let mut size_info = vk::AccelerationStructureBuildSizesInfoKHR::default();
-            device_ctx.device().acceleration_structure.get_acceleration_structure_build_sizes(
-                vk::AccelerationStructureBuildTypeKHR::DEVICE,
-                &build_geometry_info,
-                &max_primitives, // 每一个 geometry 里面的最大 primitive 数量
-                &mut size_info,
-            );
-            size_info
-        };
-
-        let uncompact_acceleration = Self::new(
+        // 复用 BLAS 的尺寸查询与 storage/scratch 分配。
+        let (uncompact_acceleration, scratch_buffer) = Self::new_blas_for_build(
             resource_ctx,
             device_ctx,
-            size_info.acceleration_structure_size,
-            vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-            format!("{}-uncompact-blas", debug_name.as_ref()),
-        );
-
-        let scratch_buffer = GfxAccelerationScratchBuffer::new(
-            resource_ctx,
-            size_info.build_scratch_size,
-            format!("{}-blas-scratch-buffer", debug_name.as_ref()),
+            blas_inputs,
+            build_geometry_info.flags,
+            format!("{debug_name}-uncompact"),
         );
 
         // 填充 build geometry info 的剩余部分以 build blas
@@ -170,13 +156,13 @@ impl GfxAcceleration {
         );
 
         // 提供更紧凑的 acceleration
-        let compact_size: Vec<vk::DeviceSize> = query_pool.get_query_result(device_ctx, 0, 1);
+        let compact_size = query_pool.get_query_result(device_ctx, 0, 1);
         let compact_acceleration = Self::new(
             resource_ctx,
             device_ctx,
             compact_size[0],
             vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-            format!("{}-compact-blas", debug_name.as_ref()),
+            format!("{debug_name}-compact-blas"),
         );
 
         immediate_ctx.one_time_exec(
@@ -215,25 +201,46 @@ impl GfxAcceleration {
     ) -> Self {
         let _span = tracy_client::span!("GfxAcceleration::build_tlas_sync");
 
-        let acceleration_instance_buffer = GfxAccelerationInstanceBuffer::new(
+        let debug_name = debug_name.as_ref();
+
+        // 空场景由上层撤销 TLAS；在上传前拒绝无法投影为 Vulkan primitiveCount 的输入。
+        assert!(!instances.is_empty(), "TLAS requires at least one instance");
+        let instance_count = u32::try_from(instances.len()).expect("TLAS instance count exceeds u32");
+        assert!(
+            u64::from(instance_count) <= resource_ctx.acceleration_structure_props.max_instance_count,
+            "TLAS instance count exceeds device limit"
+        );
+
+        let mut acceleration_instance_buffer = GfxAccelerationInstanceBuffer::new(
             resource_ctx,
             size_of_val(instances) as vk::DeviceSize,
-            format!("{}-acceleration-instance-buffer", debug_name.as_ref()),
+            format!("{}-acceleration-instance-buffer", debug_name),
         );
-        acceleration_instance_buffer.transfer_data_sync(resource_ctx, immediate_ctx, instances);
+        // ash 的 native union 不实现 NoUninit；只复制 Vulkan record，不构造宿主字节引用。
+        acceleration_instance_buffer.transfer_data_sync2(
+            resource_ctx,
+            immediate_ctx,
+            size_of_val(instances) as vk::DeviceSize,
+            |stage| unsafe {
+                std::ptr::copy_nonoverlapping(
+                    instances.as_ptr().cast::<u8>(),
+                    stage.mapped_ptr(),
+                    size_of_val(instances),
+                );
+            },
+        );
 
         let geometry = vk::AccelerationStructureGeometryKHR::default()
             .geometry_type(vk::GeometryTypeKHR::INSTANCES)
             .geometry(vk::AccelerationStructureGeometryDataKHR {
                 instances: vk::AccelerationStructureGeometryInstancesDataKHR::default()
-                    // true: data 是 &[vk::AccelerationStructureInstanceKHR]
-                    // false: data 是 &[&vk::AccelerationStructureInstanceKHR]
+                    // false 表示连续的 instance record，与上面的原始字节上传一致。
                     .array_of_pointers(false)
                     .data(vk::DeviceOrHostAddressConstKHR {
                         device_address: acceleration_instance_buffer.device_address(),
                     }),
             });
-        let range_info = vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(instances.len() as u32);
+        let range_info = vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(instance_count);
 
         let mut build_geometry_info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
             .ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
@@ -247,25 +254,25 @@ impl GfxAcceleration {
             device_ctx.device().acceleration_structure.get_acceleration_structure_build_sizes(
                 vk::AccelerationStructureBuildTypeKHR::DEVICE,
                 &build_geometry_info,
-                &[instances.len() as u32],
+                &[instance_count],
                 &mut size_info,
             );
 
-            size_info
-        };
+                size_info
+            };
 
         let acceleration = Self::new(
             resource_ctx,
             device_ctx,
             size_info.acceleration_structure_size,
             vk::AccelerationStructureTypeKHR::TOP_LEVEL,
-            format!("{}-tlas", debug_name.as_ref()),
+            format!("{debug_name}-tlas"),
         );
 
         let scratch_buffer = GfxAccelerationScratchBuffer::new(
             resource_ctx,
             size_info.build_scratch_size,
-            format!("{}-tlas-scratch-buffer", debug_name.as_ref()),
+            format!("{debug_name}-tlas-scratch-buffer"),
         );
 
         // 补全剩下的 build info
@@ -275,6 +282,14 @@ impl GfxAcceleration {
         // 正式构建 TLAS
         immediate_ctx.one_time_exec(
             |cmd| {
+                // 上传与 build 使用同一队列；host wait 只证明完成，还需让 transfer 写入对 build 输入可见。
+                cmd.memory_barrier(std::slice::from_ref(&vk::MemoryBarrier2 {
+                    src_stage_mask: vk::PipelineStageFlags2::TRANSFER,
+                    src_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
+                    dst_stage_mask: vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR,
+                    dst_access_mask: vk::AccessFlags2::SHADER_READ,
+                    ..Default::default()
+                }));
                 cmd.build_acceleration_structure(&build_geometry_info, std::slice::from_ref(&range_info));
             },
             "build-tlas",
@@ -285,7 +300,17 @@ impl GfxAcceleration {
         acceleration
     }
 
-    /// 创建 AccelerationStructure 以及 buffer    
+    /// 设备限制针对 BLAS 内所有 geometry 的总 primitive 数，而非单个 geometry。
+    fn validate_blas_counts(resource_ctx: GfxResourceCtx<'_>, inputs: &[GfxBlasInputInfo]) {
+        let geometry_count = u32::try_from(inputs.len()).expect("BLAS geometry count exceeds u32");
+        let limits = resource_ctx.acceleration_structure_props;
+        assert!(u64::from(geometry_count) <= limits.max_geometry_count, "BLAS geometry count exceeds device limit");
+        // geometry count 与每项 primitiveCount 均受 u32 约束，合计不会溢出 u64。
+        let primitives: u64 = inputs.iter().map(|input| u64::from(input.range.primitive_count)).sum();
+        assert!(primitives <= limits.max_primitive_count, "BLAS primitive count exceeds device limit");
+    }
+
+    /// 创建 AccelerationStructure 以及 buffer
     fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
@@ -293,7 +318,8 @@ impl GfxAcceleration {
         ty: vk::AccelerationStructureTypeKHR,
         debug_name: impl AsRef<str>,
     ) -> Self {
-        let buffer = GfxAccelerationStructureBuffer::new(resource_ctx, size, debug_name.as_ref());
+        let debug_name = debug_name.as_ref();
+        let buffer = GfxAccelerationStructureBuffer::new(resource_ctx, size, debug_name);
 
         let create_info = vk::AccelerationStructureCreateInfoKHR::default() //
             .ty(ty)

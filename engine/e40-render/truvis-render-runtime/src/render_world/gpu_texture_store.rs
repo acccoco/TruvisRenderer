@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use ash::vk;
 use slotmap::SecondaryMap;
@@ -9,8 +9,8 @@ use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_shader_binding::gpu;
-use truvis_world::guid_new_type::TextureAssetHandle;
 use truvis_world::SceneReadView;
+use truvis_world::guid_new_type::TextureAssetHandle;
 
 use crate::bindings::bindless_manager::BindlessSrvHandle;
 use crate::bindings::shader_binding_system::ShaderBindingSystem;
@@ -93,24 +93,42 @@ impl GpuTextureStore {
         // 它在 manager 生命周期内常驻 bindless，避免材质上传阶段产生空 SRV。
         let pixels: [u8; 4] = [255, 0, 255, 255];
         let image = GfxImage::from_rgba8(resource_ctx, immediate_ctx, 1, 1, &pixels, "FallbackTexture");
-        let image_format = image.format();
-
-        let image_handle = gfx_resource_registry.register_image(image);
-        let view_handle = gfx_resource_registry.get_or_create_image_view(
+        Self::register_texture_binding(
+            resource_ctx,
             device_ctx,
-            image_handle,
-            GfxImageViewDesc::new_2d(image_format, vk::ImageAspectFlags::COLOR),
+            gfx_resource_registry,
+            shader_binding_system,
+            image,
             "FallbackTextureView",
-        );
-        shader_binding_system.register_srv(view_handle);
-        let srv_handle = shader_binding_system.get_shader_srv_handle(view_handle);
+        )
+    }
 
-        UploadedAssetTexture {
-            image_handle,
-            view_handle,
-            srv_handle,
-            sampler: gpu::engine::bindless::ESamplerType_LinearRepeat,
-        }
+    /// 只接收上传已完成、尚未发布的 image；view/bindless 安装失败撤销本次登记。
+    /// fallback 与普通纹理共用 binding 安装路径，发布后由 store 管理退役。
+    pub(super) fn register_texture_binding(
+        _resource_ctx: GfxResourceCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        gfx_resource_registry: &mut GfxResourceRegistry,
+        shader_binding_system: &mut ShaderBindingSystem,
+        image: GfxImage,
+        view_name: &str,
+    ) -> UploadedAssetTexture {
+        let image_format = image.format();
+        let image_handle = gfx_resource_registry.register_image(image);
+        let installed = {
+            let view_handle = gfx_resource_registry.get_or_create_image_view(
+                device_ctx, image_handle,
+                GfxImageViewDesc::new_2d(image_format, vk::ImageAspectFlags::COLOR), view_name,
+            );
+            shader_binding_system.register_srv(view_handle);
+            UploadedAssetTexture {
+                image_handle,
+                view_handle,
+                srv_handle: shader_binding_system.get_shader_srv_handle(view_handle),
+                sampler: gpu::engine::bindless::ESamplerType_LinearRepeat,
+            }
+        };
+        installed
     }
 
     /// 对账 CPU texture registry，并提交尚未安装的资源到共享 transfer queue。
@@ -144,10 +162,10 @@ impl GpuTextureStore {
         }
     }
 
-    /// 发布共享 timeline 已完成的 image，并返回 shader-visible texture 变化。
+    /// 逐项安装共享 timeline 已完成的 image；未接管结果仍留在上传 queue。
     pub fn publish_completed_uploads(
         &mut self,
-        completed_uploads: Vec<CompletedTextureUpload>,
+        completed_uploads: &mut VecDeque<CompletedTextureUpload>,
         scene: SceneReadView<'_>,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
@@ -155,7 +173,7 @@ impl GpuTextureStore {
         shader_binding_system: &mut ShaderBindingSystem,
     ) {
         let _span = tracy_client::span!("GpuTextureStore::publish_completed_uploads");
-        for completed in completed_uploads {
+        while let Some(completed) = completed_uploads.pop_front() {
             let handle = completed.handle;
             let image = completed.image;
             self.pending_textures.remove(&handle);
@@ -164,11 +182,12 @@ impl GpuTextureStore {
                 continue;
             }
             if self.textures.contains_key(handle) {
-                log::error!("GpuTextureStore: reject duplicate upload for immutable texture {:?}", handle);
                 image.destroy(resource_ctx, DestroyReason::DeferredCleanup);
+                log::error!("GpuTextureStore: reject duplicate upload for immutable texture {:?}", handle);
                 continue;
             }
             self.install_uploaded_texture(
+                resource_ctx,
                 device_ctx,
                 gfx_resource_registry,
                 shader_binding_system,
@@ -218,41 +237,22 @@ impl GpuTextureStore {
             return false;
         }
 
-        self.remove_textures(
-            &stale_handles,
-            gfx_resource_registry,
-            shader_binding_system,
-        );
+        self.remove_textures(&stale_handles, gfx_resource_registry, shader_binding_system);
         true
     }
 
     fn install_uploaded_texture(
         &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
         handle: TextureAssetHandle,
         image: GfxImage,
     ) {
-        let image_format = image.format();
-        // 只有上传完成的 image 才进入全局资源管理器和 bindless 表。
-        // 从这一步开始，材质桥接层解析同一个 TextureAssetHandle 时会拿到真实 SRV。
-        let image_handle = gfx_resource_registry.register_image(image);
-        let view_handle = gfx_resource_registry.get_or_create_image_view(
-            device_ctx,
-            image_handle,
-            GfxImageViewDesc::new_2d(image_format, vk::ImageAspectFlags::COLOR),
-            "AssetTextureView",
+        let texture = Self::register_texture_binding(
+            resource_ctx, device_ctx, gfx_resource_registry, shader_binding_system, image, "AssetTextureView",
         );
-        shader_binding_system.register_srv(view_handle);
-        let srv_handle = shader_binding_system.get_shader_srv_handle(view_handle);
-
-        let texture = UploadedAssetTexture {
-            image_handle,
-            view_handle,
-            srv_handle,
-            sampler: gpu::engine::bindless::ESamplerType_LinearRepeat,
-        };
         self.textures.insert(handle, texture);
     }
 
@@ -260,9 +260,9 @@ impl GpuTextureStore {
         !self.textures.contains_key(handle) && !self.pending_textures.contains(&handle)
     }
 
-    /// 关闭上传队列并释放所有已注册纹理。
+    /// 在 GPU 安全点依次释放已注册纹理与 fallback；不提供 panic 回滚。
     ///
-    /// shutdown 会等待 pending transfer 完成，因为 staging/image/command buffer 可能仍被 queue 引用。
+    /// 调用方必须先关闭共享上传 queue，并保证已发布纹理不再被在途渲染使用。
     /// 调用后 manager 不应再被 `TextureResolver` 使用。
     pub fn destroy(
         mut self,

@@ -85,6 +85,15 @@ impl GfxImageBarrier {
         self
     }
 
+    /// 覆盖整个 image 的 mip/layer；调用方必须保证这些子资源共享声明的旧/新 layout。
+    pub fn whole_image(mut self) -> Self {
+        self.inner.subresource_range.base_mip_level = 0;
+        self.inner.subresource_range.level_count = vk::REMAINING_MIP_LEVELS;
+        self.inner.subresource_range.base_array_layer = 0;
+        self.inner.subresource_range.layer_count = vk::REMAINING_ARRAY_LAYERS;
+        self
+    }
+
     /// 构建器
     #[inline]
     pub fn image(mut self, image: vk::Image) -> Self {
