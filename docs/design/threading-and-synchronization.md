@@ -41,6 +41,10 @@ RenderGraph 表达同一帧内 image/buffer 的读写和 barrier；timeline 表�
 
 asset loader 和 Alias table worker 只做 CPU 读取或构建，不创建、提交或销毁 Vulkan 资源。GPU upload 和 shader-visible publish 仍在 RenderThread 的 runtime 路径完成。
 
+Asset loader 的完整任务入口将可展开的 Rust panic 转为失败 completion，状态只由 service
+轮询线程更新。关闭等待已排队任务退出；未轮询结果可随 owner 丢弃，不能把等待结束理解为
+资产已发布。当前没有取消或 IO 超时，阻塞文件操作仍可能延长关闭。
+
 ## 同步查询例外
 
 `after_prepare` 允许 Renderer 发起同步 raycast：prepare 已经把 GPU scene/TLAS 提交到 graphics queue，raycast service 再提交 trace、copy 和 fence 等待，并把结果读回 CPU。

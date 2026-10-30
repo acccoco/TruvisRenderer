@@ -63,6 +63,18 @@ cmake --build --preset vs2026-build-debug
 随后仅对 FBX 根变换前乘 `scale(0.01)`。不同时启用 GlobalScale，不再次缩放 mesh 顶点；累计节点变换
 和局部顶点共同定义米制世界坐标。其它格式不套用 FBX 规则；glTF 的生产导入路径位于 Rust loader。
 
+材质标量优先读取 Assimp PBR base color，缺省时读取 diffuse；metallic 使用 metallic factor，
+不从传统 reflectivity 推断。emissive intensity 只乘 RGB 一次，非法强度作为带诊断的导入失败。
+这只是已有载荷的字段转录，不宣称实现了全部 Assimp shading model 或纹理类型。
+颜色贴图优先 BASE_COLOR，缺省时 DIFFUSE；NORMALS 保持独立。所消费槽只接受单层外部
+纹理及当前 C ABI 能表达的默认 UV0/identity/repeat 映射；非默认映射、混合/flags、多层和
+embedded 引用明确失败并保留材质诊断，不伪造文件路径。未消费的其它贴图类型仍不受支持。
+
+几何输出限于静态三角形。postprocess 后仍缺少 position/normal/face、非三角 face、越界
+索引、不能由 u32 表达的索引总数、无效 mesh/material 引用均在复制前失败；skin、morph
+和顶点色尚无输出载荷，明确拒绝。消费外部贴图的 mesh 必须有二维 UV0；无贴图时可补零
+UV0，已有非二维 UV0 不接受。额外未被消费的 UV 集不导出。动画不求值，相机/灯光不转录。
+
 - 对 Rust 暴露的 target 必须是 SHARED library，并只跨 DLL 暴露 `extern "C"`、固定宽度 POD 或 opaque handle。
 - allocation/free、handle 生命周期和 callback 线程由 public C API 明确约束；exception、STL container 和 allocator
   ownership 不跨 DLL。
@@ -74,6 +86,7 @@ cmake --build --preset vs2026-build-debug
   空数组复制不访问指针，缺失的可选 normal/tangent 仍返回失败。容量单位与借用前置见 public header。
   所有 mesh 借用数组由 SceneData 持有实际 C API 元素对象，加载完成后不再依赖 Assimp 顶点类型别名。
   原始 aiScene 在全部转换完成后释放；转换期间有临时双份属性存储。视图只读且有效至 scene_free，禁止并发释放。
+  SceneImporter 持有一个可复用的 Assimp::Importer；clear 释放场景和本次结果/诊断，不重建格式插件。
 - binding crate 的 `build.rs` 单向读取 module header，经公共 codegen 生成到
   `build/bindings/{TARGET}/cxx/{crate}/`，再链接部署到 Cargo profile 目录的 import library。
 - CMake/native project 不知道 Cargo crate，也不得链接或回调 Rust symbol。

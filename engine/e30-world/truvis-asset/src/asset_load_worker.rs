@@ -103,9 +103,13 @@ impl AssetLoadWorker {
     pub(crate) fn request_load_scene(&self, req: SceneLoadRequest) {
         let result_sender = self.result_sender.clone();
         let wg_task = self.wait_group.as_ref().expect("AssetLoadWorker used after drop").clone();
+        let handle = req.handle;
         self.pool.spawn(move || {
-            let is_gltf = Self::is_gltf_path(&req.desc.path);
-            let result = if is_gltf { load_gltf_scene_task(req) } else { load_scene_task(req) };
+            // 捕获整个任务入口，包含诊断；不能让 spawn 中的 unwind 进入 Rayon 默认 abort 路径。
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if Self::is_gltf_path(&req.desc.path) { load_gltf_scene_task(req) } else { load_scene_task(req) }
+            }))
+            .unwrap_or_else(|_| LoadResult::SceneFailure(handle, "scene import task panicked".to_string()));
             let _ = result_sender.send(result);
             drop(wg_task);
         });
@@ -135,10 +139,9 @@ impl Drop for AssetLoadWorker {
     /// 这保证 `AssetLoadService` 销毁时不会留下仍在访问请求数据或 C++ importer 的 worker。
     /// 等待只发生在 loader drop；正常帧同步仍应通过 `try_recv_result` 非阻塞收集结果。
     fn drop(&mut self) {
-        log::info!("AssetLoadWorker is being dropped, waiting for tasks to complete...");
+        // 等待前后不调用 logger，避免诊断 panic 跳过任务退出或打断正在展开的异常。
         if let Some(wait_group) = self.wait_group.take() {
             wait_group.wait();
         }
-        log::info!("All asset loading tasks completed.");
     }
 }

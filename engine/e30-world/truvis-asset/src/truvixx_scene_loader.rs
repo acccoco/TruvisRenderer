@@ -21,17 +21,13 @@ use crate::handle::{
 /// 实际的 scene 导入任务。
 ///
 /// 只复制 owned CPU 数据，不把 `TruvixxSceneHandle` 或 raw pointer 传回 Rust runtime。
-/// panic 会被转换为失败结果，避免后台导入异常越过 `AssetLoadService` 的状态机边界。
-/// `req.handle` 只用于把结果关联回 `AssetLoadService` 已经分配的 model asset，不参与 FFI 调用。
+/// 整个任务的 panic 由 `AssetLoadWorker` 转为失败结果，包含入口和失败诊断。
+/// `req.handle` 只关联一次性加载请求，不是长期 asset 身份，也不参与 FFI 调用。
 pub(crate) fn load_scene_task(req: SceneLoadRequest) -> LoadResult {
     let _span = tracy_client::span!("load_scene_task");
     log::info!("Loading scene: {:?}", req.desc.path);
 
-    let result = std::panic::catch_unwind(|| TruvixxSceneReader::load_path(&req.desc.path))
-        .map_err(|_| "scene import task panicked".to_string())
-        .and_then(|result| result);
-
-    match result {
+    match TruvixxSceneReader::load_path(&req.desc.path) {
         Ok(data) => LoadResult::SceneSuccess {
             handle: req.handle,
             data,
@@ -187,7 +183,7 @@ impl TruvixxSceneReader<'_> {
 
         let mut instances = Vec::new();
         for instance_index in 0..instance_count {
-            instances.extend(self.copy_instance(instance_index)?);
+            instances.extend(self.copy_instance(instance_index, mesh_count, material_count)?);
         }
 
         Ok(RawSceneData {
@@ -248,7 +244,7 @@ impl TruvixxSceneReader<'_> {
 
         // `SubmeshData` 是 asset 层传给 render-side mesh manager 的 owned CPU 几何边界格式。
         // 从这里返回后，C++ importer 的顶点/索引内存是否释放都不再影响 Rust 数据。
-        Ok(MeshData::from_single_submesh(SubmeshData {
+        let mut submesh = SubmeshData {
             positions,
             normals,
             tangents,
@@ -256,7 +252,10 @@ impl TruvixxSceneReader<'_> {
             tangent_tex_coord: 0,
             indices: indices.to_vec(),
             name: format!("{}-{}", self.model_name, mesh_index),
-        }))
+        };
+        // 在成功事件前复用注册/上传的几何契约，避免到 AssetSystem 才发现坏的后续 mesh。
+        submesh.normalize_imported_frame()?;
+        Ok(MeshData::from_single_submesh(submesh))
     }
 
     /// 复制一个 material 的 CPU 参数。
@@ -273,6 +272,14 @@ impl TruvixxSceneReader<'_> {
         let diffuse_map = Self::read_fixed_c_string(&mat.diffuse_map);
         let normal_map = Self::read_fixed_c_string(&mat.normal_map);
         let name = Self::read_fixed_c_string(&mat.name);
+        let base_color = Self::truvixx_float4_to_vec4(mat.base_color);
+        let emissive = Self::truvixx_float4_to_vec4(mat.emissive).truncate();
+        // 在类别构造器 clamp 前校验，不把非法 opacity 或 emission 变成看似有效的材质。
+        if !base_color.is_finite() || !emissive.is_finite() || emissive.min_element() < 0.0
+            || [mat.metallic, mat.roughness, mat.opacity].iter().any(|value| !(0.0..=1.0).contains(value))
+        {
+            return Err(format!("Assimp material {material_index} '{name}' has invalid factors"));
+        }
 
         let mut textures: [Option<TextureSlot<RawTextureSource>>; TextureChannel::COUNT] = Default::default();
         for (channel, path) in [(TextureChannel::BaseColor, diffuse_map), (TextureChannel::Normal, normal_map)] {
@@ -282,22 +289,21 @@ impl TruvixxSceneReader<'_> {
         }
         // 保留 native 的绝对路径，稍后由 AssetSystem 统一规范化文件身份。
         Ok(RawMaterialData {
-            base_color: Self::truvixx_float4_to_vec4(mat.base_color),
+            base_color,
             metallic: mat.metallic,
             roughness: mat.roughness,
-            class: Self::material_class(mat.opacity, Self::truvixx_float4_to_vec4(mat.emissive).truncate()),
+            class: Self::material_class(mat.opacity),
             coverage: CoverageMode::Opaque,
             textures,
             normal_scale: 1.0,
-            emissive_factor: glam::Vec3::ZERO,
+            // 发光叠加到原表面，不把可散射材质改成专用 Emissive 终止类别。
+            emissive_factor: emissive,
             name: if name.is_empty() { format!("material-{}", material_index) } else { name },
         })
     }
 
-    fn material_class(opacity: f32, emissive: glam::Vec3) -> MaterialClass {
-        if emissive.max_element() > 0.0 {
-            MaterialClass::emissive(emissive)
-        } else if opacity < 0.99 {
+    fn material_class(opacity: f32) -> MaterialClass {
+        if opacity < 0.99 {
             MaterialClass::transmission(opacity, MaterialClass::DEFAULT_IOR)
         } else {
             MaterialClass::Surface
@@ -309,7 +315,12 @@ impl TruvixxSceneReader<'_> {
     /// 一个 node 可能引用多个 mesh，因此这里会拆成多条 `RawSceneInstanceData`。
     /// 返回值仍使用导入源内部的 mesh/material index，避免后台 FFI 任务直接分配
     /// scene handle 或 render-side GPU slot。
-    fn copy_instance(&self, instance_index: u32) -> Result<Vec<RawSceneInstanceData>, String> {
+    fn copy_instance(
+        &self,
+        instance_index: u32,
+        scene_mesh_count: u32,
+        scene_material_count: u32,
+    ) -> Result<Vec<RawSceneInstanceData>, String> {
         let mut instance = truvixx::TruvixxInstance::default();
         let res = unsafe { truvixx::truvixx_instance_get(self.handle(), instance_index, &mut instance as *mut _) };
         if res != truvixx::ResType_ResTypeSuccess {
@@ -340,6 +351,19 @@ impl TruvixxSceneReader<'_> {
 
         let instance_name = Self::read_fixed_c_string(&instance.name);
         let transform = Self::truvixx_float4x4_to_mat4(instance.world_transform);
+        if mesh_indices.iter().any(|&index| index >= scene_mesh_count)
+            || material_indices.iter().any(|&index| index >= scene_material_count)
+        {
+            return Err(format!("instance {instance_index} references missing mesh or material"));
+        }
+        // 仅约束实际发布的 mesh 实例；允许负缩放和累计 shear，空 group 不进入 GPU mirror。
+        if !transform.is_finite() || transform.row(3) != glam::Vec4::W {
+            return Err(format!("instance {instance_index} world transform must be finite and affine"));
+        }
+        let determinant = transform.determinant();
+        if !determinant.is_finite() || determinant == 0.0 || !transform.inverse().is_finite() {
+            return Err(format!("instance {instance_index} world transform has no finite f32 inverse"));
+        }
 
         // 一个 Assimp node 可能引用多个 mesh，这里拆成多个 prefab instance 记录。
         let instances = mesh_indices

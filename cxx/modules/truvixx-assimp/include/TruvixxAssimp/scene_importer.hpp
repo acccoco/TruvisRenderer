@@ -48,16 +48,16 @@ public:
 
 private:
     /// 处理场景树中的所有节点
-    void process_nodes(const aiNode* root_node);
+    bool process_nodes(const aiNode* root_node);
 
     /// 处理单个节点
-    void process_node(const aiNode* node, const aiMatrix4x4& parent_transform);
+    bool process_node(const aiNode* node, const aiMatrix4x4& parent_transform);
 
     /// 处理 Mesh
-    static void process_mesh_info(const aiMesh* mesh, MeshInfo& out_mesh);
+    bool process_mesh_info(const aiMesh* mesh, MeshInfo& out_mesh);
 
     /// 处理材质
-    void process_material(const aiMaterial* material, MaterialData& out_material) const;
+    bool process_material(const aiMaterial* material, MaterialData& out_material);
 
 private:
     std::unique_ptr<Assimp::Importer> importer_; ///< Assimp 导入器，持有 ai_scene 生命周期

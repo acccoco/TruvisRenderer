@@ -119,6 +119,7 @@ impl TextureBytes {
     ///
     /// extent 必须是非空 2D image，`pixels` 严格包含 `width * height * 4` 个通道元素。校验集中在
     /// asset 边界，后续 staging upload 和 sky distribution 可以依赖该不变量。
+    /// 这里只校验形状，不规范化 F16 数值，也不验证设备尺寸限制；解码规范化由 loader 完成。
     pub fn new(pixels: TexturePixels, extent: vk::Extent3D) -> Result<Self, String> {
         if extent.width == 0 || extent.height == 0 || extent.depth != 1 {
             return Err(format!("texture extent must be a non-empty 2D image: {extent:?}"));
@@ -224,6 +225,48 @@ pub struct SubmeshData {
 impl SubmeshData {
     /// 导入和 CPU 注册共用 GPU 上传前置条件；失败时不得上传不完整属性或越界索引。
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_input(false)
+    }
+
+    /// 导入器允许有限的非单位法线和零法线，但不能用修复掩盖损坏的属性或拓扑。
+    /// f64 计算覆盖有限 f32 的长度和叉积；零法线取首个相邻有效面的方向，保留索引与绕序。
+    pub(crate) fn normalize_imported_frame(&mut self) -> Result<(), String> {
+        self.validate_input(true)?;
+        let repaired = self.normals.iter().filter(|n| !n.is_normalized()).count();
+        for normal in &mut self.normals {
+            if *normal != glam::Vec3::ZERO {
+                *normal = normal.as_dvec3().normalize().as_vec3();
+            }
+        }
+        for tri in self.indices.chunks_exact(3) {
+            let p = [tri[0], tri[1], tri[2]].map(|index| self.positions[index as usize].as_dvec3());
+            let cross = (p[1] - p[0]).cross(p[2] - p[0]);
+            if cross == glam::DVec3::ZERO {
+                return Err(format!("submesh '{}' contains a degenerate triangle", self.name));
+            }
+            for &index in tri {
+                if self.normals[index as usize] == glam::Vec3::ZERO {
+                    self.normals[index as usize] = cross.normalize().as_vec3();
+                }
+            }
+        }
+        for tangent in &mut self.tangents {
+            if tangent.w == 0.0 || tangent.truncate() == glam::Vec3::ZERO {
+                *tangent = glam::Vec4::ZERO;
+            } else if !tangent.truncate().is_normalized() {
+                return Err(format!("submesh '{}' tangent direction must be unit length", self.name));
+            } else {
+                tangent.w = tangent.w.signum();
+            }
+        }
+        self.validate()?;
+        if repaired != 0 {
+            log::warn!("submesh '{}': normalized/fell back {} normals", self.name, repaired);
+        }
+        Ok(())
+    }
+
+    fn validate_input(&self, allow_zero_normals: bool) -> Result<(), String> {
         let count = self.positions.len();
         let reason = if count == 0 {
             Some("has no vertices")
@@ -236,7 +279,7 @@ impl SubmeshData {
         {
             Some("has mismatched vertex attribute counts")
         } else if self.positions.iter().any(|p| !p.is_finite())
-            || self.normals.iter().any(|n| !n.is_finite() || n.length_squared() <= f32::EPSILON)
+            || self.normals.iter().any(|n| !n.is_finite() || (!allow_zero_normals && n.length_squared() <= f32::EPSILON))
             || self.tangents.iter().any(|t| !t.is_finite())
             || self.tex_coords.iter().flatten().any(|uv| !uv.is_finite())
         {

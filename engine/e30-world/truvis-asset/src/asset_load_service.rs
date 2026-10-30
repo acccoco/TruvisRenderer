@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use slotmap::SlotMap;
@@ -60,7 +59,6 @@ pub enum AssetLoadEvent {
 pub struct AssetLoadService {
     textures: SlotMap<TextureLoadHandle, TextureLoadRecord>,
     scenes: SlotMap<SceneLoadHandle, SceneLoadRecord>,
-    pending_events: VecDeque<AssetLoadEvent>,
     loader: AssetLoadWorker,
 }
 
@@ -79,7 +77,6 @@ impl AssetLoadService {
         Self {
             textures: SlotMap::with_key(),
             scenes: SlotMap::with_key(),
-            pending_events: VecDeque::new(),
             loader: AssetLoadWorker::new(),
         }
     }
@@ -102,9 +99,9 @@ impl AssetLoadService {
     /// `AssetSystem` 按 scene texture key 决定。
     pub fn request_texture(&mut self, desc: TextureLoadDesc) -> TextureLoadHandle {
         let _span = tracy_client::span!("AssetLoadService::request_texture");
-        let handle = self.textures.insert(TextureLoadRecord { desc: desc.clone() });
-
         log::info!("Request load texture: {}", desc.source_label());
+        // 诊断可能 panic；成功返回后才登记请求，避免留下没有后台任务的记录。
+        let handle = self.textures.insert(TextureLoadRecord { desc: desc.clone() });
         self.loader.request_load_texture(TextureLoadRequest { desc, handle });
 
         handle
@@ -147,9 +144,9 @@ impl AssetLoadService {
     /// 事件交付 CPU payload 或错误文本。
     pub fn request_scene(&mut self, desc: SceneLoadDesc) -> SceneLoadHandle {
         let _span = tracy_client::span!("AssetLoadService::request_scene");
-        let handle = self.scenes.insert(SceneLoadRecord { desc: desc.clone() });
-
         log::info!("Request load scene: {:?}", desc.path);
+        // 与 texture 请求一致：诊断先于短期身份发布。
+        let handle = self.scenes.insert(SceneLoadRecord { desc: desc.clone() });
         self.loader.request_load_scene(SceneLoadRequest { desc, handle });
 
         handle
@@ -162,10 +159,6 @@ impl AssetLoadService {
     pub fn update(&mut self) -> Vec<AssetLoadEvent> {
         let _span = tracy_client::span!("AssetLoadService::update");
         let mut events = Vec::new();
-
-        while let Some(event) = self.pending_events.pop_front() {
-            events.push(event);
-        }
 
         while let Some(result) = self.loader.try_recv_result() {
             match result {

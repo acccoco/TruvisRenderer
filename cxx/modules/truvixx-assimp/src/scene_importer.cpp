@@ -6,9 +6,12 @@
 #include <assimp/matrix4x4.h>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstring>
 #include <deque>
 #include <format>
 #include <iostream>
+#include <limits>
 
 namespace truvixx
 {
@@ -50,6 +53,7 @@ bool SceneImporter::load(const std::filesystem::path& path)
         aiProcess_Triangulate |                                 // 三角化
         aiProcess_GenNormals |                                  // 生成法线（如果没有）
         aiProcess_SortByPType |                                 // 按图元类型排序
+        aiProcess_ValidateDataStructure |                      // 降级前仍拒绝非法结构与引用
         aiProcess_FlipUVs;                                      // UV 翻转为左上角原点
 
     // 加载场景
@@ -75,12 +79,16 @@ bool SceneImporter::load(const std::filesystem::path& path)
         ai_scene_->mRootNode->mTransformation = meters_from_centimeters * ai_scene_->mRootNode->mTransformation;
     }
 
+    if (ai_scene_->mNumAnimations != 0)
+        std::cerr << "Warning: Assimp animations ignored; using existing node transforms\n";
+
     // 处理材质
     scene_data_.materials.reserve(ai_scene_->mNumMaterials);
     for (unsigned int i = 0; i < ai_scene_->mNumMaterials; ++i)
     {
         scene_data_.materials.emplace_back();
-        process_material(ai_scene_->mMaterials[i], scene_data_.materials.back());
+        if (!process_material(ai_scene_->mMaterials[i], scene_data_.materials.back()))
+            return false;
     }
 
     // 处理 Mesh
@@ -88,11 +96,13 @@ bool SceneImporter::load(const std::filesystem::path& path)
     for (unsigned int i = 0; i < ai_scene_->mNumMeshes; ++i)
     {
         scene_data_.mesh_infos.emplace_back();
-        process_mesh_info(ai_scene_->mMeshes[i], scene_data_.mesh_infos.back());
+        if (!process_mesh_info(ai_scene_->mMeshes[i], scene_data_.mesh_infos.back()))
+            return false;
     }
 
     // 处理节点树
-    process_nodes(ai_scene_->mRootNode);
+    if (!process_nodes(ai_scene_->mRootNode))
+        return false;
 
     /// 全部输出已归 SceneData 持有；发布只读视图前释放原始场景，避免长期保留双份顶点属性。
     importer_->FreeScene();
@@ -141,14 +151,17 @@ void SceneImporter::clear()
     last_error_.clear();
     is_loaded_ = false;
 
-    // 重置 Importer（释放之前加载的场景）
-    importer_ = std::make_unique<Assimp::Importer>();
+    /// Importer 与 SceneImporter 同寿命；清空只释放原始场景，不重复创建 importer/格式插件。
+    importer_->FreeScene();
 }
 
-void SceneImporter::process_nodes(const aiNode* root_node)
+bool SceneImporter::process_nodes(const aiNode* root_node)
 {
     if (!root_node)
-        return;
+    {
+        last_error_ = "Missing scene root node";
+        return false;
+    }
 
     // BFS 遍历节点树
     std::deque<std::pair<const aiNode*, aiMatrix4x4>> queue;
@@ -160,7 +173,8 @@ void SceneImporter::process_nodes(const aiNode* root_node)
         queue.pop_front();
 
         // 处理当前节点
-        process_node(node, parent_transform);
+        if (!process_node(node, parent_transform))
+            return false;
 
         // 计算当前累积变换
         aiMatrix4x4 current_transform = parent_transform * node->mTransformation;
@@ -171,12 +185,16 @@ void SceneImporter::process_nodes(const aiNode* root_node)
             queue.emplace_back(node->mChildren[i], current_transform);
         }
     }
+    return true;
 }
 
-void SceneImporter::process_node(const aiNode* node, const aiMatrix4x4& parent_transform)
+bool SceneImporter::process_node(const aiNode* node, const aiMatrix4x4& parent_transform)
 {
-    if (!node)
-        return;
+    if (!node || scene_data_.instances.size() >= std::numeric_limits<uint32_t>::max())
+    {
+        last_error_ = "Invalid node or instance count exceeds C ABI uint32 range";
+        return false;
+    }
 
     InstanceData instance;
 
@@ -216,20 +234,87 @@ void SceneImporter::process_node(const aiNode* node, const aiMatrix4x4& parent_t
     for (unsigned int i = 0; i < node->mNumMeshes; ++i)
     {
         unsigned int mesh_idx = node->mMeshes[i];
+        if (mesh_idx >= scene_data_.mesh_infos.size())
+        {
+            last_error_ = std::format("Node '{}' references missing mesh {}", instance.name, mesh_idx);
+            return false;
+        }
         instance.mesh_indices.push_back(mesh_idx);
         instance.material_indices.push_back(ai_scene_->mMeshes[mesh_idx]->mMaterialIndex);
     }
 
     scene_data_.instances.push_back(std::move(instance));
+    return true;
 }
 
-void SceneImporter::process_mesh_info(const aiMesh* mesh, MeshInfo& out_mesh)
+bool SceneImporter::process_mesh_info(const aiMesh* mesh, MeshInfo& out_mesh)
 {
-    if (!mesh)
-        return;
+    if (!mesh || !mesh->HasPositions() || !mesh->HasNormals() || !mesh->HasFaces())
+    {
+        last_error_ = "Mesh is missing positions, normals or triangle faces after postprocess";
+        return false;
+    }
+
+    /// 静态降级不求值骨骼或 morph；现有 node transform 不保证是 bind pose。
+    if (mesh->mNumBones != 0 || mesh->mNumAnimMeshes != 0 || mesh->GetNumColorChannels() != 0)
+    {
+        std::cerr << std::format("Warning: mesh '{}': skin={}, morph={}, color channels={} ignored; "
+            "using unskinned base mesh + existing node transform (not bind pose)\n",
+            mesh->mName.C_Str(), mesh->mNumBones, mesh->mNumAnimMeshes, mesh->GetNumColorChannels());
+    }
+    if (mesh->mMaterialIndex >= scene_data_.materials.size())
+    {
+        last_error_ = std::format("Mesh '{}' references missing material", mesh->mName.C_Str());
+        return false;
+    }
+    const auto& material = scene_data_.materials[mesh->mMaterialIndex];
+    if ((!mesh->HasTextureCoords(0) && (!material.diffuse_map.empty() || !material.normal_map.empty()))
+        || (mesh->HasTextureCoords(0) && mesh->mNumUVComponents[0] != 2))
+    {
+        std::cerr << std::format("Warning: mesh '{}': consuming first two UV0 components; missing components use zero\n",
+            mesh->mName.C_Str());
+    }
 
     const unsigned int vertex_count = mesh->mNumVertices;
     const unsigned int face_count = mesh->mNumFaces;
+    /// C API 查询和 fill capacity 使用 uint32；在 reserve/复制前保证三角索引总数可表达。
+    if (face_count > std::numeric_limits<uint32_t>::max() / 3)
+    {
+        last_error_ = std::format("Mesh '{}' index count exceeds C ABI uint32 range", mesh->mName.C_Str());
+        return false;
+    }
+    for (unsigned int i = 0; i < face_count; ++i)
+    {
+        const auto& face = mesh->mFaces[i];
+        if (face.mNumIndices != 3 || !face.mIndices)
+        {
+            last_error_ = std::format("Mesh '{}' contains non-triangle or missing indices", mesh->mName.C_Str());
+            return false;
+        }
+        for (unsigned int vertex = 0; vertex < 3; ++vertex)
+        {
+            if (face.mIndices[vertex] >= vertex_count)
+            {
+                last_error_ = std::format("Mesh '{}' contains out-of-range vertex index", mesh->mName.C_Str());
+                return false;
+            }
+        }
+    }
+
+    /// 被忽略的顶点色仍须为有限数据；不能把结构/数值损坏当成可选语义。
+    for (unsigned int channel = 0; channel < AI_MAX_NUMBER_OF_COLOR_SETS; ++channel)
+    {
+        if (!mesh->HasVertexColors(channel)) continue;
+        for (unsigned int i = 0; i < vertex_count; ++i)
+        {
+            const auto& color = mesh->mColors[channel][i];
+            if (!std::isfinite(color.r) || !std::isfinite(color.g) || !std::isfinite(color.b) || !std::isfinite(color.a))
+            {
+                last_error_ = std::format("Mesh '{}' has non-finite vertex colors", mesh->mName.C_Str());
+                return false;
+            }
+        }
+    }
 
     out_mesh.vertex_cnt = vertex_count;
     out_mesh.has_normal = mesh->HasNormals();
@@ -263,8 +348,14 @@ void SceneImporter::process_mesh_info(const aiMesh* mesh, MeshInfo& out_mesh)
     {
         for (unsigned int i = 0; i < vertex_count; ++i)
         {
-            out_mesh.uvs[i].x = mesh->mTextureCoords[0][i].x;
-            out_mesh.uvs[i].y = mesh->mTextureCoords[0][i].y;
+            const auto& uv = mesh->mTextureCoords[0][i];
+            if (!std::isfinite(uv.x) || !std::isfinite(uv.y) || !std::isfinite(uv.z))
+            {
+                last_error_ = std::format("Mesh '{}' has non-finite UV0", mesh->mName.C_Str());
+                return false;
+            }
+            if (mesh->mNumUVComponents[0] > 0) out_mesh.uvs[i].x = uv.x;
+            if (mesh->mNumUVComponents[0] > 1) out_mesh.uvs[i].y = uv.y;
         }
     }
 
@@ -273,49 +364,33 @@ void SceneImporter::process_mesh_info(const aiMesh* mesh, MeshInfo& out_mesh)
     for (unsigned int i = 0; i < face_count; ++i)
     {
         const aiFace& face = mesh->mFaces[i];
-        if (face.mNumIndices != 3)
-        {
-            // 非三角形面，跳过
-            continue;
-        }
         out_mesh.indices.push_back(face.mIndices[0]);
         out_mesh.indices.push_back(face.mIndices[1]);
         out_mesh.indices.push_back(face.mIndices[2]);
     }
+    return true;
 }
 
-void SceneImporter::process_material(const aiMaterial* material, MaterialData& out_material) const
+bool SceneImporter::process_material(const aiMaterial* material, MaterialData& out_material)
 {
     if (!material)
-        return;
+    {
+        last_error_ = "Missing Assimp material";
+        return false;
+    }
 
     aiString out_str;
     aiColor4D out_color;
     ai_real out_real;
-    // 纹理路径辅助函数
-    auto get_texture_path = [&](const aiTextureType type) -> std::string {
-        if (material->GetTextureCount(type) == 0)
-            return {};
-
-        aiString tex_path;
-        if (material->GetTexture(type, 0, &tex_path) == AI_SUCCESS)
-        {
-            // 转换为绝对路径
-            const std::filesystem::path full_path = dir_ / std::u8string(tex_path.C_Str(), tex_path.C_Str() + tex_path.length);
-            const auto utf8 = full_path.u8string();
-            return std::string(utf8.begin(), utf8.end());
-        }
-        return {};
-    };
-
     // 名称
     if (material->Get(AI_MATKEY_NAME, out_str) == AI_SUCCESS)
     {
         out_material.name = out_str.C_Str();
     }
 
-    // 基础颜色
-    if (material->Get(AI_MATKEY_COLOR_DIFFUSE, out_color) == AI_SUCCESS)
+    /// 优先读取 metallic/roughness 工作流的 base color；仅缺省时使用传统 diffuse 输入。
+    if (material->Get(AI_MATKEY_BASE_COLOR, out_color) == AI_SUCCESS
+        || material->Get(AI_MATKEY_COLOR_DIFFUSE, out_color) == AI_SUCCESS)
     {
         out_material.base_color.r = out_color.r;
         out_material.base_color.g = out_color.g;
@@ -330,7 +405,7 @@ void SceneImporter::process_material(const aiMaterial* material, MaterialData& o
     }
 
     // 金属度
-    if (material->Get(AI_MATKEY_REFLECTIVITY, out_real) == AI_SUCCESS)
+    if (material->Get(AI_MATKEY_METALLIC_FACTOR, out_real) == AI_SUCCESS)
     {
         out_material.metallic = out_real;
     }
@@ -343,6 +418,20 @@ void SceneImporter::process_material(const aiMaterial* material, MaterialData& o
         out_material.emissive.b = out_color.b;
         out_material.emissive.a = out_color.a;
     }
+    /// Assimp 5.4.3 FBXConverter 已将 EmissiveFactor 写入 COLOR_EMISSIVE；这里不再读该因子。
+    /// EMISSIVE_INTENSITY 来自独立的 Maya|emissive_intensity，converter 未应用它，仍须乘 RGB。
+    /// 负值/非有限值不能先乘零颜色再隐藏非法输入。
+    if (material->Get(AI_MATKEY_EMISSIVE_INTENSITY, out_real) == AI_SUCCESS)
+    {
+        if (!std::isfinite(out_real) || out_real < 0.f)
+        {
+            last_error_ = std::format("Material '{}' has invalid emissive intensity", out_material.name);
+            return false;
+        }
+        out_material.emissive.r *= out_real;
+        out_material.emissive.g *= out_real;
+        out_material.emissive.b *= out_real;
+    }
 
     // 不透明度
     if (material->Get(AI_MATKEY_OPACITY, out_real) == AI_SUCCESS)
@@ -350,8 +439,63 @@ void SceneImporter::process_material(const aiMaterial* material, MaterialData& o
         out_material.opacity = out_real;
     }
 
-    out_material.diffuse_map = get_texture_path(aiTextureType_DIFFUSE);
-    out_material.normal_map = get_texture_path(aiTextureType_NORMALS);
+    /// 当前 C ABI 只携带外部路径，Rust 槽使用 UV0、identity transform 与 repeat。
+    /// 未支持的层与映射参数按材质槽警告后使用默认值；embedded key 不能当作外部文件名。
+    auto get_texture_path = [&](const aiTextureType type, std::string& output) -> bool {
+        const auto count = material->GetTextureCount(type);
+        if (count == 0)
+            return true;
+        if (count != 1)
+        {
+            std::cerr << std::format("Warning: material '{}' texture type {}: using first of {} layers\n",
+                out_material.name, static_cast<int>(type), count);
+        }
+        aiString path;
+        aiTextureMapping mapping = aiTextureMapping_UV;
+        unsigned int uv_index = 0;
+        ai_real blend = 1.f;
+        aiTextureOp op = aiTextureOp_Multiply;
+        aiTextureMapMode modes[3] = { aiTextureMapMode_Wrap, aiTextureMapMode_Wrap, aiTextureMapMode_Wrap };
+        aiUVTransform transform;
+        unsigned int flags = 0;
+        material->Get(AI_MATKEY_UVTRANSFORM(type, 0), transform);
+        material->Get(AI_MATKEY_TEXFLAGS(type, 0), flags);
+        if (material->GetTexture(type, 0, &path, &mapping, &uv_index, &blend, &op, modes) != AI_SUCCESS
+            || path.length == 0 || std::strlen(path.C_Str()) != path.length)
+        {
+            last_error_ = std::format("Material '{}' has invalid texture path", out_material.name);
+            return false;
+        }
+        if (path.data[0] == '*' || (ai_scene_ && ai_scene_->GetEmbeddedTexture(path.C_Str())))
+        {
+            last_error_ = std::format("Material '{}' uses unsupported embedded texture '{}'", out_material.name, path.C_Str());
+            return false;
+        }
+        if (!std::isfinite(blend) || !std::isfinite(transform.mTranslation.x) || !std::isfinite(transform.mTranslation.y)
+            || !std::isfinite(transform.mScaling.x) || !std::isfinite(transform.mScaling.y) || !std::isfinite(transform.mRotation))
+        {
+            last_error_ = std::format("Material '{}' has non-finite texture mapping", out_material.name);
+            return false;
+        }
+        if (mapping != aiTextureMapping_UV || uv_index != 0 || blend != 1.f || op != aiTextureOp_Multiply
+            || modes[0] != aiTextureMapMode_Wrap || modes[1] != aiTextureMapMode_Wrap || flags != 0
+            || transform.mTranslation != aiVector2D(0.f) || transform.mScaling != aiVector2D(1.f)
+            || transform.mRotation != 0.f)
+        {
+            std::cerr << std::format("Warning: material '{}' texture type {}: using UV0, identity transform, "
+                "repeat, multiply, blend=1 and no flags\n", out_material.name, static_cast<int>(type));
+        }
+        const auto full_path = dir_ / std::u8string(path.C_Str(), path.C_Str() + path.length);
+        const auto utf8 = full_path.u8string();
+        output.assign(utf8.begin(), utf8.end());
+        return true;
+    };
+    const auto color_type = material->GetTextureCount(aiTextureType_BASE_COLOR) > 0
+        ? aiTextureType_BASE_COLOR : aiTextureType_DIFFUSE;
+    if (!get_texture_path(color_type, out_material.diffuse_map)
+        || !get_texture_path(aiTextureType_NORMALS, out_material.normal_map))
+        return false;
+    return true;
 }
 
 } // namespace truvixx
