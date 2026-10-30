@@ -59,7 +59,7 @@ struct StreamlineLogMessage {
 /// Streamline 日志桥的 Rust 侧生命周期守卫。
 ///
 /// 持有 drain 线程 handle。Drop 时发送 Shutdown 信号并 join，
-/// 保证所有已入队日志被 flush。
+/// 正常 shutdown 且 logger 正常工作时，处理 poison pill 前的已入队日志。
 ///
 /// `StreamlineRuntime` 在 `slShutdown` 返回后才 drop 本类型，
 /// 保证 shutdown 期间的最后几条日志也能被 drain。
@@ -111,8 +111,7 @@ impl Drop for StreamlineLogBridge {
     fn drop(&mut self) {
         if let Some(state) = LOG_SENDER.get() {
             // 使用 send（阻塞）而不是 try_send，确保 Shutdown 一定送达。
-            // 此时 slShutdown 已返回，C++ 不再持有 Rust callback，队列应有空位。
-            // OnceLock 不会被清空；Shutdown 只负责结束本次生命周期的 drain 线程。
+            // OnceLock 保持有效；SDK 失败时晚到投递可能丢弃，但不会借用已销毁的 owner。
             let _ = state.sender.send(LogEntry::Shutdown);
         }
 

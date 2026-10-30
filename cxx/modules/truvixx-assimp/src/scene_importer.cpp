@@ -25,15 +25,20 @@ bool SceneImporter::load(const std::filesystem::path& path)
     // 清理之前的状态
     clear();
 
+    /// C API 与 Assimp DefaultIOSystem 都使用 UTF-8，不能经由 Windows ACP 的 path.string()。
+    const auto path_u8 = path.u8string();
+    const std::string path_utf8(path_u8.begin(), path_u8.end());
+
     // 验证文件存在
     if (!std::filesystem::exists(path) || !std::filesystem::is_regular_file(path))
     {
-        last_error_ = std::format("File not found: {}", path.string());
+        last_error_ = std::format("File not found: {}", path_utf8);
         std::cerr << last_error_ << "\n";
         return false;
     }
 
-    dir_ = path.parent_path();
+    // 外部纹理始终返回绝对路径，避免相对 scene 路径被 Rust 再拼一次目录。
+    dir_ = std::filesystem::absolute(path).parent_path();
 
     // Assimp 后处理标志
     // 坐标系：右手系，X-Right，Y-Up (Assimp 默认)
@@ -48,7 +53,7 @@ bool SceneImporter::load(const std::filesystem::path& path)
         aiProcess_FlipUVs;                                      // UV 翻转为左上角原点
 
     // 加载场景
-    ai_scene_ = importer_->ReadFile(path.string(), flags);
+    ai_scene_ = importer_->ReadFile(path_utf8, flags);
 
     if (!ai_scene_ || (ai_scene_->mFlags & AI_SCENE_FLAGS_INCOMPLETE) || !ai_scene_->mRootNode)
     {
@@ -89,6 +94,9 @@ bool SceneImporter::load(const std::filesystem::path& path)
     // 处理节点树
     process_nodes(ai_scene_->mRootNode);
 
+    /// 全部输出已归 SceneData 持有；发布只读视图前释放原始场景，避免长期保留双份顶点属性。
+    importer_->FreeScene();
+    ai_scene_ = nullptr;
     is_loaded_ = true;
     return true;
 }
@@ -108,25 +116,22 @@ const std::string& SceneImporter::last_error() const noexcept
     return last_error_;
 }
 
-TruvixxFloat3* SceneImporter::get_position(const uint32_t mesh_idx) const
+const TruvixxFloat3* SceneImporter::get_position(const uint32_t mesh_idx) const
 {
-    const auto ai_mesh = ai_scene_->mMeshes[mesh_idx];
-    static_assert(sizeof(aiVector3D) == sizeof(TruvixxFloat3), "Size mismatch between aiVector3D and TruvixxFloat3");
-    return reinterpret_cast<TruvixxFloat3*>(ai_mesh->mVertices);
+    const auto& positions = scene_data_.mesh_infos[mesh_idx].positions;
+    return positions.empty() ? nullptr : positions.data();
 }
 
-TruvixxFloat3* SceneImporter::get_normal(const uint32_t mesh_idx) const
+const TruvixxFloat3* SceneImporter::get_normal(const uint32_t mesh_idx) const
 {
-    const auto ai_mesh = ai_scene_->mMeshes[mesh_idx];
-    static_assert(sizeof(aiVector3D) == sizeof(TruvixxFloat3), "Size mismatch between aiVector3D and TruvixxFloat3");
-    return reinterpret_cast<TruvixxFloat3*>(ai_mesh->mNormals);
+    const auto& normals = scene_data_.mesh_infos[mesh_idx].normals;
+    return normals.empty() ? nullptr : normals.data();
 }
 
-TruvixxFloat3* SceneImporter::get_tangent(const uint32_t mesh_idx) const
+const TruvixxFloat3* SceneImporter::get_tangent(const uint32_t mesh_idx) const
 {
-    const auto ai_mesh = ai_scene_->mMeshes[mesh_idx];
-    static_assert(sizeof(aiVector3D) == sizeof(TruvixxFloat3), "Size mismatch between aiVector3D and TruvixxFloat3");
-    return reinterpret_cast<TruvixxFloat3*>(ai_mesh->mTangents);
+    const auto& tangents = scene_data_.mesh_infos[mesh_idx].tangents;
+    return tangents.empty() ? nullptr : tangents.data();
 }
 
 void SceneImporter::clear()
@@ -230,6 +235,28 @@ void SceneImporter::process_mesh_info(const aiMesh* mesh, MeshInfo& out_mesh)
     out_mesh.has_normal = mesh->HasNormals();
     out_mesh.has_tangent = mesh->HasTangentsAndBitangents();
 
+    /// 逐分量建立 ABI 类型对象，不把 Assimp 对象作为另一种类型数组借出。
+    out_mesh.positions.reserve(vertex_count);
+    if (out_mesh.has_normal)
+        out_mesh.normals.reserve(vertex_count);
+    if (out_mesh.has_tangent)
+        out_mesh.tangents.reserve(vertex_count);
+    for (unsigned int i = 0; i < vertex_count; ++i)
+    {
+        const auto& position = mesh->mVertices[i];
+        out_mesh.positions.push_back({ { position.x, position.y, position.z } });
+        if (out_mesh.has_normal)
+        {
+            const auto& normal = mesh->mNormals[i];
+            out_mesh.normals.push_back({ { normal.x, normal.y, normal.z } });
+        }
+        if (out_mesh.has_tangent)
+        {
+            const auto& tangent = mesh->mTangents[i];
+            out_mesh.tangents.push_back({ { tangent.x, tangent.y, tangent.z } });
+        }
+    }
+
     // UV (只取第一套)
     out_mesh.uvs.resize(static_cast<size_t>(vertex_count), { .x = 0.f, .y = 0.f });
     if (mesh->HasTextureCoords(0))
@@ -274,8 +301,9 @@ void SceneImporter::process_material(const aiMaterial* material, MaterialData& o
         if (material->GetTexture(type, 0, &tex_path) == AI_SUCCESS)
         {
             // 转换为绝对路径
-            const std::filesystem::path full_path = dir_ / tex_path.C_Str();
-            return full_path.string();
+            const std::filesystem::path full_path = dir_ / std::u8string(tex_path.C_Str(), tex_path.C_Str() + tex_path.length);
+            const auto utf8 = full_path.u8string();
+            return std::string(utf8.begin(), utf8.end());
         }
         return {};
     };

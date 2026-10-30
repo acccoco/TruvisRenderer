@@ -2,11 +2,27 @@
 #include "TruvixxAssimp/scene_importer.hpp"
 
 #include <algorithm>
+#include <cstring>
+#include <memory>
 
 /// 场景句柄的实际类型
 struct TruvixxScene
 {
     truvixx::SceneImporter importer;
+
+    /// capacity 按 T 元素计数；先检查全部前置，失败不写出，空数组不调用 memcpy。
+    template<typename T>
+    static ResType copy_array(const T* source, const size_t count, T* out, const uint32_t capacity)
+    {
+        if (capacity < count)
+            return ResTypeFail;
+        if (count == 0)
+            return ResTypeSuccess;
+        if (!source || !out)
+            return ResTypeFail;
+        std::memcpy(out, source, count * sizeof(T));
+        return ResTypeSuccess;
+    }
 };
 
 namespace
@@ -38,13 +54,18 @@ TruvixxSceneHandle truvixx_scene_load(const char* path)
     if (!path)
         return nullptr;
 
-    auto* scene = new TruvixxScene;
-    if (!scene->importer.load(path))
+    try
     {
-        // 保留错误信息，不立即删除
-        return scene;
+        auto scene = std::make_unique<TruvixxScene>();
+        // 普通导入失败仍保留句柄和错误；只有完整返回后才把所有权交给调用方。
+        (void)scene->importer.load(std::u8string(path, path + std::strlen(path)));
+        return scene.release();
     }
-    return scene;
+    catch (...)
+    {
+        // 分配、文件系统与导入异常不能越过 C ABI；已创建的 scene 由 unique_ptr 释放。
+        return nullptr;
+    }
 }
 
 ResType truvixx_scene_is_loaded(const TruvixxSceneHandle scene)
@@ -97,6 +118,10 @@ ResType truvixx_material_get(const TruvixxSceneHandle scene, const uint32_t mat_
 
     const auto& mat = data->materials[mat_index];
 
+    // 路径不能像显示名称一样截断，否则调用方会把另一个文件名误当作成功结果。
+    if (mat.diffuse_map.size() >= sizeof(out->diffuse_map) || mat.normal_map.size() >= sizeof(out->normal_map))
+        return ResTypeFail;
+
     safe_strcpy(out->name, sizeof(out->name), mat.name);
 
     out->base_color = mat.base_color;
@@ -133,7 +158,8 @@ ResType truvixx_instance_get_refs(
     const TruvixxSceneHandle scene,
     const uint32_t instance_index,
     uint32_t* out_mesh_indices,
-    uint32_t* out_material_indices
+    uint32_t* out_material_indices,
+    const uint32_t capacity
 )
 {
     const auto* data = get_scene_data(scene);
@@ -141,6 +167,13 @@ ResType truvixx_instance_get_refs(
         return ResTypeFail;
 
     const auto& inst = data->instances[instance_index];
+
+    /// 两个输出必须作为同一组引用发布，不能写完第一个后才发现第二个不合法。
+    const auto count = inst.mesh_indices.size();
+    if (inst.material_indices.size() != count || ((out_mesh_indices || out_material_indices) && capacity < count))
+        return ResTypeFail;
+    if (count == 0)
+        return ResTypeSuccess;
 
     if (out_mesh_indices)
     {
@@ -175,97 +208,68 @@ ResType truvixx_mesh_get_info(const TruvixxSceneHandle scene, const uint32_t mes
     return ResTypeSuccess;
 }
 
-ResType truvixx_mesh_fill_positions(const TruvixxSceneHandle scene, const uint32_t mesh_index, float* out)
+ResType truvixx_mesh_fill_positions(
+    const TruvixxSceneHandle scene, const uint32_t mesh_index, TruvixxFloat3* out, const uint32_t capacity
+)
 {
-    if (!out)
-        return ResTypeFail;
-
     const auto* scene_data = get_scene_data(scene);
     if (!scene_data || mesh_index >= scene_data->mesh_count())
         return ResTypeFail;
 
-    const auto position_ptr = scene->importer.get_position(mesh_index);
-    if (!position_ptr)
-        return ResTypeFail;
-
     const auto& mesh_info = scene_data->mesh_infos[mesh_index];
-    std::memcpy(out, position_ptr, mesh_info.vertex_cnt * sizeof(TruvixxFloat3));
-
-    return ResTypeSuccess;
+    return TruvixxScene::copy_array(scene->importer.get_position(mesh_index), mesh_info.vertex_cnt, out, capacity);
 }
 
-ResType truvixx_mesh_fill_normals(const TruvixxSceneHandle scene, const uint32_t mesh_index, float* out)
+ResType truvixx_mesh_fill_normals(
+    const TruvixxSceneHandle scene, const uint32_t mesh_index, TruvixxFloat3* out, const uint32_t capacity
+)
 {
-    if (!out)
-        return ResTypeFail;
-
     const auto* scene_data = get_scene_data(scene);
     if (!scene_data || mesh_index >= scene_data->mesh_count())
         return ResTypeFail;
 
     const auto& mesh_info = scene_data->mesh_infos[mesh_index];
-    const auto normal_ptr = scene->importer.get_normal(mesh_index);
-    if (!mesh_info.has_normal || !normal_ptr)
+    if (!mesh_info.has_normal)
         return ResTypeFail;
-
-    std::memcpy(out, normal_ptr, mesh_info.vertex_cnt * sizeof(TruvixxFloat3));
-
-    return ResTypeSuccess;
+    return TruvixxScene::copy_array(scene->importer.get_normal(mesh_index), mesh_info.vertex_cnt, out, capacity);
 }
 
-ResType truvixx_mesh_fill_tangents(const TruvixxSceneHandle scene, const uint32_t mesh_index, float* out)
+ResType truvixx_mesh_fill_tangents(
+    const TruvixxSceneHandle scene, const uint32_t mesh_index, TruvixxFloat3* out, const uint32_t capacity
+)
 {
-    if (!out)
-        return ResTypeFail;
-
     const auto* scene_data = get_scene_data(scene);
     if (!scene_data || mesh_index >= scene_data->mesh_count())
         return ResTypeFail;
 
     const auto& mesh_info = scene_data->mesh_infos[mesh_index];
-    const auto tangent_ptr = scene->importer.get_tangent(mesh_index);
-    if (!mesh_info.has_tangent || !tangent_ptr)
+    if (!mesh_info.has_tangent)
         return ResTypeFail;
-
-    std::memcpy(out, tangent_ptr, mesh_info.vertex_cnt * sizeof(TruvixxFloat3));
-
-    return ResTypeSuccess;
+    return TruvixxScene::copy_array(scene->importer.get_tangent(mesh_index), mesh_info.vertex_cnt, out, capacity);
 }
 
-ResType truvixx_mesh_fill_uvs(const TruvixxSceneHandle scene, const uint32_t mesh_index, float* out)
+ResType truvixx_mesh_fill_uvs(
+    const TruvixxSceneHandle scene, const uint32_t mesh_index, TruvixxFloat2* out, const uint32_t capacity
+)
 {
-    if (!out)
-        return ResTypeFail;
-
     const auto* scene_data = get_scene_data(scene);
     if (!scene_data || mesh_index >= scene_data->mesh_count())
         return ResTypeFail;
 
     const auto& mesh_info = scene_data->mesh_infos[mesh_index];
-    if (mesh_info.uvs.empty())
-        return ResTypeFail;
-
-    std::memcpy(out, mesh_info.uvs.data(), mesh_info.uvs.size() * sizeof(TruvixxFloat2));
-
-    return ResTypeSuccess;
+    return TruvixxScene::copy_array(mesh_info.uvs.data(), mesh_info.uvs.size(), out, capacity);
 }
 
-ResType truvixx_mesh_fill_indices(const TruvixxSceneHandle scene, const uint32_t mesh_index, uint32_t* out)
+ResType truvixx_mesh_fill_indices(
+    const TruvixxSceneHandle scene, const uint32_t mesh_index, uint32_t* out, const uint32_t capacity
+)
 {
-    if (!out)
-        return ResTypeFail;
-
     const auto* scene_data = get_scene_data(scene);
     if (!scene_data || mesh_index >= scene_data->mesh_count())
         return ResTypeFail;
 
     const auto& mesh_info = scene_data->mesh_infos[mesh_index];
-    if (mesh_info.indices.empty())
-        return ResTypeFail;
-
-    std::memcpy(out, mesh_info.indices.data(), mesh_info.indices.size() * sizeof(uint32_t));
-
-    return ResTypeSuccess;
+    return TruvixxScene::copy_array(mesh_info.indices.data(), mesh_info.indices.size(), out, capacity);
 }
 
 const TruvixxFloat3* truvixx_mesh_get_positions(const TruvixxSceneHandle scene, const uint32_t mesh_index)

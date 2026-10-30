@@ -94,7 +94,8 @@ impl DlssSrPass {
         };
 
         cmd.begin_label("DLSS SR", glam::vec4(0.25, 0.6, 1.0, 1.0));
-        let result = match dlss::evaluate(desc) {
+        // SAFETY: RenderThread 串行录制；graph 已转换 layout，借用来自当前 Gfx，owner 保留图像至 GPU 完成及后续消费。
+        let result = match unsafe { dlss::evaluate(desc) } {
             Ok(()) => DlssEvaluation::Succeeded,
             Err(err) => {
                 log::error!("DLSS SR evaluate failed: {}", err);

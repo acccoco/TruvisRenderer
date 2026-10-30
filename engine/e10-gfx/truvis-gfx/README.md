@@ -27,13 +27,25 @@ Vulkan RHI 抽象层，封装设备、队列、资源、同步与图形/计算/�
 - `GfxDevice.push_descriptor` 持有 `truvis_vk_binding::Device`；它只保存与当前设备配对的 POD 函数表。
 - `vkCmdPushDescriptorSetKHR` 由 native C API 通过 ash Instance 提供的 `vkGetDeviceProcAddr` 加载并同步调用；
   DLL 来源继续由 `VulkanEntrySource` 决定。必要命令缺失时，构造阶段回收尚未交付的 Device 并报告失败。
+  binding 构造是 unsafe；GfxDevice 在同一 Instance 刚创建 Device、尚未发布时完成查询并承担有效性前置。
 - `GfxCommandBuffer::push_descriptor_set` 在 `GfxWriteDescriptorSet::with_writes` 闭包内传递 ash 数组，
   包括加速结构的 `pNext`；native 不保存 CPU 指针，GPU 对象的有效期继续由原资源 owner 保证。
+  空 push 列表由 binding 在进入 native 前拒绝；通用 with_writes 保留普通 descriptor update 的使用语义。
 - wrapper 不负责 Vulkan release；最后一次命令调用必须早于 Device / Instance / Entry 的销毁。
   详细 ABI 契约见 [`truvis-vk-binding`](../../../cxx/rust/bindings/truvis-vk-binding/README.md)。
 
-## Ctx 规则
+## Descriptor 声明与写入
 
+- `DescriptorBinding` derive 检查字段属性、唯一 binding 编号和 getter 名称；它不反射 shader，Rust layout
+  仍须与 Slang owner 的 set/binding/type/count/stage 对照。类型关联不等于完整 Vulkan 合法性验证。
+- `GfxDescriptorCursor` 仅写对应 binding，检查非空 payload、descriptor 类型与数组容量；不使用 Vulkan
+  的跨连续 binding 更新语义。buffer、image/sampler、KHR acceleration structure 是当前支持的三类 payload。
+- `GfxWriteDescriptorSet::with_writes` 再次检查唯一 payload 与类型，按实际数组长度生成数量；加速结构的
+  descriptorCount 与 pNext 数量相同。基础 Vulkan 投影是私有步骤，避免漏掉 pNext 后直接使用。
+- pNext、image/buffer info 和 handle 数组只在同步回调内有效；这些检查不证明 handle 有效、image layout
+  正确或 GPU 使用已结束。资源 owner 仍负责对象有效期、同步和 descriptor set 身份。
+
+## Ctx 规则
 - `Gfx::new(...)` 返回由调用方持有的 root owner；生产代码不通过全局 singleton 访问 `Gfx`。
 - `GfxDeviceCtx`、`GfxResourceCtx`、`GfxQueueCtx`、`GfxSurfaceCtx`、`GfxDeviceInfoCtx`、`GfxImmediateCtx` 只暴露当前能力需要的 Vulkan 依赖。
 - 上层创建、提交、查询或销毁资源时，应传入最窄的 typed Ctx，避免把完整 `&Gfx` 或长期引用存进资源对象。

@@ -4,10 +4,11 @@
 //! Streamline SDK 的接口需要 UTF-16 路径，Vulkan loader 也会以 Windows DLL 的形式
 //! 从 executable 所在目录加载。
 //!
-//! 当前阶段只覆盖 Streamline runtime 生命周期：
-//! - C++ 侧是零状态的纯 ABI 转发层，只负责 `sl::Preferences` 组装和 `sl::LogType` 枚举转换。
+//! 本 crate 覆盖 Streamline runtime 与 DLSS SR/RR 的 native 调用边界：
+//! - C++ 持有进程级 DLL/函数表与初始化状态，转换 SDK 类型和日志枚举。
 //! - Rust 侧持有进程级 RAII 句柄，管理初始化状态、日志桥生命周期和 shutdown 时序。
-//! - Vulkan object、RenderGraph pass、resource tagging、`slEvaluateFeature` 都属于后续阶段。
+//! - DLSS 参数、tag/evaluate/free 的 ABI 封装见 dlss；GPU 对象与 RenderGraph 顺序仍由调用方负责。
+//! - SDK 初始化/关闭失败后不支持恢复；native 保留模块引用，不能据此声称 SDK 资源已经回收。
 //!
 //! 重要生命周期约定：启用 DLSS 时，应先初始化 [`StreamlineRuntime`]，再用
 //! [`StreamlineRuntime::vulkan_loader_path`] 创建 `truvis-gfx` 的 Streamline Vulkan loader。

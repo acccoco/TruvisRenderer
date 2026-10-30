@@ -19,12 +19,15 @@ ResType TRUVIXX_ASSIMP_API truvixx_instance_get(TruvixxSceneHandle scene, uint32
 /// @param instance_index instance 索引
 /// @param out_mesh_indices [out] mesh 索引数组 (大小 >= mesh_count), 可为 NULL
 /// @param out_material_indices [out] 材质索引数组 (大小 >= mesh_count), 可为 NULL
+/// @param capacity 每个非 NULL 输出数组的元素容量；不足时失败且两个输出均不改写
+/// 空节点或两个输出均为 NULL 时为成功的空操作；输出不得重叠或别名 scene 存储。
 /// @return 成功返回 1, 失败返回 0
 ResType TRUVIXX_ASSIMP_API truvixx_instance_get_refs(
     TruvixxSceneHandle scene,
     uint32_t instance_index,
     uint32_t* out_mesh_indices,
-    uint32_t* out_material_indices
+    uint32_t* out_material_indices,
+    uint32_t capacity
 );
 
 #ifdef __cplusplus

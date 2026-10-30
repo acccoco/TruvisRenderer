@@ -51,7 +51,7 @@ struct PerFrameData
     ///
     /// 主 RT 路径当前不再做 progressive accumulation，但保留该字段给 legacy pass 与调试显示。
     uint accum_frames;
-    /// 显式 padding 保持 16 字节对齐，避免 Rust 绑定和 shader 常量缓冲布局分歧。
+    /// 显式保留尾部三个 uint；当前 scalar layout 总长 456 字节，宿主对齐为 8 字节。
     uint _padding_0;
     uint _padding_1;
     uint _padding_2;

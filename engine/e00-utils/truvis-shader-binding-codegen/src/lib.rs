@@ -52,6 +52,8 @@ impl<'a> BindingGenerator<'a> {
         let mut builder = bindgen::Builder::default()
             .header(self.spec.binding.header.to_string_lossy())
             .clang_args(["-x", "c++", "-std=c++17"])
+            // Shader header 只投影数据；用于解析 Slang 表达式的 C++ 构造声明没有可链接实现。
+            .with_codegen_config(bindgen::CodegenConfig::TYPES | bindgen::CodegenConfig::VARS)
             .derive_default(false)
             .raw_line("#[allow(clippy::all)]")
             .raw_line("#[allow(warnings)]")

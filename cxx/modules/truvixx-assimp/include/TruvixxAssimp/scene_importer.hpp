@@ -38,9 +38,10 @@ public:
     /// 最近一次加载失败的错误信息
     [[nodiscard]] const std::string& last_error() const noexcept;
 
-    TruvixxFloat3* get_position(uint32_t mesh_idx) const;
-    TruvixxFloat3* get_normal(uint32_t mesh_idx) const;
-    TruvixxFloat3* get_tangent(uint32_t mesh_idx) const;
+    /// 调用方先确认加载成功且 mesh_idx 合法；返回 SceneData 的只读借用，空属性返回 nullptr。
+    const TruvixxFloat3* get_position(uint32_t mesh_idx) const;
+    const TruvixxFloat3* get_normal(uint32_t mesh_idx) const;
+    const TruvixxFloat3* get_tangent(uint32_t mesh_idx) const;
 
     /// 清空已加载的数据
     void clear();
@@ -60,7 +61,7 @@ private:
 
 private:
     std::unique_ptr<Assimp::Importer> importer_; ///< Assimp 导入器，持有 ai_scene 生命周期
-    const aiScene* ai_scene_ = nullptr;          ///< Assimp 场景 (由 importer_ 管理)
+    const aiScene* ai_scene_ = nullptr;          ///< 仅导入转换期间借用；成功发布前释放原始场景
 
     SceneData scene_data_;      ///< 转换后的场景数据
     std::filesystem::path dir_; ///< 场景文件所在目录

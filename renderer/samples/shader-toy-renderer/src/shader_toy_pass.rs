@@ -40,6 +40,9 @@ static SHADER_STAGES: LazyLock<EnumMap<ShaderStage, GfxShaderStageInfo>> = LazyL
     }
 });
 
+/// 独立 GLSL sample 的宿主投影；其 package 不依赖 Engine/Renderer Slang ABI，无法复用现有生成类型。
+/// 与 shadertoy.inc.glsl 同步修改；用 size_of/align_of/offset_of 对照两个阶段的 SPIR-V Offset。
+/// 当前 size/align 为 48/16，字段 offset 为 0、16、24、28、32、36、40（两个 padding float）。
 #[repr(C)]
 #[derive(Pod, Zeroable, Copy, Clone)]
 pub struct PushConstants {

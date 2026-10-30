@@ -3,7 +3,10 @@
 //! 源码预检约束 canonical include 路径、唯一解析和 `abi <- lib <- entry` 层级；
 //! 编译完成后的 depfile 校验真实传递依赖，避免条件 include 或间接 include 绕过 package 边界。
 
-use std::path::{Component, Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Component, Path, PathBuf},
+};
 
 use truvis_shader_manifest::ShaderSourceLayer;
 
@@ -59,24 +62,30 @@ impl ShaderDependencyValidator {
 
     /// 在调用编译器前检查所有 owner 源码，尽早给出具体 include 位置和错误原因。
     pub fn validate_sources(&self, packages: &[ShaderSourcePackage]) -> Result<(), String> {
+        let packages = packages
+            .iter()
+            .map(|package| {
+                Ok(ShaderSourcePackage {
+                    package_id: package.package_id.clone(),
+                    include_roots: self.canonicalize_paths(&package.include_roots, &package.package_id)?,
+                    source_roots: package
+                        .source_roots
+                        .iter()
+                        .map(|root| {
+                            Ok(ShaderSourceRoot {
+                                path: Self::canonicalize(&root.path, "shader source root")?,
+                                layer: root.layer,
+                            })
+                        })
+                        .collect::<Result<_, String>>()?,
+                    allowed_dependency_roots: self
+                        .canonicalize_dependency_roots(&package.allowed_dependency_roots, &package.package_id)?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let mut errors = Vec::new();
-        for package in packages {
-            let include_roots = match self.canonicalize_paths(&package.include_roots, &package.package_id) {
-                Ok(roots) => roots,
-                Err(err) => {
-                    errors.push(err);
-                    continue;
-                }
-            };
-            let allowed_roots =
-                match self.canonicalize_dependency_roots(&package.allowed_dependency_roots, &package.package_id) {
-                    Ok(roots) => roots,
-                    Err(err) => {
-                        errors.push(err);
-                        continue;
-                    }
-                };
-
+        for package in &packages {
+            let mut visited = BTreeSet::new();
             for source_root in &package.source_roots {
                 for entry in walkdir::WalkDir::new(&source_root.path) {
                     let entry = entry
@@ -84,13 +93,9 @@ impl ShaderDependencyValidator {
                     if !entry.path().is_file() || !Self::is_shader_source(entry.path()) {
                         continue;
                     }
-                    if let Err(err) = self.validate_source_file(
-                        &package.package_id,
-                        entry.path(),
-                        source_root.layer,
-                        &include_roots,
-                        &allowed_roots,
-                    ) {
+                    if let Err(err) =
+                        self.validate_source_file(&packages, package, entry.path(), source_root.layer, &mut visited)
+                    {
                         errors.push(err);
                     }
                 }
@@ -164,27 +169,37 @@ impl ShaderDependencyValidator {
 
     fn validate_source_file(
         &self,
-        package_id: &str,
+        packages: &[ShaderSourcePackage],
+        package: &ShaderSourcePackage,
         source_path: &Path,
         source_layer: SourceLayer,
-        include_roots: &[PathBuf],
-        allowed_roots: &[ShaderDependencyRoot],
+        visited: &mut BTreeSet<PathBuf>,
     ) -> Result<(), String> {
-        let content = std::fs::read_to_string(source_path)
+        let source_path = Self::canonicalize(source_path, "shader source")?;
+        if !visited.insert(source_path.clone()) {
+            return Ok(());
+        }
+        let content = std::fs::read_to_string(&source_path)
             .map_err(|err| format!("无法读取 shader 源码 {}: {err}", source_path.display()))?;
         let mut errors = Vec::new();
 
-        for (line_index, line) in content.lines().enumerate() {
-            let Some(include_path) = ShaderIncludeDirective::parse(line) else {
-                continue;
+        for (line_number, line) in ShaderIncludeDirective::logical_lines(&content) {
+            let location = format!("{}:{}", source_path.display(), line_number);
+            let include_path = match ShaderIncludeDirective::parse(&line) {
+                Ok(Some(path)) => path,
+                Ok(None) => continue,
+                Err(err) => {
+                    errors.push(format!("{location}: {err}"));
+                    continue;
+                }
             };
-            let location = format!("{}:{}", source_path.display(), line_index + 1);
             if let Err(err) = Self::validate_include_path(&include_path) {
                 errors.push(format!("{location}: {err}"));
                 continue;
             }
 
-            let candidates = include_roots
+            let candidates = package
+                .include_roots
                 .iter()
                 .map(|root| root.join(&include_path))
                 .filter(|path| path.is_file())
@@ -209,20 +224,43 @@ impl ShaderDependencyValidator {
                     continue;
                 }
             };
+            let local = source_path.parent().expect("canonical source has parent").join(&include_path);
+            if local.is_file() && Self::canonicalize(&local, "source-relative include")? != resolved {
+                errors.push(format!(
+                    "{location}: 源文件相对路径遮蔽 include root: '{include_path}' -> {}",
+                    local.display()
+                ));
+                continue;
+            }
             if !resolved.starts_with(&self.workspace_root) {
                 errors.push(format!("{location}: include 位于 workspace 外: {}", resolved.display()));
                 continue;
             }
-            let Some(target_root) = allowed_roots.iter().find(|root| resolved.starts_with(&root.path)) else {
+            let Some(target_root) =
+                package.allowed_dependency_roots.iter().find(|root| resolved.starts_with(&root.path))
+            else {
                 errors.push(format!(
                     "{location}: package '{}' 未声明 include 依赖: {}",
-                    package_id,
+                    package.package_id,
                     resolved.display()
                 ));
                 continue;
             };
             if source_layer == SourceLayer::Abi && target_root.layer != SourceLayer::Abi {
                 errors.push(format!("{location}: ABI 只能依赖 ABI，不能引用 '{include_path}'"));
+                continue;
+            }
+            let mut owners = packages.iter().filter(|owner| {
+                owner.source_roots.iter().any(|root| root.path == target_root.path && root.layer == target_root.layer)
+            });
+            let owner =
+                owners.next().ok_or_else(|| format!("{}: include 缺少声明 owner: {}", location, resolved.display()))?;
+            if owners.next().is_some() {
+                return Err(format!("{location}: include 存在多个声明 owner: {}", resolved.display()));
+            }
+            // 实际引用的文本无论扩展名都必须逐边检查，depfile 无法恢复引用方的 layer。
+            if let Err(err) = self.validate_source_file(packages, owner, &resolved, target_root.layer, visited) {
+                errors.push(err);
             }
         }
 
@@ -235,6 +273,7 @@ impl ShaderDependencyValidator {
         }
         let path = Path::new(include_path);
         if include_path.is_empty()
+            || include_path.split('/').any(|part| matches!(part, "" | "." | ".."))
             || path.components().any(|component| {
                 matches!(
                     component,
@@ -243,6 +282,10 @@ impl ShaderDependencyValidator {
             })
         {
             return Err(format!("include 必须是 canonical 相对路径: '{include_path}'"));
+        }
+        let mut parts = include_path.split('/');
+        if !matches!(parts.next(), Some("abi" | "lib")) || parts.next().is_none() || parts.next().is_none() {
+            return Err(format!("include 必须保留 abi/lib 与 owner 前缀: '{include_path}'"));
         }
 
         Ok(())
@@ -320,25 +363,106 @@ impl ShaderDependencyValidator {
     }
 }
 
-/// 只解析字面量 `#include` 与字面量 `import`；宏 include 交给编译器 depfile 兜底。
+/// 只接受可在构建前确定逐边依赖的字面量 include/import，不求值宏或条件分支。
 struct ShaderIncludeDirective;
 
 impl ShaderIncludeDirective {
-    fn parse(line: &str) -> Option<String> {
+    fn parse(line: &str) -> Result<Option<String>, String> {
         let trimmed = line.trim_start();
-        let argument = if let Some(after_hash) = trimmed.strip_prefix('#') {
-            after_hash.trim_start().strip_prefix("include")?.trim_start()
+        let (directive, preprocessor) = if let Some(after_hash) = trimmed.strip_prefix('#') {
+            (after_hash.trim_start(), true)
         } else {
-            trimmed.strip_prefix("import")?.trim_start()
+            (trimmed, false)
         };
+        let keyword_end = directive.find(|c: char| !c.is_ascii_alphanumeric() && c != '_').unwrap_or(directive.len());
+        let keyword = &directive[..keyword_end];
+        if !matches!((preprocessor, keyword), (true, "include") | (false, "import")) {
+            return Ok(None);
+        }
+        let argument = directive[keyword_end..].trim();
+        let invalid = || "include/import 必须使用完整字面量路径；宏或命名 module 无法静态验证逐边层级".to_string();
 
-        let (terminator, body) = match argument.chars().next()? {
-            '"' => ('"', &argument[1..]),
-            '<' => ('>', &argument[1..]),
-            _ => return None,
+        let (terminator, body) = match argument.chars().next() {
+            Some('"') => ('"', &argument[1..]),
+            Some('<') => ('>', &argument[1..]),
+            _ => return Err(invalid()),
         };
-        let end = body.find(terminator)?;
-        Some(body[..end].to_string())
+        let end = body.find(terminator).ok_or_else(invalid)?;
+        let trailing = body[end + 1..].trim();
+        if !(trailing.is_empty() || (!preprocessor && trailing == ";")) {
+            return Err(invalid());
+        }
+        Ok(Some(body[..end].to_string()))
+    }
+
+    /// 先移除续行，再将注释视为空白；保留字符串内容和每个逻辑行的原始起始行号。
+    /// 不展开条件编译：未启用分支也必须满足项目依赖约束。
+    fn logical_lines(content: &str) -> Vec<(usize, String)> {
+        let mut spliced = Vec::new();
+        let mut chars = content.trim_start_matches('\u{feff}').chars().peekable();
+        let mut line = 1;
+        while let Some(c) = chars.next() {
+            if c == '\\' && matches!(chars.peek(), Some('\n' | '\r')) {
+                if chars.next() == Some('\r') && chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                line += 1;
+                continue;
+            }
+            spliced.push((line, c));
+            if c == '\n' {
+                line += 1;
+            }
+        }
+        let mut result = Vec::new();
+        let mut current = String::new();
+        let mut start_line = 1;
+        let mut block_comment = false;
+        let mut line_comment = false;
+        let mut quote = None;
+        let mut chars = spliced.into_iter().peekable();
+        while let Some((line, c)) = chars.next() {
+            if block_comment {
+                if c == '*' && chars.peek().is_some_and(|(_, next)| *next == '/') {
+                    chars.next();
+                    block_comment = false;
+                }
+                continue;
+            }
+            if c == '\n' {
+                result.push((start_line, std::mem::take(&mut current)));
+                start_line = line + 1;
+                line_comment = false;
+                quote = None;
+                continue;
+            }
+            if line_comment {
+                continue;
+            }
+            if let Some(delimiter) = quote {
+                current.push(c);
+                if c == '\\' {
+                    if let Some((_, escaped)) = chars.next() {
+                        current.push(escaped);
+                    }
+                } else if c == delimiter {
+                    quote = None;
+                }
+                continue;
+            }
+            if c == '/' && chars.peek().is_some_and(|(_, next)| matches!(next, '/' | '*')) {
+                block_comment = chars.next().is_some_and(|(_, next)| next == '*');
+                line_comment = !block_comment;
+                current.push(' ');
+                continue;
+            }
+            if matches!(c, '"' | '\'') {
+                quote = Some(c);
+            }
+            current.push(c);
+        }
+        result.push((start_line, current));
+        result
     }
 }
 

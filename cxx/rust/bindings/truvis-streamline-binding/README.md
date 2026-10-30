@@ -16,7 +16,7 @@ Streamline runtime。
 
 - `src/lib.rs`：crate 入口，只声明模块并维持对外 re-export，不放具体生命周期实现。
 - `src/config.rs`：Streamline 初始化参数、默认路径推导和 feature flags。
-- `src/dlss.rs`：DLSS SR/RR support query、options、resource tags、evaluate 和 resource free 的 Rust 安全封装。
+- `src/dlss.rs`：DLSS SR/RR 的 POD 转换与 unsafe feature 入口，显式保留 raw handle 和调用顺序前置。
 - `src/runtime.rs`：`StreamlineRuntime`、`StreamlineError` 和 `slInit/slShutdown` RAII 生命周期。
 - `src/log_bridge.rs`：Streamline log callback 到 Rust `log` facade 的异步桥接。
 
@@ -55,11 +55,18 @@ C++ wrapper 不静态导入 `sl.interposer.dll`。`truvixx_sl_init` 会先使用
   它是 render extent 的 R32_SFLOAT 世界距离，与同帧 normal/depth 和 view/projection 矩阵配套。
 - evaluate wrapper 使用同一 frame token 提交 constants、tags 并调用 `slEvaluateFeature`。Streamline
   2.14.1 的 `slAllocateResources` 固定读取 frame 0，不用于此按帧 tagging 路径；feature 由 evaluate 创建。
+- SR/RR 均按 `use_linear_depth` 选择 device depth 或 linear depth tag；当前 Renderer 传 false，
+  不能据此忽略 binding 调用方显式指定的深度类型。
 - evaluate 返回 0 表示成功。Streamline 2.14.1 的 `sl.common/commonInterface.cpp::slEvaluateFeatureInternal`
   只在 evaluate 成功后将显存预算超限报告为 `eWarnOutOfVRAM`；C++ wrapper 将此警告归为成功，SDK
   警告仍通过日志桥输出，避免错误触发历史 reset。其它错误值原样传播，不将所有非零结果视为成功。
 - 通过 Rust 传入的全局 `TruvixxSlLogCallback` 转发日志事件。
 - 在 `LoadLibraryW` / `GetProcAddress` 失败时，通过同一条日志链路输出路径和 Win32 错误。
+
+导出解析期间，尚未发布的 DLL 引用由 native RAII 管理；加载/解析诊断自身抛 C++ 异常时，
+loader 返回 `eErrorExceptionHandler`，不在 catch 中再次分配诊断文本。Win32 系统错误缓冲同样
+按 RAII 释放。init/shutdown 和 feature 导出也隔离 C++ 异常；这仅保证异常不穿过 Rust ABI，
+不承诺捕获访问违例、恢复 SDK 状态或回滚已录制 GPU 命令。feature 输出参数仅在返回成功时消费。
 
 C++ 侧不使用 `OutputDebugStringA` fallback。没有 Rust callback 时，日志会被丢弃。
 
@@ -81,6 +88,11 @@ Streamline feature 选择由 `StreamlineInitInfo` 负责：默认请求 DLSS SR 
 warning 后忽略。C++ wrapper 不根据构建类型做策略判断。
 默认 Vulkan loader 路径通过 `StreamlineInitInfo::default_vulkan_loader_path()` 暴露；
 这个 helper 只计算当前 executable 目录下的 `sl.interposer.dll`，不检查 DLL 是否存在。
+
+`init` 在目录创建和安装一次性日志桥前拒绝空路径/内嵌 NUL，并将 plugin/log 目录固定为绝对路径。
+native init 与后续 `vulkan_loader_path()` 使用同一路径，不再随 cwd 变化重新解释相对值；这里不做
+canonicalize，也不提前替代 DLL 缺失诊断。`init_default` 将 executable 查询失败作为错误返回；
+直接调用配置的 `Default` 则在该错误时 panic，不静默退到 `.`。
 
 ## drain 线程
 
@@ -116,7 +128,7 @@ StreamlineRuntime::init
 
 StreamlineRuntime::drop
   -> 先调用 truvixx_sl_shutdown()
-  -> C++ 在 slShutdown 返回后 FreeLibrary 并清空 callback
+  -> C++ 在 slShutdown 成功后 FreeLibrary；失败保留模块，均原子清空 callback
   -> Rust 向全局 sender 发送 Shutdown
   -> drain 线程 flush 已入队日志并退出
   -> join drain 线程
@@ -127,8 +139,23 @@ StreamlineRuntime::drop
 对象指针。生产路径下 Streamline 初始化失败会由 `Gfx::new` 直接 panic，当前不支持同一进程内
 重复初始化 Streamline；日志 sender 因此使用一次性全局 `OnceLock`。
 
+native 区分 DLL 已加载与 SDK 初始化成功。重复 init 在修改 callback 前拒绝；所有 feature 入口仅在
+初始化成功状态可用。进入 SDK 后 init/shutdown 返回错误或抛 C++ 异常，wrapper 停止服务、清空回调并
+保留 DLL 引用至进程退出；仅成功 shutdown 释放。2.14.1 的错误返回不保证日志 worker/插件已回收，
+因此失败后不能继续渲染或尝试同进程重启；保留引用不是 SDK/GPU 清理完成。
+
+callback 以原子指针读取一次再调用，避免失败清空与异步日志读取竞争。已读到的 Rust callback 地址和
+OnceLock state 持续有效；receiver 退出后投递失败会丢弃日志。正常关闭按 SDK shutdown→poison pill→join
+排空队列；SDK 失败时的晚到日志及 logger 自身失败不在完整 flush 保证内。原子回调不使其它 SDK API 可并发调用。
+
 ## 关键约束
 
+- Rust feature 入口均为 `unsafe`：调用方须保证 runtime 存活和宿主串行调用；数值查询也会访问
+  进程级函数表，不能由 `StreamlineRuntime: !Send + !Sync` 推导自由入口线程安全。
+- Vulkan root、command buffer 和图像 handle 仍由调用方验证。图像须活到 GPU 使用完成，
+  `eValidUntilEvaluate` 描述 tag 的内容有效期，不允许在 CPU evaluate 返回后立即销毁 Vulkan 对象。
+- RR evaluate 当前只有 packed normal/roughness guide；配套 options 必须保持 packed，
+  不把 options 中可表达 unpacked 视为已具备独立 roughness 图像通道。
 - Rust callback 不能 panic 跨 FFI。
 - Rust callback 不能调用 SL API。
 - Rust callback 不能直接做最终 IO。

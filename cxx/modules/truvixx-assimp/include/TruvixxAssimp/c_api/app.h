@@ -12,6 +12,8 @@ extern "C" {
 /// 加载失败时仍可能返回非空句柄，以便调用方读取 importer 错误信息。
 /// 调用方必须通过 `truvixx_scene_is_loaded` 判断导入是否成功，并最终调用
 /// `truvixx_scene_free` 释放非空句柄。
+/// 分配、路径转换或导入发生 C++ 异常时在 native 内释放未发布的 scene 并返回 NULL。
+/// 不向调用方传播 C++ 异常；此时没有可查询详细错误的句柄。
 /// @param path 文件路径 (UTF-8)
 /// @return 场景句柄；参数非法或无法创建句柄时返回 NULL
 TruvixxSceneHandle TRUVIXX_ASSIMP_API truvixx_scene_load(const char* path);

@@ -4,7 +4,7 @@ use truvis_gfx::resources::special_buffers::index_buffer::GfxIndexBuffer;
 use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_render_foundation::frame_label::FrameLabel;
 
-use super::gui_vertex_layout::{ImGuiVertex, ImGuiVertexLayoutAoS};
+use super::gui_vertex_layout::ImGuiVertexLayoutAoS;
 
 /// imgui 绘制所需的 vertex buffer 和 index buffer
 pub struct GuiMesh {
@@ -20,7 +20,7 @@ pub struct GuiMesh {
 impl GuiMesh {
     pub fn new(ctx: GfxResourceCtx<'_>, frame_label: FrameLabel) -> Self {
         // 初始大小为 64KB
-        let vertex_count = 64 * 1024 / size_of::<ImGuiVertex>();
+        let vertex_count = 64 * 1024 / size_of::<imgui::DrawVert>();
         // 初始大小为 96KB
         let index_count = 96 * 1024 / size_of::<imgui::DrawIdx>();
 

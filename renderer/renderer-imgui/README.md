@@ -9,6 +9,9 @@
 - `DebugImageSelectorView`：把 `renderer-kit::DebugImageSelection` 渲染为独立窗口或可嵌入 section；视图不保存 GPU image/view，候选归一化由 Renderer 每帧执行，不依赖控件是否可见。
 - `backend`：GUI graphics pipeline、mesh 和 vertex layout；底层 pass 与 draw data 不作为公共接口暴露。
 
+顶点上传直接使用 ImGui 的 `DrawVert`，Vulkan stride、attribute offset 和容量计算也从该类型取得，
+不维护私有顶点镜像。`pos` / `uv` 是两个 float，`col` 是四个字节，按 `R8G8B8A8_UNORM` 输入 shader。
+
 ## 生命周期与依赖
 
 - 具体 Renderer 静态持有 `ImGuiSubsystem`，显式调用 `on_input`、`build_frame`、`prepare_render_data` 和 `contribute_passes`。

@@ -1,6 +1,7 @@
 #include "TruvixxUtils/string.hpp"
 
 #include <limits>
+#include <memory>
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -46,13 +47,14 @@ std::string StringUtils::win32_error_message(const uint32_t error_code)
         nullptr
     );
 
+    /// UTF-8 转换可能分配并抛异常，系统缓冲必须先取得 RAII 所有权。
+    const std::unique_ptr<wchar_t, decltype(&LocalFree)> owned_buffer(buffer, &LocalFree);
     if (chars == 0 || !buffer)
     {
         return "Win32 error " + std::to_string(error_code);
     }
 
     std::string message = to_utf8(std::wstring_view(buffer, chars));
-    LocalFree(buffer);
     while (!message.empty() && (message.back() == '\r' || message.back() == '\n' || message.back() == ' '))
     {
         message.pop_back();

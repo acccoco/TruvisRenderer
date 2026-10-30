@@ -131,6 +131,32 @@ pub struct StreamlineInitInfo {
 }
 
 impl StreamlineInitInfo {
+    /// 默认配置的可失败入口；不能把 executable 查询失败静默解释成当前工作目录。
+    pub(crate) fn from_current_exe() -> std::io::Result<Self> {
+        Ok(Self {
+            plugin_dir: PathUtils::current_exe_dir()?,
+            log_dir: TruvisPath::temp_dir().join("streamline"),
+            show_console: false,
+            verbose_log: true,
+            feature_flags: StreamlineFeatureFlags::default(),
+        })
+    }
+
+    /// 在创建目录和安装一次性日志桥之前固定路径身份；保留不存在路径的原有加载诊断。
+    pub(crate) fn resolve_paths(mut self) -> std::io::Result<Self> {
+        for (name, path) in [("plugin_dir", &mut self.plugin_dir), ("log_dir", &mut self.log_dir)] {
+            let utf16 = PathUtils::path_to_utf16_null_terminated(&*path);
+            if path.as_os_str().is_empty() || utf16[..utf16.len() - 1].contains(&0) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Streamline {name} must be nonempty and contain no NUL"),
+                ));
+            }
+            *path = std::path::absolute(&*path)?;
+        }
+        Ok(self)
+    }
+
     /// 返回默认 executable 目录中的 Streamline Vulkan loader 路径。
     ///
     /// 这个路径规则和默认 `plugin_dir` 保持一致，只计算路径，不检查 DLL 是否存在；
@@ -141,13 +167,8 @@ impl StreamlineInitInfo {
 }
 
 impl Default for StreamlineInitInfo {
+    /// 无法定位 executable 目录时 panic；需要可诊断错误时使用 StreamlineRuntime::init_default。
     fn default() -> Self {
-        Self {
-            plugin_dir: PathUtils::current_exe_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            log_dir: TruvisPath::temp_dir().join("streamline"),
-            show_console: false,
-            verbose_log: true,
-            feature_flags: StreamlineFeatureFlags::default(),
-        }
+        Self::from_current_exe().expect("failed to resolve Streamline executable directory")
     }
 }

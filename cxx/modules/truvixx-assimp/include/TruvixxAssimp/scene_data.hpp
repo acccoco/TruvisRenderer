@@ -59,6 +59,12 @@ struct MeshInfo
 {
     uint32_t vertex_cnt;
 
+    /// C API 借用的是实际 Float3 对象，不能依赖 aiVector3D 的大小相等进行类型重解释。
+    /// 转换完成后不再修改这些数组，地址在 SceneImporter clear/销毁前保持稳定。
+    std::vector<TruvixxFloat3> positions;
+    std::vector<TruvixxFloat3> normals;
+    std::vector<TruvixxFloat3> tangents;
+
     std::vector<TruvixxFloat2> uvs;
     std::vector<uint32_t> indices;
     bool has_normal;

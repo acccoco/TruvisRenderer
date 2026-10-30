@@ -6,8 +6,11 @@
 extern "C" {
 #endif
 
-// DLSS SR 当前只通过稳定 C ABI 暴露给 Rust。所有 Vulkan 对象都以整数 handle
-// 传入，避免 Rust 侧直接依赖 Streamline C++ 类型或头文件 ABI。
+/// DLSS SR/RR 通过 C linkage 和固定宽度 POD 暴露给 Rust，header 仍按 C++ 编译。
+/// 所有入口遵守 runtime.h 的宿主串行契约；整数 Vulkan handle 不转移所有权。
+/// 调用方保证指针可访问、handle 属于当前 root、GPU 生命周期及同步有效。
+/// C++ 异常转换为 eErrorExceptionHandler；返回错误不保证 SDK/GPU 工作回滚。
+/// 输出参数仅在返回 0 时可消费，失败时可能保留旧值或部分查询结果。
 
 typedef enum : uint32_t
 {
@@ -175,7 +178,7 @@ TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_set_options(uint32_t viewport_id,
 /// 在传入的 Vulkan command buffer 上 tag resource，并用同一 frame token 执行 kFeatureDLSS。
 /// 返回 0 表示 evaluate 成功，包含 SDK 成功后报告的显存预算警告；真实错误返回原 sl::Result。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_evaluate(const TruvixxSlDlssEvaluateDesc* desc);
-// 释放指定 viewport 的 kFeatureDLSS 内部资源。
+/// 释放指定 viewport 的 kFeatureDLSS 内部资源；GPU 已完成且旧命令不再提交后才能调用。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_free_resources(uint32_t viewport_id);
 // 查询 RR mode 对应的推荐 render extent。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_get_optimal_settings(
@@ -190,7 +193,7 @@ TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_set_options(
 /// 在传入的 Vulkan command buffer 上 tag resource，并用同一 frame token 执行 kFeatureDLSS_RR。
 /// 返回值与 SR evaluate 相同；预算警告仍由 SDK 日志桥报告。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_evaluate(const TruvixxSlDlssRrEvaluateDesc* desc);
-// 释放指定 viewport 的 kFeatureDLSS_RR 内部资源。
+/// 释放指定 viewport 的 kFeatureDLSS_RR 内部资源；前置与 SR free 相同。
 TRUVIXX_STREAMLINE_API int32_t truvixx_sl_dlss_rr_free_resources(uint32_t viewport_id);
 
 #ifdef __cplusplus

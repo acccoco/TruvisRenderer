@@ -14,10 +14,10 @@ use crate::{descriptors::descriptor_pool::GfxDescriptorPool, foundation::debug_m
 /// - 每个绑定的着色器阶段
 ///
 /// 使用泛型参数 T 来关联具体的绑定布局类型，
-/// 这样可以保证类型安全，并且可以在编译时检查布局的正确性。
+/// derive 可以检查声明语法和重复 binding，但不能自动证明与 shader ABI 或设备限制一致。
 ///
 /// # 泛型参数
-/// - T: 实现了 ShaderBindingLayout trait 的类型，定义了具体的绑定布局
+/// - T: 实现了 DescriptorBindingLayout trait 的类型，定义了具体的绑定布局
 pub struct GfxDescriptorSetLayout<T: DescriptorBindingLayout> {
     /// Vulkan 描述符集布局句柄
     layout: vk::DescriptorSetLayout,
@@ -90,7 +90,7 @@ impl<T: DescriptorBindingLayout> DebugType for GfxDescriptorSetLayout<T> {
 /// 每个描述符集都关联一个描述符集布局，定义了其结构。
 ///
 /// # 泛型参数
-/// - T: 实现了 ShaderBindingLayout trait 的类型，定义了具体的绑定布局
+/// - T: 实现了 DescriptorBindingLayout trait 的类型，定义了具体的绑定布局
 ///
 /// # 销毁
 ///

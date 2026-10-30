@@ -1,18 +1,14 @@
 //! 着色器绑定自动生成
 //!
 //! 通过 `build.rs` 从 `.slangi` 头文件自动生成 Rust 类型绑定。
-//! 使用 `bindgen` 解析 Slang 结构体定义，生成与 GPU 内存布局对齐的 Rust 结构体。
+//! 使用 `bindgen` 解析 Slang 的 C++ 数据投影；GPU 布局仍需对照 SPIR-V 验证。
 //!
 //! # 使用示例
-//! ```ignore
-//! use truvis_shader_binding::gpu::engine::frame::PerFrameData;
+//! ```
+//! use truvis_shader_binding::gpu::Float4;
 //!
-//! let data = PerFrameData {
-//!     projection: glam::Mat4::IDENTITY.into(),
-//!     view: glam::Mat4::IDENTITY.into(),
-//!     camera_pos: glam::Vec3::ZERO.into(),
-//!     time_ms: 0,
-//! };
+//! let value: Float4 = glam::Vec4::ONE.into();
+//! assert_eq!(value.x, 1.0);
 //! ```
 
 mod _shader_bindings {

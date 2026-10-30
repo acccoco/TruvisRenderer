@@ -37,8 +37,11 @@ impl TruvisDlssState {
     pub fn init(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>, enabled: bool) -> Result<(), StreamlineError> {
         self.requested = Self::read_options();
         let physical_device = ctx.device_info_ctx.physical_device().vk_handle().as_raw();
-        self.sr_supported = dlss::query_support(physical_device).map(|value| value.supported).unwrap_or(false);
-        self.rr_supported = dlss::query_rr_support(physical_device).map(|value| value.supported).unwrap_or(false);
+        // SAFETY: Renderer init 在 RenderThread 串行执行，ctx 提供当前存活 Gfx 的 physical device。
+        let (sr_support, rr_support) =
+            unsafe { (dlss::query_support(physical_device), dlss::query_rr_support(physical_device)) };
+        self.sr_supported = sr_support.map(|value| value.supported).unwrap_or(false);
+        self.rr_supported = rr_support.map(|value| value.supported).unwrap_or(false);
         self.effective = self.effective_options(enabled);
         let output_extent = ctx.frame_state.output_extent;
         self.reconfigure(output_extent)?;
@@ -84,7 +87,8 @@ impl TruvisDlssState {
         self.sr_state.update(&render_view, frame_state, self.effective.is_dlss_active());
         let constants = self.sr_state.constants();
         if self.effective.is_rr_active() {
-            dlss::set_rr_options(0, self.streamline_rr_options(frame_state.output_extent))?;
+            // SAFETY: RenderThread 在 evaluate 前提交本帧矩阵，extent 重建已越过 idle 边界，guide 固定 packed。
+            unsafe { dlss::set_rr_options(0, self.streamline_rr_options(frame_state.output_extent))? };
         }
         Ok(RenderFrameInput {
             render_view,
@@ -150,10 +154,13 @@ impl TruvisDlssState {
         if matches!(self.effective.dlss_sr_mode, DlssSrMode::Off | DlssSrMode::Dlaa) {
             return output_extent;
         }
-        let result = if self.effective.is_rr_active() {
-            dlss::get_rr_optimal_settings(self.streamline_rr_options(output_extent))
-        } else {
-            dlss::get_optimal_settings(self.streamline_sr_options(output_extent))
+        // SAFETY: 本状态仅由 RenderThread 在 Gfx/Streamline 存活期串行访问，查询不会与初始化或关闭竞争。
+        let result = unsafe {
+            if self.effective.is_rr_active() {
+                dlss::get_rr_optimal_settings(self.streamline_rr_options(output_extent))
+            } else {
+                dlss::get_optimal_settings(self.streamline_sr_options(output_extent))
+            }
         };
         match result {
             Ok(settings) if settings.optimal_render_width > 0 && settings.optimal_render_height > 0 => vk::Extent2D {
@@ -179,7 +186,8 @@ impl TruvisDlssState {
     fn reconfigure(&mut self, output_extent: vk::Extent2D) -> Result<(), StreamlineError> {
         self.release_feature();
         if self.effective.is_dlss_active() {
-            dlss::set_options(0, self.streamline_sr_options(output_extent))?;
+            // SAFETY: 仅从 init/idle 后的 update/resize 调用；GPU 已完成，新 extent 用于随后构建的图像。
+            unsafe { dlss::set_options(0, self.streamline_sr_options(output_extent))? };
         }
         self.sr_state.reconfigure();
         Ok(())
@@ -210,9 +218,12 @@ impl TruvisDlssState {
         let Some(feature) = self.feature_to_release.take() else {
             return;
         };
-        let result = match feature {
-            DlssFeature::SuperResolution => dlss::free_resources(0),
-            DlssFeature::RayReconstruction => dlss::free_rr_resources(0),
+        // SAFETY: reconfigure/shutdown 在 RenderThread 的 GPU idle 边界调用，旧 graph 不再提交，Gfx 仍存活。
+        let result = unsafe {
+            match feature {
+                DlssFeature::SuperResolution => dlss::free_resources(0),
+                DlssFeature::RayReconstruction => dlss::free_rr_resources(0),
+            }
         };
         if let Err(error) = result {
             log::warn!("failed to release DLSS resources: {error}");

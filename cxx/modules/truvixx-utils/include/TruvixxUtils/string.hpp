@@ -23,6 +23,7 @@ struct StringUtils
     ///
     /// Windows loader、路径和文件系统错误通常只返回 `GetLastError()` 错误码；C API wrapper
     /// 在返回稳定错误码前，可以用该函数补充系统诊断文本。
+    /// 系统分配的文本在 UTF-8 转换抛异常时也会释放；调用方仍需处理 C++ 分配异常。
     static std::string win32_error_message(uint32_t error_code);
 
     /// 将 Rust FFI 传入的 UTF-16 指针转换成 Windows `wchar_t*`。

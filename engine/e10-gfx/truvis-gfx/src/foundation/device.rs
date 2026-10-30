@@ -81,7 +81,8 @@ impl GfxDevice {
         let vk_rt_pipeline_pf = ash::khr::ray_tracing_pipeline::Device::new(instance, &device);
         let vk_debug_utils_device = ash::ext::debug_utils::Device::new(instance, &device);
         let vk_swapchain = ash::khr::swapchain::Device::new(instance, &device);
-        let vk_push_descriptor = truvis_vk_binding::Device::new(instance, &device).unwrap_or_else(|err| {
+        // device 刚由同一个 instance 创建，尚未发布；查询期间沿用仍有效的 loader 链路。
+        let vk_push_descriptor = unsafe { truvis_vk_binding::Device::new(instance, &device) }.unwrap_or_else(|err| {
             // 此时设备尚未交给 GfxDevice，也没有创建子资源；初始化失败必须回收原生句柄。
             unsafe { device.destroy_device(None) };
             panic!("Failed to initialize native Vulkan dispatch: {err}");

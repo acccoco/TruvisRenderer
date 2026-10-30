@@ -39,6 +39,12 @@ abi/<owner> <- lib/<owner> <- entry
 
 ABI 不依赖 entry；lib 不依赖 entry；entry 只组合自身可见的 ABI 和 lib。include 必须带 `abi/` 或 `lib/` 的 owner 前缀，禁止依赖 include root 顺序和 `../`。
 
+依赖声明使用完整字面量路径；宏 include 和命名 module import 在预检时拒绝。预检先处理注释和续行，
+再沿字面量引用检查目标文本（不受扩展名限制），并按目标 owner 自己的 package 可见范围继续检查。
+条件编译的未启用分支也必须满足依赖约束。源文件相对搜索路径不得遮蔽 include root 中的目标。
+编译器 depfile 只记录扁平依赖集合，用于核对实际 package 闭包；它不能替代逐边 layer 校验。
+manifest 的 shared input layer 必须匹配其 include 路径中的 `abi/` 或 `lib/` 前缀，不能通过改标注放宽权限。
+
 ## Binding 责任
 
 每个 Shader binding owner 决定：
@@ -48,6 +54,9 @@ ABI 不依赖 entry；lib 不依赖 entry；entry 只组合自身可见的 ABI �
 - 生成 binding 的生命周期和 crate 依赖。
 
 Shader binding 的 `ffi/rust_ffi.hpp` 聚合 owner Slang ABI 及基础类型的 C++ 投影，供 bindgen 解析。已有生成 binding 能表达的结构不能在 Rust 中手写镜像；Renderer binding 显式复用 Engine binding 的公共类型。
+
+Shader binding 只生成类型和常量，不生成函数、方法或构造函数。用于解析 Slang 表达式的 C++ 声明
+不代表存在可链接的 native 实现；Rust 值通过字段初始化或既有的 `From` 转换构造。
 
 ## 布局不变量
 
@@ -60,6 +69,11 @@ Shader binding 的 `ffi/rust_ffi.hpp` 聚合 owner Slang ABI 及基础类型的 
 - 修改 ABI 字段顺序或 stride 视为跨端变化，必须检查所有写入、绑定、读取和 readback。
 
 具体 offset 规则见 [shader-abi-layout.md](../../.agents/rules/shader-abi-layout.md)。
+
+Descriptor 的 Rust layout 是宿主侧投影，derive 只检查声明自身的语法与唯一 binding，不能替代 shader
+资源声明和 SPIR-V 的 set/binding/type/count/stage 对照。单 binding cursor 的写入不得越过自身容量；
+提交的 descriptor type、payload 数组及扩展结构数量必须一致。CPU 指针只在同步提交回调内有效，
+这不改变 GPU 资源 owner 的生命周期与同步责任。
 
 ## Native 集成边界
 

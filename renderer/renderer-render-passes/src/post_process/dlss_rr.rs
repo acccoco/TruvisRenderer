@@ -97,7 +97,8 @@ impl DlssRrPass {
         };
 
         cmd.begin_label("DLSS RR", glam::vec4(0.35, 0.95, 0.75, 1.0));
-        let result = match dlss::evaluate_rr(desc) {
+        // SAFETY: RenderThread 串行录制，graph 已转换 layout；本帧 RR options/packed guides 配套，owner 保留资源至 GPU 完成。
+        let result = match unsafe { dlss::evaluate_rr(desc) } {
             Ok(()) => DlssEvaluation::Succeeded,
             Err(err) => {
                 log::error!("DLSS RR evaluate failed: {}", err);

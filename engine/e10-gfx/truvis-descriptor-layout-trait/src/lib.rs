@@ -1,15 +1,22 @@
 //! 着色器绑定布局 trait
 //!
 //! 配合 `truvis-descriptor-layout-macro` 宏，自动生成 Vulkan 描述符集布局。
-//! 通过 `#[shader_layout]` 宏标注结构体，自动实现 [`DescriptorBindingLayout`] trait。
+//! 通过 `#[derive(DescriptorBinding)]` 为具名字段结构体实现 [`DescriptorBindingLayout`]。
+//! 每个字段必须声明唯一的整数 binding；可选属性省略时使用默认值，非法属性在编译时拒绝。
+//! 此投影不反射 shader，set 编号、资源类型、数量和 stage 仍须与 Shader ABI 对照。
 //!
 //! # 使用示例
 //! ```ignore
-//! #[shader_layout]
+//! use ash::vk;
+//! use truvis_descriptor_layout_macro::DescriptorBinding;
+//!
+//! #[derive(DescriptorBinding)]
 //! struct MyLayout {
-//!     #[binding = 0] uniforms: PerFrameData,
-//!     #[texture(binding = 1)] diffuse: TextureAssetHandle,
-//!     #[sampler(binding = 2)] sampler: SamplerHandle,
+//!     #[binding = 0] _uniforms: (),
+//!     #[binding = 1]
+//!     #[descriptor_type = "SAMPLED_IMAGE"]
+//!     #[stage = "FRAGMENT"]
+//!     _diffuse: (),
 //! }
 //! ```
 
@@ -28,7 +35,7 @@ pub struct DescriptorBindingItem {
 
 /// 着色器绑定布局 trait
 ///
-/// 描述着色器需要的所有资源绑定。通过 `#[shader_layout]` 宏自动实现。
+/// 描述一个 set 内的资源绑定。通过 `#[derive(DescriptorBinding)]` 自动实现。
 pub trait DescriptorBindingLayout {
     /// 获取所有绑定的详细信息
     ///

@@ -11,10 +11,14 @@
 #include <sl_helpers_vk.h>
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <string_view>
+#include <type_traits>
 
 namespace
 {
@@ -27,10 +31,9 @@ constexpr char kTruvisEngineVersion[] = "Truvis";
 // 正式发布若拿到 NVIDIA 分配的 applicationId，再统一切换身份策略。
 constexpr char kTruvisNgxProjectId[] = "e390aa77-d1d4-42c5-be02-07095506af72";
 
-// Rust 侧传入的全局日志回调地址。
-// 在 truvixx_sl_init 中写入一次，之后只读。写入发生在 slInit 之前，
-// 因此 SL callback 第一次触发时该指针已经有效，无需额外同步。
-TruvixxSlLogCallback g_rust_log_callback = nullptr;
+/// SDK worker 可能在失败返回后继续记录日志；与关闭入口清空指针之间必须同步。
+/// Rust callback 地址与 OnceLock state 在进程内有效，读取到的回调可安全完成当前投递。
+std::atomic<TruvixxSlLogCallback> g_rust_log_callback = nullptr;
 
 // Streamline 是进程级 runtime。这里显式保存 DLL handle 和入口函数表，
 // 让 C API wrapper 可以在 `truvixx_sl_init` 时才加载 `sl.interposer.dll`，
@@ -38,6 +41,9 @@ TruvixxSlLogCallback g_rust_log_callback = nullptr;
 struct SlApi
 {
     HMODULE module = nullptr;
+
+    /// module 非空只表示 DLL 已加载；SDK 失败后保留引用，但禁止继续服务或重新初始化。
+    bool initialized = false;
     PFun_slInit* sl_init = nullptr;
     PFun_slShutdown* sl_shutdown = nullptr;
     // 通用 Streamline 入口在 slInit 前就从 interposer DLL 解析出来；
@@ -57,9 +63,9 @@ struct SlApi
     PFun_slDLSSDGetOptimalSettings* sl_dlssd_get_optimal_settings = nullptr;
     PFun_slDLSSDSetOptions* sl_dlssd_set_options = nullptr;
 
-    bool is_loaded() const
+    bool is_initialized() const
     {
-        return module != nullptr && sl_init != nullptr && sl_shutdown != nullptr;
+        return initialized && module != nullptr && sl_init != nullptr && sl_shutdown != nullptr;
     }
 
     /// Streamline 2.14.1 的 slEvaluateFeatureInternal 只在 evaluate 成功后返回此预算警告。
@@ -72,10 +78,9 @@ struct SlApi
 
     void reset()
     {
-        // reset 同时服务两条路径：
-        // 1. slInit 失败后释放刚加载的 DLL，避免半初始化状态残留；
-        // 2. slShutdown 返回后释放 C++ wrapper 持有的 DLL 引用。
-        // 若 Rust/ash 也加载了同一路径的 DLL，Windows 引用计数会保证这里不会提前卸载仍在使用的模块。
+        /// 仅用于 SDK 尚未进入，或 slShutdown 已成功的路径；失败不能证明 worker/插件已回收。
+        /// 若 ash 仍持有同一路径的 DLL，Windows 引用计数继续保护其 loader 生命周期。
+        initialized = false;
         sl_init = nullptr;
         sl_shutdown = nullptr;
         sl_is_feature_supported = nullptr;
@@ -101,7 +106,7 @@ struct SlApi
 
 SlApi g_sl_api;
 
-void emit_wrapper_log(TruvixxSlLogType type, const std::string& message);
+void emit_wrapper_log(TruvixxSlLogType type, std::string_view message);
 
 template <typename T>
 T* resolve_required_export(HMODULE module, const char* name)
@@ -141,19 +146,21 @@ TruvixxSlLogType to_truvixx_log_type(const sl::LogType type)
     }
 }
 
-void emit_wrapper_log(const TruvixxSlLogType type, const std::string& message)
+void emit_wrapper_log(const TruvixxSlLogType type, const std::string_view message)
 {
     // 动态加载失败可能发生在 slInit 之前，此时还没有 Streamline 自己的 log callback。
     // Rust 在调用 C API 前已经安装全局日志回调，因此 wrapper 诊断也走同一条异步日志链路。
-    if (!g_rust_log_callback)
+    const auto callback = g_rust_log_callback.load();
+    if (!callback)
     {
         return;
     }
 
-    g_rust_log_callback(type, message.c_str(), static_cast<uint32_t>(message.size()));
+    callback(type, message.data(), static_cast<uint32_t>(message.size()));
 }
 
 sl::Result load_streamline_api(const wchar_t* interposer_dll_path)
+try
 {
     // 必须使用 Rust 传入的绝对路径，而不是依赖 DLL 搜索路径。
     // 这样 C++ 调用 slInit/slShutdown 的模块，与后续 ash::Entry::load_from 使用的
@@ -170,7 +177,10 @@ sl::Result load_streamline_api(const wchar_t* interposer_dll_path)
         return sl::Result::eErrorInvalidState;
     }
 
-    HMODULE module = LoadLibraryW(interposer_dll_path);
+    /// 导出解析的诊断可能分配并抛异常；完整函数表发布前由局部 owner 释放 DLL 引用。
+    std::unique_ptr<std::remove_pointer_t<HMODULE>, decltype(&FreeLibrary)> module(
+        LoadLibraryW(interposer_dll_path), &FreeLibrary
+    );
     if (!module)
     {
         const DWORD error_code = GetLastError();
@@ -184,27 +194,26 @@ sl::Result load_streamline_api(const wchar_t* interposer_dll_path)
 
     // Streamline C API 导出名是未修饰的 C symbol；动态解析时不会应用头文件里的默认参数，
     // 因此调用 slInit 时需要显式传入 sl::kSDKVersion。
-    auto* sl_init = resolve_required_export<PFun_slInit>(module, "slInit");
-    auto* sl_shutdown = resolve_required_export<PFun_slShutdown>(module, "slShutdown");
-    auto* sl_is_feature_supported = resolve_required_export<PFun_slIsFeatureSupported>(module, "slIsFeatureSupported");
+    auto* sl_init = resolve_required_export<PFun_slInit>(module.get(), "slInit");
+    auto* sl_shutdown = resolve_required_export<PFun_slShutdown>(module.get(), "slShutdown");
+    auto* sl_is_feature_supported = resolve_required_export<PFun_slIsFeatureSupported>(module.get(), "slIsFeatureSupported");
     auto* sl_get_feature_requirements =
-        resolve_required_export<PFun_slGetFeatureRequirements>(module, "slGetFeatureRequirements");
-    auto* sl_get_feature_function = resolve_required_export<PFun_slGetFeatureFunction>(module, "slGetFeatureFunction");
-    auto* sl_get_new_frame_token = resolve_required_export<PFun_slGetNewFrameToken>(module, "slGetNewFrameToken");
-    auto* sl_set_constants = resolve_required_export<PFun_slSetConstants>(module, "slSetConstants");
-    auto* sl_set_tag_for_frame = resolve_required_export<PFun_slSetTagForFrame>(module, "slSetTagForFrame");
-    auto* sl_evaluate_feature = resolve_required_export<PFun_slEvaluateFeature>(module, "slEvaluateFeature");
-    auto* sl_free_resources = resolve_required_export<PFun_slFreeResources>(module, "slFreeResources");
-    auto* sl_set_vulkan_info = resolve_required_export<PFun_slSetVulkanInfo>(module, "slSetVulkanInfo");
+        resolve_required_export<PFun_slGetFeatureRequirements>(module.get(), "slGetFeatureRequirements");
+    auto* sl_get_feature_function = resolve_required_export<PFun_slGetFeatureFunction>(module.get(), "slGetFeatureFunction");
+    auto* sl_get_new_frame_token = resolve_required_export<PFun_slGetNewFrameToken>(module.get(), "slGetNewFrameToken");
+    auto* sl_set_constants = resolve_required_export<PFun_slSetConstants>(module.get(), "slSetConstants");
+    auto* sl_set_tag_for_frame = resolve_required_export<PFun_slSetTagForFrame>(module.get(), "slSetTagForFrame");
+    auto* sl_evaluate_feature = resolve_required_export<PFun_slEvaluateFeature>(module.get(), "slEvaluateFeature");
+    auto* sl_free_resources = resolve_required_export<PFun_slFreeResources>(module.get(), "slFreeResources");
+    auto* sl_set_vulkan_info = resolve_required_export<PFun_slSetVulkanInfo>(module.get(), "slSetVulkanInfo");
     if (!sl_init || !sl_shutdown || !sl_is_feature_supported || !sl_get_feature_requirements ||
         !sl_get_feature_function || !sl_get_new_frame_token || !sl_set_constants || !sl_set_tag_for_frame ||
         !sl_evaluate_feature || !sl_free_resources || !sl_set_vulkan_info)
     {
-        FreeLibrary(module);
         return sl::Result::eErrorMissingOrInvalidAPI;
     }
 
-    g_sl_api.module = module;
+    g_sl_api.module = module.release();
     g_sl_api.sl_init = sl_init;
     g_sl_api.sl_shutdown = sl_shutdown;
     g_sl_api.sl_is_feature_supported = sl_is_feature_supported;
@@ -218,16 +227,22 @@ sl::Result load_streamline_api(const wchar_t* interposer_dll_path)
     g_sl_api.sl_set_vulkan_info = sl_set_vulkan_info;
     return sl::Result::eOk;
 }
+catch (...)
+{
+    /// 此边界尚未调用 SDK；不能让诊断分配失败越过 C ABI，也不能在 catch 内再分配错误文本。
+    return sl::Result::eErrorExceptionHandler;
+}
 
 // 注册给 Streamline 的日志回调。只做枚举转换并转发到 Rust 全局函数。
 void sl_log_callback(const sl::LogType type, const char* msg)
 {
-    if (!msg || !g_rust_log_callback)
+    const auto callback = g_rust_log_callback.load();
+    if (!msg || !callback)
     {
         return;
     }
 
-    g_rust_log_callback(to_truvixx_log_type(type), msg, static_cast<uint32_t>(std::strlen(msg)));
+    callback(to_truvixx_log_type(type), msg, static_cast<uint32_t>(std::strlen(msg)));
 }
 
 sl::Boolean to_sl_boolean(const uint32_t value)
@@ -350,7 +365,7 @@ sl::Resource make_image_resource(const TruvixxSlImageResource& src)
 
 sl::Result ensure_dlss_feature_api()
 {
-    if (!g_sl_api.is_loaded() || !g_sl_api.sl_get_feature_function)
+    if (!g_sl_api.is_initialized() || !g_sl_api.sl_get_feature_function)
     {
         return sl::Result::eErrorNotInitialized;
     }
@@ -382,7 +397,7 @@ sl::Result ensure_dlss_feature_api()
 
 sl::Result ensure_dlss_rr_feature_api()
 {
-    if (!g_sl_api.is_loaded() || !g_sl_api.sl_get_feature_function)
+    if (!g_sl_api.is_initialized() || !g_sl_api.sl_get_feature_function)
     {
         return sl::Result::eErrorNotInitialized;
     }
@@ -412,7 +427,7 @@ sl::Result ensure_dlss_rr_feature_api()
 
 int32_t query_feature_support(sl::Feature feature, uint64_t physical_device, TruvixxSlFeatureSupport* out_support)
 {
-    if (!g_sl_api.is_loaded() || !g_sl_api.sl_is_feature_supported || !g_sl_api.sl_get_feature_requirements ||
+    if (!g_sl_api.is_initialized() || !g_sl_api.sl_is_feature_supported || !g_sl_api.sl_get_feature_requirements ||
         !out_support)
     {
         return static_cast<int32_t>(sl::Result::eErrorInvalidParameter);
@@ -445,7 +460,12 @@ int32_t truvixx_sl_init(const TruvixxSlInitDesc* desc)
         return static_cast<int32_t>(sl::Result::eErrorInvalidParameter);
     }
 
-    g_rust_log_callback = desc->log_callback;
+    /// 重复调用不得覆盖原实例的回调；失败后保留的 module 也禁止同进程重试。
+    if (g_sl_api.module)
+    {
+        return static_cast<int32_t>(sl::Result::eErrorInvalidState);
+    }
+    g_rust_log_callback.store(desc->log_callback);
 
     const wchar_t* plugin_dir = reinterpret_cast<const wchar_t*>(desc->plugin_dir_utf16);
     const wchar_t* interposer_dll_path = reinterpret_cast<const wchar_t*>(desc->interposer_dll_path_utf16);
@@ -459,7 +479,7 @@ int32_t truvixx_sl_init(const TruvixxSlInitDesc* desc)
     const sl::Result load_result = load_streamline_api(interposer_dll_path);
     if (load_result != sl::Result::eOk)
     {
-        g_rust_log_callback = nullptr;
+        g_rust_log_callback.store(nullptr);
         return static_cast<int32_t>(load_result);
     }
 
@@ -482,7 +502,7 @@ int32_t truvixx_sl_init(const TruvixxSlInitDesc* desc)
     {
         emit_wrapper_log(TruvixxSlLogTypeError, "Streamline feature flags did not request any known feature.");
         g_sl_api.reset();
-        g_rust_log_callback = nullptr;
+        g_rust_log_callback.store(nullptr);
         return static_cast<int32_t>(sl::Result::eErrorInvalidParameter);
     }
 
@@ -505,34 +525,55 @@ int32_t truvixx_sl_init(const TruvixxSlInitDesc* desc)
 
     // PFun_slInit 没有 C++ 默认参数语义，必须显式传入当前 SDK 版本。
     // 版本不匹配时交给 Streamline 返回具体 sl::Result，Rust 侧再统一转成启动失败。
-    const sl::Result init_result = g_sl_api.sl_init(preferences, sl::kSDKVersion);
+    sl::Result init_result = sl::Result::eErrorExceptionHandler;
+    try
+    {
+        init_result = g_sl_api.sl_init(preferences, sl::kSDKVersion);
+    }
+    catch (...)
+    {
+        /// SDK 已进入，状态未知；不允许异常跨 C ABI，也不能假定可以立即卸载 DLL。
+    }
+    g_sl_api.initialized = init_result == sl::Result::eOk;
     if (init_result != sl::Result::eOk)
     {
-        g_sl_api.reset();
-        g_rust_log_callback = nullptr;
+        /// 2.14.1 的失败路径不保证销毁日志 worker，保留模块引用至进程退出。
+        g_rust_log_callback.store(nullptr);
     }
     return static_cast<int32_t>(init_result);
 }
 
 int32_t truvixx_sl_shutdown()
 {
-    if (!g_sl_api.is_loaded())
+    if (!g_sl_api.is_initialized())
     {
-        g_rust_log_callback = nullptr;
+        g_rust_log_callback.store(nullptr);
         return static_cast<int32_t>(sl::Result::eErrorNotInitialized);
     }
 
-    const sl::Result shutdown_result = g_sl_api.sl_shutdown();
-    // slShutdown 之后再释放 wrapper 持有的 DLL 引用。Gfx 会在 Vulkan root 销毁前 drop
-    // StreamlineRuntime；如果 ash Entry 仍持有同一 DLL，Windows 引用计数会延后真正卸载。
-    g_sl_api.reset();
-    g_rust_log_callback = nullptr;
+    g_sl_api.initialized = false;
+    sl::Result shutdown_result = sl::Result::eErrorExceptionHandler;
+    try
+    {
+        shutdown_result = g_sl_api.sl_shutdown();
+    }
+    catch (...)
+    {
+        /// 与 SDK 错误返回相同：停止服务并保留模块，不把部分关闭当成成功释放。
+    }
+    if (shutdown_result == sl::Result::eOk)
+    {
+        g_sl_api.reset();
+    }
+    g_rust_log_callback.store(nullptr);
     return static_cast<int32_t>(shutdown_result);
 }
 
+/// feature 导出统一隔离 C++ 异常；错误只表示调用失败，不保证 SDK/GPU 状态回滚。
 int32_t truvixx_sl_set_vulkan_info(const TruvixxSlVulkanInfo* info)
+try
 {
-    if (!g_sl_api.is_loaded() || !g_sl_api.sl_set_vulkan_info || !info)
+    if (!g_sl_api.is_initialized() || !g_sl_api.sl_set_vulkan_info || !info)
     {
         return static_cast<int32_t>(sl::Result::eErrorInvalidParameter);
     }
@@ -549,21 +590,36 @@ int32_t truvixx_sl_set_vulkan_info(const TruvixxSlVulkanInfo* info)
     const sl::Result result = g_sl_api.sl_set_vulkan_info(vulkan_info);
     return static_cast<int32_t>(result);
 }
+catch (...)
+{
+    return static_cast<int32_t>(sl::Result::eErrorExceptionHandler);
+}
 
 int32_t truvixx_sl_dlss_query_support(uint64_t physical_device, TruvixxSlFeatureSupport* out_support)
+try
 {
     return query_feature_support(sl::kFeatureDLSS, physical_device, out_support);
 }
+catch (...)
+{
+    return static_cast<int32_t>(sl::Result::eErrorExceptionHandler);
+}
 
 int32_t truvixx_sl_dlss_rr_query_support(uint64_t physical_device, TruvixxSlFeatureSupport* out_support)
+try
 {
     return query_feature_support(sl::kFeatureDLSS_RR, physical_device, out_support);
+}
+catch (...)
+{
+    return static_cast<int32_t>(sl::Result::eErrorExceptionHandler);
 }
 
 int32_t truvixx_sl_dlss_get_optimal_settings(
     const TruvixxSlDlssOptions* options,
     TruvixxSlDlssOptimalSettings* out_settings
 )
+try
 {
     if (!options || !out_settings)
     {
@@ -590,8 +646,13 @@ int32_t truvixx_sl_dlss_get_optimal_settings(
     }
     return static_cast<int32_t>(result);
 }
+catch (...)
+{
+    return static_cast<int32_t>(sl::Result::eErrorExceptionHandler);
+}
 
 int32_t truvixx_sl_dlss_set_options(uint32_t viewport_id, const TruvixxSlDlssOptions* options)
+try
 {
     if (!options)
     {
@@ -608,10 +669,15 @@ int32_t truvixx_sl_dlss_set_options(uint32_t viewport_id, const TruvixxSlDlssOpt
     const sl::Result result = g_sl_api.sl_dlss_set_options(viewport, dlss_options);
     return static_cast<int32_t>(result);
 }
+catch (...)
+{
+    return static_cast<int32_t>(sl::Result::eErrorExceptionHandler);
+}
 
 int32_t truvixx_sl_dlss_evaluate(const TruvixxSlDlssEvaluateDesc* desc)
+try
 {
-    if (!g_sl_api.is_loaded() || !g_sl_api.sl_get_new_frame_token || !g_sl_api.sl_set_constants ||
+    if (!g_sl_api.is_initialized() || !g_sl_api.sl_get_new_frame_token || !g_sl_api.sl_set_constants ||
         !g_sl_api.sl_set_tag_for_frame || !g_sl_api.sl_evaluate_feature || !desc || desc->command_buffer == 0)
     {
         return static_cast<int32_t>(sl::Result::eErrorInvalidParameter);
@@ -643,13 +709,15 @@ int32_t truvixx_sl_dlss_evaluate(const TruvixxSlDlssEvaluateDesc* desc)
     const sl::Extent render_extent{ 0, 0, desc->input_color.width, desc->input_color.height };
     const sl::Extent output_extent{ 0, 0, desc->output_color.width, desc->output_color.height };
     const sl::Extent exposure_extent{ 0, 0, desc->exposure.width, desc->exposure.height };
-    // 输入只保证有效到 evaluate；输出至少要活到后续 SDR/GUI/present 使用完成。
-    // exposure tag 是禁用 DLSS AutoExposure 的必要条件；只设置 useAutoExposure=false 不够。
-    // 当前 SR 路径使用 device depth，所以 depth tag 固定为 kBufferTypeDepth。
+    const sl::BufferType depth_buffer_type =
+        desc->use_linear_depth != 0 ? sl::kBufferTypeLinearDepth : sl::kBufferTypeDepth;
+    /// 输入只保证有效到 evaluate；输出至少要活到后续 SDR/GUI/present 使用完成。
+    /// exposure tag 是禁用 DLSS AutoExposure 的必要条件；只设置 useAutoExposure=false 不够。
+    /// 深度类型由调用方描述决定，不能把当前 Renderer 的 device depth 固定为 ABI 行为。
     std::array<sl::ResourceTag, 5> tags{
         sl::ResourceTag(&input_color, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
         sl::ResourceTag(&output_color, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent, &output_extent),
-        sl::ResourceTag(&depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
+        sl::ResourceTag(&depth, depth_buffer_type, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
         sl::ResourceTag(&motion_vectors, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilEvaluate, &render_extent),
         sl::ResourceTag(&exposure, sl::kBufferTypeExposure, sl::ResourceLifecycle::eValidUntilEvaluate, &exposure_extent),
     };
@@ -671,10 +739,15 @@ int32_t truvixx_sl_dlss_evaluate(const TruvixxSlDlssEvaluateDesc* desc)
         g_sl_api.sl_evaluate_feature(sl::kFeatureDLSS, *frame, inputs, static_cast<uint32_t>(sizeof(inputs) / sizeof(inputs[0])), command_buffer);
     return SlApi::evaluation_result(evaluate_result);
 }
+catch (...)
+{
+    return static_cast<int32_t>(sl::Result::eErrorExceptionHandler);
+}
 
 int32_t truvixx_sl_dlss_free_resources(uint32_t viewport_id)
+try
 {
-    if (!g_sl_api.is_loaded() || !g_sl_api.sl_free_resources)
+    if (!g_sl_api.is_initialized() || !g_sl_api.sl_free_resources)
     {
         return static_cast<int32_t>(sl::Result::eErrorNotInitialized);
     }
@@ -684,11 +757,16 @@ int32_t truvixx_sl_dlss_free_resources(uint32_t viewport_id)
     const sl::Result result = g_sl_api.sl_free_resources(sl::kFeatureDLSS, viewport);
     return static_cast<int32_t>(result);
 }
+catch (...)
+{
+    return static_cast<int32_t>(sl::Result::eErrorExceptionHandler);
+}
 
 int32_t truvixx_sl_dlss_rr_get_optimal_settings(
     const TruvixxSlDlssRrOptions* options,
     TruvixxSlDlssOptimalSettings* out_settings
 )
+try
 {
     if (!options || !out_settings)
     {
@@ -715,8 +793,13 @@ int32_t truvixx_sl_dlss_rr_get_optimal_settings(
     }
     return static_cast<int32_t>(result);
 }
+catch (...)
+{
+    return static_cast<int32_t>(sl::Result::eErrorExceptionHandler);
+}
 
 int32_t truvixx_sl_dlss_rr_set_options(uint32_t viewport_id, const TruvixxSlDlssRrOptions* options)
+try
 {
     if (!options)
     {
@@ -733,10 +816,15 @@ int32_t truvixx_sl_dlss_rr_set_options(uint32_t viewport_id, const TruvixxSlDlss
     const sl::Result result = g_sl_api.sl_dlssd_set_options(viewport, dlssd_options);
     return static_cast<int32_t>(result);
 }
+catch (...)
+{
+    return static_cast<int32_t>(sl::Result::eErrorExceptionHandler);
+}
 
 int32_t truvixx_sl_dlss_rr_evaluate(const TruvixxSlDlssRrEvaluateDesc* desc)
+try
 {
-    if (!g_sl_api.is_loaded() || !g_sl_api.sl_get_new_frame_token || !g_sl_api.sl_set_constants ||
+    if (!g_sl_api.is_initialized() || !g_sl_api.sl_get_new_frame_token || !g_sl_api.sl_set_constants ||
         !g_sl_api.sl_set_tag_for_frame || !g_sl_api.sl_evaluate_feature || !desc || desc->command_buffer == 0)
     {
         return static_cast<int32_t>(sl::Result::eErrorInvalidParameter);
@@ -800,10 +888,15 @@ int32_t truvixx_sl_dlss_rr_evaluate(const TruvixxSlDlssRrEvaluateDesc* desc)
     );
     return SlApi::evaluation_result(evaluate_result);
 }
+catch (...)
+{
+    return static_cast<int32_t>(sl::Result::eErrorExceptionHandler);
+}
 
 int32_t truvixx_sl_dlss_rr_free_resources(uint32_t viewport_id)
+try
 {
-    if (!g_sl_api.is_loaded() || !g_sl_api.sl_free_resources)
+    if (!g_sl_api.is_initialized() || !g_sl_api.sl_free_resources)
     {
         return static_cast<int32_t>(sl::Result::eErrorNotInitialized);
     }
@@ -811,4 +904,8 @@ int32_t truvixx_sl_dlss_rr_free_resources(uint32_t viewport_id)
     const sl::ViewportHandle viewport{ viewport_id };
     const sl::Result result = g_sl_api.sl_free_resources(sl::kFeatureDLSS_RR, viewport);
     return static_cast<int32_t>(result);
+}
+catch (...)
+{
+    return static_cast<int32_t>(sl::Result::eErrorExceptionHandler);
 }

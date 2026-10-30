@@ -330,10 +330,10 @@ impl SharcTargets {
     /// accumulation / resolved 元素字节数（均 16B），与 shader voxel data 元素一致。
     const VOXEL_DATA_SIZE: vk::DeviceSize = 16;
 
+    /// STORAGE_BUFFER 供 RT/Resolve 读写，TRANSFER_DST 供 `cmd_fill_buffer` 清零；
+    /// 通过独立 regular descriptor set 绑定，不需要 SHADER_DEVICE_ADDRESS。
     pub fn new(resource_ctx: GfxResourceCtx<'_>, immediate_ctx: GfxImmediateCtx<'_>) -> Self {
         let capacity = Self::CAPACITY;
-        // STORAGE_BUFFER 供 RT/Resolve 读写，TRANSFER_DST 供 `cmd_fill_buffer` 清零；
-        // 通过 pass-local push descriptor 绑定，不需要 SHADER_DEVICE_ADDRESS。
         let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
         let make = |size: vk::DeviceSize, name: &str| GfxBuffer::new(resource_ctx, size, usage, None, false, name);
         let hash_entries = make(capacity as vk::DeviceSize * Self::HASH_ENTRY_SIZE, "sharc-hash-entries");

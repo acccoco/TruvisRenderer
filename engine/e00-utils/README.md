@@ -28,8 +28,11 @@
   `paths.toml` 不自动生成 Cargo/CMake/Nushell 配置；改动 `build`、`external`、`config` 等映射时，需同时核对
   `.cargo/config.toml`、CMake presets/SDK 路径和 `scripts/nu/` 的固定路径。当前这些入口的默认值一致。
 - `truvis-shader-manifest/`：依赖 `truvis-path`，解析并校验 shader package、编译器、输出前缀与 binding
-  配置；不检查目录和编译器是否存在。
+  配置；shared input 的 layer 必须与 include root 下的 `abi/` 或 `lib/` 前缀一致。
+  不检查目录和编译器是否存在。
 - `truvis-shader-build/`：由 manifest 驱动的 SPIR-V 全量/增量编译与依赖校验。
+  源码预检只接受完整字面量 include/import，处理注释和续行后按 owner 逐边检查引用；被引用文本即使
+  没有标准扩展也检查，并拒绝源文件相对目录遮蔽 include root。宏路径不能交给扁平 depfile 验证层级。
   entry/shared input 按 SHA-256 内容摘要判断变化；仅更新时间戳不失效。任务发现和输入遍历错误直接报错，
   在输出清理前完成全部输入检查。只解析当前任务使用的编译器；bare 名称从 PATH 查找（Windows 补 `.exe`），
   指纹与执行使用同一绝对路径。编译器 executable 内容 hash 或同目录 DLL 路径/长度/mtime 变化使本轮全部任务失效，未使用工具缺失不阻塞构建。

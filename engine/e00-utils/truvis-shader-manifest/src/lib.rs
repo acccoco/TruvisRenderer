@@ -344,6 +344,17 @@ impl ShaderManifest {
                     let prefix = shared_path
                         .strip_prefix(&matching_roots[0])
                         .context("已匹配的 shared input 无法计算 include prefix")?;
+                    // layer 决定逐边权限，不能让目录仍在 ABI 下却通过改标注获得 lib 权限。
+                    let layer_prefix = match shared_input.layer {
+                        ShaderSourceLayer::Abi => "abi",
+                        ShaderSourceLayer::Lib => "lib",
+                    };
+                    if !prefix.starts_with(layer_prefix) {
+                        bail!(
+                            "shader shared input '{}' 的 layer 与 include 路径前缀不一致，预期 '{layer_prefix}/<owner>'",
+                            shared_input.path
+                        );
+                    }
                     if prefix.components().filter(|component| matches!(component, Component::Normal(_))).count() < 2 {
                         bail!(
                             "shader shared input '{}' 必须在 include_root 下保留 layer/owner 前缀",

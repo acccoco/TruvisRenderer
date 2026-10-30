@@ -66,6 +66,14 @@ cmake --build --preset vs2026-build-debug
 - 对 Rust 暴露的 target 必须是 SHARED library，并只跨 DLL 暴露 `extern "C"`、固定宽度 POD 或 opaque handle。
 - allocation/free、handle 生命周期和 callback 线程由 public C API 明确约束；exception、STL container 和 allocator
   ownership 不跨 DLL。
+- Assimp 加载入口用 native RAII 管理未发布的 scene；普通导入失败返回可查询错误且必须释放的句柄，
+  C++ 异常返回 null。Rust asset reader 通过 guard 对称释放，并在返回后台结果前复制全部借用数据。
+  模型及外部纹理路径显式按 UTF-8 转换，外部纹理输出绝对路径。固定 C ABI 路径数组容纳不了完整路径时，
+  material_get 返回失败且不修改输出；不将截断的文件名作为成功结果。
+  mesh fill 与 instance refs 显式接收输出元素容量，容量不足时失败且不改写任何输出；
+  空数组复制不访问指针，缺失的可选 normal/tangent 仍返回失败。容量单位与借用前置见 public header。
+  所有 mesh 借用数组由 SceneData 持有实际 C API 元素对象，加载完成后不再依赖 Assimp 顶点类型别名。
+  原始 aiScene 在全部转换完成后释放；转换期间有临时双份属性存储。视图只读且有效至 scene_free，禁止并发释放。
 - binding crate 的 `build.rs` 单向读取 module header，经公共 codegen 生成到
   `build/bindings/{TARGET}/cxx/{crate}/`，再链接部署到 Cargo profile 目录的 import library。
 - CMake/native project 不知道 Cargo crate，也不得链接或回调 Rust symbol。

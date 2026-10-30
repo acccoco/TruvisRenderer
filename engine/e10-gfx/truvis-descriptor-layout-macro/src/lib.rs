@@ -1,201 +1,180 @@
+use std::collections::BTreeSet;
+
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Attribute, Data, DeriveInput, Fields, Meta, parse_macro_input};
+use syn::{Attribute, Data, DeriveInput, Expr, Fields, Ident, Lit, LitStr, Meta, parse_macro_input};
 
-/// 为结构体实现 DescriptorBinding 派生宏
-///
-/// 支持的属性：
-/// - binding: 指定绑定点编号
-/// - descriptor_type: 指定描述符类型（如 UNIFORM_BUFFER, COMBINED_IMAGE_SAMPLER 等）
-/// - count: 指定描述符数量
-/// - stage: 指定着色器阶段（如 VERTEX, FRAGMENT 等）
-/// - flags: 指定描述符绑定标志（如 UPDATE_AFTER_BIND, PARTIALLY_BOUND 等）
+/// 为具名字段结构体生成 descriptor getter 与 DescriptorBindingLayout。
+/// 每个字段必须声明整数 binding；descriptor_type/count/stage/flags 可以省略，显式非法属性必须报错。
 #[proc_macro_derive(DescriptorBinding, attributes(binding, descriptor_type, count, stage, flags))]
 pub fn derive_descriptor_binding(input: TokenStream) -> TokenStream {
-    // 解析输入为 DeriveInput 结构
     let input = parse_macro_input!(input as DeriveInput);
-    let struct_name = &input.ident;
+    BindingField::expand(&input).unwrap_or_else(|error| error.into_compile_error().into())
+}
 
-    // 只处理结构体类型，且只支持具名字段
-    let fields = match &input.data {
-        Data::Struct(data) => match &data.fields {
-            Fields::Named(fields) => &fields.named,
-            _ => panic!("Only named fields are supported"),
-        },
-        _ => panic!("Only structs are supported"),
-    };
+/// 一个字段的完整声明；解析和生成共用这一份配置，避免 getter 与 layout 投影漂移。
+struct BindingField {
+    name: Ident,
+    method: Ident,
+    binding: u32,
+    descriptor_type: Expr,
+    count: Expr,
+    stage: Expr,
+    flags: Expr,
+}
 
-    // 收集字段信息：名称、绑定、描述符类型、数量、着色器阶段和标志
-    let mut field_infos = Vec::new();
-
-    for field in fields {
-        let field_name = field.ident.as_ref().unwrap();
-        let binding = get_binding_value(&field.attrs);
-        let descriptor_type = get_descriptor_type(&field.attrs);
-        let count = get_count_value(&field.attrs);
-        let stage = get_stage_value(&field.attrs);
-        let flags = get_flags_value(&field.attrs);
-
-        if let Some(binding) = binding {
-            // 创建不带前后缀下划线的方法名
-            let method_name = syn::Ident::new(field_name.to_string().trim_matches('_'), field_name.span());
-            field_infos.push((field_name, method_name, binding, descriptor_type, count, stage, flags));
+impl BindingField {
+    fn parse(field: &syn::Field) -> syn::Result<Self> {
+        let name = field.ident.as_ref().expect("已检查具名字段").clone();
+        let method_text = name.to_string();
+        let mut method = syn::parse_str::<Ident>(method_text.trim_matches('_'))
+            .map_err(|_| syn::Error::new_spanned(&name, "去掉首尾下划线后必须是有效方法名"))?;
+        method.set_span(name.span());
+        if matches!(method.to_string().trim_start_matches("r#"), "get_shader_bindings" | "get_vk_bindings") {
+            return Err(syn::Error::new_spanned(&name, "字段方法名与 DescriptorBindingLayout 冲突"));
         }
+
+        let binding = Self::value(&field.attrs, "binding")?
+            .ok_or_else(|| syn::Error::new_spanned(&name, "descriptor 字段必须声明 #[binding = 整数]"))?;
+        let binding = match binding {
+            Expr::Lit(value) => match &value.lit {
+                Lit::Int(value) => value.base10_parse::<u32>()?,
+                _ => return Err(syn::Error::new_spanned(binding, "binding 必须是 u32 整数")),
+            },
+            _ => return Err(syn::Error::new_spanned(binding, "binding 必须是 u32 整数")),
+        };
+        let descriptor_type = match Self::value(&field.attrs, "descriptor_type")? {
+            Some(value) => {
+                let text = Self::string(value)?;
+                let member = Self::member(text, text.value().trim())?;
+                syn::parse_quote!(vk::DescriptorType::#member)
+            }
+            None => syn::parse_quote!(vk::DescriptorType::UNIFORM_BUFFER),
+        };
+        let count = match Self::value(&field.attrs, "count")? {
+            Some(Expr::Lit(value)) if matches!(&value.lit, Lit::Str(_)) => {
+                let Lit::Str(text) = &value.lit else { unreachable!() };
+                text.parse::<Expr>()?
+            }
+            Some(value) => value.clone(),
+            None => syn::parse_quote!(1),
+        };
+        let stage = Self::flags(
+            Self::value(&field.attrs, "stage")?,
+            syn::parse_quote!(vk::ShaderStageFlags),
+            syn::parse_quote!(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT),
+        )?;
+        let flags = Self::flags(
+            Self::value(&field.attrs, "flags")?,
+            syn::parse_quote!(vk::DescriptorBindingFlags),
+            syn::parse_quote!(vk::DescriptorBindingFlags::empty()),
+        )?;
+        Ok(Self {
+            name,
+            method,
+            binding,
+            descriptor_type,
+            count,
+            stage,
+            flags,
+        })
     }
 
-    // 生成获取绑定信息的方法
-    let field_names = field_infos.iter().map(|(name, ..)| name).collect::<Vec<_>>();
-    let method_names = field_infos.iter().map(|(_, method_name, ..)| method_name).collect::<Vec<_>>();
-    let binding_values = field_infos.iter().map(|(_, _, binding, ..)| binding).collect::<Vec<_>>();
-    let descriptor_types = field_infos.iter().map(|(_, _, _, descriptor_type, ..)| descriptor_type).collect::<Vec<_>>();
-    let counts = field_infos.iter().map(|(.., count, _, _)| count).collect::<Vec<_>>();
-    let stages = field_infos.iter().map(|(.., stage, _)| stage).collect::<Vec<_>>();
-    let flags = field_infos.iter().map(|(.., flags)| flags).collect::<Vec<_>>();
+    /// 默认值只表示属性缺省，不能掩盖重复属性或错误语法。
+    fn value<'a>(attrs: &'a [Attribute], name: &str) -> syn::Result<Option<&'a Expr>> {
+        let mut value = None;
+        for attr in attrs.iter().filter(|attr| attr.path().is_ident(name)) {
+            if value.is_some() {
+                return Err(syn::Error::new_spanned(attr, format!("重复的 {name} 属性")));
+            }
+            let Meta::NameValue(meta) = &attr.meta else {
+                return Err(syn::Error::new_spanned(attr, format!("{name} 必须使用 #[{name} = 值]")));
+            };
+            value = Some(&meta.value);
+        }
+        Ok(value)
+    }
 
-    // 生成代码：
-    // 1. 实现 get_shader_bindings 方法，返回字段名和绑定值的元组数组
-    // 2. 实现 DescriptorBindingLayout trait，返回完整的 DescriptorBindingItem 数组
-    let expanded = quote! {
-        impl #struct_name {
-            #(
-                pub fn #method_names() -> &'static truvis_descriptor_layout_trait::DescriptorBindingItem {
-                    // OnceLock 的开销：get 大约是 1~3 cycles
-                    static CURSOR: std::sync::OnceLock<truvis_descriptor_layout_trait::DescriptorBindingItem> = std::sync::OnceLock::new();
-                    CURSOR.get_or_init(|| truvis_descriptor_layout_trait::DescriptorBindingItem{
-                        name: stringify!(#field_names).trim_matches('_'),
-                        binding: #binding_values,
-                        descriptor_type: #descriptor_types,
-                        stage_flags: #stages,
-                        count: #counts,
-                        flags: #flags,
-                    })
+    fn string(value: &Expr) -> syn::Result<&LitStr> {
+        if let Expr::Lit(value) = value
+            && let Lit::Str(text) = &value.lit
+        {
+            return Ok(text);
+        }
+        Err(syn::Error::new_spanned(value, "属性值必须是字符串"))
+    }
+
+    fn member(text: &LitStr, name: &str) -> syn::Result<Ident> {
+        let mut ident = syn::parse_str::<Ident>(name)
+            .map_err(|_| syn::Error::new_spanned(text, "必须填写 Vulkan 常量名；flags 以 | 分隔"))?;
+        ident.set_span(text.span());
+        Ok(ident)
+    }
+
+    fn flags(value: Option<&Expr>, ty: syn::Path, default: Expr) -> syn::Result<Expr> {
+        let Some(value) = value else { return Ok(default) };
+        let text = Self::string(value)?;
+        let members =
+            text.value().split('|').map(|name| Self::member(text, name.trim())).collect::<syn::Result<Vec<_>>>()?;
+        syn::parse2(quote!(#(#ty::#members)|*))
+    }
+
+    fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
+        for attr in &input.attrs {
+            if ["binding", "descriptor_type", "count", "stage", "flags"].iter().any(|name| attr.path().is_ident(name)) {
+                return Err(syn::Error::new_spanned(attr, "descriptor 属性只能标注字段"));
+            }
+        }
+        if !input.generics.params.is_empty() || input.generics.where_clause.is_some() {
+            return Err(syn::Error::new_spanned(&input.generics, "descriptor layout 不支持泛型声明"));
+        }
+        let Data::Struct(data) = &input.data else {
+            return Err(syn::Error::new_spanned(input, "DescriptorBinding 只支持具名字段结构体"));
+        };
+        let Fields::Named(fields) = &data.fields else {
+            return Err(syn::Error::new_spanned(input, "DescriptorBinding 只支持具名字段结构体"));
+        };
+        let fields = fields.named.iter().map(Self::parse).collect::<syn::Result<Vec<_>>>()?;
+        let mut bindings = BTreeSet::new();
+        let mut methods = BTreeSet::new();
+        for field in &fields {
+            if !bindings.insert(field.binding) {
+                return Err(syn::Error::new_spanned(&field.name, "同一 layout 的 binding 编号不能重复"));
+            }
+            if !methods.insert(field.method.to_string().trim_start_matches("r#").to_owned()) {
+                return Err(syn::Error::new_spanned(&field.name, "去掉首尾下划线后的方法名重复"));
+            }
+        }
+
+        let struct_name = &input.ident;
+        let names = fields.iter().map(|field| &field.name).collect::<Vec<_>>();
+        let methods = fields.iter().map(|field| &field.method).collect::<Vec<_>>();
+        let bindings = fields.iter().map(|field| field.binding).collect::<Vec<_>>();
+        let types = fields.iter().map(|field| &field.descriptor_type).collect::<Vec<_>>();
+        let counts = fields.iter().map(|field| &field.count).collect::<Vec<_>>();
+        let stages = fields.iter().map(|field| &field.stage).collect::<Vec<_>>();
+        let flags = fields.iter().map(|field| &field.flags).collect::<Vec<_>>();
+        Ok(quote! {
+            impl #struct_name {
+                #(
+                    pub fn #methods() -> &'static truvis_descriptor_layout_trait::DescriptorBindingItem {
+                        static ITEM: std::sync::OnceLock<truvis_descriptor_layout_trait::DescriptorBindingItem> = std::sync::OnceLock::new();
+                        ITEM.get_or_init(|| truvis_descriptor_layout_trait::DescriptorBindingItem {
+                            name: stringify!(#names).trim_matches('_'),
+                            binding: #bindings,
+                            descriptor_type: #types,
+                            stage_flags: #stages,
+                            count: #counts,
+                            flags: #flags,
+                        })
+                    }
+                )*
+            }
+            impl truvis_descriptor_layout_trait::DescriptorBindingLayout for #struct_name {
+                fn get_shader_bindings() -> Vec<truvis_descriptor_layout_trait::DescriptorBindingItem> {
+                    vec![#(*Self::#methods()),*]
                 }
-            )*
-        }
-
-        impl truvis_descriptor_layout_trait::DescriptorBindingLayout for #struct_name {
-            fn get_shader_bindings() -> Vec<truvis_descriptor_layout_trait::DescriptorBindingItem> {
-                vec![
-                    #(truvis_descriptor_layout_trait::DescriptorBindingItem {
-                        name: stringify!(#field_names).trim_matches('_'),
-                        binding: #binding_values,
-                        descriptor_type: #descriptor_types,
-                        stage_flags: #stages,
-                        count: #counts,
-                        flags: #flags,
-                    }),*
-                ]
             }
-        }
-    };
-
-    expanded.into()
-}
-
-/// 从字段属性中获取 binding 值
-///
-/// 属性格式示例：#[binding = 0]
-fn get_binding_value(attrs: &[Attribute]) -> Option<u32> {
-    for attr in attrs {
-        if attr.path().is_ident("binding")
-            && let Meta::NameValue(meta) = &attr.meta
-            && let syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Int(lit_int),
-                ..
-            }) = &meta.value
-        {
-            return Some(lit_int.base10_parse().unwrap());
-        }
+        }.into())
     }
-    None
-}
-
-/// 从字段属性中获取 descriptor_type 值
-///
-/// 属性格式示例：#[descriptor_type = "UNIFORM_BUFFER"]
-fn get_descriptor_type(attrs: &[Attribute]) -> syn::Expr {
-    for attr in attrs {
-        if attr.path().is_ident("descriptor_type")
-            && let Meta::NameValue(meta) = &attr.meta
-            && let syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Str(lit_str),
-                ..
-            }) = &meta.value
-        {
-            let descriptor_type = format!("vk::DescriptorType::{}", lit_str.value().as_str());
-            return syn::parse_str(&descriptor_type).unwrap();
-        }
-    }
-    // 默认值：统一缓冲区
-    syn::parse_quote!(vk::DescriptorType::UNIFORM_BUFFER)
-}
-
-/// 从字段属性中获取 count 值
-///
-/// 属性格式示例：#[count = 1] 或 #[count = "generated::COUNT"]。
-/// 字符串表达式允许 descriptor 数量直接引用生成 ABI，避免手工容量与 shader 枚举漂移。
-fn get_count_value(attrs: &[Attribute]) -> syn::Expr {
-    for attr in attrs {
-        if attr.path().is_ident("count")
-            && let Meta::NameValue(meta) = &attr.meta
-        {
-            if let syn::Expr::Lit(expr) = &meta.value
-                && let syn::Lit::Str(value) = &expr.lit
-            {
-                return syn::parse_str(&value.value()).expect("count must be a valid Rust expression");
-            }
-            return meta.value.clone();
-        }
-    }
-    // 默认值：1
-    syn::parse_quote!(1)
-}
-
-/// 从字段属性中获取 stage 值
-///
-/// 属性格式示例：#[stage = "VERTEX | FRAGMENT"]
-fn get_stage_value(attrs: &[Attribute]) -> syn::Expr {
-    for attr in attrs {
-        if attr.path().is_ident("stage")
-            && let Meta::NameValue(meta) = &attr.meta
-            && let syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Str(lit_str),
-                ..
-            }) = &meta.value
-        {
-            let stage = lit_str.value();
-            let stage_flags =
-                stage.split(" | ").map(|s| format!("vk::ShaderStageFlags::{}", s)).collect::<Vec<_>>().join(" | ");
-            return syn::parse_str(&stage_flags).unwrap();
-        }
-    }
-
-    // 默认值：顶点和片段着色器
-    syn::parse_quote!(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
-}
-
-/// 从字段属性中获取 flags 值
-///
-/// 属性格式示例：#[flags = "UPDATE_AFTER_BIND | PARTIALLY_BOUND"]
-fn get_flags_value(attrs: &[Attribute]) -> syn::Expr {
-    for attr in attrs {
-        if attr.path().is_ident("flags")
-            && let Meta::NameValue(meta) = &attr.meta
-            && let syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Str(lit_str),
-                ..
-            }) = &meta.value
-        {
-            let flags = lit_str.value();
-            let binding_flags = flags
-                .split(" | ")
-                .map(|s| format!("vk::DescriptorBindingFlags::{}", s))
-                .collect::<Vec<_>>()
-                .join(" | ");
-            return syn::parse_str(&binding_flags).unwrap();
-        }
-    }
-
-    // 默认值：空标志
-    syn::parse_quote!(vk::DescriptorBindingFlags::empty())
 }

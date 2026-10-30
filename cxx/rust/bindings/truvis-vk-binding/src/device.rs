@@ -26,8 +26,12 @@ pub struct Device {
 
 impl Device {
     /// 使用已有 ash Instance 的原生查询入口，不另外加载系统 loader 或 Streamline。
-    /// instance 和 device 必须仍有效且来自同一创建链路；本方法不保存它们的 Rust 引用。
-    pub fn new(instance: &ash::Instance, device: &ash::Device) -> Result<Self, LoadError> {
+    /// 本方法不保存 ash 引用；Rust wrapper 存活不等于原生对象或 loader 仍有效。
+    ///
+    /// # Safety
+    /// device 必须是由 instance 创建且尚未销毁的原生设备；instance 的函数表及所属 loader
+    /// 必须在查询期间有效，不得与销毁或卸载并发。后续命令调用仍需保持同一链路存活。
+    pub unsafe fn new(instance: &ash::Instance, device: &ash::Device) -> Result<Self, LoadError> {
         let mut dispatch = ffi::TruvixxVkDeviceDispatch::default();
         let loaded = unsafe {
             ffi::truvixx_vk_device_init(
@@ -46,9 +50,12 @@ impl Device {
 
     /// 使用已有 ash descriptor 数组同步录制，不保留数组或其 pNext / 嵌套指针。
     ///
+    /// # Panics
+    /// descriptor_writes 为空或长度超出 u32 时，在进入 native 前 panic。
+    ///
     /// # Safety
     /// command_buffer、layout 和 descriptor 资源必须属于初始化时的 Device，并满足
-    /// vkCmdPushDescriptorSetKHR 的有效用法，包括非空 writes、push descriptor layout、
+    /// vkCmdPushDescriptorSetKHR 的有效用法，包括 push descriptor layout、
     /// 合法录制状态和外部同步。调用期间所有 CPU 指针及 Device / Instance / Entry 必须有效；
     /// 被引用的 GPU 资源必须保持到相关提交完成。本接口在项目中只由 RenderThread 调用。
     #[inline]
@@ -60,6 +67,7 @@ impl Device {
         set: u32,
         descriptor_writes: &[vk::WriteDescriptorSet<'_>],
     ) {
+        assert!(!descriptor_writes.is_empty(), "push descriptor writes must not be empty");
         let count = u32::try_from(descriptor_writes.len()).expect("descriptor write count exceeds u32");
         unsafe {
             ffi::truvixx_vk_cmd_push_descriptor_set_khr(

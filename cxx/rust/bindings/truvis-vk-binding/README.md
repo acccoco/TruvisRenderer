@@ -5,12 +5,15 @@
 
 ## 使用与生命周期
 
-`Device::new(&ash::Instance, &ash::Device) -> Result<Device, LoadError>` 将设备句柄和 Instance 的
+`unsafe Device::new(&ash::Instance, &ash::Device) -> Result<Device, LoadError>` 将设备句柄和 Instance 的
 `get_device_proc_addr` 原生函数指针交给 C++。命令缺失时返回包含名称的 `LoadError`，不静默回退。
+调用方必须保证原生设备由该 Instance 创建且仍有效，查询不与销毁或 loader 卸载并发；
+ash 引用本身不拥有原生资源，不能证明这些前置。
 
 `unsafe Device::cmd_push_descriptor_set` 与 ash 对应扩展方法具有相同的命令参数：
 `vk::CommandBuffer`、`vk::PipelineBindPoint`、`vk::PipelineLayout`、`u32` 和
 `&[vk::WriteDescriptorSet<'_>]`，返回 `()`。
+空 writes 或长度超过 u32 会在进入 native 前 panic；不能将空列表作为一次合法的 push 命令。
 
 - `GfxDevice` 持有 wrapper；初始化失败时，Gfx 回收尚未交付的 Vulkan Device。
 - wrapper 的私有 POD 表仅借用句柄和函数地址，不保存 ash 引用、不负责 Vulkan release。

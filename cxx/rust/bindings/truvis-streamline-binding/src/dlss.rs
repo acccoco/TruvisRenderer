@@ -1,7 +1,9 @@
-//! DLSS SR 的 Streamline C ABI 封装。
+//! DLSS SR/RR 的 Streamline C ABI 封装。
 //!
 //! 本模块保持在 raw Vulkan handle 层，不依赖 `ash`。调用方负责保证这些 handle
-//! 来自已经被 Streamline interposer 看到的 Vulkan root，并且资源生命周期覆盖 evaluate。
+//! 来自已经被 Streamline interposer 看到的 Vulkan root，并且资源生命周期覆盖 GPU 使用。
+//! 所有 SDK 入口均为 unsafe：自由入口不借用 runtime，不能由其 !Send/!Sync 推导调用安全。
+//! 调用方必须在 runtime 存活期间按宿主串行契约调用，不能与 init/shutdown 或其它 SDK 入口竞争。
 
 use crate::{runtime::StreamlineError, truvixx};
 
@@ -278,7 +280,10 @@ fn check(result: i32, context: &'static str) -> Result<(), StreamlineError> {
     if result == 0 { Ok(()) } else { Err(StreamlineError::new(result, context)) }
 }
 
-pub fn set_vulkan_info(info: VulkanInfo) -> Result<(), StreamlineError> {
+///
+/// # Safety
+/// 调用须满足模块级串行与 runtime 存活契约。instance/physical_device/device 必须有效且属于同一 Vulkan root；queue family/index 必须来自该 device，根对象须覆盖 SDK 使用期。仅供手动 hook 路径使用。
+pub unsafe fn set_vulkan_info(info: VulkanInfo) -> Result<(), StreamlineError> {
     let ffi = truvixx::TruvixxSlVulkanInfo {
         instance: info.instance,
         physical_device: info.physical_device,
@@ -294,7 +299,10 @@ pub fn set_vulkan_info(info: VulkanInfo) -> Result<(), StreamlineError> {
 /// 查询当前物理设备是否支持 DLSS SR。
 ///
 /// 该函数只做 capability 发现，不分配 DLSS resource；即使查询失败，调用方也可以继续 native 渲染。
-pub fn query_support(physical_device: u64) -> Result<DlssSupport, StreamlineError> {
+///
+/// # Safety
+/// 调用须满足模块级串行与 runtime 存活契约；physical_device 必须属于当前 Streamline Vulkan root，且其 instance 在查询期间存活。
+pub unsafe fn query_support(physical_device: u64) -> Result<DlssSupport, StreamlineError> {
     let mut ffi = truvixx::TruvixxSlFeatureSupport::default();
     let result = unsafe { truvixx::truvixx_sl_dlss_query_support(physical_device, &mut ffi) };
     if result != 0 {
@@ -309,7 +317,10 @@ pub fn query_support(physical_device: u64) -> Result<DlssSupport, StreamlineErro
 }
 
 /// 查询当前物理设备是否支持 DLSS Ray Reconstruction。
-pub fn query_rr_support(physical_device: u64) -> Result<DlssSupport, StreamlineError> {
+///
+/// # Safety
+/// 调用须满足模块级串行与 runtime 存活契约；physical_device 必须属于当前 Streamline Vulkan root，且其 instance 在查询期间存活。
+pub unsafe fn query_rr_support(physical_device: u64) -> Result<DlssSupport, StreamlineError> {
     let mut ffi = truvixx::TruvixxSlFeatureSupport::default();
     let result = unsafe { truvixx::truvixx_sl_dlss_rr_query_support(physical_device, &mut ffi) };
     if result != 0 {
@@ -326,7 +337,10 @@ pub fn query_rr_support(physical_device: u64) -> Result<DlssSupport, StreamlineE
 /// 根据 output extent 和 SR mode 查询推荐 render extent。
 ///
 /// Runtime 会把失败视为 native fallback；本函数不修改 `DlssOptions`，只返回 Streamline 结果。
-pub fn get_optimal_settings(options: DlssOptions) -> Result<DlssOptimalSettings, StreamlineError> {
+///
+/// # Safety
+/// 调用须满足模块级串行与 runtime 存活契约；虽然只返回数值，native 仍会懒解析并写入进程级函数表。
+pub unsafe fn get_optimal_settings(options: DlssOptions) -> Result<DlssOptimalSettings, StreamlineError> {
     let ffi_options = options.to_ffi();
     let mut ffi_settings = truvixx::TruvixxSlDlssOptimalSettings::default();
     check(
@@ -337,7 +351,10 @@ pub fn get_optimal_settings(options: DlssOptions) -> Result<DlssOptimalSettings,
 }
 
 /// 根据 output extent 和 RR mode 查询推荐 render extent。
-pub fn get_rr_optimal_settings(options: DlssRrOptions) -> Result<DlssOptimalSettings, StreamlineError> {
+///
+/// # Safety
+/// 调用须满足模块级串行与 runtime 存活契约；虽然只返回数值，native 仍会懒解析并写入进程级函数表。
+pub unsafe fn get_rr_optimal_settings(options: DlssRrOptions) -> Result<DlssOptimalSettings, StreamlineError> {
     let ffi_options = options.to_ffi();
     let mut ffi_settings = truvixx::TruvixxSlDlssOptimalSettings::default();
     check(
@@ -350,14 +367,20 @@ pub fn get_rr_optimal_settings(options: DlssRrOptions) -> Result<DlssOptimalSett
 /// 设置当前 viewport 的 DLSS SR options。
 ///
 /// 需要在 evaluate 前调用，且 options 的 output extent 必须与 tagged output color 一致。
-pub fn set_options(viewport_id: u32, options: DlssOptions) -> Result<(), StreamlineError> {
+///
+/// # Safety
+/// 调用须满足模块级串行与 runtime 存活契约；必须在对应 viewport 的 evaluate 前设置，output extent 与资源一致，资源配置变化须先完成旧 GPU 工作。
+pub unsafe fn set_options(viewport_id: u32, options: DlssOptions) -> Result<(), StreamlineError> {
     let ffi_options = options.to_ffi();
     check(unsafe { truvixx::truvixx_sl_dlss_set_options(viewport_id, &ffi_options) }, "DLSS set options")
 }
 
 /// 设置当前 viewport 的 DLSS Ray Reconstruction options。
 /// 相机矩阵属于逐帧数据，即使 mode/output extent 不变，也必须在 evaluate 前更新。
-pub fn set_rr_options(viewport_id: u32, options: DlssRrOptions) -> Result<(), StreamlineError> {
+///
+/// # Safety
+/// 调用须满足模块级串行与 runtime 存活契约；extent、相机矩阵须对应本帧资源，资源配置变化须先完成旧 GPU 工作。当前 evaluate_rr 仅支持 packed normal/roughness，必须设置 normal_roughness_packed=true。
+pub unsafe fn set_rr_options(viewport_id: u32, options: DlssRrOptions) -> Result<(), StreamlineError> {
     let ffi_options = options.to_ffi();
     check(unsafe { truvixx::truvixx_sl_dlss_rr_set_options(viewport_id, &ffi_options) }, "DLSS RR set options")
 }
@@ -367,7 +390,10 @@ pub fn set_rr_options(viewport_id: u32, options: DlssRrOptions) -> Result<(), St
 /// 调用方必须已经在同一个 command buffer 上准备好 resource layout，并保证 constants 与
 /// input/output extent 匹配。C++ wrapper 使用同一 frame token 提交 tags 并 evaluate；
 /// options 由 Renderer 在 mode/resize 边界集中设置。
-pub fn evaluate(desc: DlssEvaluateDesc) -> Result<(), StreamlineError> {
+///
+/// # Safety
+/// 调用须满足模块级串行与 runtime 存活契约。command buffer 必须在同一 Vulkan device 上录制，所有 image/view/memory、layout、extent 和 usage 必须真实匹配；同帧 constants/options/tags 必须一致。资源必须覆盖 GPU 执行，输出还须覆盖后续消费，不能把 tag 的 eValidUntilEvaluate 当成可立即释放 Vulkan 对象。
+pub unsafe fn evaluate(desc: DlssEvaluateDesc) -> Result<(), StreamlineError> {
     let ffi = truvixx::TruvixxSlDlssEvaluateDesc {
         frame_index: desc.frame_index,
         viewport_id: desc.viewport_id,
@@ -386,7 +412,10 @@ pub fn evaluate(desc: DlssEvaluateDesc) -> Result<(), StreamlineError> {
 /// 调用 `slEvaluateFeature(kFeatureDLSS_RR)`。
 ///
 /// C++ wrapper 在当前帧 resource tags 完成后 evaluate，由 SDK 在该帧创建所需的 feature resource。
-pub fn evaluate_rr(desc: DlssRrEvaluateDesc) -> Result<(), StreamlineError> {
+///
+/// # Safety
+/// 须满足 evaluate 的 runtime、串行、command buffer 与资源存活契约；本帧 RR options 必须已设置，normal/roughness 使用 packed 配置，全部 guide 与本帧输入一致。
+pub unsafe fn evaluate_rr(desc: DlssRrEvaluateDesc) -> Result<(), StreamlineError> {
     let ffi = truvixx::TruvixxSlDlssRrEvaluateDesc {
         frame_index: desc.frame_index,
         viewport_id: desc.viewport_id,
@@ -408,11 +437,17 @@ pub fn evaluate_rr(desc: DlssRrEvaluateDesc) -> Result<(), StreamlineError> {
 /// 释放指定 viewport 的 DLSS feature resources。
 ///
 /// mode 切回 Off、resize fallback 或 shutdown 前应确保相关 GPU work 已完成，再调用该函数。
-pub fn free_resources(viewport_id: u32) -> Result<(), StreamlineError> {
+///
+/// # Safety
+/// 调用须满足模块级串行与 runtime 存活契约；必须先完成所有引用该 viewport feature 的 GPU 工作，并确保已录制但尚未提交的旧命令不会再次使用该 feature。
+pub unsafe fn free_resources(viewport_id: u32) -> Result<(), StreamlineError> {
     check(unsafe { truvixx::truvixx_sl_dlss_free_resources(viewport_id) }, "DLSS free resources")
 }
 
 /// 释放指定 viewport 的 DLSS Ray Reconstruction feature resources。
-pub fn free_rr_resources(viewport_id: u32) -> Result<(), StreamlineError> {
+///
+/// # Safety
+/// 调用须满足 free_resources 的 runtime、串行与 GPU 完成契约，释放对象为该 viewport 的 RR feature。
+pub unsafe fn free_rr_resources(viewport_id: u32) -> Result<(), StreamlineError> {
     check(unsafe { truvixx::truvixx_sl_dlss_rr_free_resources(viewport_id) }, "DLSS RR free resources")
 }

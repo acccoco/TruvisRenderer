@@ -16,8 +16,8 @@ use crate::{config::StreamlineInitInfo, log_bridge::StreamlineLogBridge, truvixx
 
 /// Streamline wrapper 错误。
 ///
-/// `sl_result` 是 `sl::Result` 的原始整数值（0 = 成功）。
-/// 具体错误细节通过日志桥的 error 级别消息获取。
+/// native 错误保留 `sl::Result` 的原始整数值（0 = 成功）；Rust 路径/线程前置失败使用 -1。
+/// 错误携带调用上下文和结果码；SDK/loader 的补充诊断通过日志桥获取，并非每个失败都有日志。
 #[derive(Debug, Clone)]
 pub struct StreamlineError {
     sl_result: i32,
@@ -29,7 +29,7 @@ impl StreamlineError {
         Self { sl_result, context }
     }
 
-    /// `sl::Result` 的原始整数值，0 表示成功。
+    /// native 失败的 `sl::Result` 原始值；Rust 路径/线程前置失败使用 -1。
     #[inline]
     pub fn sl_result(&self) -> i32 {
         self.sl_result
@@ -60,11 +60,19 @@ impl StreamlineRuntime {
     ///
     /// 默认假设 `cxx-build` 已把 Streamline runtime 复制到当前 executable 所在目录。
     pub fn init_default() -> Result<Self, StreamlineError> {
-        Self::init(StreamlineInitInfo::default())
+        let info = StreamlineInitInfo::from_current_exe().map_err(|err| {
+            log::error!("Failed to resolve Streamline executable directory: {}", err);
+            StreamlineError::new(-1, "default plugin directory")
+        })?;
+        Self::init(info)
     }
 
     /// 按 Rust 侧配置初始化 Streamline feature。
     pub fn init(info: StreamlineInitInfo) -> Result<Self, StreamlineError> {
+        let info = info.resolve_paths().map_err(|err| {
+            log::error!("Invalid Streamline runtime paths: {}", err);
+            StreamlineError::new(-1, "runtime paths")
+        })?;
         // 这个路径承担两个角色：
         // 1. 传给 C++ wrapper，由 LoadLibraryW 显式解析 slInit/slShutdown；
         // 2. 保存在 StreamlineRuntime 中，随后由 Gfx::new 传给 ash::Entry::load_from。

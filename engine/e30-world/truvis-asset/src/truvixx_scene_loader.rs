@@ -261,8 +261,8 @@ impl TruvixxSceneReader<'_> {
 
     /// 复制一个 material 的 CPU 参数。
     ///
-    /// material 中的 texture path 保留 importer 原始表达，不在后台线程解析相对路径。
-    /// 这样路径解析、texture handle 分配和 scene 依赖更新仍统一收敛在 `AssetSystem`。
+    /// native importer 返回外部纹理的 UTF-8 绝对路径；此处只复制，不重复拼接 scene 目录。
+    /// 文件身份规范化、texture handle 分配和 scene 依赖更新仍由 `AssetSystem` 完成。
     fn copy_material(&self, material_index: u32) -> Result<RawMaterialData, String> {
         let mut mat = truvixx::TruvixxMat::default();
         let res = unsafe { truvixx::truvixx_material_get(self.handle(), material_index, &mut mat as *mut _) };
@@ -280,7 +280,7 @@ impl TruvixxSceneReader<'_> {
                 textures[channel as usize] = Some(TextureSlot::new(RawTextureSource::ExternalPath(PathBuf::from(path))));
             }
         }
-        // texture 路径保持为导入器原始表达，稍后由 AssetSystem 根据 scene 路径统一解析。
+        // 保留 native 的绝对路径，稍后由 AssetSystem 统一规范化文件身份。
         Ok(RawMaterialData {
             base_color: Self::truvixx_float4_to_vec4(mat.base_color),
             metallic: mat.metallic,
@@ -321,8 +321,7 @@ impl TruvixxSceneReader<'_> {
         }
 
         let mesh_count = instance.mesh_count as usize;
-        // C API 要求调用方提供至少 mesh_count 长度的输出数组。数组只作为 FFI
-        // 临时写入缓冲，成功后立即被 Rust iterator 消费。
+        // 两个 FFI 临时数组均按 mesh_count 分配，并向 C API 声明该元素容量。
         let mut mesh_indices = vec![0_u32; mesh_count];
         let mut material_indices = vec![0_u32; mesh_count];
 
@@ -332,6 +331,7 @@ impl TruvixxSceneReader<'_> {
                 instance_index,
                 mesh_indices.as_mut_ptr(),
                 material_indices.as_mut_ptr(),
+                instance.mesh_count,
             )
         };
         if res != truvixx::ResType_ResTypeSuccess {

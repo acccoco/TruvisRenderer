@@ -69,10 +69,9 @@ static const uint SET_NUM = engine::binding::GLOBAL_SETS_COUNT;
 
 /// SHARC buffer 专用 descriptor set 编号。
 ///
-/// SHARC 的三个 buffer 放在独立 push descriptor set，而不是塞进 `SET_NUM`：后者已有 32 个
-/// binding（ReSTIR/GBuffer），而 `maxPushDescriptors` 在 NVIDIA/AMD 上通常正好是 32，再加 3 个会超限。
-/// 拆成独立 set 后每个 push set 都 ≤ 32，且 SHARC 资源边界更清晰。Rust 侧 pipeline layout 必须按
-/// `SET_NUM, SHARC_SET_NUM` 的顺序追加这两个 set。
+/// SHARC 的三个持久 buffer 使用独立 regular descriptor set，不占用 `SET_NUM` 的 32 个 push binding。
+/// Rust 侧 pipeline layout 按 `SET_NUM`（push）、`SHARC_SET_NUM`（regular）的顺序追加这两个 set；
+/// 不能把 SHARC 改成第二个 push set。资源创建时写入 regular set，dispatch 前只绑定该 set。
 static const uint SHARC_SET_NUM = engine::binding::GLOBAL_SETS_COUNT + 1;
 
 #ifdef __SLANG__
@@ -180,9 +179,9 @@ RWTexture2D<float4> restir_history_surface_b;
 RWTexture2D<float4> restir_history_surface_c;
 
 // ========== SHARC world-space radiance cache buffers ==========
-// 这三个 buffer 是 SHARC 的世界空间持久缓存，由 app 层 `SharcTargets` 创建并清零，放在独立的
-// `SHARC_SET_NUM` push descriptor set（见上方说明）。binding 顺序是 shader ABI：Rust 侧
-// `SharcDescriptorBinding` 必须按同一 set / binding 绑定。元素类型定义在本文件顶部全局作用域。
+/// 这三个 buffer 是 Renderer 的 SHARC 持久缓存，由 `SharcTargets` 创建并清零，使用独立 regular set。
+/// binding 顺序是 shader ABI：Rust 侧 `SharcDescriptorBinding` 必须按同一 set / binding 绑定。
+/// 元素类型定义在本文件顶部全局作用域。
 
 /// hash entry buffer：每 entry 一个 uint64 spatial hash key（0 表示空槽）。slot 抢占用 64-bit atomic。
 [[vk::binding(0, SHARC_SET_NUM)]]

@@ -22,7 +22,7 @@ struct MyShader {
     /// 纹理采样器，绑定到绑定点 1
     /// 仅用于片段着色器
     #[binding = 1]
-    #[descriptor_type = "UNIFORM_BUFFER_DYNAMIC"]
+    #[descriptor_type = "COMBINED_IMAGE_SAMPLER"]
     #[count = 1]
     #[stage = "FRAGMENT"]
     _texture: (),
