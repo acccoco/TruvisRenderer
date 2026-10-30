@@ -82,20 +82,22 @@ impl SceneInitializer {
         };
 
         match world.scene_import_status(handle) {
-            LoadStatus::Unloaded | LoadStatus::Loading => {}
-            LoadStatus::Failed => {
+            Some(LoadStatus::Unloaded | LoadStatus::Loading) => {}
+            Some(LoadStatus::Failed) => {
+                // 先结束等待，诊断 unwind 后也不能再次消费同一个终态结果。
+                self.pending_scene_import = None;
                 let error = world.scene_import_error(handle).unwrap_or("unknown scene import error");
                 log::error!("failed to load {} scene ({}): {error}", self.preset.name(), self.preset.source_path());
-                self.pending_scene_import = None;
             }
-            LoadStatus::Ready => {
+            Some(LoadStatus::Ready) => {
+                // 一次性领取实例化工作；后续失败保留已创建前缀，不在下一帧重放。
+                self.pending_scene_import = None;
                 let Some(scene_data) = world.scene_data(handle).cloned() else {
                     log::error!(
                         "{} scene ({}) import became ready without scene data",
                         self.preset.name(),
                         self.preset.source_path()
                     );
-                    self.pending_scene_import = None;
                     return;
                 };
 
@@ -114,7 +116,10 @@ impl SceneInitializer {
                         break;
                     }
                 }
+            }
+            None => {
                 self.pending_scene_import = None;
+                log::error!("{} scene import handle became stale", self.preset.name());
             }
         }
     }

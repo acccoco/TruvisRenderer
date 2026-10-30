@@ -18,5 +18,11 @@
 - 具体 Renderer 静态持有 `ImGuiSubsystem`，显式调用 `on_input`、`build_frame`、`prepare_render_data` 和 `contribute_passes`。
 - 字体和 mesh 在 RenderThread 的 `init` / `shutdown` 阶段创建和显式释放；GUI pass 顺序由 Renderer 决定。
 - resize 更新 display size，并在 present format 改变时重建 GUI pipeline；格式未变时复用，字体、mesh 和 ImGui context 不随此格式重建。
+- DPI 回调在帧间 GPU idle 后调用 `rebuild_fonts`，重新烘焙字体并替换 registry-owned image/view；
+  先失效旧 draw data/texture map，发布新 handle 后释放旧 image 及 views。Context 和用户窗口状态保留，
+  新 frame 使用新字体；`set_hidpi_factor` 只用于 init 前。display/mouse 仍以物理像素为单位。
 - 依赖 `renderer-kit`、Engine runtime/render graph 和统一的 `truvis-renderer-shader-binding`，不依赖 `renderer-rendering` 或 `renderer-render-passes`。
 - GUI shader 仍位于 `renderer/shader/entry/renderer/ui/imgui.slang`，ABI namespace 保持 `renderer::kit::ui_imgui`；Rust crate 拆分不改变 shader package 或生成 binding。
+
+ImGui 的输入返回值只表示消费操作意图；`InputEvent::updates_state` 集中定义运动、按键/鼠标释放与窗口状态事件，
+这些事件始终透传以避免 UI 捕获留下卡键或旧坐标。Renderer 只补充 gizmo 拖拽的透传条件。

@@ -48,6 +48,8 @@ Renderer hook 与 Runtime phase 一一对应但不等价：
 - `render` 返回本帧主视图是否已使用 prepare 场景快照并完成 submit；Loop 随即调用
   `RenderRuntime::finish_rendered_frame` 确认实例历史，然后进入 present。
 - `on_resize` 传播窗口尺寸变化。
+- `on_scale_factor_changed` 在帧间 GPU idle 后传播最终窗口 DPI；复用资源重建 Ctx，
+  允许物理尺寸不变时更新字体等 Renderer 资源，不改变主视图历史或调用全部 resize 子系统。
 - `shutdown` 在 Runtime 销毁前释放 Renderer-owned GPU 资源。
 
 ## 主体 Renderer 的帧快照

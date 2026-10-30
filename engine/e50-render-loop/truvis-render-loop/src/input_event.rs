@@ -77,6 +77,18 @@ pub enum InputEvent {
     MouseWheel { delta: f64 },
     /// 窗口物理尺寸变化事件。
     Resized { physical_width: u32, physical_height: u32 },
+    /// 逻辑像素到物理像素的缩放；由 RenderLoop 合并并在 GPU 安全点通知 Renderer。
+    ScaleFactorChanged { scale_factor: f64 },
     /// 暂未建模或 Renderer 当前不关心的平台事件。
     Other,
+}
+
+impl InputEvent {
+    /// UI 可以消费新的操作意图，但运动、释放和窗口状态必须继续更新引擎状态。
+    pub fn updates_state(&self) -> bool {
+        matches!(self,
+            Self::MouseMoved { .. } | Self::Focused(_) | Self::Resized { .. } | Self::ScaleFactorChanged { .. }
+            | Self::MouseButtonInput { state: ElementState::Released, .. }
+            | Self::KeyboardInput { state: ElementState::Released, .. })
+    }
 }

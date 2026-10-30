@@ -65,7 +65,6 @@ pub struct PushConstants {
 pub struct ShaderToyPass {
     color_format: vk::Format,
     pipeline: GfxGraphicsPipeline,
-    pipeline_layout: Rc<GfxPipelineLayout>,
 }
 impl ShaderToyPass {
     pub fn new(ctx: GfxDeviceCtx<'_>, color_format: vk::Format) -> Self {
@@ -82,6 +81,7 @@ impl ShaderToyPass {
             [0.0; 4],
         );
 
+        // 布局只有本 pipeline 使用；移交唯一 owner，让构造失败沿底层 destroy 回收。
         let pipeline_layout = Rc::new(GfxPipelineLayout::new(
             ctx,
             &[],
@@ -92,18 +92,16 @@ impl ShaderToyPass {
             }],
             "shader-toy",
         ));
-        let pipeline = GfxGraphicsPipeline::new(ctx, &pipeline_ci, pipeline_layout.clone(), "shader-toy");
+        let pipeline = GfxGraphicsPipeline::new(ctx, &pipeline_ci, pipeline_layout, "shader-toy");
 
         Self {
             color_format,
-            pipeline_layout,
             pipeline,
         }
     }
 
     pub fn destroy(self, ctx: GfxDeviceCtx<'_>) {
         self.pipeline.destroy(ctx);
-        self.pipeline_layout.destroy(ctx);
     }
 
     /// 仅在 GPU idle 后调用；普通尺寸变化复用 pipeline，格式改变才替换。

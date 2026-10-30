@@ -507,7 +507,7 @@ impl WorldSceneAdapter {
             data.class = Self::material_class(class)?;
         }
         if let Some(coverage) = patch.coverage {
-            data.coverage = Self::coverage(coverage)?;
+            data.coverage = Self::coverage(coverage);
         }
         if let Some(mappings) = patch.texture_mappings {
             for patch in mappings {
@@ -590,13 +590,11 @@ impl WorldSceneAdapter {
         }
     }
 
-    fn coverage(dto: CoverageModeDto) -> Result<CoverageMode, EditorError> {
+    fn coverage(dto: CoverageModeDto) -> CoverageMode {
+        // cutoff > 1 合法；范围由 patch 合并后的 MaterialData::validate 统一校验。
         match dto {
-            CoverageModeDto::Opaque => Ok(CoverageMode::Opaque),
-            CoverageModeDto::AlphaMask { alpha_cutoff } => {
-                Self::validate_unit_value("alpha cutoff", alpha_cutoff)?;
-                Ok(CoverageMode::AlphaMask { alpha_cutoff })
-            }
+            CoverageModeDto::Opaque => CoverageMode::Opaque,
+            CoverageModeDto::AlphaMask { alpha_cutoff } => CoverageMode::AlphaMask { alpha_cutoff },
         }
     }
 

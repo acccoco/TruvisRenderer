@@ -41,6 +41,11 @@ Query 读取当前权威状态；Command 请求 CPU mutation；Response 只对�
 
 每个 request 使用独立 oneshot reply，避免共享 response queue。`scene_version` 是 SceneStore 的单调版本，用于 WebView 丢弃过期分页或材质查询结果；它不等价于 frame id、GPU revision 或 notification 数量。
 
+Editor request 的 timeout 只结束调用方等待，不撤销已经入队的 request；命令可能在后续
+RenderThread update 中完成 CPU mutation，而 reply receiver 已不存在。该结果必须通过
+scene version/query 恢复，不能把 timeout 当作 rollback 或 GPU 未完成。若未来需要取消，
+必须同时定义 mutation 领取竞态和 Editor/Automation 两条 lane 的一致语义。
+
 ID 是带 generation 的 opaque handle，WebView 不能解析 index，也不能混用 Instance、Mesh、Material 和 Texture identity。删除或 generation 失效后由 World 返回 stale/not-found。
 
 ## 背压
@@ -49,13 +54,26 @@ App 到 RenderThread Client 使用有界 request inbox；Client 到 App 使用�
 
 队列满、timeout、Renderer 关闭和 notification 丢失分别是边界事件。Notification 丢失不破坏权威状态，WebView 通过查询、version 轮询或刷新恢复。
 
+RenderThread 每帧预算耗尽只延迟 inbox 消费；notification outbox 满只丢 best-effort
+通知，不影响 request 自带 response。shutdown 关闭并清空 request receiver，使未处理
+envelope 的 oneshot sender drop；随后停止 notification dispatcher。时间预算只在请求之间
+检查，单个慢查询或同步文件操作可能超出预算，不能把它视为可抢占的帧耗时上限。
+
 具体容量属于当前实现细节，不作为设计不变量；不能因为扩大容量而引入 RenderThread 阻塞。
 
 ## 编辑与恢复
 
 App RenderThread Client 将 DTO handle 还原为强类型 World handle，校验成功后才提交 CPU mutation。失败不会推进 scene version。
 
+DTO patch 在 adapter 先做格式、单位和结构转换，World 再做权威 domain validation；例如 Material 的
+`alpha_cutoff` 只要求 finite non-negative，允许大于 1 并按原值提交。失败不会进入 World mutation，
+重复提交也不会推进 scene version。这是边界防御与领域校验的分工，不是两套 scene authority。
+
 WebView 的草稿 revision 用于区分本地未确认输入和服务器回包；过期 response 不能覆盖新草稿。查询不能自动清除仍有效的 validation error。
+
+Web Inspector 的 slider 在一次 pointer/keyboard 交互中只提交一个最终值；释放和失焦事件的重复
+触发不能产生重复 command。重新开始交互后允许再次提交相同值，失败也能重试。该约束只优化
+Web 请求边界，不改变 World 的重复 mutation 去重和 scene version 规则。
 
 selection 由 Renderer 唯一持有：灯光图标在 update 通过 CPU 屏幕命中更新，网格在 after_prepare
 取得 GPU raycast 结果后更新。两者共用 tagged selection DTO 与通知；灯光 ID 包含类别和 generation。
@@ -70,6 +88,11 @@ LightDetails 的类别专有参数使用 tagged DTO，Environment 是单例，�
 Area 半轴是权威，朝向/尺寸只按需转换；Spot UI 使用角度，World 保持弧度。
 环境加载期间继续查询 CPU texture record，即使 scene version 未变化也能收敛到 Ready/Failed；不将其视为 GPU 完成。
 
+材质数值控件在 Web 层保留字符串编辑态；空值或非有限值不能变成 0 进入 draft/command。
+控件边界必须覆盖 World 的合法域，例如 alpha cutoff 允许非负且可大于 1；这只是输入边界防护，
+World 仍是最终校验 owner。native viewport 的 DOM 矩形更新是可丢弃投影，卸载时零矩形必须排在
+在途更新之后，避免旧布局完成后重新显示已销毁的 child HWND。
+
 ## 特权命令
 
 HDRI 文件选择通过 Tauri dialog 产生本地 PathBuf，经独立有界 desktop command 进入 App RenderThread Client。通用 Editor DTO 只返回文件名和 accepted/cancelled/error。
@@ -78,9 +101,12 @@ accepted 只表示 GameWorld 接受 CPU 请求，不表示 decode、GPU upload�
 
 ## 生命周期
 
-关闭时 App 先拒绝新 invoke/dialog，再让 Renderer 清空 request receiver，随后执行 Renderer/Runtime/Vulkan shutdown。未处理 oneshot 因 sender drop 结束；通知 dispatcher 最后停止。
+关闭时 App 先拒绝新 invoke/dialog，再让 Renderer 清空 request receiver，随后执行 Renderer/Runtime/Vulkan shutdown。未处理 oneshot 因 sender drop 结束；通知 dispatcher 最后停止。Desktop command 的终态处理先清除 pending import/文件请求，再执行日志或实例化，诊断 unwind 不会导致下一帧重复消费。
 
 Tauri notification task 不访问 GameWorld 或 Vulkan。WebView 退出不改变 RenderThread 的资源销毁 owner。
+
+Web session 清理必须使旧分页、详情和材质回包失效；StrictMode 再次 setup 同一组 ref 时也不能
+重新接受它们。connect/poll 的异步续接在启动刷新前重新检查 disposed；卸载不撤销已发送的 CPU mutation。
 
 ## 设计不变量
 

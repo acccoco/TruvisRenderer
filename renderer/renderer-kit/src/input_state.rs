@@ -160,7 +160,7 @@ impl InputManager {
             InputEvent::MouseWheel { delta } => {
                 self.state.mouse_wheel_delta += *delta;
             }
-            InputEvent::Focused(true) | InputEvent::Other => {}
+            InputEvent::Focused(true) | InputEvent::ScaleFactorChanged { .. } | InputEvent::Other => {}
         }
     }
 }

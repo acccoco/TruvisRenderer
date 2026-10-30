@@ -24,7 +24,7 @@ Cornell box 的箱内地面中心位于 `(13.5, 0.12, 0)`，内部宽高深均�
 默认相机从 `(11,6,22)` 看向 `(5.5,1.5,1)`；箱内近景可从 `(13.5,2.12,8)` 沿 `-Z` 观察。
 原有天空和灯光保持启用，开口允许外部光进入，因此该布局用于同场景观察，不代表标准 Cornell 光照基准。
 
-Sponza 使用 `fbx/sponza/sponza.fbx`，Cornell 使用 `fbx/cornell-box.fbx`。共享导入流程在 CPU 数据 ready 后创建一次实例；成功、导入失败或实例创建失败都会清空 pending，不重试、不切换场景。失败保留已创建对象，并记录场景、路径和错误。
+Sponza 使用 `fbx/sponza/sponza.fbx`，Cornell 使用 `fbx/cornell-box.fbx`。共享导入流程在 CPU 数据 ready 后创建一次实例；进入成功或失败终态时先清空 pending，再进行日志和实例化，因此诊断 unwind 也不会在下一帧重放。不重试、不切换场景；实例创建失败保留已创建对象，并记录场景、路径和错误。
 
 本模块不拥有 GPU 资源，不调用 Runtime prepare，也不自行驱动 loader。CPU 资源属于 `GameWorld`/`AssetSystem`，实例和灯光属于 SceneStore；Runtime 继续负责 prepare、上传与销毁。`renderer-kit::Camera` 和 shader-binding 灯光结构仅用作现有 CPU 数据接口，不访问其 GPU 能力。
 

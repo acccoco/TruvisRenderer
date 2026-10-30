@@ -137,10 +137,10 @@ impl GameWorld {
         Ok(texture)
     }
 
-    /// 查询 scene import 的 CPU 加载状态。
+    /// 查询 scene import 的 CPU 加载状态；generation 失效时返回 `None`。
     ///
     /// Renderer 只用它显示或驱动 UI，不直接读取 `AssetLoadService` 的 loader state。
-    pub fn scene_import_status(&self, handle: SceneImportHandle) -> LoadStatus {
+    pub fn scene_import_status(&self, handle: SceneImportHandle) -> Option<LoadStatus> {
         self.resources.scene_import_status(handle)
     }
 

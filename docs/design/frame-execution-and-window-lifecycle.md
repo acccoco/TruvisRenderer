@@ -61,6 +61,12 @@ resize 只在 RenderLoop 安全点处理。Runtime 重建 swapchain/present 状�
 
 窗口尺寸变化不进入 CPU scene，也不通过 Editor DTO 传播。DOM rect 由 App 交给平台 host，winit 的 `WM_SIZE`/WindowEvent 路径最终进入 RenderLoop。
 
+DPI 与物理尺寸分别交付。`ScaleFactorChanged` 沿输入 FIFO 到 RenderLoop，帧间合并为最终值；
+零尺寸和 resize debounce 期间只保留待处理值。下一帧开始前，只有与已应用值不同才调用
+Runtime 的 `resource_rebuild_phase` 等待 GPU idle，再调用 Renderer 的 `on_scale_factor_changed`。
+该回调不隐式重建 swapchain、RT/DLSS target 或失效主视图历史；GUI 由具体 Renderer 更新。
+字体仍在 RenderThread 创建和释放，鼠标、display size 与 overlay 继续使用物理像素。
+
 ## 关闭顺序
 
 ```text

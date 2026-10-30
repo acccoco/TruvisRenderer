@@ -145,7 +145,6 @@ impl ApplicationHandler<UserEvent> for StandaloneWinitHost {
         match &event {
             WindowEvent::CloseRequested => render_thread.request_exit(),
             WindowEvent::Resized(size) => render_thread.publish_resize([size.width, size.height]),
-            WindowEvent::ScaleFactorChanged { .. } => {}
             _ => {}
         }
 

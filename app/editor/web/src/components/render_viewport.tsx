@@ -35,6 +35,10 @@ export function RenderViewport() {
     let sending = false;
     let queuedRect: NativeViewportRect | null = null;
     let lastRectKey = '';
+    const zeroRect: NativeViewportRect = { x: 0, y: 0, width: 0, height: 0 };
+    const clearNativeRect = () => {
+      void invoke('set_render_viewport_rect', { rect: zeroRect }).catch(() => undefined);
+    };
 
     const flush = async () => {
       if (sending || !queuedRect || stopped) {
@@ -57,12 +61,23 @@ export function RenderViewport() {
       } finally {
         sending = false;
         if (queuedRect) {
-          void flush();
+          const nextRect = queuedRect;
+          queuedRect = null;
+          if (stopped) {
+            // 清理必须排在在途布局请求之后，避免旧矩形在零矩形之后完成。
+            void invoke('set_render_viewport_rect', { rect: nextRect }).catch(() => undefined);
+          } else {
+            queuedRect = nextRect;
+            void flush();
+          }
         }
       }
     };
 
     const measure = () => {
+      if (stopped) {
+        return;
+      }
       animationFrame = 0;
       const bounds = slot.getBoundingClientRect();
       const scale = window.devicePixelRatio || 1;
@@ -82,7 +97,7 @@ export function RenderViewport() {
     };
 
     const scheduleMeasure = () => {
-      if (!animationFrame) {
+      if (!stopped && !animationFrame) {
         animationFrame = window.requestAnimationFrame(measure);
       }
     };
@@ -104,9 +119,11 @@ export function RenderViewport() {
         window.cancelAnimationFrame(animationFrame);
       }
       window.clearTimeout(retryTimer);
-      void invoke('set_render_viewport_rect', {
-        rect: { x: 0, y: 0, width: 0, height: 0 } satisfies NativeViewportRect,
-      }).catch(() => undefined);
+      queuedRect = zeroRect;
+      if (!sending) {
+        queuedRect = null;
+        clearNativeRect();
+      }
     };
   }, [nativeDesktop]);
 

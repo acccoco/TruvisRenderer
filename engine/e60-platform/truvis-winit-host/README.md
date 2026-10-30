@@ -28,6 +28,7 @@ standalone 的日志初始化、图标资源路径和窗口外观由具体 app �
 - embedded startup 先把 `EventLoopProxy` 交还调用方，再异步创建 child，避免跨线程 parent notification 阻塞 main-thread 消息泵。
 - child 初始保持隐藏的 `1x1`；首次非零 viewport rect 先通过 `SetWindowPos` 设置真实尺寸，再启动 RenderThread。
 - viewport 几何只属于窗口层；输入通过 `InputEvent` 进入 `RenderLoop`，resize 继续使用 latest-size、generation 和 debounce。
+- standalone 与 embedded 共用 adapter 转发 `ScaleFactorChanged`；DPI 沿输入队列交给 RenderLoop，host 不直接访问 GUI 或 GPU 资源。
 - render child 收到鼠标按下后由窗口线程执行 `SetFocus`；点击 WebView 后焦点按 Windows 默认行为返回，不复制键盘事件。
 - 窗口 owner 正常路径先等待 `RenderThread::join` 完成，再销毁 `Window`；字段 drop 顺序与 RenderThread fallback
   同时保持异常展开时的线程/窗口先后，embedded 入口随后 join `RenderWindowThread`。调用方须保持 parent HWND

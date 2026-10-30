@@ -178,9 +178,9 @@ impl RenderRuntimeInitCtx<'_> {
     }
 }
 
-/// 窗口输出或 Renderer 内部渲染尺寸变化时的资源重建上下文。
+/// 窗口输出、Renderer 内部渲染尺寸或窗口 DPI 变化时的资源重建上下文。
 ///
-/// Runtime 在 GPU idle 后交付；内部尺寸变化不要求重建 swapchain，present view 仍指向当前链。
+/// Runtime 在 GPU idle 后交付；内部尺寸或 DPI 变化不要求重建 swapchain，present view 仍指向当前链。
 pub struct RenderRuntimeResizeCtx<'a> {
     /// resize 后重建上层 GPU 资源需要的 device 上下文。
     pub device_ctx: GfxDeviceCtx<'a>,

@@ -35,6 +35,10 @@ Rust 协议类型定义在 `renderer/editor/truvis-editor-bridge/src/protocol/`�
 - notification outbox 容量为 `64`，队列满时允许丢弃。
 - `../truvis-app/capabilities/main-editor.json` 只允许 `main` WebView listen/unlisten notification event。
 - 页面保留一秒 `scene_version` 与 selection 轮询，以恢复刷新或事件丢失造成的投影失效。
+- session cleanup 使旧查询序号失效，并阻止旧 connect/poll 链继续刷新；StrictMode 再次 setup 后仍保持该隔离。
+- Inspector slider 的 pointerup/keyup/blur 共享一次值去重；新的 focus/交互会重新允许提交，避免重复 IPC 又保留失败重试。
+- 数值输入保留字符串草稿；空值、非有限值和 min/max 越界不提交，整数字段另检查整数。step 只控制微调步长，不限制手输精度；Enter 与失焦共用提交路径。Alpha Cutoff 允许 World 规定的非负大于 1 值。
+- native viewport cleanup 在途矩形完成后再发送零矩形，避免旧布局回包重新覆盖隐藏状态。
 
 `Choose HDRI` 是 Tauri-only 平台动作：完整 `PathBuf` 只经过 App/Renderer 之间的私有队列，WebView
 只接收文件名和 accepted/cancelled/error。accepted 不表示 decode、GPU upload 或 Alias distribution 已完成。

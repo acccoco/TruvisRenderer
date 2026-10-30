@@ -6,7 +6,7 @@ use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
 use truvis_render_loop::input_event::{ElementState, InputEvent};
 use truvis_render_loop::renderer::{Renderer, RendererInitCtx, RendererResizeCtx, RendererShutdownCtx};
-use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx};
+use truvis_render_runtime::render_runtime::{RenderRuntimeRenderCtx, RenderRuntimeResizeCtx, RenderRuntimeUpdateCtx};
 
 use renderer_imgui::{DebugInfoOverlay, ImGuiSubsystem};
 use renderer_kit::camera_controller::CameraController;
@@ -131,6 +131,10 @@ impl Renderer for TriangleRenderer {
     fn on_resize(&mut self, ctx: &mut RendererResizeCtx<'_>) {
         self.triangle.on_resize(&mut ctx.runtime);
         self.imgui.on_resize(&mut ctx.runtime);
+    }
+
+    fn on_scale_factor_changed(&mut self, scale_factor: f64, ctx: &mut RenderRuntimeResizeCtx<'_>) {
+        self.imgui.rebuild_fonts(scale_factor, ctx);
     }
 
     fn shutdown(&mut self, ctx: &mut RendererShutdownCtx<'_>) {

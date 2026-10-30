@@ -386,9 +386,6 @@ impl ApplicationHandler<EmbeddedUserEvent> for EmbeddedWinitHandler {
             WindowEvent::Resized(size) => {
                 render_thread.publish_resize([size.width, size.height]);
             }
-            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                log::info!("embedded render viewport scale factor changed to {scale_factor}");
-            }
             _ => {}
         }
 

@@ -238,19 +238,28 @@ impl GuiPass {
                                 idx_offset,
                             },
                     } => {
-                        let clip_x = (clip_rect[0] - clip_offset[0]) * clip_scale[0];
-                        let clip_y = (clip_rect[1] - clip_offset[1]) * clip_scale[1];
-                        let clip_w = (clip_rect[2] - clip_offset[0]) * clip_scale[0] - clip_x;
-                        let clip_h = (clip_rect[3] - clip_offset[1]) * clip_scale[1] - clip_y;
+                        let clip_left = (clip_rect[0] - clip_offset[0]) * clip_scale[0];
+                        let clip_top = (clip_rect[1] - clip_offset[1]) * clip_scale[1];
+                        let clip_right = (clip_rect[2] - clip_offset[0]) * clip_scale[0];
+                        let clip_bottom = (clip_rect[3] - clip_offset[1]) * clip_scale[1];
+                        let canvas_width = canvas_extent.width as f32;
+                        let canvas_height = canvas_extent.height as f32;
+                        let clip_left = clip_left.max(0.0);
+                        let clip_top = clip_top.max(0.0);
+                        let clip_right = clip_right.min(canvas_width);
+                        let clip_bottom = clip_bottom.min(canvas_height);
+                        if clip_right <= clip_left || clip_bottom <= clip_top {
+                            continue;
+                        }
 
                         let scissors = [vk::Rect2D {
                             offset: vk::Offset2D {
-                                x: (clip_x as i32).max(0),
-                                y: (clip_y as i32).max(0),
+                                x: clip_left as i32,
+                                y: clip_top as i32,
                             },
                             extent: vk::Extent2D {
-                                width: clip_w as _,
-                                height: clip_h as _,
+                                width: (clip_right - clip_left) as u32,
+                                height: (clip_bottom - clip_top) as u32,
                             },
                         }];
                         cmd.cmd_set_scissor(0, &scissors);

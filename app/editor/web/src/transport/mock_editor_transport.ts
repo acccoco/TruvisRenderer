@@ -57,14 +57,19 @@ export class MockEditorTransport implements EditorTransport {
 
   private readonly stateListeners = new Set<(state: EditorBackendState) => void>();
   private readonly notificationListeners = new Set<(notification: EditorNotification) => void>();
+  // mock 也模拟真实 transport 的连接代次，避免 StrictMode 的旧 connect 回写 ready。
+  private generation = 0;
 
   async connect(): Promise<void> {
+    const generation = ++this.generation;
     this.emitState('starting');
     await new Promise((resolve) => window.setTimeout(resolve, 80));
+    if (generation !== this.generation) return;
     this.emitState('ready');
   }
 
   close(): void {
+    ++this.generation;
     this.emitState('unavailable');
   }
 

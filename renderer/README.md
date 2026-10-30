@@ -9,6 +9,8 @@
 更新 InputManager，避免返回 viewport 后留下旧位置或按下状态；失焦/resize 继续取消交互。
 Triangle/ShaderToy 的 graphics pass 与共用 ImGui pipeline 在 resize 安全点核对 present format，
 仅格式变化才重建；viewport/scissor 继续使用当前尺寸，不因普通尺寸变化重建 pipeline。
+两个 sample pass 把 pipeline layout 唯一持有权移交给 `GfxGraphicsPipeline`，不另存仅用于销毁的 Rc；
+未提交的构造失败和正常销毁都沿同一底层 owner 回收。格式替换先创建候选，成功后才销毁旧 pipeline。
 Truvis Tauri App 与 Cornell standalone App 共用完整的 `TruvisRenderer`，场景来自 App 层共享模块。
 `editor/truvis-editor-bridge` 保存传输无关的 Editor 协议，`renderer/shader` 保存 Renderer shader、ABI 与 binding。
 Native CXX project 与 Rust FFI binding 统一位于 [`../cxx/`](../cxx/README.md)，不镜像 Renderer 物理分层。

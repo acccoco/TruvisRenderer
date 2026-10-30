@@ -441,8 +441,8 @@ impl AssetSystem {
         scene_import
     }
 
-    pub(crate) fn scene_import_status(&self, handle: SceneImportHandle) -> LoadStatus {
-        self.scene_imports.get(handle).map_or(LoadStatus::Failed, |record| record.status)
+    pub(crate) fn scene_import_status(&self, handle: SceneImportHandle) -> Option<LoadStatus> {
+        self.scene_imports.get(handle).map(|record| record.status)
     }
     pub(crate) fn scene_import_error(&self, handle: SceneImportHandle) -> Option<&str> {
         self.scene_imports.get(handle).and_then(|record| record.error.as_deref())

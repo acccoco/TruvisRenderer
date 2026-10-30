@@ -207,6 +207,8 @@ export function useEditorSession() {
     const work = commandTail.current.then(async () => {
       try {
         if (epoch.current === inspection) change({ error: null });
+        // Material query 不带版本；记录发送时的序号，避免迟到 ACK 覆盖期间刷新的投影。
+        const materialQuerySequence = materialSequence.current;
         const response = await request({ category: 'command', payload: command });
         if (epoch.current !== inspection || (command.type === 'update_material' && (current.current.materialId !== materialId || materialEpoch.current !== materialInspection))) return;
         const clearAcknowledged = <T extends object>(draft: T): T => {
@@ -217,9 +219,14 @@ export function useEditorSession() {
           return next;
         };
         if (response.type === 'command_applied') {
+          const reload = materialSequence.current !== materialQuerySequence
+            || BigInt(response.payload.scene_version) < BigInt(current.current.sceneVersion);
           ++materialSequence.current;
           observeVersion(response.payload.scene_version);
-          change({ material: response.payload.material, materialDraft: clearAcknowledged(current.current.materialDraft) });
+          change({ ...(reload ? {} : { material: response.payload.material }),
+            materialDraft: clearAcknowledged(current.current.materialDraft) });
+          // 交叠查询可能早于或晚于 mutation 执行；使其失效并在 ACK 后重新读取权威值。
+          if (reload && materialId) void loadMaterial(materialId, inspection);
         } else if (response.type === 'light_applied' || response.type === 'environment_applied') {
           ++detailsSequence.current;
           observeVersion(response.payload.scene_version);
@@ -239,7 +246,7 @@ export function useEditorSession() {
     });
     commandTail.current = work;
     return work;
-  }, [change, observeVersion, request]);
+  }, [change, loadMaterial, observeVersion, request]);
 
   const commitMaterial = useCallback((patch: MaterialPatch) => {
     const id = current.current.materialId;
@@ -284,11 +291,13 @@ export function useEditorSession() {
       } catch (error) { if (!disposed) change({ error: String(error) }); }
       finally { polling = false; }
     };
-    void transport.connect().then(async () => { if (!disposed) { await poll(); await refresh(); } })
+    void transport.connect().then(async () => { if (!disposed) { await poll(); if (!disposed) await refresh(); } })
       .catch((error) => { if (!disposed) change({ error: String(error) }); });
     const timer = window.setInterval(() => { if (current.current.backendState === 'ready') void poll(); }, 1000);
     return () => {
       disposed = true; active.current = false; ++epoch.current; ++selectionSequence.current;
+      // StrictMode 会重新 setup 同一组 ref；旧分页也必须永久失效，不能只依赖 active。
+      ++detailsSequence.current; ++materialSequence.current; ++listSequence.current; ++materialEpoch.current;
       window.clearInterval(timer); removeState(); removeNotification(); transport.close();
     };
   }, [acceptSelection, change, loadDetails, observeVersion, query, refresh, transport]);

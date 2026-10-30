@@ -170,7 +170,12 @@ impl WorldAutomationController {
             Ok(handle) => handle,
             Err(error) => return AutomationResponse::Error(error),
         };
-        let status = world.scene_import_status(handle);
+        let Some(status) = world.scene_import_status(handle) else {
+            return AutomationResponse::Error(EditorError::new(
+                EditorErrorCode::StaleObject,
+                "scene import ID is no longer valid",
+            ));
+        };
         let status_name = match status {
             truvis_asset::handle::LoadStatus::Unloaded => "unloaded",
             truvis_asset::handle::LoadStatus::Loading => "loading",

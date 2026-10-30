@@ -2,11 +2,11 @@ use std::cell::Cell;
 
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
-use truvis_render_loop::input_event::{ElementState, InputEvent};
+use truvis_render_loop::input_event::InputEvent;
 use truvis_render_loop::renderer::{Renderer, RendererInitCtx, RendererResizeCtx, RendererShutdownCtx};
 use truvis_render_runtime::ray_cast::{RayCastRay, RayCastResult};
 use truvis_render_runtime::render_runtime::{
-    RenderFrameInput, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeUpdateCtx,
+    RenderFrameInput, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx, RenderRuntimeUpdateCtx,
 };
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_world::{GameWorld, LightTarget, WorldEditError, guid_new_type::MeshInstanceHandle};
@@ -343,20 +343,7 @@ impl Renderer for TruvisRenderer {
                 self.cancel_interaction();
             }
             let captured = self.imgui.on_input(event);
-            // UI 可消费按下意图，但不能截断坐标更新和松键，否则返回 viewport 会留下旧坐标/按键。
-            let state_event = matches!(
-                event,
-                InputEvent::MouseMoved { .. }
-                    | InputEvent::MouseButtonInput {
-                        state: ElementState::Released,
-                        ..
-                    }
-                    | InputEvent::KeyboardInput {
-                        state: ElementState::Released,
-                        ..
-                    }
-            );
-            if !captured || state_event || self.active_gizmo_target.is_some() {
+            if !captured || self.active_gizmo_target.is_some() {
                 self.input.process_event(event);
             }
         }
@@ -543,6 +530,11 @@ impl Renderer for TruvisRenderer {
         }
         self.viewport_overlay.on_resize(&mut ctx.runtime);
         self.imgui.on_resize(&mut ctx.runtime);
+    }
+
+    fn on_scale_factor_changed(&mut self, scale_factor: f64, ctx: &mut RenderRuntimeResizeCtx<'_>) {
+        self.imgui.rebuild_fonts(scale_factor, ctx);
+        self.ui_scale = scale_factor as f32;
     }
 
     fn shutdown(&mut self, ctx: &mut RendererShutdownCtx<'_>) {

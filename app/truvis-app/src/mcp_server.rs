@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
@@ -200,6 +201,8 @@ struct ImportStatusArgs {
 impl McpServer {
     const LISTEN_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8765);
     const PATH: &'static str = "/mcp";
+    /// 关闭后的 HTTP 排空窗口；慢请求体不能无限阻塞桌面线程的 join。
+    const SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
     fn new(client: AutomationClient) -> Self {
         Self {
@@ -226,6 +229,8 @@ impl McpServer {
                 .with_json_response(true)
                 .with_stateless_protocol_metadata_required(false)
                 .with_allowed_hosts(["127.0.0.1:8765"])
+                // MCP 只供本地原生客户端使用；拒绝所有携带 Origin 的浏览器请求。
+                .enforce_origin_validation()
                 // Axum 的 graceful shutdown 负责停止新连接；不取消 RMCP 内部 token，
                 // 让已经进入 handler 的请求继续等待 RenderThread reply。
                 .with_cancellation_token(CancellationToken::new()),
@@ -246,10 +251,27 @@ impl McpServer {
         };
         let _ = ready_sender.send(Ok(()));
         log::info!("Truvis MCP Streamable HTTP listening on http://{}{}", Self::LISTEN_ADDRESS, Self::PATH);
-        axum::serve(listener, router)
-            .with_graceful_shutdown(cancellation.cancelled_owned())
-            .await
-            .map_err(std::io::Error::other)
+        let serving = async {
+            axum::serve(listener, router)
+                .with_graceful_shutdown(cancellation.clone().cancelled_owned())
+                .await
+                .map_err(std::io::Error::other)
+        };
+        tokio::pin!(serving);
+        tokio::select! {
+            result = &mut serving => result,
+            _ = cancellation.cancelled() => {
+                // 正常请求仍有机会收到 RenderThread reply；但 receiver 关闭无法结束一个
+                // 尚未收齐的 HTTP body。超时后返回，让专属 runtime 销毁剩余连接任务。
+                match tokio::time::timeout(Self::SHUTDOWN_DRAIN_TIMEOUT, &mut serving).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        log::warn!("MCP HTTP shutdown drain timed out; closing remaining connections");
+                        Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "MCP HTTP shutdown drain timed out"))
+                    }
+                }
+            }
+        }
     }
 
     async fn result(&self, response: AutomationResponse) -> Result<CallToolResult, McpError> {

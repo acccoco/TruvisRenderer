@@ -6,6 +6,7 @@ use ash::vk;
 use imgui::{DrawData, TextureId, Ui};
 
 use truvis_gfx::basic::color::LabelColor;
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
@@ -18,6 +19,7 @@ use truvis_render_graph::render_graph::{
 use truvis_render_loop::input_event::{ElementState, InputEvent, MouseButton};
 use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
 use truvis_render_runtime::render_runtime_ctx::RenderPassRecordCtx;
+use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
 
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 
@@ -74,17 +76,27 @@ impl ImGuiSubsystem {
     }
 
     pub fn set_hidpi_factor(&mut self, factor: f64) {
+        assert!(self.fonts_image_handle.is_none(), "use rebuild_fonts after ImGui initialization");
+        assert!(factor.is_finite() && factor > 0.0, "invalid ImGui scale factor");
         self.hidpi_factor = factor;
+    }
+
+    /// 只能在帧间 GPU idle 的重建阶段调用；字体像素重新烘焙，不放大旧 atlas 代替新 DPI。
+    /// 保留 ImGui context 的窗口与控件状态，失效旧 draw data 和纹理映射后替换字体资源。
+    pub fn rebuild_fonts(&mut self, factor: f64, ctx: &mut RenderRuntimeResizeCtx<'_>) {
+        assert!(factor.is_finite() && factor > 0.0, "invalid ImGui scale factor");
+        self.hidpi_factor = factor;
+        self.init_font(ctx.resource_ctx, ctx.immediate_ctx, ctx.device_ctx, ctx.gfx_resource_registry);
     }
 
     pub fn set_display_size(&mut self, physical_size: [u32; 2]) {
         self.imgui_ctx.io_mut().display_size = [physical_size[0] as f32, physical_size[1] as f32];
     }
 
-    /// 将平台输入交给 ImGui，并由拥有该子系统的 Renderer 决定后续消费策略。
+    /// 先更新 ImGui，再报告是否消费操作意图；状态更新事件始终透传。
     pub fn on_input(&mut self, event: &InputEvent) -> bool {
         let io = self.imgui_ctx.io_mut();
-        match event {
+        let captured = match event {
             InputEvent::Resized {
                 physical_width,
                 physical_height,
@@ -124,8 +136,9 @@ impl ImGuiSubsystem {
                 }
                 false
             }
-            InputEvent::Other => false,
-        }
+            InputEvent::ScaleFactorChanged { .. } | InputEvent::Other => false,
+        };
+        captured && !event.updates_state()
     }
 
     /// 在闭包内构建完整 ImGui frame，并保留仅供本子系统 render 阶段使用的 draw data。
@@ -194,10 +207,20 @@ impl ImGuiSubsystem {
         self.draw_data.map(|ptr| unsafe { &*ptr }).expect("ImGuiSubsystem draw data requested before build_frame")
     }
 
-    fn init_font(&mut self, ctx: &mut RenderRuntimeInitCtx<'_>) {
+    fn init_font(
+        &mut self,
+        resource_ctx: GfxResourceCtx<'_>,
+        immediate_ctx: GfxImmediateCtx<'_>,
+        device_ctx: GfxDeviceCtx<'_>,
+        registry: &mut GfxResourceRegistry,
+    ) {
         let font_size = (10.0 * self.hidpi_factor) as f32;
+        assert!(font_size.is_finite() && font_size > 0.0, "unrepresentable ImGui font size");
         let font_data = std::fs::read(TruvisPath::resources_path_str("mplus-1p-regular.ttf")).unwrap();
 
+        self.draw_data = None;
+        self.tex_map.clear();
+        self.imgui_ctx.fonts().clear();
         self.imgui_ctx.fonts().add_font(&[
             imgui::FontSource::DefaultFontData {
                 config: Some(imgui::FontConfig {
@@ -224,22 +247,25 @@ impl ImGuiSubsystem {
 
         let atlas_texture = self.imgui_ctx.fonts().build_rgba32_texture();
         let fonts_image = GfxImage::from_rgba8(
-            ctx.resource_ctx,
-            ctx.immediate_ctx,
+            resource_ctx,
+            immediate_ctx,
             atlas_texture.width,
             atlas_texture.height,
             atlas_texture.data,
             "imgui-fonts",
         );
-        let fonts_image_handle = ctx.gfx_resource_registry.register_image(fonts_image);
-        let fonts_image_view_handle = ctx.gfx_resource_registry.get_or_create_image_view(
-            ctx.device_ctx,
+        let fonts_image_handle = registry.register_image(fonts_image);
+        let fonts_image_view_handle = registry.get_or_create_image_view(
+            device_ctx,
             fonts_image_handle,
             GfxImageViewDesc::new_2d(vk::Format::R8G8B8A8_UNORM, vk::ImageAspectFlags::COLOR),
             "imgui-fonts",
         );
-        self.fonts_image_handle = Some(fonts_image_handle);
+        let old_image = self.fonts_image_handle.replace(fonts_image_handle);
         self.fonts_image_view_handle = Some(fonts_image_view_handle);
+        if let Some(old_image) = old_image {
+            registry.release_image_immediate(resource_ctx, device_ctx, old_image, DestroyReason::ImmediateRelease);
+        }
     }
 }
 
@@ -251,7 +277,7 @@ impl SubsystemLifecycle for ImGuiSubsystem {
             ctx.swapchain_image_info.image_format,
         ));
         self.gui_meshes = Some(FrameLabel::ALL.map(|frame_label| GuiMesh::new(ctx.resource_ctx, frame_label)));
-        self.init_font(ctx);
+        self.init_font(ctx.resource_ctx, ctx.immediate_ctx, ctx.device_ctx, ctx.gfx_resource_registry);
     }
 
     fn on_resize(&mut self, ctx: &mut RenderRuntimeResizeCtx<'_>) {

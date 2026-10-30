@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useRef } from 'react';
 
 import type { MaterialClassDto, MaterialDto, MaterialPatch, TextureMappingDto } from '../protocol/generated';
+import { NumberField } from './parameter_fields';
 
 interface MaterialInspectorProps {
   material: MaterialDto | null;
@@ -126,19 +127,9 @@ export function MaterialInspector({ material, dirty, updateDraft, commitMaterial
               onDraft={(value) => updateDraft({ class: { ...materialClass, opacity: value } })}
               onCommit={(value) => commitMaterial(completePatch({ class: { ...materialClass, opacity: value } }))}
             />
-            <label className="field field--row">
-              <span>IOR</span>
-              <input
-                type="number"
-                min="1"
-                step="0.01"
-                value={materialClass.ior}
-                onChange={(event) => updateDraft({ class: { ...materialClass, ior: Number(event.target.value) } })}
-                onBlur={(event) =>
-                  void commitMaterial(completePatch({ class: { ...materialClass, ior: Number(event.currentTarget.value) } }))
-                }
-              />
-            </label>
+            <NumberField label="IOR" value={materialClass.ior} min={1} step={0.01}
+              onDraft={(ior) => updateDraft({ class: { ...materialClass, ior } })}
+              onCommit={(ior) => void commitMaterial(completePatch({ class: { ...materialClass, ior } }))} />
           </div>
         ) : null}
 
@@ -146,25 +137,15 @@ export function MaterialInspector({ material, dirty, updateDraft, commitMaterial
           <fieldset className="field-group radiance-group">
             <legend>Emissive Radiance</legend>
             {materialClass.radiance.map((channel, index) => (
-              <label className="channel-field" key={index}>
-                <span>{['R', 'G', 'B'][index]}</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  value={channel}
-                  onChange={(event) => {
-                    const radiance = [...materialClass.radiance] as [number, number, number];
-                    radiance[index] = Number(event.target.value);
-                    updateDraft({ class: { kind: 'emissive', radiance } });
-                  }}
-                  onBlur={(event) => {
-                    const radiance = [...materialClass.radiance] as [number, number, number];
-                    radiance[index] = Number(event.currentTarget.value);
-                    void commitMaterial(completePatch({ class: { kind: 'emissive', radiance } }));
-                  }}
-                />
-              </label>
+              <NumberField className="channel-field" key={index} label={['R', 'G', 'B'][index]} value={channel} min={0} step={0.1}
+                onDraft={(value) => {
+                  const radiance = [...materialClass.radiance] as [number, number, number];
+                  radiance[index] = value; updateDraft({ class: { kind: 'emissive', radiance } });
+                }}
+                onCommit={(value) => {
+                  const radiance = [...materialClass.radiance] as [number, number, number];
+                  radiance[index] = value; void commitMaterial(completePatch({ class: { kind: 'emissive', radiance } }));
+                }} />
             ))}
           </fieldset>
         ) : null}
@@ -185,58 +166,52 @@ export function MaterialInspector({ material, dirty, updateDraft, commitMaterial
         </label>
 
         {coverageMode.kind === 'alpha_mask' ? (
-          <RangeField
+          <NumberField
             label="Alpha Cutoff"
             value={coverageMode.alpha_cutoff}
+            min={0}
+            step={0.001}
             onDraft={(value) => updateDraft({ coverage: { kind: 'alpha_mask', alpha_cutoff: value } })}
-            onCommit={(value) => commitMaterial(completePatch({ coverage: { kind: 'alpha_mask', alpha_cutoff: value } }))}
+            onCommit={(value) => void commitMaterial(completePatch({ coverage: { kind: 'alpha_mask', alpha_cutoff: value } }))}
           />
         ) : null}
 
-        {(['normal_scale'] as const).map((field) => (
-          <label className="field field--row" key={field}>
-            <span>{'Normal strength'}</span>
-            <input type="number" step="0.01" value={material[field]}
-              onChange={(event) => updateDraft({ [field]: Number(event.target.value) })}
-              onBlur={(event) => void commitMaterial(completePatch({ [field]: Number(event.target.value) }))} />
-          </label>
-        ))}
+        <NumberField label="Normal strength" value={material.normal_scale} step={0.01}
+          onDraft={(value) => updateDraft({ normal_scale: value })}
+          onCommit={(value) => void commitMaterial(completePatch({ normal_scale: value }))} />
         {material.emissive_factor.map((value, axis) => (
-          <label className="field field--row" key={`emission-${axis}`}>
-            <span>Emission {'RGB'[axis]}</span>
-            <input type="number" min="0" step="0.1" value={value}
-              onChange={(event) => {
-                const factor = [...material.emissive_factor] as [number, number, number];
-                factor[axis] = Number(event.target.value); updateDraft({ emissive_factor: factor });
-              }}
-              onBlur={() => void commitMaterial(completePatch({ emissive_factor: material.emissive_factor }))} />
-          </label>
+          <NumberField key={`emission-${axis}`} label={`Emission ${'RGB'[axis]}`} value={value} min={0} step={0.1}
+            onDraft={(next) => {
+              const factor = [...material.emissive_factor] as [number, number, number];
+              factor[axis] = next; updateDraft({ emissive_factor: factor });
+            }}
+            onCommit={(next) => {
+              const factor = [...material.emissive_factor] as [number, number, number];
+              factor[axis] = next; void commitMaterial(completePatch({ emissive_factor: factor }));
+            }} />
         ))}
         {material.textures.map((slot, channel) => (
           <details key={channel} open={slot ? undefined : false}>
             <summary>{['Base color', 'Metallic / roughness', 'Normal', 'Emissive'][channel]} texture</summary>
             <ReadOnlyBinding label="Image" value={slot?.texture ?? null} />
             {slot && <>
-              <label className="field field--row"><span>UV set</span>
-                <input type="number" min="0" step="1" value={slot.mapping.tex_coord}
-                  onChange={(event) => editMapping(channel, { ...slot.mapping, tex_coord: Number(event.target.value) }, false)}
-                  onBlur={() => editMapping(channel, slot.mapping, true)} />
-              </label>
+              <NumberField label="UV set" value={slot.mapping.tex_coord} min={0} step={1} integer
+                onDraft={(value) => editMapping(channel, { ...slot.mapping, tex_coord: value }, false)}
+                onCommit={(value) => editMapping(channel, { ...slot.mapping, tex_coord: value }, true)} />
               {(['offset', 'scale'] as const).flatMap((field) => [0, 1].map((axis) => (
-                <label className="field field--row" key={`${field}-${axis}`}>
-                  <span>{field} {'UV'[axis]}</span>
-                  <input type="number" step="0.01" value={slot.mapping[field][axis]}
-                    onChange={(event) => {
-                      const pair = [...slot.mapping[field]] as [number, number]; pair[axis] = Number(event.target.value);
-                      editMapping(channel, { ...slot.mapping, [field]: pair }, false);
-                    }} onBlur={() => editMapping(channel, slot.mapping, true)} />
-                </label>
+                <NumberField key={`${field}-${axis}`} label={`${field} ${'UV'[axis]}`} value={slot.mapping[field][axis]} step={0.01}
+                  onDraft={(value) => {
+                    const pair = [...slot.mapping[field]] as [number, number]; pair[axis] = value;
+                    editMapping(channel, { ...slot.mapping, [field]: pair }, false);
+                  }}
+                  onCommit={(value) => {
+                    const pair = [...slot.mapping[field]] as [number, number]; pair[axis] = value;
+                    editMapping(channel, { ...slot.mapping, [field]: pair }, true);
+                  }} />
               )))}
-              <label className="field field--row"><span>Rotation (degrees)</span>
-                <input type="number" step="1" value={slot.mapping.rotation * 180 / Math.PI}
-                  onChange={(event) => editMapping(channel, { ...slot.mapping, rotation: Number(event.target.value) * Math.PI / 180 }, false)}
-                  onBlur={() => editMapping(channel, slot.mapping, true)} />
-              </label>
+              <NumberField label="Rotation (degrees)" value={slot.mapping.rotation * 180 / Math.PI} step={1}
+                onDraft={(value) => editMapping(channel, { ...slot.mapping, rotation: value * Math.PI / 180 }, false)}
+                onCommit={(value) => editMapping(channel, { ...slot.mapping, rotation: value * Math.PI / 180 }, true)} />
               {[0, 1].map((axis) => (
                 <label className="field field--row" key={`wrap-${axis}`}><span>Wrap {'UV'[axis]}</span>
                   <select value={slot.mapping.wrap[axis]} onChange={(event) => {
@@ -312,26 +287,16 @@ function BaseColorEditor({ color, updateDraft, commitMaterial }: BaseColorEditor
         }}
       />
       {color.map((channel, index) => (
-        <label className="channel-field" key={['R', 'G', 'B', 'A'][index]}>
-          <span>{['R', 'G', 'B', 'A'][index]}</span>
-          <input
-            type="number"
-            min="0"
-            max="1"
-            step="0.001"
-            value={channel.toFixed(3)}
-            onChange={(event) => {
-              const updatedColor = [...color] as MaterialDto['base_color'];
-              updatedColor[index] = Number(event.target.value);
-              updateDraft({ base_color: updatedColor });
-            }}
-            onBlur={(event) => {
-              const updatedColor = [...color] as MaterialDto['base_color'];
-              updatedColor[index] = Number(event.currentTarget.value);
-              void commitMaterial(completePatch({ base_color: updatedColor }));
-            }}
-          />
-        </label>
+        <NumberField className="channel-field" key={['R', 'G', 'B', 'A'][index]} label={['R', 'G', 'B', 'A'][index]}
+          value={channel} min={0} max={1} step={0.001}
+          onDraft={(value) => {
+            const updatedColor = [...color] as MaterialDto['base_color'];
+            updatedColor[index] = value; updateDraft({ base_color: updatedColor });
+          }}
+          onCommit={(value) => {
+            const updatedColor = [...color] as MaterialDto['base_color'];
+            updatedColor[index] = value; void commitMaterial(completePatch({ base_color: updatedColor }));
+          }} />
       ))}
     </fieldset>
   );
@@ -345,6 +310,13 @@ interface RangeFieldProps {
 }
 
 function RangeField({ label, value, onDraft, onCommit }: RangeFieldProps) {
+  // 同一手势的释放与失焦只提交一次；新的交互仍可重试同一个值。
+  const lastCommitted = useRef<number | null>(null);
+  const commitOnce = (next: number) => {
+    if (lastCommitted.current === next) return;
+    lastCommitted.current = next;
+    void onCommit(next);
+  };
   return (
     <label className="field range-field">
       <span>{label}</span>
@@ -354,10 +326,13 @@ function RangeField({ label, value, onDraft, onCommit }: RangeFieldProps) {
         max="1"
         step="0.001"
         value={value}
-        onChange={(event) => onDraft(Number(event.target.value))}
-        onPointerUp={(event) => void onCommit(Number(event.currentTarget.value))}
-        onKeyUp={(event) => void onCommit(Number(event.currentTarget.value))}
-        onBlur={(event) => void onCommit(Number(event.currentTarget.value))}
+        onFocus={() => { lastCommitted.current = null; }}
+        onPointerDown={() => { lastCommitted.current = null; }}
+        onKeyDown={(event) => { if (event.key !== 'Tab') lastCommitted.current = null; }}
+        onChange={(event) => { lastCommitted.current = null; onDraft(Number(event.target.value)); }}
+        onPointerUp={(event) => commitOnce(Number(event.currentTarget.value))}
+        onKeyUp={(event) => commitOnce(Number(event.currentTarget.value))}
+        onBlur={(event) => commitOnce(Number(event.currentTarget.value))}
       />
       <output>{value.toFixed(3)}</output>
     </label>

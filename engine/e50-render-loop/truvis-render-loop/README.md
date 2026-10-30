@@ -34,6 +34,10 @@
 原生窗口通过 `RenderThreadControl::publish_resize` 同时发布尺寸 generation 和 `InputEvent::Resized`。
 即使窗口恢复原尺寸，也会在下一次 update 前清理旧交互；DLSS 内部 resize 不走该窗口通道。
 
+窗口 DPI 通过 `InputEvent::ScaleFactorChanged` 传递，Loop 截获并只保留最终值，
+普通输入仍保持 FIFO。恢复渲染前在 GPU idle 安全点调用 `Renderer::on_scale_factor_changed`；
+同值不回调，物理尺寸不变也可交付，零尺寸暂停期间不重建字体资源。
+
 退出标记同时限制输入生产和排空：send_input 观察到退出后不再入队，Loop 在 drain
 期间检查退出，并在 drain 后重查，避免积压拖延关闭或再开始 resize/frame。与退出
 并发且已越过检查的投递仍可能入队；这是停止接收的观察边界，不是事务式关闭通道。

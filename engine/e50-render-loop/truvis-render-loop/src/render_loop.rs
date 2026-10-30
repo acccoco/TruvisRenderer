@@ -20,6 +20,10 @@ pub struct RenderLoop {
     render_runtime: Option<RenderRuntime>,
     input_events: Vec<InputEvent>,
     renderer: Box<dyn Renderer>,
+
+    /// 已应用的窗口 DPI；待处理事件只保留最终值，零尺寸暂停期间不创建 GPU 资源。
+    scale_factor: f64,
+    pending_scale_factor: Option<f64>,
 }
 
 impl RenderLoop {
@@ -28,6 +32,8 @@ impl RenderLoop {
             render_runtime: None,
             input_events: Vec::new(),
             renderer,
+            scale_factor: 1.0,
+            pending_scale_factor: None,
         }
     }
 
@@ -110,6 +116,7 @@ impl RenderLoop {
                 }
             }
 
+            render_loop.apply_pending_scale_factor();
             render_loop.run_frame();
         }
 
@@ -138,6 +145,8 @@ impl RenderLoop {
         scale_factor: f64,
         window_size: [u32; 2],
     ) {
+        assert!(scale_factor.is_finite() && scale_factor > 0.0, "invalid initial window scale factor");
+        self.scale_factor = scale_factor;
         let mut render_runtime = Self::new_render_runtime(raw_display);
         {
             let runtime = render_runtime.init_after_window(raw_display, raw_window, window_size);
@@ -157,6 +166,7 @@ impl RenderLoop {
             render_runtime,
             input_events,
             renderer,
+            ..
         } = self;
         let render_runtime = render_runtime.as_mut().expect("RenderRuntime missing in RenderLoop::run_frame");
 
@@ -236,7 +246,26 @@ impl RenderLoop {
     }
 
     fn push_input_event(&mut self, event: InputEvent) {
-        self.input_events.push(event);
+        if let InputEvent::ScaleFactorChanged { scale_factor } = event {
+            assert!(scale_factor.is_finite() && scale_factor > 0.0, "invalid window scale factor");
+            self.pending_scale_factor = Some(scale_factor);
+        } else {
+            self.input_events.push(event);
+        }
+    }
+
+    /// DPI 不依赖 swapchain resize；即使物理尺寸不变，也在新 ImGui frame 前交付一次最终值。
+    fn apply_pending_scale_factor(&mut self) {
+        let Some(scale_factor) = self.pending_scale_factor.take() else {
+            return;
+        };
+        if scale_factor == self.scale_factor {
+            return;
+        }
+        let runtime = self.render_runtime.as_mut().expect("RenderRuntime missing for scale factor update");
+        let mut ctx = runtime.resource_rebuild_phase();
+        self.renderer.on_scale_factor_changed(scale_factor, &mut ctx);
+        self.scale_factor = scale_factor;
     }
 
     fn recreate_swapchain_if_needed(&mut self, new_size: [u32; 2]) {

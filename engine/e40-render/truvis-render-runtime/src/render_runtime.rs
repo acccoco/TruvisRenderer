@@ -417,18 +417,7 @@ impl RenderRuntime {
         self.frame_state.render_extent = new_render_extent;
         self.history_invalidated = true;
 
-        Some(RenderRuntimeResizeCtx {
-            device_ctx: self.gfx.device_ctx(),
-            resource_ctx: self.gfx.resource_ctx(),
-            immediate_ctx: self.gfx.immediate_ctx(),
-            surface_ctx: self.gfx.surface_ctx(),
-            gfx_resource_registry: &mut self.gfx_resource_registry,
-            shader_binding_system: &mut self.shader_binding_system,
-            frame_timing: &self.frame_timing,
-            frame_state: &mut self.frame_state,
-            present: self.swapchain_presenter.as_ref().unwrap().view(),
-            requested_render_extent: &mut self.requested_render_extent,
-        })
+        Some(self.resize_ctx())
     }
 
     /// 是否存在等待处理的 swapchain 重建请求。
@@ -491,7 +480,18 @@ impl RenderRuntime {
         // 返回的 resize ctx 交给 Renderer/子系统完成，避免 engine 反向持有管线策略资源。
         self.sync_frame_extent_after_present_resize();
 
-        Some(RenderRuntimeResizeCtx {
+        Some(self.resize_ctx())
+    }
+
+    /// 在帧间等待 GPU idle 后交付资源重建能力，不改变输出尺寸或主视图历史。
+    /// 用于窗口 DPI 等与 swapchain 尺寸无关的 Renderer 资源更新；失败时不交付可销毁资源的上下文。
+    pub fn resource_rebuild_phase(&mut self) -> RenderRuntimeResizeCtx<'_> {
+        self.gfx.wait_idel();
+        self.resize_ctx()
+    }
+
+    fn resize_ctx(&mut self) -> RenderRuntimeResizeCtx<'_> {
+        RenderRuntimeResizeCtx {
             device_ctx: self.gfx.device_ctx(),
             resource_ctx: self.gfx.resource_ctx(),
             immediate_ctx: self.gfx.immediate_ctx(),
@@ -502,7 +502,7 @@ impl RenderRuntime {
             frame_state: &mut self.frame_state,
             present: self.swapchain_presenter.as_ref().unwrap().view(),
             requested_render_extent: &mut self.requested_render_extent,
-        })
+        }
     }
 
     /// 生成 shutdown 阶段上下文，供 Renderer/子系统在 runtime 子资源销毁前释放自己持有的 GPU 资源。

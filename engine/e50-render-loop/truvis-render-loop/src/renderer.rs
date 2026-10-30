@@ -86,6 +86,10 @@ pub trait Renderer {
     /// 状态，并显式重建各子系统持有的 renderer-owned render targets。
     fn on_resize(&mut self, _ctx: &mut RendererResizeCtx<'_>) {}
 
+    /// 窗口 DPI 变化，在下一帧开始前、GPU idle 后调用；物理尺寸可以不变。
+    /// 复用资源重建能力，仅由 Renderer 更新 GUI 等依赖 scale 的资源，不隐式重建场景 target。
+    fn on_scale_factor_changed(&mut self, _scale_factor: f64, _ctx: &mut RenderRuntimeResizeCtx<'_>) {}
+
     /// 按 Renderer 定义的顺序释放自己和各具体子系统持有的 GPU 资源。
     ///
     /// `RenderLoop` 在 GPU idle 之后、runtime root owner 销毁之前调用此 hook。

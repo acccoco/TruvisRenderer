@@ -9,6 +9,8 @@ WebView、原生嵌入 viewport、`EditorIpc`、文件对话框和主线程关�
 - `desktop`：组装 Tauri/Tao main thread、WebView、frontend ports 与 `EmbeddedWinitHost`。
 - `client`：在 RenderThread 上组合共享 `truvis-scenes::SceneInitializer`，处理 Editor 请求和本地桌面命令。
 - `EditorIpc`：独占 Tauri invoke、event emit、两秒 request timeout 和 notification task。
+- timeout 只结束 WebView 等待，已入队 CPU command 仍可能在后续 RenderThread tick 执行；
+  scene version/query 是恢复入口，不能把 response timeout 当成 mutation rollback 或 GPU 完成。
 - `mcp_server`：始终启动固定 loopback Streamable HTTP MCP；工具请求只进入
   有界 Automation endpoint，由 RenderThread 的 `WorldAutomationController` 修改 CPU scene。
 - `main` / `build.rs` / Tauri 配置：提供桌面应用启动与打包入口。
@@ -27,7 +29,8 @@ WebView、原生嵌入 viewport、`EditorIpc`、文件对话框和主线程关�
 ## MCP Automation
 
 MCP server 固定监听 `127.0.0.1:8765/mcp`，不使用 token 或其他身份认证；访问控制依赖 loopback
-地址和固定 Host 校验。RMCP 支持 MCP `2025-06-18`、`2025-11-25` 和 `2026-07-28` 的 stateless
+地址和固定 Host 校验；接口供原生客户端使用，拒绝所有携带 Origin 的请求（包括 `null`）。
+RMCP 支持 MCP `2025-06-18`、`2025-11-25` 和 `2026-07-28` 的 stateless
 Streamable HTTP；2025 版本通过 `initialize` 协商，2026 版本可以使用 `server/discover` 和现代 request
 metadata，标准 `MCP-Protocol-Version` header 由 RMCP 校验。端口被占用时 Truvis 启动失败，用户需要释放
 `127.0.0.1:8765` 后重新启动；不提供旧 HTTP+SSE、REST 别名、自动换端口、远程监听或 CORS/OAuth
