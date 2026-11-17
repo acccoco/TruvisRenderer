@@ -6352,26 +6352,15 @@ dependencies = [
 name = "truvis-assimp-binding"
 version = "0.1.0"
 dependencies = [
- "truvis-cxx-binding-codegen",
+ "truvis-cxx-binding-build",
  "truvis-path",
 ]
 
 [[package]]
-name = "truvis-cxx-binding-codegen"
+name = "truvis-cxx-binding-build"
 version = "0.1.0"
 dependencies = [
  "bindgen",
- "truvis-path",
-]
-
-[[package]]
-name = "truvis-cxx-build"
-version = "0.1.0"
-dependencies = [
- "log",
- "serde",
- "serde_json",
- "truvis-logs",
  "truvis-path",
 ]
 
@@ -6633,7 +6622,7 @@ name = "truvis-streamline-binding"
 version = "0.1.0"
 dependencies = [
  "log",
- "truvis-cxx-binding-codegen",
+ "truvis-cxx-binding-build",
  "truvis-path",
  "truvis-utils",
 ]
@@ -6647,7 +6636,7 @@ name = "truvis-vk-binding"
 version = "0.1.0"
 dependencies = [
  "ash",
- "truvis-cxx-binding-codegen",
+ "truvis-cxx-binding-build",
  "truvis-path",
 ]
 

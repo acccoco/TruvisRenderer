@@ -106,8 +106,8 @@ impl Default for StreamlineFeatureFlags {
 /// `plugin_dir` 是 Streamline plugin/runtime 搜索目录，必须包含 `sl.interposer.dll`、
 /// `sl.common.dll`、`sl.pcl.dll`、`sl.dlss.dll`、`nvngx_dlss.dll`、`sl.dlss_d.dll`
 /// 和 `nvngx_dlssd.dll`。项目的
-/// `cxx-build` 会把这些文件复制到 `build/{profile}` 和
-/// `build/{profile}/examples`，所以默认值使用当前 executable 所在目录。
+/// 本 crate 的 `build.rs` 把这些文件复制到 `build/{profile}` 和
+/// `build/{profile}/deps`，所以默认值使用当前 executable 所在目录。
 ///
 /// `log_dir` 是 Streamline 日志目录。默认放在 `.temp/streamline`，这样运行目录只承担
 /// DLL/JSON 布置职责，诊断日志不会混在 `build` 产物中。
@@ -160,7 +160,7 @@ impl StreamlineInitInfo {
     /// 返回默认 executable 目录中的 Streamline Vulkan loader 路径。
     ///
     /// 这个路径规则和默认 `plugin_dir` 保持一致，只计算路径，不检查 DLL 是否存在；
-    /// DLL 布置仍由 `cxx-build` 负责。
+    /// DLL 布置由本 crate 的 `build.rs` 负责。
     pub fn default_vulkan_loader_path() -> Result<PathBuf, std::io::Error> {
         Ok(PathUtils::current_exe_dir()?.join("sl.interposer.dll"))
     }

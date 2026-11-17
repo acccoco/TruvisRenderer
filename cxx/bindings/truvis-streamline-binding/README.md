@@ -12,6 +12,14 @@ null-terminated UTF-16，Vulkan loader 也按 Windows DLL 路径处理。Rust �
 `GetProcAddress` 显式解析 `slInit` / `slShutdown`，不通过链接期导入库自动加载
 Streamline runtime。
 
+## 构建与运行文件
+
+外层 `just cxx-debug` / `just cxx` 先构建 CMake，再构建 binding。本 crate 的 `build.rs` 手写 wrapper、
+SDK DLL 和四个项目 JSON 的列表；Debug 使用 SDK development 目录，可选复制 `sl.imgui.dll`。
+文件部署到 Cargo profile 根与 `deps/`，默认初始化仍从当前 executable 目录加载。
+import library 直接从 `TRUVIS_CXX_TOOL` 选定的 native 目录链接，不链接 `sl.interposer.lib`。
+删除依赖或手工删除部署文件后需清理相应构建产物再重建，不自动维护历史部署。
+
 ## 源码边界
 
 - `src/lib.rs`：crate 入口，只声明模块并维持对外 re-export，不放具体生命周期实现。

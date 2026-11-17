@@ -28,4 +28,4 @@
 `build/cxx/generated/include/TruvixxVk/c_api/vulkan_include_roots.txt`。
 单独 configure（包括 clangd 辅助 configure）不发布该文件，Rust 因而消费实际构建使用的 headers。
 
-Rust consumer 和函数签名见 [`truvis-vk-binding`](../../rust/bindings/truvis-vk-binding/README.md)。
+Rust consumer 和函数签名见 [`truvis-vk-binding`](../../bindings/truvis-vk-binding/README.md)。

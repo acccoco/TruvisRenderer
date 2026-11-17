@@ -58,7 +58,7 @@ pub struct StreamlineRuntime {
 impl StreamlineRuntime {
     /// 使用项目默认路径初始化 Streamline。
     ///
-    /// 默认假设 `cxx-build` 已把 Streamline runtime 复制到当前 executable 所在目录。
+    /// 默认假设本 crate 的 `build.rs` 已把 Streamline runtime 复制到当前 executable 所在目录。
     pub fn init_default() -> Result<Self, StreamlineError> {
         let info = StreamlineInitInfo::from_current_exe().map_err(|err| {
             log::error!("Failed to resolve Streamline executable directory: {}", err);

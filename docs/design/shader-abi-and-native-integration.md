@@ -20,7 +20,7 @@ flowchart LR
     end
     subgraph Native["Native C ABI 消费"]
         CHeader["CXX module public C header"] --> NativeDll["CXX module DLL"]
-        CHeader -->|bindgen| NativeBinding["cxx/rust/bindings"]
+        CHeader -->|bindgen| NativeBinding["cxx/bindings"]
         NativeDll -->|链接产物| NativeBinding
     end
 ```
@@ -79,10 +79,12 @@ Descriptor 的 Rust layout 是宿主侧投影，derive 只检查声明自身的�
 
 workspace 根 `cxx/` 是唯一 native integration project。CMake target 直接依赖 native module，不镜像 Rust 顶层分层。
 
-Native 部署集合由当前 CMake target、其运行依赖和显式 sidecar 声明决定；输出目录中的残留文件不构成部署依据。
-Rust 部署前校验完整输入和删除边界，并保留失败重试所需的文件所有权；部署成功前不能把混合版本输出视为可用。
+Native 编译由外层先调用 CMake 完成；各 Rust binding 显式声明 import library、DLL 和配置文件，并直接消费所选工具链的产物。
+输出目录残留不构成部署依据；第三方间接 DLL 由 binding owner 随 SDK 版本人工维护，不递归发现依赖。
+部署只复制显式声明的运行文件，不维护历史清单或失败回滚；缺少源文件或复制失败即构建失败，不能使用混合输出。
+删除依赖或手工删除部署文件后应清理相关构建产物再重建，不提供自动修复或旧状态兼容。
 
-对 Rust 暴露 C ABI 的 target 必须是 DLL；内部实现可以使用 STATIC 或 OBJECT。Native public C ABI 定义在 module 的 `include/.../c_api/module.h`；`cxx/rust/bindings/` 下各 crate 的 `build.rs` 从该 header 生成 Rust binding，并链接对应 native 产物。CMake 不知道 Cargo crate，native module 不链接或回调 Rust symbol。
+对 Rust 暴露 C ABI 的 target 必须是 DLL；内部实现可以使用 STATIC 或 OBJECT。Native public C ABI 定义在 module 的 `include/.../c_api/module.h`；`cxx/bindings/` 下各 crate 的 `build.rs` 从该 header 生成 Rust binding，并链接对应 native 产物。CMake 不知道 Cargo crate，native module 不链接或回调 Rust symbol。
 
 生成 header、CXX module 和 Rust binding 的生命周期必须由各自 owner 管理。不要把 native 句柄、CPU 指针或工作线程隐藏在通用 binding 生成器中。
 

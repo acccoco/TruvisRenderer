@@ -23,13 +23,12 @@ ash 引用本身不拥有原生资源，不能证明这些前置。
 
 ## 类型生成
 
-`build.rs` 单向消费 C API header 和 native build 发布的 include roots；通过 Cargo metadata 接入现有
-`just _cxx-bindings`，无需修改 CMake 对 Cargo 的依赖方向。
+`build.rs` 单向消费 C API header 和 native build 发布的 include roots，显式链接并复制本模块 DLL。
+`just cxx-debug` 在 CMake 完成后构建三个 binding；工具链使用 `TRUVIS_CXX_TOOL`，默认 `vs2022`。
 
 生成器保持 `allowlist_recursively(false)`，直接读取 `module.h`，只输出本模块函数表和导出函数。
 namespace import 将 Vulkan 类型映射到 ash；可空 C 函数指针使用 `Option<ash::vk::PFN_vk…>`。
 Vulkan 宿主布局直接采用 ash 的 C ABI 表示，binding 不生成单元测试。
 
-先运行 `just cxx-debug`，再运行 `cargo build -p truvis-vk-binding`。
-Release native 产物由 `just cxx` 准备，再运行 `cargo build -p truvis-vk-binding --release`。
-DLL 部署及 native 入口约束见 [`truvixx-vk`](../../../modules/truvixx-vk/README.md)。
+`just cxx-debug` 完成 Debug native、binding 和 DLL 部署；`just cxx` 顺序完成 Debug/Release 两套流程。
+DLL 部署及 native 入口约束见 [`truvixx-vk`](../../modules/truvixx-vk/README.md)。

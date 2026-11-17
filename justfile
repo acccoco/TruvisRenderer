@@ -52,31 +52,25 @@ shader-force *tool_opts:
     cargo run --bin shader-build -- --manifest shader-packages.toml --force {{ tool_opts }}
     cargo build -p truvis-shader-binding -p truvis-renderer-shader-binding
 
-# 增量准备 Debug CXX 产物，供 dev cargo run / just truvis 使用，可追加 --verbose
+# 构建 Debug native 与三个 Rust binding，并由 binding 复制运行文件
 [group('2 资源生成与构建')]
-cxx-debug *tool_opts:
-    cargo run --bin cxx-build -- --profile debug {{ tool_opts }}
+cxx-debug:
+    nu scripts/nu/cxx-cmake.nu '{{ justfile_directory() }}' debug
 
-# 只生成 clangd 使用的 compile_commands.json，不构建 native target 或 Rust binding
+# 只生成 clangd 数据库，不构建 native target 或 Rust binding
 [group('2 资源生成与构建')]
-cxx-compile-commands *tool_opts:
-    cargo run --bin cxx-build -- --compile-commands {{ tool_opts }}
+cxx-compile-commands:
+    nu scripts/nu/cxx-cmake.nu '{{ justfile_directory() }}' --compile-commands
 
-# 增量编译 Debug + Release CXX 项目并更新 Rust 绑定，可追加 --verbose
+# 顺序构建 Debug、Release native 与 Rust binding
 [group('2 资源生成与构建')]
-cxx *tool_opts:
-    cargo run --bin cxx-build -- --profile all {{ tool_opts }}
-    just _cxx-bindings
+cxx:
+    nu scripts/nu/cxx-cmake.nu '{{ justfile_directory() }}' all
 
-# 强制重新编译 Debug + Release CXX 项目并更新 Rust 绑定，可追加 --verbose
+# CMake clean-first 后重新构建两种配置
 [group('2 资源生成与构建')]
-cxx-force *tool_opts:
-    cargo run --bin cxx-build -- --profile all --force {{ tool_opts }}
-    just _cxx-bindings
-
-# 从 Cargo package metadata 发现所有单向消费 public CXX DLL 的 binding crate。
-_cxx-bindings:
-    nu scripts/nu/build-cxx-bindings.nu '{{ justfile_directory() }}'
+cxx-force:
+    nu scripts/nu/cxx-cmake.nu '{{ justfile_directory() }}' all --force
 
 # 运行 Triangle 示例
 [group('3 运行示例')]
@@ -103,20 +97,9 @@ truvis-direct *run_opts: editor-web (_run-cargo-bin "truvis-app" run_opts)
 tracy:
     start '{{ tracy_profiler }}'
 
-# 配置 cxx/ CMake preset：tool=vs2026/vs2022/clang，profile=debug/release
-[group('5 CXX CMake 手工入口')]
-cxx-preset tool="vs2026" profile="debug": (_cxx-cmake "preset" tool profile)
-
-# 构建 cxx/ CMake preset：tool=vs2026/vs2022/clang，profile=debug/release
-[group('5 CXX CMake 手工入口')]
-cxx-build tool="vs2026" profile="debug": (_cxx-cmake "build" tool profile)
-
 # Web editor 的 TypeScript 协议必须从 Rust DTO 生成；该内部 recipe 不作为日常命令暴露。
 _editor-web-types:
     cargo run -p truvis-editor-bridge --bin export_editor_types
 
 _run-cargo-bin bin *run_opts:
     nu scripts/nu/run-cargo-bin.nu '{{ justfile_directory() }}' '{{ bin }}' {{ run_opts }}
-
-_cxx-cmake action tool profile:
-    nu scripts/nu/cxx-cmake.nu '{{ justfile_directory() }}' '{{ action }}' '{{ tool }}' '{{ profile }}'

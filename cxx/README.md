@@ -6,55 +6,57 @@ Rust binding。它不镜像 `engine/`、`renderer/`、`app/` 的 Rust 分层，�
 ## 目录
 
 - `CMakeLists.txt`、`CMakePresets.json`、`vcpkg.json`：唯一 native project 入口。
-- `cmake/`：export header 与 runtime plan 等少量公共 CMake helper。
+- `cmake/`：export header 公共 CMake helper。
 - `modules/`：全部 C++ target；module 使用标准 CMake 直接依赖。
-- `rust/tools/`：`truvis-cxx-build` 与 `truvis-cxx-binding-codegen`。
-- `rust/bindings/`：Assimp、Streamline 等 public C ABI 的 Rust consumer。
+- `tools/`：`truvis-cxx-binding-build` 提供 binding 生成、native 链接与运行文件复制支持。
+- `bindings/`：Assimp、Streamline 等 public C ABI 的 Rust consumer。
 
 当前 native module：
 
 - `truvixx-utils`：内部 STATIC helper。
 - `truvixx-assimp`：内部 Assimp 实现；`truvixx-assimp-capi` 是 Rust 使用的 SHARED C API。
 - `truvixx-vk-capi`：使用 Vulkan C headers 的设备命令桥接，函数入口由 ash 注入，不链接 Vulkan loader。
-- `truvixx-streamline-capi`：Streamline/DLSS SHARED C API，运行时 sidecar 与 JSON 由本 module 声明。
+- `truvixx-streamline-capi`：Streamline/DLSS SHARED C API，运行时 DLL 与 JSON 由对应 Rust binding 声明。
 
 ## 构建与增量
 
-`truvis-cxx-build` 每次都调用 CMake configure/build。C++ source、header、编译参数和链接输入是否需要重新编译或
-重新链接，只由 CMake generator、MSBuild/Ninja 与 compiler dependency information 判断；Rust 不保存 native 输入快照。
-`--force` 映射到 CMake `--clean-first`，不会由 Rust 删除 object/cache。
+外层 `scripts/nu/cxx-cmake.nu` 顺序调用 CMake configure/build，再构建三个明确列出的 Rust binding。
+C++ 编译与链接增量完全交给 CMake/MSBuild/Ninja；binding 的 `build.rs` 不启动 CMake。
 
-CMake 在每次 Debug/Release build 完成后生成完整 runtime plan：public SHARED target 的 DLL/import library
-与可选 PDB、target 声明的运行 DLL 及其递归依赖、module 声明的 required/optional sidecar。
-第三方 DLL 从声明的来源解析，不以 native 输出目录中的残留文件为依据；内部 STATIC 产物不部署到 Cargo。
-Rust 只消费这份 plan，将其部署到 `build/{debug,release}` 与其 `examples/`，不扫描 native 输出目录。
-
-部署按文件内容判断是否需要更新，不能用修改时间代替内容身份。旧部署清单只能删除 profile 根目录与
-`examples/` 的直接文件；清单路径及其实际父目录必须通过边界校验。必需源文件、目标重名、目录占用和旧清单
-在复制前统一校验；首次复制前记录旧集合与当前计划的并集，成功后才缩减为当前集合。这样 IO 失败后重跑或
-切换计划仍能清理部分部署的新文件。状态清单通过同目录临时文件替换；不支持并发部署，不保证多文件失败回滚，
-失败后必须修正原因并重新成功部署，不能继续使用混合输出。进程崩溃、断电持久化不在此保证内。
-
-常用入口：
+工具链由 `TRUVIS_CXX_TOOL=vs2022|vs2026|clang-cl` 显式选择，未设置时使用 `vs2022`。
+CMake 和 Cargo 必须继承同一值；不自动探测或回退，也不保存当前工具链状态。仅支持 Windows x64 MSVC ABI、
+Debug/Release 和项目 `build/` 输出布局，不支持并发切换工具链或向同一 profile 部署。
+IDE 的 Cargo 检查也必须使用同一环境；不同 Cargo 构建缓存共享部署目录，混用工具链后需清理 binding 缓存再重建。
 
 ```powershell
+just cxx-debug             # Debug native + 三个 binding + 运行文件
+just cxx                   # 顺序执行 Debug、Release 两套流程
+just cxx-force             # 两套流程的 CMake build 增加 --clean-first
+just cxx-compile-commands  # 仅 clang-cl Debug configure，更新 clangd 数据库
+$env:TRUVIS_CXX_TOOL = 'clang-cl'
 just cxx-debug
-just cxx
-just cxx-force
-just cxx-compile-commands
 ```
 
-`cxx-debug` 只构建并部署 Debug native 产物；最终的 `cargo run` 会在同一个 Cargo 构建图中编译所需 Rust binding。
-Triangle、ShaderToy 也通过 Gfx 使用 native Vulkan binding，其 `just` 入口同样先执行 `cxx-debug`。
-需要更新 clangd 数据库时单独运行 `cxx-compile-commands`，它不会构建 native target 或 Rust binding。
+三个 binding 分别手写链接库和运行文件。import library 直接从所选 native 输出目录链接，PDB 留在 native
+目录；DLL/JSON 按内容比较后复制到 `build/{debug,release}` 及其 `deps/`，不默认部署到 `examples/`。
+Assimp 的间接 DLL 来自所选 CMake build tree 的 vcpkg 安装目录；仅 Assimp 自身使用唯一文件名匹配以容纳
+工具集后缀，其余文件全部列名。升级 SDK/依赖时必须人工核对列表，缺少必需源文件直接失败，不从旧部署补找。
 
-也可以直接使用独立 CMake project：
+部署不保存历史状态、不递归发现 DLL 依赖、不自动删除旧文件，也不保证多文件失败回滚。失败后修正原因再重建。
+源 lib/DLL/JSON 与工具链变量由 Cargo 追踪；手工删除目标文件不会自动修复，需先清理对应 binding 的 Cargo 缓存。
+三个 binding 的缓存可用 `cargo clean -p truvis-assimp-binding -p truvis-streamline-binding -p truvis-vk-binding` 清理。
+删除或重命名依赖时应清理旧 profile 产物后重建；完整重置可以使用 `cargo clean`，随后重新准备 shader/native。
+没有旧清单迁移或兼容入口。
+
+运行示例的 recipe 仍先执行 `cxx-debug`。需要独立操作 CMake 时直接使用 presets；其本身不构建 Rust binding：
 
 ```powershell
 Set-Location cxx
-cmake --preset vs2026
-cmake --build --preset vs2026-build-debug
+cmake --preset vs2022
+cmake --build --preset vs2022-build-debug
 ```
+
+clangd 辅助 configure 不部署 DLL、不发布 Vulkan include roots，也不改变日常选择的工具链。
 
 ## Rust FFI 边界
 
@@ -88,25 +90,23 @@ UV0，已有非二维 UV0 不接受。额外未被消费的 UV 集不导出。�
   原始 aiScene 在全部转换完成后释放；转换期间有临时双份属性存储。视图只读且有效至 scene_free，禁止并发释放。
   SceneImporter 持有一个可复用的 Assimp::Importer；clear 释放场景和本次结果/诊断，不重建格式插件。
 - binding crate 的 `build.rs` 单向读取 module header，经公共 codegen 生成到
-  `build/bindings/{TARGET}/cxx/{crate}/`，再链接部署到 Cargo profile 目录的 import library。
+  `build/bindings/{TARGET}/cxx/{crate}/`，再直接链接所选 native 输出目录的 import library。
 - CMake/native project 不知道 Cargo crate，也不得链接或回调 Rust symbol。
 - Vulkan 命令 binding 通过 owner 指定的 namespace import 复用 ash 类型；公共 codegen 不维护 Vulkan 类型映射。
 - Streamline 的 RenderGraph pass 顺序和 Vulkan resource 生命周期仍由 Rust Renderer/Runtime owner 管理。
 
 Streamline Rust 生命周期细节见
-[`truvis-streamline-binding/README.md`](rust/bindings/truvis-streamline-binding/README.md)。
+[`truvis-streamline-binding/README.md`](bindings/truvis-streamline-binding/README.md)。
 
 Vulkan 命令桥接和宿主 ABI 契约见
 [`truvixx-vk/README.md`](modules/truvixx-vk/README.md) 与
-[`truvis-vk-binding/README.md`](rust/bindings/truvis-vk-binding/README.md)。
+[`truvis-vk-binding/README.md`](bindings/truvis-vk-binding/README.md)。
 
 ## 生成目录
 
 - CMake binary dir：`build/cxx/cmake/{vs2022,vs2026,clang-cl}`。
 - Native 输出：`build/cxx/output/{toolchain}/{Debug,Release}`。
 - export header：`build/cxx/generated/include/`。
-- runtime plan：各 CMake binary dir 的 `runtime/`；configure 只生成脚本，成功 build 才发布版本 2 清单。
-- Rust 部署所有权：`build/cxx/.state/`。
 - Rust binding：`build/bindings/{TARGET}/cxx/{crate}/`。
 - clangd database：`build/cxx/compile_commands.json` 与 `.vscode/compile_commands.json`。
 

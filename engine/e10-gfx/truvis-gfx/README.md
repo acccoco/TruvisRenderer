@@ -40,7 +40,7 @@ Vulkan RHI 抽象层，封装设备、队列、资源、同步与图形/计算/�
   包括加速结构的 `pNext`；native 不保存 CPU 指针，GPU 对象的有效期继续由原资源 owner 保证。
   空 push 列表由 binding 在进入 native 前拒绝；通用 with_writes 保留普通 descriptor update 的使用语义。
 - wrapper 不负责 Vulkan release；最后一次命令调用必须早于 Device / Instance / Entry 的销毁。
-  详细 ABI 契约见 [`truvis-vk-binding`](../../../cxx/rust/bindings/truvis-vk-binding/README.md)。
+  详细 ABI 契约见 [`truvis-vk-binding`](../../../cxx/bindings/truvis-vk-binding/README.md)。
 
 ## Descriptor 声明与写入
 

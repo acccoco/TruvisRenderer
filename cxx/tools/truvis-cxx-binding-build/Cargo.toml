@@ -1,0 +1,9 @@
+[package]
+name = "truvis-cxx-binding-build"
+version = "0.1.0"
+edition = "2024"
+description = "Build support for Truvis CXX bindings: generation, native linking and runtime file copying"
+
+[dependencies]
+bindgen = { workspace = true }
+truvis-path = { workspace = true }

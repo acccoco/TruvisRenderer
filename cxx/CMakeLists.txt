@@ -25,5 +25,3 @@ list(PREPEND CMAKE_MODULE_PATH "${TRUVIS_CXX_ROOT}/cmake")
 include(TruvisCxx)
 
 add_subdirectory(modules)
-
-truvis_finalize_runtime_plans()

@@ -7,8 +7,7 @@ members = [
     "engine/e00-utils/truvis-shader-manifest",
     "engine/e00-utils/truvis-shader-binding-codegen",
     "engine/e00-utils/truvis-shader-build",
-    "cxx/rust/tools/truvis-cxx-binding-codegen",
-    "cxx/rust/tools/truvis-cxx-build",
+    "cxx/tools/truvis-cxx-binding-build",
     # e00-foundation
     "engine/e00-foundation/truvis-utils",
     "engine/e00-foundation/truvis-logs",
@@ -31,9 +30,9 @@ members = [
     # shader 绑定相关
     "engine/shader/truvis-shader-binding",
     # cxx 绑定相关
-    "cxx/rust/bindings/truvis-assimp-binding",
-    "cxx/rust/bindings/truvis-streamline-binding",
-    "cxx/rust/bindings/truvis-vk-binding",
+    "cxx/bindings/truvis-assimp-binding",
+    "cxx/bindings/truvis-streamline-binding",
+    "cxx/bindings/truvis-vk-binding",
     # renderer
     "renderer/truvis-renderer",
     "renderer/editor/truvis-editor-bridge",
@@ -72,8 +71,7 @@ truvis-path = { path = "engine/e00-utils/truvis-path" }
 truvis-shader-manifest = { path = "engine/e00-utils/truvis-shader-manifest" }
 truvis-shader-binding-codegen = { path = "engine/e00-utils/truvis-shader-binding-codegen" }
 truvis-shader-build = { path = "engine/e00-utils/truvis-shader-build" }
-truvis-cxx-binding-codegen = { path = "cxx/rust/tools/truvis-cxx-binding-codegen" }
-truvis-cxx-build = { path = "cxx/rust/tools/truvis-cxx-build" }
+truvis-cxx-binding-build = { path = "cxx/tools/truvis-cxx-binding-build" }
 # e00-foundation
 truvis-logs = { path = "engine/e00-foundation/truvis-logs" }
 truvis-utils = { path = "engine/e00-foundation/truvis-utils" }
@@ -108,9 +106,9 @@ shader-toy-renderer = { path = "renderer/samples/shader-toy-renderer" }
 # shader
 truvis-shader-binding = { path = "engine/shader/truvis-shader-binding" }
 # cxx
-truvis-assimp-binding = { path = "cxx/rust/bindings/truvis-assimp-binding" }
-truvis-streamline-binding = { path = "cxx/rust/bindings/truvis-streamline-binding" }
-truvis-vk-binding = { path = "cxx/rust/bindings/truvis-vk-binding" }
+truvis-assimp-binding = { path = "cxx/bindings/truvis-assimp-binding" }
+truvis-streamline-binding = { path = "cxx/bindings/truvis-streamline-binding" }
+truvis-vk-binding = { path = "cxx/bindings/truvis-vk-binding" }
 
 
 

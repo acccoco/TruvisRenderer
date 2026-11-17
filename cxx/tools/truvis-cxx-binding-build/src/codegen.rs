@@ -1,8 +1,3 @@
-//! CXX public DLL 的 Rust binding 公共生成支持。
-//!
-//! Native module 不依赖本 crate；binding owner 的 `build.rs` 单向读取 C ABI header，
-//! 并在这里复用 allowlist、稳定输出路径和 write-if-changed 行为。
-
 use std::{
     fs,
     path::{Path, PathBuf},

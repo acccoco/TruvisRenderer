@@ -1,6 +1,6 @@
 # just 命令图解
 
-按 2026-10-11 的 [justfile](../justfile) 与参数解析实现核对，覆盖 **20 个公开命令、4 个内部 recipe**。这是当前工具流程的使用说明；命令变化时以实现为准。
+按 [justfile](../justfile) 与脚本实现说明当前命令。这是当前工具流程的使用说明；命令变化时以实现为准。
 
 ## 1. 日常入口依赖图
 
@@ -20,7 +20,7 @@ flowchart LR
         W["editor-web"]
         S["shader"]
         X["cxx<br/>Debug + Release"]
-        XD["cxx-debug<br/>仅 Debug native"]
+        XD["cxx-debug<br/>Debug native + binding"]
     end
     subgraph Execute["最终构建 / 运行"]
         ALL["cargo build --all"]
@@ -43,9 +43,11 @@ flowchart LR
     C -->|2| XD
     C -->|3| RT
     TRI -->|1| S
-    TRI -->|2| TR
+    TRI -->|2| XD
+    TRI -->|3| TR
     TOY -->|1| S
-    TOY -->|2| ST
+    TOY -->|2| XD
+    TOY -->|3| ST
     classDef entry fill:#e7f0ff,stroke:#4075b5,color:#172b4d
     classDef prepare fill:#e8f5ee,stroke:#39815c,color:#173d2b
     classDef internal fill:#f0edf8,stroke:#8066a7,color:#35274b
@@ -60,7 +62,7 @@ flowchart LR
 
 ## 2. 构建命令内部流程
 
-本图箭头统一表示**执行先后**；圆角节点是公开命令，方框是内部 recipe 或实际工具步骤。`shader-force` 和 `cxx-force` 各自直接执行构建工具，不是调用 `shader` / `cxx` recipe。
+本图箭头统一表示**执行先后**；圆角节点是公开命令，方框是内部 recipe 或实际工具步骤。`shader-force` 强制 shader 编译，`cxx-force` 向 CMake 传入 `--clean-first`。
 
 ```mermaid
 flowchart TB
@@ -77,18 +79,17 @@ flowchart TB
         SC --> SB["cargo build<br/>truvis-shader-binding<br/>truvis-renderer-shader-binding"]
     end
     subgraph Native["CXX 与 Rust binding"]
-        X("cxx · tool_opts") -->|--profile all| XC["cxx-build 工具<br/>CMake configure → build → runtime 部署"]
-        XF("cxx-force · tool_opts") -->|--profile all --force| XC
-        XD("cxx-debug · tool_opts") -->|--profile debug| XC
-        XC -->|仅 cxx / cxx-force| XB["just _cxx-bindings<br/>按 Cargo metadata 发现 binding crate<br/>cargo build -p …"]
-        XC -->|cxx-debug 到此结束| XE["Debug native 产物就绪<br/>后续 cargo run 编译所需 Rust binding"]
-        CC("cxx-compile-commands · tool_opts") --> DB["cxx-build --compile-commands<br/>配置 clang-cl-debug 并复制数据库<br/>不构建 native target / Rust binding"]
+        X("cxx") -->|Debug、Release| XC["cxx-cmake.nu<br/>CMake configure → build"]
+        XF("cxx-force") -->|额外 --clean-first| XC
+        XD("cxx-debug") -->|仅 Debug| XC
+        XC --> XB["cargo build 三个明确列出的 binding<br/>对应 profile，build.rs 链接并复制运行文件"]
+        CC("cxx-compile-commands") --> DB["仅配置 clang-cl-debug 并复制数据库"]
     end
 ```
 
-`cxx` 的 Debug + Release 指 **native 构建与部署**；其 `_cxx-bindings` 使用普通 `cargo build`，未传 `--release`。`cxx-build` 工具的 `--force` 对应 CMake `--clean-first`。
+`cxx` 顺序构建 Debug、Release native 与对应 profile 的三个 binding。工具链由 `TRUVIS_CXX_TOOL` 统一选择；运行文件由 binding 显式复制，import library 从 native 输出目录直接链接。
 
-## 3. 资源、手工 CMake 与辅助入口
+## 3. 资源与辅助入口
 
 此图实线表示执行步骤，虚线表示**需要手动满足的前提**，不会自动触发左侧命令。
 
@@ -102,14 +103,10 @@ flowchart LR
     TP --> EX["启动 external/tracy/tracy-profiler.exe"]
     SE("scene-export source output blender?") --> PY["export_gltf.py<br/>Python / Pillow + Blender"]
     PY --> GL["scene.gltf + 外部贴图<br/>不自动运行应用"]
-    CP("cxx-preset tool? profile?") --> HP["_cxx-cmake preset<br/>cmake --preset …"]
-    HP -.->|先配置对应 preset| CB("cxx-build tool? profile?")
-    CB --> HB["_cxx-cmake build<br/>cmake --build --preset …"]
 ```
 
-`fetch-res` 不在 `build-all` 或运行命令的 recipe 依赖中；`tracy` 也不会自动下载工具。手工 `just cxx-build` 不自动调用 `just cxx-preset`，也不执行 Rust 工具的 runtime 部署与 binding 构建。
-
-注意同名区别：**`just cxx-build` 是手工 CMake 入口**；`cargo run --bin cxx-build -- …` 才是 `cxx` 系列使用的自动构建、部署工具。
+`fetch-res` 不在 `build-all` 或运行命令的 recipe 依赖中；`tracy` 也不会自动下载工具。
+独立 CMake 操作直接在 `cxx/` 使用 `cmake --preset …` 与 `cmake --build --preset …`，不会执行 binding 和部署。
 
 ## 4. 运行选项如何流动
 
@@ -141,10 +138,8 @@ flowchart LR
 | `just editor-web-dev` | 无参数，协议类型 → npm install → 开发服务器；不启动桌面应用 |
 | `just tracy` | 无参数，启动已下载的 Tracy Profiler |
 | `just scene-export <source> <output> [blender]` | `source`：`.blend` / `.fbx`；`output`：输出目录；`blender` 默认 `C:/Program Files/Blender Foundation/Blender 5.2/blender.exe` |
-| `just cxx-preset [tool] [profile]` | `tool`：`vs2026`（默认）/ `vs2022` / `clang`；`profile`：`debug`（默认）/ `release` |
-| `just cxx-build [tool] [profile]` | 同上；需要先配置相应 preset |
 
-`scene-export` 的三个参数都是位置参数；不透传额外选项。Python 脚本的 `--texture-size`（默认 2048）、`--texture-root`、`--invert-normal-green` 需要直接调用脚本，不能追加给这个 recipe。手工 CMake 的参数也按位置传，例如 `just cxx-build clang release`，不是 `--tool clang --profile release`。
+`scene-export` 的三个参数都是位置参数；不透传额外选项。Python 脚本的 `--texture-size`（默认 2048）、`--texture-root`、`--invert-normal-green` 需要直接调用脚本，不能追加给这个 recipe。
 
 ### 资源选择
 
@@ -169,19 +164,19 @@ flowchart LR
 
 `shader-force` 仍会执行后续 Rust binding 构建，但不强制清理 Cargo 缓存。
 
-### CXX 工具选项
+### CXX 工具链与入口
 
-| Recipe | 内置选项 | 可追加选项 |
-|---|---|---|
-| `just cxx-debug` | `--profile debug` | `--verbose`、`--force` / `-f`、`--profile <值>`、帮助 |
-| `just cxx` | `--profile all` | 同上 |
-| `just cxx-force` | `--profile all --force` | 同上；无法用选项关闭已内置的 force |
-| `just cxx-compile-commands` | `--compile-commands` | `--verbose`、帮助 |
+| Recipe | 行为 |
+|---|---|
+| `just cxx-debug` | Debug native → 三个 Debug binding → DLL/JSON 部署 |
+| `just cxx` | 顺序执行 Debug、Release 两套流程 |
+| `just cxx-force` | 同上，CMake build 增加 `--clean-first` |
+| `just cxx-compile-commands` | 仅 clang-cl Debug configure 与数据库复制 |
 
-- `--profile` 的值为 `debug` / `release` / `all`；重复指定时后值覆盖前值，仅改变 native profile。选 `release` 不会让后续 `_cxx-bindings` 自动改成 Release。
-- `--compile-commands` 与任何显式 `--profile` 或 `--force` 互斥。因此不能追加给 `cxx` / `cxx-debug` / `cxx-force`，也不能在 `cxx-compile-commands` 后追加 profile 或 force。
-- 帮助选项为 `-h` / `--help`；与 shader 工具一样，当前以错误结果返回并停止后续步骤。
-- 自动 CXX recipe 没有 `--tool` 选项；手工指定工具链使用 `cxx-preset` / `cxx-build`。
+这些 recipe 不接受附加参数。`TRUVIS_CXX_TOOL` 接受 `vs2022`（未设置时默认）、`vs2026`、`clang-cl`，
+CMake 与 Cargo 必须继承同一值。非法值或工具缺失直接失败，不自动回退。clangd 数据库入口不改变该选择。
+DLL/JSON 复制到 profile 根与 `deps/`；不维护部署历史，也不默认复制到 `examples/`。
+删除依赖或手工删除部署文件后需清理相关构建产物及 binding 缓存再重建；完整重置可执行 `cargo clean` 后重新准备 shader/native。
 
 ### 运行命令选项
 
@@ -212,16 +207,16 @@ just truvis-direct --scene cornell
 
 # 针对性重建并查看详细日志
 just shader-force --verbose
-just cxx-debug --force --verbose
-just cxx-compile-commands --verbose
+just cxx-force
+just cxx-compile-commands
 
 # 按名称下载 / 下载所有资源
 just fetch-res slang tracy --verbose
 just fetch-res --all --verbose
 
-# 手工 CMake：先配置，再构建
-just cxx-preset clang release
-just cxx-build clang release
+# 显式选择工具链，native 和 binding 使用同一环境变量
+$env:TRUVIS_CXX_TOOL = 'clang-cl'
+just cxx-debug
 
 # 场景转换：带空格的路径用引号包住
 just scene-export "D:/assets/scene.blend" "D:/assets/export"
@@ -233,6 +228,6 @@ just --dry-run truvis imgui --scene cornell
 ## 核对入口
 
 - [justfile](../justfile)：recipe 依赖、顺序、默认参数与固定选项。
-- [run-cargo-bin.nu](../scripts/nu/run-cargo-bin.nu)、[cxx-cmake.nu](../scripts/nu/cxx-cmake.nu)、[build-cxx-bindings.nu](../scripts/nu/build-cxx-bindings.nu)：运行选项与 CMake / binding 包装行为。
-- [shader-build.rs](../engine/e00-utils/truvis-shader-build/src/bin/shader-build.rs)、[cxx-build/main.rs](../cxx/rust/tools/truvis-cxx-build/src/bin/cxx-build/main.rs)、[fetch_res.rs](../engine/e00-utils/truvis-fetch-res/src/bin/fetch_res.rs)：构建与资源工具选项解析。
+- [run-cargo-bin.nu](../scripts/nu/run-cargo-bin.nu)、[cxx-cmake.nu](../scripts/nu/cxx-cmake.nu)：运行选项与 CMake / binding 包装行为。
+- [shader-build.rs](../engine/e00-utils/truvis-shader-build/src/bin/shader-build.rs)、[fetch_res.rs](../engine/e00-utils/truvis-fetch-res/src/bin/fetch_res.rs)：构建与资源工具选项解析。
 - [startup_options.rs](../app/truvis-scenes/src/startup_options.rs)、[export_gltf.py](../scripts/scene/export_gltf.py)：场景参数与导出选项。
