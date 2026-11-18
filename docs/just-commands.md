@@ -229,5 +229,5 @@ just --dry-run truvis imgui --scene cornell
 
 - [justfile](../justfile)：recipe 依赖、顺序、默认参数与固定选项。
 - [run-cargo-bin.nu](../scripts/nu/run-cargo-bin.nu)、[cxx-cmake.nu](../scripts/nu/cxx-cmake.nu)：运行选项与 CMake / binding 包装行为。
-- [shader-build.rs](../engine/e00-utils/truvis-shader-build/src/bin/shader-build.rs)、[fetch_res.rs](../engine/e00-utils/truvis-fetch-res/src/bin/fetch_res.rs)：构建与资源工具选项解析。
+- [shader-build.rs](../engine/tools/truvis-shader-build/src/bin/shader-build.rs)、[fetch_res.rs](../engine/tools/truvis-fetch-res/src/bin/fetch_res.rs)：构建与资源工具选项解析。
 - [startup_options.rs](../app/truvis-scenes/src/startup_options.rs)、[export_gltf.py](../scripts/scene/export_gltf.py)：场景参数与导出选项。

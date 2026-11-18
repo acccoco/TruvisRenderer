@@ -103,9 +103,9 @@ device/device-info/timeline，但保留资源和队列能力，例如 ImGui 在 
 
 ## 实现入口
 
-- [`render_runtime.rs`](../../engine/e40-render/truvis-render-runtime/src/render_runtime.rs)
-- [`render_runtime_ctx.rs`](../../engine/e40-render/truvis-render-runtime/src/render_runtime_ctx.rs)
-- [`renderer.rs`](../../engine/e50-render-loop/truvis-render-loop/src/renderer.rs)
+- [`render_runtime.rs`](../../engine/runtime/e40-render/truvis-render-runtime/src/render_runtime.rs)
+- [`render_runtime_ctx.rs`](../../engine/runtime/e40-render/truvis-render-runtime/src/render_runtime_ctx.rs)
+- [`renderer.rs`](../../engine/runtime/e50-render-loop/truvis-render-loop/src/renderer.rs)
 - [`renderer-kit`](../../renderer/renderer-kit/README.md)
 
 ## 能力矩阵

@@ -1,7 +1,7 @@
 # app
 
 `app/` 保存面向最终用户的应用启动壳和产品业务 Client。它依赖 `renderer/` 提供的具体 Renderer，并可直接使用
-`engine/e60-platform` 的窗口宿主；渲染 pass、Subsystem、shader 与 GPU 生命周期不属于本层。
+`engine/runtime/e60-platform` 的窗口宿主；渲染 pass、Subsystem、shader 与 GPU 生命周期不属于本层。
 
 ## 目录职责
 

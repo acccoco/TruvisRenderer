@@ -101,7 +101,7 @@ Native 编译由外层先调用 CMake 完成；各 Rust binding 显式声明 imp
 - [`shader-packages.toml`](../../shader-packages.toml)
 - [`renderer/shader/README.md`](../../renderer/shader/README.md)
 - [`cxx/README.md`](../../cxx/README.md)
-- [`truvis-shader-build`](../../engine/e00-utils/README.md)
+- [`truvis-shader-build`](../../engine/tools/README.md)
 
 本文不重复完整字段表；字段和 binding 编号变化应直接修改 ABI owner、生成配置和相应模块文档。
 

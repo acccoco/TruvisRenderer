@@ -118,10 +118,10 @@ scene revision。后续准备中断时新 pair 仍有 owner，成功确认只清
 
 ## 实现入口
 
-- [`scene_store.rs`](../../engine/e30-world/truvis-world/src/scene_store.rs)
-- [`asset_system.rs`](../../engine/e30-world/truvis-world/src/asset_system.rs)
-- [`render_world.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_world.rs)
-- [`render_instance_table.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_instance_table.rs)
+- [`scene_store.rs`](../../engine/runtime/e30-world/truvis-world/src/scene_store.rs)
+- [`asset_system.rs`](../../engine/runtime/e30-world/truvis-world/src/asset_system.rs)
+- [`render_world.rs`](../../engine/runtime/e40-render/truvis-render-runtime/src/render_world/render_world.rs)
+- [`render_instance_table.rs`](../../engine/runtime/e40-render/truvis-render-runtime/src/render_world/render_instance_table.rs)
 
 ## Readiness 与视图
 

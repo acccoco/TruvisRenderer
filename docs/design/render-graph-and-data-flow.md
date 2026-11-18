@@ -130,9 +130,9 @@ transient image/buffer aliasing 不是当前架构的默认资源类别。新增
 
 ## 实现入口
 
-- [`truvis-render-graph`](../../engine/e40-render/truvis-render-graph/README.md)
+- [`truvis-render-graph`](../../engine/runtime/e40-render/truvis-render-graph/README.md)
 - [`renderer-rendering`](../../renderer/renderer-rendering/README.md)
-- [`render_runtime_ctx.rs`](../../engine/e40-render/truvis-render-runtime/src/render_runtime_ctx.rs)
+- [`render_runtime_ctx.rs`](../../engine/runtime/e40-render/truvis-render-runtime/src/render_runtime_ctx.rs)
 - [`selection_outline.rs`](../../renderer/renderer-render-passes/src/effects/selection_outline.rs)
 
 ## 资源访问原则

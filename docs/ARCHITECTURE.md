@@ -52,8 +52,8 @@ app ──> renderer ──> engine
 - [`renderer/shader/README.md`](../renderer/shader/README.md)：Renderer shader package、ABI 和 binding owner。
 - [`app/README.md`](../app/README.md)：Tauri 和 standalone 启动壳。
 - [`app/editor/README.md`](../app/editor/README.md)：Web Editor 构建与 Tauri transport。
-- [`truvis-render-thread/README.md`](../engine/e60-platform/truvis-render-thread/README.md)：渲染线程宿主。
-- [`truvis-winit-host/README.md`](../engine/e60-platform/truvis-winit-host/README.md)：standalone 和 embedded winit 宿主。
+- [`truvis-render-thread/README.md`](../engine/runtime/e60-platform/truvis-render-thread/README.md)：渲染线程宿主。
+- [`truvis-winit-host/README.md`](../engine/runtime/e60-platform/truvis-winit-host/README.md)：standalone 和 embedded winit 宿主。
 
 ## 全局约束
 

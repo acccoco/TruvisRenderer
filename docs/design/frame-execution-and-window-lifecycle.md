@@ -98,9 +98,9 @@ owner 释放需要各自完成凭据，不能统一 catch 后继续销毁。跨�
 
 ## 实现入口
 
-- [`render_loop`](../../engine/e50-render-loop/truvis-render-loop/src/render_loop.rs)
-- [`truvis-render-thread`](../../engine/e60-platform/truvis-render-thread/README.md)
-- [`truvis-winit-host`](../../engine/e60-platform/truvis-winit-host/README.md)
+- [`render_loop`](../../engine/runtime/e50-render-loop/truvis-render-loop/src/render_loop.rs)
+- [`truvis-render-thread`](../../engine/runtime/e60-platform/truvis-render-thread/README.md)
+- [`truvis-winit-host`](../../engine/runtime/e60-platform/truvis-winit-host/README.md)
 
 ## 事件语义
 

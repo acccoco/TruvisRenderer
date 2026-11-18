@@ -1,14 +1,14 @@
 # CXX
 
-`cxx/` 是 Truvis 唯一的 native integration 子系统，同时包含完整 CMake project、C++ modules、构建工具和
-Rust binding。它不镜像 `engine/`、`renderer/`、`app/` 的 Rust 分层，也不从 CMake 调用 Cargo。
+`cxx/` 是 Truvis 唯一的 native integration project，包含完整 CMake project、C++ modules 和 Rust
+binding。它不镜像 `engine/`、`renderer/`、`app/` 的 Rust 分层，也不从 CMake 调用 Cargo。共用的
+Rust binding 构建支持位于 `engine/tools/truvis-cxx-binding-build`。
 
 ## 目录
 
 - `CMakeLists.txt`、`CMakePresets.json`、`vcpkg.json`：唯一 native project 入口。
 - `cmake/`：export header 公共 CMake helper。
 - `modules/`：全部 C++ target；module 使用标准 CMake 直接依赖。
-- `tools/`：`truvis-cxx-binding-build` 提供 binding 生成、native 链接与运行文件复制支持。
 - `bindings/`：Assimp、Streamline 等 public C ABI 的 Rust consumer。
 
 当前 native module：

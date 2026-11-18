@@ -1,32 +1,32 @@
 [workspace]
 resolver = "3"
 members = [
-    # e00-utils
-    "engine/e00-utils/truvis-fetch-res",
-    "engine/e00-utils/truvis-path",
-    "engine/e00-utils/truvis-shader-manifest",
-    "engine/e00-utils/truvis-shader-binding-codegen",
-    "engine/e00-utils/truvis-shader-build",
-    "cxx/tools/truvis-cxx-binding-build",
-    # e00-foundation
-    "engine/e00-foundation/truvis-utils",
-    "engine/e00-foundation/truvis-logs",
-    # e10-gfx
-    "engine/e10-gfx/truvis-gfx",
-    "engine/e10-gfx/truvis-descriptor-layout-macro",
-    "engine/e10-gfx/truvis-descriptor-layout-trait",
-    # e40-render
-    "engine/e40-render/truvis-render-foundation",
-    "engine/e40-render/truvis-render-graph",
-    "engine/e40-render/truvis-render-runtime",
-    # e30-world
-    "engine/e30-world/truvis-asset",
-    "engine/e30-world/truvis-world",
-    # e50-render-loop
-    "engine/e50-render-loop/truvis-render-loop",
-    # e60-platform
-    "engine/e60-platform/truvis-render-thread",
-    "engine/e60-platform/truvis-winit-host",
+    # tools
+    "engine/tools/truvis-fetch-res",
+    "engine/tools/truvis-shader-binding-codegen",
+    "engine/tools/truvis-shader-build",
+    "engine/tools/truvis-cxx-binding-build",
+    # runtime foundation and utilities
+    "engine/runtime/e00-foundation/truvis-utils",
+    "engine/runtime/e00-foundation/truvis-logs",
+    "engine/runtime/e00-utils/truvis-path",
+    "engine/runtime/e00-utils/truvis-shader-manifest",
+    # runtime gfx
+    "engine/runtime/e10-gfx/truvis-gfx",
+    "engine/runtime/e10-gfx/truvis-descriptor-layout-macro",
+    "engine/runtime/e10-gfx/truvis-descriptor-layout-trait",
+    # runtime render
+    "engine/runtime/e40-render/truvis-render-foundation",
+    "engine/runtime/e40-render/truvis-render-graph",
+    "engine/runtime/e40-render/truvis-render-runtime",
+    # runtime world
+    "engine/runtime/e30-world/truvis-asset",
+    "engine/runtime/e30-world/truvis-world",
+    # runtime render loop
+    "engine/runtime/e50-render-loop/truvis-render-loop",
+    # runtime platform
+    "engine/runtime/e60-platform/truvis-render-thread",
+    "engine/runtime/e60-platform/truvis-winit-host",
     # shader 绑定相关
     "engine/shader/truvis-shader-binding",
     # cxx 绑定相关
@@ -65,32 +65,32 @@ panic = 'abort'    # panic 时直接终止，进一步减小体积
 
 
 [workspace.dependencies]
-# e00-utils
-truvis-fetch-res = { path = "engine/e00-utils/truvis-fetch-res" }
-truvis-path = { path = "engine/e00-utils/truvis-path" }
-truvis-shader-manifest = { path = "engine/e00-utils/truvis-shader-manifest" }
-truvis-shader-binding-codegen = { path = "engine/e00-utils/truvis-shader-binding-codegen" }
-truvis-shader-build = { path = "engine/e00-utils/truvis-shader-build" }
-truvis-cxx-binding-build = { path = "cxx/tools/truvis-cxx-binding-build" }
-# e00-foundation
-truvis-logs = { path = "engine/e00-foundation/truvis-logs" }
-truvis-utils = { path = "engine/e00-foundation/truvis-utils" }
-# e10-gfx
-truvis-gfx = { path = "engine/e10-gfx/truvis-gfx" }
-truvis-descriptor-layout-macro = { path = "engine/e10-gfx/truvis-descriptor-layout-macro" }
-truvis-descriptor-layout-trait = { path = "engine/e10-gfx/truvis-descriptor-layout-trait" }
-# e40-render
-truvis-render-foundation = { path = "engine/e40-render/truvis-render-foundation" }
-truvis-render-graph = { path = "engine/e40-render/truvis-render-graph" }
-truvis-render-runtime = { path = "engine/e40-render/truvis-render-runtime" }
-# e30-world
-truvis-asset = { path = "engine/e30-world/truvis-asset" }
-truvis-world = { path = "engine/e30-world/truvis-world" }
-# e50-render-loop
-truvis-render-loop = { path = "engine/e50-render-loop/truvis-render-loop" }
-# e60-platform
-truvis-render-thread = { path = "engine/e60-platform/truvis-render-thread" }
-truvis-winit-host = { path = "engine/e60-platform/truvis-winit-host" }
+# tools
+truvis-fetch-res = { path = "engine/tools/truvis-fetch-res" }
+truvis-shader-binding-codegen = { path = "engine/tools/truvis-shader-binding-codegen" }
+truvis-shader-build = { path = "engine/tools/truvis-shader-build" }
+truvis-cxx-binding-build = { path = "engine/tools/truvis-cxx-binding-build" }
+# runtime foundation and utilities
+truvis-logs = { path = "engine/runtime/e00-foundation/truvis-logs" }
+truvis-utils = { path = "engine/runtime/e00-foundation/truvis-utils" }
+truvis-path = { path = "engine/runtime/e00-utils/truvis-path" }
+truvis-shader-manifest = { path = "engine/runtime/e00-utils/truvis-shader-manifest" }
+# runtime gfx
+truvis-gfx = { path = "engine/runtime/e10-gfx/truvis-gfx" }
+truvis-descriptor-layout-macro = { path = "engine/runtime/e10-gfx/truvis-descriptor-layout-macro" }
+truvis-descriptor-layout-trait = { path = "engine/runtime/e10-gfx/truvis-descriptor-layout-trait" }
+# runtime render
+truvis-render-foundation = { path = "engine/runtime/e40-render/truvis-render-foundation" }
+truvis-render-graph = { path = "engine/runtime/e40-render/truvis-render-graph" }
+truvis-render-runtime = { path = "engine/runtime/e40-render/truvis-render-runtime" }
+# runtime world
+truvis-asset = { path = "engine/runtime/e30-world/truvis-asset" }
+truvis-world = { path = "engine/runtime/e30-world/truvis-world" }
+# runtime render loop
+truvis-render-loop = { path = "engine/runtime/e50-render-loop/truvis-render-loop" }
+# runtime platform
+truvis-render-thread = { path = "engine/runtime/e60-platform/truvis-render-thread" }
+truvis-winit-host = { path = "engine/runtime/e60-platform/truvis-winit-host" }
 # app
 renderer-kit = { path = "renderer/renderer-kit" }
 renderer-imgui = { path = "renderer/renderer-imgui" }

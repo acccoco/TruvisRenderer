@@ -82,9 +82,9 @@ Renderer 资源必须早于 Runtime destroy；Runtime 资源必须早于 Gfx des
 
 ## 实现入口
 
-- [`gfx_resource_registry.rs`](../../engine/e40-render/truvis-render-runtime/src/resources/gfx_resource_registry.rs)
-- [`render_world.rs`](../../engine/e40-render/truvis-render-runtime/src/render_world/render_world.rs)
-- [`Gfx::destroy`](../../engine/e10-gfx/truvis-gfx/src/gfx.rs)
+- [`gfx_resource_registry.rs`](../../engine/runtime/e40-render/truvis-render-runtime/src/resources/gfx_resource_registry.rs)
+- [`render_world.rs`](../../engine/runtime/e40-render/truvis-render-runtime/src/render_world/render_world.rs)
+- [`Gfx::destroy`](../../engine/runtime/e10-gfx/truvis-gfx/src/gfx.rs)
 - [`selection_outline.rs`](../../renderer/truvis-renderer/src/selection_outline.rs)
 
 ## 资源变更评审

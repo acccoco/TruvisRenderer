@@ -1,7 +1,7 @@
 # Engine Shader
 
 `engine/shader/` 只保存 Engine 自有 shader 源码与 Engine Rust binding owner。workspace 级 SPIR-V 编译与
-Rust binding 公共生成工具位于 `engine/e00-utils/`。所有 Renderer 侧 shader 集中在 `renderer/shader/`；package 清单的唯一来源是根目录
+Rust binding 公共生成工具位于 `engine/tools/`，运行时和工具共用的 manifest 位于 `engine/runtime/e00-utils/`。所有 Renderer 侧 shader 集中在 `renderer/shader/`；package 清单的唯一来源是根目录
 `shader-packages.toml`。
 
 ## 源码职责
@@ -12,10 +12,10 @@ Rust binding 公共生成工具位于 `engine/e00-utils/`。所有 Renderer 侧 
   Renderer descriptor 或 `renderer/shader`。
 - `entry/`：Engine runtime 自有 shader entry，目前只包含同步 raycast。
 - `truvis-shader-binding/`：`engine::*` 与 canonical Slang 基础类型的 Rust binding owner。
-- `../e00-utils/truvis-shader-binding-codegen/`：Engine/Renderer binding 共用的 bindgen 执行、类型重命名、namespace
+- `../tools/truvis-shader-binding-codegen/`：Engine/Renderer binding 共用的 bindgen 执行、类型重命名、namespace
   注入、内容 hash 与 write-if-changed 实现；header、include roots 和输出路径来自 manifest。
-- `../e00-utils/truvis-shader-manifest/`：编译工具、binding codegen 与运行时路径查询共用的 manifest 模型。
-- `../e00-utils/truvis-shader-build/`：读取 `shader-packages.toml` 的多 package shader 编译工具。
+- `../runtime/e00-utils/truvis-shader-manifest/`：编译工具、binding codegen 与运行时路径查询共用的 manifest 模型。
+- `../tools/truvis-shader-build/`：读取 `shader-packages.toml` 的多 package shader 编译工具。
 
 Renderer 侧的 ABI、Slang-only 算法、entry 与统一 Rust binding 结构见 `renderer/shader/README.md`。
 

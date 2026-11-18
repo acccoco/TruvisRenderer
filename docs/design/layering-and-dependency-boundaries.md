@@ -78,9 +78,9 @@ CPU scene 的权威方向是 `GameWorld -> prepare -> RenderWorld -> RenderGraph
 
 ## 实现入口
 
-- [`RenderRuntime`](../../engine/e40-render/truvis-render-runtime/src/render_runtime.rs)
-- [`RenderLoop`](../../engine/e50-render-loop/truvis-render-loop/src/render_loop.rs)
-- [`Renderer` trait](../../engine/e50-render-loop/truvis-render-loop/src/renderer.rs)
+- [`RenderRuntime`](../../engine/runtime/e40-render/truvis-render-runtime/src/render_runtime.rs)
+- [`RenderLoop`](../../engine/runtime/e50-render-loop/truvis-render-loop/src/render_loop.rs)
+- [`Renderer` trait](../../engine/runtime/e50-render-loop/truvis-render-loop/src/renderer.rs)
 - [`renderer/truvis-renderer`](../../renderer/truvis-renderer/README.md)
 - [`app/editor`](../../app/editor/README.md)
 

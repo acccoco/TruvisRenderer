@@ -83,9 +83,9 @@ producer、consumer 和 owner 的销毁顺序必须覆盖：CPU worker 停止、
 ## 实现入口
 
 - [资源生命周期文档](resource-lifecycle-and-destruction.md)
-- [`truvis-render-thread`](../../engine/e60-platform/truvis-render-thread/README.md)
+- [`truvis-render-thread`](../../engine/runtime/e60-platform/truvis-render-thread/README.md)
 - [`client/editor_controller.rs`](../../app/truvis-app/src/client/editor_controller.rs)
-- [`render_runtime_ctx.rs`](../../engine/e40-render/truvis-render-runtime/src/render_runtime_ctx.rs)
+- [`render_runtime_ctx.rs`](../../engine/runtime/e40-render/truvis-render-runtime/src/render_runtime_ctx.rs)
 
 ## 锁与等待
 

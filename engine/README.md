@@ -1,127 +1,52 @@
 # Engine
 
-`engine/` 是渲染引擎核心实现与 Shader 工具链目录。这里的 Rust crate 覆盖基础工具、Vulkan
-RHI、CPU scene/assets、RenderGraph、RenderRuntime、RenderLoop 框架和平台入口；具体 Renderer、GUI 集成和业务 pass 位于
-workspace 顶层 `renderer/`，最终应用启动壳位于 `app/`。
+`engine/` 是渲染引擎核心实现、运行时基础设施和 Shader 工具链目录。Rust crate 覆盖
+基础设施、Vulkan RHI、CPU scene/assets、RenderGraph、RenderRuntime、RenderLoop 和平台入口；
+具体 Renderer、GUI 集成和业务 pass 位于 workspace 顶层 `renderer/`，应用启动壳位于 `app/`。
 
-## 分层速览
+## 目录职责
 
-真实依赖边界以 Cargo 依赖、`../docs/ARCHITECTURE.md` 和 `../docs/design/` 中的设计约束为准，物理目录主要用于导航。总体方向是上层依赖下层，
-同层 crate 默认不互相依赖，除非架构文档明确记录。
+物理目录用于导航，实际依赖边界以 Cargo manifest、`docs/ARCHITECTURE.md` 和 `docs/design/` 为准。
+运行时目录内部仍使用 `eNN-` 前缀表示 Engine 的架构阶段；工具目录不属于运行时层。
 
-一级 Rust 职责目录使用 `eNN-` 前缀标识 Engine 归属和主要架构阶段；`e40-render/`、`e60-platform/` 等目录可以包含
-多个实际 crate 层级。`shader/` 是 Engine-owned 的横切源码与 ABI 根目录。
+- `tools/`：资源准备、shader 编译、shader binding codegen 和 CXX binding 构建支持。
+- `runtime/e00-foundation/`：日志和通用基础工具。
+- `runtime/e00-utils/`：被运行时和构建流程共同使用的路径与 shader manifest crate。
+- `runtime/e10-gfx/`：Vulkan RHI、资源、队列、同步、swapchain、pipeline 和 descriptor layout。
+- `runtime/e30-world/`：CPU asset、scene、World 和领域数据验证。
+- `runtime/e40-render/`：Render foundation、RenderGraph、RenderRuntime、RenderWorld 和 GPU bridge。
+- `runtime/e50-render-loop/`：Renderer phase contract、RenderLoop 和线程控制契约。
+- `runtime/e60-platform/`：RenderThread、standalone/embedded winit host 和窗口输入适配。
+- `shader/`：Engine-owned shader 源码、ABI 和 `truvis-shader-binding`。
 
-- L0 基础层：`e00-foundation/`、`e00-utils/` 和 descriptor-layout crate，提供日志、路径、通用工具和 shader binding layout 元信息。
-- L1 RHI 层：`e10-gfx/truvis-gfx` 封装 Vulkan root owner、typed Ctx、资源、队列、同步、swapchain 与管线基础能力。
-- L2 渲染契约：`e40-render/truvis-render-foundation` 提供 `FrameLabel`、资源句柄、`RenderView` /
-  `RenderSceneView` 和 `GfxResourceAccess`。
-- L3 语义与编排辅助：`e30-world/` 保存 CPU asset/scene 语义，`e40-render/truvis-render-graph` 负责按 Renderer 指定顺序推导 pass 同步。
-- L4 Runtime 集成层：`e40-render/truvis-render-runtime` 持有 `Gfx`、`GameWorld`、GPU resource/binding/timing owners、runtime render state、`RenderWorld`、present、`RenderPassRecordCtx` 和 asset-to-GPU bridge。
-- L5 RenderLoop 框架层：`e50-render-loop/truvis-render-loop` 定义具体 `Renderer` 阶段契约、统一 `RenderLoop` 和最小线程控制契约。
-- L6 渲染线程宿主：`e60-platform/truvis-render-thread` 管理不依赖窗口 backend 的 OS RenderThread 生命周期。
-- L7 窗口平台层：`e60-platform/truvis-winit-host` 管理 winit standalone / embedded 窗口与输入适配。
-- L8 Renderer 层：具体 Renderer、Subsystem、pass、shader 和 typed ports 位于 `../renderer/`。
-- L9 应用壳层：Tauri Editor 与 standalone sample 启动入口位于 `../app/`。
+Renderer 层位于 workspace 顶层 `../renderer/`，应用层位于 `../app/`。Engine 不依赖这两个顶层业务目录。
 
-`shader/` 是 Engine shader 源码与外部 ABI 边界；通用 shader 构建与 binding codegen crate 位于
-`e00-utils/`。完整 native project、C++ modules 与 Rust FFI binding 统一位于 workspace 根 [`../cxx/`](../cxx/README.md)。
+## 工具与运行时边界
 
-## 目录与 crate
+`engine/tools/` 中的 crate 只负责构建期或资源准备工作，不拥有 Vulkan、RenderGraph、GPU resource
+或线程生命周期。它们可以依赖 `runtime/e00-utils/` 中的路径和 shader manifest crate；目录分类不
+替代 Cargo 实际依赖方向，也不引入兼容转发层。
 
-### `e00-foundation/`
+`engine/shader/` 是 Shader ABI owner。绑定 crate 从 owner 的 ABI 投影生成 Rust 类型，不负责 shader
+编译或 pass 录制。
 
-基础工具层，不依赖窗口、渲染运行时或 Renderer/App 业务语义。
+workspace 根 `cxx/` 仍是唯一 native integration project：native module 和 public C ABI 属于
+`cxx/modules`，Rust binding 位于 `cxx/bindings`，`engine/tools/truvis-cxx-binding-build` 只提供
+binding 生成、链接和显式运行文件复制支持。
 
-- `truvis-utils/`：通用小工具 crate，提供带索引常量数组、基础配置解析等 helper；不承载 Vulkan、asset 或 Renderer/App
-  生命周期语义。
-- `truvis-logs/`：项目统一日志初始化和 formatter；业务 crate 继续使用 `log` facade，不在调用点手工拼接线程上下文。
+## 推荐阅读和入口
 
-### `e00-utils/`
+1. `../docs/ARCHITECTURE.md`：架构入口、依赖方向和全局约束。
+2. `../docs/design/`：Runtime、RenderGraph、线程、资源生命周期和 shader/native 边界。
+3. `runtime/*/README.md`：具体运行时 crate 职责和生命周期。
+4. `tools/README.md` 与 `runtime/e00-utils/README.md`：工具和基础路径/manifest 入口。
+5. `shader/README.md` 与 `../cxx/README.md`：shader 工具链和 native integration。
 
-引擎工具层，面向 workspace 路径和资源准备，不等同于运行时 asset 系统。
-
-- `truvis-path/`：基于根目录 `paths.toml` 的统一物理路径入口，提供 workspace、assets、resources、shader/binding
-  build、运行时路径编码和词法路径归一化等 helper；不理解 shader package schema，也不负责下载或加载资源内容。
-- `truvis-fetch-res/`：`fetch_res` 工具 crate，读取 `resources.toml` 并下载模型资产、外部工具、SDK 或参考源码资源；不参与渲染线程的
-  asset loading。
-- `truvis-shader-manifest/`：依赖 `truvis-path` 提供的产物根，统一解析和校验 `shader-packages.toml` 的
-  package、compiler、输出前缀与 binding 配置；不依赖 Engine/Renderer 运行时结构，也不检查构建环境是否完整。
-- `truvis-shader-build/`：`shader-build` 工具 crate，负责把 manifest 声明的 shader 源码编译到
-  `build/shader/`；推荐通过 `just shader` 调用。
-- `truvis-shader-binding-codegen/`：消费 manifest 已解析的 binding 路径，提供共用 bindgen 参数、类型重命名、
-  content hash 与 write-if-changed；allowlist 和跨 crate re-export 仍由 ABI owner 决定。
-### `e10-gfx/`
-
-Vulkan RHI 与 descriptor-layout 辅助层，提供底层 GPU 能力，不包含 scene、Renderer/App 或具体 pass 编排。
-
-- `truvis-gfx/`：`Gfx` root owner、typed Gfx Ctx、Vulkan device/queue/resource/sync/swapchain/pipeline
-  wrapper；不依赖更高层渲染或业务语义。
-- `truvis-descriptor-layout-trait/`：描述 shader descriptor binding layout 的 trait 和 binding item 数据结构；不做宏解析或
-  descriptor 分配。
-- `truvis-descriptor-layout-macro/`：`DescriptorBinding` derive 宏，按字段属性生成 binding layout 元信息；不持有运行时 GPU
-  资源。
-
-### `e30-world/`
-
-CPU 侧语义层，负责 asset 身份、加载状态、scene runtime 身份与 `GameWorld` 聚合，不创建 GPU 资源。
-
-- `truvis-asset/`：纹理、mesh、material、model 等内容资产的 CPU 身份、去重、加载状态和完成事件；不创建 GPU
-  image/buffer、BLAS、bindless index 或 material slot。
-- `truvis-world/`：`GameWorld`、`SceneStore` 和 `AssetLoadService` 聚合入口；不持有 `Gfx`、GPU resource/binding owner、swapchain 或 frame state。
-
-### `e40-render/`
-
-通用渲染基础设施目录，覆盖 GPU 状态、RenderGraph 同步辅助和 Runtime 集成。
-
-- `truvis-render-foundation/`：跨渲染 crate 的最小契约层，提供 `FrameLabel`、GPU 资源句柄、
-  `RenderView`、`RenderSceneView` 和 `GfxResourceAccess`；不包含 GPU owner、CPU scene、窗口平台或 runtime render state 语义。
-- `truvis-render-graph/`：按 Renderer 添加 pass 的线性顺序推导 image barrier、layout transition 和 semaphore submit
-  信息；不做自动调度、资源 aliasing 或业务 pass 逻辑。
-- `truvis-render-runtime/`：渲染运行时集成层，拥有 `Gfx`、`GameWorld`、`GfxResourceRegistry`、`ShaderBindingSystem`、`CmdAllocator`、`PerFrameGpuData`、runtime render state、runtime 私有 `RenderWorld`、present、同步资源、`RenderPassRecordCtx` 和 CPU-to-GPU bridge；不负责窗口事件循环、GUI 适配或具体 Renderer pass 顺序。
-
-### `e50-render-loop/`
-
-平台无关的 RenderLoop 框架目录，定义 Renderer、固定帧执行器和 RenderLoop 消费的跨线程契约。
-
-- `truvis-render-loop/`：定义具体 `Renderer`、phase Ctx、统一 `RenderLoop` 和最小线程控制契约；不依赖
-  `winit`，也不持有具体 Renderer/子系统业务状态。
-
-### `e60-platform/`
-
-窗口和线程宿主目录，保持窗口 backend 与 OS 渲染线程生命周期独立。
-
-- `truvis-render-thread/`：backend-independent OS RenderThread owner，负责线程启动、Renderer factory、完成/panic 握手与
-  join；只依赖 render-loop 契约，不依赖 winit、Tauri 或 Windows API。
-- `truvis-winit-host/`：winit standalone / embedded 窗口 owner，负责 EventLoop、输入适配、Win32 typed handle 交接和
-  child HWND；窗口标题、图标资源与日志初始化由具体 app 入口决定。
-
-### `shader/`
-
-Shader 源码、SPIR-V 编译和 Rust 绑定生成目录。
-
-- `entry/`、`api/`、`lib/`：Slang shader 入口、共享 ABI/API 头文件和 shader 侧复用库。共享结构变更会影响 Rust 绑定。
-- `truvis-shader-binding/`：通过 bindgen 生成 Rust 侧 GPU 数据结构绑定，并导出 `truvis_shader_binding::gpu`；不负责 shader
-  编译或 pass 录制。
-
-Renderer 层位于 workspace 顶层 `../renderer/`：它保存具体 Renderer、capability crates、Subsystem、
-GPU pass、shader 和传输无关的 typed ports，只能单向依赖 Engine。应用壳位于 `../app/`，只保留
-Tauri Editor 和 standalone sample 启动入口。Engine 不得依赖这两个顶层业务目录。
-
-## 推荐阅读顺序
-
-1. `../docs/ARCHITECTURE.md`：先确认当前架构入口、阅读顺序与最高优先级约束。
-2. `../docs/design/`：按主题阅读分层依赖、帧生命周期、Runtime/Renderer/Subsystem 边界、RenderGraph 数据流、线程与资源生命周期。`../docs/summary/` 只在用户明确要求时更新。
-3. 本文件：按目录和 crate 定位要阅读的模块。
-4. 各 crate 内 README：深入具体职责、生命周期和边界；重点可先看 `e10-gfx/truvis-gfx/README.md`、`e30-world/truvis-asset/README.md`、
-   `e30-world/truvis-world/README.md`、`e40-render/*/README.md`、`e50-render-loop/*/README.md`、`e60-platform/*/README.md`。
-5. `shader/README.md` 与 `../cxx/README.md`：了解 shader 工具链和独立 CXX/native integration 子系统。
-
-## 构建与工具入口
+## 构建入口
 
 运行渲染示例前优先参考根目录 `justfile`：
 
 - `just fetch-res`：下载 `resources.toml` 声明的资源与工具。
-- `just shader`：编译 shader 并更新 `truvis-shader-binding`。
+- `just shader`：编译 shader 并更新 shader binding。
 - `just cxx`：构建 C++ native 产物并更新 Assimp / Streamline Rust binding。
 - `just build-all`：依次准备 shader、CXX，再构建整个 workspace。
