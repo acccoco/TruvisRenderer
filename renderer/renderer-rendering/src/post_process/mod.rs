@@ -1,6 +1,7 @@
 use ash::vk;
 
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
+use renderer_kit::targets::{SingleImageTarget, TargetImageDesc};
 use renderer_render_passes::post_process::auto_exposure::{AutoExposurePass, AutoExposureRgPass, ExposureStage};
 use renderer_render_passes::post_process::image_clear::{ImageClearPass, ImageClearRgPass};
 use renderer_render_passes::post_process::sdr::{SdrPass, SdrRgPass};
@@ -10,7 +11,6 @@ use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeR
 use truvis_renderer_shader_binding::gpu;
 
 use crate::shared::settings::{ExposureMode, SdrPostProcessSettings};
-use crate::shared::targets::{SingleImageTarget, TargetImageDesc};
 use crate::shared::{PathTracingDebugChannel, RenderMode};
 
 /// 当前 graph 中的借用视图，不转移 realtime/offline target 所有权。
@@ -96,7 +96,7 @@ impl SdrResources {
             vk::Format::R16G16B16A16_SFLOAT,
             vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
         );
-        let image = ctx.gfx_resource_registry.get_image(lut.image).unwrap();
+        let image = ctx.gfx_resource_registry.get_image(lut.target().image).unwrap();
         let staging = ctx.immediate_ctx.one_time_exec(
             |cmd| {
                 // transfer_data 的同队列 shader 读取可见性已覆盖 compute，保持其只读 layout。

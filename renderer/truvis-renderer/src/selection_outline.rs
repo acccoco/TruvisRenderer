@@ -5,7 +5,7 @@ use renderer_kit::subsystem::SubsystemLifecycle;
 use renderer_render_passes::effects::selection_outline::{
     SelectionOutlineCompositeRgPass, SelectionOutlineMaskRgPass, SelectionOutlinePass,
 };
-use renderer_rendering::ImageTarget;
+use renderer_kit::targets::ImageTarget;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::image_view::GfxImageViewDesc;

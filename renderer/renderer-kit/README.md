@@ -1,12 +1,13 @@
 # renderer-kit
 
-`renderer-kit` 是 Renderer 域的基础能力层，只保存生命周期契约、相机/输入和与具体界面、渲染实现无关的纯 CPU 状态。
+`renderer-kit` 是 Renderer 域的基础能力层，提供生命周期契约、相机与输入状态，以及跨渲染子系统复用的图像分配。
 
 ## 主要职责
 
 - `SubsystemLifecycle`：只约束需要显式资源管理的子系统 `init` / 可选 `on_resize` / `shutdown`；具体 Renderer 静态持有并直接调用。
 - `SubsystemRenderCtx`：只转发子系统实际消费的 resource/queue/record、只读 scene 和 present；队列提交与 timeline 信号编排仍归 Renderer。resource/queue 可用于 ImGui 上传，不是 GPU 只读权限。
 - `Camera` / `CameraController` / `InputManager` / `InputState`：Renderer-owned 相机与输入状态，生成 runtime prepare 所需的 `RenderView` 快照。
+- `targets`：共用的图像分配、按 FIF 访问以及显式释放。格式和用途由调用方定义，图像与 view 由 Engine registry 管理。
 - `DebugImageOption` / `DebugImageSelection`：稳定候选 ID、标签、显示开关与当前选择；不依赖 ImGui，不保存 GPU image/view 或 RenderGraph handle。
 
 ## 所有权与依赖

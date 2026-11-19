@@ -1,25 +1,21 @@
-//! Realtime/offline 子系统共享的 image target 构建和资源释放契约。
-//!
-//! 这些资源描述具体渲染子系统需要的中间图像，而不是 engine 的帧调度基础设施。
-//! owner 只保存 `GfxResourceRegistry` handle；创建、resize 和 shutdown 时由
-//! Realtime/Offline subsystem 通过生命周期 ctx 显式传入 manager 与 typed Gfx ctx。
-//!
-//! 设计边界：
-//! - `FrameLabel` 仍来自 engine，用来表达当前使用哪个在飞帧槽位。
-//! - 具体图像的用途、格式和 resize 生命周期属于 Renderer 渲染策略；shader 可见性由消费它的 pass-local descriptor 表达。
-//! - 本模块不保存 `Gfx` / device / allocator 引用，避免长期资源 owner 反向持有 runtime 能力。
+//! Renderer 子系统共享的 image target 构建和释放。资源 owner 通过当前阶段的 ctx 显式操作 registry。
 
 use ash::vk;
 use itertools::Itertools;
 use slotmap::Key;
-
-use truvis_gfx::commands::barrier::GfxImageBarrier;
-use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
-use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
-use truvis_gfx::resources::image_view::GfxImageViewDesc;
-use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_render_foundation::frame_label::FrameLabel;
-use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
+use truvis_gfx::{
+    commands::barrier::GfxImageBarrier,
+    gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx},
+    resources::{
+        image::{GfxImage, GfxImageCreateInfo},
+        image_view::GfxImageViewDesc,
+        lifecycle::DestroyReason,
+    },
+};
+use truvis_render_foundation::{
+    frame_label::FrameLabel,
+    handles::{GfxImageHandle, GfxImageViewHandle},
+};
 use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
 
 /// RenderGraph 导入图像所需的 handle、格式和尺寸快照。
@@ -28,7 +24,8 @@ use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry
 /// 调用方只能在 owner 存活期间把它导入 RenderGraph；真实释放仍由 owner 在
 /// resize / shutdown 阶段通过 manager 显式完成。
 #[derive(Clone, Copy)]
-pub struct ImageTarget {
+pub struct ImageTarget
+{
     /// manager-owned image handle，用于 RenderGraph import。
     pub image: GfxImageHandle,
     /// 对应 image view handle；具体 pass 在录制时把它写入自己的 descriptor。
@@ -44,30 +41,27 @@ pub struct ImageTarget {
 /// 这类 target 会被当前 frame label 对应的 command buffer 写入；同一 label 再次复用前，
 /// runtime 的 FIF timeline 已经保证上一轮提交完成。因此它适合放置单帧 RT 输出、
 /// main view color 等“每个在飞帧各一份”的图像。
-pub(crate) struct PerFrameImageSet {
-    pub(crate) images: [GfxImageHandle; FrameLabel::COUNT],
+pub struct PerFrameImageSet
+{
+    images: [GfxImageHandle; FrameLabel::COUNT],
     views: [GfxImageViewHandle; FrameLabel::COUNT],
-    pub(crate) format: vk::Format,
-    pub(crate) extent: vk::Extent2D,
+    format: vk::Format,
+    extent: vk::Extent2D,
 }
 
-impl PerFrameImageSet {
-    pub(crate) fn new(
+impl PerFrameImageSet
+{
+    pub fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_registry: &mut GfxResourceRegistry,
         desc: TargetImageDesc<'_>,
         frame_id: u64,
-    ) -> Self {
+    ) -> Self
+    {
         let images = FrameLabel::ALL.map(|frame_label| {
-            create_image(
-                resource_ctx,
-                desc.extent,
-                desc.format,
-                desc.usage,
-                format!("{}-{}-{}", desc.name_prefix, frame_label, frame_id),
-            )
+            desc.create_image(resource_ctx, format!("{}-{}-{}", desc.name_prefix, frame_label, frame_id))
         });
 
         // 不捕获 transition：submit/wait 异常不能证明这组 image 已不再被 GPU 使用。
@@ -92,7 +86,13 @@ impl PerFrameImageSet {
         target
     }
 
-    pub(crate) fn target(&self, frame_label: FrameLabel) -> ImageTarget {
+    pub fn images(&self) -> &[GfxImageHandle; FrameLabel::COUNT]
+    {
+        &self.images
+    }
+
+    pub fn target(&self, frame_label: FrameLabel) -> ImageTarget
+    {
         ImageTarget {
             image: self.images[*frame_label],
             view: self.views[*frame_label],
@@ -101,24 +101,26 @@ impl PerFrameImageSet {
         }
     }
 
-    pub(crate) fn destroy(
+    pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
-    ) {
+    )
+    {
         Self::destroy_all(&mut [self], resource_ctx, device_ctx, gfx_resource_registry, reason);
     }
 
     /// 调用方已满足 resize/shutdown 的 GPU safe point；registry 保证 view-before-image。
-    pub(crate) fn destroy_all(
+    pub fn destroy_all(
         targets: &mut [&mut Self],
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
-    ) {
+    )
+    {
         for target in targets {
             target.views = Default::default();
             for image in std::mem::take(&mut target.images) {
@@ -128,8 +130,10 @@ impl PerFrameImageSet {
     }
 }
 
-impl Drop for PerFrameImageSet {
-    fn drop(&mut self) {
+impl Drop for PerFrameImageSet
+{
+    fn drop(&mut self)
+    {
         debug_assert!(self.images.iter().all(|img| img.is_null()));
     }
 }
@@ -138,29 +142,26 @@ impl Drop for PerFrameImageSet {
 /// 这类 target 不随 frame label 轮转，适合保存跨帧持续累积的渲染子系统私有历史。
 /// 调用方必须通过 RenderGraph 为每次读写声明状态；本类型只负责 image/view 生命周期，
 /// 不表达 descriptor 绑定或任何跨帧同步语义。
-pub(crate) struct SingleImageTarget {
-    pub(crate) image: GfxImageHandle,
+pub struct SingleImageTarget
+{
+    image: GfxImageHandle,
     view: GfxImageViewHandle,
-    pub(crate) format: vk::Format,
-    pub(crate) extent: vk::Extent2D,
+    format: vk::Format,
+    extent: vk::Extent2D,
 }
 
-impl SingleImageTarget {
-    pub(crate) fn new(
+impl SingleImageTarget
+{
+    pub fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
         gfx_resource_registry: &mut GfxResourceRegistry,
         desc: TargetImageDesc<'_>,
         frame_id: u64,
-    ) -> Self {
-        let image = create_image(
-            resource_ctx,
-            desc.extent,
-            desc.format,
-            desc.usage,
-            format!("{}-{}", desc.name_prefix, frame_id),
-        );
+    ) -> Self
+    {
+        let image = desc.create_image(resource_ctx, format!("{}-{}", desc.name_prefix, frame_id));
         transition_images_to_general(
             immediate_ctx,
             std::slice::from_ref(&image),
@@ -184,7 +185,8 @@ impl SingleImageTarget {
         target
     }
 
-    pub(crate) fn target(&self) -> ImageTarget {
+    pub fn target(&self) -> ImageTarget
+    {
         ImageTarget {
             image: self.image,
             view: self.view,
@@ -193,13 +195,14 @@ impl SingleImageTarget {
         }
     }
 
-    pub(crate) fn destroy(
+    pub fn destroy(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_registry: &mut GfxResourceRegistry,
         reason: DestroyReason,
-    ) {
+    )
+    {
         // registry 在传播释放诊断前已撤销资源索引，owner 不能保留过期 handle。
         let image = std::mem::take(&mut self.image);
         self.view = GfxImageViewHandle::default();
@@ -207,15 +210,19 @@ impl SingleImageTarget {
     }
 }
 
-impl Drop for SingleImageTarget {
-    fn drop(&mut self) {
+impl Drop for SingleImageTarget
+{
+    fn drop(&mut self)
+    {
         debug_assert!(self.image.is_null());
         debug_assert!(self.view.is_null());
     }
 }
 
-impl Default for ImageTarget {
-    fn default() -> Self {
+impl Default for ImageTarget
+{
+    fn default() -> Self
+    {
         Self {
             image: GfxImageHandle::default(),
             view: GfxImageViewHandle::default(),
@@ -225,37 +232,38 @@ impl Default for ImageTarget {
     }
 }
 
-pub(crate) struct TargetImageDesc<'a> {
+pub struct TargetImageDesc<'a>
+{
     /// 资源名用于 debug name、Tracy span 和 destroy 日志定位。
-    pub(crate) name_prefix: &'a str,
+    pub name_prefix: &'a str,
     /// image 与 view 使用同一格式；调用方负责保证 pipeline attachment 格式匹配。
-    pub(crate) format: vk::Format,
+    pub format: vk::Format,
     /// 创建时的窗口尺寸快照，resize 后必须重建 owner。
-    pub(crate) extent: vk::Extent2D,
+    pub extent: vk::Extent2D,
     /// 由具体 target 语义决定的 Vulkan usage，不在 engine 中硬编码。
-    pub(crate) usage: vk::ImageUsageFlags,
+    pub usage: vk::ImageUsageFlags,
 }
 
-pub(crate) fn create_image(
-    resource_ctx: GfxResourceCtx<'_>,
-    extent: vk::Extent2D,
-    format: vk::Format,
-    usage: vk::ImageUsageFlags,
-    name: impl AsRef<str>,
-) -> GfxImage {
-    let image_create_info = GfxImageCreateInfo::new_image_2d_info(extent, format, usage);
-    GfxImage::new(
-        resource_ctx,
-        &image_create_info,
-        &vk_mem::AllocationCreateInfo {
-            usage: vk_mem::MemoryUsage::AutoPreferDevice,
-            ..Default::default()
-        },
-        name.as_ref(),
-    )
+impl TargetImageDesc<'_>
+{
+    /// 为需要自行上传初始内容的目标创建图像，由调用方完成 layout transition 和注册。
+    pub fn create_image(&self, resource_ctx: GfxResourceCtx<'_>, name: impl AsRef<str>) -> GfxImage
+    {
+        let image_create_info = GfxImageCreateInfo::new_image_2d_info(self.extent, self.format, self.usage);
+        GfxImage::new(
+            resource_ctx,
+            &image_create_info,
+            &vk_mem::AllocationCreateInfo {
+                usage: vk_mem::MemoryUsage::AutoPreferDevice,
+                ..Default::default()
+            },
+            name.as_ref(),
+        )
+    }
 }
 
-fn transition_images_to_general(immediate_ctx: GfxImmediateCtx<'_>, images: &[GfxImage], label: &str) {
+fn transition_images_to_general(immediate_ctx: GfxImmediateCtx<'_>, images: &[GfxImage], label: &str)
+{
     // storage target 在本项目里以 GENERAL 作为初始稳定布局，
     // 后续精确读写状态由 RenderGraph 在每帧导入后继续接管。
     immediate_ctx.one_time_exec(

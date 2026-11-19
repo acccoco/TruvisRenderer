@@ -4405,6 +4405,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "renderer-dlss"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "glam",
+ "log",
+ "renderer-kit",
+ "slotmap",
+ "truvis-gfx",
+ "truvis-render-foundation",
+ "truvis-render-graph",
+ "truvis-render-runtime",
+ "truvis-streamline-binding",
+]
+
+[[package]]
 name = "renderer-imgui"
 version = "0.1.0"
 dependencies = [
@@ -4431,12 +4447,16 @@ dependencies = [
 name = "renderer-kit"
 version = "0.1.0"
 dependencies = [
+ "ash",
  "glam",
+ "itertools 0.10.5",
  "log",
+ "slotmap",
  "truvis-gfx",
  "truvis-render-foundation",
  "truvis-render-loop",
  "truvis-render-runtime",
+ "vk-mem",
 ]
 
 [[package]]
@@ -4458,7 +4478,6 @@ dependencies = [
  "truvis-render-runtime",
  "truvis-renderer-shader-binding",
  "truvis-shader-manifest",
- "truvis-streamline-binding",
  "vk-mem",
 ]
 
@@ -4467,6 +4486,7 @@ name = "renderer-render-ui"
 version = "0.1.0"
 dependencies = [
  "imgui",
+ "renderer-dlss",
  "renderer-imgui",
  "renderer-kit",
  "renderer-rendering",
@@ -4481,6 +4501,7 @@ dependencies = [
  "glam",
  "itertools 0.10.5",
  "log",
+ "renderer-dlss",
  "renderer-kit",
  "renderer-render-passes",
  "slotmap",
@@ -6531,6 +6552,7 @@ dependencies = [
  "glam",
  "imgui",
  "log",
+ "renderer-dlss",
  "renderer-imgui",
  "renderer-kit",
  "renderer-render-passes",
@@ -6543,8 +6565,8 @@ dependencies = [
  "truvis-render-graph",
  "truvis-render-loop",
  "truvis-render-runtime",
+ "truvis-renderer-shader-binding",
  "truvis-shader-binding",
- "truvis-streamline-binding",
  "truvis-utils",
  "truvis-world",
  "vk-mem",

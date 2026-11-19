@@ -2,9 +2,9 @@
 
 use slotmap::Key;
 
-use crate::post_process::SdrPostProcessInput;
 use renderer_kit::debug_image::DebugImageOption;
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
+use renderer_kit::targets::ImageTarget;
 use renderer_render_passes::post_process::accum::{AccumPass, AccumRgPass};
 use renderer_render_passes::post_process::image_clear::{ImageClearPass, ImageClearRgPass};
 use renderer_render_passes::post_process::resolve::{ResolveDebugImage, ResolvePass, ResolveRgPass};
@@ -17,8 +17,9 @@ use truvis_render_foundation::render_view::RenderViewAccumSignature;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgImageState};
 use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
 
+use crate::post_process::SdrPostProcessInput;
 use crate::offline::resources::OfflineTargets;
-use crate::shared::{ImageTarget, PathTracingCommonSettings, PathTracingDebugChannel, SkySamplingMode};
+use crate::shared::{PathTracingCommonSettings, PathTracingDebugChannel, SkySamplingMode};
 
 mod resources;
 

@@ -10,4 +10,3 @@ mod compute_pass;
 pub mod effects;
 pub mod post_process;
 pub mod ray_tracing;
-pub(crate) mod streamline_pass;

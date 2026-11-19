@@ -5,12 +5,12 @@
 //! `DebugImageSelection`。这里不接触 RenderGraph、GPU resource 生命周期或 GUI draw
 //! data 上传；调用方在 `ImGuiSubsystem::build_frame` 的闭包内调用 `TruvisOverlayUi::build`。
 
+use renderer_dlss::DlssOptions;
 use renderer_imgui::{DebugImageSelectorView, DebugInfoOverlay, FrameStatsOverlayData};
 use renderer_kit::debug_image::{DebugImageOption, DebugImageSelection};
 use renderer_render_ui::RenderControlsOverlay;
 use renderer_rendering::{OfflineRenderSettings, PathTracingCommonSettings, RealtimeRenderSettings, RenderMode};
 use truvis_render_runtime::ray_cast::RayCastResult;
-use renderer_rendering::DlssOptions;
 use truvis_world::GameWorld;
 use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
 

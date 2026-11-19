@@ -1,11 +1,10 @@
+use renderer_dlss::{DlssOptions, DlssSrMode};
 use renderer_rendering::offline::OfflineRenderSettings;
 use renderer_rendering::realtime::{RealtimeRenderSettings, RtRestirDiMode, RtSharcMode};
 use renderer_rendering::shared::{
     ColorGradingSettings, ExposureMode, MeteringMode, PathTracingCommonSettings, PathTracingDebugChannel, RenderMode,
     SdrPostProcessSettings, SkySamplingMode, ToneMappingMode,
 };
-use renderer_rendering::DlssOptions;
-use renderer_rendering::DlssSrMode;
 
 #[derive(Default)]
 pub struct RenderControlsOverlay;

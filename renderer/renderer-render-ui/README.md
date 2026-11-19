@@ -12,6 +12,6 @@
 
 ## 边界约束
 
-- 依赖 `renderer-imgui`、`renderer-rendering`、`renderer-kit` 与 Engine 的 `DlssOptions`，不直接依赖 `renderer-render-passes`。
+- 渲染子系统设置来自 `renderer-rendering`，requested `DlssOptions` 来自 `renderer-dlss`。
 - `SdrPostProcessSettings` 只通过 `renderer-rendering::shared` 获取；UI 不持有 image、pipeline、descriptor 或 RenderGraph。
 - Triangle / ShaderToy 不依赖本 crate，也不显示 render mode、DLSS 或 path tracing controls。

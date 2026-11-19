@@ -14,13 +14,13 @@
 
 use ash::vk;
 
+use renderer_kit::targets::{PerFrameImageSet, TargetImageDesc};
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
 
-use crate::shared::targets::{PerFrameImageSet, TargetImageDesc};
 
 /// Realtime 渲染子系统使用的 GBuffer 资源集合。
 ///

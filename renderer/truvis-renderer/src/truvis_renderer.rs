@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::env;
 
 use truvis_render_foundation::render_view::RenderView;
 use truvis_render_graph::render_graph::{RenderGraphBuilder, RgSemaphoreInfo};
@@ -9,19 +9,20 @@ use truvis_render_runtime::render_runtime::{
     RenderFrameInput, RenderRuntimeRayCastCtx, RenderRuntimeRenderCtx, RenderRuntimeResizeCtx, RenderRuntimeUpdateCtx,
 };
 use truvis_render_runtime::selection::WorldSubmeshSelection;
+use truvis_renderer_shader_binding::gpu::renderer::render_passes::realtime_rt::DLSS_MOTION_VECTOR_INVALID_VALUE;
+use truvis_utils::ConfigUtils;
 use truvis_world::{GameWorld, LightTarget, WorldEditError, guid_new_type::MeshInstanceHandle};
 
+use renderer_dlss::{Dlss, DlssOptions, DlssSrMode};
 use renderer_imgui::{FrameStatsOverlayData, ImGuiSubsystem};
 use renderer_kit::camera_controller::CameraController;
 use renderer_kit::debug_image::DebugImageSelection;
 use renderer_kit::input_state::InputManager;
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
 use renderer_rendering::{
-    DlssEvaluation, OfflineRenderSubsystem, PathTracingCommonSettings, RealtimeRenderSubsystem, RenderMode,
-    SdrPostProcess,
+    OfflineRenderSubsystem, PathTracingCommonSettings, RealtimeRenderSubsystem, RenderMode, SdrPostProcess,
 };
 
-use crate::dlss::TruvisDlssState;
 use crate::overlay_ui::{
     DebugImageSelectionData, RaycastOverlayData, RenderControlsData, TruvisOverlayFrame, TruvisOverlayOptions,
     TruvisOverlayUi,
@@ -57,7 +58,7 @@ pub struct TruvisRenderer {
     active_gizmo_target: Option<GizmoTarget>,
     light_overlay: LightOverlay,
     focused: bool,
-    dlss: TruvisDlssState,
+    dlss: Dlss,
     view_accum: ViewAccumState,
     restir_reset_pending: bool,
 
@@ -102,6 +103,17 @@ impl GizmoTarget {
 }
 
 impl TruvisRenderer {
+    fn initial_dlss_options() -> DlssOptions {
+        let mut options = DlssOptions::default();
+        if let Some(mode) = env::var("TRUVIS_DLSS_SR_MODE").ok().as_deref().and_then(DlssSrMode::from_config_value) {
+            options.dlss_sr_mode = mode;
+        }
+        if let Some(enabled) = env::var("TRUVIS_DLSS_RR").ok().as_deref().and_then(ConfigUtils::parse_bool_env) {
+            options.dlss_rr_enabled = enabled;
+        }
+        options
+    }
+
     /// 使用 App 注入的 Client 构造渲染侧业务状态。
     pub fn new(client: Box<dyn RendererClient>) -> Self {
         let camera_controller = CameraController::default();
@@ -128,7 +140,7 @@ impl TruvisRenderer {
             active_gizmo_target: None,
             light_overlay: Default::default(),
             focused: true,
-            dlss: Default::default(),
+            dlss: Dlss::new(DLSS_MOTION_VECTOR_INVALID_VALUE),
             view_accum: Default::default(),
             restir_reset_pending: false,
             client,
@@ -318,7 +330,11 @@ impl Renderer for TruvisRenderer {
         self.frame_view = self.camera_controller.camera().render_view();
         self.output_extent = ctx.runtime.present.swapchain_image_info().image_extent;
         self.dlss
-            .init(&mut ctx.runtime, self.render_mode == RenderMode::Realtime)
+            .init(
+                &mut ctx.runtime,
+                Self::initial_dlss_options(),
+                self.render_mode == RenderMode::Realtime,
+            )
             .expect("DLSS init configuration failed");
 
         // Renderer 持有初始化顺序：场景 CPU 状态先就绪，再依次创建具体渲染资源。
@@ -572,8 +588,7 @@ impl Renderer for TruvisRenderer {
             self.selection.and_then(SceneSelection::light),
         );
         let selected_debug_image_id = self.debug_image_selection.selected_id();
-        let dlss_snapshot = self.dlss.snapshot();
-        let dlss_evaluation = Cell::new(DlssEvaluation::NotRun);
+        let dlss_frame = self.dlss.frame(ctx.record_ctx.frame_timing);
 
         // compute graph 的资源借用在录制后结束；提交信息只保存 Vulkan handle，资源继续由 subsystem 持有。
         let (compute_submit, scene_submitted, frame_commit, sdr_commit) = {
@@ -584,8 +599,7 @@ impl Renderer for TruvisRenderer {
                         &mut graph,
                         &subsystem_ctx,
                         &self.path_tracing_common_settings,
-                        dlss_snapshot,
-                        &dlss_evaluation,
+                        &dlss_frame,
                         self.restir_reset_pending,
                     );
                     (display, MainViewCommit::Realtime(commit))
@@ -623,10 +637,7 @@ impl Renderer for TruvisRenderer {
                 RenderMode::Offline => (self.offline.compute_cmd(frame_label), "offline-compute-graph"),
             };
             cmd.begin(ash::vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT, label);
-            // snapshot/空场景不创建 feature；只有即将录制场景 DLSS 的 graph 才登记释放责任。
-            if uses_scene && self.render_mode == RenderMode::Realtime {
-                self.dlss.begin_recording(dlss_snapshot);
-            }
+            self.dlss.begin_recording(&dlss_frame);
             compiled_graph.execute(cmd, ctx.record_ctx.gfx_resource_registry);
             cmd.end();
             (compiled_graph.build_submit_info(std::slice::from_ref(cmd)), uses_scene, frame_commit, sdr_commit)
@@ -648,8 +659,7 @@ impl Renderer for TruvisRenderer {
                             &subsystem_ctx,
                             &self.path_tracing_common_settings,
                             selected_debug_image_id,
-                            dlss_snapshot.options,
-                            dlss_evaluation.get(),
+                            &dlss_frame,
                         )
                         .present_image
                 }
@@ -694,7 +704,7 @@ impl Renderer for TruvisRenderer {
             MainViewCommit::Realtime(commit) => self.realtime.finish_rendered_frame(commit),
             MainViewCommit::Offline(commit) => self.offline.finish_rendered_frame(commit),
         }
-        self.dlss.finish_rendered_frame(scene_submitted, dlss_evaluation.get());
+        self.dlss.finish_rendered_frame(scene_submitted, dlss_frame);
         if scene_submitted && self.render_mode == RenderMode::Realtime {
             self.restir_reset_pending = false;
         }

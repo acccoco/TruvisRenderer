@@ -3,17 +3,16 @@
 use ash::vk;
 use slotmap::Key;
 
+use renderer_kit::targets::{ImageTarget, PerFrameImageSet, TargetImageDesc};
 use truvis_gfx::commands::barrier::GfxImageBarrier;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::resources::buffer::GfxBuffer;
-use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
 use truvis_render_runtime::state::frame_state::FrameRenderState;
 use truvis_renderer_shader_binding::gpu::renderer::render_passes::realtime_rt::RR_FAR_HIT_DISTANCE;
 
-use crate::shared::targets::{ImageTarget, PerFrameImageSet, TargetImageDesc, create_image};
 
 /// Realtime 渲染子系统工作图像：单帧 ray tracing 输出。
 ///
@@ -86,7 +85,7 @@ impl RtWorkingTargets {
 
 impl Drop for RtWorkingTargets {
     fn drop(&mut self) {
-        debug_assert!(self.single_frame_rt.images.iter().all(|img| img.is_null()));
+        debug_assert!(self.single_frame_rt.images().iter().all(|img| img.is_null()));
     }
 }
 /// ReSTIR DI reservoir 的四图像打包视图。
@@ -343,7 +342,7 @@ impl RestirDiTargets {
 
 impl Drop for RestirDiTargets {
     fn drop(&mut self) {
-        self.for_each_set(|set| debug_assert!(set.images.iter().all(|img| img.is_null())));
+        self.for_each_set(|set| debug_assert!(set.images().iter().all(|img| img.is_null())));
     }
 }
 
@@ -579,90 +578,8 @@ impl DlssSrInputTargets {
 
 impl Drop for DlssSrInputTargets {
     fn drop(&mut self) {
-        debug_assert!(self.depth.images.iter().all(|img| img.is_null()));
-        debug_assert!(self.motion_vectors.images.iter().all(|img| img.is_null()));
-    }
-}
-
-/// DLSS SR 使用的固定手动曝光纹理。
-///
-/// Streamline 的 SR 插件在缺少 `kBufferTypeExposure` 时会忽略 `useAutoExposure=false`
-/// 并自动启用 NGX AutoExposure。这里用一张常驻 1x1 R32_SFLOAT 图像提供手动 exposure
-/// scale=1.0，保持当前 RT HDR 输入、`preExposure=1.0` 与 `exposureScale=1.0` 的同一数值空间。
-pub struct DlssSrExposureTarget {
-    exposure: ImageTarget,
-}
-
-impl DlssSrExposureTarget {
-    pub const FORMAT: vk::Format = vk::Format::R32_SFLOAT;
-    const EXTENT: vk::Extent2D = vk::Extent2D { width: 1, height: 1 };
-    const VALUE: f32 = 1.0;
-
-    pub fn new(
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_registry: &mut GfxResourceRegistry,
-        frame_id: u64,
-    ) -> Self {
-        let name = format!("dlss-sr-exposure-{}", frame_id);
-        let image = create_image(
-            resource_ctx,
-            Self::EXTENT,
-            Self::FORMAT,
-            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-            &name,
-        );
-
-        // 该图像从创建到销毁始终保存固定 exposure scale=1.0。初始化后保持
-        // SHADER_READ_ONLY_OPTIMAL，RenderGraph 导入时也必须使用同一初始状态，避免
-        // UNDEFINED layout transition 丢弃这 4 个字节的手动曝光数据。
-        let exposure_bytes = Self::VALUE.to_ne_bytes();
-        let stage_buffer = immediate_ctx
-            .one_time_exec(|cmd| image.transfer_data(resource_ctx, cmd, &exposure_bytes), "dlss-sr-exposure-upload");
-        stage_buffer.destroy(resource_ctx, DestroyReason::ScopeDrop);
-
-        let image_handle = gfx_resource_registry.register_image(image);
-        let mut target = Self {
-            exposure: ImageTarget {
-                image: image_handle,
-                view: Default::default(),
-                format: Self::FORMAT,
-                extent: Self::EXTENT,
-            },
-        };
-        target.exposure.view = gfx_resource_registry.get_or_create_image_view(
-            device_ctx,
-            image_handle,
-            GfxImageViewDesc::new_2d(Self::FORMAT, vk::ImageAspectFlags::COLOR),
-            name,
-        );
-
-        target
-    }
-
-    pub fn destroy(
-        &mut self,
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_registry: &mut GfxResourceRegistry,
-        reason: DestroyReason,
-    ) {
-        // registry 完成释放后仍可能传播日志异常，先撤销 owner 的 image/view 快照。
-        let exposure = std::mem::take(&mut self.exposure);
-        gfx_resource_registry.release_image_immediate(resource_ctx, device_ctx, exposure.image, reason);
-    }
-
-    #[inline]
-    pub fn exposure(&self) -> ImageTarget {
-        self.exposure
-    }
-}
-
-impl Drop for DlssSrExposureTarget {
-    fn drop(&mut self) {
-        debug_assert!(self.exposure.image.is_null());
-        debug_assert!(self.exposure.view.is_null());
+        debug_assert!(self.depth.images().iter().all(|img| img.is_null()));
+        debug_assert!(self.motion_vectors.images().iter().all(|img| img.is_null()));
     }
 }
 
@@ -732,7 +649,7 @@ impl DlssRrInputTargets {
         // 创建/resize 时初始化所有 FIF；后续每个 RT 像素仍必须写入 hit 或 miss guide。
         immediate_ctx.one_time_exec(
             |cmd| {
-                for handle in specular_hit_distance.images {
+                for handle in *specular_hit_distance.images() {
                     let image = gfx_resource_registry.get_image(handle).expect("RR hit distance image missing");
                     cmd.image_memory_barrier(
                         vk::DependencyFlags::empty(),
@@ -833,84 +750,9 @@ impl DlssRrInputTargets {
 
 impl Drop for DlssRrInputTargets {
     fn drop(&mut self) {
-        debug_assert!(self.diffuse_albedo.images.iter().all(|img| img.is_null()));
-        debug_assert!(self.specular_albedo.images.iter().all(|img| img.is_null()));
-        debug_assert!(self.specular_hit_distance.images.iter().all(|img| img.is_null()));
-    }
-}
-
-/// DLSS SR / DLAA / RR 共享的高分辨率 HDR 输出图像。
-///
-/// Streamline evaluate 写入 output extent 下的 linear HDR color；后续 tone mapping pass 再把它写入
-/// main view color，保证 GUI 和 present 仍只消费最终 SDR target。SR 与 RR 只在 evaluate feature
-/// 上互斥，输出资源本身由同一个 owner 管理。
-pub struct DlssOutputTargets {
-    color: PerFrameImageSet,
-}
-
-impl DlssOutputTargets {
-    pub fn new(
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_registry: &mut GfxResourceRegistry,
-        frame_state: &FrameRenderState,
-        frame_id: u64,
-    ) -> Self {
-        // DLSS output 后续作为 storage image 被 SDR pass 读取，也会在 debug viewer 中被采样。
-        // TRANSFER_DST 用于 validation/debug 清理路径，TRANSFER_SRC 保留给截图或后续 copy 诊断。
-        let color = PerFrameImageSet::new(
-            resource_ctx,
-            device_ctx,
-            immediate_ctx,
-            gfx_resource_registry,
-            TargetImageDesc {
-                name_prefix: "dlss-output",
-                format: frame_state.hdr_color_format,
-                extent: frame_state.output_extent,
-                usage: vk::ImageUsageFlags::STORAGE
-                    | vk::ImageUsageFlags::TRANSFER_SRC
-                    | vk::ImageUsageFlags::TRANSFER_DST
-                    | vk::ImageUsageFlags::SAMPLED,
-            },
-            frame_id,
-        );
-
-        Self { color }
-    }
-
-    pub fn rebuild(
-        &mut self,
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_registry: &mut GfxResourceRegistry,
-        frame_state: &FrameRenderState,
-        frame_id: u64,
-    ) {
-        self.destroy(resource_ctx, device_ctx, gfx_resource_registry, DestroyReason::Resize);
-        *self = Self::new(resource_ctx, device_ctx, immediate_ctx, gfx_resource_registry, frame_state, frame_id);
-    }
-
-    pub fn destroy(
-        &mut self,
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        gfx_resource_registry: &mut GfxResourceRegistry,
-        reason: DestroyReason,
-    ) {
-        self.color.destroy(resource_ctx, device_ctx, gfx_resource_registry, reason);
-    }
-
-    #[inline]
-    pub fn color(&self, frame_label: FrameLabel) -> ImageTarget {
-        self.color.target(frame_label)
-    }
-}
-
-impl Drop for DlssOutputTargets {
-    fn drop(&mut self) {
-        debug_assert!(self.color.images.iter().all(|img| img.is_null()));
+        debug_assert!(self.diffuse_albedo.images().iter().all(|img| img.is_null()));
+        debug_assert!(self.specular_albedo.images().iter().all(|img| img.is_null()));
+        debug_assert!(self.specular_hit_distance.images().iter().all(|img| img.is_null()));
     }
 }
 

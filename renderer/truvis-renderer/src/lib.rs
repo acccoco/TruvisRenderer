@@ -1,7 +1,6 @@
 //! Truvis 产品 Renderer 与 App RenderThread Client 注入边界。
 
 mod overlay_geometry;
-mod dlss;
 mod viewport_overlay;
 mod light_overlay;
 mod overlay_ui;

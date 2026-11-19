@@ -5,6 +5,7 @@ edition = "2024"
 description = "ImGui integration for realtime/offline rendering configuration"
 
 [dependencies]
+renderer-dlss = { workspace = true }
 renderer-imgui = { workspace = true }
 renderer-kit = { workspace = true }
 renderer-rendering = { workspace = true }

@@ -12,3 +12,7 @@ truvis-render-runtime = { workspace = true }
 
 glam = { workspace = true }
 log = { workspace = true }
+ash = { workspace = true }
+itertools = { workspace = true }
+slotmap = { workspace = true }
+vk-mem = { workspace = true }

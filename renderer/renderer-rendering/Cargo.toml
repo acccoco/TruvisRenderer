@@ -5,6 +5,7 @@ edition = "2024"
 description = "Realtime/offline render subsystems and their persistent GPU resources"
 
 [dependencies]
+renderer-dlss = { workspace = true }
 renderer-kit = { workspace = true }
 renderer-render-passes = { workspace = true }
 truvis-gfx = { workspace = true }

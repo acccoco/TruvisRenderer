@@ -5,6 +5,7 @@ edition = "2024"
 description = "Truvis product renderer and frontend communication ports"
 
 [dependencies]
+renderer-dlss = { workspace = true }
 truvis-render-loop = { workspace = true }
 renderer-kit = { workspace = true }
 renderer-imgui = { workspace = true }
@@ -18,7 +19,7 @@ truvis-render-graph = { workspace = true }
 truvis-asset = { workspace = true }
 truvis-world = { workspace = true }
 truvis-shader-binding = { workspace = true }
-truvis-streamline-binding = { workspace = true }
+truvis-renderer-shader-binding = { workspace = true }
 truvis-utils = { workspace = true }
 
 ash = { workspace = true }

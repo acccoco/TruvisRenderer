@@ -8,6 +8,7 @@ pub mod camera_controller;
 pub mod debug_image;
 pub mod input_state;
 pub mod subsystem;
+pub mod targets;
 
 pub use camera::Camera;
 pub use camera_controller::CameraController;

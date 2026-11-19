@@ -38,6 +38,7 @@ members = [
     "renderer/editor/truvis-editor-bridge",
     "renderer/renderer-kit",
     "renderer/renderer-imgui",
+    "renderer/renderer-dlss",
     "renderer/renderer-render-passes",
     "renderer/renderer-rendering",
     "renderer/renderer-render-ui",
@@ -94,6 +95,7 @@ truvis-winit-host = { path = "engine/runtime/e60-platform/truvis-winit-host" }
 # app
 renderer-kit = { path = "renderer/renderer-kit" }
 renderer-imgui = { path = "renderer/renderer-imgui" }
+renderer-dlss = { path = "renderer/renderer-dlss" }
 renderer-render-passes = { path = "renderer/renderer-render-passes" }
 renderer-rendering = { path = "renderer/renderer-rendering" }
 renderer-render-ui = { path = "renderer/renderer-render-ui" }

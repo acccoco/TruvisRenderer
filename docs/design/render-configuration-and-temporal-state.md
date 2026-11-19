@@ -20,9 +20,9 @@ flowchart LR
 
 ## Runtime 配置
 
-`DlssOptions`、effective DLSS mode、能力查询和 optimal extent 由 `TruvisRenderer` 持有。`DlssSrMode` 决定 native、DLAA 或 SR render extent；RR 是否启用由独立选项决定。Streamline 仍由 Engine/Gfx 默认初始化。
+具体 Renderer 持有 `renderer-dlss::Dlss`，由它保存 requested/effective 配置并查询能力与 optimal extent。`DlssSrMode` 决定 native、DLAA 或 SR render extent；RR 是否启用由独立选项决定。Streamline 仍由 Engine/Gfx 默认初始化。
 
-DLSS 的 Streamline options 由 `TruvisDlssState` 统一提交：SR options 在 mode/resize 生效边界设置，
+DLSS 的 Streamline options 由 `Dlss` 统一提交：SR options 在 mode/resize 生效边界设置，
 RR options 还包含逐帧相机矩阵，因此在 `frame_input` 确定当前 view 后每帧更新。更新矩阵不释放 feature，
 也不重置 temporal history。
 
@@ -41,12 +41,13 @@ binding wrapper 使用同一 frame token 提交 constants、resource tags 和 `s
 当前 Streamline 2.14.1 的 SR/RR `slAllocateResources` 内部构造 `EventData{viewport, 0}`，无法读取
 当前帧 tags，因此不用于此路径；feature 由当前帧 evaluate 创建。源码依据是 SDK 的
 `source/plugins/sl.dlss/dlssEntry.cpp` 与 `source/plugins/sl.dlss_d/dlss_dEntry.cpp`。
-Renderer 在 update、resize 和 shutdown 的 GPU idle 边界释放旧 feature，Runtime 不理解 DLSS API，
+DLSS owner 在 update、resize 和 shutdown 的 GPU idle 边界释放旧 feature，Runtime 不理解 DLSS API，
 也不为 Streamline 私有资源插入应用侧 barrier。此生命周期约束不等于验证了 NGX 内部 GPU 同步。
 
-snapshot 只读取状态；含场景的 Realtime graph 开始录制前登记可能存在的 feature，
+`DlssFrame` 冻结本帧配置和图像，并记录实际建图结果。含 DLSS pass 的 graph 开始录制前登记可能存在的 feature，
 无 TLAS 清屏和 Offline 不登记。登记早于 execute/submit，覆盖 evaluate 或提交失败的半成品；
 它不是实际分配成功的证明，graph 在 SDK 调用前失败也可能留下保守记录。
+SR 固定曝光图像和 DLSS HDR 输出由 DLSS owner 管理，depth、motion vectors 与 RR guides 由输入生产者持有。
 释放只有返回成功才清空归属；返回错误时保存 feature 归属并传播原始错误，阻止新的录制、options 提交
 和 history 重配置，也不自动再次调用 free。shutdown 将错误向 Renderer hook 传播，停止后续
 target 销毁；这不构成全局安全退出协议，SDK shutdown/Runtime/线程异常退场仍须整体复核。
@@ -97,7 +98,7 @@ DLSS 的唯一 pending reset 属于 `DlssSrState`。after_prepare 只合并 rese
 输入；snapshot 是录制参数，不另存跨帧 reset。SR/RR pass 通过当前 render 作用域的 `Cell`
 报告 `NotRun / Succeeded`，不扩展 RenderGraph 通用接口。已调度的 SR/RR adapter
 在 SDK evaluate 错误处记录 SDK 错误并 panic，中止整个 graph，不执行后续曝光/SDR，也不提交。
-成功 submit 后 Succeeded 消费 reset；没有调度 DLSS 的 NotRun 保留 reset，并在主视图推进时请求 reset。
+成功 evaluate 且 submit 正常返回后消费 reset。未调度 DLSS 时保留 reset，并在主视图推进时请求 reset。
 失败 render 不进入任何提交确认，不在录制中切换 fallback，也不承诺下一帧自动恢复。
 Streamline 成功后报告的显存预算警告仍属于 Succeeded，由 C++ evaluate 封装按 SDK 契约转换；
 警告保留日志，不因此 reset。其它失败由 adapter 直接中止录制，具体 SDK 边界见 binding 模块 README。
@@ -239,14 +240,12 @@ UI / startup option
 - DLSS history 不能与 Renderer 私有 accumulation history 混用。
 - shared setting 只有一个语义 owner。
 - mode 切换的资源释放必须满足 GPU 完成条件。
-- DLSS options 只有 `TruvisDlssState` 一个 owner；pass 只提交当前帧 tags、constants 和 evaluate。
+- DLSS options 只有 `Dlss` 一个 owner；pass 只提交当前帧 tags、constants 和 evaluate。
 - constants、tags 和 evaluate 必须使用同一 frame token；RR 相机矩阵必须来自同帧 view。
 
 ## 实现入口
 
-- [`dlss.rs`](../../renderer/truvis-renderer/src/dlss.rs)
-- [`dlss_options.rs`](../../renderer/renderer-render-passes/src/post_process/dlss_options.rs)
-- [`dlss_sr_state.rs`](../../renderer/renderer-render-passes/src/post_process/dlss_sr_state.rs)
+- [`renderer-dlss`](../../renderer/renderer-dlss/README.md)
 - [`frame_state.rs`](../../engine/runtime/e40-render/truvis-render-runtime/src/state/frame_state.rs)
 - [`view_accum.rs`](../../renderer/truvis-renderer/src/view_accum.rs)
 

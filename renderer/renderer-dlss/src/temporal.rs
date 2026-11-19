@@ -1,91 +1,6 @@
 use ash::vk;
 use truvis_render_foundation::render_view::RenderView;
-use truvis_streamline_binding::dlss;
-
 use truvis_render_runtime::state::frame_state::FrameRenderState;
-use truvis_renderer_shader_binding::gpu::renderer::render_passes::realtime_rt::DLSS_MOTION_VECTOR_INVALID_VALUE;
-
-use super::dlss_options::DlssEvaluation;
-
-/// DLSS Super Resolution / DLAA 模式。
-///
-/// 这里只表示 `kFeatureDLSS` 的模式选择；Ray Reconstruction 后续作为独立开关，
-/// 在执行层替换 SR evaluate，而不是作为这里的另一个互斥质量模式。
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum DlssSrMode {
-    /// 关闭 DLSS，runtime 使用 native render extent。
-    #[default]
-    Off,
-    /// DLAA 路径仍调用 DLSS feature，但 render extent 与 output extent 相同，只做抗锯齿。
-    Dlaa,
-    /// 质量优先的 SR upscale mode，render extent 由 Streamline optimal settings 决定。
-    Quality,
-    /// 质量与性能折中 SR upscale mode。
-    Balanced,
-    /// 性能优先 SR upscale mode。
-    Performance,
-    /// 最大放大倍率 SR upscale mode，通常只适合高分辨率输出。
-    UltraPerformance,
-}
-
-impl DlssSrMode {
-    pub const ALL: [Self; 6] = [
-        Self::Off,
-        Self::Dlaa,
-        Self::Quality,
-        Self::Balanced,
-        Self::Performance,
-        Self::UltraPerformance,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Off => "Off",
-            Self::Dlaa => "DLAA",
-            Self::Quality => "Quality",
-            Self::Balanced => "Balanced",
-            Self::Performance => "Performance",
-            Self::UltraPerformance => "Ultra Performance",
-        }
-    }
-
-    /// 转换为 Streamline 的 SR/DLAA quality mode。
-    ///
-    /// 这里是项目内唯一的 `DlssSrMode -> dlss::DlssMode` 映射入口；RR 仍复用同一
-    /// quality mode，但是否走 `kFeatureDLSS_RR` 由 `DlssOptions` 决定。
-    pub fn to_streamline_mode(self) -> dlss::DlssMode {
-        match self {
-            Self::Off => dlss::DlssMode::Off,
-            Self::Dlaa => dlss::DlssMode::Dlaa,
-            Self::Quality => dlss::DlssMode::Quality,
-            Self::Balanced => dlss::DlssMode::Balanced,
-            Self::Performance => dlss::DlssMode::Performance,
-            Self::UltraPerformance => dlss::DlssMode::UltraPerformance,
-        }
-    }
-
-    /// 解析调试启动配置中的 DLSS SR 模式名称。
-    ///
-    /// 允许空格、连字符和下划线差异，是为了让环境变量输入对大小写和写法宽容。
-    pub fn from_config_value(value: &str) -> Option<Self> {
-        let normalized = value
-            .trim()
-            .chars()
-            .filter(|ch| !matches!(ch, ' ' | '-' | '_'))
-            .flat_map(char::to_lowercase)
-            .collect::<String>();
-
-        match normalized.as_str() {
-            "off" => Some(Self::Off),
-            "dlaa" => Some(Self::Dlaa),
-            "quality" => Some(Self::Quality),
-            "balanced" => Some(Self::Balanced),
-            "performance" => Some(Self::Performance),
-            "ultraperformance" => Some(Self::UltraPerformance),
-            _ => None,
-        }
-    }
-}
 
 /// DLSS SR 每帧 evaluate 需要的 common constants。
 ///
@@ -93,7 +8,8 @@ impl DlssSrMode {
 /// `truvis-streamline-binding` 的 raw ABI 类型。矩阵按 Streamline 契约保存为 row-major。
 /// 这些字段描述的是当前 viewport 的 temporal 关系，不拥有任何 GPU resource。
 #[derive(Clone, Copy, Debug)]
-pub struct DlssSrFrameConstants {
+pub(super) struct DlssSrFrameConstants
+{
     pub camera_view_to_clip: [f32; 16],
     pub clip_to_camera_view: [f32; 16],
     pub world_to_camera_view: [f32; 16],
@@ -128,8 +44,10 @@ pub struct DlssSrFrameConstants {
     pub reset: bool,
 }
 
-impl Default for DlssSrFrameConstants {
-    fn default() -> Self {
+impl DlssSrFrameConstants
+{
+    fn new(motion_vectors_invalid_value: f32) -> Self
+    {
         Self {
             camera_view_to_clip: Self::row_major(glam::Mat4::IDENTITY),
             clip_to_camera_view: Self::row_major(glam::Mat4::IDENTITY),
@@ -148,17 +66,16 @@ impl Default for DlssSrFrameConstants {
             camera_far: 1000.0,
             camera_fov: 60.0_f32.to_radians(),
             camera_aspect_ratio: 1.0,
-            motion_vectors_invalid_value: DLSS_MOTION_VECTOR_INVALID_VALUE,
+            motion_vectors_invalid_value,
             depth_inverted: false,
             camera_motion_included: false,
             motion_vectors_3d: false,
             reset: true,
         }
     }
-}
 
-impl DlssSrFrameConstants {
-    fn row_major(matrix: glam::Mat4) -> [f32; 16] {
+    fn row_major(matrix: glam::Mat4) -> [f32; 16]
+    {
         // glam 内部按列存储；Streamline common constants 按 row-major 语义读取。
         let cols = matrix.to_cols_array_2d();
         [
@@ -173,16 +90,20 @@ impl DlssSrFrameConstants {
 /// sequence index 必须跟随 `DlssSrState` reset 一起回到固定起点；DLSS 关闭时不推进
 /// 序列，避免 native 路径隐藏消耗采样状态。
 #[derive(Clone, Copy, Debug, Default)]
-struct DlssJitterSequence {
+struct DlssJitterSequence
+{
     index: u32,
 }
 
-impl DlssJitterSequence {
-    fn reset(&mut self) {
+impl DlssJitterSequence
+{
+    fn reset(&mut self)
+    {
         self.index = 0;
     }
 
-    fn next_offset(&mut self, dlss_active: bool) -> [f32; 2] {
+    fn next_offset(&mut self, dlss_active: bool) -> [f32; 2]
+    {
         if !dlss_active {
             return [0.0, 0.0];
         }
@@ -191,7 +112,8 @@ impl DlssJitterSequence {
         [Self::halton(self.index, 2) - 0.5, Self::halton(self.index, 3) - 0.5]
     }
 
-    fn halton(mut index: u32, base: u32) -> f32 {
+    fn halton(mut index: u32, base: u32) -> f32
+    {
         debug_assert!(base > 1);
 
         let mut fraction = 1.0;
@@ -210,32 +132,39 @@ impl DlssJitterSequence {
 /// builder 不持有跨帧状态，也不接触 Streamline FFI；它只负责一次 `update` 内的矩阵、
 /// camera 和 extent 派生，保证 `DlssSrState` 聚焦 temporal 状态推进。
 #[derive(Clone, Copy)]
-struct DlssCommonConstantsBuilder<'a> {
+struct DlssCommonConstantsBuilder<'a>
+{
     render_view: &'a RenderView,
     previous_view: RenderView,
     frame_state: &'a FrameRenderState,
     jitter_offset: [f32; 2],
+    motion_vectors_invalid_value: f32,
     reset: bool,
 }
 
-impl<'a> DlssCommonConstantsBuilder<'a> {
+impl<'a> DlssCommonConstantsBuilder<'a>
+{
     fn new(
         render_view: &'a RenderView,
         previous_view: RenderView,
         frame_state: &'a FrameRenderState,
         jitter_offset: [f32; 2],
+        motion_vectors_invalid_value: f32,
         reset: bool,
-    ) -> Self {
+    ) -> Self
+    {
         Self {
             render_view,
             previous_view,
             frame_state,
             jitter_offset,
+            motion_vectors_invalid_value,
             reset,
         }
     }
 
-    fn build(self) -> DlssSrFrameConstants {
+    fn build(self) -> DlssSrFrameConstants
+    {
         let current_clip_from_world = self.render_view.projection * self.render_view.view;
         let previous_clip_from_world = self.previous_view.projection * self.previous_view.view;
         // Streamline 仍需要 current clip <-> previous clip 的关系；shader 写入的 2D
@@ -275,7 +204,7 @@ impl<'a> DlssCommonConstantsBuilder<'a> {
             camera_far: 1000.0,
             camera_fov: Self::estimate_vertical_fov(self.render_view.projection),
             camera_aspect_ratio: Self::extent_aspect(self.frame_state.output_extent),
-            motion_vectors_invalid_value: DLSS_MOTION_VECTOR_INVALID_VALUE,
+            motion_vectors_invalid_value: self.motion_vectors_invalid_value,
             depth_inverted: false,
             camera_motion_included: true,
             motion_vectors_3d: false,
@@ -283,27 +212,32 @@ impl<'a> DlssCommonConstantsBuilder<'a> {
         }
     }
 
-    fn reciprocal_extent(value: u32) -> f32 {
+    fn reciprocal_extent(value: u32) -> f32
+    {
         if value == 0 { 1.0 } else { 1.0 / value as f32 }
     }
 
-    fn normalize_or(value: glam::Vec3, fallback: glam::Vec3) -> glam::Vec3 {
+    fn normalize_or(value: glam::Vec3, fallback: glam::Vec3) -> glam::Vec3
+    {
         value.try_normalize().unwrap_or(fallback)
     }
 
-    fn estimate_vertical_fov(projection: glam::Mat4) -> f32 {
+    fn estimate_vertical_fov(projection: glam::Mat4) -> f32
+    {
         let cot_half_fov = projection.y_axis.y.abs();
         if cot_half_fov > f32::EPSILON { 2.0 * (1.0 / cot_half_fov).atan() } else { 60.0_f32.to_radians() }
     }
 
     /// 当前相机使用 glam 的 [0,1] infinite RH projection，w_axis.z = -near。
     /// 不能套用 OpenGL [-1,1] 投影的除二公式；fallback 同样使用 m。
-    fn estimate_camera_near(projection: glam::Mat4) -> f32 {
+    fn estimate_camera_near(projection: glam::Mat4) -> f32
+    {
         let near = -projection.w_axis.z;
         if near.is_finite() && near > 0.0 { near } else { 0.01 }
     }
 
-    fn extent_aspect(extent: vk::Extent2D) -> f32 {
+    fn extent_aspect(extent: vk::Extent2D) -> f32
+    {
         if extent.height == 0 { 1.0 } else { extent.width as f32 / extent.height as f32 }
     }
 }
@@ -313,15 +247,15 @@ impl<'a> DlssCommonConstantsBuilder<'a> {
 /// 职责边界：
 /// - 负责把 app 提供的当前 `RenderView` 转换成 Streamline common constants；
 /// - 持有上一帧 `RenderView`，用于计算 current clip 与 previous clip 的转换；
-/// - 维护 DLSS 使用的帧级 temporal jitter，并在 resize、DLSS mode 切换等历史失效点
-///   提供 reset 标记。
+/// - 维护 DLSS 使用的帧级 temporal jitter，并在 resize、DLSS mode 切换等历史失效点 提供 reset 标记。
 ///
 /// 非职责：
 /// - 不创建或 tag GPU resource；
 /// - 不调用 Streamline API；
 /// - 不决定 DLSS mode 或 render extent。
 #[derive(Clone, Copy, Debug)]
-pub struct DlssSrState {
+pub(super) struct DlssSrState
+{
     constants: DlssSrFrameConstants,
     previous_view: Option<RenderView>,
     /// 本帧 prepare 的 view 与候选 jitter；只有主视图 submit 才成为跨帧历史。
@@ -331,10 +265,12 @@ pub struct DlssSrState {
     reset_pending: bool,
 }
 
-impl Default for DlssSrState {
-    fn default() -> Self {
+impl DlssSrState
+{
+    pub(super) fn new(motion_vectors_invalid_value: f32) -> Self
+    {
         Self {
-            constants: DlssSrFrameConstants::default(),
+            constants: DlssSrFrameConstants::new(motion_vectors_invalid_value),
             previous_view: None,
             prepared_view: None,
             prepared_jitter: DlssJitterSequence::default(),
@@ -342,30 +278,32 @@ impl Default for DlssSrState {
             reset_pending: true,
         }
     }
-}
 
-impl DlssSrState {
     #[inline]
-    pub fn constants(&self) -> DlssSrFrameConstants {
+    pub(super) fn constants(&self) -> DlssSrFrameConstants
+    {
         let mut constants = self.constants;
         constants.reset |= self.reset_pending;
         constants
     }
 
     #[inline]
-    pub fn motion_vector_previous_view(&self) -> Option<RenderView> {
+    pub(super) fn motion_vector_previous_view(&self) -> Option<RenderView>
+    {
         self.previous_view
     }
 
     /// 请求下一次 evaluate 重置 DLSS history。
     ///
     /// 调用点包括窗口尺寸变化、render extent 变化、DLSS mode 切换和未来场景大跳变。
-    pub fn request_reset(&mut self) {
+    pub(super) fn request_reset(&mut self)
+    {
         self.reset_pending = true;
     }
 
     /// 配置/尺寸变化在 prepare 前重启采样；仍保留上一实际提交主视图的相机。
-    pub fn reconfigure(&mut self) {
+    pub(super) fn reconfigure(&mut self)
+    {
         assert!(self.prepared_view.is_none(), "cannot reconfigure after frame prepare");
         self.request_reset();
         self.jitter_sequence.reset();
@@ -373,15 +311,17 @@ impl DlssSrState {
 
     /// 只能在本帧命令 submit 正常返回后调用，evaluate 成功录制本身不能消费 reset。
     /// 与 instance history 使用同一主视图提交边界；清屏帧释放准备记录但不推进历史。
-    pub fn finish_rendered_frame(&mut self, scene_submitted: bool, evaluation: DlssEvaluation) {
+    pub(super) fn finish_rendered_frame(&mut self, scene_submitted: bool, evaluated: bool)
+    {
         let view = self.prepared_view.take().expect("camera frame was not prepared");
         if scene_submitted {
             self.previous_view = Some(view);
             self.jitter_sequence = self.prepared_jitter;
         }
-        match evaluation {
-            DlssEvaluation::Succeeded => self.reset_pending = false,
-            DlssEvaluation::NotRun => self.reset_pending |= scene_submitted,
+        if evaluated {
+            self.reset_pending = false;
+        } else {
+            self.reset_pending |= scene_submitted;
         }
     }
 
@@ -392,14 +332,22 @@ impl DlssSrState {
     ///
     /// `dlss_active` 决定本帧是否生成 temporal jitter。DLSS 关闭时必须写 0 且不推进
     /// jitter sequence，避免 native 路径和下一次 DLSS reset 继承不可见的采样状态。
-    pub fn update(&mut self, render_view: &RenderView, frame_state: &FrameRenderState, dlss_active: bool) {
+    pub(super) fn update(&mut self, render_view: &RenderView, frame_state: &FrameRenderState, dlss_active: bool)
+    {
         assert!(self.prepared_view.is_none(), "camera frame prepared twice");
         let previous_view = self.previous_view.unwrap_or(*render_view);
         let reset = self.reset_pending || self.previous_view.is_none();
         self.prepared_jitter = self.jitter_sequence;
         let jitter_offset = self.prepared_jitter.next_offset(dlss_active);
-        self.constants =
-            DlssCommonConstantsBuilder::new(render_view, previous_view, frame_state, jitter_offset, reset).build();
+        self.constants = DlssCommonConstantsBuilder::new(
+            render_view,
+            previous_view,
+            frame_state,
+            jitter_offset,
+            self.constants.motion_vectors_invalid_value,
+            reset,
+        )
+        .build();
 
         self.prepared_view = Some(*render_view);
     }

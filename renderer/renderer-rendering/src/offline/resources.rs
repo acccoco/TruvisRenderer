@@ -3,13 +3,13 @@
 use ash::vk;
 use slotmap::Key;
 
+use renderer_kit::targets::{ImageTarget, PerFrameImageSet, SingleImageTarget, TargetImageDesc};
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx};
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_runtime::resources::gfx_resource_registry::GfxResourceRegistry;
 use truvis_render_runtime::state::frame_state::FrameRenderState;
 
-use crate::shared::targets::{ImageTarget, PerFrameImageSet, SingleImageTarget, TargetImageDesc};
 
 /// 离线 ground truth 渲染子系统的窗口尺寸图像。
 ///
@@ -125,8 +125,8 @@ impl OfflineTargets {
 
 impl Drop for OfflineTargets {
     fn drop(&mut self) {
-        debug_assert!(self.single_frame_image.images.iter().all(|img| img.is_null()));
-        debug_assert!(self.accum_image.image.is_null());
-        debug_assert!(self.render_target.images.iter().all(|img| img.is_null()));
+        debug_assert!(self.single_frame_image.images().iter().all(|img| img.is_null()));
+        debug_assert!(self.accum_image.target().image.is_null());
+        debug_assert!(self.render_target.images().iter().all(|img| img.is_null()));
     }
 }

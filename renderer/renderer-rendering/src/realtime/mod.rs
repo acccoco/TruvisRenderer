@@ -1,15 +1,13 @@
-//! Realtime 渲染子系统及其专属 ReSTIR、SHARC、DLSS 状态。
+//! Realtime 渲染子系统及其专属 ReSTIR、SHARC 状态。
 
-use std::{cell::Cell, env};
+use std::env;
 
 use slotmap::Key;
 
-use crate::post_process::SdrPostProcessInput;
+use renderer_dlss::{DlssFrame, DlssInputs, DlssRrGuides};
 use renderer_kit::debug_image::DebugImageOption;
 use renderer_kit::subsystem::{SubsystemLifecycle, SubsystemRenderCtx};
-use renderer_render_passes::post_process::dlss_options::{DlssEvaluation, DlssFrameSnapshot, DlssOptions};
-use renderer_render_passes::post_process::dlss_rr::{DlssRrPass, DlssRrRgPass};
-use renderer_render_passes::post_process::dlss_sr::{DLSS_SR_INPUT_READ, DlssSrPass, DlssSrRgPass};
+use renderer_kit::targets::ImageTarget;
 use renderer_render_passes::post_process::image_clear::{ImageClearPass, ImageClearRgPass};
 use renderer_render_passes::post_process::resolve::{ResolveDebugImage, ResolvePass, ResolveRgPass};
 use renderer_render_passes::ray_tracing::realtime::{
@@ -22,12 +20,13 @@ use truvis_render_graph::render_graph::{RenderGraphBuilder, RgImageHandle, RgIma
 use truvis_render_runtime::render_runtime::{RenderRuntimeInitCtx, RenderRuntimeResizeCtx, RenderRuntimeShutdownCtx};
 use truvis_renderer_shader_binding::gpu::renderer::render_passes::realtime_rt::RR_FAR_HIT_DISTANCE;
 
+use crate::post_process::SdrPostProcessInput;
 use crate::realtime::gbuffer::GBuffer;
 use crate::realtime::resources::{
-    DlssOutputTargets, DlssRrInputTargets, DlssSrExposureTarget, DlssSrInputTargets, MainViewTargets, RestirDiTargets,
+    DlssRrInputTargets, DlssSrInputTargets, MainViewTargets, RestirDiTargets,
     RestirReservoirTarget, RestirSurfaceKeyTarget, RtWorkingTargets, SharcTargets,
 };
-use crate::shared::{ImageTarget, PathTracingCommonSettings, PathTracingDebugChannel, SkySamplingMode};
+use crate::shared::{PathTracingCommonSettings, PathTracingDebugChannel, SkySamplingMode};
 
 mod gbuffer;
 mod resources;
@@ -287,10 +286,6 @@ impl RtRestirDiMode {
 struct RealtimeRenderResources {
     image_clear_pass: ImageClearPass,
     realtime_rt_pass: RealtimeRtPass,
-    /// DLSS SR 是外部 opaque pass，不拥有 shader pipeline；只在 SR/DLAA 分支被加入 compute graph。
-    dlss_sr_pass: DlssSrPass,
-    /// DLSS RR 是 SR 基础设施上的替代 evaluate 分支，不与 `dlss_sr_pass` 连续运行。
-    dlss_rr_pass: DlssRrPass,
     resolve_pass: ResolvePass,
     gbuffer: GBuffer,
     /// RT 私有工作图像。它们的格式/用途由 realtime 渲染子系统决定，因此不再放在 engine runtime state。
@@ -303,12 +298,8 @@ struct RealtimeRenderResources {
     ///
     /// 即使 SR 关闭也会由 raygen 写入，便于 ImGui debug viewer 验证深度和 motion vector。
     dlss_sr_inputs: DlssSrInputTargets,
-    /// DLSS SR 固定手动曝光 scale=1.0；缺少 exposure tag 时 Streamline 会退回 AutoExposure。
-    dlss_sr_exposure: DlssSrExposureTarget,
     /// DLSS RR 额外需要的低分辨率输入。
     dlss_rr_inputs: DlssRrInputTargets,
-    /// DLSS SR / DLAA / RR 共享输出的高分辨率 HDR color。
-    dlss_outputs: DlssOutputTargets,
     /// 主视图离屏目标。compute graph 写入 color，present graph 再 resolve 到 swapchain。
     main_view_targets: MainViewTargets,
     compute_cmds: [GfxCommandBuffer; FrameLabel::COUNT],
@@ -336,8 +327,6 @@ impl RealtimeRenderResources {
             sharc_targets.resolve_hash_entries_buffer(),
             sharc_targets.resolve_history_buffer(),
         );
-        let dlss_sr_pass = DlssSrPass::new();
-        let dlss_rr_pass = DlssRrPass::new();
         let image_clear_pass = ImageClearPass::new(ctx.device_ctx, ctx.shader_binding_system.global_descriptor_sets());
         let resolve_pass = ResolvePass::new(
             ctx.device_ctx,
@@ -382,22 +371,7 @@ impl RealtimeRenderResources {
             &target_frame_state,
             ctx.frame_timing.frame_id(),
         );
-        let dlss_sr_exposure = DlssSrExposureTarget::new(
-            ctx.resource_ctx,
-            ctx.device_ctx,
-            ctx.immediate_ctx,
-            &mut *ctx.gfx_resource_registry,
-            ctx.frame_timing.frame_id(),
-        );
         let dlss_rr_inputs = DlssRrInputTargets::new(
-            ctx.resource_ctx,
-            ctx.device_ctx,
-            ctx.immediate_ctx,
-            &mut *ctx.gfx_resource_registry,
-            &target_frame_state,
-            ctx.frame_timing.frame_id(),
-        );
-        let dlss_outputs = DlssOutputTargets::new(
             ctx.resource_ctx,
             ctx.device_ctx,
             ctx.immediate_ctx,
@@ -425,17 +399,13 @@ impl RealtimeRenderResources {
         Self {
             image_clear_pass,
             realtime_rt_pass,
-            dlss_sr_pass,
-            dlss_rr_pass,
             resolve_pass,
             gbuffer,
             rt_targets,
             restir_di_targets,
             sharc_targets,
             dlss_sr_inputs,
-            dlss_sr_exposure,
             dlss_rr_inputs,
-            dlss_outputs,
             main_view_targets,
             compute_cmds,
             present_cmds,
@@ -448,10 +418,6 @@ impl RealtimeRenderResources {
         self.image_clear_pass.destroy(ctx.device_ctx);
 
         self.realtime_rt_pass.destroy(ctx.resource_ctx, ctx.device_ctx);
-
-        self.dlss_sr_pass.destroy();
-
-        self.dlss_rr_pass.destroy();
 
         self.resolve_pass.destroy(ctx.device_ctx);
 
@@ -485,21 +451,7 @@ impl RealtimeRenderResources {
             DestroyReason::Shutdown,
         );
 
-        self.dlss_sr_exposure.destroy(
-            ctx.resource_ctx,
-            ctx.device_ctx,
-            &mut *ctx.gfx_resource_registry,
-            DestroyReason::Shutdown,
-        );
-
         self.dlss_rr_inputs.destroy(
-            ctx.resource_ctx,
-            ctx.device_ctx,
-            &mut *ctx.gfx_resource_registry,
-            DestroyReason::Shutdown,
-        );
-
-        self.dlss_outputs.destroy(
             ctx.resource_ctx,
             ctx.device_ctx,
             &mut *ctx.gfx_resource_registry,
@@ -555,14 +507,6 @@ impl SubsystemLifecycle for RealtimeRenderSubsystem {
                 ctx.frame_timing.frame_id(),
             );
             resources.dlss_rr_inputs.rebuild(
-                ctx.resource_ctx,
-                ctx.device_ctx,
-                ctx.immediate_ctx,
-                &mut *ctx.gfx_resource_registry,
-                &target_frame_state,
-                ctx.frame_timing.frame_id(),
-            );
-            resources.dlss_outputs.rebuild(
                 ctx.resource_ctx,
                 ctx.device_ctx,
                 ctx.immediate_ctx,
@@ -627,8 +571,7 @@ impl RealtimeRenderSubsystem {
         rg_builder: &mut RenderGraphBuilder<'a>,
         ctx: &'a SubsystemRenderCtx<'a>,
         common_settings: &PathTracingCommonSettings,
-        dlss_snapshot: DlssFrameSnapshot,
-        dlss_evaluation: &'a Cell<DlssEvaluation>,
+        dlss: &'a DlssFrame,
         history_reset: bool,
     ) -> (Option<SdrPostProcessInput>, RealtimeFrameCommit) {
         let resources = self.resources();
@@ -639,7 +582,6 @@ impl RealtimeRenderSubsystem {
         let sharc_targets = &resources.sharc_targets;
         let dlss_sr_inputs = &resources.dlss_sr_inputs;
         let dlss_rr_inputs = &resources.dlss_rr_inputs;
-        let dlss_outputs = &resources.dlss_outputs;
         let main_view_targets = &resources.main_view_targets;
         let debug_channel = self.settings.debug_channel.shader_channel();
         let sky_sampling_mode = common_settings.sky_sampling_mode.shader_mode();
@@ -665,7 +607,7 @@ impl RealtimeRenderSubsystem {
             && self.restir_last_frame_id.is_some_and(|previous| previous.checked_add(1) == Some(frame_id))
             && self.restir_last_settings == Some(history_settings)
             && !history_reset;
-        let jitter_px = dlss_snapshot.constants.sampling_jitter_offset;
+        let jitter_px = dlss.sampling_jitter_px();
         let restir_history_jitter_delta = if restir_history_valid {
             [
                 jitter_px[0] - self.restir_last_jitter_px[0],
@@ -822,16 +764,6 @@ impl RealtimeRenderSubsystem {
             RgImageState::GENERAL,
         );
 
-        let dlss_output_target = dlss_outputs.color(frame_label);
-        let dlss_output = rg_builder.import_image(
-            "dlss-output",
-            dlss_output_target.image,
-            Some(dlss_output_target.view),
-            dlss_output_target.format,
-            RgImageState::UNDEFINED_TOP,
-            None,
-        );
-
         // compute graph 的输出 target 会被 present graph 继续读取；导出状态固定为 fragment read，
         // 让后续 resolve/GUI 叠加路径以明确状态重新导入。
         let color_target = main_view_targets.color(frame_label);
@@ -909,56 +841,23 @@ impl RealtimeRenderSubsystem {
             },
         );
 
-        let dlss_options = dlss_snapshot.options;
-        let (source, source_extent) = if dlss_options.is_rr_active() {
-            rg_builder.add_pass(
-                "dlss-rr",
-                DlssRrRgPass {
-                    evaluation: dlss_evaluation,
-                    dlss_rr_pass: &resources.dlss_rr_pass,
-                    record_ctx,
-                    snapshot: dlss_snapshot,
-                    resource_ctx: ctx.resource_ctx,
-                    input_color: single_frame_image,
-                    output_color: dlss_output,
+        let (source, source_extent) = dlss
+            .add_pass(
+                rg_builder,
+                ctx.resource_ctx,
+                DlssInputs {
+                    color: single_frame_image,
                     depth,
                     motion_vectors,
-                    diffuse_albedo: rr_diffuse_albedo,
-                    specular_albedo: rr_specular_albedo,
-                    normal_roughness: gbuffer_a,
-                    specular_hit_distance: rr_specular_hit_distance,
+                    rr: Some(DlssRrGuides {
+                        diffuse_albedo: rr_diffuse_albedo,
+                        specular_albedo: rr_specular_albedo,
+                        normal_roughness: gbuffer_a,
+                        specular_hit_distance: rr_specular_hit_distance,
+                    }),
                 },
-            );
-            (dlss_output, record_ctx.frame_state.output_extent)
-        } else if dlss_options.is_sr_active() {
-            let target = resources.dlss_sr_exposure.exposure();
-            let exposure = rg_builder.import_image(
-                "dlss-sr-exposure",
-                target.image,
-                Some(target.view),
-                target.format,
-                DLSS_SR_INPUT_READ,
-                None,
-            );
-            rg_builder.add_pass(
-                "dlss-sr",
-                DlssSrRgPass {
-                    evaluation: dlss_evaluation,
-                    dlss_sr_pass: &resources.dlss_sr_pass,
-                    record_ctx,
-                    snapshot: dlss_snapshot,
-                    resource_ctx: ctx.resource_ctx,
-                    input_color: single_frame_image,
-                    output_color: dlss_output,
-                    depth,
-                    motion_vectors,
-                    exposure,
-                },
-            );
-            (dlss_output, record_ctx.frame_state.output_extent)
-        } else {
-            (single_frame_image, record_ctx.frame_state.render_extent)
-        };
+            )
+            .unwrap_or((single_frame_image, record_ctx.frame_state.render_extent));
         (
             Some(SdrPostProcessInput {
                 source,
@@ -978,13 +877,11 @@ impl RealtimeRenderSubsystem {
 
     /// 根据稳定 ID 解析当前帧 debug image 及其跨 graph 稳定状态。
     ///
-    /// 该解析必须发生在 render phase：per-FIF target 由当前 `FrameLabel` 决定，DLSS 输入的
-    /// 稳定 layout 也取决于本帧 SR/RR mode。返回值只借给当前 present graph 使用。
+    /// compute 录制后从 DLSS 帧状态获取实际图像 layout，仅供当前 present graph 使用。
     fn debug_image_source(
         &self,
         frame_label: FrameLabel,
-        dlss_options: DlssOptions,
-        dlss_evaluation: DlssEvaluation,
+        dlss: &DlssFrame,
         has_tlas: bool,
         id: &str,
     ) -> Option<(ImageTarget, RgImageState)> {
@@ -992,18 +889,11 @@ impl RealtimeRenderSubsystem {
         if !has_tlas && !matches!(id, "single-frame-rt" | "main-view-color" | "dlss-rr-specular-hit-distance") {
             return None;
         }
-        // present graph 在 compute 录制后构建；只借出本帧成功 evaluate 的 output。
-        if id == "dlss-output"
-            && (!dlss_options.is_dlss_active() || !matches!(dlss_evaluation, DlssEvaluation::Succeeded))
-        {
-            return None;
-        }
         let resources = self.resources();
         let rt_targets = &resources.rt_targets;
         let main_view_targets = &resources.main_view_targets;
         let dlss_sr_inputs = &resources.dlss_sr_inputs;
         let dlss_rr_inputs = &resources.dlss_rr_inputs;
-        let dlss_outputs = &resources.dlss_outputs;
         let gbuffer = &resources.gbuffer;
 
         let single_frame = rt_targets.single_frame_rt(frame_label);
@@ -1013,22 +903,16 @@ impl RealtimeRenderSubsystem {
         let rr_diffuse_albedo = dlss_rr_inputs.diffuse_albedo(frame_label);
         let rr_specular_albedo = dlss_rr_inputs.specular_albedo(frame_label);
         let rr_specular_hit_distance = dlss_rr_inputs.specular_hit_distance(frame_label);
-        let dlss_output = dlss_outputs.color(frame_label);
         let (gbuffer_a_image, gbuffer_a_view) = gbuffer.a_handle(frame_label);
         let (gbuffer_b_image, gbuffer_b_view) = gbuffer.b_handle(frame_label);
         let (gbuffer_c_image, gbuffer_c_view) = gbuffer.c_handle(frame_label);
-        // SR/RR 开启后这些输入已经在 compute graph 末尾停留在 DLSS read layout；
-        // present graph 的 debug preview 必须用同一状态 import，不能再假设所有 storage image 都是 GENERAL。
-        let sl_input_state =
-            if has_tlas && dlss_options.is_dlss_active() { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
-        let rr_input_state =
-            if has_tlas && dlss_options.is_rr_active() { DLSS_SR_INPUT_READ } else { RgImageState::GENERAL };
-        let gbuffer_a_state = rr_input_state;
+        let sl_input_state = dlss.input_state(RgImageState::GENERAL);
+        let rr_input_state = dlss.rr_guide_state(RgImageState::GENERAL);
 
         let source = match id {
             "single-frame-rt" => (single_frame, sl_input_state),
             "main-view-color" => (main_view_color, RgImageState::SHADER_READ_FRAGMENT),
-            "dlss-output" => (dlss_output, RgImageState::GENERAL),
+            "dlss-output" => dlss.preview_output()?,
             "dlss-depth" => (depth, sl_input_state),
             "dlss-motion-vectors" => (motion_vectors, sl_input_state),
             "dlss-rr-diffuse-albedo" => (rr_diffuse_albedo, rr_input_state),
@@ -1041,7 +925,7 @@ impl RealtimeRenderSubsystem {
                     format: GBuffer::A_FORMAT,
                     extent: gbuffer.extent(),
                 },
-                gbuffer_a_state,
+                rr_input_state,
             ),
             "gbuffer-b" => (
                 ImageTarget {
@@ -1073,8 +957,7 @@ impl RealtimeRenderSubsystem {
         ctx: &'a SubsystemRenderCtx<'a>,
         _common_settings: &PathTracingCommonSettings,
         selected_debug_image_id: Option<&str>,
-        dlss_options: DlssOptions,
-        dlss_evaluation: DlssEvaluation,
+        dlss: &DlssFrame,
     ) -> RtPresentGraphTargets {
         let resources = self.resources();
         let record_ctx = ctx.record_ctx;
@@ -1099,8 +982,7 @@ impl RealtimeRenderSubsystem {
             .and_then(|id| {
                 self.debug_image_source(
                     frame_label,
-                    dlss_options,
-                    dlss_evaluation,
+                    dlss,
                     ctx.render_scene.tlas_handle(frame_label).is_some(),
                     id,
                 )

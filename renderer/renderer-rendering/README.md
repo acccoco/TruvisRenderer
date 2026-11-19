@@ -8,12 +8,12 @@ shader/FFI 契约、反射距离近似与 debug 规则见
 
 ## 所有权分组
 
-- `realtime`：`RealtimeRenderSubsystem` / `RealtimeRenderSettings`，以及 GBuffer、ReSTIR reservoir/surface key、SHARC buffer、DLSS 输入输出、working target 和 main-view target。
+- `realtime`：`RealtimeRenderSubsystem` / `RealtimeRenderSettings`，以及 GBuffer、ReSTIR reservoir/surface key、SHARC buffer、DLSS 输入、working target 和 main-view target。
 - `offline`：`OfflineRenderSubsystem` / `OfflineRenderSettings`，以及独立的 single-frame target、跨帧累计 image、output target、sample count 和累计签名。
 - `post_process`：`TruvisRenderer` 唯一持有的 `SdrPostProcess`，拥有 AgX LUT、直方图、曝光历史与显示 pass；Realtime/Offline 通过 `SdrPostProcessInput` 借出 graph image，不转移 target 所有权。
-- `shared`：`RenderMode`、`PathTracingCommonSettings`、`PathTracingDebugChannel`、`SkySamplingMode`、`SdrPostProcessSettings` 和 `ImageTarget`。
+- `shared`：`RenderMode`、`PathTracingCommonSettings`、`PathTracingDebugChannel`、`SkySamplingMode`和 `SdrPostProcessSettings`。
 - `PathTracingDebugChannel` / `SkySamplingMode` 同时服务 realtime/offline；ReSTIR DI 和 SHARC 模式只属于 realtime 模块。
-- DLSS 的 pass adapter、options、SR frame constants 和 snapshot 位于 `renderer-render-passes`；具体 requested/effective 配置、能力与资源生命周期由 `TruvisRenderer` 持有。
+- Realtime 导入 RT 写入的输入，交给 [`renderer-dlss`](../renderer-dlss/README.md) 在 HDR 与 SDR 之间加入 SR/RR pass。预览从同一 DLSS 帧获取已录制的输出与输入 layout。
 - 环境倍率由 World 持有，Realtime/Offline 从同帧 RenderSceneView 读取；不在 common settings 保存副本。
 - `OfflineRenderSettings::supports_debug_channel` 是离线 debug 候选的唯一判定入口；`normalize` 将非法候选恢复为 Final 并约束 dispatch 数，由 Renderer 固定 update 路径调用，不依赖 UI。
 
