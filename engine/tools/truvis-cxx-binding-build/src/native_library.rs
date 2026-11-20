@@ -23,7 +23,7 @@ impl NativeLibrary {
             "CXX binding requires Windows x64 MSVC ABI"
         );
         println!("cargo:rerun-if-env-changed=TRUVIS_CXX_TOOL");
-        let tool = std::env::var_os("TRUVIS_CXX_TOOL").unwrap_or_else(|| "vs2022".into());
+        let tool = std::env::var_os("TRUVIS_CXX_TOOL").unwrap_or_else(|| "clang-cl".into());
         let tool = tool.to_str().expect("TRUVIS_CXX_TOOL must be UTF-8");
         assert!(matches!(tool, "vs2022" | "vs2026" | "clang-cl"), "Unsupported TRUVIS_CXX_TOOL: {tool}");
         let profile = std::env::var("PROFILE").expect("PROFILE must be set by Cargo");

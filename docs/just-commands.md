@@ -173,7 +173,7 @@ flowchart LR
 | `just cxx-force` | 同上，CMake build 增加 `--clean-first` |
 | `just cxx-compile-commands` | 仅 clang-cl Debug configure 与数据库复制 |
 
-这些 recipe 不接受附加参数。`TRUVIS_CXX_TOOL` 接受 `vs2022`（未设置时默认）、`vs2026`、`clang-cl`，
+这些 recipe 不接受附加参数。`TRUVIS_CXX_TOOL` 接受 `clang-cl`（默认，使用 Ninja）、`vs2022` 和 `vs2026`，
 CMake 与 Cargo 必须继承同一值。非法值或工具缺失直接失败，不自动回退。clangd 数据库入口不改变该选择。
 DLL/JSON 复制到 profile 根与 `deps/`；不维护部署历史，也不默认复制到 `examples/`。
 删除依赖或手工删除部署文件后需清理相关构建产物及 binding 缓存再重建；完整重置可执行 `cargo clean` 后重新准备 shader/native。
@@ -215,7 +215,7 @@ just fetch-res slang tracy --verbose
 just fetch-res --all --verbose
 
 # 显式选择工具链，native 和 binding 使用同一环境变量
-$env:TRUVIS_CXX_TOOL = 'clang-cl'
+$env:TRUVIS_CXX_TOOL = 'vs2026'
 just cxx-debug
 
 # 场景转换：带空格的路径用引号包住

@@ -11,7 +11,7 @@ def main [repo_root: path, profile: string = "debug", --force, --compile-command
         return
     }
 
-    let tool = ($env.TRUVIS_CXX_TOOL? | default 'vs2022')
+    let tool = ($env.TRUVIS_CXX_TOOL? | default 'clang-cl')
     if ($tool not-in ['vs2022', 'vs2026', 'clang-cl']) {
         error make { msg: $"Unsupported TRUVIS_CXX_TOOL: ($tool)" }
     }

@@ -24,7 +24,7 @@ ash 引用本身不拥有原生资源，不能证明这些前置。
 ## 类型生成
 
 `build.rs` 单向消费 C API header 和 native build 发布的 include roots，显式链接并复制本模块 DLL。
-`just cxx-debug` 在 CMake 完成后构建三个 binding；工具链使用 `TRUVIS_CXX_TOOL`，默认 `vs2022`。
+`just cxx-debug` 在 CMake 完成后构建三个 binding。`TRUVIS_CXX_TOOL` 未设置时默认使用 `clang-cl + Ninja`。
 
 生成器保持 `allowlist_recursively(false)`，直接读取 `module.h`，只输出本模块函数表和导出函数。
 namespace import 将 Vulkan 类型映射到 ash；可空 C 函数指针使用 `Option<ash::vk::PFN_vk…>`。

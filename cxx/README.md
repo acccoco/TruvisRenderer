@@ -23,18 +23,16 @@ Rust binding 构建支持位于 `engine/tools/truvis-cxx-binding-build`。
 外层 `scripts/nu/cxx-cmake.nu` 顺序调用 CMake configure/build，再构建三个明确列出的 Rust binding。
 C++ 编译与链接增量完全交给 CMake/MSBuild/Ninja；binding 的 `build.rs` 不启动 CMake。
 
-工具链由 `TRUVIS_CXX_TOOL=vs2022|vs2026|clang-cl` 显式选择，未设置时使用 `vs2022`。
+`TRUVIS_CXX_TOOL` 未设置时默认使用 `clang-cl + Ninja`，也可显式指定 `clang-cl`、`vs2022` 或 `vs2026`。
 CMake 和 Cargo 必须继承同一值；不自动探测或回退，也不保存当前工具链状态。仅支持 Windows x64 MSVC ABI、
 Debug/Release 和项目 `build/` 输出布局，不支持并发切换工具链或向同一 profile 部署。
 IDE 的 Cargo 检查也必须使用同一环境；不同 Cargo 构建缓存共享部署目录，混用工具链后需清理 binding 缓存再重建。
 
 ```powershell
-just cxx-debug             # Debug native + 三个 binding + 运行文件
 just cxx                   # 顺序执行 Debug、Release 两套流程
+just cxx-debug             # Debug native + 三个 binding + 运行文件
 just cxx-force             # 两套流程的 CMake build 增加 --clean-first
 just cxx-compile-commands  # 仅 clang-cl Debug configure，更新 clangd 数据库
-$env:TRUVIS_CXX_TOOL = 'clang-cl'
-just cxx-debug
 ```
 
 三个 binding 分别手写链接库和运行文件。import library 直接从所选 native 输出目录链接，PDB 留在 native
@@ -52,8 +50,8 @@ Assimp 的间接 DLL 来自所选 CMake build tree 的 vcpkg 安装目录；仅 
 
 ```powershell
 Set-Location cxx
-cmake --preset vs2022
-cmake --build --preset vs2022-build-debug
+cmake --preset clang-cl-debug
+cmake --build --preset clang-cl-build-debug
 ```
 
 clangd 辅助 configure 不部署 DLL、不发布 Vulkan include roots，也不改变日常选择的工具链。
@@ -110,4 +108,5 @@ Vulkan 命令桥接和宿主 ABI 契约见
 - Rust binding：`build/bindings/{TARGET}/cxx/{crate}/`。
 - clangd database：`build/cxx/compile_commands.json` 与 `.vscode/compile_commands.json`。
 
-需要 PATH 上的 CMake、MSVC C++ workload、`VCPKG_ROOT`，以及可选的 clang-cl/Ninja。
+默认构建需要 `PATH` 中的 `cmake.exe`、`clang-cl.exe` 和 `ninja.exe`，以及 MSVC C++ workload 和已配置的 `VCPKG_ROOT`。
+vcpkg 的 `x64-windows` triplet 使用 MSVC 构建第三方依赖。
