@@ -336,6 +336,7 @@ impl RenderRuntime {
 
         self.update_frame_state();
         self.acquire_image();
+        self.imports.poll(&mut self.assets);
 
         RenderRuntimeUpdateCtx {
             device_ctx: self.gfx.device_ctx(),
@@ -620,7 +621,6 @@ impl RenderRuntime {
         let frame_label = self.frame_timing.frame_label();
         let cmd = self.render_world_update_cmds[*frame_label].clone();
 
-        self.imports.poll(&mut self.assets);
         // 两类 transfer 上传在同一次 poll 后交回各自的 owner，再统一更新本帧 descriptor。
         self.world.render.prepare_sky(
             &self.world.game, &self.assets, self.gfx.resource_ctx(), self.gfx.device_ctx(),

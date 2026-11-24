@@ -8,7 +8,7 @@ Runtime 持有一组 World 和一个设备域内共享的 `AssetSystem`。`GameW
 `RenderWorld` 直接借用 `&GameWorld` 与 `&AssetSystem`，产出同一个场景的 GPU 表示。资源生命周期独立于 World。
 `GpuSkyStore` 随 World 保存天空采样分布，HDRI 纹理属于共享资产。
 
-`AssetLoadService` 在后台读取和解码，返回内存数据。Runtime 的 `AssetImports` 在 prepare 入口领取完成，
+`AssetLoadService` 在后台读取和解码，返回内存数据。Runtime 的 `AssetImports` 在 update 边界领取完成，
 按任务身份登记资产或发布导入描述；上层选择何时把描述实例化到 World。导入预检先验证 mesh、引用、
 材质参数和外部纹理路径，再提交资源。失败的纹理可以由调用方显式以原 handle 重试。
 
@@ -25,7 +25,7 @@ RenderWorld 合并两路候选并读取最终状态，首次建立时读取完�
 
 ## Prepare 顺序
 
-1. update 应用上层编辑，GameWorld 收集变更身份。prepare 入口消费加载完成。
+1. update 应用加载完成和上层编辑，GameWorld 收集变更身份。
 2. Runtime 推进共享 transfer queue 和 mesh graphics timeline，纹理发布由 AssetSystem 接收，
    天空分布完成由 RenderWorld 接收。
 3. Runtime 更新 bindless descriptor，录制当前 FIF 的 MaterialTable dirty rows。

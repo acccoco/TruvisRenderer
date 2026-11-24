@@ -23,8 +23,8 @@ Runtime 不感知 GUI、selection outline、具体 RT subsystem 或 Editor contr
 |---|---|---|
 | `init_after_window` | 创建 surface、swapchain 和 present owner | `RenderRuntimeInitCtx` |
 | `begin_frame` | 时间快照、FIF 等待、命令池重置、延迟释放 | 无公开 ctx |
-| `update_phase` | 同步 frame state、获取 present image | World、资产、导入和配置入口 |
-| `prepare` | 应用资产加载完成，生成 GPU 可见的 scene 快照 | 不直接暴露完整 owner |
+| `update_phase` | 同步 frame state、获取 present image、应用资产加载完成 | World、资产、导入和配置入口 |
+| `prepare` | CPU scene、asset、instance 转为 GPU 可见快照 | 不直接暴露完整 owner |
 | `ray_cast_phase` | 对 prepare 后 GPU scene 做同步查询 | `RenderRuntimeRayCastCtx` |
 | `render_phase` | 提供只读 scene、present 和 timing 视图 | `RenderRuntimeRenderCtx` |
 | `present` | 提交 present queue | 无公开 ctx |

@@ -1,7 +1,7 @@
 # truvis-asset
 
 本 crate 定义共享资产身份、CPU payload 与一次性加载服务。文件读取、纹理解码和 scene 导入由后台执行；
-Runtime 的 `AssetImports` 在 prepare 入口将结果应用到 `AssetSystem`，并交付给上层场景初始化逻辑。
+Runtime 的 `AssetImports` 在 update 边界将结果应用到 `AssetSystem`，并交付给上层场景初始化逻辑。
 
 ## 组件与边界
 

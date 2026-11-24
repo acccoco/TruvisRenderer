@@ -198,7 +198,7 @@ selection 与同步 raycast 只查询当前 prepare 快照，
   在剩余时间大于 1 ms 时短周期 `park_timeout(1 ms)`，最后 1 ms 内有界自旋；重负载超过间隔时不额外等待、不补帧。
 - `begin_frame` 是每帧资源回收入口：由 `FrameTiming` 一次采样更新 delta/total time、等待当前 FIF slot、重置 frame command pool、
   清理延迟释放队列，并把当前 frame id 传给 bindless 与 AssetSystem 和 RenderWorld 内部 manager；旧 sky distribution
-  跨过 FIF 窗口后由 `GfxResourceRegistry` 销毁。AssetLoadService 事件在 prepare 入口由 AssetImports 收敛。
+  跨过 FIF 窗口后由 `GfxResourceRegistry` 销毁。AssetLoadService 事件在 update 入口由 AssetImports 收敛。
 - `update_phase` 同步 present extent 到 `FrameRenderState`、acquire 当前 swapchain image，并返回 CPU update Ctx。具体窗口尺寸 render target 由 Renderer/子系统在 init/resize/shutdown 阶段管理。
 - Renderer update 结束后，`RenderLoop` 调用 `sync_render_extent`，把 Renderer 提交的中性内部尺寸请求
   应用到 `FrameRenderState`；如果 target 尺寸变化，则返回 resize Ctx 交给 Renderer 编排子系统重建。
@@ -219,7 +219,7 @@ selection 与同步 raycast 只查询当前 prepare 快照，
 
 ## Prepare 数据流
 
-- Runtime 在 prepare 入口应用加载完成，随后推进 AssetSystem 的 mesh 和纹理发布，并分发共享 transfer completion。
+- Runtime 在 update 入口应用加载完成；prepare 推进 AssetSystem 的 mesh 和纹理发布，并分发共享 transfer completion。
 - 更新 bindless 后录制当前 FIF 的 MaterialTable dirty rows，再由 RenderWorld 准备场景表和 per-frame UBO。
   graphics submit 等待已发布 transfer 资源使用的 timeline，成功后确认对应 FIF 的上传。
 - `GpuSkyStore` 在 prepare 中直接对账 `SceneSkyState`，并在资源表提供 texture bytes 后通过
