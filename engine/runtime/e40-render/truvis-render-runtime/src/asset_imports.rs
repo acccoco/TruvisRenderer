@@ -182,6 +182,9 @@ impl AssetImports {
         // 所有可返回错误的校验与路径解析先完成，失败不能登记资源或重试共享纹理。
         let prepared = (|| {
             Self::validate_scene_payload(&raw)?;
+            if raw.materials.len() > assets.available_material_slots() {
+                return Err("scene import exceeds available material slots".to_string());
+            }
             for mesh in &raw.meshes {
                 mesh.validate().map_err(|error| error.to_string())?;
             }

@@ -660,7 +660,6 @@ impl RenderRuntime {
         // bindless 准备成功后才取走 CPU 通知，RenderWorld 入口立即将其交给 instance table。
         self.assets.upload_materials(self.gfx.resource_ctx(), &cmd, transfer_barrier_mask, frame_label);
         let instance_changes = self.world.game.take_instance_changes();
-        let asset_changes = self.assets.take_render_changes();
         let render_world_result = self.world.render.prepare_render_data(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -672,7 +671,6 @@ impl RenderRuntime {
             &self.world.game,
             &self.assets,
             instance_changes,
-            asset_changes,
         );
         if render_world_result.history_invalidated {
             self.history_invalidated = true;

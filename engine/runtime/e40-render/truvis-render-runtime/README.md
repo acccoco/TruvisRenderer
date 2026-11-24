@@ -136,11 +136,10 @@ selection 与同步 raycast 只查询当前 prepare 快照，
 - runtime 内部拥有默认 120 FPS 软件上限、surface format、present mode 与 depth format 候选顺序；这些默认策略不放入
   foundation 公共配置契约。
 - `AssetSystem` 持有 mesh、texture 和 `MaterialTable`。texture transfer copy 与天空分布共用 Runtime 队列，
-  mesh 使用 graphics timeline 构建 BLAS。材质 slot 在 prepare 对账时分配，颜色槽在纹理未发布时用诊断图。
-  当前 FIF 的 dirty 材质行在 prepare 上传。
+  mesh 使用 graphics timeline 构建 BLAS。材质注册即分配稳定 slot。颜色槽在纹理未发布时使用诊断图，其他通道使用 null binding。当前 FIF 的 dirty 材质行在 prepare 上传。
 - `RenderWorld` 持有 `RenderInstanceTable`、`MaterialSlotTable`、`AnalyticLightTable`、
   `RenderEmissiveLightTable`、`GpuSkyStore`、TLAS 和 draw 数据。它直接查询 World 与资产，
-  合并 World changelog 和 prepare 发布的资源变化。
+  接管 World 变更并主动观察等待中的 mesh 和活跃材质版本。
 - `GpuSkyStore` 保存默认 fallback、本 World 的 request generation 和 active/retired distribution。
   sky texture bytes 到达后异步构建最高 `4096x2048` 的 Alias 表，再通过共享 transfer timeline 上传。
   Builder 用三行缓存对源线性亮度做横纵 `[1,6,1]/8` 预过滤（U 环绕、V 钳制），
@@ -234,8 +233,8 @@ selection 与同步 raycast 只查询当前 prepare 快照，
   时显示真实 HDRI 并使用 1x1 uniform sphere PDF；无效/全黑分布也保持 uniform。sky revision、真实 sky 切换或
   distribution 版本变化时重置累积帧；binding 解析与诊断成功后才确认已交付的变化，
   这一确认只覆盖本次 binding 返回，不代表外层 prepare 已完成。
-- `RenderInstanceTable` 首次扫描完整 membership，后续对账 World 编辑和资源变化合并后的候选批次。
-  实例等待 mesh 和材质投影就绪后，共享材质 slot 写入当前 World 的 MaterialSlotTable。
+- `RenderInstanceTable` 首次扫描完整 membership，后续对账 World 变更批次和 mesh 就绪的等待实例。
+  已登记材质的稳定 slot 直接写入当前 World 的 MaterialSlotTable。
 - `RenderInstanceTable` 在同一次 prepare 输出中同步生成 `GpuInstanceSlot -> CPU record`
   反查快照。raycast readback 只信任这个快照，避免查询阶段重新遍历 CPU scene。
 - `RenderWorld` 消费 `RenderData`、analytic light binding、environment binding 和 emissive binding，按当前 FIF 上传

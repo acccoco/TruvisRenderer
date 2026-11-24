@@ -493,7 +493,7 @@ impl GpuMeshStore {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-    ) -> Vec<MeshAssetHandle> {
+    ) {
         let _span = tracy_client::span!("GpuMeshStore::sync_scene");
         self.reclaim_retired_resources(resource_ctx, device_ctx);
 
@@ -505,7 +505,6 @@ impl GpuMeshStore {
             self.pending_meshes.insert(handle);
         }
 
-        let mut published_meshes = Vec::new();
         for finished in self.upload_queue.update(resource_ctx, device_ctx) {
             let handle = finished.handle;
             let duplicate = self.meshes.contains_key(handle);
@@ -526,9 +525,7 @@ impl GpuMeshStore {
             }
             self.install_uploaded_mesh(device_ctx, finished);
             self.pending_meshes.remove(&handle);
-            published_meshes.push(handle);
         }
-        published_meshes
     }
 
     /// 移除 scene mesh 对应的 GPU-ready cache。

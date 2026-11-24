@@ -10,18 +10,28 @@ Runtime 持有一组 World 和一个设备域内共享的 `AssetSystem`。`GameW
 
 `AssetLoadService` 在后台读取和解码，返回内存数据。Runtime 的 `AssetImports` 在 update 边界领取完成，
 按任务身份登记资产或发布导入描述；上层选择何时把描述实例化到 World。导入预检先验证 mesh、引用、
-材质参数和外部纹理路径，再提交资源。失败的纹理可以由调用方显式以原 handle 重试。
+材质参数、可用 slot 和外部纹理路径，再提交资源。失败的纹理可以由调用方显式以原 handle 重试。
 
 ## 身份、材质表和就绪
 
-AssetSystem 拥有 CPU 材质和 GPU MaterialTable。Prepare 对账时分配 stable slot，当前 FIF 副本随本帧提交。
-RenderWorld 持有每个 FIF 的 MaterialSlotTable，保存 instance submesh 到共享材质 slot 的间接映射。
-实例等待 mesh 几何与 BLAS，以及材质 slot 的投影。颜色贴图未就绪时使用诊断纹理，其它通道使用 null binding。
+- `AssetSystem` 持有 `MaterialTable`。材质注册成功同时交付 generational handle 与稳定 GPU slot。
+  当前帧副本在 prepare 上传，之后才可提交使用该行的 pass。
+- `RenderWorld` 持有每个 FIF 的 `MaterialSlotTable`。它为实例的 submesh 保存共享材质 slot，
+  shader 由 instance 和 submesh 经该表定位 `MaterialTable`。
+- 合法场景引用由上层提交。实例等待 mesh 的几何 buffer 和 BLAS 发布，随后进入 GPUScene、
+  TLAS、draw cache 和拾取快照。材质 slot 在实例提交前已经存在。
+- 未发布的颜色贴图使用诊断纹理，其它通道使用 null binding。AssetSystem 在 prepare 对账纹理发布，
+  纹理内容变化更新原材质行，保持 MaterialSlotTable 的索引。
 
 ## 最终状态对账
 
-GameWorld 交付去重后的 generational instance handle。AssetSystem 对账 GPU 资源后交付本帧变化的身份，
-RenderWorld 合并两路候选并读取最终状态，首次建立时读取完整 membership。FIF 副本与持久语义版本分别确认。
+GameWorld 的变更批次只保存去重后的 generational instance handle，包括删除的旧 handle。
+RenderWorld 接管整个批次并查询最终状态，初次建立时读取完整 membership。
+后续主动查询等待实例的 mesh readiness，以及实际可见材质的外观和发光版本。
+coverage 的最终 any-hit 要求由活跃实例的材质参数计算。资源 owner 的发布和场景准备各自在其 owner 内确认。
+
+已产生的实例变更保留到快照交付。上传、TLAS、发光表和历史的失效状态一旦观察到就写入对应 owner，
+FIF 副本和语义版本分别确认。MaterialSlotTable 在实例成员、绑定或布局变化时重写。
 
 ## Prepare 顺序
 

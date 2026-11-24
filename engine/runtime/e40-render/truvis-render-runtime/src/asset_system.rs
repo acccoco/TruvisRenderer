@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
-use indexmap::IndexSet;
 use slotmap::SlotMap;
 
 use truvis_asset::handle::{
@@ -23,12 +22,12 @@ use crate::resources::gpu_asset_upload_queue::{CompletedTextureUpload, GpuAssetU
 
 use self::gpu_mesh_store::GpuMeshStore;
 use self::gpu_texture_store::GpuTextureStore;
+pub(crate) use self::material_table::MaterialRevisions;
 use self::material_table::MaterialTable;
 
 mod gpu_mesh_store;
 pub(crate) mod gpu_texture_store;
 mod material_table;
-mod texture_resolver;
 pub(crate) mod mesh_geometry;
 
 /// 资源的可持久化来源描述。来源不进入资源 handle，而是随 record 保存。
@@ -61,22 +60,12 @@ struct TextureKey {
     color_space: TextureColorSpace,
 }
 
-/// Prepare 对账后交给 RenderWorld 的资源变化身份。
-#[derive(Default)]
-pub(crate) struct AssetRenderChanges {
-    pub(crate) published_meshes: IndexSet<MeshAssetHandle>,
-    pub(crate) appearance_changed_materials: IndexSet<MaterialAssetHandle>,
-    pub(crate) emissive_changed_materials: IndexSet<MaterialAssetHandle>,
-}
-
 /// Runtime 持有的共享资产。Scene 和导入任务分别由 World 与导入协调持有。
 pub struct AssetSystem {
     textures: SlotMap<TextureAssetHandle, TextureRecord>,
     texture_by_key: HashMap<TextureKey, TextureAssetHandle>,
     meshes: SlotMap<MeshAssetHandle, MeshData>,
-    materials: SlotMap<MaterialAssetHandle, (MaterialData, u64)>,
-    material_table: MaterialTable,
-    render_changes: AssetRenderChanges,
+    materials: MaterialTable,
     revision: u64,
 
     /// GPU 投影由同一 owner 推进，共享资产寿命与 World 无关。
@@ -98,9 +87,7 @@ impl AssetSystem {
             textures: SlotMap::with_key(),
             texture_by_key: HashMap::new(),
             meshes: SlotMap::with_key(),
-            materials: SlotMap::with_key(),
-            material_table: MaterialTable::new(resource_ctx, frame_id),
-            render_changes: AssetRenderChanges::default(),
+            materials: MaterialTable::new(resource_ctx, frame_id),
             revision: 0,
             gpu_textures: GpuTextureStore::new(resource_ctx, device_ctx, immediate_ctx, registry, bindings),
             gpu_meshes: GpuMeshStore::new(device_ctx, queue_ctx, frame_id),
@@ -110,7 +97,7 @@ impl AssetSystem {
     pub(crate) fn begin_frame(&mut self, frame_id: u64) {
         self.gpu_textures.begin_frame(frame_id);
         self.gpu_meshes.begin_frame(frame_id);
-        self.material_table.begin_frame(frame_id);
+        self.materials.begin_frame(frame_id);
     }
 
     /// Mesh 使用 graphics timeline，纹理 copy 由 Runtime 的共享 transfer queue 推进。
@@ -126,9 +113,7 @@ impl AssetSystem {
         self.gpu_textures.remove_stale_textures(&self.textures, registry, bindings);
         self.gpu_meshes.remove_stale_meshes(&self.meshes);
         self.gpu_textures.submit_uploads(&self.textures, resource_ctx, device_ctx, queue_ctx, queue);
-        self.render_changes.published_meshes.extend(
-            self.gpu_meshes.sync_scene(&self.meshes, resource_ctx, device_ctx, queue_ctx),
-        );
+        self.gpu_meshes.sync_scene(&self.meshes, resource_ctx, device_ctx, queue_ctx);
     }
 
     pub(crate) fn publish_textures(
@@ -147,13 +132,7 @@ impl AssetSystem {
             registry,
             bindings,
         );
-        let changes = self.material_table.sync_scene(&self.materials, &self.gpu_textures);
-        self.render_changes.appearance_changed_materials.extend(changes.appearance_changed_materials);
-        self.render_changes.emissive_changed_materials.extend(changes.emissive_changed_materials);
-    }
-
-    pub(crate) fn take_render_changes(&mut self) -> AssetRenderChanges {
-        std::mem::take(&mut self.render_changes)
+        self.materials.resolve_textures(&self.gpu_textures);
     }
 
     pub(crate) fn upload_materials(
@@ -163,15 +142,15 @@ impl AssetSystem {
         barrier: GfxBarrierMask,
         label: FrameLabel,
     ) {
-        self.material_table.upload(resource_ctx, cmd, barrier, label);
+        self.materials.upload(resource_ctx, cmd, barrier, label);
     }
 
     pub(crate) fn commit_uploaded_frame(&mut self, label: FrameLabel) {
-        self.material_table.commit_submitted_frame(label);
+        self.materials.commit_submitted_frame(label);
     }
 
     pub(crate) fn material_buffer_device_address(&self, label: FrameLabel) -> ash::vk::DeviceAddress {
-        self.material_table.material_buffer_device_address(label)
+        self.materials.material_buffer_device_address(label)
     }
 
     pub(crate) fn resolve_mesh(&self, handle: MeshAssetHandle) -> Option<MeshRenderData<'_>> {
@@ -186,10 +165,17 @@ impl AssetSystem {
         self.gpu_textures.binding(handle)
     }
 
-    /// Prepare 投影有了 slot 和参数后，实例才能进入渲染快照。
+    /// 材质登记成功后，逻辑 slot 和材质参数在同一查询中有效。
     pub(crate) fn material_binding(&self, handle: MaterialAssetHandle) -> Option<(u32, &MaterialData)> {
-        let slot = self.material_table.resolve_material_slot(handle)?;
-        Some((slot, self.material_table.material_data(handle)?))
+        self.materials.binding(handle)
+    }
+
+    pub(crate) fn material_render_revision(&self, handle: MaterialAssetHandle) -> Option<MaterialRevisions> {
+        self.materials.revision(handle)
+    }
+
+    pub(crate) fn available_material_slots(&self) -> usize {
+        self.materials.free_slot_count()
     }
 
     /// Runtime 已关闭共享上传队列并确认在飞帧结束，资源才能进入显式释放。
@@ -200,7 +186,7 @@ impl AssetSystem {
         registry: &mut GfxResourceRegistry,
         bindings: &mut ShaderBindingSystem,
     ) {
-        self.material_table.destroy(resource_ctx);
+        self.materials.destroy(resource_ctx);
         self.gpu_textures.destroy(resource_ctx, device_ctx, registry, bindings);
         self.gpu_meshes.destroy(resource_ctx, device_ctx);
     }
@@ -301,33 +287,29 @@ impl AssetSystem {
     }
 
     pub fn material_handles(&self) -> impl Iterator<Item = MaterialAssetHandle> + '_ {
-        self.materials.keys()
+        self.materials.handles()
     }
 
     pub fn material_data(&self, handle: MaterialAssetHandle) -> Option<&MaterialData> {
-        self.materials.get(handle).map(|(data, _)| data)
+        self.materials.data(handle)
     }
 
     pub fn register_material(&mut self, data: MaterialData) -> anyhow::Result<MaterialAssetHandle> {
-        self.validate_material(&data)?;
-        let handle = self.materials.insert((data, 1));
+        self.validate_texture_refs(&data)?;
+        let handle = self.materials.register(data, &self.gpu_textures)?;
         self.revision = self.revision.saturating_add(1);
         Ok(handle)
     }
 
     pub fn update_material(&mut self, handle: MaterialAssetHandle, data: MaterialData) -> anyhow::Result<()> {
-        self.validate_material(&data)?;
-        let (old, revision) = self.materials.get_mut(handle).ok_or_else(|| anyhow::anyhow!("stale material asset handle"))?;
-        if *old != data {
-            *old = data;
-            *revision = revision.saturating_add(1);
+        self.validate_texture_refs(&data)?;
+        if self.materials.update(handle, data, &self.gpu_textures)? {
             self.revision = self.revision.saturating_add(1);
         }
         Ok(())
     }
 
-    fn validate_material(&self, data: &MaterialData) -> anyhow::Result<()> {
-        data.validate().map_err(anyhow::Error::msg)?;
+    fn validate_texture_refs(&self, data: &MaterialData) -> anyhow::Result<()> {
         anyhow::ensure!(
             data.textures.iter().flatten().all(|slot| self.contains_texture(slot.texture)),
             "material references a missing texture",
@@ -335,21 +317,21 @@ impl AssetSystem {
         Ok(())
     }
 
-    /// 通过 update context 检查场景引用后撤销登记，GPU 对象按帧退役。
+    /// 调用方在随后的提交前处理材质引用；GPU 对象随后按帧同步退役。
     pub(crate) fn remove_material(&mut self, handle: MaterialAssetHandle) -> bool {
-        let removed = self.materials.remove(handle).is_some();
+        let removed = self.materials.remove(handle);
         self.revision = self.revision.saturating_add(u64::from(removed));
         removed
     }
 
-    /// 通过 update context 检查场景引用后撤销登记，GPU 对象按帧退役。
+    /// 调用方在随后的提交前处理实例引用。
     pub(crate) fn remove_mesh(&mut self, handle: MeshAssetHandle) -> bool {
         let removed = self.meshes.remove(handle).is_some();
         self.revision = self.revision.saturating_add(u64::from(removed));
         removed
     }
 
-    /// 通过 update context 检查场景引用后撤销登记，GPU 对象按帧退役。
+    /// 调用方在随后的提交前处理材质与天空引用。
     pub(crate) fn remove_texture(&mut self, handle: TextureAssetHandle) -> bool {
         let Some(record) = self.textures.remove(handle) else {
             return false;

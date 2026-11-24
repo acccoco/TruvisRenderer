@@ -317,6 +317,9 @@ impl RenderInstanceTable {
             self.pending_candidates.extend(scene.instance_map().keys());
             self.initialized = true;
         }
+        self.pending_candidates.extend(self.bindings.iter().filter_map(|(handle, binding)| {
+            (binding.state == InstanceState::Pending && assets.mesh_is_ready(binding.source.mesh)).then_some(handle)
+        }));
         self.sync_scene_instances(scene, assets);
 
         // RenderData 是提交给 RenderWorld 的只读快照。这里按稳定 slot 排序，保证 raster draw、
@@ -400,8 +403,7 @@ impl RenderInstanceTable {
             };
             let source_revision =
                 scene.instance_revision(handle).expect("RenderInstanceTable: live instance revision missing");
-            let ready = assets.mesh_is_ready(instance.mesh)
-                && instance.materials.iter().all(|&handle| assets.material_binding(handle).is_some());
+            let ready = assets.mesh_is_ready(instance.mesh);
             if !self.bindings.contains_key(handle) {
                 self.register_instance(handle, instance, source_revision);
             }

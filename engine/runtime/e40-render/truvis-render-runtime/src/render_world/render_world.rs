@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use slotmap::SecondaryMap;
+use truvis_asset::handle::MaterialAssetHandle;
 use ash::vk;
 
 use truvis_gfx::basic::bytes::BytesConvert;
@@ -14,7 +16,7 @@ use truvis_render_foundation::render_scene_view::{RenderSceneAccumSignature, Ren
 use truvis_shader_binding::gpu;
 use truvis_world::GameWorld;
 
-use crate::asset_system::{AssetRenderChanges, AssetSystem};
+use crate::asset_system::{AssetSystem, MaterialRevisions};
 
 use crate::bindings::shader_binding_system::ShaderBindingSystem;
 use crate::render_world::analytic_light_table::{AnalyticLightBinding, AnalyticLightTable};
@@ -44,6 +46,7 @@ pub struct RenderWorld {
     /// 天空分布由该 World 的环境设置派生，HDRI 本身由 AssetSystem 持有。
     pub(crate) gpu_sky: GpuSkyStore,
     /// 只观察此 World 当前使用的材质投影，资源发布与 World 的推进互相独立。
+    material_revisions: SecondaryMap<MaterialAssetHandle, MaterialRevisions>,
     /// prepare 中断时继续保留，只有本次上传提交确认后才能释放该历史失效提示。
     pending_history_invalidated: bool,
     pub(super) render_instance_table: RenderInstanceTable,
@@ -100,6 +103,7 @@ impl RenderWorld {
 
         Self {
             gpu_sky,
+            material_revisions: SecondaryMap::new(),
             pending_history_invalidated: false,
             render_instance_table,
             analytic_light_table: analytic_light_table,
@@ -189,17 +193,9 @@ impl RenderWorld {
         frame_label: FrameLabel,
         scene: &GameWorld,
         assets: &AssetSystem,
-        mut instance_changes: indexmap::IndexSet<truvis_world::guid_new_type::MeshInstanceHandle>,
-        asset_changes: AssetRenderChanges,
+        instance_changes: indexmap::IndexSet<truvis_world::guid_new_type::MeshInstanceHandle>,
     ) -> RenderWorldPrepareResult {
-        // 世界编辑和资源对账共用同一批候选；投影读取的是最终状态。
-        if !asset_changes.published_meshes.is_empty() || !asset_changes.appearance_changed_materials.is_empty() {
-            instance_changes.extend(scene.instance_map().iter().filter_map(|(handle, instance)| {
-                (asset_changes.published_meshes.contains(&instance.mesh)
-                    || instance.materials.iter().any(|material| asset_changes.appearance_changed_materials.contains(material)))
-                    .then_some(handle)
-            }));
-        }
+        // 接管 World 的变更批次，异常重入时表继续保有候选身份。
         self.render_instance_table.queue_changes(instance_changes);
         let sky_update = self.gpu_sky.update_sky_binding(assets);
         self.pending_history_invalidated |= sky_update.changed;
@@ -213,10 +209,16 @@ impl RenderWorld {
             .iter()
             .flat_map(|instance| instance.material_handles.iter().copied())
             .collect();
-        let material_appearance_changed =
-            asset_changes.appearance_changed_materials.iter().any(|material| used_materials.contains(material));
-        let material_emissive_changed =
-            asset_changes.emissive_changed_materials.iter().any(|material| used_materials.contains(material));
+        self.material_revisions.retain(|handle, _| used_materials.contains(&handle));
+        let mut material_appearance_changed = false;
+        let mut material_emissive_changed = false;
+        for material in used_materials {
+            let revision = assets.material_render_revision(material).expect("visible material must be registered");
+            if let Some(previous) = self.material_revisions.insert(material, revision) {
+                material_appearance_changed |= previous.appearance != revision.appearance;
+                material_emissive_changed |= previous.emissive != revision.emissive;
+            }
+        }
         let scene_changed = instance_result.active_set_changed || instance_result.material_binding_changed;
         if scene_changed {
             self.scene_revision = self.scene_revision.saturating_add(1).max(1);

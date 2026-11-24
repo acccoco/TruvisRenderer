@@ -16,8 +16,6 @@ use crate::bindings::shader_binding_system::ShaderBindingSystem;
 use crate::resources::gpu_asset_upload_queue::{CompletedTextureUpload, GpuAssetUploadQueue};
 use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 
-use super::texture_resolver::{TextureBinding, TextureResolver};
-
 /// shader 可见的纹理绑定缓存。
 ///
 /// `image_handle`/`view_handle` 归 `GfxResourceRegistry` 管理，`srv_handle` 是 bindless 表中的稳定引用。
@@ -288,26 +286,8 @@ impl GpuTextureStore {
     pub(crate) fn binding(&self, handle: TextureAssetHandle) -> Option<BindlessSrvHandle> {
         self.textures.get(handle).map(|texture| texture.srv_handle)
     }
-}
-
-impl TextureResolver for GpuTextureStore {
-    fn is_texture_ready(&self, handle: TextureAssetHandle) -> bool {
-        self.textures.contains_key(handle)
-    }
-
-    fn texture_revision(&self, handle: TextureAssetHandle) -> u64 {
-        // 每个 generational handle 的内容不可变，因此只有 fallback -> ready 一次发布；
-        // handle 本身区分删除后创建的新资源，0/1 足以表达这一代资源的 binding stamp。
-        u64::from(self.textures.contains_key(handle))
-    }
-
-    fn resolve_texture(&self, handle: TextureAssetHandle) -> TextureBinding {
-        // 解析接口永远返回可写入 material buffer 的 binding。未 ready 或失败的 texture
-        // 走 fallback，避免 shader 读取空 bindless 句柄。
-        let texture = self.textures.get(handle).unwrap_or(&self.fallback);
-        TextureBinding {
-            srv_handle: texture.srv_handle,
-            sampler: truvis_shader_binding::gpu::engine::bindless::ESamplerType_LinearRepeat,
-        }
+    /// 未发布的颜色纹理仍使用常驻诊断图。
+    pub(super) fn fallback_binding(&self) -> BindlessSrvHandle {
+        self.fallback.srv_handle
     }
 }
