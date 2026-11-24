@@ -181,7 +181,6 @@ struct TextureMappingPatchArg {
 }
 #[derive(Debug, Deserialize, serde::Serialize, schemars::JsonSchema)]
 struct TextureMappingArg {
-    pub tex_coord: u32,
     pub offset: [f32; 2],
     pub rotation: f32,
     pub scale: [f32; 2],

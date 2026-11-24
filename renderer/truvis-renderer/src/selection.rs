@@ -25,12 +25,11 @@ impl SceneSelection {
     }
 
     pub(crate) fn is_valid(self, world: &GameWorld) -> bool {
-        let scene = world.scene_view();
         match self {
-            Self::Submesh(value) => scene
+            Self::Submesh(value) => world
                 .get_instance(value.instance)
                 .is_some_and(|instance| (value.submesh_index as usize) < instance.materials.len()),
-            Self::Light(value) => scene.light_position(value).is_some(),
+            Self::Light(value) => world.light_position(value).is_some(),
         }
     }
 }

@@ -21,7 +21,7 @@ flowchart LR
 
 Engine 提供与产品无关的能力：
 
-- `RenderRuntime` 聚合 `Gfx`、CPU `GameWorld`、GPU `RenderWorld`、资源绑定、帧同步和 present。
+- `RenderRuntime` 聚合 `Gfx`、`World`、共享 AssetSystem、加载协调、资源绑定、帧同步和 present。`World` 将同一个场景的 `GameWorld` 与 `RenderWorld` 配对。
 - `RenderLoop` 固定帧顺序，驱动 `Renderer` hook，但不发现或管理具体 Renderer 子系统。
 - `truvis-world` 保存 CPU scene 与资源身份；它不拥有 Vulkan 对象。
 - `truvis-gfx`、RenderGraph 和 platform host 提供底层设备、窗口与同步能力。
@@ -50,7 +50,7 @@ App 是启动壳和产品接入层，也可以提供运行在 RenderThread 上�
 - `truvis-scenes` 在 App 层统一场景预设、启动参数与异步导入收敛，不依赖 Tauri 或 Editor bridge。Truvis/Cornell Client 复用它，并注入同一个完整 `TruvisRenderer`。
 - App 可以创建 Editor/Client ports，并把 RenderThread Client 随 Renderer factory 移交给 RenderThread。
 - Tauri 主线程不访问 `GameWorld`、Vulkan、`ash` 或 RenderWorld 内部状态。
-- App 提供的 RenderThread Client 可以在 RendererClient 窄接口内借用 CPU `GameWorld`，但不访问 Runtime、GPU owner 或 RenderWorld。
+- App 提供的 RenderThread Client 可以在 RendererClient 窄接口内借用 `GameWorld`、CPU 资产编辑和导入入口。Runtime 负责 GPU 发布和 RenderWorld。
 
 App 主线程与 Engine 的直接依赖用于启动和平台宿主；RenderThread Client 允许使用 CPU scene facade，不能借此绕过 Renderer 的 GPU/RenderGraph 业务边界。
 

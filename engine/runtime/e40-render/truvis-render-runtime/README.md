@@ -1,13 +1,9 @@
 # truvis-render-runtime
 
 `truvis-render-runtime` 是被 `truvis-render-loop::RenderLoop` 驱动的渲染运行时集成层。
-它持有 `Gfx` root owner、CPU `GameWorld`、GPU binding/timing owners 和私有的 `RenderWorld`；`RenderWorld` 内部持有 `RenderAssetSystem`，
-并通过阶段化的 typed Ctx 向上层暴露初始化、更新、渲染、resize 与 shutdown 能力。
-
-正常关闭先等待 GPU，再停止 sky producer、关闭上传 queue，释放发布资源与子 owner，最后释放 Gfx。
-构造和销毁不提供逐层 panic 回滚；真实等待/提交错误按既有致命错误路径传播。
-Release 使用 panic=abort，不执行 unwind。Debug 外层线程的 catch、finished 或 join 成功仅说明线程退场，
-不能证明异常情况下 Vulkan/SDK 资源已完整释放。回调与 worker 的异常边界由各自 owner 管理。
+它持有 Vulkan `Gfx`、独立的 `AssetSystem` 与 `AssetImports`、一组
+`World`（`GameWorld` + `RenderWorld`），以及 frame/binding/present 基础设施。
+init/update 向业务层提供场景、资产与导入入口，prepare 生成 pass 可读取的场景。
 
 ## 职责边界
 
@@ -117,10 +113,9 @@ emissive base map 必须与 geometry indirect 同序同长；Active 材质和 ge
 selection 与同步 raycast 只查询当前 prepare 快照，
 调用方必须使用当前帧上下文的 label；slot 反查表不提供旧 FIF 的历史查询。
 
-- `GameWorld` 承载 CPU 侧 `SceneStore` 与 `AssetSystem`，供 update/prepare 阶段读取或修改；Renderer-facing
-  model import、procedural mesh/material、runtime instance 和 analytic light 注册通过 `GameWorld` facade 进入，
--  render runtime 只通过 `GameWorld::poll_asset_loads()` 收敛 loader 状态和 `GameWorld::scene_view()`
-  只读 scene/resource snapshot 访问这些 CPU owner；scene 语义变化由 prepare 阶段按最终状态对账，不再依赖 change log。
+- `GameWorld` 保存实例、灯光和环境，用变更批次与 revision 驱动本 World 的 prepare。
+  `AssetImports` 消费 `AssetLoadService` 结果，向 `AssetSystem` 登记资源。场景实例化由上层调用。
+
 - `GfxResourceRegistry` 承载 manager-owned GPU image/buffer/view 生命周期。
   延迟释放每个有效 handle 只保留最新退役帧，null/stale 请求不入队；重复请求不能提前释放。
   cleanup 由 begin_frame 在 FIF timeline 等待后调用；registry 不自行同步 GPU，调用方须先停止
@@ -140,45 +135,25 @@ selection 与同步 raycast 只查询当前 prepare 快照，
   DLSS、ViewAccum 和具体 Renderer temporal state 不属于 Runtime。
 - runtime 内部拥有默认 120 FPS 软件上限、surface format、present mode 与 depth format 候选顺序；这些默认策略不放入
   foundation 公共配置契约。
-- `RenderWorld` 是 runtime 私有的 scene GPU 翻译层，内部持有 `RenderAssetSystem`、`RenderInstanceTable`、
-  `AnalyticLightTable`、`RenderEmissiveLightTable`、scene/instance/geometry/indirect buffer、raster draw cache
-  和 `SceneTlas`；同一个 RenderWorld 内的多个 instance 共享资源 manager，render pass 只通过 `RenderSceneView` 读取它。
-- `RenderAssetSystem` 持有 `GpuTextureStore`、`GpuMeshStore`、`GpuMaterialStore`、`GpuSkyStore` 和
-  `GpuAssetUploadQueue`；资源按 CPU handle 发布、按 FIF 延迟回收，不依赖某个 instance。跨多个 RenderWorld
-  的 device-level 资源共享不属于当前实现范围。
-- 默认 sky 通过 `GameWorld` facade 注册为普通 `TextureAssetHandle`，再写入 `SceneStore::SceneSkyState`；
-  `GpuSkyStore` 从 `GameWorld::scene_view()` 读取 sky state，持有常驻纯色 fallback sky、单线程
-  `SkyDistributionBuilder`、request generation 与 active/retired distribution。当前 sky CPU texture bytes
-  到达后异步构建最高 `4096x2048` 的 Alias 表，再通过共享 transfer timeline 异步上传；
-  `RenderWorld` 只消费已发布的 sky 环境绑定快照。
+- `AssetSystem` 持有 mesh、texture 和 `MaterialTable`。texture transfer copy 与天空分布共用 Runtime 队列，
+  mesh 使用 graphics timeline 构建 BLAS。材质 slot 在 prepare 对账时分配，颜色槽在纹理未发布时用诊断图。
+  当前 FIF 的 dirty 材质行在 prepare 上传。
+- `RenderWorld` 持有 `RenderInstanceTable`、`MaterialSlotTable`、`AnalyticLightTable`、
+  `RenderEmissiveLightTable`、`GpuSkyStore`、TLAS 和 draw 数据。它直接查询 World 与资产，
+  合并 World changelog 和 prepare 发布的资源变化。
+- `GpuSkyStore` 保存默认 fallback、本 World 的 request generation 和 active/retired distribution。
+  sky texture bytes 到达后异步构建最高 `4096x2048` 的 Alias 表，再通过共享 transfer timeline 上传。
   Builder 用三行缓存对源线性亮度做横纵 `[1,6,1]/8` 预过滤（U 环绕、V 钳制），
-  然后乘源立体角累加 cell 权重；额外内存为 O(源宽度)。该近似 proposal 覆盖双线性
-  天空的高亮边缘，不修改实际 HDRI。Alias 与 PDF 共享过滤权重，全黑输入回退 uniform，
-  有限正能量不按绝对 epsilon 剔除。request generation、上传和 retired buffer 生命周期保持不变。
-- `GpuTextureStore` 扫描 `SceneReadView` 中已解码的 texture CPU bytes，异步上传 GPU image，并注册
-  每个 handle 唯一的同格式 image view 与 bindless SRV（RGBA8 按源用途使用 sRGB 或 UNORM，HDR/EXR 使用 SFLOAT）；
-  未 ready 或失败时通过 fallback texture 保证材质仍可安全读取。
-  image upload 与 sky distribution buffer upload 共用 `RenderAssetSystem` 私有的 `GpuAssetUploadQueue`；
-  默认 sky 的真实 texture 也复用该上传路径，但 sky fallback 由 `GpuSkyStore` 独立维护。CPU registry 中已删除的
-  texture 会先移除 ready cache；已提交但未完成的 stale upload 在 timeline 到达后只销毁，不会重新 publish 到 resolver。
-- `GpuMeshStore` 扫描 `SceneReadView` 中不可变的 mesh CPU 数据，在 graphics queue 上按 submesh
-  创建 vertex/index buffer 和 `RtGeometry`，并为同一个 mesh 构建一个包含多 geometry input 的 BLAS；mesh 完成前不会被 `RenderInstanceTable` 激活。
-  CPU registry 中已删除的 mesh 会移除 ready cache，并阻止 late BLAS/geometry completion 重新进入 resolver。
-- `GpuMaterialStore` 扫描 CPU material registry，维护 `MaterialAssetHandle -> stable material slot` 映射、FIF
-  material buffer、dirty region 上传和延迟 slot 回收；texture binding revision 负责发现异步 ready。
-  它在资源对账阶段复制 CPU 材质参数并生成 render-side prepared snapshot，写 GPU material buffer 时只消费这份副本。
-- `RenderInstanceTable` 首次初始化完整 membership，后续仅对账 CPU 编辑与资源反向引用合并的候选 handle；同步 `MeshInstanceHandle -> GpuInstanceSlot`，在 mesh/material 都 GPU ready 前保持 pending，并按稳定 slot 输出
-  active render list，同时为同步 raycast 生成当前 prepare 快照的 slot 反查表。运动历史与 FIF 版本
-  由 instance manager 的 dirty 集合收敛，不向 GameWorld 反向传播 previous 更新。
+  乘源立体角累加 cell 权重。Alias 与 PDF 共享过滤权重，全黑输入回退 uniform。
 - instance slot 不再预设固定数量；新 slot 按稳定索引增长，删除后仍跨 FIF 窗口复用。当前 FIF 的
   geometry、instance 和 indirect buffer 在 prepare 时按实际数据以二次幂容量扩容，扩容后整表重传。
 - bindless sampled-image descriptor 上限为 1024，descriptor pool 与生成的 layout count 使用同一来源；
-  material slot 仍由 `GpuMaterialStore` 的独立容量策略管理。
+  material slot 仍由 `MaterialTable` 的独立容量策略管理。
   到期 bindless slot 在 begin_frame 的 FIF 等待之后、纹理注册之前归还；prepare 只提交新增
   descriptor 写入，写入失败保留 dirty。null view 在修改状态前拒绝，shader index 转换检查整数范围；
   live slot 不原地覆盖，调用方仍须先撤销后续 GPU 引用再 unregister。
 - `AnalyticLightTable` 对账 analytic light revision，按 FIF 持有 point / spot / area light structured buffer；
-  变化时标记全部 FIF，当前 frame label 使用前上传最新 `SceneReadView` light snapshot，并向 scene root 提供
+  变化时标记全部 FIF，当前 frame label 使用前上传最新 GameWorld 的灯光快照，并向 scene root 提供
   device address、count 和 analytic light version。
 - `RayCastService` 持有 runtime 私有的专用 ray tracing pipeline/SBT、可增长 ray/result/readback buffer、
   command pool 和 fence；它由 runtime 拥有，不进入 RenderGraph，也不通过 Renderer 层 pass crate 暴露。
@@ -216,23 +191,19 @@ selection 与同步 raycast 只查询当前 prepare 快照，
 
 ## 生命周期
 
-- `RenderRuntime::new` 创建与窗口无关的 runtime root state：`Gfx`、`GameWorld`、`GfxResourceRegistry`、
-  `ShaderBindingSystem`、`FrameTiming`、`PerFrameGpuData` 和 `RenderWorld`；texture/mesh/material/sky/upload queue
-  与 instance/emissive/TLAS 等场景 owner 都在 `RenderWorld::new` 中初始化，前者由其内部的
-  `RenderAssetSystem` 持有。
+- Runtime 创建 `Gfx`、World、`AssetSystem`、`AssetImports`、共享上传队列和设备级基础设施。
 - `RenderRuntime::init_after_window` 在平台层提供 raw window/display handle 后创建 surface、
   swapchain 与 `SwapchainPresenter`，并返回 init Ctx 供 Renderer/子系统创建长期 GPU 资源。
 - `remaining_until_render` 读取 `FrameTiming` 的最小帧间隔；默认 120 FPS 对应约 `8.333333 ms`。外层 RenderLoop
   在剩余时间大于 1 ms 时短周期 `park_timeout(1 ms)`，最后 1 ms 内有界自旋；重负载超过间隔时不额外等待、不补帧。
 - `begin_frame` 是每帧资源回收入口：由 `FrameTiming` 一次采样更新 delta/total time、等待当前 FIF slot、重置 frame command pool、
-  清理延迟释放队列，并把当前 frame id 传给 bindless 与 `RenderWorld` 内部的资源/场景 manager；旧 sky distribution
-  跨过 FIF 窗口后由 `GfxResourceRegistry` 销毁。AssetLoadService 事件只在
-  prepare 边界通过 `GameWorld::poll_asset_loads()` 收敛。
+  清理延迟释放队列，并把当前 frame id 传给 bindless 与 AssetSystem 和 RenderWorld 内部 manager；旧 sky distribution
+  跨过 FIF 窗口后由 `GfxResourceRegistry` 销毁。AssetLoadService 事件在 prepare 入口由 AssetImports 收敛。
 - `update_phase` 同步 present extent 到 `FrameRenderState`、acquire 当前 swapchain image，并返回 CPU update Ctx。具体窗口尺寸 render target 由 Renderer/子系统在 init/resize/shutdown 阶段管理。
 - Renderer update 结束后，`RenderLoop` 调用 `sync_render_extent`，把 Renderer 提交的中性内部尺寸请求
   应用到 `FrameRenderState`；如果 target 尺寸变化，则返回 resize Ctx 交给 Renderer 编排子系统重建。
 - `prepare(RenderFrameInput)` 是 CPU 语义数据到 GPU 可见数据的边界：它读取 Renderer 提供的当前/上一帧视图与 jitter，
-  通过 `RenderWorld` 内部同步 material/instance/mesh/texture 状态、上传 RenderWorld
+  先同步共享资产，再通过 RenderWorld 上传场景
   和 per-frame data，再刷新 per-frame descriptor。
 - `ray_cast_phase` 发生在 `prepare` 之后、`render_phase` 之前。同步 raycast 提交到
   graphics queue，并用 fence 阻塞等待 readback；队列顺序保证它能看到本帧 prepare
@@ -243,24 +214,14 @@ selection 与同步 raycast 只查询当前 prepare 快照，
 - `end_frame` 在 present 或空 signal 提交正常返回后推进 `FrameTiming` frame id，切换
   下一帧 FIF label；不表示 GPU 已完成。frame id 耗尽时明确失败，不回绕到旧 timeline 序号。
 - `wait_idle` 在 Renderer/子系统 shutdown 前调用，确保上层资源释放时不再被 GPU command 引用。
-- `destroy` 等待 GPU idle，依次释放 present、CPU scene/assets、`RenderWorld` 场景资源与其内部的 `RenderAssetSystem`、
-  command allocator、resource manager、sync、sampler、descriptor 等资源，最后销毁 `Gfx`。
+- `destroy` 等待 GPU idle，停止加载和天空 worker、关闭共享上传队列，再释放 RenderWorld 与 AssetSystem；
+  最后释放 Runtime 绑定、registry 和 `Gfx`。
 
 ## Prepare 数据流
 
-- `RenderRuntime::prepare_render_world` 先调用 `GameWorld::poll_asset_loads()`，收敛 loader completion 到 CPU registry；
-  `RenderWorld::sync_assets` 通过内部 `RenderAssetSystem::sync` 按 CPU registry membership 清理 texture/mesh，发布 upload completion，并扫描
-  material source revision 与 texture binding revision。removed texture/mesh/material 会在下一次完整对账时
-  从对应 render manager 移除，避免 stale upload 或 stale slot。model ready/failed 状态由 `GameWorld` 内部的
-  `AssetSystem` 在 asset sync 阶段写回
-  import status 并发布 `SceneData`；外部 Renderer 根据 scene data 显式完成到 `SceneStore`
-  runtime handle 的翻译。
-- `RenderRuntime::prepare` 是 update 与 render 之间的固定桥接阶段，按 bindless、`RenderWorld::prepare_render_data`、
-  per-frame data 的顺序准备渲染可见数据。
-- `GpuMaterialStore` 在 prepare asset sync 中扫描 material source revision；scene material 变化会推进 material
-  GPU payload 与依赖的 instance 重新计算，texture ready 通过 binding revision 让 fallback 在各 FIF buffer 中被替换。
-  资源对账阶段通过 `SceneReadView` 读取 CPU 最终材质状态，准备好材质副本和 texture binding；后续 GPU 上传按
-  dirty slot 局部写入 material buffer，不再在上传阶段回读 CPU owner。
+- Runtime 在 prepare 入口应用加载完成，随后推进 AssetSystem 的 mesh 和纹理发布，并分发共享 transfer completion。
+- 更新 bindless 后录制当前 FIF 的 MaterialTable dirty rows，再由 RenderWorld 准备场景表和 per-frame UBO。
+  graphics submit 等待已发布 transfer 资源使用的 timeline，成功后确认对应 FIF 的上传。
 - `GpuSkyStore` 在 prepare 中直接对账 `SceneSkyState`，并在资源表提供 texture bytes 后通过
   `Arc` 共享当前 sky texture bytes 给 worker。worker 同时最多一个 in-flight build，连续切换时只保留最新 pending
   request；CPU/GPU completion 必须同时匹配最新 request id 与 `TextureAssetHandle` 才能发布。
@@ -269,13 +230,12 @@ selection 与同步 raycast 只查询当前 prepare 快照，
   native submit 错误仍走致命路径，不提供逐层 unwind 回滚。
   shutdown 丢弃 pending，等待当前 build 结束，join 结果由 builder 记录；未消费 CPU payload
   在 join 后释放。随后在 GPU 安全点依次回收分布与 fallback。
-  在 prepare 阶段通过 `TextureResolver` 查询当前 sky texture 是否 GPU ready：image ready 而 distribution 未 ready
+  在 prepare 阶段通过 `AssetSystem` 查询当前 sky texture 是否 GPU ready：image ready 而 distribution 未 ready
   时显示真实 HDRI 并使用 1x1 uniform sphere PDF；无效/全黑分布也保持 uniform。sky revision、真实 sky 切换或
   distribution 版本变化时重置累积帧；binding 解析与诊断成功后才确认已交付的变化，
   这一确认只覆盖本次 binding 返回，不代表外层 prepare 已完成。
-- `RenderInstanceTable` 首次扫描完整 membership，后续读取已接管候选的 CPU 最终状态，比较 transform/material snapshot，
-  结合 `MaterialSlotResolver` 与 `MeshRenderResolver` 做 ready gate；
-  material resolver 由 `GpuMaterialStore` 的 scene material stable slot 表提供，且 instance material 数量必须与 mesh geometry 数量一致，只有完整可渲染的实例才进入 `RenderData`。
+- `RenderInstanceTable` 首次扫描完整 membership，后续对账 World 编辑和资源变化合并后的候选批次。
+  实例等待 mesh 和材质投影就绪后，共享材质 slot 写入当前 World 的 MaterialSlotTable。
 - `RenderInstanceTable` 在同一次 prepare 输出中同步生成 `GpuInstanceSlot -> CPU record`
   反查快照。raycast readback 只信任这个快照，避免查询阶段重新遍历 CPU scene。
 - `RenderWorld` 消费 `RenderData`、analytic light binding、environment binding 和 emissive binding，按当前 FIF 上传
@@ -309,7 +269,7 @@ selection 与同步 raycast 只查询当前 prepare 快照，
 - `RenderRuntime::new` 用嵌套 span 分别记录 Gfx、frame state、timeline、registry、command
   allocator、bindings、GameWorld、默认天空注册、RenderWorld、raycast、per-frame buffer
   和 command buffer 初始化。span 不持有资源，也不承担回滚。
-- 下层构造函数保留自身 span；`GameWorld`/`SceneStore` 不因此增加 Tracy 依赖，CPU scene
+- 下层构造函数保留自身 span；`GameWorld` 不因此增加 Tracy 依赖，CPU scene
   创建时间由 `RenderRuntime::new/world` 观测。
 
 Sky builder 对大型工作集使用 `try_reserve_exact`，失败结果携带 request id、texture 和诊断。

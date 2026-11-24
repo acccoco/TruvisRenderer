@@ -32,7 +32,7 @@ handle 或内部路径结构。写请求可携带 `expected_scene_version`，版
 
 import accepted 仅表示获得 CPU 导入身份；Ready 表示导入数据和资源身份就绪，不会自动创建
 live instance。第一阶段 Automation 尚无实例化导入结果的命令。不存在或 generation 不匹配的
-import ID 返回 StaleObject，真实加载失败返回 Failed 与错误文本。import record 保留到 World
+import ID 返回 StaleObject，真实加载失败返回 Failed 与错误文本。import record 由 AssetImports 保留到 Runtime
 销毁；释放策略需要同时定义查询和重复实例化的生命周期，不能按一次状态读取自动回收。
 
 ## HTTP 安全与协议

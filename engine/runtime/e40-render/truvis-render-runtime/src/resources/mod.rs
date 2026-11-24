@@ -2,3 +2,4 @@
 
 pub mod cmd_allocator;
 pub mod gfx_resource_registry;
+pub(crate) mod gpu_asset_upload_queue;

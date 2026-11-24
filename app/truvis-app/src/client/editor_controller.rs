@@ -16,8 +16,9 @@ use truvis_editor_bridge::{
     },
 };
 use truvis_renderer::{SceneSelection, SelectionChange};
+use truvis_render_runtime::asset_system::{AssetSource, AssetSystem, TextureState};
 use truvis_world::{
-    AreaLightShape, AssetSource, GameWorld, LightTarget, SceneEditError, TextureState, WorldEditError,
+    AreaLightShape, GameWorld, LightTarget, SceneEditError,
     guid_new_type::MeshInstanceHandle,
 };
 
@@ -59,7 +60,7 @@ impl EditorController {
     }
 
     /// 按单帧预算处理 Query / Command。
-    pub(crate) fn process_requests(&mut self, world: &mut GameWorld, selection: Option<SceneSelection>) {
+    pub(crate) fn process_requests(&mut self, world: &mut GameWorld, assets: &mut AssetSystem, selection: Option<SceneSelection>) {
         let started_at = Instant::now();
         for _ in 0..self.config.max_requests_per_frame {
             if started_at.elapsed() >= self.config.max_time_per_frame {
@@ -70,20 +71,21 @@ impl EditorController {
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
             };
-            self.process_request(world, selection, envelope);
+            self.process_request(world, assets, selection, envelope);
         }
     }
 
     fn process_request(
         &self,
         world: &mut GameWorld,
+        assets: &mut AssetSystem,
         selection: Option<SceneSelection>,
         envelope: EditorRequestEnvelope,
     ) {
         let EditorRequestEnvelope { request, reply } = envelope;
         let (response, notification) = match request {
-            EditorRequest::Query(query) => (WorldSceneAdapter::handle_query(world, selection, query), None),
-            EditorRequest::Command(command) => WorldSceneAdapter::handle_command(world, command),
+            EditorRequest::Query(query) => (WorldSceneAdapter::handle_query(world, assets, selection, query), None),
+            EditorRequest::Command(command) => WorldSceneAdapter::handle_command(world, assets, command),
         };
 
         // WebView 可能已刷新、timeout 或进入 shutdown；reply receiver 消失不能回滚已经
@@ -96,6 +98,11 @@ impl EditorController {
 }
 
 impl WorldSceneAdapter {
+    /// Editor 查询同时观察场景编辑和共享资产的 CPU 版本。
+    pub(crate) fn scene_version(world: &GameWorld, assets: &AssetSystem) -> u64 {
+        world.scene_version().saturating_add(assets.revision())
+    }
+
     fn light_identity(target: LightTarget) -> (LightId, LightKindDto) {
         let (prefix, handle, kind) = match target {
             LightTarget::Point(handle) => ("point", handle, LightKindDto::Point),
@@ -119,18 +126,17 @@ impl WorldSceneAdapter {
         }
     }
 
-    fn light_dto(world: &GameWorld, light_id: LightId) -> Result<LightDetailsDto, EditorError> {
+    fn light_dto(world: &GameWorld, assets: &AssetSystem, light_id: LightId) -> Result<LightDetailsDto, EditorError> {
         let target = Self::decode_light_id(&light_id)?;
-        let scene = world.scene_view();
         let stale = || EditorError::new(EditorErrorCode::StaleObject, "light ID is no longer valid");
-        let position = scene.light_position(target).ok_or_else(stale)?.to_array();
+        let position = world.light_position(target).ok_or_else(stale)?.to_array();
         let (radiance, parameters) = match target {
             LightTarget::Point(id) => {
-                let light = scene.point_light_map().get(id).ok_or_else(stale)?;
+                let light = world.point_light_map().get(id).ok_or_else(stale)?;
                 (glam::Vec3::from(light.color).to_array(), LightParametersDto::Point)
             }
             LightTarget::Spot(id) => {
-                let light = scene.spot_light_map().get(id).ok_or_else(stale)?;
+                let light = world.spot_light_map().get(id).ok_or_else(stale)?;
                 (
                     glam::Vec3::from(light.color).to_array(),
                     LightParametersDto::Spot {
@@ -141,7 +147,7 @@ impl WorldSceneAdapter {
                 )
             }
             LightTarget::Area(id) => {
-                let light = scene.area_light_map().get(id).ok_or_else(stale)?;
+                let light = world.area_light_map().get(id).ok_or_else(stale)?;
                 (
                     glam::Vec3::from(light.radiance).to_array(),
                     LightParametersDto::Area {
@@ -157,7 +163,7 @@ impl WorldSceneAdapter {
             }
         };
         Ok(LightDetailsDto {
-            scene_version: SceneVersion::from_u64(scene.scene_version()),
+            scene_version: SceneVersion::from_u64(Self::scene_version(world, assets)),
             light_id,
             position,
             radiance,
@@ -165,14 +171,12 @@ impl WorldSceneAdapter {
         })
     }
 
-    fn environment_dto(world: &GameWorld) -> EnvironmentDetailsDto {
-        let scene = world.scene_view();
-        let sky = scene.sky_state();
-        let record = sky.texture.and_then(|id| scene.texture_record(id));
+    fn environment_dto(world: &GameWorld, assets: &AssetSystem) -> EnvironmentDetailsDto {
+        let sky = world.sky_state();
+        let record = sky.texture.and_then(|id| assets.texture_record(id));
         let file_name = record.map(|record| match &record.source {
             AssetSource::File { path } => path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
             AssetSource::Embedded { image_index, .. } => format!("Embedded image {image_index}"),
-            AssetSource::Generated { .. } => "Generated texture".into(),
         });
         let load_state = record.map_or(EnvironmentLoadState::Unset, |record| match record.state {
             TextureState::Loading => EnvironmentLoadState::Loading,
@@ -180,7 +184,7 @@ impl WorldSceneAdapter {
             TextureState::Failed => EnvironmentLoadState::Failed,
         });
         EnvironmentDetailsDto {
-            scene_version: SceneVersion::from_u64(scene.scene_version()),
+            scene_version: SceneVersion::from_u64(Self::scene_version(world, assets)),
             enabled: sky.enabled,
             brightness: sky.brightness,
             texture_id: sky.texture.map(Self::encode_texture_id),
@@ -189,8 +193,8 @@ impl WorldSceneAdapter {
         }
     }
 
-    fn edit_error(error: WorldEditError) -> EditorResponse {
-        let code = if matches!(error, WorldEditError::Scene(SceneEditError::StaleHandle { .. })) {
+    fn edit_error(error: SceneEditError) -> EditorResponse {
+        let code = if matches!(error, SceneEditError::StaleHandle { .. }) {
             EditorErrorCode::StaleObject
         } else {
             EditorErrorCode::InvalidRequest
@@ -200,26 +204,27 @@ impl WorldSceneAdapter {
 
     pub(crate) fn handle_query(
         world: &GameWorld,
+        assets: &AssetSystem,
         selection: Option<SceneSelection>,
         query: EditorQuery,
     ) -> EditorResponse {
         match query {
             EditorQuery::GetSceneVersion => {
-                EditorResponse::SceneVersion(SceneVersion::from_u64(world.scene_view().scene_version()))
+                EditorResponse::SceneVersion(SceneVersion::from_u64(Self::scene_version(world, assets)))
             }
             EditorQuery::GetLightDetails { light_id } => {
-                Self::light_dto(world, light_id).map(EditorResponse::LightDetails).unwrap_or_else(EditorResponse::Error)
+                Self::light_dto(world, assets, light_id).map(EditorResponse::LightDetails).unwrap_or_else(EditorResponse::Error)
             }
-            EditorQuery::GetEnvironment => EditorResponse::Environment(Self::environment_dto(world)),
+            EditorQuery::GetEnvironment => EditorResponse::Environment(Self::environment_dto(world, assets)),
             EditorQuery::GetSelection => EditorResponse::Selection(Self::selection_dto(world, selection)),
             EditorQuery::GetSceneObjects {
                 offset,
                 limit,
                 expected_scene_version,
-            } => Self::scene_objects_page(world, offset, limit, expected_scene_version),
-            EditorQuery::GetInstanceDetails { instance_id } => Self::instance_details(world, instance_id),
+            } => Self::scene_objects_page(world, assets, offset, limit, expected_scene_version),
+            EditorQuery::GetInstanceDetails { instance_id } => Self::instance_details(world, assets, instance_id),
             EditorQuery::GetMaterial { material_id } => match Self::decode_material_id(&material_id) {
-                Ok(handle) => match Self::material_dto(world, handle) {
+                Ok(handle) => match Self::material_dto(assets, handle) {
                     Some(material) => EditorResponse::Material(material),
                     None => Self::error(EditorErrorCode::StaleObject, "material ID is no longer valid"),
                 },
@@ -230,9 +235,10 @@ impl WorldSceneAdapter {
 
     pub(crate) fn handle_command(
         world: &mut GameWorld,
+        assets: &mut AssetSystem,
         command: EditorCommand,
     ) -> (EditorResponse, Option<EditorNotification>) {
-        let previous_version = world.scene_view().scene_version();
+        let previous_version = Self::scene_version(world, assets);
         match command {
             EditorCommand::UpdateLight { light_id, patch } => {
                 let target = match Self::decode_light_id(&light_id) {
@@ -252,18 +258,18 @@ impl WorldSceneAdapter {
                 if let Err(e) = world.update_light(target, patch) {
                     return (Self::edit_error(e), None);
                 }
-                let response = Self::light_dto(world, light_id)
+                let response = Self::light_dto(world, assets, light_id)
                     .map(EditorResponse::LightApplied)
                     .unwrap_or_else(EditorResponse::Error);
-                (response, Self::version_notification(world, previous_version))
+                (response, Self::version_notification(world, assets, previous_version))
             }
             EditorCommand::UpdateEnvironment { patch } => {
                 if let Err(e) = world.update_sky_parameters(patch.enabled, patch.brightness) {
                     return (Self::edit_error(e), None);
                 }
                 (
-                    EditorResponse::EnvironmentApplied(Self::environment_dto(world)),
-                    Self::version_notification(world, previous_version),
+                    EditorResponse::EnvironmentApplied(Self::environment_dto(world, assets)),
+                    Self::version_notification(world, assets, previous_version),
                 )
             }
 
@@ -272,24 +278,24 @@ impl WorldSceneAdapter {
                     Ok(handle) => handle,
                     Err(error) => return (EditorResponse::Error(error), None),
                 };
-                let Some(current) = world.material_data(handle).cloned() else {
+                let Some(current) = assets.material_data(handle).cloned() else {
                     return (Self::error(EditorErrorCode::StaleObject, "material ID is no longer valid"), None);
                 };
                 let updated = match Self::apply_material_patch(current, patch) {
                     Ok(updated) => updated,
                     Err(error) => return (EditorResponse::Error(error), None),
                 };
-                let previous_scene_version = world.scene_view().scene_version();
-                if let Err(error) = world.update_material(handle, updated) {
+                let previous_scene_version = Self::scene_version(world, assets);
+                if let Err(error) = assets.update_material(handle, updated) {
                     return (
                         Self::error(EditorErrorCode::InvalidRequest, format!("material update failed: {error}")),
                         None,
                     );
                 }
 
-                let current_scene_version = world.scene_view().scene_version();
+                let current_scene_version = Self::scene_version(world, assets);
                 let scene_version = SceneVersion::from_u64(current_scene_version);
-                let Some(material) = Self::material_dto(world, handle) else {
+                let Some(material) = Self::material_dto(assets, handle) else {
                     return (Self::error(EditorErrorCode::Internal, "updated material disappeared"), None);
                 };
                 let notification = (current_scene_version != previous_scene_version)
@@ -307,19 +313,19 @@ impl WorldSceneAdapter {
 }
 
 impl WorldSceneAdapter {
-    fn version_notification(world: &GameWorld, previous: u64) -> Option<EditorNotification> {
-        let current = world.scene_view().scene_version();
+    fn version_notification(world: &GameWorld, assets: &AssetSystem, previous: u64) -> Option<EditorNotification> {
+        let current = Self::scene_version(world, assets);
         (current != previous).then(|| EditorNotification::SceneVersionChanged(SceneVersion::from_u64(current)))
     }
 
     pub(crate) fn scene_objects_page(
         world: &GameWorld,
+        assets: &AssetSystem,
         offset: u32,
         limit: u16,
         expected_scene_version: Option<SceneVersion>,
     ) -> EditorResponse {
-        let view = world.scene_view();
-        let scene_version = view.scene_version();
+        let scene_version = Self::scene_version(world, assets);
         if let Some(expected) = expected_scene_version {
             let expected = match expected.parse() {
                 Ok(expected) => expected,
@@ -332,30 +338,30 @@ impl WorldSceneAdapter {
 
         let limit = if limit == 0 { DEFAULT_SCENE_PAGE_SIZE } else { limit.min(MAX_SCENE_PAGE_SIZE) } as usize;
         let offset = offset as usize;
-        let instances = view.instance_map().iter().map(|(handle, instance)| SceneObjectSummary::Instance {
+        let instances = world.instance_map().iter().map(|(handle, instance)| SceneObjectSummary::Instance {
             instance_id: Self::encode_instance_id(handle),
             name: instance.name.clone(),
             material_count: instance.materials.len() as u32,
         });
-        let points = view.point_light_map().keys().enumerate().map(|(i, id)| SceneObjectSummary::Point {
+        let points = world.point_light_map().keys().enumerate().map(|(i, id)| SceneObjectSummary::Point {
             light_id: Self::light_identity(LightTarget::Point(id)).0,
             name: format!("Point Light {}", i + 1),
         });
-        let spots = view.spot_light_map().keys().enumerate().map(|(i, id)| SceneObjectSummary::Spot {
+        let spots = world.spot_light_map().keys().enumerate().map(|(i, id)| SceneObjectSummary::Spot {
             light_id: Self::light_identity(LightTarget::Spot(id)).0,
             name: format!("Spot Light {}", i + 1),
         });
-        let areas = view.area_light_map().keys().enumerate().map(|(i, id)| SceneObjectSummary::Area {
+        let areas = world.area_light_map().keys().enumerate().map(|(i, id)| SceneObjectSummary::Area {
             light_id: Self::light_identity(LightTarget::Area(id)).0,
             name: format!("Area Light {}", i + 1),
         });
-        let total = view.instance_map().len() +
-            view.point_light_map().len() +
-            view.spot_light_map().len() +
-            view.area_light_map().len() +
+        let total = world.instance_map().len() +
+            world.point_light_map().len() +
+            world.spot_light_map().len() +
+            world.area_light_map().len() +
             1;
         let environment = SceneObjectSummary::Environment {
-            name: if view.sky_state().texture.is_some() {
+            name: if world.sky_state().texture.is_some() {
                 "Environment / HDRI"
             } else {
                 "Environment / HDRI (not set)"
@@ -382,24 +388,23 @@ impl WorldSceneAdapter {
 
     /// 从一次 CPU scene 只读快照构造 Web inspector 的 owned instance 详情。
     ///
-    /// Instance 对 mesh/material 的引用完整性由 `SceneStore` 在注册、更新和删除边界维护；
+    /// Instance 对 mesh/material 的引用完整性由 上层场景操作维护，GameWorld 校验绑定形状；
     /// 因此 live instance 出现缺失依赖表示内部不变量已经破坏，而不是普通 stale query。
-    pub(crate) fn instance_details(world: &GameWorld, instance_id: InstanceId) -> EditorResponse {
+    pub(crate) fn instance_details(world: &GameWorld, assets: &AssetSystem, instance_id: InstanceId) -> EditorResponse {
         let handle = match Self::decode_instance_id(&instance_id) {
             Ok(handle) => handle,
             Err(error) => return EditorResponse::Error(error),
         };
-        let view = world.scene_view();
-        let Some(instance) = view.get_instance(handle) else {
+        let Some(instance) = world.get_instance(handle) else {
             return Self::error(EditorErrorCode::StaleObject, "instance ID is no longer valid");
         };
-        let Some(mesh_name) = view.mesh_name(instance.mesh) else {
+        let Some(mesh_name) = assets.mesh_data(instance.mesh).map(|mesh| mesh.name.as_str()) else {
             return Self::error(EditorErrorCode::Internal, "live instance references a missing mesh");
         };
 
         let mut materials = Vec::with_capacity(instance.materials.len());
         for (submesh_index, material_handle) in instance.materials.iter().copied().enumerate() {
-            let Some(material) = view.material_data(material_handle) else {
+            let Some(material) = assets.material_data(material_handle) else {
                 return Self::error(EditorErrorCode::Internal, "live instance references a missing material");
             };
             materials.push(InstanceMaterialBindingDto {
@@ -416,7 +421,7 @@ impl WorldSceneAdapter {
             scale: trs.scale.to_array(),
         });
         EditorResponse::InstanceDetails(InstanceDetailsDto {
-            scene_version: SceneVersion::from_u64(view.scene_version()),
+            scene_version: SceneVersion::from_u64(Self::scene_version(world, assets)),
             instance_id,
             name: instance.name.clone(),
             transform,
@@ -431,19 +436,19 @@ impl WorldSceneAdapter {
     fn selection_dto(world: &GameWorld, selection: Option<SceneSelection>) -> Option<SelectionDto> {
         match selection? {
             SceneSelection::Submesh(selection) => {
-                let instance = world.scene_view().get_instance(selection.instance)?;
+                let instance = world.get_instance(selection.instance)?;
                 let material = *instance.materials.get(selection.submesh_index as usize)?;
                 Some(Self::selection_dto_from_handles(selection.instance, selection.submesh_index, material))
             }
             SceneSelection::Light(target) => {
-                world.scene_view().light_position(target)?;
+                world.light_position(target)?;
                 Some(Self::light_selection_dto(target))
             }
         }
     }
 
-    pub(crate) fn material_dto(world: &GameWorld, handle: MaterialAssetHandle) -> Option<MaterialDto> {
-        let data = world.material_data(handle)?;
+    pub(crate) fn material_dto(assets: &AssetSystem, handle: MaterialAssetHandle) -> Option<MaterialDto> {
+        let data = assets.material_data(handle)?;
         Some(MaterialDto {
             id: Self::encode_material_id(handle),
             name: data.name.clone(),

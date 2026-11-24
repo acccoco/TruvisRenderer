@@ -1,22 +1,22 @@
 use std::collections::{HashSet, VecDeque};
 
 use ash::vk;
-use slotmap::SecondaryMap;
+use slotmap::{SecondaryMap, SlotMap};
 
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
-use truvis_shader_binding::gpu;
-use truvis_world::SceneReadView;
+use crate::asset_system::TextureRecord;
 use truvis_asset::handle::TextureAssetHandle;
 
 use crate::bindings::bindless_manager::BindlessSrvHandle;
 use crate::bindings::shader_binding_system::ShaderBindingSystem;
-use crate::render_world::gpu_asset_upload_queue::{CompletedTextureUpload, GpuAssetUploadQueue};
-use crate::render_world::texture_resolver::{TextureBinding, TextureResolver};
+use crate::resources::gpu_asset_upload_queue::{CompletedTextureUpload, GpuAssetUploadQueue};
 use crate::resources::gfx_resource_registry::GfxResourceRegistry;
+
+use super::texture_resolver::{TextureBinding, TextureResolver};
 
 /// shader 可见的纹理绑定缓存。
 ///
@@ -30,14 +30,11 @@ pub struct UploadedAssetTexture {
     pub view_handle: GfxImageViewHandle,
     /// bindless 表中的稳定 SRV 引用。
     pub srv_handle: BindlessSrvHandle,
-    /// 材质写入 GPU buffer 时使用的 sampler 类型。
-    pub sampler: gpu::engine::bindless::ESamplerType,
 }
 
 /// 渲染侧纹理资产上传与绑定缓存。
 ///
-/// 它是 `TextureAssetHandle -> shader texture binding` 的唯一转换点。加载失败或尚未完成上传时，
-/// `TextureResolver` 会返回 fallback 纹理，使材质 GPU 数据始终可被 shader 安全读取。
+/// 只有完成 copy 且 bindless 条目已登记的纹理才可查询到 GPU binding。
 pub struct GpuTextureStore {
     textures: SecondaryMap<TextureAssetHandle, UploadedAssetTexture>,
     pending_textures: HashSet<TextureAssetHandle>,
@@ -105,7 +102,7 @@ impl GpuTextureStore {
 
     /// 只接收上传已完成、尚未发布的 image；view/bindless 安装失败撤销本次登记。
     /// fallback 与普通纹理共用 binding 安装路径，发布后由 store 管理退役。
-    pub(super) fn register_texture_binding(
+    pub(crate) fn register_texture_binding(
         _resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_registry: &mut GfxResourceRegistry,
@@ -125,7 +122,6 @@ impl GpuTextureStore {
                 image_handle,
                 view_handle,
                 srv_handle: shader_binding_system.get_shader_srv_handle(view_handle),
-                sampler: gpu::engine::bindless::ESamplerType_LinearRepeat,
             }
         };
         installed
@@ -137,18 +133,18 @@ impl GpuTextureStore {
     /// 在共享 queue 统一 poll 后接收。
     pub fn submit_uploads(
         &mut self,
-        scene: SceneReadView<'_>,
+        assets: &SlotMap<TextureAssetHandle, TextureRecord>,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
         upload_queue: &mut GpuAssetUploadQueue,
     ) {
         let _span = tracy_client::span!("GpuTextureStore::submit_uploads");
-        for handle in scene.texture_handles() {
+        for (handle, record) in assets.iter() {
             if !self.needs_upload(handle) {
                 continue;
             }
-            let Some(data) = scene.texture_data(handle) else {
+            let Some(data) = record.data.as_ref() else {
                 continue;
             };
             match upload_queue.submit_texture(resource_ctx, device_ctx, queue_ctx, handle, data) {
@@ -166,7 +162,7 @@ impl GpuTextureStore {
     pub fn publish_completed_uploads(
         &mut self,
         completed_uploads: &mut VecDeque<CompletedTextureUpload>,
-        scene: SceneReadView<'_>,
+        assets: &SlotMap<TextureAssetHandle, TextureRecord>,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         gfx_resource_registry: &mut GfxResourceRegistry,
@@ -177,8 +173,9 @@ impl GpuTextureStore {
             let handle = completed.handle;
             let image = completed.image;
             self.pending_textures.remove(&handle);
-            if !scene.contains_texture(handle) {
+            if !assets.contains_key(handle) {
                 image.destroy(resource_ctx, DestroyReason::DeferredCleanup);
+                log::debug!("Discarded completed upload for removed texture {handle:?}");
                 continue;
             }
             if self.textures.contains_key(handle) {
@@ -223,15 +220,14 @@ impl GpuTextureStore {
     /// 已提交的异步上传在 completion 时再次检查同一 registry，无需长期保存删除 tombstone。
     pub fn remove_stale_textures(
         &mut self,
-        scene: SceneReadView<'_>,
+        assets: &SlotMap<TextureAssetHandle, TextureRecord>,
         gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
     ) -> bool {
-        let live_handles = scene.texture_handles().collect::<HashSet<_>>();
         let stale_handles = self
             .textures
             .keys()
-            .filter(|handle| !live_handles.contains(handle))
+            .filter(|handle| !assets.contains_key(*handle))
             .collect::<Vec<_>>();
         if stale_handles.is_empty() {
             return false;
@@ -260,10 +256,9 @@ impl GpuTextureStore {
         !self.textures.contains_key(handle) && !self.pending_textures.contains(&handle)
     }
 
-    /// 在 GPU 安全点依次释放已注册纹理与 fallback；不提供 panic 回滚。
+    /// 在 GPU 安全点释放已注册纹理。
     ///
     /// 调用方必须先关闭共享上传 queue，并保证已发布纹理不再被在途渲染使用。
-    /// 调用后 manager 不应再被 `TextureResolver` 使用。
     pub fn destroy(
         mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -289,6 +284,10 @@ impl GpuTextureStore {
             DestroyReason::Shutdown,
         );
     }
+
+    pub(crate) fn binding(&self, handle: TextureAssetHandle) -> Option<BindlessSrvHandle> {
+        self.textures.get(handle).map(|texture| texture.srv_handle)
+    }
 }
 
 impl TextureResolver for GpuTextureStore {
@@ -308,7 +307,7 @@ impl TextureResolver for GpuTextureStore {
         let texture = self.textures.get(handle).unwrap_or(&self.fallback);
         TextureBinding {
             srv_handle: texture.srv_handle,
-            sampler: texture.sampler,
+            sampler: truvis_shader_binding::gpu::engine::bindless::ESamplerType_LinearRepeat,
         }
     }
 }

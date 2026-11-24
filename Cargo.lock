@@ -6592,6 +6592,7 @@ dependencies = [
  "renderer-kit",
  "truvis-asset",
  "truvis-path",
+ "truvis-render-runtime",
  "truvis-shader-binding",
  "truvis-world",
 ]

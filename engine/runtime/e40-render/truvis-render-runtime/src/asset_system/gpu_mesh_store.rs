@@ -3,7 +3,7 @@ use std::mem::size_of_val;
 use std::ptr;
 
 use ash::vk;
-use slotmap::SecondaryMap;
+use slotmap::{SecondaryMap, SlotMap};
 
 use truvis_asset::handle::{MeshData, SubmeshData};
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
@@ -21,12 +21,9 @@ use truvis_gfx::resources::special_buffers::index_buffer::GfxIndex32Buffer;
 use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 use truvis_render_foundation::frame_label::FrameLabel;
-use truvis_world::SceneReadView;
 use truvis_asset::handle::MeshAssetHandle;
 
-use crate::render_world::geometry::{RtGeometry, RtTriangleMeta};
-use crate::render_world::render_data::MeshRenderData;
-use crate::render_world::render_resolver::MeshRenderResolver;
+use super::mesh_geometry::{MeshRenderData, RtGeometry, RtTriangleMeta};
 /// 已提交到 graphics queue、但尚未确认完成的 mesh 上传任务。
 ///
 /// 这里同时持有 staging/scratch/geometry/BLAS owner，是因为 timeline 到达前这些资源
@@ -492,7 +489,7 @@ impl GpuMeshStore {
     /// 可见的 `meshes` map，因此 instance bridge 会继续把依赖它的实例保持为 pending。
     pub fn sync_scene(
         &mut self,
-        scene: SceneReadView<'_>,
+        assets: &SlotMap<MeshAssetHandle, MeshData>,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
@@ -500,13 +497,10 @@ impl GpuMeshStore {
         let _span = tracy_client::span!("GpuMeshStore::sync_scene");
         self.reclaim_retired_resources(resource_ctx, device_ctx);
 
-        for handle in scene.mesh_handles() {
+        for (handle, data) in assets.iter() {
             if !self.needs_upload(handle) {
                 continue;
             }
-            let Some(data) = scene.mesh_data(handle) else {
-                continue;
-            };
             self.upload_queue.submit_mesh_upload(resource_ctx, device_ctx, queue_ctx, handle, data);
             self.pending_meshes.insert(handle);
         }
@@ -515,7 +509,7 @@ impl GpuMeshStore {
         for finished in self.upload_queue.update(resource_ctx, device_ctx) {
             let handle = finished.handle;
             let duplicate = self.meshes.contains_key(handle);
-            if !scene.contains_mesh(handle) || duplicate {
+            if !assets.contains_key(handle) || duplicate {
                 if duplicate {
                     // 日志异常时仍由 completed 队列持有；下一次同步可重新处理。
                     log::error!("GpuMeshStore: reject duplicate upload for immutable mesh {:?}", handle);
@@ -561,12 +555,11 @@ impl GpuMeshStore {
     /// 按 CPU registry 的完整 membership 清理已经删除的 render-side mesh。
     ///
     /// 首期 mesh 内容不可变；这里仅处理资源生命周期，不支持同 handle 的内容替换。
-    pub fn remove_stale_meshes(&mut self, scene: SceneReadView<'_>) -> bool {
-        let live_handles = scene.mesh_handles().collect::<HashSet<_>>();
+    pub fn remove_stale_meshes(&mut self, assets: &SlotMap<MeshAssetHandle, MeshData>) -> bool {
         let stale_handles = self
             .meshes
             .keys()
-            .filter(|handle| !live_handles.contains(handle))
+            .filter(|handle| !assets.contains_key(*handle))
             .collect::<Vec<_>>();
         if stale_handles.is_empty() {
             return false;
@@ -632,8 +625,12 @@ impl GpuMeshStore {
     }
 }
 
-impl MeshRenderResolver for GpuMeshStore {
-    fn resolve_mesh(&self, handle: MeshAssetHandle) -> Option<MeshRenderData<'_>> {
+impl GpuMeshStore {
+    pub(super) fn is_ready(&self, handle: MeshAssetHandle) -> bool {
+        self.meshes.contains_key(handle)
+    }
+
+    pub(super) fn resolve_mesh(&self, handle: MeshAssetHandle) -> Option<MeshRenderData<'_>> {
         let mesh = self.meshes.get(handle)?;
         Some(MeshRenderData {
             geometries: mesh.geometries.as_slice(),

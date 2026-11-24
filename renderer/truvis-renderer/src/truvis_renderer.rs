@@ -11,7 +11,7 @@ use truvis_render_runtime::render_runtime::{
 use truvis_render_runtime::selection::WorldSubmeshSelection;
 use truvis_renderer_shader_binding::gpu::renderer::render_passes::realtime_rt::DLSS_MOTION_VECTOR_INVALID_VALUE;
 use truvis_utils::ConfigUtils;
-use truvis_world::{GameWorld, LightTarget, WorldEditError, guid_new_type::MeshInstanceHandle};
+use truvis_world::{GameWorld, LightTarget, SceneEditError, guid_new_type::MeshInstanceHandle};
 
 use renderer_dlss::{Dlss, DlssOptions, DlssSrMode};
 use renderer_imgui::{FrameStatsOverlayData, ImGuiSubsystem};
@@ -89,12 +89,12 @@ impl GizmoTarget {
 
     fn transform(self, world: &GameWorld) -> Option<glam::Mat4> {
         match self {
-            Self::Instance(handle) => world.scene_view().get_instance(handle).map(|instance| instance.transform),
-            Self::Light(target) => world.scene_view().light_position(target).map(glam::Mat4::from_translation),
+            Self::Instance(handle) => world.get_instance(handle).map(|instance| instance.transform),
+            Self::Light(target) => world.light_position(target).map(glam::Mat4::from_translation),
         }
     }
 
-    fn apply(self, world: &mut GameWorld, transform: glam::Mat4) -> Result<(), WorldEditError> {
+    fn apply(self, world: &mut GameWorld, transform: glam::Mat4) -> Result<(), SceneEditError> {
         match self {
             Self::Instance(handle) => world.update_instance_transform(handle, transform),
             Self::Light(target) => world.update_light_position(target, transform.w_axis.truncate()),
@@ -326,7 +326,12 @@ impl Renderer for TruvisRenderer {
         self.imgui.set_hidpi_factor(ctx.scale_factor);
         self.imgui.set_display_size(ctx.window_size);
 
-        self.client.initialize(&mut *ctx.runtime.world, self.camera_controller.camera_mut());
+        self.client.initialize(
+            ctx.runtime.world,
+            ctx.runtime.assets,
+            ctx.runtime.imports,
+            self.camera_controller.camera_mut(),
+        );
         self.frame_view = self.camera_controller.camera().render_view();
         self.output_extent = ctx.runtime.present.swapchain_image_info().image_extent;
         self.dlss
@@ -368,7 +373,7 @@ impl Renderer for TruvisRenderer {
     fn update(&mut self, ctx: &mut RenderRuntimeUpdateCtx) {
         self.click_ray_cast_probe.update_time(ctx.frame_timing.delta_time_s());
         self.clear_stale_selection(ctx.world);
-        self.client.tick(ctx.world, self.selection);
+        self.client.tick(ctx.world, ctx.assets, ctx.imports, self.selection);
         self.clear_stale_selection(ctx.world);
         let delta = std::time::Duration::from_secs_f32(ctx.frame_timing.delta_time_s());
         let viewport_size = glam::vec2(ctx.swapchain_extent.width as f32, ctx.swapchain_extent.height as f32);
@@ -404,7 +409,7 @@ impl Renderer for TruvisRenderer {
         }
 
         let camera = self.camera_controller.camera();
-        self.light_overlay.project(ctx.world.scene_view(), camera, viewport_size);
+        self.light_overlay.project(ctx.world, camera, viewport_size);
         let mouse = self.input.state().mouse_position();
         let screen_pos = glam::vec2(mouse[0] as f32, mouse[1] as f32);
         if pointer_available && !gizmo_update.consumed && self.input.state().is_left_button_just_pressed() {
@@ -429,14 +434,14 @@ impl Renderer for TruvisRenderer {
         );
         let gizmo_hover = self.transform_gizmo.update_hover(pointer_available.then_some(screen_pos));
         self.light_overlay.refresh_snapshot(
-            ctx.world.scene_view(),
+            ctx.world,
             camera,
             self.selection.and_then(SceneSelection::light),
             (pointer_available && !gizmo_hover).then_some(screen_pos),
         );
         self.frame_view = camera.render_view();
 
-        let sky = *ctx.world.scene_view().sky_state();
+        let sky = *ctx.world.sky_state();
         let mut sky_brightness = sky.brightness;
         let mut sky_enabled = sky.enabled;
         self.imgui.build_frame(delta, |ui| {
@@ -461,7 +466,7 @@ impl Renderer for TruvisRenderer {
                 },
                 raycast: RaycastOverlayData {
                     probe: &self.click_ray_cast_probe,
-                    world: ctx.world,
+                    assets: ctx.assets,
                 },
                 debug_images: DebugImageSelectionData {
                     selection: &mut self.debug_image_selection,

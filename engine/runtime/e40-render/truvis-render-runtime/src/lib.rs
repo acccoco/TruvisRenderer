@@ -6,6 +6,8 @@
 //! 阶段的数据上传；具体 Renderer、子系统、GUI 适配和 render graph 编排由上层 crate 决定。
 
 /// shader-visible descriptor、bindless、sampler 与 per-frame binding owner。
+pub mod asset_imports;
+pub mod asset_system;
 pub mod bindings;
 /// 窗口 surface、swapchain image/view 与 present 同步对象的所有权边界。
 pub mod present;

@@ -8,7 +8,12 @@ use std::path::PathBuf;
 
 use tokio::sync::{mpsc, oneshot};
 
-use truvis_world::{GameWorld, WorldEditError};
+use truvis_asset::handle::TextureColorSpace;
+use truvis_render_runtime::asset_imports::AssetImports;
+use truvis_render_runtime::asset_system::AssetSystem;
+use truvis_world::GameWorld;
+
+use super::editor_controller::WorldSceneAdapter;
 
 /// 私有桌面命令队列容量。
 ///
@@ -93,7 +98,7 @@ impl DesktopCommandController {
     }
 
     /// 在 RenderThread update 阶段非阻塞处理至多一条命令。
-    pub(crate) fn process_next(&mut self, world: &mut GameWorld) -> DesktopCommandUpdate {
+    pub(crate) fn process_next(&mut self, world: &mut GameWorld, assets: &mut AssetSystem, imports: &mut AssetImports) -> DesktopCommandUpdate {
         let command = match self.receiver.try_recv() {
             Ok(command) => command,
             Err(mpsc::error::TryRecvError::Empty | mpsc::error::TryRecvError::Disconnected) => {
@@ -103,12 +108,14 @@ impl DesktopCommandController {
 
         match command {
             DesktopCommand::RequestSkyTexture { path, reply } => {
-                let previous_scene_version = world.scene_view().scene_version();
-                let request_result = world
-                    .request_sky_texture_from_path(path)
-                    .map(|_| DesktopSkyAccepted)
-                    .map_err(Self::world_edit_error_message);
-                let current_scene_version = world.scene_view().scene_version();
+                let previous_scene_version = WorldSceneAdapter::scene_version(world, assets);
+                let request_result = imports.import_texture(assets, path, TextureColorSpace::Linear)
+                    .map(|handle| {
+                        world.update_sky_texture(Some(handle));
+                        DesktopSkyAccepted
+                    })
+                    .map_err(|_| "Failed to open the selected HDRI".to_string());
+                let current_scene_version = WorldSceneAdapter::scene_version(world, assets);
                 let scene_version_changed = (request_result.is_ok() && current_scene_version != previous_scene_version)
                     .then_some(current_scene_version);
 
@@ -124,15 +131,5 @@ impl DesktopCommandController {
     pub(crate) fn shutdown(&mut self) {
         self.receiver.close();
         while self.receiver.try_recv().is_ok() {}
-    }
-
-    /// 把 GameWorld 错误转换为可展示但不泄露本机完整路径的桌面错误。
-    fn world_edit_error_message(error: WorldEditError) -> String {
-        match error {
-            WorldEditError::FilesystemCanonicalizeFailed { error, .. } => {
-                format!("Failed to open the selected HDRI: {error}")
-            }
-            WorldEditError::Scene(error) => format!("Failed to update the scene sky: {error}"),
-        }
     }
 }

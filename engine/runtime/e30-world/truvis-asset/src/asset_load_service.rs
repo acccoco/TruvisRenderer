@@ -82,15 +82,6 @@ impl AssetLoadService {
     }
 }
 
-// 销毁
-impl AssetLoadService {
-    /// 消耗资产中心。
-    ///
-    /// 当前 asset 层没有额外显式释放逻辑；真正需要等待的是内部 `AssetLoadWorker` 的
-    /// `Drop`，它会在 hub 被消费后等待后台任务结束。
-    pub fn destroy(self) {}
-}
-
 // 对外接口
 impl AssetLoadService {
     /// 请求加载纹理。
@@ -121,7 +112,7 @@ impl AssetLoadService {
     /// 请求从已拥有的 encoded bytes 解码纹理的 task。
     ///
     /// `AssetLoadService` 只持有 task 期间的 `Arc`；解码完成后 payload 通过事件交给 CPU
-    /// `AssetStore`，不会在 hub 内形成长期像素 registry。
+    /// 资产注册表，不会在 hub 内形成长期像素 registry。
     pub fn request_texture_bytes(
         &mut self,
         identity: crate::handle::EmbeddedTextureId,

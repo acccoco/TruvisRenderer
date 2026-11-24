@@ -8,7 +8,7 @@ import type { SceneVersion } from "./SceneVersion";
 /**
  * Web 右侧栏按需读取的完整 CPU scene instance 投影。
  *
- * DTO 在一次 Renderer update 查询中从同一个 `SceneReadView` 构造，Web 只把它作为
+ * DTO 在一次 Renderer update 查询中通过当前场景状态和资产数据构造，Web 只把它作为
  * 可丢弃投影。TRS 不属于 shader ABI，也不表示 GPU scene 已经 ready。
  */
 export type InstanceDetailsDto = {
@@ -21,7 +21,7 @@ scene_version: SceneVersion,
  */
 instance_id: InstanceId,
 /**
- * `SceneStore` 持有的 instance 展示名称。
+ * `GameWorld` 持有的 instance 展示名称。
  */
 name: string,
 /**

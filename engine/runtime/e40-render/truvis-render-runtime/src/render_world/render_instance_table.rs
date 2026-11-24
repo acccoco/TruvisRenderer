@@ -7,17 +7,18 @@ use slotmap::SecondaryMap;
 
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_shader_binding::gpu;
-use truvis_world::SceneReadView;
+use truvis_world::GameWorld;
 use truvis_world::components::instance::Instance;
 use truvis_asset::handle::{MaterialAssetHandle, MeshAssetHandle};
 use truvis_world::guid_new_type::MeshInstanceHandle;
 
-use crate::render_world::render_data::{GpuInstanceSlot, InstanceRenderData, MeshRenderData, RenderData};
-use crate::render_world::render_resolver::{MaterialSlotResolver, MeshRenderResolver};
+use crate::asset_system::mesh_geometry::MeshRenderData;
+use crate::render_world::render_data::{GpuInstanceSlot, InstanceRenderData, RenderData};
+use crate::asset_system::AssetSystem;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InstanceState {
-    /// 已分配稳定 slot，但 mesh/material 依赖尚未全部 GPU-ready。
+    /// 已分配稳定 slot，但 mesh 尚未发布。
     Pending,
     /// 可进入 `RenderData`，对应 slot 会被写入 instance buffer 和 TLAS custom index。
     Active,
@@ -62,13 +63,10 @@ pub(crate) struct RayCastInstanceRecord {
 
 /// Render-side runtime instance manager.
 ///
-/// 它为 `MeshInstanceHandle` 分配生命周期内稳定的 GPU instance slot，并在 mesh/material
-/// 都 GPU ready 前保持 pending，避免 draw/TLAS 访问未就绪资源。
-/// manager 是 CPU scene read view 与 runtime 私有 `RenderData` 之间的翻译层：`GameWorld`
-/// 保存语义实例，RenderWorld 只接收按稳定 slot 排序、依赖已就绪的渲染快照。
+/// 在 mesh 发布前保持 pending，发布后以稳定 instance slot 进入 GPUScene、TLAS 与拾取索引。
 pub struct RenderInstanceTable {
     bindings: SecondaryMap<MeshInstanceHandle, InstanceBinding>,
-    /// 镜像首次建立时读取完整 membership，后续只处理编辑/资源发布候选。
+    /// 镜像首次建立时读取完整 membership，后续只处理实际编辑和 mesh 已就绪的等待实例。
     initialized: bool,
     /// 已接管的最终状态候选；整批对账成功后清空，异常时保留以便重新读取 CPU 最终状态。
     pending_candidates: IndexSet<MeshInstanceHandle>,
@@ -308,23 +306,18 @@ impl RenderInstanceTable {
         self.pending_candidates.extend(candidates);
     }
 
-    /// 从 CPU scene read view 构建本帧可渲染的 `RenderData` 快照。
-    ///
-    /// 该阶段会先同步 instance 生命周期与依赖 ready 状态；只有 mesh/material 都能被 resolver
-    /// 解析到 GPU 数据的实例才进入 active 列表。输出按稳定 slot 排序，保证 raster draw、
-    /// TLAS custom index 和 GPU instance buffer 共享同一套 instance slot 语义。
+    /// 使用最新 World 状态与已发布资产构建本帧快照。
     pub fn prepare_render_data<'a>(
         &mut self,
-        scene: SceneReadView<'_>,
-        material_slot_resolver: &dyn MaterialSlotResolver,
-        mesh_resolver: &'a dyn MeshRenderResolver,
+        scene: &GameWorld,
+        assets: &'a AssetSystem,
     ) -> (RenderData<'a>, RenderInstanceUpdateResult) {
         assert!(self.pending_upload.is_none() && self.pending_history.is_empty(), "previous frame was not finished");
         if !self.initialized {
             self.pending_candidates.extend(scene.instance_map().keys());
             self.initialized = true;
         }
-        self.sync_scene_instances(scene, material_slot_resolver, mesh_resolver);
+        self.sync_scene_instances(scene, assets);
 
         // RenderData 是提交给 RenderWorld 的只读快照。这里按稳定 slot 排序，保证 raster draw、
         // TLAS custom index 和 GPU instance buffer 使用同一套 instance slot 语义。
@@ -337,19 +330,17 @@ impl RenderInstanceTable {
 
         let mut active_instances = self
             .bindings
-            .iter()
+            .iter_mut()
             .filter(|(_, binding)| binding.state == InstanceState::Active)
-            .map(|(handle, binding)| (handle, binding, &binding.source))
             .collect::<Vec<_>>();
-        active_instances.sort_by_key(|(_, binding, _)| binding.slot);
+        active_instances.sort_by_key(|(_, binding)| binding.slot);
 
-        'active: for (handle, binding, instance) in active_instances {
+        for (handle, binding) in active_instances {
+            let instance = &binding.source;
             let mesh_index = if let Some(&index) = mesh_handle_to_index.get(&instance.mesh) {
                 index
             } else {
-                let Some(mesh_render_data) = mesh_resolver.resolve_mesh(instance.mesh) else {
-                    continue;
-                };
+                let mesh_render_data = assets.resolve_mesh(instance.mesh).expect("active instance mesh must remain published");
                 let index = all_meshes.len();
                 mesh_handle_to_index.insert(instance.mesh, index);
                 mesh_geometry_start_indices.push(total_geometry_count);
@@ -359,30 +350,15 @@ impl RenderInstanceTable {
                 all_meshes.push(mesh_render_data);
                 index
             };
-            let mesh_geometry_count = all_meshes[mesh_index].geometries.len();
-            if mesh_geometry_count != instance.materials.len() {
-                log::error!(
-                    "RenderInstanceTable: skip instance {:?}; material count {} does not match mesh {:?} geometry count {}",
-                    handle,
-                    instance.materials.len(),
-                    instance.mesh,
-                    mesh_geometry_count
-                );
-                continue;
-            }
-
             let mut material_slots = Vec::with_capacity(instance.materials.len());
             let mut requires_any_hit = false;
             for &material in &instance.materials {
-                let Some(slot) = material_slot_resolver.resolve_material_slot(material) else {
-                    continue 'active;
-                };
-                let Some(data) = material_slot_resolver.material_data(material) else {
-                    continue 'active;
-                };
+                let (slot, data) = assets.material_binding(material).expect("active instance requires a registered material");
                 requires_any_hit |= data.coverage.requires_any_hit();
                 material_slots.push(slot);
             }
+            self.pending_update.requires_any_hit_changed |= binding.requires_any_hit != requires_any_hit;
+            binding.requires_any_hit = requires_any_hit;
 
             all_instances.push(InstanceRenderData {
                 instance_slot: binding.slot,
@@ -409,9 +385,8 @@ impl RenderInstanceTable {
 
     fn sync_scene_instances(
         &mut self,
-        scene: SceneReadView<'_>,
-        material_slot_resolver: &dyn MaterialSlotResolver,
-        mesh_resolver: &dyn MeshRenderResolver,
+        scene: &GameWorld,
+        assets: &AssetSystem,
     ) {
         if !self.pending_candidates.is_empty() {
             log::debug!("RenderInstanceTable: reconcile {} candidate instances", self.pending_candidates.len());
@@ -425,11 +400,8 @@ impl RenderInstanceTable {
             };
             let source_revision =
                 scene.instance_revision(handle).expect("RenderInstanceTable: live instance revision missing");
-            // resolver 与版本预检先完成，不能先推进 source revision 再丢失派生变化。
-            let requires_any_hit = instance.materials.iter().any(|&material| {
-                material_slot_resolver.material_data(material).is_some_and(|data| data.coverage.requires_any_hit())
-            });
-            let ready = Self::dependencies_ready(instance, material_slot_resolver, mesh_resolver);
+            let ready = assets.mesh_is_ready(instance.mesh)
+                && instance.materials.iter().all(|&handle| assets.material_binding(handle).is_some());
             if !self.bindings.contains_key(handle) {
                 self.register_instance(handle, instance, source_revision);
             }
@@ -467,8 +439,6 @@ impl RenderInstanceTable {
                 self.pending_update.transform_changed = true;
             }
             self.pending_update.material_binding_changed |= material_binding_changed && was_active;
-            self.pending_update.requires_any_hit_changed |= was_active && binding.requires_any_hit != requires_any_hit;
-            binding.requires_any_hit = requires_any_hit;
             match (binding.state, ready) {
                 (InstanceState::Pending, true) => {
                     binding.state = InstanceState::Active;
@@ -554,19 +524,5 @@ impl RenderInstanceTable {
                 true
             }
         });
-    }
-
-    fn dependencies_ready(
-        instance: &Instance,
-        material_slot_resolver: &dyn MaterialSlotResolver,
-        mesh_resolver: &dyn MeshRenderResolver,
-    ) -> bool {
-        // mesh 必须已经拥有 vertex/index buffer 与 BLAS；material 必须已有稳定 slot。
-        // texture 未 ready 不会阻止 material ready，因为 material manager 会使用 fallback binding。
-        let Some(mesh) = mesh_resolver.resolve_mesh(instance.mesh) else {
-            return false;
-        };
-        mesh.geometries.len() == instance.materials.len()
-            && instance.materials.iter().all(|&material| material_slot_resolver.is_material_ready(material))
     }
 }

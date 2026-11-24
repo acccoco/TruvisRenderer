@@ -9,9 +9,9 @@ use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_shader_binding::gpu;
 use truvis_asset::material::MaterialData;
 
-use crate::render_world::geometry::RtTriangleMeta;
+use crate::asset_system::mesh_geometry::RtTriangleMeta;
 use crate::render_world::render_data::{InstanceRenderData, RenderData};
-use crate::render_world::render_resolver::MaterialSlotResolver;
+use crate::asset_system::AssetSystem;
 
 const INVALID_EMISSIVE_TRIANGLE_BASE: u32 = u32::MAX;
 
@@ -226,7 +226,7 @@ impl EmissiveLightFrameBuffers {
 
 /// runtime 私有的自发光三角形 light table owner。
 ///
-/// 它只读取 prepare 阶段已经解析好的 `RenderData` 和 `SceneReadView` 的材质 emissive view，
+/// 它只读取 prepare 阶段已经解析好的 `RenderData` 和 材质 resolver 返回的 emissive 参数，
 /// 不访问 `GameWorld` 或 pass 资源。GPU buffer 按 FIF 拆分，避免 CPU 更新当前帧表时覆盖
 /// 上一帧仍可能被 raygen 读取的 table。
 pub(crate) struct RenderEmissiveLightTable {
@@ -265,10 +265,10 @@ impl RenderEmissiveLightTable {
         barrier_mask: GfxBarrierMask,
         frame_label: FrameLabel,
         render_data: &RenderData<'_>,
-        material_resolver: &dyn MaterialSlotResolver,
+        assets: &AssetSystem,
     ) -> EmissiveLightBinding {
         if self.dirty {
-            self.rebuild(render_data, material_resolver);
+            self.rebuild(render_data, assets);
             self.dirty = false;
             self.version = self.version.saturating_add(1).max(1);
         }
@@ -303,7 +303,7 @@ impl RenderEmissiveLightTable {
         }
     }
 
-    fn rebuild(&mut self, render_data: &RenderData<'_>, material_resolver: &dyn MaterialSlotResolver) {
+    fn rebuild(&mut self, render_data: &RenderData<'_>, assets: &AssetSystem) {
         // base map 必须与 geometry indirect 使用同一紧凑顺序，不能用 zip 截短来容忍坏快照。
         let (_, _, base_count) = render_data.buffer_counts();
         for mesh in &render_data.all_meshes {
@@ -319,7 +319,7 @@ impl RenderEmissiveLightTable {
         // 这样 emissive table 不需要自己保存 mesh/material/instance revision 组合状态。
         let mut weighted_records = Vec::new();
         for instance in &render_data.all_instances {
-            self.append_instance(render_data, material_resolver, instance, &mut weighted_records);
+            self.append_instance(render_data, assets, instance, &mut weighted_records);
         }
         assert_eq!(self.base_map.len(), base_count, "emissive base map must match geometry indirect count");
 
@@ -339,7 +339,7 @@ impl RenderEmissiveLightTable {
     fn append_instance(
         &mut self,
         render_data: &RenderData<'_>,
-        material_resolver: &dyn MaterialSlotResolver,
+        assets: &AssetSystem,
         instance: &InstanceRenderData,
         weighted_records: &mut Vec<(usize, f64)>,
     ) {
@@ -347,7 +347,7 @@ impl RenderEmissiveLightTable {
         for (submesh_idx, (&material_slot, &material_handle)) in
             instance.material_slots.iter().zip(instance.material_handles.iter()).enumerate()
         {
-            let material = material_resolver.material_data(material_handle).expect("active instance material is missing");
+            let material = assets.material_data(material_handle).expect("active instance material is missing");
             let triangles = mesh.triangle_metadata[submesh_idx].as_slice();
             if triangles.is_empty() || !Self::is_emissive_material(material) {
                 self.base_map.push(INVALID_EMISSIVE_TRIANGLE_BASE);

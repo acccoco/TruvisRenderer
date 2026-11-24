@@ -8,7 +8,8 @@ use truvis_world::components::instance::Instance;
 use truvis_asset::handle::{CoverageMode, MaterialClass};
 use truvis_asset::material::MaterialData;
 use truvis_asset::handle::MaterialAssetHandle;
-use truvis_world::guid_new_type::SceneImportHandle;
+use truvis_render_runtime::asset_imports::{AssetImports, SceneImportHandle};
+use truvis_render_runtime::asset_system::AssetSystem;
 
 use renderer_kit::camera::Camera;
 
@@ -66,35 +67,43 @@ impl SceneInitializer {
     }
 
     /// 只在 Renderer init 调用一次；后续导入收敛由 update 完成。
-    pub fn initialize(&mut self, world: &mut GameWorld, camera: &mut Camera) {
+    /// 把已登记的资产组合成实例；World 接收该 mesh 的固定 submesh 数量。
+    fn spawn(world: &mut GameWorld, assets: &AssetSystem, instance: Instance) -> anyhow::Result<()> {
+        let mesh = assets.mesh_data(instance.mesh).ok_or_else(|| anyhow::anyhow!("missing mesh asset"))?;
+        anyhow::ensure!(instance.materials.iter().all(|&material| assets.material_data(material).is_some()), "missing material asset");
+        world.create_mesh_instance(instance, mesh.submesh_count())?;
+        Ok(())
+    }
+
+    pub fn initialize(&mut self, world: &mut GameWorld, assets: &mut AssetSystem, imports: &mut AssetImports, camera: &mut Camera) {
         self.pending_scene_import = match self.preset {
             InitialScene::Manual => {
-                manual::ManualScene::initialize(world, camera);
+                manual::ManualScene::initialize(world, assets, imports, camera);
                 None
             }
-            InitialScene::Sponza => Some(sponza::SponzaScene::initialize(world, camera)),
-            InitialScene::Cornell => Some(cornell::CornellScene::initialize(world, camera)),
+            InitialScene::Sponza => Some(sponza::SponzaScene::initialize(world, assets, imports, camera)),
+            InitialScene::Cornell => Some(cornell::CornellScene::initialize(world, imports, camera)),
         };
     }
 
     /// prepare 前收敛导入；成功或失败均结束等待，避免重复创建实例或逐帧报错。
-    pub fn update(&mut self, world: &mut GameWorld) {
+    pub fn update(&mut self, world: &mut GameWorld, assets: &AssetSystem, imports: &AssetImports) {
         let Some(handle) = self.pending_scene_import else {
             return;
         };
 
-        match world.scene_import_status(handle) {
+        match imports.scene_import_status(handle) {
             Some(LoadStatus::Unloaded | LoadStatus::Loading) => {}
             Some(LoadStatus::Failed) => {
                 // 先结束等待，诊断 unwind 后也不能再次消费同一个终态结果。
                 self.pending_scene_import = None;
-                let error = world.scene_import_error(handle).unwrap_or("unknown scene import error");
+                let error = imports.scene_import_error(handle).unwrap_or("unknown scene import error");
                 log::error!("failed to load {} scene ({}): {error}", self.preset.name(), self.preset.source_path());
             }
             Some(LoadStatus::Ready) => {
                 // 一次性领取实例化工作；后续失败保留已创建前缀，不在下一帧重放。
                 self.pending_scene_import = None;
-                let Some(scene_data) = world.scene_data(handle).cloned() else {
+                let Some(scene_data) = imports.scene_data(handle).cloned() else {
                     log::error!(
                         "{} scene ({}) import became ready without scene data",
                         self.preset.name(),
@@ -104,7 +113,7 @@ impl SceneInitializer {
                 };
 
                 for object in scene_data.objects {
-                    if let Err(error) = world.create_mesh_instance(Instance {
+                    if let Err(error) = Self::spawn(world, assets, Instance {
                         name: object.name,
                         mesh: object.mesh,
                         materials: object.materials,
@@ -143,7 +152,7 @@ impl MaterialSamples {
         "emissive-reference",
     ];
 
-    pub(super) fn register(world: &mut GameWorld) -> Self {
+    pub(super) fn register(assets: &mut AssetSystem) -> Self {
         let specs = [
             (
                 Self::NAMES[0],
@@ -165,7 +174,7 @@ impl MaterialSamples {
         ];
 
         let handles = specs.map(|(name, base_color, metallic, roughness, class)| {
-            world
+            assets
                 .register_material(MaterialData {
                     base_color,
                     metallic,
@@ -191,8 +200,8 @@ impl MaterialSamples {
         Self::NAMES[index]
     }
 
-    pub(super) fn register_ground(world: &mut GameWorld) -> MaterialAssetHandle {
-        world
+    pub(super) fn register_ground(assets: &mut AssetSystem) -> MaterialAssetHandle {
+        assets
             .register_material(MaterialData {
                 base_color: glam::vec4(0.32, 0.34, 0.38, 1.0),
                 metallic: 0.0,

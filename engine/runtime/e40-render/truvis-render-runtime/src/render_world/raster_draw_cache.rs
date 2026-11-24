@@ -54,7 +54,7 @@ pub(super) fn draw_raster_cache(
     // render pass 只获得只读 view。每次 draw 前回调 instance slot/submesh index，
     // 让具体 pass 能绑定 push constants 或 descriptor，而不暴露 RenderWorld 内部缓存结构。
     for draw in draw_cache {
-        cmd.cmd_bind_index_buffer_raw(draw.index_buffer, 0, super::geometry::RtGeometry::index_type());
+        cmd.cmd_bind_index_buffer_raw(draw.index_buffer, 0, crate::asset_system::mesh_geometry::RtGeometry::index_type());
         cmd.cmd_bind_vertex_buffers(0, &draw.vertex_buffers, &draw.vertex_offsets);
 
         before_draw(draw.instance_slot, draw.submesh_idx);
@@ -76,7 +76,7 @@ pub(super) fn draw_raster_cache_selected(
             continue;
         }
 
-        cmd.cmd_bind_index_buffer_raw(draw.index_buffer, 0, super::geometry::RtGeometry::index_type());
+        cmd.cmd_bind_index_buffer_raw(draw.index_buffer, 0, crate::asset_system::mesh_geometry::RtGeometry::index_type());
         cmd.cmd_bind_vertex_buffers(0, &draw.vertex_buffers, &draw.vertex_offsets);
 
         before_draw(draw.instance_slot, draw.submesh_idx);

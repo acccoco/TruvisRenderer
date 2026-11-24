@@ -1,5 +1,6 @@
 use ash::vk;
 
+use truvis_asset::handle::{MaterialAssetHandle, MeshAssetHandle, TextureAssetHandle};
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
@@ -7,6 +8,8 @@ use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_world::GameWorld;
 
+use crate::asset_imports::AssetImports;
+use crate::asset_system::AssetSystem;
 use crate::bindings::per_frame_gpu_data::PerFrameGpuData;
 use crate::bindings::shader_binding_system::{ShaderBindingSystem, ShaderBindingView};
 use crate::present::swapchain_presenter::PresentView;
@@ -50,6 +53,10 @@ pub struct RenderRuntimeUpdateCtx<'a> {
     pub(crate) device_ctx: GfxDeviceCtx<'a>,
     /// CPU 语义世界；update 阶段允许 Renderer/子系统修改 scene、asset 请求和运行时实例。
     pub world: &'a mut GameWorld,
+    /// init/update 独占期间可登记和编辑 CPU 资产。
+    pub assets: &'a mut AssetSystem,
+    /// 文件导入任务的协调与状态查询。
+    pub imports: &'a mut AssetImports,
     /// 当前帧渲染目标状态快照，已在 acquire 前与 swapchain 同步。
     pub frame_state: &'a FrameRenderState,
     /// 当前 swapchain extent，便于 app 在 update 阶段同步相机纵横比。
@@ -61,6 +68,38 @@ pub struct RenderRuntimeUpdateCtx<'a> {
 }
 
 impl RenderRuntimeUpdateCtx<'_> {
+    /// 拒绝删除场景中仍由实例引用的共享材质。
+    pub fn remove_material(&mut self, handle: MaterialAssetHandle) -> anyhow::Result<bool> {
+        anyhow::ensure!(
+            self.world.instance_map().values().all(|instance| !instance.materials.contains(&handle)),
+            "material is still referenced by a live instance",
+        );
+        Ok(self.assets.remove_material(handle))
+    }
+
+    /// 拒绝删除场景中仍由实例引用的共享 mesh。
+    pub fn remove_mesh(&mut self, handle: MeshAssetHandle) -> anyhow::Result<bool> {
+        anyhow::ensure!(
+            self.world.instance_map().values().all(|instance| instance.mesh != handle),
+            "mesh is still referenced by a live instance",
+        );
+        Ok(self.assets.remove_mesh(handle))
+    }
+
+    /// 同时检查材质贴图和当前 World 的天空引用。
+    pub fn remove_texture(&mut self, handle: TextureAssetHandle) -> anyhow::Result<bool> {
+        let material_uses_texture = self.assets.material_handles().any(|material| {
+            self.assets.material_data(material).is_some_and(|data| {
+                data.textures.iter().flatten().any(|slot| slot.texture == handle)
+            })
+        });
+        anyhow::ensure!(
+            !material_uses_texture && self.world.sky_state().texture != Some(handle),
+            "texture is still referenced by a material or the world sky",
+        );
+        Ok(self.assets.remove_texture(handle))
+    }
+
     pub fn set_render_extent(&mut self, extent: vk::Extent2D) {
         *self.requested_render_extent = extent;
     }
@@ -154,6 +193,10 @@ pub struct RenderRuntimeInitCtx<'a> {
     pub surface_ctx: GfxSurfaceCtx<'a>,
     /// CPU 语义世界，供 Renderer/子系统注册初始 scene、asset 和实例。
     pub world: &'a mut GameWorld,
+    /// init/update 独占期间可登记和编辑 CPU 资产。
+    pub assets: &'a mut AssetSystem,
+    /// 文件导入任务的协调与状态查询。
+    pub imports: &'a mut AssetImports,
     /// manager-owned buffer/image/view 资源生命周期 owner。
     pub gfx_resource_registry: &'a mut GfxResourceRegistry,
     /// shader-visible descriptor、bindless 和 sampler owner。

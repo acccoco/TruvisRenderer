@@ -14,6 +14,8 @@ use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_shader_binding::gpu;
 use truvis_world::GameWorld;
 
+use crate::asset_imports::AssetImports;
+use crate::asset_system::AssetSystem;
 use crate::bindings::global_descriptor_sets::PerFrameDescriptorBinding;
 use crate::bindings::per_frame_gpu_data::PerFrameGpuData;
 use crate::bindings::shader_binding_system::ShaderBindingSystem;
@@ -23,6 +25,7 @@ use crate::render_runtime_ctx::RenderPassRecordCtx;
 use crate::render_world::render_world::RenderWorld;
 use crate::resources::cmd_allocator::CmdAllocator;
 use crate::resources::gfx_resource_registry::GfxResourceRegistry;
+use crate::resources::gpu_asset_upload_queue::GpuAssetUploadQueue;
 use crate::runtime_defaults::DefaultRenderRuntimeSettings;
 use crate::state::frame_state::FrameRenderState;
 use crate::state::frame_timing::FrameTiming;
@@ -66,6 +69,9 @@ pub struct RenderRuntime {
     gfx: Gfx,
 
     world: World,
+    assets: AssetSystem,
+    imports: AssetImports,
+    asset_upload_queue: GpuAssetUploadQueue,
     gfx_resource_registry: GfxResourceRegistry,
     shader_binding_system: ShaderBindingSystem,
     frame_timing: FrameTiming,
@@ -88,8 +94,7 @@ pub struct RenderRuntime {
 impl RenderRuntime {
     /// 创建不依赖窗口系统的 runtime root state。
     ///
-    /// 这里会初始化 `Gfx`、CPU `GameWorld`、runtime 级 GPU resource/binding/timing owner 和私有
-    /// `RenderWorld`；`RenderWorld` 同时持有其内部的 `RenderAssetSystem`。
+    /// 这里初始化 `Gfx`、共享资产和导入协调、一组 `World`，以及 GPU 绑定与帧同步。
     /// 这里不会创建 surface/swapchain。窗口相关资源必须等
     /// `init_after_window` 收到平台层 raw handle 后再创建。
     pub fn new(extra_instance_ext: Vec<&'static CStr>) -> Self {
@@ -134,16 +139,27 @@ impl RenderRuntime {
             let _span = tracy_client::span!("RenderRuntime::new/bindings");
             ShaderBindingSystem::new(gfx.device_ctx(), frame_timing.frame_id())
         };
-        let mut world = {
+        let mut game_world = {
             let _span = tracy_client::span!("RenderRuntime::new/world");
             GameWorld::new()
         };
+        let mut assets = AssetSystem::new(
+            gfx.resource_ctx(),
+            gfx.device_ctx(),
+            gfx.queue_ctx(),
+            gfx.immediate_ctx(),
+            &mut gfx_resource_registry,
+            &mut shader_binding_system,
+            frame_timing.frame_id(),
+        );
+        let asset_upload_queue = GpuAssetUploadQueue::new(gfx.device_ctx(), gfx.queue_ctx());
+        let mut imports = AssetImports::new();
         {
             let _span = tracy_client::span!("RenderRuntime::new/default_sky_texture");
-            let texture = world
-                .import_texture(TruvisPath::resources_path("sky.jpg"), truvis_asset::handle::TextureColorSpace::Linear)
+            let texture = imports
+                .import_texture(&mut assets, TruvisPath::resources_path("sky.jpg"), truvis_asset::handle::TextureColorSpace::Linear)
                 .expect("failed to register default sky texture");
-            world.update_sky_texture(Some(texture)).expect("failed to assign default sky texture");
+            game_world.update_sky_texture(Some(texture));
         }
         let render_world = {
             let _span = tracy_client::span!("RenderRuntime::new/render_world");
@@ -151,7 +167,6 @@ impl RenderRuntime {
                 gfx.resource_ctx(),
                 gfx.device_ctx(),
                 gfx.immediate_ctx(),
-                gfx.queue_ctx(),
                 &mut gfx_resource_registry,
                 &mut shader_binding_system,
                 frame_timing.frame_id(),
@@ -180,7 +195,10 @@ impl RenderRuntime {
         };
         Self {
             gfx,
-            world: World { game: world, render: render_world },
+            world: World { game: game_world, render: render_world },
+            assets,
+            imports,
+            asset_upload_queue,
             gfx_resource_registry,
             shader_binding_system,
             frame_timing,
@@ -240,13 +258,21 @@ impl RenderRuntime {
         }
         self.ray_cast_service.destroy_mut(self.gfx.resource_ctx(), self.gfx.device_ctx());
         // CPU producer 先停止，GPU scene 再按完成凭据释放。
-        self.world.game.destroy_scene_mut();
-        self.world.game.destroy();
+        drop(self.imports);
+        drop(self.world.game);
+        self.world.render.gpu_sky.stop_worker();
+        self.asset_upload_queue.shutdown(self.gfx.resource_ctx(), self.gfx.device_ctx());
         self.world.render.destroy(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             &mut self.shader_binding_system,
             &mut self.gfx_resource_registry,
+        );
+        self.assets.destroy(
+            self.gfx.resource_ctx(),
+            self.gfx.device_ctx(),
+            &mut self.gfx_resource_registry,
+            &mut self.shader_binding_system,
         );
         self.per_frame_gpu_data.destroy(self.gfx.resource_ctx());
         self.render_world_update_cmds.clear();
@@ -264,7 +290,7 @@ impl RenderRuntime {
     /// 自包含的帧开始流程：时间快照更新、FIF 等待、资源清理和 manager frame id 推进。
     ///
     /// 这里是 runtime 每帧唯一的资源回收入口。先等待当前 FIF 槽位不再被 GPU 使用，
-    /// 再重置命令池和延迟释放队列；`GameWorld::poll_asset_loads` 在 update 之后的 prepare 边界执行。
+    /// 再重置命令池和延迟释放队列；导入完成在 update 入口应用。
     pub fn begin_frame(&mut self) {
         let _span = tracy_client::span!("RenderRuntime::begin_frame");
         self.history_invalidated = false;
@@ -296,6 +322,7 @@ impl RenderRuntime {
         // bindless 与 RenderWorld 内部的资源/场景 manager 都使用同一个 frame id 推进
         // 延迟回收窗口，保持 shader-visible slot 与 handle 的复用节奏一致。
         self.shader_binding_system.begin_frame(current_frame_id);
+        self.assets.begin_frame(current_frame_id);
         self.world.render.begin_frame(current_frame_id);
     }
 
@@ -313,6 +340,8 @@ impl RenderRuntime {
         RenderRuntimeUpdateCtx {
             device_ctx: self.gfx.device_ctx(),
             world: &mut self.world.game,
+            assets: &mut self.assets,
+            imports: &mut self.imports,
             frame_state: &self.frame_state,
             swapchain_extent: self.frame_state.output_extent,
             frame_timing: &self.frame_timing,
@@ -563,6 +592,8 @@ impl RenderRuntime {
             immediate_ctx: self.gfx.immediate_ctx(),
             surface_ctx: self.gfx.surface_ctx(),
             world: &mut self.world.game,
+            assets: &mut self.assets,
+            imports: &mut self.imports,
             gfx_resource_registry: &mut self.gfx_resource_registry,
             shader_binding_system: &mut self.shader_binding_system,
             frame_timing: &self.frame_timing,
@@ -589,18 +620,25 @@ impl RenderRuntime {
         let frame_label = self.frame_timing.frame_label();
         let cmd = self.render_world_update_cmds[*frame_label].clone();
 
-        // GameWorld 同步必须发生在 Renderer update 之后、RenderWorld buffer 上传之前。
-        // loader completion 先收敛到 CPU registry；RenderWorld 随后通过内部
-        // RenderAssetSystem 从最终资源表对账并提交尚未安装的 texture/mesh，再由 bindless prepare 写入本帧 descriptor。
-        self.world.game.poll_asset_loads();
-        let asset_upload_wait = self.world.render.sync_assets(
-            self.world.game.scene_view(),
-            self.gfx.resource_ctx(),
-            self.gfx.device_ctx(),
-            self.gfx.queue_ctx(),
-            &mut self.gfx_resource_registry,
-            &mut self.shader_binding_system,
+        self.imports.poll(&mut self.assets);
+        // 两类 transfer 上传在同一次 poll 后交回各自的 owner，再统一更新本帧 descriptor。
+        self.world.render.prepare_sky(
+            &self.world.game, &self.assets, self.gfx.resource_ctx(), self.gfx.device_ctx(),
+            self.gfx.queue_ctx(), &mut self.gfx_resource_registry, &mut self.asset_upload_queue,
         );
+        self.assets.submit_uploads(
+            self.gfx.resource_ctx(), self.gfx.device_ctx(), self.gfx.queue_ctx(),
+            &mut self.gfx_resource_registry, &mut self.shader_binding_system, &mut self.asset_upload_queue,
+        );
+        let mut completed = self.asset_upload_queue.poll(self.gfx.resource_ctx(), self.gfx.device_ctx());
+        self.assets.publish_textures(
+            &mut completed.textures, self.gfx.resource_ctx(), self.gfx.device_ctx(),
+            &mut self.gfx_resource_registry, &mut self.shader_binding_system,
+        );
+        self.world.render.gpu_sky.publish_completed_uploads(
+            &mut completed.sky_distributions, self.gfx.resource_ctx(), &mut self.gfx_resource_registry,
+        );
+        let asset_upload_wait = self.asset_upload_queue.graphics_wait();
 
         // RenderWorld 更新使用独立命令缓冲，把 material/instance/geometry/light/scene buffer
         // 的 staging copy 和 barrier 串在一起，作为 render graph 录制前的固定准备阶段。
@@ -620,7 +658,9 @@ impl RenderRuntime {
         // 后续 scene root buffer 会写入这些 shader-visible handle。
         self.shader_binding_system.prepare_render_data(self.gfx.device_ctx(), &self.gfx_resource_registry);
         // bindless 准备成功后才取走 CPU 通知，RenderWorld 入口立即将其交给 instance table。
+        self.assets.upload_materials(self.gfx.resource_ctx(), &cmd, transfer_barrier_mask, frame_label);
         let instance_changes = self.world.game.take_instance_changes();
+        let asset_changes = self.assets.take_render_changes();
         let render_world_result = self.world.render.prepare_render_data(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
@@ -629,8 +669,10 @@ impl RenderRuntime {
             transfer_barrier_mask,
             self.frame_timing.frame_id(),
             self.frame_timing.frame_label(),
-            self.world.game.scene_view(),
+            &self.world.game,
+            &self.assets,
             instance_changes,
+            asset_changes,
         );
         if render_world_result.history_invalidated {
             self.history_invalidated = true;
@@ -681,6 +723,7 @@ impl RenderRuntime {
             submit_info = submit_info.wait_raw(semaphore, vk::PipelineStageFlags2::ALL_COMMANDS, Some(value));
         }
         self.gfx.queue_ctx().gfx_queue().submit(vec![submit_info], None);
+        self.assets.commit_uploaded_frame(frame_label);
         self.world.render.commit_uploaded_frame(frame_label);
     }
 }

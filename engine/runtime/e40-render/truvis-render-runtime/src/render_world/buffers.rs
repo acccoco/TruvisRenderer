@@ -19,8 +19,9 @@ pub(super) struct SceneBuffers {
     pub(super) instance_buffer: GfxStructuredBuffer<gpu::engine::scene::Instance>,
     pub(super) instance_stage_buffer: GfxStructuredBuffer<gpu::engine::scene::Instance>,
     /// instance -> material slot 的间接索引表，按本帧 active instance/submesh 紧凑写入。
-    pub(super) material_indirect_buffer: GfxStructuredBuffer<u32>,
-    pub(super) material_indirect_stage_buffer: GfxStructuredBuffer<u32>,
+    /// 此 World 的 MaterialSlotTable，按实例和 submesh 索引共享 MaterialTable。
+    pub(super) material_slot_table: GfxStructuredBuffer<u32>,
+    pub(super) material_slot_stage: GfxStructuredBuffer<u32>,
     /// instance -> geometry table index 的间接索引表，按本帧 active instance/submesh 紧凑写入。
     pub(super) geometry_indirect_buffer: GfxStructuredBuffer<u32>,
     pub(super) geometry_indirect_stage_buffer: GfxStructuredBuffer<u32>,
@@ -43,17 +44,16 @@ impl SceneBuffers {
         let scene;
         let geometry;
         let instance;
-        let material_indirect;
         let geometry_indirect;
         scene = GfxStructuredBuffer::new_ubo(ctx, 1, format!("scene buffer-{frame_label}"));
         geometry = Self::new_pair(ctx, max_geometry_cnt, &format!("geometry-{frame_label}"));
         instance = Self::new_pair(ctx, max_instance_cnt, &format!("instance-{frame_label}"));
-        material_indirect = Self::new_pair(ctx, max_instance_cnt * 8, &format!("material-indirect-{frame_label}"));
         geometry_indirect = Self::new_pair(ctx, max_instance_cnt * 8, &format!("geometry-indirect-{frame_label}"));
 
         let (geometry_buffer, geometry_stage_buffer) = geometry;
         let (instance_buffer, instance_stage_buffer) = instance;
-        let (material_indirect_buffer, material_indirect_stage_buffer) = material_indirect;
+        let (material_slot_table, material_slot_stage) =
+            Self::new_pair(ctx, max_instance_cnt * 8, &format!("material-slot-table-{frame_label}"));
         let (geometry_indirect_buffer, geometry_indirect_stage_buffer) = geometry_indirect;
         Self {
             scene_buffer: scene,
@@ -61,8 +61,8 @@ impl SceneBuffers {
             geometry_stage_buffer,
             instance_buffer,
             instance_stage_buffer,
-            material_indirect_buffer,
-            material_indirect_stage_buffer,
+            material_slot_table,
+            material_slot_stage,
             geometry_indirect_buffer,
             geometry_indirect_stage_buffer,
             accum_signature: RenderSceneAccumSignature::default(),
@@ -124,8 +124,8 @@ impl SceneBuffers {
             &mut self.needs_full_upload,
         );
         Self::grow_pair(
-            &mut self.material_indirect_buffer,
-            &mut self.material_indirect_stage_buffer,
+            &mut self.material_slot_table,
+            &mut self.material_slot_stage,
             indirect_count,
             &format!("material-indirect-{frame}"),
             ctx,
@@ -184,8 +184,8 @@ impl SceneBuffers {
             DestroyReason::Shutdown,
         );
         Self::destroy_pair(
-            &mut self.material_indirect_buffer,
-            &mut self.material_indirect_stage_buffer,
+            &mut self.material_slot_table,
+            &mut self.material_slot_stage,
             resource_ctx,
             DestroyReason::Shutdown,
         );

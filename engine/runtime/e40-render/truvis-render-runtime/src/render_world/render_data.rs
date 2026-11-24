@@ -1,8 +1,6 @@
-use ash::vk;
-
 use truvis_asset::handle::MaterialAssetHandle;
 
-use super::geometry::{RtGeometry, RtTriangleMeta};
+use crate::asset_system::mesh_geometry::MeshRenderData;
 
 /// Instance 在 GPU scene instance buffer 中的稳定 slot。
 ///
@@ -33,7 +31,7 @@ impl GpuInstanceSlot {
 /// 用于渲染的单个实例快照。
 ///
 /// 它已经把 CPU scene 中的 resource handle 解析为稳定 instance slot、mesh 索引和
-/// material slot；`RenderWorld` 只消费这些 render-side 索引，不再访问 `SceneStore`。
+/// material slot；`RenderWorld` 只消费这些 render-side 索引，不再访问 `GameWorld`。
 #[derive(Clone)]
 pub(crate) struct InstanceRenderData {
     /// 该实例在 GPU instance buffer 与 TLAS custom index 中共用的稳定 slot。
@@ -48,19 +46,6 @@ pub(crate) struct InstanceRenderData {
     pub(crate) requires_any_hit: bool,
     /// 由 CPU scene 提供的模型矩阵，prepare 阶段会写入 instance buffer 并参与 TLAS 构建。
     pub(crate) transform: glam::Mat4,
-}
-
-/// 用于渲染的 mesh GPU 数据引用。
-///
-/// `RtGeometry` 与 BLAS 生命周期由 `GpuMeshStore` 持有，这里只借用已完成上传的
-/// render-side 数据，保证 `RenderData` 构建期间不会复制 GPU 资源 owner。
-pub(crate) struct MeshRenderData<'a> {
-    /// 该 mesh 包含的所有 submesh 几何体。
-    pub(crate) geometries: &'a [RtGeometry],
-    /// 与 `geometries` 同顺序的 CPU 三角形元数据，只保存 light table 构建需要的最小字段。
-    pub(crate) triangle_metadata: &'a [Vec<RtTriangleMeta>],
-    /// BLAS 的设备地址，用于 `RenderWorld` 构建 TLAS；未 ready 的 mesh 不应出现在 active 实例中。
-    pub(crate) blas_device_address: Option<vk::DeviceAddress>,
 }
 
 /// 由 render-side scene bridge 构建的场景数据快照。

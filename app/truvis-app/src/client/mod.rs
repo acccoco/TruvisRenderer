@@ -12,6 +12,8 @@ use truvis_editor_bridge::{
 use truvis_renderer::RendererClient;
 use truvis_renderer::{SceneSelection, SelectionChange};
 use truvis_scenes::{InitialScene, SceneInitializer};
+use truvis_render_runtime::asset_imports::AssetImports;
+use truvis_render_runtime::asset_system::AssetSystem;
 use truvis_world::GameWorld;
 
 use self::desktop_command::DesktopCommandController;
@@ -78,19 +80,19 @@ impl TruvisAppClient {
 }
 
 impl RendererClient for TruvisAppClient {
-    fn initialize(&mut self, world: &mut GameWorld, camera: &mut Camera) {
-        self.scene.initialize(world, camera);
+    fn initialize(&mut self, world: &mut GameWorld, assets: &mut AssetSystem, imports: &mut AssetImports, camera: &mut Camera) {
+        self.scene.initialize(world, assets, imports, camera);
     }
 
-    fn tick(&mut self, world: &mut GameWorld, selection: Option<SceneSelection>) {
-        self.scene.update(world);
+    fn tick(&mut self, world: &mut GameWorld, assets: &mut AssetSystem, imports: &mut AssetImports, selection: Option<SceneSelection>) {
+        self.scene.update(world, assets, imports);
 
-        let desktop_update = self.desktop_commands.process_next(world);
+        let desktop_update = self.desktop_commands.process_next(world, assets, imports);
         if let Some(scene_version) = desktop_update.scene_version_changed {
             self.editor.notify_scene_version_changed(scene_version);
         }
-        self.editor.process_requests(world, selection);
-        self.automation.process_requests(world);
+        self.editor.process_requests(world, assets, selection);
+        self.automation.process_requests(world, assets, imports);
     }
 
     fn on_selection_changed(&mut self, selection: Option<SelectionChange>) {

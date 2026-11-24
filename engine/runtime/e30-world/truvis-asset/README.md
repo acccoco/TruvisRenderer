@@ -1,19 +1,15 @@
 # truvis-asset
 
-资产加载模块只负责一次性的 CPU 文件读取、纹理解码和 scene 导入。它位于 `AssetSystem`
-和 RenderRuntime 之间，不创建 Vulkan image、buffer、BLAS、descriptor 或 material slot。
-长期资产 handle 和 CPU 材质参数也定义在本 crate，由上层资产 owner 分配和保存。
+本 crate 定义共享资产身份、CPU payload 与一次性加载服务。文件读取、纹理解码和 scene 导入由后台执行；
+Runtime 的 `AssetImports` 在 prepare 入口将结果应用到 `AssetSystem`，并交付给上层场景初始化逻辑。
 
 ## 组件与边界
 
-- `AssetLoadService` 分配 `TextureLoadHandle` / `SceneLoadHandle`，保存一次性请求描述，
-  收集 worker 结果并发布 `AssetLoadEvent`。
-- `AssetLoadWorker` 隐藏 Rayon 线程池和结果 channel。后台任务只读取文件、解码纹理、
-  导入 scene 并复制 owned Rust 数据，不修改 `AssetStore`、`GameWorld` 或 `SceneStore`。
-- `TextureLoadDesc` / `SceneLoadDesc` 是 task 输入，不承担长期资源身份；`TextureBytes`、
-  `MeshData` 和 `RawSceneData` 是 CPU completion payload。
-- `AssetSystem` 消费事件并分配 `TextureAssetHandle`、`MeshAssetHandle`、
-  `MaterialAssetHandle`；scene 完成后发布 `SceneData`，外部再创建 `MeshInstanceHandle`。
+- `AssetLoadService` 分配短期 load handle，保存请求描述并收集 worker 的 `AssetLoadEvent`。
+- `AssetLoadWorker` 持有线程池和结果 channel，worker 只交付 owned 内存数据。
+- `TextureLoadDesc` / `SceneLoadDesc` 是任务输入，`TextureBytes`、`MeshData` 和
+  `RawSceneData` 是 CPU payload。`MaterialData` 持有长期纹理身份。
+- `TextureAssetHandle`、`MeshAssetHandle`、`MaterialAssetHandle` 在 Runtime 的共享 AssetSystem 内分配。
 
 `TextureLoadHandle` 和 `SceneLoadHandle` 只在加载阶段存在。它们不表示长期资源、GPU slot
 或 live runtime instance。CPU `Ready` 也不表示 GPU upload 或 descriptor publish 已完成。
@@ -66,7 +62,7 @@ transform”，不承诺 bind pose。morph 不求值，但 target 数量、权�
 Assimp / glTF loader 只复制 owned scene 数据。glTF loader 在把外部 image URI 复制为
 `RawTextureSource::ExternalPath` 前完成 percent-decoding，并对非法 percent escape 或无效
 UTF-8 直接失败；`RawTextureSource` 随后保留已解码的本地路径或 embedded bytes。路径解析、canonicalize、`AssetSource` 构造以及
-`AssetSource + TextureColorSpace` 去重由 `truvis-world` 的 `AssetSystem` 负责。
+`AssetSource + TextureColorSpace` 去重由 Runtime 的导入协调与 AssetSystem 负责。
 Embedded source 使用 canonical scene path 与 image index 表示。
 
 Assimp Reader 在返回成功前复用 `SubmeshData::normalize_imported_frame` 归一化/修复法线并检查几何，并校验实例的
@@ -115,7 +111,7 @@ count 的 u32 上限保护寻址和 sparse 游标，不是内存预算；大输�
 buffer/image 共用严格 URI 解码：data URI 先解码 percent escape，再按末尾 base64 标志
 解码一次；普通未转义 base64 借用原文本。外部路径拒绝空值、NUL、远程 scheme 和未编码
 的 query/fragment；支持本地相对/绝对路径，`file:` 前缀后须为平台可识别的绝对路径，
-不处理 URL authority。路径定位与文件存在性仍由对应 buffer 读取或 AssetSystem 负责。
+不处理 URL authority。路径定位与文件存在性由 buffer 读取或 AssetImports 处理。
 
 图片解码不翻转行；glTF UV 保持原值，Assimp 继续由 C++ 导入阶段处理坐标约定。
 `TextureBytes` 校验 extent 和四通道元素数量，并根据 payload 推导 Vulkan format；HDR/EXR

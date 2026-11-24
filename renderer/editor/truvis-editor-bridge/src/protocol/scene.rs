@@ -36,7 +36,7 @@ pub struct MeshSummaryDto {
     /// 当前 session 内的 mesh opaque identity，不表示 GPU geometry slot 或 BLAS identity。
     pub mesh_id: MeshId,
 
-    /// `SceneStore` 长期保存的 mesh 展示名称。
+    /// `AssetSystem` 持有的 mesh 展示名称。
     pub name: String,
 }
 
@@ -68,7 +68,7 @@ pub struct InstanceTransformDto {
 
 /// Web 右侧栏按需读取的完整 CPU scene instance 投影。
 ///
-/// DTO 在一次 Renderer update 查询中从同一个 `SceneReadView` 构造，Web 只把它作为
+/// DTO 在一次 Renderer update 查询中通过当前场景状态和资产数据构造，Web 只把它作为
 /// 可丢弃投影。TRS 不属于 shader ABI，也不表示 GPU scene 已经 ready。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct InstanceDetailsDto {
@@ -78,7 +78,7 @@ pub struct InstanceDetailsDto {
     /// 当前 session 内用于重新查询和失效检测的 opaque identity。
     pub instance_id: InstanceId,
 
-    /// `SceneStore` 持有的 instance 展示名称。
+    /// `GameWorld` 持有的 instance 展示名称。
     pub name: String,
 
     /// 无法可靠分解时为 null，其他 instance 信息仍正常返回。
