@@ -44,8 +44,10 @@ FIF 副本和语义版本分别确认。MaterialSlotTable 在实例成员、绑�
 
 ## 删除边界
 
-update context 对当前 World 的实例、材质和天空引用执行检查。
-晚到的异步完成通过 generational handle 校验，仅释放失效任务的结果。
+上层保证下一次提交中的引用有效。移除纹理前，可在同一 tick 清空或替换相关材质和环境引用；
+移除材质或 mesh 前，可改绑或移除相关实例。AssetSystem 的删除只处理目标资产自身的登记与退役。
+已发布纹理的引用由上层通过普通材质或环境编辑调整。晚到的异步完成通过 generational handle 校验，
+仅释放失效任务的结果。GPU 退役条件见[资源生命周期](resource-lifecycle-and-destruction.md)。
 
 ## FIF 与 capacity
 

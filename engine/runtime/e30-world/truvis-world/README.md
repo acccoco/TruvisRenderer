@@ -12,4 +12,5 @@ mesh 不变时，改绑继续匹配实例原有的材质数量。
 - `GameWorld::update_light` 合并完整 patch 后校验并提交。位置编辑复用这一入口。
   `SceneSkyState` 保存贴图引用、亮度、启用状态和语义版本。
 
-共享资产、加载任务及 GPU scene 由 Runtime 内各自的 owner 管理。update context 负责在删除资产前检查当前引用。相关生命周期见[场景同步设计](../../../../docs/design/scene-sync-and-render-world.md)。
+共享资产、加载任务及 GPU scene 由 Runtime 内各自的 owner 管理。上层决定替换或移除引用，
+独立提交场景编辑和资产删除。相关生命周期见[场景同步设计](../../../../docs/design/scene-sync-and-render-world.md)。

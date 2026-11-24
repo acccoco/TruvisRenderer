@@ -52,7 +52,7 @@ WSI present 使用的 semaphore/swapchain 必须满足 presentation 侧的释放
 
 ## 退役与 FIF
 
-update context 拒绝删除仍被实例、材质或天空引用的资产。通过检查的删除撤销登记，并按 FIF 退役资源和 slot。晚到的 completion 只销毁失效任务的结果。
+上层先保证后续提交引用有效。AssetSystem 的删除撤销自身 membership，并按 FIF 退役资源和 slot。晚到的 completion 只销毁失效任务的结果。
 
 每个 FIF 副本在再次使用前必须经过 timeline 安全点。资源 registry 负责延迟释放；manager 负责撤销自己的 shader-visible slot 和局部 cache。
 

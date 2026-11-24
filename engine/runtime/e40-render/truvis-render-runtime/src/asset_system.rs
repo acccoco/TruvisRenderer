@@ -292,44 +292,34 @@ impl AssetSystem {
     }
 
     pub fn register_material(&mut self, data: MaterialData) -> anyhow::Result<MaterialAssetHandle> {
-        self.validate_texture_refs(&data)?;
         let handle = self.materials.register(data, &self.textures, &self.gpu_textures)?;
         self.revision = self.revision.saturating_add(1);
         Ok(handle)
     }
 
     pub fn update_material(&mut self, handle: MaterialAssetHandle, data: MaterialData) -> anyhow::Result<()> {
-        self.validate_texture_refs(&data)?;
         if self.materials.update(handle, data, &self.textures, &self.gpu_textures)? {
             self.revision = self.revision.saturating_add(1);
         }
         Ok(())
     }
 
-    fn validate_texture_refs(&self, data: &MaterialData) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            data.textures.iter().flatten().all(|slot| self.contains_texture(slot.texture)),
-            "material references a missing texture",
-        );
-        Ok(())
-    }
-
     /// 调用方在随后的提交前处理材质引用；GPU 对象随后按帧同步退役。
-    pub(crate) fn remove_material(&mut self, handle: MaterialAssetHandle) -> bool {
+    pub fn remove_material(&mut self, handle: MaterialAssetHandle) -> bool {
         let removed = self.materials.remove(handle);
         self.revision = self.revision.saturating_add(u64::from(removed));
         removed
     }
 
     /// 调用方在随后的提交前处理实例引用。
-    pub(crate) fn remove_mesh(&mut self, handle: MeshAssetHandle) -> bool {
+    pub fn remove_mesh(&mut self, handle: MeshAssetHandle) -> bool {
         let removed = self.meshes.remove(handle).is_some();
         self.revision = self.revision.saturating_add(u64::from(removed));
         removed
     }
 
     /// 调用方在随后的提交前处理材质与天空引用。
-    pub(crate) fn remove_texture(&mut self, handle: TextureAssetHandle) -> bool {
+    pub fn remove_texture(&mut self, handle: TextureAssetHandle) -> bool {
         let Some(record) = self.textures.remove(handle) else {
             return false;
         };

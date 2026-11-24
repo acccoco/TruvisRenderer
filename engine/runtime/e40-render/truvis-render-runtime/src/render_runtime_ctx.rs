@@ -1,6 +1,5 @@
 use ash::vk;
 
-use truvis_asset::handle::{MaterialAssetHandle, MeshAssetHandle, TextureAssetHandle};
 use truvis_gfx::commands::semaphore::GfxSemaphore;
 use truvis_gfx::gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx, GfxSurfaceCtx};
 use truvis_gfx::swapchain::swapchain::GfxSwapchainImageInfo;
@@ -68,38 +67,6 @@ pub struct RenderRuntimeUpdateCtx<'a> {
 }
 
 impl RenderRuntimeUpdateCtx<'_> {
-    /// 拒绝删除场景中仍由实例引用的共享材质。
-    pub fn remove_material(&mut self, handle: MaterialAssetHandle) -> anyhow::Result<bool> {
-        anyhow::ensure!(
-            self.world.instance_map().values().all(|instance| !instance.materials.contains(&handle)),
-            "material is still referenced by a live instance",
-        );
-        Ok(self.assets.remove_material(handle))
-    }
-
-    /// 拒绝删除场景中仍由实例引用的共享 mesh。
-    pub fn remove_mesh(&mut self, handle: MeshAssetHandle) -> anyhow::Result<bool> {
-        anyhow::ensure!(
-            self.world.instance_map().values().all(|instance| instance.mesh != handle),
-            "mesh is still referenced by a live instance",
-        );
-        Ok(self.assets.remove_mesh(handle))
-    }
-
-    /// 同时检查材质贴图和当前 World 的天空引用。
-    pub fn remove_texture(&mut self, handle: TextureAssetHandle) -> anyhow::Result<bool> {
-        let material_uses_texture = self.assets.material_handles().any(|material| {
-            self.assets.material_data(material).is_some_and(|data| {
-                data.textures.iter().flatten().any(|slot| slot.texture == handle)
-            })
-        });
-        anyhow::ensure!(
-            !material_uses_texture && self.world.sky_state().texture != Some(handle),
-            "texture is still referenced by a material or the world sky",
-        );
-        Ok(self.assets.remove_texture(handle))
-    }
-
     pub fn set_render_extent(&mut self, extent: vk::Extent2D) {
         *self.requested_render_extent = extent;
     }
