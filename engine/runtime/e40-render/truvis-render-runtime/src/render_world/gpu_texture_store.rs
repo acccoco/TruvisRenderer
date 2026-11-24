@@ -10,7 +10,7 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_render_foundation::handles::{GfxImageHandle, GfxImageViewHandle};
 use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
-use truvis_world::guid_new_type::TextureAssetHandle;
+use truvis_asset::handle::TextureAssetHandle;
 
 use crate::bindings::bindless_manager::BindlessSrvHandle;
 use crate::bindings::shader_binding_system::ShaderBindingSystem;

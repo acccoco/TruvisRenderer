@@ -1,5 +1,5 @@
 use crate::components::transform::{TransformDecompositionError, TransformTrs};
-use crate::guid_new_type::{MaterialAssetHandle, MeshAssetHandle};
+use truvis_asset::handle::{MaterialAssetHandle, MeshAssetHandle};
 
 /// CPU 侧的 live instance 语义数据。
 ///

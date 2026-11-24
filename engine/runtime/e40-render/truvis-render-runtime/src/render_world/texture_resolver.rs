@@ -5,7 +5,7 @@
 //! 纹理上传、fallback 资源所有权和 bindless 注册仍由纹理管理器等实现方负责。
 
 use truvis_shader_binding::gpu;
-use truvis_world::guid_new_type::TextureAssetHandle;
+use truvis_asset::handle::TextureAssetHandle;
 
 use crate::bindings::bindless_manager::BindlessSrvHandle;
 

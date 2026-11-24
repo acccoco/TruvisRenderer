@@ -13,7 +13,7 @@ use truvis_gfx::gfx::{GfxDeviceCtx, GfxQueueCtx, GfxResourceCtx};
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_world::guid_new_type::TextureAssetHandle;
+use truvis_asset::handle::TextureAssetHandle;
 
 use crate::render_world::sky_distribution_builder::SkyDistributionBuild;
 

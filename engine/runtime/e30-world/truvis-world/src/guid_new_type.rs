@@ -14,25 +14,6 @@ new_key_type! {
     /// prepare/sync 阶段把它映射到稳定的 GPU instance slot，二者不共享所有权或生命周期。
     pub struct MeshInstanceHandle;
 
-    /// `AssetStore` 内 texture 资源记录的 runtime 身份。
-    ///
-    /// 该 handle 是 CPU scene 对 texture 的长期引用边界，不表示 texture CPU bytes 或
-    /// GPU image 已存在。`AssetLoadService` 的 loader handle 只在 `AssetSystem` 内部用于
-    /// 完成事件翻译，不会作为 scene / render-world 的长期身份。
-    pub struct TextureAssetHandle;
-
-    /// `AssetStore` 内 mesh 资源记录的 runtime 身份。
-    ///
-    /// 该 handle 是 CPU scene 对 mesh 的长期引用边界，不表示 mesh 已完成 GPU 上传或
-    /// BLAS 构建。渲染侧 manager 以该 handle 作为 GPU-ready mesh cache key。
-    pub struct MeshAssetHandle;
-
-    /// `AssetStore` 内 material 资源记录的 runtime 身份。
-    ///
-    /// 该 handle 是 CPU scene 对材质参数的长期引用边界，不表示已经分配 shader 可见
-    /// material slot。渲染侧 material manager 以该 handle 作为 CPU material 注册 key。
-    pub struct MaterialAssetHandle;
-
     /// `SceneStore` 内 live light 的 runtime 身份。
     ///
     /// 该 handle 标识某一类 CPU 侧光源记录；point / spot / area light 分别存放在独立

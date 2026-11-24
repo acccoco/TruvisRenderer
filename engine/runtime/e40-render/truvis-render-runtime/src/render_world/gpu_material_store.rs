@@ -15,8 +15,9 @@ use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuff
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
-use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
-use truvis_world::guid_new_type::MaterialAssetHandle;
+use truvis_asset::handle::{CoverageMode, MaterialClass};
+use truvis_asset::material::MaterialData;
+use truvis_asset::handle::MaterialAssetHandle;
 
 use crate::render_world::render_resolver::MaterialSlotResolver;
 use crate::render_world::texture_resolver::{TextureBinding, TextureResolver};

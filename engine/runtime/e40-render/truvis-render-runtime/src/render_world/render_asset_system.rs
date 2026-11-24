@@ -17,9 +17,9 @@ use crate::resources::gfx_resource_registry::GfxResourceRegistry;
 /// instance 局部对账。实际 ready 仍由 resolver 判断，不能将上传入队当作发布。
 #[derive(Default)]
 pub(crate) struct RenderResourceSyncResult {
-    pub(crate) published_meshes: indexmap::IndexSet<truvis_world::guid_new_type::MeshAssetHandle>,
-    pub(crate) appearance_changed_materials: indexmap::IndexSet<truvis_world::guid_new_type::MaterialAssetHandle>,
-    pub(crate) emissive_changed_materials: indexmap::IndexSet<truvis_world::guid_new_type::MaterialAssetHandle>,
+    pub(crate) published_meshes: indexmap::IndexSet<truvis_asset::handle::MeshAssetHandle>,
+    pub(crate) appearance_changed_materials: indexmap::IndexSet<truvis_asset::handle::MaterialAssetHandle>,
+    pub(crate) emissive_changed_materials: indexmap::IndexSet<truvis_asset::handle::MaterialAssetHandle>,
     pub(crate) sky_changed: bool,
 }
 

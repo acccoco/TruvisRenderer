@@ -1,6 +1,6 @@
 use ash::vk;
 
-use truvis_world::guid_new_type::MaterialAssetHandle;
+use truvis_asset::handle::MaterialAssetHandle;
 
 use super::geometry::{RtGeometry, RtTriangleMeta};
 

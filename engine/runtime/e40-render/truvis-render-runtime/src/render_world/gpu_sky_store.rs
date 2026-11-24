@@ -11,7 +11,8 @@ use truvis_render_foundation::{
     handles::{GfxBufferHandle, GfxImageHandle, GfxImageViewHandle},
 };
 use truvis_shader_binding::gpu;
-use truvis_world::{SceneSkyState, guid_new_type::TextureAssetHandle};
+use truvis_asset::handle::TextureAssetHandle;
+use truvis_world::SceneSkyState;
 
 use crate::{
     bindings::{bindless_manager::BindlessSrvHandle, shader_binding_system::ShaderBindingSystem},

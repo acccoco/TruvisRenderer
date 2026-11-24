@@ -5,14 +5,14 @@ use slotmap::SlotMap;
 
 use truvis_asset::asset_load_service::{AssetLoadEvent, AssetLoadService};
 use truvis_asset::handle::{
-    EmbeddedTextureId, LoadStatus, RawMaterialData, RawSceneData, RawTextureSource, SceneLoadDesc, SceneLoadHandle, TextureBytes,
-    TextureColorSpace, TextureLoadDesc, TextureLoadHandle,
+    EmbeddedTextureId, LoadStatus, MaterialAssetHandle, MeshAssetHandle, RawMaterialData, RawSceneData, RawTextureSource,
+    SceneLoadDesc, SceneLoadHandle, TextureAssetHandle, TextureBytes, TextureColorSpace, TextureLoadDesc, TextureLoadHandle,
 };
+use truvis_asset::material::MaterialData;
 use truvis_asset::material_texture::TextureChannel;
 
-use crate::components::material::MaterialData;
 use crate::edit_error::{SceneEditError, SceneHandleKind};
-use crate::guid_new_type::{MaterialAssetHandle, MeshAssetHandle, SceneImportHandle, TextureAssetHandle};
+use crate::guid_new_type::SceneImportHandle;
 
 /// 资源的可持久化来源描述。来源不进入资源 handle，而是随 record 保存。
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -694,7 +694,8 @@ impl Default for AssetSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::material::{CoverageMode, MaterialClass, TextureSlot};
+    use truvis_asset::handle::{CoverageMode, MaterialClass};
+    use truvis_asset::material_texture::TextureSlot;
 
     #[test]
     fn texture_reverse_reference_controls_orphan_removal() {

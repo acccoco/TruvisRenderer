@@ -1,5 +1,6 @@
 use truvis_render_runtime::selection::WorldSubmeshSelection;
-use truvis_world::{GameWorld, LightTarget, guid_new_type::MaterialAssetHandle};
+use truvis_asset::handle::MaterialAssetHandle;
+use truvis_world::{GameWorld, LightTarget};
 
 /// Renderer 唯一选择状态；使用 CPU 身份，不缓存 GPU slot 或材质。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

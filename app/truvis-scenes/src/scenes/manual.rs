@@ -3,8 +3,10 @@ use truvis_path::TruvisPath;
 use truvis_shader_binding::gpu;
 use truvis_world::GameWorld;
 use truvis_world::components::instance::Instance;
-use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData, TextureChannel, TextureSlot};
-use truvis_world::guid_new_type::{MaterialAssetHandle, MeshAssetHandle};
+use truvis_asset::handle::{CoverageMode, MaterialClass};
+use truvis_asset::material::MaterialData;
+use truvis_asset::material_texture::{TextureChannel, TextureSlot};
+use truvis_asset::handle::{MaterialAssetHandle, MeshAssetHandle};
 use truvis_world::procedural_mesh::ProceduralMeshKind;
 
 use renderer_kit::camera::Camera;

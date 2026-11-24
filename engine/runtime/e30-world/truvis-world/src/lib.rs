@@ -6,7 +6,8 @@
 
 use std::path::PathBuf;
 
-use truvis_asset::handle::{LoadStatus, MeshData, TextureColorSpace};
+use truvis_asset::handle::{LoadStatus, MaterialAssetHandle, MeshAssetHandle, MeshData, TextureAssetHandle, TextureColorSpace};
+use truvis_asset::material::MaterialData;
 use truvis_shader_binding::gpu;
 
 mod asset_system;
@@ -20,11 +21,8 @@ mod scene_store;
 
 pub use crate::asset_system::{AssetSource, AssetSystem, GeneratedSourceKey, SceneData, SceneObjectData, TextureRecord, TextureState};
 use crate::components::instance::Instance;
-use crate::components::material::MaterialData;
 pub use crate::edit_error::{SceneEditError, SceneHandleKind, WorldEditError};
-use crate::guid_new_type::{
-    LightHandle, MaterialAssetHandle, MeshAssetHandle, MeshInstanceHandle, SceneImportHandle, TextureAssetHandle,
-};
+use crate::guid_new_type::{LightHandle, MeshInstanceHandle, SceneImportHandle};
 pub use crate::light_target::LightTarget;
 use crate::scene_store::SceneStore;
 pub use crate::scene_store::{SceneReadView, SceneSkyState};

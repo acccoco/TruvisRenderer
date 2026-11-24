@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
 use slotmap::{Key, KeyData};
+use truvis_asset::handle::{CoverageMode, MaterialAssetHandle, MaterialClass, MeshAssetHandle, TextureAssetHandle};
+use truvis_asset::material::MaterialData;
 use truvis_asset::material_texture::{TextureFilter, TextureSampler, TextureTransform, TextureWrap};
 use truvis_editor_bridge::{
     EditorRendererEndpoint, EditorRequestEnvelope,
@@ -16,8 +18,7 @@ use truvis_editor_bridge::{
 use truvis_renderer::{SceneSelection, SelectionChange};
 use truvis_world::{
     AreaLightShape, AssetSource, GameWorld, LightTarget, SceneEditError, TextureState, WorldEditError,
-    components::material::{CoverageMode, MaterialClass, MaterialData},
-    guid_new_type::{MaterialAssetHandle, MeshAssetHandle, MeshInstanceHandle, TextureAssetHandle},
+    guid_new_type::MeshInstanceHandle,
 };
 
 /// Editor 请求在单帧 update 中的处理预算。

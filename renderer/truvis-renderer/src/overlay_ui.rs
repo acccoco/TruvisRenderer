@@ -12,7 +12,8 @@ use renderer_render_ui::RenderControlsOverlay;
 use renderer_rendering::{OfflineRenderSettings, PathTracingCommonSettings, RealtimeRenderSettings, RenderMode};
 use truvis_render_runtime::ray_cast::RayCastResult;
 use truvis_world::GameWorld;
-use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
+use truvis_asset::handle::{CoverageMode, MaterialClass};
+use truvis_asset::material::MaterialData;
 
 use crate::truvis_renderer::ClickRayCastProbe;
 

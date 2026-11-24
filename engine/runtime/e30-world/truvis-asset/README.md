@@ -2,6 +2,7 @@
 
 资产加载模块只负责一次性的 CPU 文件读取、纹理解码和 scene 导入。它位于 `AssetSystem`
 和 RenderRuntime 之间，不创建 Vulkan image、buffer、BLAS、descriptor 或 material slot。
+长期资产 handle 和 CPU 材质参数也定义在本 crate，由上层资产 owner 分配和保存。
 
 ## 组件与边界
 

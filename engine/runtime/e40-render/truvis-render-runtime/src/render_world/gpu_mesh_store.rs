@@ -22,7 +22,7 @@ use truvis_gfx::resources::special_buffers::vertex_buffer::GfxVertexBuffer;
 use truvis_gfx::resources::vertex_layout::soa_3d::VertexLayoutSoA3D;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_world::SceneReadView;
-use truvis_world::guid_new_type::MeshAssetHandle;
+use truvis_asset::handle::MeshAssetHandle;
 
 use crate::render_world::geometry::{RtGeometry, RtTriangleMeta};
 use crate::render_world::render_data::MeshRenderData;

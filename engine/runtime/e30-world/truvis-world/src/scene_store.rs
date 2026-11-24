@@ -2,15 +2,17 @@ use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexSet;
 use slotmap::{SecondaryMap, SlotMap};
-use truvis_asset::handle::{MeshData, TextureBytes};
+
+use truvis_asset::handle::{MaterialAssetHandle, MeshAssetHandle, MeshData, TextureAssetHandle, TextureBytes};
+use truvis_asset::material::MaterialData;
 use truvis_shader_binding::gpu;
 
 use crate::{
     AreaLightShape, LightPatch, LightTarget, TextureRecord,
     asset_system::AssetStore,
-    components::{instance::Instance, material::MaterialData},
+    components::instance::Instance,
     edit_error::{SceneEditError, SceneHandleKind},
-    guid_new_type::{LightHandle, MaterialAssetHandle, MeshAssetHandle, MeshInstanceHandle, TextureAssetHandle},
+    guid_new_type::{LightHandle, MeshInstanceHandle},
 };
 
 /// CPU scene 中的 sky / environment 权威状态。
@@ -626,7 +628,7 @@ impl SceneStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::components::material::{CoverageMode, MaterialClass};
+    use truvis_asset::handle::{CoverageMode, MaterialClass};
     use truvis_asset::handle::{MeshData, SubmeshData};
 
     use super::*;

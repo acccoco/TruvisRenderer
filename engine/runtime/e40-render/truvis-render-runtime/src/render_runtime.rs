@@ -32,6 +32,12 @@ pub use crate::render_runtime_ctx::{
     RenderRuntimeShutdownCtx, RenderRuntimeUpdateCtx,
 };
 
+/// 同一个场景的权威 CPU 状态和 prepare 后的 GPU 表示。
+struct World {
+    game: GameWorld,
+    render: RenderWorld,
+}
+
 /// 渲染运行时核心。
 ///
 /// 只通过返回类型化 Ctx 结构的生命周期方法暴露状态。
@@ -59,7 +65,7 @@ pub use crate::render_runtime_ctx::{
 pub struct RenderRuntime {
     gfx: Gfx,
 
-    world: GameWorld,
+    world: World,
     gfx_resource_registry: GfxResourceRegistry,
     shader_binding_system: ShaderBindingSystem,
     frame_timing: FrameTiming,
@@ -67,7 +73,6 @@ pub struct RenderRuntime {
     frame_state: FrameRenderState,
     requested_render_extent: vk::Extent2D,
     history_invalidated: bool,
-    render_world: RenderWorld,
     ray_cast_service: RayCastService,
 
     cmd_allocator: CmdAllocator,
@@ -175,13 +180,12 @@ impl RenderRuntime {
         };
         Self {
             gfx,
-            world,
+            world: World { game: world, render: render_world },
             gfx_resource_registry,
             shader_binding_system,
             frame_timing,
             per_frame_gpu_data,
             frame_state,
-            render_world,
             ray_cast_service,
             cmd_allocator,
             fif_timeline_semaphore,
@@ -236,9 +240,9 @@ impl RenderRuntime {
         }
         self.ray_cast_service.destroy_mut(self.gfx.resource_ctx(), self.gfx.device_ctx());
         // CPU producer 先停止，GPU scene 再按完成凭据释放。
-        self.world.destroy_scene_mut();
-        self.world.destroy();
-        self.render_world.destroy(
+        self.world.game.destroy_scene_mut();
+        self.world.game.destroy();
+        self.world.render.destroy(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             &mut self.shader_binding_system,
@@ -292,7 +296,7 @@ impl RenderRuntime {
         // bindless 与 RenderWorld 内部的资源/场景 manager 都使用同一个 frame id 推进
         // 延迟回收窗口，保持 shader-visible slot 与 handle 的复用节奏一致。
         self.shader_binding_system.begin_frame(current_frame_id);
-        self.render_world.begin_frame(current_frame_id);
+        self.world.render.begin_frame(current_frame_id);
     }
 
     /// 执行内部 frame state 同步并获取 swapchain image，
@@ -308,7 +312,7 @@ impl RenderRuntime {
 
         RenderRuntimeUpdateCtx {
             device_ctx: self.gfx.device_ctx(),
-            world: &mut self.world,
+            world: &mut self.world.game,
             frame_state: &self.frame_state,
             swapchain_extent: self.frame_state.output_extent,
             frame_timing: &self.frame_timing,
@@ -330,7 +334,7 @@ impl RenderRuntime {
 
     /// 主视图提交结果由 Loop 同帧交回；上传已入队不等于该快照已经用于渲染。
     pub fn finish_rendered_frame(&mut self, scene_submitted: bool) {
-        self.render_world.finish_rendered_frame(scene_submitted);
+        self.world.render.finish_rendered_frame(scene_submitted);
     }
 
     /// prepare 后、render graph 组图前的 Renderer 同步查询阶段。
@@ -344,8 +348,8 @@ impl RenderRuntime {
             queue_ctx: self.gfx.queue_ctx(),
             frame_timing: &self.frame_timing,
             shader_bindings: self.shader_binding_system.view(),
-            render_scene: &self.render_world,
-            render_instance_table: self.render_world.render_instance_table(),
+            render_scene: &self.world.render,
+            render_instance_table: self.world.render.render_instance_table(),
             ray_cast_service: &mut self.ray_cast_service,
             history_invalidated: self.history_invalidated,
         }
@@ -372,8 +376,8 @@ impl RenderRuntime {
                 gfx_resource_registry: &self.gfx_resource_registry,
                 per_frame_gpu_data: &self.per_frame_gpu_data,
             },
-            render_scene: &self.render_world,
-            world_submesh_raster: &self.render_world,
+            render_scene: &self.world.render,
+            world_submesh_raster: &self.world.render,
             present: self.swapchain_presenter.as_ref().unwrap().view(),
             timeline: &self.fif_timeline_semaphore,
         }
@@ -558,7 +562,7 @@ impl RenderRuntime {
             device_info_ctx: self.gfx.device_info_ctx(),
             immediate_ctx: self.gfx.immediate_ctx(),
             surface_ctx: self.gfx.surface_ctx(),
-            world: &mut self.world,
+            world: &mut self.world.game,
             gfx_resource_registry: &mut self.gfx_resource_registry,
             shader_binding_system: &mut self.shader_binding_system,
             frame_timing: &self.frame_timing,
@@ -588,9 +592,9 @@ impl RenderRuntime {
         // GameWorld 同步必须发生在 Renderer update 之后、RenderWorld buffer 上传之前。
         // loader completion 先收敛到 CPU registry；RenderWorld 随后通过内部
         // RenderAssetSystem 从最终资源表对账并提交尚未安装的 texture/mesh，再由 bindless prepare 写入本帧 descriptor。
-        self.world.poll_asset_loads();
-        let asset_upload_wait = self.render_world.sync_assets(
-            self.world.scene_view(),
+        self.world.game.poll_asset_loads();
+        let asset_upload_wait = self.world.render.sync_assets(
+            self.world.game.scene_view(),
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.queue_ctx(),
@@ -616,8 +620,8 @@ impl RenderRuntime {
         // 后续 scene root buffer 会写入这些 shader-visible handle。
         self.shader_binding_system.prepare_render_data(self.gfx.device_ctx(), &self.gfx_resource_registry);
         // bindless 准备成功后才取走 CPU 通知，RenderWorld 入口立即将其交给 instance table。
-        let instance_changes = self.world.take_instance_changes();
-        let render_world_result = self.render_world.prepare_render_data(
+        let instance_changes = self.world.game.take_instance_changes();
+        let render_world_result = self.world.render.prepare_render_data(
             self.gfx.resource_ctx(),
             self.gfx.device_ctx(),
             self.gfx.immediate_ctx(),
@@ -625,7 +629,7 @@ impl RenderRuntime {
             transfer_barrier_mask,
             self.frame_timing.frame_id(),
             self.frame_timing.frame_label(),
-            self.world.scene_view(),
+            self.world.game.scene_view(),
             instance_changes,
         );
         if render_world_result.history_invalidated {
@@ -677,7 +681,7 @@ impl RenderRuntime {
             submit_info = submit_info.wait_raw(semaphore, vk::PipelineStageFlags2::ALL_COMMANDS, Some(value));
         }
         self.gfx.queue_ctx().gfx_queue().submit(vec![submit_info], None);
-        self.render_world.commit_uploaded_frame(frame_label);
+        self.world.render.commit_uploaded_frame(frame_label);
     }
 }
 
@@ -723,7 +727,7 @@ impl RenderRuntime {
     fn update_perframe_descriptor_set(&mut self) {
         let frame_label = self.frame_timing.frame_label();
         let per_frame_data_buffer = self.per_frame_gpu_data.buffer(frame_label);
-        let gpu_scene_buffer = self.render_world.scene_buffer(frame_label);
+        let gpu_scene_buffer = self.world.render.scene_buffer(frame_label);
         let perframe_set =
             self.shader_binding_system.global_descriptor_sets().current_perframe_set(frame_label).handle();
 

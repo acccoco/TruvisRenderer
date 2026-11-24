@@ -9,7 +9,8 @@ use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_shader_binding::gpu;
 use truvis_world::SceneReadView;
 use truvis_world::components::instance::Instance;
-use truvis_world::guid_new_type::{MaterialAssetHandle, MeshAssetHandle, MeshInstanceHandle};
+use truvis_asset::handle::{MaterialAssetHandle, MeshAssetHandle};
+use truvis_world::guid_new_type::MeshInstanceHandle;
 
 use crate::render_world::render_data::{GpuInstanceSlot, InstanceRenderData, MeshRenderData, RenderData};
 use crate::render_world::render_resolver::{MaterialSlotResolver, MeshRenderResolver};

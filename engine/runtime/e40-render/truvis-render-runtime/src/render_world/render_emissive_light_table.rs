@@ -7,7 +7,7 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_shader_binding::gpu;
-use truvis_world::components::material::MaterialData;
+use truvis_asset::material::MaterialData;
 
 use crate::render_world::geometry::RtTriangleMeta;
 use crate::render_world::render_data::{InstanceRenderData, RenderData};

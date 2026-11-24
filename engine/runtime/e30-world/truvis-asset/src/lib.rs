@@ -29,6 +29,7 @@
 
 pub mod asset_load_service;
 pub mod handle;
+pub mod material;
 pub mod material_texture;
 
 pub(crate) mod asset_load_worker;

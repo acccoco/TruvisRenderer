@@ -13,7 +13,8 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_shader_binding::gpu;
-use truvis_world::guid_new_type::{MaterialAssetHandle, MeshAssetHandle, MeshInstanceHandle};
+use truvis_asset::handle::{MaterialAssetHandle, MeshAssetHandle};
+use truvis_world::guid_new_type::MeshInstanceHandle;
 
 use crate::render_world::render_instance_table::RenderInstanceTable;
 use crate::state::frame_timing::FrameTiming;

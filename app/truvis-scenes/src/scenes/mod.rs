@@ -5,8 +5,10 @@ mod sponza;
 use truvis_asset::handle::LoadStatus;
 use truvis_world::GameWorld;
 use truvis_world::components::instance::Instance;
-use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
-use truvis_world::guid_new_type::{MaterialAssetHandle, SceneImportHandle};
+use truvis_asset::handle::{CoverageMode, MaterialClass};
+use truvis_asset::material::MaterialData;
+use truvis_asset::handle::MaterialAssetHandle;
+use truvis_world::guid_new_type::SceneImportHandle;
 
 use renderer_kit::camera::Camera;
 

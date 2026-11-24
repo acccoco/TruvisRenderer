@@ -1,7 +1,5 @@
-use crate::guid_new_type::TextureAssetHandle;
-
-pub use truvis_asset::handle::{CoverageMode, MaterialClass};
-pub use truvis_asset::material_texture::{TextureChannel, TextureSlot};
+use crate::handle::{CoverageMode, MaterialClass, TextureAssetHandle};
+use crate::material_texture::{TextureChannel, TextureSlot};
 
 /// CPU scene 中的材质语义参数。
 ///

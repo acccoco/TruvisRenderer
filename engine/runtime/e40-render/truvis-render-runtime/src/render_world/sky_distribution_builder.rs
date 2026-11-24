@@ -7,7 +7,7 @@ use std::{
 
 use truvis_asset::handle::TextureBytes;
 use truvis_shader_binding::gpu;
-use truvis_world::guid_new_type::TextureAssetHandle;
+use truvis_asset::handle::TextureAssetHandle;
 
 const MAX_DISTRIBUTION_WIDTH: u32 = 4096;
 const MAX_DISTRIBUTION_HEIGHT: u32 = 2048;

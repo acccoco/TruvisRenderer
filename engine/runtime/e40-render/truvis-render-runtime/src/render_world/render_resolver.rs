@@ -1,5 +1,5 @@
-use truvis_world::guid_new_type::{MaterialAssetHandle, MeshAssetHandle};
-use truvis_world::components::material::MaterialData;
+use truvis_asset::handle::{MaterialAssetHandle, MeshAssetHandle};
+use truvis_asset::material::MaterialData;
 
 use crate::render_world::render_data::MeshRenderData;
 
