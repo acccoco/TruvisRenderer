@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::mem::size_of;
 
 use ash::vk;
+use indexmap::IndexSet;
 use slotmap::SlotMap;
 
-use truvis_asset::handle::{CoverageMode, MaterialAssetHandle, MaterialClass};
+use truvis_asset::handle::{CoverageMode, MaterialAssetHandle, MaterialClass, TextureAssetHandle};
 use truvis_asset::material::MaterialData;
 use truvis_asset::material_texture::{TextureChannel, TextureTransform};
 use truvis_gfx::commands::barrier::{GfxBarrierMask, GfxBufferBarrier};
@@ -17,7 +18,7 @@ use truvis_shader_binding::gpu;
 
 use crate::bindings::bindless_manager::BindlessSrvHandle;
 
-use super::gpu_texture_store::GpuTextureStore;
+use super::{TextureRecord, gpu_texture_store::GpuTextureStore};
 
 const MAX_MATERIAL_COUNT: usize = 1024;
 
@@ -41,7 +42,15 @@ struct MaterialRecord {
     data: MaterialData,
     gpu: gpu::engine::material::PbrMaterial,
     revisions: MaterialRevisions,
-    texture_revisions: [bool; TextureChannel::COUNT],
+}
+
+impl MaterialRecord {
+    fn waiting_for_texture(&self, textures: &SlotMap<TextureAssetHandle, TextureRecord>) -> bool {
+        self.data.textures.iter().zip(&self.gpu.textures).any(|(source, binding)| {
+            binding.image.index == BindlessSrvHandle::null().0.index
+                && source.as_ref().is_some_and(|slot| textures.contains_key(slot.texture))
+        })
+    }
 }
 
 /// 单个 FIF frame label 对应的材质 GPU buffer 与 staging buffer。
@@ -91,6 +100,7 @@ pub(super) struct MaterialTable {
     records: SlotMap<MaterialAssetHandle, MaterialRecord>,
     slot_to_handle: Vec<Option<MaterialAssetHandle>>,
     free_slots: Vec<usize>,
+    waiting: IndexSet<MaterialAssetHandle>,
     dirty_slots: HashMap<usize, SlotDirtyInfo>,
     buffers: [MaterialBuffers; FrameLabel::COUNT],
     /// 只在 copy/barrier 完整录制后写入，graphics submit 成功后确认对应副本。
@@ -104,6 +114,7 @@ impl MaterialTable {
             records: SlotMap::with_key(),
             slot_to_handle: vec![None; MAX_MATERIAL_COUNT],
             free_slots: (0..MAX_MATERIAL_COUNT).rev().collect(),
+            waiting: IndexSet::new(),
             dirty_slots: HashMap::new(),
             buffers: FrameLabel::ALL.map(|label| MaterialBuffers::new(ctx, label)),
             pending_commits: FrameLabel::ALL.map(|_| Vec::new()),
@@ -118,6 +129,7 @@ impl MaterialTable {
     pub(super) fn register(
         &mut self,
         data: MaterialData,
+        textures: &SlotMap<TextureAssetHandle, TextureRecord>,
         gpu_textures: &GpuTextureStore,
     ) -> anyhow::Result<MaterialAssetHandle> {
         data.validate().map_err(anyhow::Error::msg)?;
@@ -125,7 +137,6 @@ impl MaterialTable {
         let gpu = Self::build_gpu_material(&data, gpu_textures);
         let record = MaterialRecord {
             slot,
-            texture_revisions: Self::texture_revisions(&data, gpu_textures),
             data,
             gpu,
             revisions: MaterialRevisions {
@@ -133,9 +144,13 @@ impl MaterialTable {
                 emissive: 1,
             },
         };
+        let waiting = record.waiting_for_texture(textures);
         self.free_slots.pop();
         let handle = self.records.insert(record);
         self.slot_to_handle[slot] = Some(handle);
+        if waiting {
+            self.waiting.insert(handle);
+        }
         self.mark_dirty(slot);
         Ok(handle)
     }
@@ -144,6 +159,7 @@ impl MaterialTable {
         &mut self,
         handle: MaterialAssetHandle,
         data: MaterialData,
+        textures: &SlotMap<TextureAssetHandle, TextureRecord>,
         gpu_textures: &GpuTextureStore,
     ) -> anyhow::Result<bool> {
         data.validate().map_err(anyhow::Error::msg)?;
@@ -158,38 +174,48 @@ impl MaterialTable {
 
         let changed_emissive = Self::emissive_projection_changed(&record.data, &data);
         record.gpu = Self::build_gpu_material(&data, gpu_textures);
-        record.texture_revisions = Self::texture_revisions(&data, gpu_textures);
         record.data = data;
         record.revisions.appearance = record.revisions.appearance.saturating_add(1);
         if changed_emissive {
             record.revisions.emissive = record.revisions.emissive.saturating_add(1);
         }
         let slot = record.slot;
+        if record.waiting_for_texture(textures) {
+            self.waiting.insert(handle);
+        } else {
+            self.waiting.swap_remove(&handle);
+        }
         self.mark_dirty(slot);
         Ok(true)
     }
 
-    /// 每帧对账已登记材质的纹理状态。可见性变化时重建原 slot 的投影。
-    pub(super) fn resolve_textures(&mut self, gpu_textures: &GpuTextureStore) {
-        let mut dirty = Vec::new();
-        for record in self.records.values_mut() {
-            let revisions = Self::texture_revisions(&record.data, gpu_textures);
-            if revisions != record.texture_revisions {
-                record.texture_revisions = revisions;
-                record.gpu = Self::build_gpu_material(&record.data, gpu_textures);
+    /// 只补写仍为空的通道。已发布 binding 的变更由上层通过材质编辑提交。
+    pub(super) fn resolve_waiting(
+        &mut self,
+        textures: &SlotMap<TextureAssetHandle, TextureRecord>,
+        gpu_textures: &GpuTextureStore,
+    ) {
+        for index in (0..self.waiting.len()).rev() {
+            let handle = self.waiting[index];
+            let record = &mut self.records[handle];
+            let mut changed = false;
+            for (source, binding) in record.data.textures.iter().zip(&mut record.gpu.textures) {
+                if binding.image.index == BindlessSrvHandle::null().0.index {
+                    if let Some(srv) = source.as_ref().and_then(|slot| gpu_textures.binding(slot.texture)) {
+                        binding.image = srv.0;
+                        changed = true;
+                    }
+                }
+            }
+            let slot = record.slot;
+            if !record.waiting_for_texture(textures) {
+                self.waiting.swap_remove_index(index);
+            }
+            if changed {
                 record.revisions.appearance = record.revisions.appearance.saturating_add(1);
-                dirty.push(record.slot);
+                self.mark_dirty(slot);
             }
         }
-        for slot in dirty {
-            self.mark_dirty(slot);
-        }
-    }
-
-    fn texture_revisions(data: &MaterialData, gpu_textures: &GpuTextureStore) -> [bool; TextureChannel::COUNT] {
-        std::array::from_fn(|index| {
-            data.textures[index].as_ref().is_some_and(|slot| gpu_textures.binding(slot.texture).is_some())
-        })
     }
 
     pub(super) fn remove(&mut self, handle: MaterialAssetHandle) -> bool {
@@ -197,6 +223,7 @@ impl MaterialTable {
             return false;
         };
         let slot = record.slot;
+        self.waiting.swap_remove(&handle);
         self.slot_to_handle[slot] = None;
         self.invalidate_recorded_slot(slot);
         self.dirty_slots.insert(
@@ -366,19 +393,11 @@ impl MaterialTable {
             || left.textures[TextureChannel::Emissive as usize] != right.textures[TextureChannel::Emissive as usize]
     }
 
-    /// 未发布颜色贴图用诊断图，其他通道用各自的中性 null binding。
+    /// 所有通道使用相同的 null binding 表示未发布的贴图。
     fn build_gpu_material(data: &MaterialData, textures: &GpuTextureStore) -> gpu::engine::material::PbrMaterial {
         let textures = std::array::from_fn(|index| {
             let slot = data.textures[index].as_ref();
-            let binding = slot.map_or_else(BindlessSrvHandle::null, |slot| {
-                textures.binding(slot.texture).unwrap_or_else(|| {
-                    if index == TextureChannel::BaseColor as usize {
-                        textures.fallback_binding()
-                    } else {
-                        BindlessSrvHandle::null()
-                    }
-                })
-            });
+            let binding = slot.and_then(|slot| textures.binding(slot.texture)).unwrap_or_else(BindlessSrvHandle::null);
             let rows = slot.map_or(TextureTransform::default(), |slot| slot.transform).affine_rows();
             gpu::engine::material::MaterialTexture {
                 uv_row0: glam::Vec4::from_array(rows[0]).into(),

@@ -11,7 +11,7 @@ use truvis_asset::material::MaterialData;
 
 use truvis_gfx::commands::barrier::GfxBarrierMask;
 use truvis_gfx::commands::command_buffer::GfxCommandBuffer;
-use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx};
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxQueueCtx, GfxResourceCtx};
 use truvis_render_foundation::frame_label::FrameLabel;
 
 use self::mesh_geometry::MeshRenderData;
@@ -78,9 +78,6 @@ impl AssetSystem {
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
-        registry: &mut GfxResourceRegistry,
-        bindings: &mut ShaderBindingSystem,
         frame_id: u64,
     ) -> Self {
         Self {
@@ -89,7 +86,7 @@ impl AssetSystem {
             meshes: SlotMap::with_key(),
             materials: MaterialTable::new(resource_ctx, frame_id),
             revision: 0,
-            gpu_textures: GpuTextureStore::new(resource_ctx, device_ctx, immediate_ctx, registry, bindings),
+            gpu_textures: GpuTextureStore::new(),
             gpu_meshes: GpuMeshStore::new(device_ctx, queue_ctx, frame_id),
         }
     }
@@ -132,7 +129,7 @@ impl AssetSystem {
             registry,
             bindings,
         );
-        self.materials.resolve_textures(&self.gpu_textures);
+        self.materials.resolve_waiting(&self.textures, &self.gpu_textures);
     }
 
     pub(crate) fn upload_materials(
@@ -296,14 +293,14 @@ impl AssetSystem {
 
     pub fn register_material(&mut self, data: MaterialData) -> anyhow::Result<MaterialAssetHandle> {
         self.validate_texture_refs(&data)?;
-        let handle = self.materials.register(data, &self.gpu_textures)?;
+        let handle = self.materials.register(data, &self.textures, &self.gpu_textures)?;
         self.revision = self.revision.saturating_add(1);
         Ok(handle)
     }
 
     pub fn update_material(&mut self, handle: MaterialAssetHandle, data: MaterialData) -> anyhow::Result<()> {
         self.validate_texture_refs(&data)?;
-        if self.materials.update(handle, data, &self.gpu_textures)? {
+        if self.materials.update(handle, data, &self.textures, &self.gpu_textures)? {
             self.revision = self.revision.saturating_add(1);
         }
         Ok(())

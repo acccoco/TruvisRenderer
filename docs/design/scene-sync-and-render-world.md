@@ -20,8 +20,8 @@ Runtime 持有一组 World 和一个设备域内共享的 `AssetSystem`。`GameW
   shader 由 instance 和 submesh 经该表定位 `MaterialTable`。
 - 合法场景引用由上层提交。实例等待 mesh 的几何 buffer 和 BLAS 发布，随后进入 GPUScene、
   TLAS、draw cache 和拾取快照。材质 slot 在实例提交前已经存在。
-- 未发布的颜色贴图使用诊断纹理，其它通道使用 null binding。AssetSystem 在 prepare 对账纹理发布，
-  纹理内容变化更新原材质行，保持 MaterialSlotTable 的索引。
+- 材质所有未发布纹理通道都使用 null binding。AssetSystem 逐帧查询等待集合，只补写仍为空的通道；
+  采样使用材质参数和对应通道的 shader 常量。材质和贴图内容变化保持 MaterialSlotTable 的索引。
 
 ## 最终状态对账
 

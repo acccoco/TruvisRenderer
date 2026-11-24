@@ -136,7 +136,8 @@ selection 与同步 raycast 只查询当前 prepare 快照，
 - runtime 内部拥有默认 120 FPS 软件上限、surface format、present mode 与 depth format 候选顺序；这些默认策略不放入
   foundation 公共配置契约。
 - `AssetSystem` 持有 mesh、texture 和 `MaterialTable`。texture transfer copy 与天空分布共用 Runtime 队列，
-  mesh 使用 graphics timeline 构建 BLAS。材质注册即分配稳定 slot。颜色槽在纹理未发布时使用诊断图，其他通道使用 null binding。当前 FIF 的 dirty 材质行在 prepare 上传。
+  mesh 使用 graphics timeline 构建 BLAS。材质注册即分配稳定 slot，等待纹理时使用 null binding，
+  update context 检查资产删除时的存活引用。当前 FIF 的 dirty 材质行在 prepare 上传。
 - `RenderWorld` 持有 `RenderInstanceTable`、`MaterialSlotTable`、`AnalyticLightTable`、
   `RenderEmissiveLightTable`、`GpuSkyStore`、TLAS 和 draw 数据。它直接查询 World 与资产，
   接管 World 变更并主动观察等待中的 mesh 和活跃材质版本。

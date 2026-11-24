@@ -3,7 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use ash::vk;
 use slotmap::{SecondaryMap, SlotMap};
 
-use truvis_gfx::gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxQueueCtx, GfxResourceCtx};
+use truvis_gfx::gfx::{GfxDeviceCtx, GfxQueueCtx, GfxResourceCtx};
 use truvis_gfx::resources::image::GfxImage;
 use truvis_gfx::resources::image_view::GfxImageViewDesc;
 use truvis_gfx::resources::lifecycle::DestroyReason;
@@ -36,7 +36,6 @@ pub struct UploadedAssetTexture {
 pub struct GpuTextureStore {
     textures: SecondaryMap<TextureAssetHandle, UploadedAssetTexture>,
     pending_textures: HashSet<TextureAssetHandle>,
-    fallback: UploadedAssetTexture,
     current_frame_id: u64,
 }
 
@@ -45,57 +44,12 @@ impl GpuTextureStore {
         self.current_frame_id = current_frame_id;
     }
 
-    /// 创建纹理资产管理器，并注册常驻 fallback texture。
-    ///
-    /// fallback texture 在真实贴图未加载、加载失败或上传未完成时被 `TextureResolver` 返回，
-    /// 因此材质 buffer 永远不会写入无效 SRV。
-    pub fn new(
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_registry: &mut GfxResourceRegistry,
-        shader_binding_system: &mut ShaderBindingSystem,
-    ) -> Self {
-        let _span = tracy_client::span!("GpuTextureStore::new");
-
-        let fallback = {
-            let _span = tracy_client::span!("GpuTextureStore::new/fallback_texture");
-            Self::create_fallback_texture(
-                resource_ctx,
-                device_ctx,
-                immediate_ctx,
-                gfx_resource_registry,
-                shader_binding_system,
-            )
-        };
-
+    pub(crate) fn new() -> Self {
         Self {
             textures: SecondaryMap::new(),
             pending_textures: HashSet::new(),
-            fallback,
             current_frame_id: 0,
         }
-    }
-
-    fn create_fallback_texture(
-        resource_ctx: GfxResourceCtx<'_>,
-        device_ctx: GfxDeviceCtx<'_>,
-        immediate_ctx: GfxImmediateCtx<'_>,
-        gfx_resource_registry: &mut GfxResourceRegistry,
-        shader_binding_system: &mut ShaderBindingSystem,
-    ) -> UploadedAssetTexture {
-        // fallback 使用醒目的 1x1 洋红色纹理，目的是让缺失/未就绪纹理在画面中容易定位；
-        // 它在 manager 生命周期内常驻 bindless，避免材质上传阶段产生空 SRV。
-        let pixels: [u8; 4] = [255, 0, 255, 255];
-        let image = GfxImage::from_rgba8(resource_ctx, immediate_ctx, 1, 1, &pixels, "FallbackTexture");
-        Self::register_texture_binding(
-            resource_ctx,
-            device_ctx,
-            gfx_resource_registry,
-            shader_binding_system,
-            image,
-            "FallbackTextureView",
-        )
     }
 
     /// 只接收上传已完成、尚未发布的 image；view/bindless 安装失败撤销本次登记。
@@ -274,20 +228,9 @@ impl GpuTextureStore {
             );
         }
 
-        shader_binding_system.unregister_srv(self.fallback.view_handle);
-        gfx_resource_registry.release_image_immediate(
-            resource_ctx,
-            device_ctx,
-            self.fallback.image_handle,
-            DestroyReason::Shutdown,
-        );
     }
 
     pub(crate) fn binding(&self, handle: TextureAssetHandle) -> Option<BindlessSrvHandle> {
         self.textures.get(handle).map(|texture| texture.srv_handle)
-    }
-    /// 未发布的颜色纹理仍使用常驻诊断图。
-    pub(super) fn fallback_binding(&self) -> BindlessSrvHandle {
-        self.fallback.srv_handle
     }
 }

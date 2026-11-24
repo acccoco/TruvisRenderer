@@ -144,13 +144,7 @@ impl RenderRuntime {
             GameWorld::new()
         };
         let mut assets = AssetSystem::new(
-            gfx.resource_ctx(),
-            gfx.device_ctx(),
-            gfx.queue_ctx(),
-            gfx.immediate_ctx(),
-            &mut gfx_resource_registry,
-            &mut shader_binding_system,
-            frame_timing.frame_id(),
+            gfx.resource_ctx(), gfx.device_ctx(), gfx.queue_ctx(), frame_timing.frame_id(),
         );
         let asset_upload_queue = GpuAssetUploadQueue::new(gfx.device_ctx(), gfx.queue_ctx());
         let mut imports = AssetImports::new();
