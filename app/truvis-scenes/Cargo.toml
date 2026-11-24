@@ -8,6 +8,7 @@ description = "Shared CPU startup scenes for Truvis applications"
 renderer-kit = { workspace = true }
 truvis-asset = { workspace = true }
 truvis-world = { workspace = true }
+truvis-render-runtime = { workspace = true }
 truvis-path = { workspace = true }
 truvis-shader-binding = { workspace = true }
 

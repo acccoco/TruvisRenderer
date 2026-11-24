@@ -7,7 +7,9 @@ use std::{
 
 use truvis_asset::handle::TextureBytes;
 use truvis_shader_binding::gpu;
-use truvis_world::guid_new_type::TextureAssetHandle;
+use truvis_asset::handle::TextureAssetHandle;
+
+use crate::resources::gpu_asset_upload_queue::SkyDistributionBuild;
 
 const MAX_DISTRIBUTION_WIDTH: u32 = 4096;
 const MAX_DISTRIBUTION_HEIGHT: u32 = 2048;
@@ -21,19 +23,6 @@ pub(crate) struct SkyDistributionBuildRequest
     pub(crate) request_id: u64,
     pub(crate) texture: TextureAssetHandle,
     pub(crate) texture_bytes: TextureBytes,
-}
-
-/// 可提交到共享 transfer queue 的 Alias distribution。
-pub(crate) struct SkyDistributionBuild
-{
-    pub(crate) request_id: u64,
-    pub(crate) texture: TextureAssetHandle,
-    pub(crate) source_width: u32,
-    pub(crate) source_height: u32,
-    pub(crate) width: u32,
-    pub(crate) height: u32,
-    pub(crate) entries: Vec<gpu::engine::scene::SkyDistributionEntry>,
-    pub(crate) cpu_build_elapsed: Duration,
 }
 
 /// worker 完成结果。

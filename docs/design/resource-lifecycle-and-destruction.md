@@ -8,17 +8,19 @@
 flowchart TB
     Runtime["RenderRuntime"] --> Gfx["Gfx root"]
     Runtime --> Registry["GfxResourceRegistry"]
-    Runtime --> Scene["RenderWorld"]
+    Runtime --> Scene["World / RenderWorld"]
+    Runtime --> Assets["AssetSystem"]
+    Runtime --> Upload["共享 transfer queue"]
     Runtime --> Present["SwapchainPresenter"]
     Renderer["Renderer"] --> Subsystems["Renderer-owned targets / pipelines"]
     Registry --> Leaf["buffer / image / view / acceleration"]
 ```
 
-`Gfx` 是 Vulkan root owner；Runtime 持有资源 registry、binding system、RenderWorld、present、command allocator 和同步对象。Renderer/Subsystem 只能通过 lifecycle Ctx 创建和释放自身资源。
+`Gfx` 是 Vulkan root owner；Runtime 持有资源 registry、binding system、World、AssetSystem、共享 transfer queue、present、command allocator 和同步对象。Renderer/Subsystem 只能通过 lifecycle Ctx 创建和释放自身资源。
 
 ## 创建阶段
 
-- `RenderRuntime::new` 创建 `Gfx`、CPU `GameWorld`、GPU binding/resource owner、FrameTiming 和私有 RenderWorld。
+- `RenderRuntime::new` 创建 `Gfx`、World、共享 AssetSystem、加载协调、GPU binding/resource owner 和 FrameTiming。
 - `init_after_window` 创建 surface、swapchain 和 present owner。
 - Renderer `init` 使用 init Ctx 创建窗口尺寸 target、pipeline、descriptor 和 subsystem state。
 - prepare 阶段生成 GPU scene 和 per-frame data，不改变长期 owner 归属。
@@ -30,8 +32,8 @@ Manager 不保存 typed `Gfx` 引用，不把 device context 放进长期资源�
 - Persistent：pipeline、sampler、descriptor layout、shader binding。
 - Frame：command buffer、per-frame buffer、FIF timeline state。
 - Swapchain：surface、swapchain image/view、present semaphore。
-- Asset：texture image、mesh buffer、BLAS、material slot、sky distribution。
-- Scene GPU：instance、geometry、light、indirect buffer、TLAS、raster draw cache。
+- Asset：texture image、mesh buffer、BLAS、材质表及 material slot。
+- Scene GPU：instance、geometry、light、间接表、TLAS、raster draw cache、sky distribution。
 - Renderer target：RT working target、GBuffer、selection mask、GUI buffer。
 
 类别用于确定 owner 和回收边界，不表示所有资源都由同一个 manager 管理。
@@ -50,7 +52,7 @@ WSI present 使用的 semaphore/swapchain 必须满足 presentation 侧的释放
 
 ## 退役与 FIF
 
-CPU 删除只撤销 CPU membership；GPU mirror 在下一次完整对账中退役。已提交但尚未完成的 upload 只销毁完成结果，不得重新 publish stale handle。
+上层先保证后续提交引用有效。AssetSystem 的删除撤销自身 membership，并按 FIF 退役资源和 slot。晚到的 completion 只销毁失效任务的结果。
 
 每个 FIF 副本在再次使用前必须经过 timeline 安全点。资源 registry 负责延迟释放；manager 负责撤销自己的 shader-visible slot 和局部 cache。
 
@@ -61,14 +63,16 @@ CPU 删除只撤销 CPU membership；GPU mirror 在下一次完整对账中退�
 ```text
 Renderer/Subsystem shutdown
 -> wait GPU idle
--> present / raycast / scene assets
+-> present / raycast / 停止加载与天空 worker
+-> 关闭共享 transfer 队列
+-> RenderWorld / AssetSystem
 -> per-frame data / command allocator
 -> resource registry / binding system
 -> timeline semaphore
 -> Gfx root
 ```
 
-RenderWorld 的 asset shutdown 先停止并 join CPU distribution worker，再等待 upload timeline，最后释放 active/retired/fallback GPU resources。
+Runtime 先停止并 join 加载及天空构建，再等待共享 transfer timeline，随后释放各 owner 当中的 active、retired 和 fallback GPU 资源。
 
 Renderer 资源必须早于 Runtime destroy；Runtime 资源必须早于 Gfx destroy；窗口 host 必须晚于 RenderThread 退出。
 

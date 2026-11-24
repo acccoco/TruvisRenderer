@@ -4,86 +4,50 @@
 
 ## 权威状态
 
-`GameWorld`/`SceneStore` 是 CPU scene、material、light 和 asset identity 的权威 owner。Renderer 可以通过 update Ctx 发起编辑，但不保存第二份完整 scene。
+Runtime 持有一组 World 和一个设备域内共享的 `AssetSystem`。`GameWorld` 保存实例、灯光和环境的权威状态，
+`RenderWorld` 直接借用 `&GameWorld` 与 `&AssetSystem`，产出同一个场景的 GPU 表示。资源生命周期独立于 World。
+`GpuSkyStore` 随 World 保存天空采样分布，HDRI 纹理属于共享资产。
 
-Transform gizmo 属于 Renderer-owned interaction。拖拽结果在 `TruvisRenderer::update` 阶段直接写入
-`GameWorld::update_instance_transform`，不经过新的 Client API 或通知通道；随后由 prepare 将 CPU transform
-同步到 `RenderWorld`。
+`AssetLoadService` 在后台读取和解码，返回内存数据。Runtime 的 `AssetImports` 在 update 边界领取完成，
+按任务身份登记资产或发布导入描述；上层选择何时把描述实例化到 World。导入预检先验证 mesh、引用、
+材质参数、可用 slot 和外部纹理路径，再提交资源。失败的纹理可以由调用方显式以原 handle 重试。
 
-`RenderWorld` 是 RenderThread 内的 GPU-side composition owner。它保存 render-side asset stores、instance mirror、geometry/light buffers、TLAS 和 per-FIF draw cache；它不成为 Editor 或 CPU world 的业务权威。
+## 身份、材质表和就绪
 
-```mermaid
-flowchart LR
-    World["GameWorld / SceneStore\nCPU final state"] --> Prepare["RenderRuntime::prepare"]
-    Prepare --> Assets["RenderAssetSystem\nGPU asset readiness"]
-    Prepare --> Scene["RenderWorld\nGPU scene mirror"]
-    Scene --> View["RenderSceneView\nread-only frame view"]
-    View --> Graph["RenderGraph / passes"]
-```
+- `AssetSystem` 持有 `MaterialTable`。材质注册成功同时交付 generational handle 与稳定 GPU slot。
+  当前帧副本在 prepare 上传，之后才可提交使用该行的 pass。
+- `RenderWorld` 持有每个 FIF 的 `MaterialSlotTable`。它为实例的 submesh 保存共享材质 slot，
+  shader 由 instance 和 submesh 经该表定位 `MaterialTable`。
+- 合法场景引用由上层提交。实例等待 mesh 的几何 buffer 和 BLAS 发布，随后进入 GPUScene、
+  TLAS、draw cache 和拾取快照。材质 slot 在实例提交前已经存在。
+- 材质所有未发布纹理通道都使用 null binding。AssetSystem 逐帧查询等待集合，只补写仍为空的通道；
+  采样使用材质参数和对应通道的 shader 常量。材质和贴图内容变化保持 MaterialSlotTable 的索引。
 
-## 身份与 slot
+## 最终状态对账
 
-CPU handle 表示 world 语义身份，包含 generation，不能直接当作 GPU slot。`RenderInstanceTable` 维护 CPU instance handle 到稳定 render slot 的映射，并保存 transform/material 快照和 motion history。
+GameWorld 的变更批次只保存去重后的 generational instance handle，包括删除的旧 handle。
+RenderWorld 接管整个批次并查询最终状态，初次建立时读取完整 membership。
+后续主动查询等待实例的 mesh readiness，以及实际可见材质的外观和发光版本。
+coverage 的最终 any-hit 要求由活跃实例的材质参数计算。资源 owner 的发布和场景准备各自在其 owner 内确认。
 
-material、mesh、texture manager 各自拥有 GPU slot 或 ready cache。instance 的组合关系属于 RenderWorld，不由独立 asset manager 保存。
+已产生的实例变更保留到快照交付。上传、TLAS、发光表和历史的失效状态一旦观察到就写入对应 owner，
+FIF 副本和语义版本分别确认。MaterialSlotTable 在实例成员、绑定或布局变化时重写。
 
-删除或 slot reuse 必须经过 generation 检查，避免旧异步结果写入新对象。Renderer/Editor 只看到 CPU handle 和 submesh index，不依赖 GPU index。
+## Prepare 顺序
 
-## Final-state reconciliation
+1. update 应用加载完成和上层编辑，GameWorld 收集变更身份。
+2. Runtime 推进共享 transfer queue 和 mesh graphics timeline，纹理发布由 AssetSystem 接收，
+   天空分布完成由 RenderWorld 接收。
+3. Runtime 更新 bindless descriptor，录制当前 FIF 的 MaterialTable dirty rows。
+4. RenderWorld 查询 GameWorld 和 AssetSystem，准备场景各表、TLAS、draw cache 和 scene root。
+5. graphics submit 等待所发布 transfer 资源的 timeline，提交成功确认对应 FIF。RenderGraph 和同步拾取读取准备后的场景。
 
-SceneStore 在有效 instance mutation 时记录去重的 generational handle，包含删除的旧 handle，不保存字段事件或矩阵快照。prepare 接管整个批次，读取 CPU 最终存在性与字段，更新 render-side binding。
+## 删除边界
 
-同一帧的多次编辑不需要抵消事件：移动后换材质、创建后删除或 A→B→C 都通过最终状态对账处理。异步 texture/mesh ready 通过独立 completion/revision 触发重新准备。
-
-mesh 发布与 material 渲染投影变化通过现有 CPU 反向引用找到受影响 instance，与 CPU 编辑合并去重。资源候选即使 source revision 未变也重算 ready/派生状态。首次建立镜像执行完整 membership 初始化；常规帧无全量扫描兜底或 Pending 轮询。
-
-CPU 变更集合只表示需要读取最终状态的身份，不是 changelog 或操作重放；它在同步对账完成后即释放，不等待 GPU。GPU 副本追平由 render-side bookkeeping 独立维护。
-
-instance table 接管候选后，对账中断须保留身份，重入时读取 CPU 最终状态；已改变镜像
-对应的下游变化标记须保留到快照成功交付，不能因重入成为 no-op 而消失。此局部契约
-不等于整帧事务。资源 owner 成功返回的通知先由 RenderWorld 持有，CPU 变更在 bindless
-准备成功后移交 table；table 返回的变化先转成 scene/TLAS/emissive 失效状态，再做后续
-上传。历史失效保留到 prepare 提交确认；未提交 command 的重录与设备错误退场仍是独立契约。
-
-## prepare 顺序
-
-1. `GameWorld::poll_asset_loads()` 消费 loader 完成事件并写回 CPU final state。
-2. `RenderWorld::sync_assets()` 对账 membership、上传队列和 GPU completion。
-3. `ShaderBindingSystem::prepare_render_data()` 刷新 bindless/global binding。
-4. 合并 CPU 编辑和资源变化的 instance 候选，局部对账 membership/ready，然后打包 `RenderData`。
-5. 更新 analytic/emissive/light/geometry/instance/indirect buffer、TLAS 和 scene root。
-6. 写 per-frame 数据，向 RenderGraph 暴露只读 `RenderSceneView`。
-
-变更发现不依赖可见性；候选 handle 在 CPU 中不存在才退役 binding。变更 handle 消费为 O(D)，完整 RenderData 打包、资源表同步和依赖访问另计，不宣称整个 prepare 为 O(D)。
-
-## 异步与删除
-
-loader 完成、GPU copy 入队、timeline completion、shader-visible publish 和最终 render 结果是不同阶段。任一日志成功不能替代后续阶段证据。
-
-纹理 CPU 加载失败不作永久负缓存。调用方显式重复导入相同来源/颜色空间时，Failed 可在
-原长期 handle 上重试，保留 material/sky 引用；Loading/Ready 继续去重，已发布内容保持
-不可变。成功派发任务后才发布 Loading 状态或清除旧失败信息；此约束不表示整个 scene
-ingest 或 GPU 上传是事务，也不引入后台自动重试。
-
-scene ingest 的输入预检先于资源身份发布：全部 mesh、材质、引用和外部纹理
-路径通过后才登记资源。正常输入错误只使该 import Failed，不留下部分资源，也不触发
-共享 Failed 纹理重试。纹理解码仍可在 scene 结构 Ready 之后独立失败。
-
-AssetSystem 按完成结果更新 CPU 状态；worker 负责将加载失败交付为 Failed。宿主 panic 不提供 scene/texture 派发回滚，Release abort 不执行 unwind。
-
-
-
-Mesh GPU 资源创建和队列提交沿用底层 fail-fast 行为，不提供上传失败后的自动重试。
-提交正常返回后才标记 Pending upload；timeline 完成并安装到 resolver 后报告实际发布的 mesh handle，
-通过已有反向引用唤醒依赖实例。等待完成不属于失败，也不依赖 instance 再次编辑。
-
-CPU 删除先检查反向引用，再移除 SceneStore/AssetSystem membership。instance 删除记录旧 handle，RenderWorld 下一次局部对账撤销 slot；资源 owner 继续按资源 membership 清理 cache，未完成上传只销毁 stale result。
-
-GPU 资源按自己的 owner 延迟回收，不能把 CPU 删除直接等同于 Vulkan image/buffer 已安全释放。
-
-灯光拖拽只通过 `GameWorld::update_light_position` 修改 CPU 权威位置，并同时推进
-light revision 和 scene version。prepare 使用既有 AnalyticLightTable 完整对账，标记全部 FIF，
-当前副本上传后才进入渲染；图标 hover/selection 不修改 World，也不影响光照累计签名。
+上层保证下一次提交中的引用有效。移除纹理前，可在同一 tick 清空或替换相关材质和环境引用；
+移除材质或 mesh 前，可改绑或移除相关实例。AssetSystem 的删除只处理目标资产自身的登记与退役。
+已发布纹理的引用由上层通过普通材质或环境编辑调整。晚到的异步完成通过 generational handle 校验，
+仅释放失效任务的结果。GPU 退役条件见[资源生命周期](resource-lifecycle-and-destruction.md)。
 
 ## FIF 与 capacity
 
@@ -108,26 +72,16 @@ SceneBuffers 的 device/stage 成对交付；当前 FIF 安全点之后才替换
 完整上传需求必须保留到提交确认，不能只依赖一次 ensure_capacity 的临时返回值或 CPU
 scene revision。后续准备中断时新 pair 仍有 owner，成功确认只清除当前 FIF 的需求。
 
-## 设计不变量
-
-- CPU final state 由 World/ResourceSystem 权威持有。
-- RenderWorld 只保存 GPU 派生状态与 render-side composition。
-- CPU handle、source revision、published revision 和 per-FIF upload revision 不合并成一个全局 dirty 数。
-- 所有 instance mutation 必须记录变更 handle；删除由候选身份的 CPU 最终存在性判断，不能使用可见列表代替。
-- Render pass 只读取 prepare 后的 scene view，不修改 CPU scene。
-
 ## 实现入口
 
-- [`scene_store.rs`](../../engine/runtime/e30-world/truvis-world/src/scene_store.rs)
-- [`asset_system.rs`](../../engine/runtime/e30-world/truvis-world/src/asset_system.rs)
-- [`render_world.rs`](../../engine/runtime/e40-render/truvis-render-runtime/src/render_world/render_world.rs)
-- [`render_instance_table.rs`](../../engine/runtime/e40-render/truvis-render-runtime/src/render_world/render_instance_table.rs)
+- [GameWorld](../../engine/runtime/e30-world/truvis-world/src/game_world.rs)
+- [AssetSystem](../../engine/runtime/e40-render/truvis-render-runtime/src/asset_system.rs)
+- [MaterialTable](../../engine/runtime/e40-render/truvis-render-runtime/src/asset_system/material_table.rs)
+- [RenderWorld](../../engine/runtime/e40-render/truvis-render-runtime/src/render_world/render_world.rs)
+- [RenderInstanceTable](../../engine/runtime/e40-render/truvis-render-runtime/src/render_world/render_instance_table.rs)
 
-## Readiness 与视图
-
-`RenderData` 是 prepare 的只读打包视图，不是 CPU scene 的第二份权威。Pending 实例等待资源发布触发再次对账，不能因为本帧不可见就当成已删除。mesh geometry/BLAS 和 material slot 决定 ready；texture 使用 fallback，不阻止激活。
-
-`RenderSceneView` 只暴露当前 FIF 可安全使用的 scene root、TLAS、draw cache 和资源视图。pass 不应该通过 view 反查或修改 SceneStore。
+`RenderSceneView` 只暴露当前 FIF 可安全使用的 scene root、TLAS 和 draw 数据。源资产、实例编辑和
+GPU 同步只发生在各自的 Runtime phase。
 
 ## 版本语义
 
@@ -145,7 +99,7 @@ scene revision。后续准备中断时新 pair 仍有 owner，成功确认只清
 
 - 新资源是否先进入 CPU owner 再进入 RenderWorld？
 - GPU slot 是否能从 CPU handle 安全反查？
-- ready gate 是否覆盖所有依赖资源？
+- 实例是否在 mesh 和该帧材质表有效之后提交？
 - 删除是否记录完整 generational handle 并在局部对账中退役？
 - late completion 是否会重新 publish stale handle？
 - 新 buffer capacity 是否同步 descriptor 和每个 FIF？

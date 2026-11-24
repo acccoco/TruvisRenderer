@@ -2,8 +2,11 @@ use truvis_path::TruvisPath;
 use truvis_shader_binding::gpu;
 use truvis_world::GameWorld;
 use truvis_world::components::instance::Instance;
-use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
-use truvis_world::guid_new_type::{MeshAssetHandle, SceneImportHandle};
+use truvis_asset::handle::{CoverageMode, MaterialClass};
+use truvis_asset::material::MaterialData;
+use truvis_asset::handle::MeshAssetHandle;
+use truvis_render_runtime::asset_imports::{AssetImports, SceneImportHandle};
+use truvis_render_runtime::asset_system::AssetSystem;
 use truvis_world::procedural_mesh::ProceduralMeshKind;
 
 use renderer_kit::camera::Camera;
@@ -30,22 +33,22 @@ const EMISSIVE_CUBE_MATRIX_CONFIG: EmissiveCubeMatrixConfig = EmissiveCubeMatrix
 impl SponzaScene {
     pub(super) const IMPORT_PATH: &'static str = "fbx/sponza/sponza.fbx";
 
-    pub(super) fn initialize(world: &mut GameWorld, camera: &mut Camera) -> SceneImportHandle {
+    pub(super) fn initialize(world: &mut GameWorld, assets: &mut AssetSystem, imports: &mut AssetImports, camera: &mut Camera) -> SceneImportHandle {
         camera.position = glam::vec3(2.7, 1.94, -0.64);
         camera.euler_yaw_deg = 90.0;
         camera.euler_pitch_deg = 0.0;
 
         Self::register_lighting(world);
-        let samples = MaterialSamples::register(world);
-        Self::spawn_material_test_cubes(world, &samples);
+        let samples = MaterialSamples::register(assets);
+        Self::spawn_material_test_cubes(world, assets, &samples);
 
         log::info!("start load sponza model");
-        world.import_scene(TruvisPath::assets_path(Self::IMPORT_PATH))
+        imports.import_scene(TruvisPath::assets_path(Self::IMPORT_PATH))
     }
 
-    fn spawn_material_test_cubes(world: &mut GameWorld, samples: &MaterialSamples) {
+    fn spawn_material_test_cubes(world: &mut GameWorld, assets: &mut AssetSystem, samples: &MaterialSamples) {
         let cube_mesh =
-            world.import_mesh(ProceduralMeshKind::Cube.mesh_data()).expect("failed to register procedural cube mesh");
+            assets.register_mesh(ProceduralMeshKind::Cube.mesh_data()).expect("failed to register procedural cube mesh");
         let centers = [
             glam::vec3(-8.0, 1.0, -0.25),
             glam::vec3(-4.5, 1.0, -0.25),
@@ -55,8 +58,7 @@ impl SponzaScene {
         ];
 
         for (index, center) in centers.into_iter().enumerate() {
-            world
-                .create_mesh_instance(Instance {
+            super::SceneInitializer::spawn(world, assets, Instance {
                     name: format!("material-test-cube-{}", samples.name(index)),
                     mesh: cube_mesh,
                     materials: vec![samples.get(index)],
@@ -65,10 +67,10 @@ impl SponzaScene {
                 .expect("failed to register material test cube instance");
         }
 
-        Self::spawn_emissive_cube_matrix(world, cube_mesh);
+        Self::spawn_emissive_cube_matrix(world, assets, cube_mesh);
     }
 
-    fn spawn_emissive_cube_matrix(world: &mut GameWorld, cube_mesh: MeshAssetHandle) {
+    fn spawn_emissive_cube_matrix(world: &mut GameWorld, assets: &mut AssetSystem, cube_mesh: MeshAssetHandle) {
         let palette_specs = [
             ("warm-amber", glam::vec4(1.0, 0.72, 0.32, 1.0), glam::vec3(4.8, 2.7, 0.8) * 5.0),
             ("rose", glam::vec4(1.0, 0.36, 0.54, 1.0), glam::vec3(4.2, 0.9, 1.8) * 5.0),
@@ -77,7 +79,7 @@ impl SponzaScene {
             ("violet", glam::vec4(0.72, 0.48, 1.0, 1.0), glam::vec3(2.2, 1.2, 4.8) * 5.0),
         ];
         let emissive_materials = palette_specs.map(|(name, base_color, radiance)| {
-            world
+            assets
                 .register_material(MaterialData {
                     base_color,
                     metallic: 0.0,
@@ -102,8 +104,7 @@ impl SponzaScene {
                             y as f32 * EMISSIVE_CUBE_MATRIX_CONFIG.spacing.y,
                             z as f32 * EMISSIVE_CUBE_MATRIX_CONFIG.spacing.z,
                         );
-                    world
-                        .create_mesh_instance(Instance {
+                    super::SceneInitializer::spawn(world, assets, Instance {
                             name: format!("emissive-cube-matrix-{x}-{y}-{z}"),
                             mesh: cube_mesh,
                             materials: vec![emissive_materials[cube_index % emissive_materials.len()]],

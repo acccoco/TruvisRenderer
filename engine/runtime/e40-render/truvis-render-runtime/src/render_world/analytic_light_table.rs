@@ -7,7 +7,7 @@ use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuffer;
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_shader_binding::gpu;
-use truvis_world::SceneReadView;
+use truvis_world::GameWorld;
 
 const INITIAL_ANALYTIC_LIGHT_CAPACITY: usize = 512;
 
@@ -164,7 +164,7 @@ impl AnalyticLightTable {
     }
 
     /// 对账 CPU light revision；无需依赖 scene dirty event 才能发现新增或删除光源。
-    pub(crate) fn sync_scene(&mut self, scene: SceneReadView<'_>) {
+    pub(crate) fn sync_scene(&mut self, scene: &GameWorld) {
         if self.version != scene.light_revision() {
             self.point_lights = scene
                 .point_light_map()

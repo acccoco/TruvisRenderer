@@ -4,7 +4,7 @@
 
 ## 状态权威
 
-`GameWorld`/`SceneStore` 是 CPU scene、material、sky、light 和 instance 的唯一权威。WebView 只保存可丢弃的展示投影；Renderer selection 是 CPU handle 语义，不是 GPU slot。
+`GameWorld` 持有场景、天空设置、灯光和实例。`AssetSystem` 持有材质及其他共享资产。WebView 只保存可丢弃的展示投影；Renderer selection 是 CPU handle 语义，不是 GPU slot。
 
 Transform gizmo 的移动由 Renderer 在 update 阶段直接提交到 `GameWorld`，不新增 gizmo 专用 notification。
 Renderer 的所有选择来源共用私有提交入口，集中比较、赋值、通知和旧 gizmo 展示失效；材质 handle 仅随网格通知传递。
@@ -39,7 +39,7 @@ World 检查有限值、仿射结构、退化输入与重组误差；shear 等�
 
 Query 读取当前权威状态；Command 请求 CPU mutation；Response 只对应当前 invoke；Notification 只做 best-effort 提示。
 
-每个 request 使用独立 oneshot reply，避免共享 response queue。`scene_version` 是 SceneStore 的单调版本，用于 WebView 丢弃过期分页或材质查询结果；它不等价于 frame id、GPU revision 或 notification 数量。
+每个 request 使用独立 oneshot reply，避免共享 response queue。`scene_version` 合并 GameWorld 和 AssetSystem 的 CPU 单调版本，用于 WebView 丢弃过期分页或材质查询结果；它不等价于 frame id、GPU revision 或 notification 数量。
 
 Editor request 的 timeout 只结束调用方等待，不撤销已经入队的 request；命令可能在后续
 RenderThread update 中完成 CPU mutation，而 reply receiver 已不存在。该结果必须通过

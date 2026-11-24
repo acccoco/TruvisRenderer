@@ -57,11 +57,11 @@ app ──> renderer ──> engine
 
 ## 全局约束
 
-- `RenderRuntime` 拥有 `Gfx`、`GameWorld`、GPU resource/binding/timing owner、`RenderWorld`、present、command 和同步资源。
-- Renderer 与 Subsystem 只通过当前 phase 的窄 Ctx 使用 Runtime 能力；App RenderThread Client 只通过 `RendererClient` 窄接口借用 CPU `GameWorld`。
+- `RenderRuntime` 拥有 `Gfx`、一组 `World`（`GameWorld` 与 `RenderWorld`）、共享 `AssetSystem`、`AssetImports` 和 GPU resource/binding/timing owner、present、command 和同步资源。
+- Renderer 与 Subsystem 只通过当前 phase 的窄 Ctx 使用 Runtime 能力；App RenderThread Client 通过 `RendererClient` 在 init/update 借用场景、资产和导入入口。
 - 具体 Renderer 拥有 camera/input、overlay、selection 和渲染子系统，并显式决定 RenderGraph pass 顺序。
 - `SubsystemLifecycle` 只约束 init/resize/shutdown，controller 不实现该 trait。
-- CPU scene 只由 `GameWorld`/`SceneStore` 权威持有；GPU scene 是 prepare 后的派生状态。
+- `GameWorld` 持有 CPU scene，`AssetSystem` 持有共享资产，`RenderWorld` 持有 prepare 派生的 GPU scene。
 - Vulkan 对象只在 RenderThread 创建、使用和销毁。
 - 窗口 owner 只有在 RenderThread 完成 Renderer/Runtime/Vulkan 回收后才销毁 child HWND。
 - Shader owner 方向为 `engine <- renderer`，package manifest 是构建期 shader 依赖事实来源。

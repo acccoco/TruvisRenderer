@@ -1,20 +1,34 @@
 //! App 在 RenderThread 上提供的产品业务 Client 边界。
 
 use renderer_kit::camera::Camera;
+use truvis_render_runtime::asset_imports::AssetImports;
+use truvis_render_runtime::asset_system::AssetSystem;
 use truvis_world::GameWorld;
 
 use crate::{SceneSelection, SelectionChange};
 
 /// 由 App 注入、但只在 RenderThread 生命周期阶段执行的产品业务 Client。
 ///
-/// Client 可以在受控阶段借用 CPU `GameWorld`，负责场景组合和 Editor 业务请求；
+/// Client 可以在受控阶段借用 GameWorld、AssetSystem 的 CPU 编辑接口和导入协调，负责场景组合和 Editor 请求；
 /// RenderLoop 继续拥有 RenderRuntime；Renderer 负责 GPU 查询、RenderGraph 及具体渲染 subsystem。
 pub trait RendererClient: Send {
     /// 注册启动场景和初始相机状态。
-    fn initialize(&mut self, world: &mut GameWorld, camera: &mut Camera);
+    fn initialize(
+        &mut self,
+        world: &mut GameWorld,
+        assets: &mut AssetSystem,
+        imports: &mut AssetImports,
+        camera: &mut Camera,
+    );
 
     /// 在每帧 `update` 阶段处理 CPU scene 业务，之后才进入 runtime prepare。
-    fn tick(&mut self, world: &mut GameWorld, selection: Option<SceneSelection>);
+    fn tick(
+        &mut self,
+        world: &mut GameWorld,
+        assets: &mut AssetSystem,
+        imports: &mut AssetImports,
+        selection: Option<SceneSelection>,
+    );
 
     /// update 中的灯光拾取/清空，或 after_prepare 的网格拾取触发产品通知。
     ///

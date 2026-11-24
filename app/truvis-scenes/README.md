@@ -26,6 +26,6 @@ Cornell box 的箱内地面中心位于 `(13.5, 0.12, 0)`，内部宽高深均�
 
 Sponza 使用 `fbx/sponza/sponza.fbx`，Cornell 使用 `fbx/cornell-box.fbx`。共享导入流程在 CPU 数据 ready 后创建一次实例；进入成功或失败终态时先清空 pending，再进行日志和实例化，因此诊断 unwind 也不会在下一帧重放。不重试、不切换场景；实例创建失败保留已创建对象，并记录场景、路径和错误。
 
-本模块不拥有 GPU 资源，不调用 Runtime prepare，也不自行驱动 loader。CPU 资源属于 `GameWorld`/`AssetSystem`，实例和灯光属于 SceneStore；Runtime 继续负责 prepare、上传与销毁。`renderer-kit::Camera` 和 shader-binding 灯光结构仅用作现有 CPU 数据接口，不访问其 GPU 能力。
+本模块不拥有 GPU 资源，不调用 Runtime prepare，也不自行驱动 loader。资产属于 Runtime 的 AssetSystem，导入由 AssetImports 协调，实例和灯光属于 GameWorld；Runtime 继续负责 prepare、上传与销毁。`renderer-kit::Camera` 和 shader-binding 灯光结构仅用作现有 CPU 数据接口，不访问其 GPU 能力。
 
 场景切换只发生在启动时，不提供运行时注册表或通用 Scene trait。新增产品场景应在本 crate 的具体模块与预设枚举内实现。

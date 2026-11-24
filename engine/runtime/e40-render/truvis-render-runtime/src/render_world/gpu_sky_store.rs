@@ -11,16 +11,16 @@ use truvis_render_foundation::{
     handles::{GfxBufferHandle, GfxImageHandle, GfxImageViewHandle},
 };
 use truvis_shader_binding::gpu;
-use truvis_world::{SceneSkyState, guid_new_type::TextureAssetHandle};
+use truvis_asset::handle::TextureAssetHandle;
+use truvis_world::SceneSkyState;
 
 use crate::{
     bindings::{bindless_manager::BindlessSrvHandle, shader_binding_system::ShaderBindingSystem},
+    asset_system::{AssetSystem, gpu_texture_store::GpuTextureStore},
+    resources::gpu_asset_upload_queue::{CompletedSkyDistributionUpload, GpuAssetUploadQueue},
     render_world::{
         environment_binding::EnvironmentSkyBinding,
-        gpu_asset_upload_queue::{CompletedSkyDistributionUpload, GpuAssetUploadQueue},
-        gpu_texture_store::GpuTextureStore,
         sky_distribution_builder::{SkyDistributionBuildRequest, SkyDistributionBuildResult, SkyDistributionBuilder},
-        texture_resolver::TextureResolver,
     },
     resources::gfx_resource_registry::GfxResourceRegistry,
 };
@@ -155,7 +155,7 @@ pub(crate) struct RenderSkyUpdateResult
 
 /// scene sky 的 runtime 私有桥接层。
 ///
-/// `SceneStore` 只保存 `TextureAssetHandle` 与天空语义；真实 image 由 `GpuTextureStore`
+/// `GameWorld` 只保存 `TextureAssetHandle` 与天空语义；真实 image 由 `GpuTextureStore`
 /// 持有。该 manager 拥有 distribution worker、请求 generation、active/retired Alias
 /// buffer，并保证新 texture 绝不引用旧 texture 的 distribution。
 pub(crate) struct GpuSkyStore
@@ -408,10 +408,14 @@ impl GpuSkyStore
     ///
     /// 真实 image ready 但 Alias 尚未发布时，仍绑定真实 HDRI，并用 1x1 uniform sphere
     /// distribution。这样 CPU/GPU 异步过程不会制造黑帧，也不会把旧 Alias 配给新图。
-    pub(crate) fn update_sky_binding(&mut self, texture_resolver: &dyn TextureResolver) -> RenderSkyUpdateResult
+    pub(crate) fn update_sky_binding(&mut self, assets: &AssetSystem) -> RenderSkyUpdateResult
     {
-        let real_ready =
-            self.sky_texture.is_some_and(|texture| self.sky_enabled && texture_resolver.is_texture_ready(texture));
+        let binding = if self.sky_enabled {
+            self.sky_texture.and_then(|texture| assets.texture_binding(texture))
+        } else {
+            None
+        };
+        let real_ready = binding.is_some();
         let sky_source_changed = self.using_real_sky != real_ready;
 
         if sky_source_changed {
@@ -428,11 +432,9 @@ impl GpuSkyStore
         }
         let distribution_changed = self.last_active_distribution_version != distribution.version;
 
-        let binding = if real_ready {
-            let texture = texture_resolver
-                .resolve_texture(self.sky_texture.expect("GpuSkyStore: real_ready requires a scene texture handle"));
+        let binding = if let Some(srv_handle) = binding {
             EnvironmentSkyBinding {
-                srv_handle: texture.srv_handle,
+                srv_handle,
                 sampler: gpu::engine::bindless::ESamplerType_LinearRepeatClamp,
                 distribution_device_address: distribution.device_address,
                 distribution_width: distribution.width,

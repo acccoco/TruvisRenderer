@@ -1,5 +1,5 @@
 use renderer_kit::camera::Camera;
-use truvis_world::{LightTarget, SceneReadView};
+use truvis_world::{GameWorld, LightTarget};
 
 use crate::overlay_geometry::OverlayGeometry;
 
@@ -96,7 +96,7 @@ impl LightWireBuilder<'_> {
         }
     }
 
-    fn wire(&mut self, scene: SceneReadView<'_>, target: LightTarget) {
+    fn wire(&mut self, scene: &GameWorld, target: LightTarget) {
         let Some(position) = scene.light_position(target) else {
             return;
         };
@@ -159,7 +159,7 @@ impl LightOverlay {
     const HOVER_COLOR: glam::Vec4 = glam::vec4(1.0, 1.0, 0.8, 1.0);
     const SELECTED_COLOR: glam::Vec4 = glam::vec4(0.2, 0.65, 1.0, 1.0);
 
-    pub(crate) fn project(&mut self, scene: SceneReadView<'_>, camera: &Camera, viewport: glam::Vec2) {
+    pub(crate) fn project(&mut self, scene: &GameWorld, camera: &Camera, viewport: glam::Vec2) {
         self.viewport = viewport;
         self.icons.clear();
         let targets = scene
@@ -200,7 +200,7 @@ impl LightOverlay {
 
     pub(crate) fn refresh_snapshot(
         &mut self,
-        scene: SceneReadView<'_>,
+        scene: &GameWorld,
         camera: &Camera,
         selected: Option<LightTarget>,
         mouse: Option<glam::Vec2>,

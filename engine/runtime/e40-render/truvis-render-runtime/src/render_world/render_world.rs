@@ -1,3 +1,7 @@
+use std::collections::HashSet;
+
+use slotmap::SecondaryMap;
+use truvis_asset::handle::MaterialAssetHandle;
 use ash::vk;
 
 use truvis_gfx::basic::bytes::BytesConvert;
@@ -10,12 +14,15 @@ use truvis_gfx::resources::special_buffers::structured_buffer::GfxStructuredBuff
 use truvis_render_foundation::frame_label::FrameLabel;
 use truvis_render_foundation::render_scene_view::{RenderSceneAccumSignature, RenderSceneView};
 use truvis_shader_binding::gpu;
-use truvis_world::SceneReadView;
+use truvis_world::GameWorld;
+
+use crate::asset_system::{AssetSystem, MaterialRevisions};
 
 use crate::bindings::shader_binding_system::ShaderBindingSystem;
 use crate::render_world::analytic_light_table::{AnalyticLightBinding, AnalyticLightTable};
 use crate::render_world::environment_binding::EnvironmentBinding;
-use crate::render_world::render_asset_system::{RenderAssetSystem, RenderResourceSyncResult};
+use crate::render_world::gpu_sky_store::GpuSkyStore;
+use crate::resources::gpu_asset_upload_queue::GpuAssetUploadQueue;
 use crate::render_world::render_data::RenderData;
 use crate::render_world::render_emissive_light_table::EmissiveLightBinding;
 use crate::render_world::render_emissive_light_table::RenderEmissiveLightTable;
@@ -34,13 +41,12 @@ use super::raster_draw_cache::{
 /// 它把 `RenderInstanceTable` 产出的 `RenderData` 转换成 shader 可读的 GPU buffer 和
 /// 光栅化 draw cache，并协调 `SceneTlas` 更新 TLAS；render pass 只能通过
 /// `RenderSceneView` 读取 prepare 后的快照。
-/// `RenderWorld` 不拥有 CPU scene；它拥有当前场景的 GPU 表示，以及在该 world 内供多个
-/// instance 共享的 `RenderAssetSystem`。
+/// 共享 mesh、texture 和 material 由 Runtime 的 AssetSystem 持有。
 pub struct RenderWorld {
-    /// 同一个 RenderWorld 内的 texture/mesh/material/sky GPU 资源共享表；它不属于某个 instance。
-    render_assets: RenderAssetSystem,
-    /// 资源 owner 已发布、尚未转为场景失效状态的通知；不能只保存在 Runtime 栈上。
-    pending_resource_changes: RenderResourceSyncResult,
+    /// 天空分布由该 World 的环境设置派生，HDRI 本身由 AssetSystem 持有。
+    pub(crate) gpu_sky: GpuSkyStore,
+    /// 只观察此 World 当前使用的材质投影，资源发布与 World 的推进互相独立。
+    material_revisions: SecondaryMap<MaterialAssetHandle, MaterialRevisions>,
     /// prepare 中断时继续保留，只有本次上传提交确认后才能释放该历史失效提示。
     pending_history_invalidated: bool,
     pub(super) render_instance_table: RenderInstanceTable,
@@ -73,22 +79,20 @@ impl RenderWorld {
     ///
     /// `RenderWorld` 不拥有 CPU scene；它只接收 asset sync、scene read view 和当前 frame
     /// label，把这些输入整理成 GPU 可见的 scene 表示。
-    pub fn new(
+    pub(crate) fn new(
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,
-        queue_ctx: GfxQueueCtx<'_>,
         gfx_resource_registry: &mut GfxResourceRegistry,
         shader_binding_system: &mut ShaderBindingSystem,
         current_frame_id: u64,
     ) -> Self {
         let _span = tracy_client::span!("RenderWorld::new");
         let render_instance_table = RenderInstanceTable::new(current_frame_id);
-        let render_assets = RenderAssetSystem::new(
+        let gpu_sky = GpuSkyStore::new(
             resource_ctx,
             device_ctx,
             immediate_ctx,
-            queue_ctx,
             gfx_resource_registry,
             shader_binding_system,
             current_frame_id,
@@ -98,8 +102,8 @@ impl RenderWorld {
         let scene_buffers = FrameLabel::ALL.map(|label| SceneBuffers::new(resource_ctx, label));
 
         Self {
-            render_assets,
-            pending_resource_changes: RenderResourceSyncResult::default(),
+            gpu_sky,
+            material_revisions: SecondaryMap::new(),
             pending_history_invalidated: false,
             render_instance_table,
             analytic_light_table: analytic_light_table,
@@ -133,15 +137,14 @@ impl RenderWorld {
         for buffers in &mut self.scene_buffers {
             buffers.destroy_mut(resource_ctx, device_ctx);
         }
-        // assets 最后关闭；其内部 queue 等待失败优先透传，不能被先前的 scene 释放诊断掩盖。
-        self.render_assets.destroy(resource_ctx, device_ctx, shader_binding_system, gfx_resource_registry);
+        self.gpu_sky.destroy_gpu_resources(resource_ctx, device_ctx, shader_binding_system, gfx_resource_registry);
     }
 }
 
 // Runtime 内部阶段入口：`RenderRuntime` 只负责提供阶段上下文，具体 render-side scene 状态在这里推进。
 impl RenderWorld {
     pub(crate) fn begin_frame(&mut self, current_frame_id: u64) {
-        self.render_assets.begin_frame(current_frame_id);
+        self.gpu_sky.begin_frame(current_frame_id);
         self.render_instance_table.begin_frame(current_frame_id);
     }
 
@@ -149,28 +152,25 @@ impl RenderWorld {
         self.render_instance_table.finish_rendered_frame(scene_submitted);
     }
 
-    /// 对账当前 `GameWorld` 的 CPU 资源，并推进本 world 的 GPU 资源安装。
-    ///
-    /// 资源同步必须发生在 scene buffer command 开始录制前；这样保持 texture/mesh
-    /// completion、GPU resource publish 和后续 scene prepare 的原有顺序。
-    pub(crate) fn sync_assets(
+    /// 天空分布使用与纹理相同的 transfer queue，结果只发布给本 World。
+    pub(crate) fn prepare_sky(
         &mut self,
-        scene: SceneReadView<'_>,
+        world: &GameWorld,
+        assets: &AssetSystem,
         resource_ctx: GfxResourceCtx<'_>,
         device_ctx: GfxDeviceCtx<'_>,
         queue_ctx: GfxQueueCtx<'_>,
-        gfx_resource_registry: &mut GfxResourceRegistry,
-        shader_binding_system: &mut ShaderBindingSystem,
-    ) -> Option<(vk::Semaphore, u64)> {
-        self.render_assets.sync(
-            scene,
-            &mut self.pending_resource_changes,
-            resource_ctx,
-            device_ctx,
-            queue_ctx,
-            gfx_resource_registry,
-            shader_binding_system,
-        )
+        registry: &mut GfxResourceRegistry,
+        queue: &mut GpuAssetUploadQueue,
+    ) {
+        let sky = world.sky_state();
+        self.pending_history_invalidated |= self.gpu_sky.apply_scene_sky_state(sky, registry);
+        if let Some(texture) = sky.texture {
+            if let Some(data) = assets.texture_data(texture) {
+                self.gpu_sky.observe_texture_loaded(texture, data, registry);
+            }
+        }
+        self.gpu_sky.submit_completed_builds(resource_ctx, device_ctx, queue_ctx, queue);
     }
 
     /// 同步 raycast 需要用 instance slot 反查 CPU record；只暴露只读引用，不暴露 instance manager 修改入口。
@@ -181,7 +181,7 @@ impl RenderWorld {
     /// 准备 render pass 可见的 GPU scene。
     ///
     /// 该函数保持现有 prepare 顺序：sky binding、material buffer、instance ready gate、
-    /// emissive table、TLAS/scene root。它不修改 CPU scene，只读取 `SceneReadView` 快照。
+    /// emissive table、TLAS/scene root。它不修改 CPU scene，只读取 `GameWorld` 当前状态。
     pub(crate) fn prepare_render_data(
         &mut self,
         resource_ctx: GfxResourceCtx<'_>,
@@ -191,43 +191,38 @@ impl RenderWorld {
         transfer_barrier_mask: GfxBarrierMask,
         frame_id: u64,
         frame_label: FrameLabel,
-        scene: SceneReadView<'_>,
-        mut instance_changes: indexmap::IndexSet<truvis_world::guid_new_type::MeshInstanceHandle>,
+        scene: &GameWorld,
+        assets: &AssetSystem,
+        instance_changes: indexmap::IndexSet<truvis_world::guid_new_type::MeshInstanceHandle>,
     ) -> RenderWorldPrepareResult {
-        // CPU 编辑与资源发布合并后立即移交，sky/buffer 工作失败时仍有 owner 持有候选。
-        for &mesh in &self.pending_resource_changes.published_meshes {
-            instance_changes.extend(scene.instances_using_mesh(mesh));
-        }
-        for &material in &self.pending_resource_changes.appearance_changed_materials {
-            instance_changes.extend(scene.instances_using_material(material));
-        }
+        // 接管 World 的变更批次，异常重入时表继续保有候选身份。
         self.render_instance_table.queue_changes(instance_changes);
-
-        let sky_update = self.render_assets.update_sky_binding();
+        let sky_update = self.gpu_sky.update_sky_binding(assets);
         self.pending_history_invalidated |= sky_update.changed;
         let environment_binding = EnvironmentBinding {
             sky: sky_update.binding,
         };
-        self.render_assets.upload_materials(resource_ctx, cmd, transfer_barrier_mask, frame_label);
 
-        let (scene_render_data, instance_result) = self.render_instance_table.prepare_render_data(
-            scene,
-            self.render_assets.material_resolver(),
-            self.render_assets.mesh_resolver(),
-        );
-        let used_materials = scene_render_data
+        let (scene_render_data, instance_result) = self.render_instance_table.prepare_render_data(scene, assets);
+        let used_materials: HashSet<_> = scene_render_data
             .all_instances
             .iter()
             .flat_map(|instance| instance.material_handles.iter().copied())
-            .collect::<std::collections::HashSet<_>>();
+            .collect();
+        self.material_revisions.retain(|handle, _| used_materials.contains(&handle));
+        let mut material_appearance_changed = false;
+        let mut material_emissive_changed = false;
+        for material in used_materials {
+            let revision = assets.material_render_revision(material).expect("visible material must be registered");
+            if let Some(previous) = self.material_revisions.insert(material, revision) {
+                material_appearance_changed |= previous.appearance != revision.appearance;
+                material_emissive_changed |= previous.emissive != revision.emissive;
+            }
+        }
         let scene_changed = instance_result.active_set_changed || instance_result.material_binding_changed;
         if scene_changed {
             self.scene_revision = self.scene_revision.saturating_add(1).max(1);
         }
-        let material_appearance_changed =
-            self.pending_resource_changes.appearance_changed_materials.iter().any(|material| used_materials.contains(material));
-        let material_emissive_changed =
-            self.pending_resource_changes.emissive_changed_materials.iter().any(|material| used_materials.contains(material));
         let appearance_changed = instance_result.active_set_changed
             || instance_result.transform_changed
             || instance_result.material_binding_changed
@@ -253,23 +248,21 @@ impl RenderWorld {
         self.pending_history_invalidated |= scene_changed
             || material_appearance_changed
             || material_emissive_changed
-            || self.last_light_revision != scene.light_revision()
-            || self.pending_resource_changes.sky_changed;
-        self.pending_resource_changes = RenderResourceSyncResult::default();
+            || self.last_light_revision != scene.light_revision();
 
         self.analytic_light_table.sync_scene(scene);
         let analytic_light_binding =
             self.analytic_light_table.update_and_upload(resource_ctx, cmd, transfer_barrier_mask, frame_label);
         self.last_light_revision = scene.light_revision();
 
-        let material_buffer_device_address = self.render_assets.material_buffer_device_address(frame_label);
+        let material_buffer_device_address = assets.material_buffer_device_address(frame_label);
         let emissive_light_binding = self.render_emissive_light_table.update_and_upload(
             resource_ctx,
             cmd,
             transfer_barrier_mask,
             frame_label,
             &scene_render_data,
-            self.render_assets.material_resolver(),
+            assets,
         );
         Self::upload_render_data(
             &mut self.scene_buffers,
@@ -303,7 +296,6 @@ impl RenderWorld {
     }
 
     pub(crate) fn commit_uploaded_frame(&mut self, frame_label: FrameLabel) {
-        self.render_assets.commit_submitted_frame(frame_label);
         self.render_instance_table.commit_uploaded_frame(frame_label);
         self.analytic_light_table.commit_submitted_frame(frame_label);
         self.render_emissive_light_table.commit_submitted_frame(frame_label);
@@ -385,7 +377,7 @@ impl RenderWorld {
     /// # 阶段：Before Render
     ///
     /// 将 runtime bridge 已经整理好的 `RenderData` 写入当前 FIF 的 device buffer。
-    /// 此方法不依赖 `SceneStore`，这是 CPU scene 与 GPU scene 的边界。
+    /// 此方法不依赖 `GameWorld`，这是 CPU scene 与 GPU scene 的边界。
     ///
     /// 上传顺序刻意保持为 draw cache、mesh/instance/light buffer、TLAS、scene root buffer：
     /// scene root buffer 最后写入，确保它记录的 device address 与本帧实际 buffer/TLAS 对齐。
@@ -482,7 +474,7 @@ impl RenderWorld {
             all_instances: crt_gpu_buffers.instance_buffer.device_address(),
             all_mats: material_buffer_device_address,
             all_geometries: crt_gpu_buffers.geometry_buffer.device_address(),
-            instance_material_map: crt_gpu_buffers.material_indirect_buffer.device_address(),
+            instance_material_map: crt_gpu_buffers.material_slot_table.device_address(),
             instance_geometry_map: crt_gpu_buffers.geometry_indirect_buffer.device_address(),
             point_lights: analytic_light_binding.point_lights,
             spot_lights: analytic_light_binding.spot_lights,
@@ -593,10 +585,10 @@ impl RenderWorld {
 
         let crt_instance_stage_buffer = &mut crt_gpu_buffers.instance_stage_buffer;
         let crt_geometry_indirect_stage_buffer = &mut crt_gpu_buffers.geometry_indirect_stage_buffer;
-        let crt_material_indirect_stage_buffer = &mut crt_gpu_buffers.material_indirect_stage_buffer;
+        let crt_material_slot_stage = &mut crt_gpu_buffers.material_slot_stage;
 
         let instance_buffer_slices = crt_instance_stage_buffer.mapped_slice();
-        let material_indirect_buffer_slices = crt_material_indirect_stage_buffer.mapped_slice();
+        let material_slot_table_slices = crt_material_slot_stage.mapped_slice();
         let geometry_indirect_buffer_slices = crt_geometry_indirect_stage_buffer.mapped_slice();
 
         let mut crt_geometry_indirect_idx = 0;
@@ -620,7 +612,7 @@ impl RenderWorld {
             if geometry_indirect_buffer_slices.len() < crt_geometry_indirect_idx + submesh_cnt {
                 panic!("instance geometry cnt can not be larger than buffer");
             }
-            if material_indirect_buffer_slices.len() < crt_material_indirect_idx + submesh_cnt {
+            if material_slot_table_slices.len() < crt_material_indirect_idx + submesh_cnt {
                 panic!("instance material cnt can not be larger than buffer");
             }
 
@@ -643,9 +635,9 @@ impl RenderWorld {
             crt_geometry_indirect_idx += submesh_cnt;
 
             // 将稳定 material slot 写入间接索引 buffer。
-            // material slot 来自 GpuMaterialStore，可被 shader 直接索引材质 buffer。
+            // material slot 来自共享 MaterialTable，可被 shader 直接索引材质 buffer。
             for material_slot in instance.material_slots.iter() {
-                material_indirect_buffer_slices[crt_material_indirect_idx] = *material_slot;
+                material_slot_table_slices[crt_material_indirect_idx] = *material_slot;
                 crt_material_indirect_idx += 1;
             }
         }
@@ -661,8 +653,8 @@ impl RenderWorld {
         Self::flush_copy_and_barrier(
             resource_ctx,
             cmd,
-            crt_material_indirect_stage_buffer,
-            &mut crt_gpu_buffers.material_indirect_buffer,
+            crt_material_slot_stage,
+            &mut crt_gpu_buffers.material_slot_table,
             barrier_mask,
             crt_material_indirect_idx,
         );

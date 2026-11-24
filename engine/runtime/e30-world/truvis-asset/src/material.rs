@@ -1,14 +1,8 @@
-use crate::guid_new_type::TextureAssetHandle;
+use crate::handle::{CoverageMode, MaterialClass, TextureAssetHandle};
+use crate::material_texture::{TextureChannel, TextureSlot};
 
-pub use truvis_asset::handle::{CoverageMode, MaterialClass};
-pub use truvis_asset::material_texture::{TextureChannel, TextureSlot};
-
-/// CPU scene 中的材质语义参数。
+/// 材质资产的权威 CPU 参数，以长期纹理 handle 表示各通道引用。
 ///
-/// `MaterialData` 是 `GameWorld` facade 和 `SceneStore` 对外使用的材质数据形状。
-/// texture 引用使用 `TextureAssetHandle`，因此 Renderer、instance、raycast 和 render-side
-/// manager 不需要知道 `AssetLoadService` 内部 loader handle。GPU material slot、bindless
-/// texture binding 和 per-FIF material buffer 仍由 `RenderWorld` 内部 manager 维护。
 /// `class` 是 CPU -> GPU 光学类别的权威来源；`coverage` 单独表达 alpha mask 可见性。
 /// `base_color.w` 只作为 `CoverageMode::AlphaMask` 的 alpha factor，与 diffuse 贴图 alpha
 /// 相乘后再和 cutoff 比较。
@@ -47,7 +41,7 @@ impl Default for MaterialData {
 impl MaterialData {
     /// 在任何 CPU edit 提交前校验，防止 NaN 破坏相等比较与跨帧版本对账。
     pub fn validate(&self) -> Result<(), String> {
-        // 公共 world 入口拒绝非法 BSDF 权重/概率；RGB 保留既有 HDR 范围，不依赖导入器或 UI 校验。
+        // 资产注册与编辑入口拒绝非法 BSDF 权重/概率；RGB 保留既有 HDR 范围，不依赖导入器或 UI 校验。
         if !self.base_color.is_finite()
             || self.base_color.truncate().min_element() < 0.0
             || !(0.0..=1.0).contains(&self.base_color.w)

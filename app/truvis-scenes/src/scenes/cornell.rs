@@ -2,14 +2,14 @@ use renderer_kit::camera::Camera;
 use truvis_path::TruvisPath;
 use truvis_shader_binding::gpu;
 use truvis_world::GameWorld;
-use truvis_world::guid_new_type::SceneImportHandle;
+use truvis_render_runtime::asset_imports::{AssetImports, SceneImportHandle};
 
 pub(super) struct CornellScene;
 
 impl CornellScene {
     pub(super) const IMPORT_PATH: &'static str = "fbx/cornell-box.fbx";
 
-    pub(super) fn initialize(world: &mut GameWorld, camera: &mut Camera) -> SceneImportHandle {
+    pub(super) fn initialize(world: &mut GameWorld, imports: &mut AssetImports, camera: &mut Camera) -> SceneImportHandle {
         camera.position = glam::vec3(-4.0, 10.0, 10.0);
         camera.euler_yaw_deg = 330.0;
         camera.euler_pitch_deg = -27.0;
@@ -52,6 +52,6 @@ impl CornellScene {
         }).expect("invalid built-in area light");
 
         log::info!("Loading model...");
-        world.import_scene(TruvisPath::assets_path(Self::IMPORT_PATH))
+        imports.import_scene(TruvisPath::assets_path(Self::IMPORT_PATH))
     }
 }

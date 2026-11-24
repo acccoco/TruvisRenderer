@@ -13,9 +13,22 @@ use truvis_gfx::gfx::{GfxDeviceCtx, GfxQueueCtx, GfxResourceCtx};
 use truvis_gfx::resources::buffer::GfxBuffer;
 use truvis_gfx::resources::image::{GfxImage, GfxImageCreateInfo};
 use truvis_gfx::resources::lifecycle::DestroyReason;
-use truvis_world::guid_new_type::TextureAssetHandle;
+use truvis_asset::handle::TextureAssetHandle;
 
-use crate::render_world::sky_distribution_builder::SkyDistributionBuild;
+use truvis_shader_binding::gpu;
+
+/// 可提交到共享 transfer queue 的 Alias distribution。
+pub(crate) struct SkyDistributionBuild
+{
+    pub(crate) request_id: u64,
+    pub(crate) texture: TextureAssetHandle,
+    pub(crate) source_width: u32,
+    pub(crate) source_height: u32,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) entries: Vec<gpu::engine::scene::SkyDistributionEntry>,
+    pub(crate) cpu_build_elapsed: Duration,
+}
 
 /// 已完成的 scene texture image 上传。
 ///

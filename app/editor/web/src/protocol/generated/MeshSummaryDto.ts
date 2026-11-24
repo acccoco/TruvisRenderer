@@ -10,6 +10,6 @@ export type MeshSummaryDto = {
  */
 mesh_id: MeshId,
 /**
- * `SceneStore` 长期保存的 mesh 展示名称。
+ * `AssetSystem` 持有的 mesh 展示名称。
  */
 name: string, };

@@ -6,6 +6,17 @@ use slotmap::new_key_type;
 use ash::vk;
 
 new_key_type! {
+    /// 纹理资产的长期身份。CPU 解码和 GPU binding 各自有独立的就绪状态。
+    pub struct TextureAssetHandle;
+
+    /// Mesh 资产的长期身份。GPU 几何与 BLAS 完成后才能用于实例渲染。
+    pub struct MeshAssetHandle;
+
+    /// 材质资产的长期身份。由资源 owner 解析成 shader 可见材质表中的 slot。
+    pub struct MaterialAssetHandle;
+}
+
+new_key_type! {
     /// 纹理加载任务身份。
     ///
     /// 该 handle 只用于把后台 texture load result 关联回 `AssetSystem`，
@@ -18,7 +29,7 @@ new_key_type! {
     /// scene / prefab 加载任务身份。
     ///
     /// 该 handle 只用于把后台 scene import result 关联回 `AssetSystem`，
-    /// 不是长期 scene database key，也不是 `SceneStore` 中的 live runtime instance handle。
+    /// 不是长期 scene database key，也不是 `GameWorld` 中的 live runtime instance handle。
     pub struct SceneLoadHandle;
 }
 
@@ -32,7 +43,7 @@ pub enum TextureColorSpace {
 /// 一次 texture CPU decode task 的输入描述。
 ///
 /// 这是一次性 loader 请求的参数，不是长期 identity key。同一路径是否复用为同一个
-/// `TextureAssetHandle` 由 `AssetSystem` 内部的 `AssetStore` 决定。
+/// `TextureAssetHandle` 由 `AssetSystem` 内部的 资产注册表 决定。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextureLoadDesc {
     File { path: PathBuf, color_space: TextureColorSpace },
@@ -214,7 +225,7 @@ pub struct SubmeshData {
     pub normals: Vec<glam::Vec3>,
     /// XYZW 保留切线方向和 bitangent handedness；零向量表示需要从所选 UV 重建。
     pub tangents: Vec<glam::Vec4>,
-    /// UV 与 positions 等长，左上原点。
+    /// 每套 UV 都与 positions 等长，按 glTF TEXCOORD_n 索引；左上原点。
     pub tex_coords: Vec<glam::Vec2>,
     pub indices: Vec<u32>,
     pub name: String,
@@ -294,7 +305,7 @@ impl SubmeshData {
 
 /// upload-ready 的 CPU mesh 数据。
 ///
-/// `MeshData` 是 `SceneStore` 与 render-side mesh manager 之间的 mesh 边界格式：
+/// `MeshData` 是 资产登记与 GPU 上传之间的 mesh 边界格式：
 /// mesh 本身对应一个 BLAS，内部每个 `SubmeshData` 对应 BLAS 中的一条 geometry。
 /// instance 只能引用一个 mesh，并且它的 material 列表必须与这里的 submesh 顺序一一对齐。
 #[derive(Debug, Clone, PartialEq)]
@@ -304,6 +315,17 @@ pub struct MeshData {
 }
 
 impl MeshData {
+    /// 校验 CPU 数据能完整写入固定的顶点布局；空 mesh 无法构建 BLAS。
+    pub fn validate(&self) -> Result<(), String> {
+        if self.submeshes.is_empty() {
+            return Err(format!("mesh '{}' has no submeshes", self.name));
+        }
+        for submesh in &self.submeshes {
+            submesh.validate()?;
+        }
+        Ok(())
+    }
+
     /// 把现有单几何导入路径显式包装成单 submesh mesh。
     ///
     /// 该 helper 只用于保持 importer / procedural mesh 当前“一份几何就是一个 mesh”的策略；
@@ -423,7 +445,7 @@ impl CoverageMode {
 
 /// 后台 Assimp task 产出的 owned material CPU 数据。
 ///
-/// texture 仍以导入器返回的 source 表达，避免后台 task 直接修改 `SceneStore`。
+/// texture 仍以导入器返回的 source 表达，避免后台 task 直接修改 `GameWorld`。
 /// `AssetSystem` 在 asset sync 阶段解析相对路径、分配 `TextureAssetHandle`
 /// 并提交必要的 file 或 memory texture load task。
 #[derive(Debug, Clone, PartialEq)]
@@ -490,4 +512,15 @@ pub enum LoadStatus {
     Ready,
     /// 失败状态：文件不存在、格式错误、解码失败或导入器返回错误。
     Failed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MeshData;
+
+    #[test]
+    fn rejects_mesh_without_submeshes() {
+        let mesh = MeshData { name: "test-mesh".to_string(), submeshes: Vec::new() };
+        assert!(mesh.validate().is_err());
+    }
 }

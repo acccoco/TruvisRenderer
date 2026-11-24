@@ -1,5 +1,6 @@
 use truvis_render_runtime::selection::WorldSubmeshSelection;
-use truvis_world::{GameWorld, LightTarget, guid_new_type::MaterialAssetHandle};
+use truvis_asset::handle::MaterialAssetHandle;
+use truvis_world::{GameWorld, LightTarget};
 
 /// Renderer 唯一选择状态；使用 CPU 身份，不缓存 GPU slot 或材质。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,12 +25,11 @@ impl SceneSelection {
     }
 
     pub(crate) fn is_valid(self, world: &GameWorld) -> bool {
-        let scene = world.scene_view();
         match self {
-            Self::Submesh(value) => scene
+            Self::Submesh(value) => world
                 .get_instance(value.instance)
                 .is_some_and(|instance| (value.submesh_index as usize) < instance.materials.len()),
-            Self::Light(value) => scene.light_position(value).is_some(),
+            Self::Light(value) => world.light_position(value).is_some(),
         }
     }
 }

@@ -11,8 +11,9 @@ use renderer_kit::debug_image::{DebugImageOption, DebugImageSelection};
 use renderer_render_ui::RenderControlsOverlay;
 use renderer_rendering::{OfflineRenderSettings, PathTracingCommonSettings, RealtimeRenderSettings, RenderMode};
 use truvis_render_runtime::ray_cast::RayCastResult;
-use truvis_world::GameWorld;
-use truvis_world::components::material::{CoverageMode, MaterialClass, MaterialData};
+use truvis_render_runtime::asset_system::AssetSystem;
+use truvis_asset::handle::{CoverageMode, MaterialClass};
+use truvis_asset::material::MaterialData;
 
 use crate::truvis_renderer::ClickRayCastProbe;
 
@@ -196,7 +197,7 @@ impl TruvisOverlayUi {
                     ui.text(format!("UV: ({:.3}, {:.3})", hit.uv.x, hit.uv.y));
                 }
                 if ui.collapsing_header("Material", imgui::TreeNodeFlags::empty()) {
-                    Self::draw_material_info(ui, raycast.world.material_data(hit.material));
+                    Self::draw_material_info(ui, raycast.assets.material_data(hit.material));
                 }
             }
             None => {
@@ -265,7 +266,7 @@ pub(crate) struct RenderControlsData<'a> {
 
 pub(crate) struct RaycastOverlayData<'a> {
     pub(crate) probe: &'a ClickRayCastProbe,
-    pub(crate) world: &'a GameWorld,
+    pub(crate) assets: &'a AssetSystem,
 }
 
 pub(crate) struct DebugImageSelectionData<'a> {

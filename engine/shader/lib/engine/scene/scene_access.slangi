@@ -5,8 +5,7 @@
 /// SceneAccess 是 shader 侧访问 engine::scene::GpuScene 间接表的唯一入口。
 /// 全局 `engine::binding::gpu_scene` 来自 set 2；raster 与 RT 共用同一套索引规则。
 ///
-/// 所有函数都假设 `RenderInstanceManager` 已经过 ready gate，只把 mesh/material 都 ready 的实例放入
-/// active render list。shader 侧因此不做空指针或 slot 越界恢复；相关错误应在 prepare 阶段暴露。
+/// 实例发布时 mesh 已就绪，材质 slot 已登记，本帧的 MaterialTable 和 MaterialSlotTable 已准备好。
 struct SceneAccess
 {
     [ForceInline]

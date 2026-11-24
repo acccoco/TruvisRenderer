@@ -9,7 +9,8 @@ use truvis_editor_bridge::protocol::{
 use truvis_editor_bridge::{AutomationRendererEndpoint, RequestEnvelope};
 use truvis_world::GameWorld;
 use truvis_world::components::transform::TransformTrs;
-use truvis_world::guid_new_type::SceneImportHandle;
+use truvis_render_runtime::asset_imports::{AssetImports, SceneImportHandle};
+use truvis_render_runtime::asset_system::AssetSystem;
 
 use super::editor_controller::WorldSceneAdapter;
 
@@ -41,7 +42,7 @@ impl WorldAutomationController {
         }
     }
 
-    pub(crate) fn process_requests(&mut self, world: &mut GameWorld) {
+    pub(crate) fn process_requests(&mut self, world: &mut GameWorld, assets: &mut AssetSystem, imports: &mut AssetImports) {
         let started = Instant::now();
         for _ in 0..self.config.max_requests_per_frame {
             if started.elapsed() >= self.config.max_time_per_frame {
@@ -54,27 +55,26 @@ impl WorldAutomationController {
                     | tokio::sync::mpsc::error::TryRecvError::Disconnected,
                 ) => break,
             };
-            self.process_request(world, envelope);
+            self.process_request(world, assets, imports, envelope);
         }
     }
 
-    fn process_request(&self, world: &mut GameWorld, envelope: RequestEnvelope<AutomationRequest, AutomationResponse>) {
+    fn process_request(&self, world: &mut GameWorld, assets: &mut AssetSystem, imports: &mut AssetImports, envelope: RequestEnvelope<AutomationRequest, AutomationResponse>) {
         let response = match envelope.request {
-            AutomationRequest::Query(query) => self.query(world, query),
-            AutomationRequest::Command(command) => self.command(world, command),
+            AutomationRequest::Query(query) => self.query(world, assets, imports, query),
+            AutomationRequest::Command(command) => self.command(world, assets, imports, command),
         };
         let _ = envelope.reply.send(response);
     }
 
-    fn query(&self, world: &GameWorld, query: AutomationQuery) -> AutomationResponse {
+    fn query(&self, world: &GameWorld, assets: &AssetSystem, imports: &AssetImports, query: AutomationQuery) -> AutomationResponse {
         match query {
             AutomationQuery::GetSceneSummary => {
-                let view = world.scene_view();
                 AutomationResponse::SceneSummary(SceneSummaryDto {
-                    scene_version: SceneVersion::from_u64(view.scene_version()),
-                    object_count: view.instance_map().len() as u32,
-                    material_count: view.material_handles().count() as u32,
-                    mesh_count: view.mesh_handles().count() as u32,
+                    scene_version: SceneVersion::from_u64(WorldSceneAdapter::scene_version(world, assets)),
+                    object_count: world.instance_map().len() as u32,
+                    material_count: assets.material_handles().count() as u32,
+                    mesh_count: assets.mesh_handles().count() as u32,
                 })
             }
             AutomationQuery::GetSceneObjects {
@@ -83,6 +83,7 @@ impl WorldAutomationController {
                 expected_scene_version,
             } => Self::map_editor_response(WorldSceneAdapter::handle_query(
                 world,
+                assets,
                 None,
                 EditorQuery::GetSceneObjects {
                     offset,
@@ -91,29 +92,30 @@ impl WorldAutomationController {
                 },
             )),
             AutomationQuery::GetInstanceDetails { instance_id } => Self::map_editor_response(
-                WorldSceneAdapter::handle_query(world, None, EditorQuery::GetInstanceDetails { instance_id }),
+                WorldSceneAdapter::handle_query(world, assets, None, EditorQuery::GetInstanceDetails { instance_id }),
             ),
             AutomationQuery::GetMaterial { material_id } => Self::map_editor_response(WorldSceneAdapter::handle_query(
                 world,
+                assets,
                 None,
                 EditorQuery::GetMaterial { material_id },
             )),
-            AutomationQuery::GetSceneImportStatus { import_id } => self.import_status(world, import_id),
+            AutomationQuery::GetSceneImportStatus { import_id } => self.import_status(imports, import_id),
         }
     }
 
-    fn command(&self, world: &mut GameWorld, command: AutomationCommand) -> AutomationResponse {
+    fn command(&self, world: &mut GameWorld, assets: &mut AssetSystem, imports: &mut AssetImports, command: AutomationCommand) -> AutomationResponse {
         match command {
             AutomationCommand::UpdateMaterial {
                 material_id,
                 patch,
                 expected_scene_version,
             } => {
-                if let Some(error) = Self::check_version(world, expected_scene_version) {
+                if let Some(error) = Self::check_version(world, assets, expected_scene_version) {
                     return AutomationResponse::Error(error);
                 }
                 Self::map_editor_response(
-                    WorldSceneAdapter::handle_command(world, EditorCommand::UpdateMaterial { material_id, patch }).0,
+                    WorldSceneAdapter::handle_command(world, assets, EditorCommand::UpdateMaterial { material_id, patch }).0,
                 )
             }
             AutomationCommand::UpdateTransform {
@@ -121,7 +123,7 @@ impl WorldAutomationController {
                 transform,
                 expected_scene_version,
             } => {
-                if let Some(error) = Self::check_version(world, expected_scene_version) {
+                if let Some(error) = Self::check_version(world, assets, expected_scene_version) {
                     return AutomationResponse::Error(error);
                 }
                 let handle = match WorldSceneAdapter::decode_instance_id(&instance_id) {
@@ -132,7 +134,7 @@ impl WorldAutomationController {
                     Ok(matrix) => matrix,
                     Err(error) => return AutomationResponse::Error(error),
                 };
-                if world.scene_view().get_instance(handle).is_none() {
+                if world.get_instance(handle).is_none() {
                     return AutomationResponse::Error(EditorError::new(
                         EditorErrorCode::StaleObject,
                         "instance ID is no longer valid",
@@ -145,7 +147,7 @@ impl WorldAutomationController {
                     ));
                 }
                 AutomationResponse::CommandApplied {
-                    scene_version: SceneVersion::from_u64(world.scene_view().scene_version()),
+                    scene_version: SceneVersion::from_u64(WorldSceneAdapter::scene_version(world, assets)),
                     material: None,
                 }
             }
@@ -153,24 +155,24 @@ impl WorldAutomationController {
                 path,
                 expected_scene_version,
             } => {
-                if let Some(error) = Self::check_version(world, expected_scene_version) {
+                if let Some(error) = Self::check_version(world, assets, expected_scene_version) {
                     return AutomationResponse::Error(error);
                 }
-                let handle = world.import_scene(PathBuf::from(path));
+                let handle = imports.import_scene(PathBuf::from(path));
                 AutomationResponse::SceneImportAccepted {
                     import_id: WorldSceneAdapter::encode_key("import", handle),
-                    scene_version: SceneVersion::from_u64(world.scene_view().scene_version()),
+                    scene_version: SceneVersion::from_u64(WorldSceneAdapter::scene_version(world, assets)),
                 }
             }
         }
     }
 
-    fn import_status(&self, world: &GameWorld, import_id: String) -> AutomationResponse {
+    fn import_status(&self, imports: &AssetImports, import_id: String) -> AutomationResponse {
         let handle = match WorldSceneAdapter::decode_key::<SceneImportHandle>("import", &import_id) {
             Ok(handle) => handle,
             Err(error) => return AutomationResponse::Error(error),
         };
-        let Some(status) = world.scene_import_status(handle) else {
+        let Some(status) = imports.scene_import_status(handle) else {
             return AutomationResponse::Error(EditorError::new(
                 EditorErrorCode::StaleObject,
                 "scene import ID is no longer valid",
@@ -185,11 +187,11 @@ impl WorldAutomationController {
         AutomationResponse::SceneImportStatus(SceneImportStatusDto {
             import_id,
             status: status_name.to_string(),
-            error: world.scene_import_error(handle).map(str::to_string),
+            error: imports.scene_import_error(handle).map(str::to_string),
         })
     }
 
-    fn check_version(world: &GameWorld, expected: Option<SceneVersion>) -> Option<EditorError> {
+    fn check_version(world: &GameWorld, assets: &AssetSystem, expected: Option<SceneVersion>) -> Option<EditorError> {
         let Some(expected) = expected else {
             return None;
         };
@@ -199,7 +201,7 @@ impl WorldAutomationController {
                 return Some(EditorError::new(EditorErrorCode::InvalidRequest, "scene version is not a u64 string"));
             }
         };
-        (expected != world.scene_view().scene_version())
+        (expected != WorldSceneAdapter::scene_version(world, assets))
             .then(|| EditorError::new(EditorErrorCode::Conflict, "scene version conflict"))
     }
 

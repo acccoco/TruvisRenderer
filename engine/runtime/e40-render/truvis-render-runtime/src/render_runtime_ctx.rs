@@ -7,6 +7,8 @@ use truvis_render_foundation::render_scene_view::RenderSceneView;
 use truvis_render_foundation::render_view::RenderView;
 use truvis_world::GameWorld;
 
+use crate::asset_imports::AssetImports;
+use crate::asset_system::AssetSystem;
 use crate::bindings::per_frame_gpu_data::PerFrameGpuData;
 use crate::bindings::shader_binding_system::{ShaderBindingSystem, ShaderBindingView};
 use crate::present::swapchain_presenter::PresentView;
@@ -50,6 +52,10 @@ pub struct RenderRuntimeUpdateCtx<'a> {
     pub(crate) device_ctx: GfxDeviceCtx<'a>,
     /// CPU 语义世界；update 阶段允许 Renderer/子系统修改 scene、asset 请求和运行时实例。
     pub world: &'a mut GameWorld,
+    /// init/update 独占期间可登记和编辑 CPU 资产。
+    pub assets: &'a mut AssetSystem,
+    /// 文件导入任务的协调与状态查询。
+    pub imports: &'a mut AssetImports,
     /// 当前帧渲染目标状态快照，已在 acquire 前与 swapchain 同步。
     pub frame_state: &'a FrameRenderState,
     /// 当前 swapchain extent，便于 app 在 update 阶段同步相机纵横比。
@@ -154,6 +160,10 @@ pub struct RenderRuntimeInitCtx<'a> {
     pub surface_ctx: GfxSurfaceCtx<'a>,
     /// CPU 语义世界，供 Renderer/子系统注册初始 scene、asset 和实例。
     pub world: &'a mut GameWorld,
+    /// init/update 独占期间可登记和编辑 CPU 资产。
+    pub assets: &'a mut AssetSystem,
+    /// 文件导入任务的协调与状态查询。
+    pub imports: &'a mut AssetImports,
     /// manager-owned buffer/image/view 资源生命周期 owner。
     pub gfx_resource_registry: &'a mut GfxResourceRegistry,
     /// shader-visible descriptor、bindless 和 sampler owner。
