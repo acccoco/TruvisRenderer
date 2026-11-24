@@ -326,9 +326,9 @@ struct RtDirectLighting
     {
         engine::geometry::Geometry* geom = SceneAccess::get_geometry(light.instance_id, light.geometry_id);
         const uint3 tri = GeometryEval::triangle(geom, light.primitive_id);
-        const float2 alpha_uv = MaterialAccess::source_uv(mat, engine::material::TEXTURE_BASE_COLOR, geom, tri, bary.yz);
-        if (MaterialOpacity::is_cutout(mat, alpha_uv)) return float3(0);
-        return MaterialAccess::emission(mat, MaterialAccess::source_uv(mat, engine::material::TEXTURE_EMISSIVE, geom, tri, bary.yz));
+        const float2 uv = GeometryEval::interp_uv(geom, tri, bary.yz);
+        if (MaterialOpacity::is_cutout(mat, uv)) return float3(0);
+        return MaterialAccess::emission(mat, uv);
     }
 
     static float3 sample_triangle_barycentrics(inout uint seed)

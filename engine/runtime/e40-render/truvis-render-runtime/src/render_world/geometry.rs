@@ -41,8 +41,6 @@ pub struct RtGeometry {
     pub vertex_buffer: GfxVertexBuffer<VertexLayoutSoA3D>,
     /// 32-bit index buffer；ray tracing 和 raster pass 使用同一索引类型。
     pub index_buffer: GfxIndex32Buffer,
-    pub uv_set_count: u32,
-    pub tangent_tex_coord: u32,
 }
 
 // 访问器

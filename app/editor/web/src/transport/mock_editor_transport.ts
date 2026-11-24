@@ -25,7 +25,7 @@ export class MockEditorTransport implements EditorTransport {
     class: { kind: 'surface' },
     coverage: { kind: 'opaque' },
     textures: [
-      { texture: 'texture:0000000100000041', mapping: { tex_coord: 0, offset: [0, 0], rotation: 0, scale: [1, 1], wrap: [0, 0], filter: 1 } },
+      { texture: 'texture:0000000100000041', mapping: { offset: [0, 0], rotation: 0, scale: [1, 1], wrap: [0, 0], filter: 1 } },
       null, null, null,
     ],
     normal_scale: 1,

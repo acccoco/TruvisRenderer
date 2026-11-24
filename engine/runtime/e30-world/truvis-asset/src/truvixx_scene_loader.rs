@@ -248,8 +248,7 @@ impl TruvixxSceneReader<'_> {
             positions,
             normals,
             tangents,
-            tex_coords: vec![uvs],
-            tangent_tex_coord: 0,
+            tex_coords: uvs,
             indices: indices.to_vec(),
             name: format!("{}-{}", self.model_name, mesh_index),
         };

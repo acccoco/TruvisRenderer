@@ -513,7 +513,7 @@ impl GpuMaterialStore {
                 sampler_type: slot.map_or(binding.sampler, |slot| {
                     gpu::engine::bindless::ESamplerType_MaterialBase + slot.sampler.index()
                 }),
-                tex_coord: slot.map_or(0, |slot| slot.tex_coord),
+                _padding_1: 0,
                 _padding_0: 0,
             }
         });

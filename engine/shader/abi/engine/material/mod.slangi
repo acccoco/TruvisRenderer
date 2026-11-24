@@ -26,9 +26,9 @@ struct MaterialTexture
     float4 uv_row1;
     engine::bindless::SrvHandle image;
     engine::bindless::ESamplerType sampler_type;
-    uint tex_coord;
     /// 保持 MaterialTexture 的 48 字节 stride 与 16 字节行对齐。
     uint _padding_0;
+    uint _padding_1;
 };
 
 /// PBR 材质的 shader-visible 表示。

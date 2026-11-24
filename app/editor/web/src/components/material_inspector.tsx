@@ -195,9 +195,6 @@ export function MaterialInspector({ material, dirty, updateDraft, commitMaterial
             <summary>{['Base color', 'Metallic / roughness', 'Normal', 'Emissive'][channel]} texture</summary>
             <ReadOnlyBinding label="Image" value={slot?.texture ?? null} />
             {slot && <>
-              <NumberField label="UV set" value={slot.mapping.tex_coord} min={0} step={1} integer
-                onDraft={(value) => editMapping(channel, { ...slot.mapping, tex_coord: value }, false)}
-                onCommit={(value) => editMapping(channel, { ...slot.mapping, tex_coord: value }, true)} />
               {(['offset', 'scale'] as const).flatMap((field) => [0, 1].map((axis) => (
                 <NumberField key={`${field}-${axis}`} label={`${field} ${'UV'[axis]}`} value={slot.mapping[field][axis]} step={0.01}
                   onDraft={(value) => {

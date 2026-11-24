@@ -29,9 +29,9 @@ struct GeometryEval
     }
 
     [ForceInline]
-    static float2* uv(engine::geometry::Geometry* geom, uint vertex_idx, uint set = 0)
+    static float2* uv(engine::geometry::Geometry* geom, uint vertex_idx)
     {
-        return geom.uv_buffer + set * geom.vertex_count + vertex_idx;
+        return geom.uv_buffer + vertex_idx;
     }
 
     [ForceInline]
@@ -75,12 +75,11 @@ struct GeometryEval
         return normalize(n / max(abs(n.x), max(abs(n.y), abs(n.z))));
     }
 
-    static float2 interp_uv(engine::geometry::Geometry* geom, uint3 tri, float2 barycentrics, uint set = 0)
+    static float2 interp_uv(engine::geometry::Geometry* geom, uint3 tri, float2 barycentrics)
     {
         const float a = 1.f - barycentrics.x - barycentrics.y;
         const float b = barycentrics.x;
         const float c = barycentrics.y;
-        if (set >= geom.uv_set_count) return float2(0.0);
-        return (*uv(geom, tri.x, set)) * a + (*uv(geom, tri.y, set)) * b + (*uv(geom, tri.z, set)) * c;
+        return (*uv(geom, tri.x)) * a + (*uv(geom, tri.y)) * b + (*uv(geom, tri.z)) * c;
     }
 };

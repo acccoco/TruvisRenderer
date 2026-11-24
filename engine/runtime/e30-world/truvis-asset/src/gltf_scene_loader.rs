@@ -339,7 +339,7 @@ impl GltfSceneReader {
                 let material_index =
                     Self::primitive_material_index(&material_index_by_gltf_index, &primitive, default_material_index);
                 let primitive_name = format!("{}-mesh{}-prim{}", mesh_name, mesh.index(), primitive.index());
-                meshes.push(self.copy_primitive_mesh(&primitive, &materials[material_index as usize], primitive_name)?);
+                meshes.push(self.copy_primitive_mesh(&primitive, primitive_name)?);
                 refs.push(GltfPrimitiveRef {
                     mesh_index,
                     material_index,
@@ -482,11 +482,15 @@ impl GltfSceneReader {
             .ok_or_else(|| format!("texture {} has no image source", texture.index()))?;
         let sampler = texture.sampler();
         let (transform, override_coord) = transform.unwrap_or_default();
+        let tex_coord = override_coord.unwrap_or(tex_coord);
+        if tex_coord != 0 {
+            return Err(format!("texture {} uses unsupported TEXCOORD_{tex_coord}; only TEXCOORD_0 is supported", texture.index()));
+        }
         if !transform.is_finite() {
             return Err(format!("texture {} has non-finite transform", texture.index()));
         }
         Ok(TextureSlot {
-            texture: source, tex_coord: override_coord.unwrap_or(tex_coord), transform,
+            texture: source, transform,
             sampler: TextureSampler {
                 wrap_s: Self::texture_wrap(sampler.wrap_s()), wrap_t: Self::texture_wrap(sampler.wrap_t()),
                 filter: match sampler.mag_filter() {
@@ -678,7 +682,7 @@ impl GltfSceneReader {
     /// 当前 render-side mesh manager 要求 position / normal / tangent / uv 数组长度一致且
     /// index count 为 3 的倍数。缺少 NORMAL 时按 glTF 规则生成 flat normals，
     /// 并同步展开共享顶点的全部属性；零切线交给现有 shader 按 normal UV 重建。
-    fn copy_primitive_mesh(&self, primitive: &gltf::Primitive<'_>, material: &RawMaterialData, name: String) -> Result<MeshData, String> {
+    fn copy_primitive_mesh(&self, primitive: &gltf::Primitive<'_>, name: String) -> Result<MeshData, String> {
         if primitive.mode() != gltf::mesh::Mode::Triangles {
             return Err(format!("glTF primitive '{}' is not triangle list", name));
         }
@@ -727,32 +731,17 @@ impl GltfSceneReader {
         } else {
             vec![glam::Vec4::ZERO; vertex_count]
         };
-        let uv_count = primitive.attributes().filter_map(|(semantic, _)| match semantic {
-            gltf::Semantic::TexCoords(set) => Some(set), _ => None,
-        }).max().map(|set| set.checked_add(1)
-            .ok_or_else(|| format!("glTF primitive '{name}' UV set index overflow"))).transpose()?.unwrap_or(0);
-        // 不按不可信的最大集合编号预分配；稀疏或超大编号会在首个缺失集合处返回错误。
-        let mut tex_coords = Vec::new();
-        for set in 0..uv_count {
-            let coords = reader.read_tex_coords(set)
-                .ok_or_else(|| format!("glTF primitive '{name}' is missing TEXCOORD_{set}"))?
-                .into_f32().map(glam::Vec2::from_array).collect::<Vec<_>>();
-            tex_coords.push(coords);
-        }
-        for (channel, slot) in TextureChannel::ALL.into_iter().zip(material.textures.iter()) {
-            if let Some(slot) = slot {
-                if slot.tex_coord as usize >= tex_coords.len() {
-                    return Err(format!("glTF primitive '{name}' {} requires missing TEXCOORD_{}", channel.name(), slot.tex_coord));
-                }
-            }
-        }
-        let tangent_tex_coord = material.textures[TextureChannel::Normal as usize].as_ref().map_or(0, |slot| slot.tex_coord);
+        let tex_coords = if primitive.get(&gltf::Semantic::TexCoords(0)).is_some() {
+            reader.read_tex_coords(0).ok_or_else(|| unreadable("TEXCOORD_0"))?
+                .into_f32().map(glam::Vec2::from_array).collect()
+        } else {
+            vec![glam::Vec2::ZERO; vertex_count]
+        };
         let mut submesh = SubmeshData {
             positions,
             normals,
             tangents,
             tex_coords,
-            tangent_tex_coord,
             indices,
             name,
         };
@@ -1006,10 +995,8 @@ impl GltfSceneReader {
     /// 展开后每个角点只属于一个面，三角形顺序/绕序与 UV 对应关系保持，已有切线必须丢弃。
     fn generate_flat_normals(submesh: &mut SubmeshData) -> Result<(), String> {
         let count = submesh.indices.len();
-        if count > u32::MAX as usize
-            || submesh.tex_coords.len().checked_mul(count).is_none_or(|size| size > u32::MAX as usize)
-        {
-            return Err(format!("submesh '{}' flat expansion exceeds GPU uint vertex/UV addressing range", submesh.name));
+        if count > u32::MAX as usize {
+            return Err(format!("submesh '{}' flat expansion exceeds GPU uint vertex addressing range", submesh.name));
         }
         let mut normals = Vec::with_capacity(count);
         for tri in submesh.indices.chunks_exact(3) {
@@ -1023,9 +1010,7 @@ impl GltfSceneReader {
             normals.extend([normal; 3]);
         }
         submesh.positions = submesh.indices.iter().map(|&index| submesh.positions[index as usize]).collect();
-        for coords in &mut submesh.tex_coords {
-            *coords = submesh.indices.iter().map(|&index| coords[index as usize]).collect();
-        }
+        submesh.tex_coords = submesh.indices.iter().map(|&index| submesh.tex_coords[index as usize]).collect();
         submesh.normals = normals;
         submesh.tangents = vec![glam::Vec4::ZERO; count];
         submesh.indices = (0..count as u32).collect();

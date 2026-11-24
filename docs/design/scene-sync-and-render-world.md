@@ -65,7 +65,7 @@ loader 完成、GPU copy 入队、timeline completion、shader-visible publish �
 不可变。成功派发任务后才发布 Loading 状态或清除旧失败信息；此约束不表示整个 scene
 ingest 或 GPU 上传是事务，也不引入后台自动重试。
 
-scene ingest 的输入预检先于资源身份发布：全部 mesh、材质、引用、所需 UV 和外部纹理
+scene ingest 的输入预检先于资源身份发布：全部 mesh、材质、引用和外部纹理
 路径通过后才登记资源。正常输入错误只使该 import Failed，不留下部分资源，也不触发
 共享 Failed 纹理重试。纹理解码仍可在 scene 结构 Ready 之后独立失败。
 

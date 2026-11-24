@@ -123,11 +123,10 @@ impl MeshUploadQueue {
             let submesh_name =
                 if submesh.name.is_empty() { format!("{name}-submesh{submesh_index}") } else { submesh.name.clone() };
 
-            let vertex_buffer = GfxVertexBuffer::<VertexLayoutSoA3D>::new_with_tail(
+            let vertex_buffer = GfxVertexBuffer::<VertexLayoutSoA3D>::new(
                 resource_ctx,
                 vertex_count,
                 false,
-                VertexLayoutSoA3D::extra_uv_bytes(vertex_count, submesh.tex_coords.len()),
                 format!("{submesh_name}-vertex"),
             );
             let index_buffer =
@@ -147,8 +146,6 @@ impl MeshUploadQueue {
             geometries.push(RtGeometry {
                 vertex_buffer: vertex_buffer,
                 index_buffer: index_buffer,
-                uv_set_count: submesh.tex_coords.len() as u32,
-                tangent_tex_coord: submesh.tangent_tex_coord,
             });
             triangle_metadata.push(Self::build_triangle_metadata(submesh));
         }
@@ -346,9 +343,7 @@ impl MeshUploadQueue {
         data: &SubmeshData,
         debug_name: impl AsRef<str>,
     ) -> GfxBuffer {
-        let total_size = VertexLayoutSoA3D::buffer_size(vertex_count)
-            .checked_add(VertexLayoutSoA3D::extra_uv_bytes(vertex_count, data.tex_coords.len()))
-            .expect("vertex stage buffer size overflow") as vk::DeviceSize;
+        let total_size = VertexLayoutSoA3D::buffer_size(vertex_count) as vk::DeviceSize;
         let stage_buffer = GfxBuffer::new_stage_buffer(resource_ctx, total_size, debug_name);
         // CPU registry 已校验属性长度；按 SoA 布局复制 positions/normals/tangents/uvs。
         unsafe {
@@ -367,24 +362,11 @@ impl MeshUploadQueue {
                 stage_buffer.mapped_ptr().add(VertexLayoutSoA3D::tangent_offset(vertex_count) as usize),
                 size_of_val(data.tangents.as_slice()),
             );
-            // 固定布局后的 UV 集连续存储；Geometry 用 vertex_count 作为集合 stride。
-            for (set, coords) in data.tex_coords.iter().enumerate() {
-                ptr::copy_nonoverlapping(
-                    coords.as_ptr() as *const u8,
-                    stage_buffer.mapped_ptr().add(
-                        VertexLayoutSoA3D::uv_offset(vertex_count) as usize
-                            + set * vertex_count * size_of::<glam::Vec2>(),
-                    ),
-                    size_of_val(coords.as_slice()),
-                );
-            }
-            if data.tex_coords.is_empty() {
-                ptr::write_bytes(
-                    stage_buffer.mapped_ptr().add(VertexLayoutSoA3D::uv_offset(vertex_count) as usize),
-                    0,
-                    vertex_count * size_of::<glam::Vec2>(),
-                );
-            }
+            ptr::copy_nonoverlapping(
+                data.tex_coords.as_ptr() as *const u8,
+                stage_buffer.mapped_ptr().add(VertexLayoutSoA3D::uv_offset(vertex_count) as usize),
+                size_of_val(data.tex_coords.as_slice()),
+            );
         }
         stage_buffer.flush(resource_ctx, 0, total_size);
 

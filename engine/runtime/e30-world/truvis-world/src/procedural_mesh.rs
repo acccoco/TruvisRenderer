@@ -101,8 +101,7 @@ impl UvSphereMesh {
             positions,
             normals,
             tangents,
-            tex_coords: vec![tex_coords],
-            tangent_tex_coord: 0,
+            tex_coords,
             indices,
             name: ProceduralMeshKind::UvSphere.name().to_string(),
         })
@@ -119,8 +118,7 @@ pub fn triangle() -> MeshData {
         ],
         normals: vec![glam::vec3(0.0, 0.0, 1.0); 3],
         tangents: vec![glam::Vec4::ZERO; 3],
-        tex_coords: vec![vec![glam::vec2(0.0, 1.0), glam::vec2(1.0, 1.0), glam::vec2(0.5, 0.0)]],
-        tangent_tex_coord: 0,
+        tex_coords: vec![glam::vec2(0.0, 1.0), glam::vec2(1.0, 1.0), glam::vec2(0.5, 0.0)],
         indices: vec![0, 1, 2],
         name: ProceduralMeshKind::Triangle.name().to_string(),
     })
@@ -137,13 +135,12 @@ pub fn rect() -> MeshData {
         ],
         normals: vec![glam::vec3(0.0, 0.0, 1.0); 4],
         tangents: vec![glam::Vec4::ZERO; 4],
-        tex_coords: vec![vec![
+        tex_coords: vec![
             glam::vec2(0.0, 1.0),
             glam::vec2(1.0, 1.0),
             glam::vec2(1.0, 0.0),
             glam::vec2(0.0, 0.0),
-        ]],
-        tangent_tex_coord: 0,
+        ],
         // 从 +Z 看为逆时针，与顶点法线及正面判定保持一致。
         indices: vec![0, 2, 1, 0, 3, 2],
         name: ProceduralMeshKind::Rect.name().to_string(),
@@ -161,13 +158,12 @@ pub fn floor() -> MeshData {
         ],
         normals: vec![glam::vec3(0.0, 1.0, 0.0); 4],
         tangents: vec![glam::Vec4::ZERO; 4],
-        tex_coords: vec![vec![
+        tex_coords: vec![
             glam::vec2(1.0, 0.0),
             glam::vec2(0.0, 0.0),
             glam::vec2(0.0, 1.0),
             glam::vec2(1.0, 1.0),
-        ]],
-        tangent_tex_coord: 0,
+        ],
         indices: vec![0, 1, 2, 0, 2, 3],
         name: ProceduralMeshKind::Floor.name().to_string(),
     })
@@ -204,8 +200,7 @@ pub fn cube() -> MeshData {
         ],
         normals: cube_normals(),
         tangents: vec![glam::Vec4::ZERO; 24],
-        tex_coords: vec![cube_uvs()],
-        tangent_tex_coord: 0,
+        tex_coords: cube_uvs(),
         indices: vec![
             0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 8, 9, 10, 8, 10, 11, 12, 14, 13, 12, 15, 14, 16, 17, 18, 16, 18, 19,
             20, 22, 21, 20, 23, 22,

@@ -23,12 +23,6 @@ struct Geometry
 
     /// 三角形索引数组，按 3 个 `uint` 组成一个 primitive。
     PTR(uint, index_buffer);
-    /// UV 集按 vertex_count 连续存储，所有集合共享同一位置/index 拓扑。
-    uint vertex_count;
-    uint uv_set_count;
-    uint tangent_tex_coord;
-    /// 保持含 device address 的 Geometry stride 为 8 字节倍数。
-    uint _padding_0;
 };
 
 }

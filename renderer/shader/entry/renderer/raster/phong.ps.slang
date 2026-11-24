@@ -33,12 +33,12 @@ PsOutput main(PsInput input)
     const uint light_cnt = engine::binding::gpu_scene.point_light_count;
 
     const float4 object_color = MaterialAccess::base_color_rgba(
-        mat, input.coarse_vertex.uv[engine::material::TEXTURE_BASE_COLOR]);
+        mat, input.coarse_vertex.uv);
     if (mat.coverage_mode == engine::material::COVERAGE_ALPHA_MASK && object_color.w < mat.alpha_cutoff) discard;
     const engine::material::MaterialTexture normal_slot = mat.textures[engine::material::TEXTURE_NORMAL];
     if (BindlessSrv::is_valid(normal_slot.image))
     {
-        const float2 normal_uv = MaterialAccess::transform_uv(normal_slot, input.coarse_vertex.uv[engine::material::TEXTURE_NORMAL]);
+        const float2 normal_uv = MaterialAccess::transform_uv(normal_slot, input.coarse_vertex.uv);
         float4 tangent = input.coarse_vertex.tangent;
         if (dot(tangent.xyz, tangent.xyz) < 1e-12)
         {
@@ -46,12 +46,12 @@ PsOutput main(PsInput input)
                 ddx(input.coarse_vertex.world_pos), ddy(input.coarse_vertex.world_pos), ddx(normal_uv), ddy(normal_uv));
         }
         normal = MaterialAccess::normal_from_sample(normal, tangent, MaterialAccess::sample(normal_slot,
-            input.coarse_vertex.uv[engine::material::TEXTURE_NORMAL], float4(0.5, 0.5, 1, 1)).xyz, mat.normal_scale);
+            input.coarse_vertex.uv, float4(0.5, 0.5, 1, 1)).xyz, mat.normal_scale);
     }
     const float3 emission = mat.emissive * MaterialAccess::sample(mat.textures[engine::material::TEXTURE_EMISSIVE],
-        input.coarse_vertex.uv[engine::material::TEXTURE_EMISSIVE], float4(1)).xyz;
+        input.coarse_vertex.uv, float4(1)).xyz;
     const float4 mr = MaterialAccess::sample(mat.textures[engine::material::TEXTURE_METALLIC_ROUGHNESS],
-        input.coarse_vertex.uv[engine::material::TEXTURE_METALLIC_ROUGHNESS], float4(1));
+        input.coarse_vertex.uv, float4(1));
     const float metallic = mat.metallic * mr.b;
     const float roughness = mat.roughness * mr.g;
 

@@ -2,8 +2,7 @@
 
 /// raster Phong pass 在 VS/PS 之间传递的插值属性。
 ///
-/// world_pos 和 frag_normal 由 vertex shader 明确写入，fragment shader 只做归一化和光照；
-/// 这样 sample raster path 不需要访问 runtime scene 的 vertex buffer。
+/// 光栅化与 RT 从同一套顶点 UV 读取数据，材质通道在采样时应用各自的变换。
 struct CoarseVertex
 {
     [[vk::location(0)]]
@@ -13,8 +12,8 @@ struct CoarseVertex
     float3 frag_normal : FRAG_NORMAL;
 
     [[vk::location(2)]]
-    float2 uv[engine::material::TEXTURE_CHANNEL_COUNT] : UV;
+    float2 uv : UV;
 
-    [[vk::location(7)]]
+    [[vk::location(3)]]
     float4 tangent : TANGENT;
 };

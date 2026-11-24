@@ -534,13 +534,6 @@ impl AssetSystem {
             let materials = raw.materials.into_iter()
                 .map(|material| Self::prepare_scene_material(&scene_path, material))
                 .collect::<Result<Vec<_>, _>>()?;
-            for instance in &raw.instances {
-                for (submesh, &material) in meshes[instance.mesh_index as usize].data.submeshes.iter()
-                    .zip(&instance.material_indices)
-                {
-                    materials[material as usize].data.validate_uv_sets(submesh)?;
-                }
-            }
             Ok::<_, String>((meshes, materials, raw.instances))
         })();
         let (prepared_meshes, prepared_materials, instances) = match prepared {

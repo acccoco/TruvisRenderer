@@ -48,7 +48,7 @@ scene import 完成不会自动修改 `SceneStore`。外部可以过滤、复制
 `scene_import_status` 返回 `Option<LoadStatus>`：`None` 表示 handle 不存在或 generation 不匹配，
 不能当作真实任务的 `Failed`。失败任务仍保留可查询的错误；调用方应区分身份错误和加载失败。
 
-scene ingest 先校验全部 mesh、材质参数、引用/材质数量与所需 UV，并解析全部外部纹理
+scene ingest 先校验全部 mesh、材质参数和引用/材质数量，并解析全部外部纹理
 路径，再登记资源身份。输入预检失败时不登记任何 mesh/material/texture，也不重试共享
 Failed 纹理。embedded 的身份沿用请求入口的 canonical scene path；已拥有的 bytes
 不要求源 scene 文件继续存在。场景纹理派发阶段的 Rust unwind 转为该 texture 的 Failed，
@@ -99,8 +99,7 @@ metallic/roughness 与 base color alpha 必须在 [0,1]，base RGB 非负且保�
 [0,1]，保证 HDR 纹理不会重新产生非法采样概率；不修改通用纹理数据或 HDR 发光通道。
 光学类别沿用现有可表示范围：opacity 为 [0,1]，IOR 至少 1，radiance 非负；数值及两路
 emission 的和必须有限。alpha cutoff 允许大于 1，只拒绝负值和非有限值。校验不截断输入。
-共享材质的 UV 集合需求必须满足每个 live instance 的对应 submesh；失败保持材质、纹理
-反向引用和版本不变。相同内容不推进 revision，instance 材质槽重复引用也只计一个引用者。
+材质使用 mesh 唯一的 UV 集合。相同内容不推进 revision，instance 材质槽重复引用也只计一个引用者。
 
 ## 灯光注册与编辑
 

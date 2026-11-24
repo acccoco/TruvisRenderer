@@ -175,7 +175,6 @@ impl GameWorld {
 
     /// 更新 CPU material 参数；实际变化才推进 source revision。
     pub fn update_material(&mut self, handle: MaterialAssetHandle, data: MaterialData) -> Result<(), WorldEditError> {
-        self.scene.validate_material_update(&self.resources.store, handle, &data)?;
         if self.resources.update_material(handle, data)? {
             self.scene.mark_resource_changed();
         }

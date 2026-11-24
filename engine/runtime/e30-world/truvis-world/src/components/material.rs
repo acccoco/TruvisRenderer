@@ -81,17 +81,4 @@ impl MaterialData {
         }
         Ok(())
     }
-
-    /// 对当前绑定的每个 submesh 分别检查，失败不能静默选择 UV0。
-    pub fn validate_uv_sets(&self, submesh: &truvis_asset::handle::SubmeshData) -> Result<(), String> {
-        for (channel, slot) in TextureChannel::ALL.into_iter().zip(&self.textures) {
-            if let Some(slot) = slot {
-                if slot.tex_coord as usize >= submesh.tex_coords.len() {
-                    return Err(format!("material '{}' {} requires TEXCOORD_{} missing from submesh '{}'",
-                        self.name, channel.name(), slot.tex_coord, submesh.name));
-                }
-            }
-        }
-        Ok(())
-    }
 }

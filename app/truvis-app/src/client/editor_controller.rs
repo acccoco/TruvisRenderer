@@ -455,7 +455,6 @@ impl WorldSceneAdapter {
                 data.textures[index].as_ref().map(|slot| TextureSlotDto {
                     texture: Self::encode_texture_id(slot.texture),
                     mapping: TextureMappingDto {
-                        tex_coord: slot.tex_coord,
                         offset: slot.transform.offset.to_array(),
                         rotation: slot.transform.rotation,
                         scale: slot.transform.scale.to_array(),
@@ -523,7 +522,6 @@ impl WorldSceneAdapter {
                     wrap_t: *wraps.get(mapping.wrap[1] as usize).ok_or_else(invalid)?,
                     filter: *filters.get(mapping.filter as usize).ok_or_else(invalid)?,
                 };
-                slot.tex_coord = mapping.tex_coord;
                 slot.transform = TextureTransform {
                     offset: mapping.offset.into(),
                     rotation: mapping.rotation,

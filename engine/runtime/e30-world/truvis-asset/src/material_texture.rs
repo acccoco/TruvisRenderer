@@ -108,18 +108,17 @@ impl TextureSampler {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextureSlot<T> {
     pub texture: T,
-    pub tex_coord: u32,
     pub transform: TextureTransform,
     pub sampler: TextureSampler,
 }
 
 impl<T> TextureSlot<T> {
     pub fn new(texture: T) -> Self {
-        Self { texture, tex_coord: 0, transform: TextureTransform::default(), sampler: TextureSampler::default() }
+        Self { texture, transform: TextureTransform::default(), sampler: TextureSampler::default() }
     }
 
     /// Ingest 仅替换资源身份，保留同一次引用的全部采样参数。
     pub fn with_texture<U>(self, texture: U) -> TextureSlot<U> {
-        TextureSlot { texture, tex_coord: self.tex_coord, transform: self.transform, sampler: self.sampler }
+        TextureSlot { texture, transform: self.transform, sampler: self.sampler }
     }
 }

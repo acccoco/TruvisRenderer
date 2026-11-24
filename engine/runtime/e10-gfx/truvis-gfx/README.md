@@ -125,8 +125,7 @@ wait，不能由 CPU 完成查询替代，也不能替代 RenderGraph 的布局/
 - SBT 大小和偏移使用 checked DeviceSize 算术，分配前检查 host 范围、group 索引、设备对齐与 handle stride
   上限；分配后检查非零 base address、对齐和完整地址范围。raygen 的 size 等于 stride，空区域保持零。
   这些检查不证明 group 类型与 pipeline 一致，也不改变已提交 GPU work 的销毁前置。
-- SoA 的属性偏移、固定大小和额外 UV tail 均检查溢出及 host 范围；mesh 的 device/staging 分配复用
-  `VertexLayoutSoA3D::extra_uv_bytes`。合法布局保持不变，固定布局始终保留一个 UV 槽。
+- SoA 的属性偏移和固定大小检查溢出及 host 范围。mesh 的 device/staging 分配使用同一固定布局，每个顶点提供一份 UV。
 - `GfxQueryPool` 只承载单个 `u64` 标量结果（occlusion、timestamp 和四种 AS property query），
   读取固定使用 `TYPE_64 | WAIT`；多计数器或可变布局查询需要另行表达其数据契约。
   read/reset/AS property write 在 native 调用前验证容量、溢出及适用类型，合法空范围不调用 native。

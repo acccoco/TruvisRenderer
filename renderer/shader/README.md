@@ -59,13 +59,13 @@ ShaderToy 即使物理上位于 `renderer/shader`，也不能访问 Renderer 或
 
 ### 材质映射与几何 ABI
 
-Engine 的 `MaterialTexture` 为 48 字节（两行 float4，随后 SRV、sampler、UV 集和 padding），
-`PbrMaterial` 为 256 字节，四槽数组从 offset 64 开始。`Geometry` 为 56 字节，包含 vertex_count、
-uv_set_count、tangent_tex_coord；UV 集连续存储，以 vertex_count 为集合 stride，tangent 为 float4。
+Engine 的 `MaterialTexture` 为 48 字节（两行 float4、SRV、sampler 和 padding），
+`PbrMaterial` 为 256 字节，四槽数组从 offset 64 开始。`Geometry` 为 40 字节，保存五个 device address。
+每个顶点提供一份 float2 UV 和一份 float4 tangent。
 vertex SoA 的 tangent 起点按 16 字节对齐，不把紧凑 float3 当成 16 字节数据。
-`EmissiveTriangleLight` 为 80 字节，仅保存几何身份和采样所需几何信息，UV 由几何表按槽查询。
+`EmissiveTriangleLight` 为 80 字节，仅保存几何身份和采样所需几何信息，UV 由几何表查询。
 Phong 的 push constants 为 16 字节，字段 offset 为 0/4/8/12；frame/scene root 使用全局 descriptor，
-不再传入 UBO device address。唯一顶点入口为 `raster/phong3d.vs.slang`，复用 `PhongVertex` 读取各槽 UV。
+不再传入 UBO device address。唯一顶点入口为 `raster/phong3d.vs.slang`，复用 `PhongVertex` 读取顶点 UV。
 
 生成的 host binding 使用自身自然对齐（MaterialTexture/PbrMaterial 为 4，Geometry 为 8），
 上传 buffer/device address 满足 shader 的访问对齐；字段 offset 和数组 stride 必须与 SPIR-V 一致。
@@ -76,7 +76,7 @@ realtime/offline 的 closest-hit 入口共用 `lib/renderer/realtime_rt/surface_
 两者的 `MaterialType`、`RtSurfaceHit`、`RtTracePayload` 与 `ShadowMissPayload` 只定义在
 `lib/renderer/ray_payload.slangi`，不携带 pass-local 资源或配置。各自 payload 入口仍拥有
 push constants、深度上限与 ABI 选择；Offline 必须先包含自己的入口契约，再复用共享 helper。
-raster 顶点侧按四槽分别选择 UV，片元侧与 RT 共用 Engine `MaterialAccess` 的变换、切线重建和法线解码。
+raster 顶点侧传递一份 UV，片元侧与 RT 共用 Engine `MaterialAccess` 的槽级变换、切线重建和法线解码。
 各路径的光照和 LOD 边界见 [RT 流程](../../docs/design/realtime-raytracing-sampling.md)。
 
 ### 生成绑定

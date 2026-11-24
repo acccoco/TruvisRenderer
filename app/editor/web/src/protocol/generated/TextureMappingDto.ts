@@ -3,7 +3,7 @@
 /**
  * 槽级采样参数；rotation 使用弧度，UI 自行转换角度显示。
  */
-export type TextureMappingDto = { tex_coord: number, offset: [number, number], rotation: number, scale: [number, number],
+export type TextureMappingDto = { offset: [number, number], rotation: number, scale: [number, number],
 /**
  * 0 Repeat、1 Clamp、2 MirroredRepeat。
  */

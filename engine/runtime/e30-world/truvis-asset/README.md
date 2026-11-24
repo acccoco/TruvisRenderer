@@ -101,7 +101,8 @@ glTF 在 typed reader 前检查全部 accessor 的范围和浮点有限性，并
 indices/normal/tangent 才沿用默认生成；索引不得使用原 component type 的 restart 值。
 输出仍由 `SubmeshData::validate` 检查长度、有限数值和三角索引范围；不会重复建立 mesh 校验层。
 
-缺失 NORMAL 时按三角形角点展开 positions 和所有 UV，生成 flat normals 并丢弃输入 tangent。
+每个顶点提供一份 UV。glTF 读取 TEXCOORD_0，无该属性时填零，材质实际引用其它集合时导入失败。
+缺失 NORMAL 时按三角形角点展开 positions 和 UV，生成 flat normals 并丢弃输入 tangent。
 三角形顺序和绕序保持；逐面方向用 f64 计算，精确零面积面作为退化拓扑拒绝。
 展开前后均检查 CPU mesh 契约和 u32 寻址容量；已有 NORMAL 时保留原顶点/索引布局。
 零切线仍由现有 shader 根据 normal UV 差分重建；这不是 MikkTSpace 烘焙切线的等价保证。

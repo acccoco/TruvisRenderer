@@ -25,7 +25,6 @@ pub enum CoverageModeDto {
 /// 槽级采样参数；rotation 使用弧度，UI 自行转换角度显示。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct TextureMappingDto {
-    pub tex_coord: u32,
     pub offset: [f32; 2],
     pub rotation: f32,
     pub scale: [f32; 2],

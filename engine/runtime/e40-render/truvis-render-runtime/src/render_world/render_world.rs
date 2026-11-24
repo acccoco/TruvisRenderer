@@ -560,11 +560,6 @@ impl RenderWorld {
                     normal_buffer: geometry.vertex_buffer.normal_address(),
                     tangent_buffer: geometry.vertex_buffer.tangent_address(),
                     uv_buffer: geometry.vertex_buffer.uv_address(),
-                    vertex_count: u32::try_from(geometry.vertex_buffer.vertex_cnt())
-                        .expect("geometry vertex count exceeds u32"),
-                    uv_set_count: geometry.uv_set_count,
-                    tangent_tex_coord: geometry.tangent_tex_coord,
-                    _padding_0: 0,
                     index_buffer: geometry.index_buffer.device_address(),
                 };
             }

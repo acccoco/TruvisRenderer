@@ -102,18 +102,6 @@ impl GfxVertexLayout for VertexLayoutSoA3D {
 }
 
 impl VertexLayoutSoA3D {
-    /// 固定布局已包含一个 UV 槽；额外集合连续追加，device/staging 分配复用同一尺寸契约。
-    pub fn extra_uv_bytes(vertex_cnt: usize, uv_set_count: usize) -> usize {
-        let extra = uv_set_count
-            .saturating_sub(1)
-            .checked_mul(vertex_cnt)
-            .and_then(|count| count.checked_mul(size_of::<glam::Vec2>()))
-            .expect("SoA extra UV size overflow");
-        let total = Self::buffer_size(vertex_cnt).checked_add(extra).expect("SoA total size overflow");
-        assert!(total <= isize::MAX as usize, "SoA buffer exceeds host addressable range");
-        extra
-    }
-
     pub fn create_vertex_buffer(
         resource_ctx: GfxResourceCtx<'_>,
         immediate_ctx: GfxImmediateCtx<'_>,

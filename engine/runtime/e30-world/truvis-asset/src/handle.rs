@@ -214,10 +214,8 @@ pub struct SubmeshData {
     pub normals: Vec<glam::Vec3>,
     /// XYZW 保留切线方向和 bitangent handedness；零向量表示需要从所选 UV 重建。
     pub tangents: Vec<glam::Vec4>,
-    /// 每套 UV 都与 positions 等长，按 glTF TEXCOORD_n 索引；左上原点。
-    pub tex_coords: Vec<Vec<glam::Vec2>>,
-    /// 导入切线对应的 UV 集；切换法线槽 UV 时不能误用其它参数化的切线。
-    pub tangent_tex_coord: u32,
+    /// UV 与 positions 等长，左上原点。
+    pub tex_coords: Vec<glam::Vec2>,
     pub indices: Vec<u32>,
     pub name: String,
 }
@@ -271,17 +269,16 @@ impl SubmeshData {
         let reason = if count == 0 {
             Some("has no vertices")
         } else if count > u32::MAX as usize
-            || self.tex_coords.len().checked_mul(count).is_none_or(|size| size > u32::MAX as usize)
         {
             Some("exceeds GPU uint vertex/UV addressing range")
         } else if self.normals.len() != count || self.tangents.len() != count
-            || self.tex_coords.iter().any(|set| set.len() != count)
+            || self.tex_coords.len() != count
         {
             Some("has mismatched vertex attribute counts")
         } else if self.positions.iter().any(|p| !p.is_finite())
             || self.normals.iter().any(|n| !n.is_finite() || (!allow_zero_normals && n.length_squared() <= f32::EPSILON))
             || self.tangents.iter().any(|t| !t.is_finite())
-            || self.tex_coords.iter().flatten().any(|uv| !uv.is_finite())
+            || self.tex_coords.iter().any(|uv| !uv.is_finite())
         {
             Some("has non-finite attributes or zero normals")
         } else if self.indices.is_empty() || !self.indices.len().is_multiple_of(3) {

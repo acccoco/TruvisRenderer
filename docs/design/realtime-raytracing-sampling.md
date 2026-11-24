@@ -103,7 +103,7 @@ OpenPBR 是后续材质模型演进的基准，版本由根目录 `resources.tom
 Realtime、Offline、NEE、ReSTIR 和 SHARC 应消费共同的材质语义与求值契约，
 采样或缓存优化不能隐式改变材质模型，也不能在消费者中另建一套材质公式。
 
-MaterialAccess 统一 UV 集、纹理变换、sampler、色彩空间和 fallback。base color、metallic/roughness、normal、emissive 的 factor 与 texture 只组合一次。
+材质采样使用同一套顶点 UV，MaterialAccess 统一槽级纹理变换、sampler、色彩空间和 fallback。base color、metallic/roughness、normal、emissive 的 factor 与 texture 只组合一次。
 CPU 材质入口拒绝越界 metallic/roughness、base alpha 和负 RGB；RGB 保留既有 HDR 表达范围。
 MR 贴图可能来自 HDR，MaterialAccess 将 factor 与通道乘积限制在 [0,1]，再用于分类、采样概率和
 GGX alpha。限制属于材质通道语义，不修改共享纹理或发光/天空数据；参数合法不等于能量守恒。
