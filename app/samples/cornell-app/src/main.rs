@@ -26,7 +26,7 @@ impl CornellApp {
             title: "Truvis".to_string(),
             logical_size: [1200.0, 800.0],
             transparent: true,
-            icon_bytes: Some(std::fs::read(TruvisPath::resources_path("DruvisIII.png"))?),
+            icon_bytes: Some(std::fs::read(TruvisPath::resources("DruvisIII.png"))?),
         };
         // factory 在 RenderThread 内执行，Client 和 Renderer 的构造均留在该线程。
         StandaloneWinitHost::run(options, move || {

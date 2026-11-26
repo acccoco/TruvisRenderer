@@ -1,3 +1,3 @@
-pub mod config;
+pub mod config_utils;
 
-pub use config::ConfigUtils;
+pub use config_utils::ConfigUtils;

@@ -6,7 +6,7 @@ use truvis_editor_bridge::protocol::{EditorNotification, EditorRequest, EditorRe
 use truvis_path::TruvisPath;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let output_dir = TruvisPath::workspace_path().join("app/editor/web/src/protocol/generated");
+    let output_dir = TruvisPath::workspace().join("app/editor/web/src/protocol/generated");
     if output_dir.is_dir() {
         fs::remove_dir_all(&output_dir)?;
     }

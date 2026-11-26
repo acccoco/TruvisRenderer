@@ -151,7 +151,7 @@ impl RenderRuntime {
         {
             let _span = tracy_client::span!("RenderRuntime::new/default_sky_texture");
             let texture = imports
-                .import_texture(&mut assets, TruvisPath::resources_path("sky.jpg"), truvis_asset::handle::TextureColorSpace::Linear)
+                .import_texture(&mut assets, TruvisPath::resources("sky.jpg"), truvis_asset::handle::TextureColorSpace::Linear)
                 .expect("failed to register default sky texture");
             game_world.update_sky_texture(Some(texture));
         }

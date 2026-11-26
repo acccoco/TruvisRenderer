@@ -43,7 +43,7 @@ impl SponzaScene {
         Self::spawn_material_test_cubes(world, assets, &samples);
 
         log::info!("start load sponza model");
-        imports.import_scene(TruvisPath::assets_path(Self::IMPORT_PATH))
+        imports.import_scene(TruvisPath::assets(Self::IMPORT_PATH))
     }
 
     fn spawn_material_test_cubes(world: &mut GameWorld, assets: &mut AssetSystem, samples: &MaterialSamples) {

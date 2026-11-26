@@ -61,8 +61,8 @@ just shader-force
 
 `just shader` 先运行 package-aware 编译器，再构建 Engine 与 Renderer 两个 binding crate。运行时通过
 `ShaderArtifactPath::resolve(package_id, entry_relative_path)` 解析同一份 manifest，调用点不手写输出前缀。
-`paths.toml` 的 `dirs.shader_build`、`dirs.binding_build` 和 `dirs.temp` 是产物物理根的唯一配置源；
-`shader-packages.toml` 只声明 package/compiler/binding 及 package id 到输出前缀的逻辑映射。
+`TruvisPath` 提供工作区下的 `build/shader/`、`build/bindings/` 和 `.temp/`。
+`shader-packages.toml` 声明 package、compiler、binding 和 package id 到输出前缀的映射。
 
 `build/shader/.state/shader-build.json` 使用版本 9 记录 package、compiler、输出、共享输入和任务，
 `build/shader/.deps/` 保存编译器 depfile。构建前检查 canonical include、唯一解析和层级方向，编译后再验证
@@ -70,8 +70,7 @@ just shader-force
 任务；Renderer shared input 只失效 Renderer；Engine shared input 会传播到声明依赖 Engine 的 Renderer 和 Hello Triangle；
 ShaderToy shared input 只失效自身。
 
-binding 源码生成到 `dirs.binding_build/{TARGET}/shader/<binding-crate>/`（当前为
-`build/bindings/{TARGET}/shader/<binding-crate>/`），源码树不保存
+binding 源码生成到 `build/bindings/{TARGET}/shader/<binding-crate>/`，源码树不保存
 `_shader_bindings.rs`。两个 owner 的 `build.rs` 按 binding id 读取 `[[binding]]`，只补充各自 allowlist 与
 跨 crate Rust re-export policy。
 

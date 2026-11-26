@@ -216,7 +216,7 @@ impl ImGuiSubsystem {
     ) {
         let font_size = (10.0 * self.hidpi_factor) as f32;
         assert!(font_size.is_finite() && font_size > 0.0, "unrepresentable ImGui font size");
-        let font_data = std::fs::read(TruvisPath::resources_path_str("mplus-1p-regular.ttf")).unwrap();
+        let font_data = std::fs::read(TruvisPath::resources("mplus-1p-regular.ttf")).unwrap();
 
         self.draw_data = None;
         self.tex_map.clear();

@@ -4,7 +4,7 @@ use truvis_path::TruvisPath;
 fn main() {
     let native = NativeLibrary::new();
     let module_dir = TruvisPath::workspace().join("cxx/modules/truvixx-assimp");
-    let generated_include_dir = TruvisPath::target().join("cxx/generated/include");
+    let generated_include_dir = TruvisPath::target_dir().join("cxx/generated/include");
     let generated = CxxBindingGenerator::new(CxxBindingSpec {
         output_crate: "truvis-assimp-binding",
         header: module_dir.join("include/TruvixxAssimp/c_api/module.h"),

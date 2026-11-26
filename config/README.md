@@ -4,6 +4,6 @@
 
 - `vulkan/khronos_validation_settings.txt`：Khronos validation layer 设置，由 `just cornell` 与 `just truvis` 默认启用；需要关闭时追加 `no-validation`。
 
-第三方工具、SDK 与参考源码位于 [`external/`](../external/README.md)。workspace 级路径、资源和 shader package manifest
-继续由根目录的 `paths.toml`、`resources.toml` 与 `shader-packages.toml` 承载。Streamline module 自用的
-runtime JSON 位于 `cxx/modules/truvixx-streamline/runtime/`。
+第三方工具、SDK 与参考源码位于 [`external/`](../external/README.md)。工作区目录由 `TruvisPath` 提供，
+资源清单和 Shader package manifest 分别位于根目录的 `resources.toml` 和 `shader-packages.toml`。
+Streamline module 自用的 runtime JSON 位于 `cxx/modules/truvixx-streamline/runtime/`。

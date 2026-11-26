@@ -11,7 +11,7 @@ fn main() {
         title: "Truvis".to_string(),
         logical_size: [1200.0, 800.0],
         transparent: true,
-        icon_bytes: Some(std::fs::read(TruvisPath::resources_path("DruvisIII.png")).expect("failed to read icon file")),
+        icon_bytes: Some(std::fs::read(TruvisPath::resources("DruvisIII.png")).expect("failed to read icon file")),
     };
     StandaloneWinitHost::run(options, || Box::new(ShaderToyRenderer::default()));
 }

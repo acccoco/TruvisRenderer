@@ -32,7 +32,8 @@ impl NativeLibrary {
             "release" => "Release",
             _ => panic!("Unsupported CXX profile: {profile}"),
         };
-        let root = TruvisPath::target().join("cxx");
+        let target_dir = TruvisPath::target_dir();
+        let root = target_dir.join("cxx");
         let mut cmake_dir = root.join("cmake").join(tool);
         if tool == "clang-cl" {
             cmake_dir.push(configuration);
@@ -41,7 +42,7 @@ impl NativeLibrary {
         Self {
             output_dir: root.join("output").join(tool).join(configuration),
             vcpkg_bin_dir: cmake_dir.join("vcpkg_installed/x64-windows").join(if debug { "debug/bin" } else { "bin" }),
-            cargo_dir: TruvisPath::target().join(profile),
+            cargo_dir: target_dir.join(profile),
             debug,
         }
     }

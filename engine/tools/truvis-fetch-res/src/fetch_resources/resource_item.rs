@@ -87,7 +87,7 @@ impl ResourceConfig {
         config.validate_resource_names()?;
 
         for item in &mut config.resources {
-            item.target_dir = TruvisPath::workspace_path().join(&item.target_dir).to_str().unwrap().to_string();
+            item.target_dir = TruvisPath::workspace().join(&item.target_dir).to_str().unwrap().to_string();
         }
 
         Ok(config)

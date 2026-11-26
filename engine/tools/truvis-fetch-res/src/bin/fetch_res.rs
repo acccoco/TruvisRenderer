@@ -25,7 +25,7 @@ fn main() -> Result<()> {
     let resource_temp_dir = TruvisPath::temp_dir().join("resource");
     let fetcher = GitHubResourceFetcher::with_temp_dir(resource_temp_dir)?;
 
-    let config_path = TruvisPath::workspace_path().join("resources.toml");
+    let config_path = TruvisPath::workspace().join("resources.toml");
 
     fetcher.fetch_from_config_with_selection(config_path, options.selection)?;
     println!("✓ 批量下载完成");

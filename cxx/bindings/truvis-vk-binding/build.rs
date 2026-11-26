@@ -6,7 +6,7 @@ use truvis_path::TruvisPath;
 fn main() {
     let native = NativeLibrary::new();
     let module_dir = TruvisPath::workspace().join("cxx/modules/truvixx-vk");
-    let generated_include_dir = TruvisPath::target().join("cxx/generated/include");
+    let generated_include_dir = TruvisPath::target_dir().join("cxx/generated/include");
     let roots_file = generated_include_dir.join("TruvixxVk/c_api/vulkan_include_roots.txt");
     let roots =
         fs::read_to_string(&roots_file).expect("Native Vulkan headers are not published; run `just cxx-debug` first");

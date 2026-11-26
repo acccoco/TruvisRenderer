@@ -52,6 +52,6 @@ impl CornellScene {
         }).expect("invalid built-in area light");
 
         log::info!("Loading model...");
-        imports.import_scene(TruvisPath::assets_path(Self::IMPORT_PATH))
+        imports.import_scene(TruvisPath::assets(Self::IMPORT_PATH))
     }
 }
