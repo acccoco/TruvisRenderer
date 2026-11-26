@@ -279,6 +279,9 @@ async fn select_hdri(
 pub struct TruvisDesktop;
 
 impl TruvisDesktop {
+    /// 临时跳过 MCP 启动，避免监听失败打断桌面初始化。
+    const MCP_SERVER_ENABLED: bool = false;
+
     pub fn run() -> Result<()> {
         let startup_options = StartupOptions::from_process_args("truvis-app")?;
         if startup_options.show_help {
@@ -306,7 +309,13 @@ impl TruvisDesktop {
                     .window_handle()
                     .map_err(|error| std::io::Error::other(format!("failed to get Tauri parent HWND: {error}")))?
                     .as_raw();
-                let mcp_server = Some(McpServerHandle::start(frontend_automation).map_err(std::io::Error::other)?);
+                let mcp_server = if Self::MCP_SERVER_ENABLED {
+                    Some(McpServerHandle::start(frontend_automation).map_err(std::io::Error::other)?)
+                } else {
+                    drop(frontend_automation);
+                    log::info!("Truvis MCP server disabled");
+                    None
+                };
                 let render_host = EmbeddedWinitHost::spawn(parent_window, move || {
                     let client = TruvisAppClient::new(client_ports, initial_scene);
                     Box::new(TruvisRenderer::new(Box::new(client)))

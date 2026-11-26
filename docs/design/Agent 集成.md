@@ -2,7 +2,9 @@
 
 ## 第一阶段边界
 
-`truvis-app` 在同一进程内创建一个独立 current-thread Tokio HTTP 线程，使用 RMCP 3.4.0 的
+桌面应用当前固定停用 MCP。恢复时将 `TruvisDesktop::MCP_SERVER_ENABLED` 改为 `true` 并重新构建。
+
+启用后，`truvis-app` 在同一进程内创建一个独立 current-thread Tokio HTTP 线程，使用 RMCP 3.4.0 的
 stateless Streamable HTTP service 挂载单一 `/mcp` endpoint。HTTP handler 只负责参数 schema、固定 Host
 校验、向 Automation endpoint 投递请求、等待 oneshot 和构造 MCP structured result；它不持有
 `GameWorld`、RenderWorld、Renderer 或 Vulkan 引用。
@@ -42,13 +44,13 @@ import accepted 表示已获得导入 ID。状态 `ready` 表示导入已完成�
 Host 校验。此接口仅供本地原生客户端使用：无 Origin 请求可进入，任何携带 Origin 的请求
 （含 `null`）均由 RMCP 拒绝；这不构成本地进程身份认证。支持 MCP `2025-06-18`、`2025-11-25` 和 `2026-07-28` 的 stateless Streamable HTTP：
 2025 版本通过 `initialize` 协商，2026 版本可以使用 `server/discover` 和现代 request metadata；标准
-`MCP-Protocol-Version` header 仍由 RMCP 校验。端口占用会直接阻止 Truvis 启动，用户需要释放端口后
+`MCP-Protocol-Version` header 仍由 RMCP 校验。启用时若端口被占用，Truvis 启动失败，用户需要释放端口后
 重新启动；不实现旧 HTTP+SSE、REST fallback、兼容字段、自动换端口、CORS 或远程 OAuth。本地其他
 进程可以访问该 endpoint。协议版本只影响 MCP envelope 和生命周期，不影响 Automation wire DTO。
 
 ## Shutdown
 
-桌面关闭先标记 `shutting_down` 并取消 HTTP listener 的接收；随后关闭 RenderThread，使 Automation
+MCP 启用时，桌面关闭先标记 `shutting_down` 并取消 HTTP listener 的接收；随后关闭 RenderThread，使 Automation
 receiver drop，未处理 oneshot 在进程内得到 renderer shutdown 错误；再 join HTTP thread，最后停止
 Editor notification task 并销毁 Tauri parent window。HTTP 停止接收后只给在途连接有限的排空窗口，
 当前为两秒；超时后退出专属 runtime，释放尚未完成的连接任务，不能依赖客户端补齐请求体。
