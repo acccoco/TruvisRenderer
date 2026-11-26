@@ -6,7 +6,7 @@ use itertools::Itertools;
 
 use crate::gfx::GfxDeviceCtx;
 use crate::pipelines::shader::GfxShaderModuleCache;
-use crate::{foundation::debug_messenger::DebugType, pipelines::shader::GfxShaderStageInfo};
+use crate::{core::debug_messenger::DebugType, pipelines::shader::GfxShaderStageInfo};
 
 /// 管线布局封装
 ///

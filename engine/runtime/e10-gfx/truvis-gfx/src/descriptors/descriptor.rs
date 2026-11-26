@@ -4,7 +4,7 @@ use ash::vk::Handle;
 use truvis_descriptor_layout_trait::DescriptorBindingLayout;
 
 use crate::gfx::GfxDeviceCtx;
-use crate::{descriptors::descriptor_pool::GfxDescriptorPool, foundation::debug_messenger::DebugType};
+use crate::{descriptors::descriptor_pool::GfxDescriptorPool, core::debug_messenger::DebugType};
 
 /// 描述符集布局
 ///

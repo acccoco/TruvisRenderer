@@ -6,7 +6,7 @@ use ash::vk;
 
 use crate::{
     commands::command_queue::GfxCommandQueue,
-    foundation::{
+    core::{
         debug_messenger::GfxDebugMsger, device::GfxDevice, instance::GfxInstance, physical_device::GfxPhysicalDevice,
     },
 };

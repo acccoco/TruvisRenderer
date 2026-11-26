@@ -7,7 +7,7 @@ use std::{
 use ash::vk;
 use itertools::Itertools;
 
-use crate::foundation::debug_messenger::GfxDebugMsger;
+use crate::core::debug_messenger::GfxDebugMsger;
 
 pub struct GfxInstance {
     /// Rc 共享 ash dispatch wrapper，不延长 native instance 或 loader 的生命周期。

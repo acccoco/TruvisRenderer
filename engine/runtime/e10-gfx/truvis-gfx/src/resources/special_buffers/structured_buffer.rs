@@ -6,7 +6,7 @@ use std::{
 use ash::vk;
 
 use crate::{
-    foundation::debug_messenger::DebugType,
+    core::debug_messenger::DebugType,
     gfx::{GfxImmediateCtx, GfxResourceCtx},
     impl_derive_buffer,
     resources::buffer::GfxBuffer,

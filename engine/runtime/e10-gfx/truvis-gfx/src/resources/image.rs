@@ -4,7 +4,7 @@ use vk_mem::{Alloc, Allocation};
 
 use crate::{
     commands::{barrier::GfxImageBarrier, command_buffer::GfxCommandBuffer},
-    foundation::debug_messenger::DebugType,
+    core::debug_messenger::DebugType,
     gfx::{GfxImmediateCtx, GfxResourceCtx},
     resources::{buffer::GfxBuffer, lifecycle::DestroyReason, vma_debug::with_vma_debug_name},
 };

@@ -6,7 +6,7 @@ use std::{
 use ash::{vk, vk::Handle};
 
 use crate::{
-    foundation::debug_messenger::DebugType, gfx::GfxResourceCtx, impl_derive_buffer, resources::buffer::GfxBuffer,
+    core::debug_messenger::DebugType, gfx::GfxResourceCtx, impl_derive_buffer, resources::buffer::GfxBuffer,
 };
 
 pub struct GfxStageBuffer<T: bytemuck::Pod> {

@@ -3,7 +3,7 @@ use std::rc::Rc;
 use ash::vk;
 use ash::vk::Handle;
 
-use crate::foundation::debug_messenger::DebugType;
+use crate::core::debug_messenger::DebugType;
 use crate::gfx::GfxDeviceCtx;
 
 /// 描述符池

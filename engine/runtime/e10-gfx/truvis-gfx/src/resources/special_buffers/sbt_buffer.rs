@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use ash::{vk, vk::Handle};
 
 use crate::{
-    foundation::debug_messenger::DebugType,
+    core::debug_messenger::DebugType,
     gfx::{GfxDeviceCtx, GfxDeviceInfoCtx, GfxResourceCtx},
     impl_derive_buffer,
     resources::buffer::GfxBuffer,

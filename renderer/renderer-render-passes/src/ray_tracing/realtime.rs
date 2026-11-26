@@ -10,7 +10,7 @@ use truvis_descriptor_layout_macro::DescriptorBinding;
 use truvis_gfx::basic::bytes::BytesConvert;
 use truvis_gfx::descriptors::descriptor::{GfxDescriptorSet, GfxDescriptorSetLayout};
 use truvis_gfx::descriptors::descriptor_pool::{GfxDescriptorPool, GfxDescriptorPoolCreateInfo};
-use truvis_gfx::foundation::device::GfxDevice;
+use truvis_gfx::core::device::GfxDevice;
 use truvis_gfx::resources::lifecycle::DestroyReason;
 use truvis_gfx::utilities::descriptor_cursor::GfxDescriptorCursor;
 use truvis_gfx::{

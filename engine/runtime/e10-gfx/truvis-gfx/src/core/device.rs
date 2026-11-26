@@ -7,7 +7,7 @@ use std::{
 use ash::vk;
 use itertools::Itertools;
 
-use crate::{foundation::debug_messenger::DebugType, utilities::descriptor_cursor::GfxWriteDescriptorSet};
+use crate::{core::debug_messenger::DebugType, utilities::descriptor_cursor::GfxWriteDescriptorSet};
 
 /// Vulkan 逻辑设备封装
 ///

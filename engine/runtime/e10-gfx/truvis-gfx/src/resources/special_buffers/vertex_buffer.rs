@@ -7,7 +7,7 @@ use ash::{vk, vk::Handle};
 
 use crate::resources::layout::GfxVertexLayout;
 use crate::{
-    foundation::debug_messenger::DebugType, gfx::GfxResourceCtx, impl_derive_buffer, resources::buffer::GfxBuffer,
+    core::debug_messenger::DebugType, gfx::GfxResourceCtx, impl_derive_buffer, resources::buffer::GfxBuffer,
 };
 
 pub struct GfxVertexBuffer<L: GfxVertexLayout> {

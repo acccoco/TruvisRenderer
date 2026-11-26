@@ -6,8 +6,8 @@
 
 pub mod basic;
 pub mod commands;
+pub mod core;
 pub mod descriptors;
-pub mod foundation;
 pub mod gfx;
 pub mod gfx_core;
 pub mod pipelines;

@@ -5,7 +5,7 @@ use itertools::Itertools;
 
 use crate::{
     commands::{fence::GfxFence, submit_info::GfxSubmitInfo},
-    foundation::{debug_messenger::DebugType, device::GfxDevice},
+    core::{debug_messenger::DebugType, device::GfxDevice},
 };
 
 #[derive(Clone, Debug)]

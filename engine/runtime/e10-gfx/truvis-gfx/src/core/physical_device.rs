@@ -3,7 +3,7 @@ use std::{ffi::CStr, ptr::null_mut};
 use ash::vk;
 use itertools::Itertools;
 
-use crate::{commands::command_queue::GfxQueueFamily, foundation::debug_messenger::DebugType};
+use crate::{commands::command_queue::GfxQueueFamily, core::debug_messenger::DebugType};
 
 /// 表示一张物理显卡
 pub struct GfxPhysicalDevice {

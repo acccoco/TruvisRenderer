@@ -7,7 +7,7 @@ use crate::resources::special_buffers::acceleration_buffer::{
     GfxAccelerationInstanceBuffer, GfxAccelerationScratchBuffer, GfxAccelerationStructureBuffer,
 };
 use crate::{
-    foundation::debug_messenger::DebugType,
+    core::debug_messenger::DebugType,
     gfx::{GfxDeviceCtx, GfxImmediateCtx, GfxResourceCtx},
     query::query_pool::GfxQueryPool,
     resources::lifecycle::DestroyReason,

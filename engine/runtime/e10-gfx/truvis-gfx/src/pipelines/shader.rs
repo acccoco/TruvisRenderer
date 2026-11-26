@@ -4,7 +4,7 @@ use std::ffi::CStr;
 use ash::vk;
 use ash::vk::Handle;
 
-use crate::{foundation::debug_messenger::DebugType, gfx::GfxDeviceCtx};
+use crate::{core::debug_messenger::DebugType, gfx::GfxDeviceCtx};
 
 /// # 销毁
 ///

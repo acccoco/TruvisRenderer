@@ -5,7 +5,7 @@ use ash::vk::Handle;
 use vk_mem::Alloc;
 
 use crate::{
-    foundation::debug_messenger::DebugType,
+    core::debug_messenger::DebugType,
     gfx::{GfxImmediateCtx, GfxResourceCtx},
     resources::{lifecycle::DestroyReason, vma_debug::with_vma_debug_name},
 };

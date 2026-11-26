@@ -1,6 +1,6 @@
 use ash::{vk, vk::Handle};
 
-use crate::{foundation::debug_messenger::DebugType, gfx::GfxDeviceCtx};
+use crate::{core::debug_messenger::DebugType, gfx::GfxDeviceCtx};
 
 /// Fence 的唯一 owner；提交只借用，调用方等待 GPU 完成后显式销毁。
 pub struct GfxFence {

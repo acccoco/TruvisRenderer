@@ -1,7 +1,7 @@
 use ash::vk;
 use ash::vk::Handle;
 
-use crate::{foundation::debug_messenger::DebugType, gfx::GfxDeviceCtx};
+use crate::{core::debug_messenger::DebugType, gfx::GfxDeviceCtx};
 
 /// 每个 query 返回一个 u64 标量；多计数器/可变布局查询需要由相应 owner 单独建模。
 pub struct GfxQueryPool {

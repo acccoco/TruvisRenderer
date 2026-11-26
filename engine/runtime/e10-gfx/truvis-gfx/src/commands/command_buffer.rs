@@ -4,7 +4,7 @@ use std::rc::Rc;
 use ash::vk;
 use itertools::Itertools;
 
-use crate::foundation::device::GfxDevice;
+use crate::core::device::GfxDevice;
 use crate::gfx::GfxDeviceCtx;
 use crate::resources::layout::GfxIndexType;
 use crate::resources::special_buffers::index_buffer::GfxIndexBuffer;
@@ -15,7 +15,7 @@ use crate::{
         barrier::{GfxBufferBarrier, GfxImageBarrier},
         command_pool::GfxCommandPool,
     },
-    foundation::debug_messenger::DebugType,
+    core::debug_messenger::DebugType,
     pipelines::rendering_info::GfxRenderingInfo,
     query::query_pool::GfxQueryPool,
     resources::buffer::GfxBuffer,

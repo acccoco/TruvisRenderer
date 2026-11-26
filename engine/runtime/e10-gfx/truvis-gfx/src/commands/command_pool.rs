@@ -2,7 +2,7 @@ use ash::vk;
 use ash::vk::Handle;
 
 use crate::commands::command_buffer::GfxCommandBuffer;
-use crate::{commands::command_queue::GfxQueueFamily, foundation::debug_messenger::DebugType, gfx::GfxDeviceCtx};
+use crate::{commands::command_queue::GfxQueueFamily, core::debug_messenger::DebugType, gfx::GfxDeviceCtx};
 
 /// command pool 是和 queue family 绑定的，而不是和 queue 绑定的
 pub struct GfxCommandPool {
@@ -27,7 +27,7 @@ impl GfxCommandPool {
     /// 这里直接接收 device owner，避免在 root owner 尚未构造完成时反向借用 `Gfx` Ctx。
     #[inline]
     pub(crate) fn new_internal(
-        gfx_device: std::rc::Rc<crate::foundation::device::GfxDevice>,
+        gfx_device: std::rc::Rc<crate::core::device::GfxDevice>,
         queue_family: GfxQueueFamily,
         flags: vk::CommandPoolCreateFlags,
         debug_name: &str,
@@ -58,11 +58,11 @@ impl GfxCommandPool {
         self.release(ctx.device());
     }
 
-    pub fn destroy_internal(mut self, gfx_device: &crate::foundation::device::GfxDevice) {
+    pub fn destroy_internal(mut self, gfx_device: &crate::core::device::GfxDevice) {
         self.release(gfx_device);
     }
 
-    fn release(&mut self, gfx_device: &crate::foundation::device::GfxDevice) {
+    fn release(&mut self, gfx_device: &crate::core::device::GfxDevice) {
         if self.handle.is_null() {
             return;
         }

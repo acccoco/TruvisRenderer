@@ -12,7 +12,7 @@ use crate::{
         command_queue::{GfxCommandQueue, GfxQueueFamily},
         submit_info::GfxSubmitInfo,
     },
-    foundation::{
+    core::{
         device::GfxDevice, instance::GfxInstance, physical_device::GfxPhysicalDevice, vmem_allocator::VMemAllocator,
     },
 };
