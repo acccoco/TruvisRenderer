@@ -20,26 +20,26 @@ app ──> renderer ──> engine
 
 ## 设计文档
 
-1. [`layering-and-dependency-boundaries.md`](design/layering-and-dependency-boundaries.md)：顶层三层职责与依赖方向。
-2. [`shader-abi-and-native-integration.md`](design/shader-abi-and-native-integration.md)：Shader ABI、Rust binding、C ABI 与 CXX owner。
+1. [`分层与依赖边界.md`](design/分层与依赖边界.md)：顶层三层职责与依赖方向。
+2. [`Shader 契约与集成.md`](design/Shader%20契约与集成.md)：Shader ABI、Rust binding、C ABI 与 CXX owner。
 3. [`runtime-phase-contract.md`](design/runtime-phase-contract.md)：Runtime、RenderLoop、Renderer、Subsystem 的阶段能力。
-4. [`frame-execution-and-window-lifecycle.md`](design/frame-execution-and-window-lifecycle.md)：启动、帧循环、resize、present 和关闭。
-5. [`threading-and-synchronization.md`](design/threading-and-synchronization.md)：线程 owner、消息边界和 GPU 同步。
-6. [`resource-lifecycle-and-destruction.md`](design/resource-lifecycle-and-destruction.md)：GPU/CPU 资源创建、重建、退役和销毁。
-7. [`scene-sync-and-render-world.md`](design/scene-sync-and-render-world.md)：CPU scene 到 GPU RenderWorld 的同步契约。
-8. [`render-graph-and-data-flow.md`](design/render-graph-and-data-flow.md)：RenderGraph 资源访问、pass 顺序与提交。
+4. [`帧执行与窗口生命周期.md`](design/帧执行与窗口生命周期.md)：启动、帧循环、resize、present 和关闭。
+5. [`线程与同步.md`](design/线程与同步.md)：线程 owner、消息边界和 GPU 同步。
+6. [`资源生命周期与显式销毁.md`](design/资源生命周期与显式销毁.md)：GPU/CPU 资源创建、重建、退役和销毁。
+7. [`场景以及 World 划分.md`](design/场景以及%20World%20划分.md)：CPU scene 到 GPU RenderWorld 的同步契约。
+8. [`RenderGraph 与帧内数据流.md`](design/RenderGraph%20与帧内数据流.md)：RenderGraph 资源访问、pass 顺序与提交。
 9. [`render-configuration-and-temporal-state.md`](design/render-configuration-and-temporal-state.md)：配置、派生 frame state 与 temporal history。
 10. [`realtime-raytracing-sampling.md`](design/realtime-raytracing-sampling.md)：Realtime RT、NEE、PDF/MIS 和 ReSTIR DI。
 11. [`radiance-cache-and-debug.md`](design/radiance-cache-and-debug.md)：SHARC cache 与 debug 观测边界。
-12. [`editor-boundary-and-consistency.md`](design/editor-boundary-and-consistency.md)：Editor 状态权威、typed ports、背压和恢复。
+12. [`Editor 规范.md`](design/Editor%20规范.md)：Editor 状态权威、typed ports、背压和恢复。
 
 ## 面向人的问题切片
 
 以下文档只有在用户明确要求时更新；普通代码改动和设计维护不触发 summary 更新。
 
-- [`render-runtime-phases.md`](summary/render-runtime-phases.md)：RenderRuntime 各阶段在做什么。
-- [`render-runtime-object-hierarchy.md`](summary/render-runtime-object-hierarchy.md)：Runtime、World、Renderer、Subsystem 的对象层级和 owner。
-- [`picking-flow.md`](summary/picking-flow.md)：从鼠标点选到 GPU 查询、selection、描边和 Editor 通知。
+- [`RenderRuntime 各阶段在做什么.md`](summary/RenderRuntime%20各阶段在做什么.md)：RenderRuntime 各阶段在做什么。
+- [`RenderRuntime 下的对象层级.md`](summary/RenderRuntime%20下的对象层级.md)：Runtime、World、Renderer、Subsystem 的对象层级和 owner。
+- [`点选操作如何实现.md`](summary/点选操作如何实现.md)：从鼠标点选到 GPU 查询、selection、描边和 Editor 通知。
 
 每篇 summary 都标明核对基准和“解释性快照”性质，不作为实现唯一事实来源。
 

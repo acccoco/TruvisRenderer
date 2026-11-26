@@ -140,15 +140,15 @@ CPU 场景由 `GameWorld` 权威持有，`RenderRuntime` 在 prepare 阶段同�
 
 ## 文档导航
 
-- [just 命令、选项与依赖图](./docs/just-commands.md)
+- 在仓库根目录运行 `just --list` 查看可用命令。
 - [架构入口](./docs/ARCHITECTURE.md)
-- [Editor 子系统边界与一致性](./docs/design/editor-boundary-and-consistency.md)
-- [CPU Scene 到 GPU Scene 同步机制](./docs/design/scene-sync-and-render-world.md)
-- [RenderGraph 与帧内数据流](./docs/design/render-graph-and-data-flow.md)
+- [Editor 子系统边界与一致性](./docs/design/Editor%20规范.md)
+- [CPU Scene 到 GPU Scene 同步机制](./docs/design/场景以及%20World%20划分.md)
+- [RenderGraph 与帧内数据流](./docs/design/RenderGraph%20与帧内数据流.md)
 - [Realtime RT 采样流程](./docs/design/realtime-raytracing-sampling.md)
-- [RenderRuntime 阶段说明](./docs/summary/render-runtime-phases.md)
-- [RenderRuntime 对象层级](./docs/summary/render-runtime-object-hierarchy.md)
-- [点选流程](./docs/summary/picking-flow.md)
+- [RenderRuntime 阶段说明](./docs/summary/RenderRuntime%20各阶段在做什么.md)
+- [RenderRuntime 对象层级](./docs/summary/RenderRuntime%20下的对象层级.md)
+- [点选流程](./docs/summary/点选操作如何实现.md)
 - [应用壳模块说明](./app/README.md)
 - [主体 Truvis Renderer](renderer/truvis-renderer/README.md)
 - [Shader 模块说明](./engine/shader/README.md)

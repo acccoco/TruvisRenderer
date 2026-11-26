@@ -90,7 +90,7 @@ prepare、overlay 与 Offline 累计签名共用同一视图；after_prepare 相
 - 不绕过唯一 `RenderLoop` 帧骨架，也不让 Renderer/子系统长期持有完整 runtime 或 typed `Gfx` Ctx。
 - 主体 Renderer 的 pass 顺序、selection/overlay 策略和 realtime/offline 模式选择不进入 `SubsystemLifecycle`。
 
-跨线程 Editor、协议与一致性边界见 [`docs/design/editor-boundary-and-consistency.md`](../../docs/design/editor-boundary-and-consistency.md)。
+跨线程 Editor、协议与一致性边界见 [`docs/design/Editor 规范.md`](../../docs/design/Editor%20规范.md)。
 Runtime/Renderer/Subsystem 的通用契约见
 [`docs/design/runtime-phase-contract.md`](../../docs/design/runtime-phase-contract.md)。
 

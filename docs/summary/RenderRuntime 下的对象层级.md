@@ -3,7 +3,7 @@
 > 类型：面向人的问题切片。
 > 核对基准：2026-09-20 工作区实现。
 > 更新策略：只有用户明确要求时更新；本文是解释性快照，不是实现事实的唯一来源。
-> 设计入口：[分层与依赖边界](../design/layering-and-dependency-boundaries.md)、[资源生命周期](../design/resource-lifecycle-and-destruction.md)。
+> 设计入口：[分层与依赖边界](../design/分层与依赖边界.md)、[资源生命周期](../design/资源生命周期与显式销毁.md)。
 
 ## 顶层关系
 
@@ -111,4 +111,4 @@ Renderer shutdown 早于 Runtime destroy；窗口 host 晚于 RenderThread 退�
 - [`TruvisRenderer`](../../renderer/truvis-renderer/src/truvis_renderer.rs)
 - [`render_runtime_ctx.rs`](../../engine/e40-render/truvis-render-runtime/src/render_runtime_ctx.rs)
 
-阶段顺序见 [RenderRuntime 各阶段](render-runtime-phases.md)，点选结果如何回到 Renderer 见 [点选流程](picking-flow.md)。
+阶段顺序见 [RenderRuntime 各阶段](RenderRuntime%20各阶段在做什么.md)，点选结果如何回到 Renderer 见 [点选流程](点选操作如何实现.md)。

@@ -29,7 +29,7 @@
 
 正常退出直接 wait_idle → Renderer shutdown → Runtime destroy，不插入额外日志调用。
 阶段内 panic 仍可能跳过后续关闭；RenderThread finished 不能证明 surface/root 已回收。
-详见[帧执行与关闭约束](../../../docs/design/frame-execution-and-window-lifecycle.md)。
+详见[帧执行与关闭约束](../../../../docs/design/帧执行与窗口生命周期.md)。
 
 原生窗口通过 `RenderThreadControl::publish_resize` 同时发布尺寸 generation 和 `InputEvent::Resized`。
 即使窗口恢复原尺寸，也会在下一次 update 前清理旧交互；DLSS 内部 resize 不走该窗口通道。

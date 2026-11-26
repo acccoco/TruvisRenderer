@@ -3,7 +3,7 @@
 > 类型：面向人的问题切片。
 > 核对基准：2026-09-20 工作区实现。
 > 更新策略：只有用户明确要求时更新；本文是解释性快照，不是实现事实的唯一来源。
-> 设计入口：[Runtime Phase Contract](../design/runtime-phase-contract.md)、[帧执行与窗口生命周期](../design/frame-execution-and-window-lifecycle.md)。
+> 设计入口：[Runtime Phase Contract](../design/runtime-phase-contract.md)、[帧执行与窗口生命周期](../design/帧执行与窗口生命周期.md)。
 
 ## 先看一帧
 
@@ -108,4 +108,4 @@ Renderer 资源必须早于 Runtime 的 `Gfx` 销毁。窗口 owner 必须活到
 - [`render_loop`](../../engine/e50-render-loop/truvis-render-loop/src/render_loop.rs)
 - [`TruvisRenderer`](../../renderer/truvis-renderer/src/truvis_renderer.rs)
 
-本文只回答“阶段在做什么”。对象 owner 见 [RenderRuntime 对象层级](render-runtime-object-hierarchy.md)，点选见 [点选流程](picking-flow.md)。
+本文只回答“阶段在做什么”。对象 owner 见 [RenderRuntime 对象层级](RenderRuntime%20下的对象层级.md)，点选见 [点选流程](点选操作如何实现.md)。

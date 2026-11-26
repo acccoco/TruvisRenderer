@@ -134,4 +134,4 @@ alpha 限制到 [0,1]，非有限 alpha 取 1。公开 `TextureBytes::new` 只�
   相机和 glTF 可表达的灯光随场景导出，不生成独立的 manifest 或 metadata JSON。
 
 长期资源 source、去重和 scene import 状态见 [`truvis-world`](../truvis-world/README.md) 与
-[`scene-sync-and-render-world.md`](../../../docs/design/scene-sync-and-render-world.md)。
+[`场景以及 World 划分.md`](../../../../docs/design/场景以及%20World%20划分.md)。

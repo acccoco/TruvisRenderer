@@ -30,10 +30,11 @@ handle 或内部路径结构。写请求可携带 `expected_scene_version`，版
 不提供旧草稿冲突检测。预算只在请求之间检查，不能限制单次同步任务的耗时；丢弃 reply
 或断开调用方等待不撤销已经入队的命令。
 
-import accepted 仅表示获得 CPU 导入身份；Ready 表示导入数据和资源身份就绪，不会自动创建
-live instance。第一阶段 Automation 尚无实例化导入结果的命令。不存在或 generation 不匹配的
-import ID 返回 StaleObject，真实加载失败返回 Failed 与错误文本。import record 由 AssetImports 保留到 Runtime
-销毁；释放策略需要同时定义查询和重复实例化的生命周期，不能按一次状态读取自动回收。
+import accepted 表示已获得导入 ID。状态 `ready` 表示导入已完成资产登记，可以交付场景描述，详见
+[场景以及 World 划分](场景以及%20World%20划分.md)。贴图可随后发布。场景实例化由上层发起，
+第一阶段 Automation 的导入接口负责提交请求和查询状态。不存在或 generation 不匹配的 import ID 返回
+`StaleObject`。场景导入失败返回状态 `failed` 和错误文本。`AssetImports` 将导入记录保留到 Runtime 销毁。
+释放策略需要同时定义查询和重复实例化的生命周期，不能按一次状态读取自动回收。
 
 ## HTTP 安全与协议
 

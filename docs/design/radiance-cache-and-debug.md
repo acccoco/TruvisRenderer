@@ -133,7 +133,7 @@ Runtime shutdown 前，Renderer 必须先释放 SHARC pipeline、buffer 和 desc
 - [`renderer_rendering/realtime`](../../renderer/renderer-rendering/src/realtime/mod.rs)
 - [`realtime shader`](../../renderer/shader/lib/renderer/realtime_rt/)
 - [`render configuration`](render-configuration-and-temporal-state.md)
-- [`resource lifecycle`](resource-lifecycle-and-destruction.md)
+- [`resource lifecycle`](资源生命周期与显式销毁.md)
 
 ## Cache 失效
 

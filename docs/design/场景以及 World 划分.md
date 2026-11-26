@@ -8,9 +8,12 @@ Runtime 持有一组 World 和一个设备域内共享的 `AssetSystem`。`GameW
 `RenderWorld` 直接借用 `&GameWorld` 与 `&AssetSystem`，产出同一个场景的 GPU 表示。资源生命周期独立于 World。
 `GpuSkyStore` 随 World 保存天空采样分布，HDRI 纹理属于共享资产。
 
-`AssetLoadService` 在后台读取和解码，返回内存数据。Runtime 的 `AssetImports` 在 update 边界领取完成，
-按任务身份登记资产或发布导入描述；上层选择何时把描述实例化到 World。导入预检先验证 mesh、引用、
-材质参数、可用 slot 和外部纹理路径，再提交资源。失败的纹理可以由调用方显式以原 handle 重试。
+`AssetLoadService` 在后台读取和解码，返回内存数据。Runtime 的 `AssetImports` 在 update 边界消费加载结果。
+场景导入先预检 mesh、引用、材质参数、可用 slot 和外部纹理路径，通过后向 `AssetSystem` 登记资源。
+
+Mesh 和 Material 登记完成、引用的纹理已取得 handle 并发起或复用加载后，导入发布 `Ready` 和 `SceneData`。
+上层选择何时把 `SceneData` 实例化到 `GameWorld`。此时纹理仍可能在解码或等待 GPU 发布，材质使用下文的
+null binding。后续纹理解码失败记录在纹理自身，调用方可用原 handle 显式重试。
 
 ## 身份、材质表和就绪
 
@@ -47,7 +50,7 @@ FIF 副本和语义版本分别确认。MaterialSlotTable 在实例成员、绑�
 上层保证下一次提交中的引用有效。移除纹理前，可在同一 tick 清空或替换相关材质和环境引用；
 移除材质或 mesh 前，可改绑或移除相关实例。AssetSystem 的删除只处理目标资产自身的登记与退役。
 已发布纹理的引用由上层通过普通材质或环境编辑调整。晚到的异步完成通过 generational handle 校验，
-仅释放失效任务的结果。GPU 退役条件见[资源生命周期](resource-lifecycle-and-destruction.md)。
+仅释放失效任务的结果。GPU 退役条件见[资源生命周期](资源生命周期与显式销毁.md)。
 
 ## FIF 与 capacity
 
