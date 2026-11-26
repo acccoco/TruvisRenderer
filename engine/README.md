@@ -10,8 +10,7 @@
 运行时目录内部仍使用 `eNN-` 前缀表示 Engine 的架构阶段；工具目录不属于运行时层。
 
 - `tools/`：资源准备、shader 编译、shader binding codegen 和 CXX binding 构建支持。
-- `runtime/e00-foundation/`：日志和通用基础工具。
-- `runtime/e00-utils/`：被运行时和构建流程共同使用的路径与 shader manifest crate。
+- `runtime/e00-foundation/`：运行时和构建工具共用的日志、通用工具、工作区路径与 Shader 清单。
 - `runtime/e10-gfx/`：Vulkan RHI、资源、队列、同步、swapchain、pipeline 和 descriptor layout。
 - `runtime/e30-world/`：CPU asset、scene、World 和领域数据验证。
 - `runtime/e40-render/`：Render foundation、RenderGraph、RenderRuntime、RenderWorld 和 GPU bridge。
@@ -24,7 +23,7 @@ Renderer 层位于 workspace 顶层 `../renderer/`，应用层位于 `../app/`�
 ## 工具与运行时边界
 
 `engine/tools/` 中的 crate 只负责构建期或资源准备工作，不拥有 Vulkan、RenderGraph、GPU resource
-或线程生命周期。它们可以依赖 `runtime/e00-utils/` 中的路径和 shader manifest crate；目录分类不
+或线程生命周期。它们可以依赖 `runtime/e00-foundation/` 中的路径和 shader manifest crate；目录分类不
 替代 Cargo 实际依赖方向，也不引入兼容转发层。
 
 `engine/shader/` 是 Shader ABI owner。绑定 crate 从 owner 的 ABI 投影生成 Rust 类型，不负责 shader
@@ -39,7 +38,7 @@ binding 生成、链接和显式运行文件复制支持。
 1. `../docs/ARCHITECTURE.md`：架构入口、依赖方向和全局约束。
 2. `../docs/design/`：Runtime、RenderGraph、线程、资源生命周期和 shader/native 边界。
 3. `runtime/*/README.md`：具体运行时 crate 职责和生命周期。
-4. `tools/README.md` 与 `runtime/e00-utils/README.md`：工具和基础路径/manifest 入口。
+4. [工具](tools/README.md)和[基础设施](runtime/e00-foundation/README.md)的模块入口。
 5. `shader/README.md` 与 `../cxx/README.md`：shader 工具链和 native integration。
 
 ## 构建入口

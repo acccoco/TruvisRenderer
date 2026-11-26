@@ -13,7 +13,7 @@ struct CliOptions {
 
 impl CliOptions {
     fn parse() -> Result<Self, String> {
-        let mut manifest_path = PathBuf::from("shader-packages.toml");
+        let mut manifest_path = PathBuf::from("shader-manifest.toml");
         let mut force = false;
         let mut verbose = false;
         let mut args = std::env::args().skip(1);

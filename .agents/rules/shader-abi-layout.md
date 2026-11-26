@@ -8,7 +8,7 @@
 
 ## 2) 搜索路径与依赖方向
 
-- `.vscode/settings.json` 的 `slang.additionalSearchPaths` 固定为 `engine/shader` 与 `renderer/shader`，是编辑器看到的完整源码根；`shader-packages.toml` 是构建期唯一事实来源，必须显式镜像相同根目录或其严格子集，构建器不读取编辑器配置。
+- `.vscode/settings.json` 的 `slang.additionalSearchPaths` 固定为 `engine/shader` 与 `renderer/shader`，是编辑器看到的完整源码根；`shader-manifest.toml` 是构建期唯一事实来源，必须显式镜像相同根目录或其严格子集，构建器不读取编辑器配置。
 - include 必须从搜索根开始并带 layer/owner 前缀，只允许 `abi/engine/...`、`lib/engine/...`、`abi/renderer/...`、`lib/renderer/...`、`lib/sample-shader-toy/...`。禁止 `../`、绝对路径、workspace-root 路径、反斜杠以及依赖 include root 顺序解析的裸 domain 路径；同一 include 必须唯一解析。
 - Shader 源码层级固定为 `abi/<owner> <- lib/<owner> <- entry`：ABI 只能依赖同 owner 或下层 owner 的 ABI；lib 可以依赖 ABI、同 owner lib 和下层 owner lib，但不能依赖 entry；entry 可以组合可见 ABI/lib，但不得被其它源码 include/import。
 - Owner 方向固定为 `engine <- renderer`。Renderer shader 可以依赖 Engine；Engine shader 不得依赖 Renderer。Hello Triangle 只依赖 Engine；ShaderToy 的 package `depends_on = []`，不得依赖 Engine 或 Renderer。

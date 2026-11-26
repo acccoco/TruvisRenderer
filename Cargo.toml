@@ -6,11 +6,11 @@ members = [
     "engine/tools/truvis-shader-binding-codegen",
     "engine/tools/truvis-shader-build",
     "engine/tools/truvis-cxx-binding-build",
-    # runtime foundation and utilities
+    # runtime foundation
     "engine/runtime/e00-foundation/truvis-utils",
     "engine/runtime/e00-foundation/truvis-logs",
-    "engine/runtime/e00-utils/truvis-path",
-    "engine/runtime/e00-utils/truvis-shader-manifest",
+    "engine/runtime/e00-foundation/truvis-path",
+    "engine/runtime/e00-foundation/truvis-shader-manifest",
     # runtime gfx
     "engine/runtime/e10-gfx/truvis-gfx",
     "engine/runtime/e10-gfx/truvis-descriptor-layout-macro",
@@ -71,11 +71,11 @@ truvis-fetch-res = { path = "engine/tools/truvis-fetch-res" }
 truvis-shader-binding-codegen = { path = "engine/tools/truvis-shader-binding-codegen" }
 truvis-shader-build = { path = "engine/tools/truvis-shader-build" }
 truvis-cxx-binding-build = { path = "engine/tools/truvis-cxx-binding-build" }
-# runtime foundation and utilities
+# runtime foundation
 truvis-logs = { path = "engine/runtime/e00-foundation/truvis-logs" }
 truvis-utils = { path = "engine/runtime/e00-foundation/truvis-utils" }
-truvis-path = { path = "engine/runtime/e00-utils/truvis-path" }
-truvis-shader-manifest = { path = "engine/runtime/e00-utils/truvis-shader-manifest" }
+truvis-path = { path = "engine/runtime/e00-foundation/truvis-path" }
+truvis-shader-manifest = { path = "engine/runtime/e00-foundation/truvis-shader-manifest" }
 # runtime gfx
 truvis-gfx = { path = "engine/runtime/e10-gfx/truvis-gfx" }
 truvis-descriptor-layout-macro = { path = "engine/runtime/e10-gfx/truvis-descriptor-layout-macro" }

@@ -2,7 +2,7 @@ fn main() {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let root = std::path::Path::new(&manifest)
         .parent()
-        .unwrap() // engine/runtime/e00-utils/
+        .unwrap() // engine/runtime/e00-foundation/
         .parent()
         .unwrap() // engine/runtime/
         .parent()

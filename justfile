@@ -43,13 +43,13 @@ editor-web-dev: _editor-web-types
 # 增量编译 shader 并更新 Rust 绑定，可追加 --verbose
 [group('2 资源生成与构建')]
 shader *tool_opts:
-    cargo run --bin shader-build -- --manifest shader-packages.toml {{ tool_opts }}
+    cargo run --bin shader-build -- --manifest shader-manifest.toml {{ tool_opts }}
     cargo build -p truvis-shader-binding -p truvis-renderer-shader-binding
 
 # 强制重新编译全部 shader 并更新 Rust 绑定，可追加 --verbose
 [group('2 资源生成与构建')]
 shader-force *tool_opts:
-    cargo run --bin shader-build -- --manifest shader-packages.toml --force {{ tool_opts }}
+    cargo run --bin shader-build -- --manifest shader-manifest.toml --force {{ tool_opts }}
     cargo build -p truvis-shader-binding -p truvis-renderer-shader-binding
 
 # 构建 Debug native 与三个 Rust binding，并由 binding 复制运行文件

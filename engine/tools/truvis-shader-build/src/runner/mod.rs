@@ -1,6 +1,6 @@
 //! Shader 编译工具
 //!
-//! 按 `shader-packages.toml` 发现多个 shader package，将入口编译到带 package prefix 的
+//! 按 `shader-manifest.toml` 发现多个 shader package，将入口编译到带 package prefix 的
 //! SPIR-V 目录，并维护 package-aware 增量 manifest。
 
 mod common;

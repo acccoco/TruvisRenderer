@@ -87,7 +87,7 @@ Renderer ABI 若引用具名 Engine 类型，必须通过 `ModuleRawLine` 注入
 缺失映射时允许 Rust 编译失败，以 fail-closed 暴露依赖错误。
 
 Renderer 的 header、package include roots、额外 Engine FFI include root 与输出 crate 由
-`shader-packages.toml` 的 `[[binding]] id = "renderer"` 声明；owner `build.rs` 不再拼接 shader 目录。
+`shader-manifest.toml` 的 `[[binding]] id = "renderer"` 声明；owner `build.rs` 不再拼接 shader 目录。
 
 Engine 类型只由 `truvis-shader-binding` 定义；不使用禁止定义黑名单，也不为旧命名的 Renderer binding crate 或旧
 shader 路径保留兼容层。
@@ -101,4 +101,4 @@ shader 路径保留兼容层。
 
 运行时仍使用 entry 相对路径，并通过 `ShaderArtifactPath::resolve` 以 `renderer`、
 `sample-hello-triangle`、`sample-shader-toy` package id 解析产物。`TruvisPath` 提供 `build/shader/`，
-`shader-packages.toml` 提供 package id 到输出前缀的映射。
+`shader-manifest.toml` 提供 package id 到输出前缀的映射。

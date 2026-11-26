@@ -98,7 +98,7 @@ Native 编译由外层先调用 CMake 完成；各 Rust binding 显式声明 imp
 
 ## 实现入口
 
-- [`shader-packages.toml`](../../shader-packages.toml)
+- [`shader-manifest.toml`](../../shader-manifest.toml)
 - [`renderer/shader/README.md`](../../renderer/shader/README.md)
 - [`cxx/README.md`](../../cxx/README.md)
 - [`truvis-shader-build`](../../engine/tools/README.md)

@@ -1,8 +1,4 @@
 //! Shader 构建配置的唯一解析入口。
-//!
-//! package 源码、header 和带分隔符的 compiler 路径以 manifest 所在目录为根；shader、binding
-//! 产物根由 `TruvisPath` 基于工作区根目录提供。该 crate 只验证 shader schema、词法路径和
-//! package 图，不要求源码、编译器或输出目录已经存在，因此运行时路径查询也可以复用同一模型。
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -17,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use truvis_path::TruvisPath;
 
+/// 直接和 shader-manifest.toml 的结构对应
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShaderManifest {
@@ -112,7 +109,7 @@ impl ShaderArtifactPath {
         DEFAULT_SHADER_MANIFEST
             .get_or_init(|| {
                 ShaderManifest::load_default()
-                    .unwrap_or_else(|error| panic!("shader-packages.toml 加载失败: {error:#}"))
+                    .unwrap_or_else(|error| panic!("shader-manifest.toml 加载失败: {error:#}"))
             })
             .shader_output_path(package_id, entry_relative_path)
             .unwrap_or_else(|error| panic!("shader 输出路径解析失败: {error:#}"))
@@ -261,7 +258,7 @@ impl ShaderManifest {
         Self::validate_compiler("compiler.dxc", &self.compiler.dxc)?;
 
         if self.packages.is_empty() {
-            bail!("shader-packages.toml 至少需要一个 [[package]]");
+            bail!("shader-manifest.toml 至少需要一个 [[package]]");
         }
 
         let mut package_ids = BTreeSet::new();

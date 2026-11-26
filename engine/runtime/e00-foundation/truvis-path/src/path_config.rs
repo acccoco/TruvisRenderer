@@ -91,7 +91,7 @@ impl TruvisPath {
 
     /// Shader package manifest 路径。
     pub fn shader_manifest_path() -> PathBuf {
-        Self::workspace().join("shader-packages.toml")
+        Self::workspace().join("shader-manifest.toml")
     }
 
     /// Rust 自动绑定生成目录（`build/bindings/`）。
